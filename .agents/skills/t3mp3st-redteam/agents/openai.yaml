@@ -1,0 +1,4 @@
+interface:
+  display_name: "T3MP3ST Redteam"
+  short_description: "Structured authorized red-team workflow"
+  default_prompt: "Use $t3mp3st-redteam to run an authorized Recon, Plan, Execute, Reflect security assessment."

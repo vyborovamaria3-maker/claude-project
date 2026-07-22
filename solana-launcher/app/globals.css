@@ -1,0 +1,434 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --theme-bg: #17120a;
+  --theme-bg-soft: #110d07;
+  --theme-bg-card: #241c10;
+  --theme-bg-elevated: #302513;
+  --theme-bg-overlay: #382c17;
+  --theme-bg-border: #42301a;
+  --theme-content: #f7ead5;
+  --theme-content-soft: #d7c39c;
+  --theme-content-muted: #ad956d;
+  --theme-content-faint: #806c50;
+  --theme-content-inverted: #09090b;
+  --theme-primary: #f59e0b;
+  --theme-primary-foreground: #fcfcfd;
+  --theme-primary-soft: #f59e0b24;
+  --theme-primary-border: #f59e0b57;
+  --theme-primary-glow: #f59e0b85;
+  --theme-secondary: #14f195;
+  --theme-ring: #f59e0b6b;
+  --theme-success: #22c55e;
+  --theme-success-foreground: #08130d;
+  --theme-success-soft: #22c55e24;
+  --theme-success-border: #22c55e4d;
+  --theme-warning: #f59e0b;
+  --theme-warning-foreground: #120b02;
+  --theme-warning-soft: #f59e0b24;
+  --theme-warning-border: #f59e0b4d;
+  --theme-danger: #ef4444;
+  --theme-danger-foreground: #fff5f5;
+  --theme-danger-soft: #ef444424;
+  --theme-danger-border: #ef44444d;
+  --theme-info: #38bdf8;
+  --theme-accent: var(--theme-primary);
+  --theme-accent-glow: var(--theme-primary-glow);
+  --theme-warm-glow: rgba(245,158,11,0.14);
+  --theme-cool-glow: rgba(20,241,149,0.10);
+  --theme-ambient-glow: rgba(56,189,248,0.07);
+  --theme-surface: linear-gradient(160deg,
+    color-mix(in srgb, var(--theme-bg-elevated) 100%, white 3%),
+    var(--theme-bg-card) 72%);
+  --theme-surface-strong: linear-gradient(160deg,
+    color-mix(in srgb, var(--theme-bg-overlay) 100%, white 5%),
+    var(--theme-bg-card) 80%);
+  --page-accent: var(--theme-primary);
+  --page-accent-2: var(--theme-secondary);
+  --page-glow: rgba(245,158,11,0.14);
+  --page-glow-2: rgba(20,241,149,0.10);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html, body {
+  background: var(--theme-bg);
+  color: var(--theme-content);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  background-image:
+    radial-gradient(circle at 12% 4%, var(--page-glow, var(--theme-primary-soft)), transparent 24%),
+    radial-gradient(circle at 88% 10%, var(--page-glow-2, var(--theme-cool-glow)), transparent 22%),
+    radial-gradient(circle at 50% 92%, var(--theme-ambient-glow), transparent 30%),
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--theme-bg) 100%, white 2%),
+      color-mix(in srgb, var(--theme-bg-soft) 82%, var(--theme-bg) 18%)
+    );
+}
+
+button,
+a[href],
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a[href] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a[href]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--theme-ring);
+  outline-offset: 3px;
+}
+
+button:not(:disabled):active,
+a[href]:active {
+  transform: translateY(1px);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+* {
+  scrollbar-color: var(--theme-bg-border) var(--theme-bg-soft);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--theme-primary) 32%, transparent);
+  color: var(--theme-content);
+}
+
+img, video, canvas, svg, iframe {
+  max-width: 100%;
+}
+
+table, pre, code {
+  max-width: 100%;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--theme-bg-soft); }
+::-webkit-scrollbar-thumb { background: var(--theme-bg-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--theme-bg-elevated); }
+
+[class*="text-white"] {
+  color: var(--theme-content) !important;
+}
+
+[class*="text-white/50"],
+[class*="text-white/45"],
+[class*="text-white/40"] {
+  color: var(--theme-content-muted) !important;
+}
+
+[class*="text-white/30"],
+[class*="text-white/35"] {
+  color: var(--theme-content-faint) !important;
+}
+
+[class*="border-white/"] {
+  border-color: color-mix(in srgb, var(--theme-bg-border) 82%, white 18%) !important;
+}
+
+[class*="bg-neon-green"],
+[class*="text-neon-green"] {
+  color: var(--theme-primary) !important;
+}
+
+[class*="bg-neon-purple"],
+[class*="text-neon-purple"] {
+  color: var(--theme-secondary) !important;
+}
+
+[class*="text-neon-red"] {
+  color: var(--theme-danger) !important;
+}
+
+[class*="bg-neon-green/"] {
+  background-color: color-mix(in srgb, var(--theme-primary) 16%, transparent) !important;
+}
+
+[class*="bg-neon-purple/"] {
+  background-color: color-mix(in srgb, var(--theme-secondary) 14%, transparent) !important;
+}
+
+[class*="border-neon-green/"] {
+  border-color: color-mix(in srgb, var(--theme-primary) 34%, transparent) !important;
+}
+
+[class*="border-neon-purple/"] {
+  border-color: color-mix(in srgb, var(--theme-secondary) 34%, transparent) !important;
+}
+
+.app-button, button[data-button="surface"] {
+  background-image: linear-gradient(180deg,
+    color-mix(in srgb, var(--theme-bg-elevated) 100%, white 4%),
+    var(--theme-bg-card)
+  ) !important;
+  border-color: color-mix(in srgb, var(--theme-bg-border) 80%, white 20%);
+  color: var(--theme-content);
+  box-shadow:
+    0 1px 0 0 rgba(255,255,255,0.05) inset,
+    0 10px 24px -18px rgba(0,0,0,0.72);
+  transition: box-shadow 0.2s ease, transform 0.15s ease, border-color 0.2s ease, filter 0.2s ease, background 0.2s ease;
+}
+.app-button:hover, button[data-button="surface"]:hover {
+  box-shadow:
+    0 14px 30px -18px rgba(0,0,0,0.74),
+    0 0 0 1px color-mix(in srgb, var(--theme-primary) 24%, transparent),
+    0 0 24px -12px color-mix(in srgb, var(--theme-primary) 18%, transparent);
+  filter: brightness(1.05);
+}
+.app-button:active, button[data-button="surface"]:active {
+  transform: translateY(1px);
+}
+
+.button-primary {
+  background-image: linear-gradient(180deg,
+    color-mix(in srgb, var(--theme-primary) 100%, white 12%),
+    var(--theme-primary)
+  ) !important;
+  color: var(--theme-primary-foreground) !important;
+  border-color: color-mix(in srgb, var(--theme-primary) 55%, transparent) !important;
+  box-shadow:
+    0 1px 0 0 color-mix(in srgb, white 25%, transparent) inset,
+    0 6px 18px -2px color-mix(in srgb, var(--theme-primary) 44%, transparent),
+    0 2px 4px 0 rgba(0,0,0,0.3);
+  transition: box-shadow 0.2s ease, transform 0.15s ease, filter 0.2s ease, background 0.2s ease;
+}
+.button-primary:hover {
+  filter: brightness(1.08);
+  box-shadow:
+    0 1px 0 0 color-mix(in srgb, white 30%, transparent) inset,
+    0 8px 26px -2px color-mix(in srgb, var(--theme-primary) 68%, transparent),
+    0 2px 6px 0 rgba(0,0,0,0.4);
+}
+
+.button-secondary {
+  background-image: linear-gradient(180deg,
+    color-mix(in srgb, var(--theme-secondary) 100%, white 8%),
+    var(--theme-secondary)
+  ) !important;
+  color: var(--theme-content-inverted) !important;
+  border-color: color-mix(in srgb, var(--theme-secondary) 50%, transparent) !important;
+}
+
+[class*="bg-white/"]:not([data-keep-transparent]),
+[class*="bg-bg-soft/"]:not([data-keep-transparent]),
+[class*="bg-bg-card/"]:not([data-keep-transparent]),
+[class*="bg-bg-border/"]:not([data-keep-transparent]) {
+  background-image: linear-gradient(160deg,
+    color-mix(in srgb, var(--theme-bg-elevated) 100%, white 3%),
+    var(--theme-bg-card) 62%
+  ) !important;
+}
+
+@layer components {
+  .surface-panel {
+    background-image:
+      radial-gradient(circle at top right, var(--page-glow, var(--theme-primary-soft)), transparent 32%),
+      linear-gradient(180deg,
+        color-mix(in srgb, var(--theme-bg-elevated) 100%, white 4%),
+        var(--theme-bg-card) 72%
+      );
+    border: 1px solid color-mix(in srgb, var(--theme-bg-border) 84%, white 16%);
+    border-radius: 1rem;
+    box-shadow:
+      0 1px 0 0 color-mix(in srgb, white 8%, transparent) inset,
+      0 18px 50px -22px rgba(0,0,0,0.76),
+      0 0 0 1px color-mix(in srgb, var(--page-accent) 8%, transparent);
+  }
+  .surface-panel-hero {
+    background-image:
+      radial-gradient(circle at top left, var(--page-glow, var(--theme-primary-soft)), transparent 34%),
+      radial-gradient(circle at top right, var(--page-glow-2, var(--theme-cool-glow)), transparent 30%),
+      radial-gradient(circle at bottom right, color-mix(in srgb, var(--theme-secondary) 8%, transparent), transparent 28%),
+      linear-gradient(180deg,
+        color-mix(in srgb, var(--theme-bg-elevated) 100%, white 4%),
+        var(--theme-bg-card) 72%
+      );
+    border: 1px solid color-mix(in srgb, var(--theme-bg-border) 84%, white 16%);
+    border-radius: 1.125rem;
+    box-shadow:
+      0 1px 0 0 color-mix(in srgb, white 9%, transparent) inset,
+      0 24px 60px -24px rgba(0,0,0,0.8),
+      0 0 0 1px color-mix(in srgb, var(--page-accent) 10%, transparent);
+  }
+  .surface-table {
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--theme-bg-border) 86%, white 14%);
+    border-radius: 0.75rem;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--theme-bg-elevated) 100%, white 2%), var(--theme-bg-card) 70%);
+    box-shadow:
+      0 12px 30px -22px rgba(0,0,0,0.76),
+      0 0 0 1px color-mix(in srgb, var(--page-accent) 6%, transparent);
+  }
+  .surface-table thead {
+    background: linear-gradient(180deg,
+      color-mix(in srgb, var(--theme-bg-elevated) 100%, white 6%),
+      color-mix(in srgb, var(--theme-bg-card) 100%, white 2%)
+    );
+    color: var(--theme-content-muted);
+    backdrop-filter: blur(14px);
+  }
+  .surface-table tbody tr {
+    border-top: 1px solid color-mix(in srgb, var(--theme-bg-border) 82%, white 18%);
+  }
+  .surface-table tbody tr:hover {
+    background: color-mix(in srgb, var(--page-accent) 6%, transparent);
+  }
+  .surface-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid color-mix(in srgb, var(--theme-bg-border) 86%, white 14%);
+    background: linear-gradient(180deg,
+      color-mix(in srgb, var(--theme-bg-elevated) 100%, white 3%),
+      var(--theme-bg-card)
+    );
+    color: var(--theme-content-soft);
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    box-shadow:
+      0 1px 0 0 rgba(255,255,255,0.05) inset,
+      0 8px 24px -18px rgba(0,0,0,0.75);
+  }
+  .glass {
+    background-image: var(--theme-surface);
+    border: 1px solid color-mix(in srgb, var(--theme-bg-border) 86%, white 14%);
+    border-radius: 1rem;
+    box-shadow:
+      0 1px 0 0 color-mix(in srgb, white 6%, transparent) inset,
+      0 10px 30px -18px rgba(0,0,0,0.62),
+      0 0 0 1px color-mix(in srgb, var(--theme-primary) 5%, transparent);
+  }
+  .glass-strong {
+    background-image: var(--theme-surface-strong);
+    border: 1px solid color-mix(in srgb, var(--theme-bg-border) 84%, white 16%);
+    border-radius: 1rem;
+    box-shadow:
+      0 1px 0 0 color-mix(in srgb, white 8%, transparent) inset,
+      0 20px 52px -22px rgba(0,0,0,0.68),
+      0 0 0 1px color-mix(in srgb, var(--theme-primary) 7%, transparent);
+  }
+  .glass-orb {
+    position: relative;
+    overflow: hidden;
+  }
+  .glass-orb::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--theme-primary) 10%, transparent), transparent 42%);
+    pointer-events: none;
+  }
+  .glass-hover {
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  }
+  .glass-hover:hover {
+    border-color: color-mix(in srgb, var(--theme-primary) 50%, transparent);
+    box-shadow:
+      0 1px 0 0 color-mix(in srgb, white 8%, transparent) inset,
+      0 8px 32px -8px color-mix(in srgb, var(--theme-primary) 30%, transparent),
+      0 4px 24px -8px rgba(0,0,0,0.5);
+    transform: translateY(-1px);
+  }
+  .neon-text-green {
+    color: var(--theme-primary);
+    text-shadow: 0 0 8px var(--theme-accent-glow), 0 0 22px color-mix(in srgb, var(--theme-primary) 26%, transparent);
+  }
+  .grid-bg {
+    background-image:
+      linear-gradient(color-mix(in srgb, var(--theme-bg-border) 30%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--theme-bg-border) 30%, transparent) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .monitoring-field-label {
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+  }
+  .monitoring-control {
+    width: 100%;
+    border-radius: 1rem;
+    border: 1px solid color-mix(in srgb, var(--theme-bg-border) 80%, white 20%);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--theme-bg-elevated) 100%, white 3%), var(--theme-bg-card));
+    color: var(--theme-content);
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-size: 0.95rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    line-height: 1.4;
+    padding: 0 1rem;
+    outline: none;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.05),
+      0 8px 24px -18px rgba(15,23,42,0.85);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+    appearance: none;
+  }
+  .monitoring-control::placeholder {
+    color: var(--theme-content-faint);
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .monitoring-control:hover {
+    border-color: color-mix(in srgb, var(--theme-primary) 22%, var(--theme-bg-border));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--theme-bg-elevated) 100%, white 4%), color-mix(in srgb, var(--theme-bg-card) 100%, white 1%));
+  }
+  .monitoring-control:focus {
+    border-color: var(--theme-primary-border);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.06),
+      0 0 0 4px color-mix(in srgb, var(--theme-ring) 35%, transparent),
+      0 14px 30px -20px color-mix(in srgb, var(--theme-primary) 42%, transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--theme-bg-elevated) 100%, white 6%), color-mix(in srgb, var(--theme-bg-card) 100%, white 2%));
+  }
+  .monitoring-control option {
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    background: var(--theme-bg-card);
+    color: var(--theme-content);
+  }
+  .tab-chip {
+    border: 1px solid color-mix(in srgb, var(--theme-bg-border) 82%, white 18%);
+    background: linear-gradient(180deg,
+      color-mix(in srgb, var(--theme-bg-elevated) 100%, white 4%),
+      var(--theme-bg-card)
+    );
+    box-shadow:
+      0 1px 0 0 rgba(255,255,255,0.06) inset,
+      0 10px 26px -18px rgba(0,0,0,0.85);
+  }
+  .tab-chip-active {
+    background: linear-gradient(145deg,
+      color-mix(in srgb, var(--theme-primary) 18%, transparent),
+      color-mix(in srgb, var(--theme-secondary) 12%, transparent),
+      color-mix(in srgb, var(--theme-bg-card) 82%, transparent)
+    );
+    border-color: color-mix(in srgb, var(--theme-primary) 46%, transparent);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--theme-primary) 24%, transparent),
+      0 10px 30px -16px color-mix(in srgb, var(--theme-primary) 52%, transparent);
+  }
+}
+
+

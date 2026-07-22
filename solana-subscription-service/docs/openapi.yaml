@@ -1,0 +1,229 @@
+openapi: 3.1.0
+info:
+  title: SolSub API
+  version: 1.0.0
+servers:
+  - url: http://localhost:4000
+security:
+  - cookieAuth: []
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: API is alive
+  /api/auth/telegram:
+    post:
+      summary: Exchange Telegram Login Widget data or Mini App initData for JWT cookies
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  properties:
+                    loginData:
+                      type: object
+                      additionalProperties: true
+                - type: object
+                  properties:
+                    initData:
+                      type: string
+      responses:
+        "200":
+          description: Authenticated user and csrf token
+        "401":
+          description: Invalid Telegram hash or expired auth payload
+  /api/auth/refresh:
+    post:
+      summary: Rotate refresh token and access token cookies
+      security: []
+      responses:
+        "200":
+          description: Tokens refreshed
+        "401":
+          description: Missing, expired or revoked refresh token
+  /api/auth/logout:
+    post:
+      summary: Revoke refresh token and clear auth cookies
+      responses:
+        "200":
+          description: Session cleared
+  /api/auth/me:
+    get:
+      summary: Current authenticated user
+      responses:
+        "200":
+          description: Current user with wallets
+        "401":
+          description: Access token missing or expired
+  /api/wallet/challenge:
+    post:
+      summary: Create a short-lived wallet signature challenge
+      parameters:
+        - $ref: "#/components/parameters/Csrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [publicKey]
+              properties:
+                publicKey:
+                  type: string
+      responses:
+        "200":
+          description: Message to sign
+  /api/wallet/link:
+    post:
+      summary: Link Phantom or Backpack wallet after signature verification
+      parameters:
+        - $ref: "#/components/parameters/Csrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [publicKey, signature]
+              properties:
+                publicKey:
+                  type: string
+                signature:
+                  type: string
+      responses:
+        "200":
+          description: Linked wallet
+        "401":
+          description: Invalid wallet signature
+  /api/wallet:
+    delete:
+      summary: Unlink all wallets for current user
+      parameters:
+        - $ref: "#/components/parameters/Csrf"
+      responses:
+        "200":
+          description: Wallets removed
+  /api/plans:
+    get:
+      summary: List active subscription plans
+      security: []
+      responses:
+        "200":
+          description: Active plans
+  /api/subscription/initiate:
+    post:
+      summary: Create a Solana Pay payment intent with unique memo nonce
+      parameters:
+        - $ref: "#/components/parameters/Csrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId, period, currency]
+              properties:
+                planId:
+                  enum: [BASIC, ADVANCED, PREMIUM]
+                period:
+                  enum: [MONTHLY, YEARLY]
+                currency:
+                  enum: [SOL, USDC]
+      responses:
+        "201":
+          description: Pending payment transaction
+        "400":
+          description: Invalid or inactive plan
+  /api/subscription/confirm:
+    post:
+      summary: Verify a Solana transaction signature and activate subscription
+      parameters:
+        - $ref: "#/components/parameters/Csrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paymentId, signature]
+              properties:
+                paymentId:
+                  type: string
+                  format: uuid
+                signature:
+                  type: string
+      responses:
+        "200":
+          description: Confirmed payment and subscription
+        "400":
+          description: Nonce, amount, destination or signature mismatch
+        "409":
+          description: Transaction not confirmed yet
+  /api/subscription/status:
+    get:
+      summary: Current subscription status
+      responses:
+        "200":
+          description: Latest subscription or null
+  /api/subscription/payments:
+    get:
+      summary: Current user's payment history
+      responses:
+        "200":
+          description: Payment list
+  /api/premium/wallet-analytics:
+    get:
+      summary: Gated demo wallet analytics for active subscribers
+      responses:
+        "200":
+          description: Premium analytics
+        "402":
+          description: Active subscription required
+  /api/webhooks/telegram:
+    post:
+      summary: Telegram Bot API webhook receiver
+      security: []
+      parameters:
+        - name: x-telegram-bot-api-secret-token
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Update accepted
+        "401":
+          description: Bad Telegram webhook secret
+  /api/webhooks/solana:
+    post:
+      summary: Optional Helius webhook receiver for detected payment transactions
+      security: []
+      parameters:
+        - name: authorization
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Events processed
+        "401":
+          description: Bad webhook token
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+  parameters:
+    Csrf:
+      name: x-csrf-token
+      in: header
+      required: true
+      schema:
+        type: string

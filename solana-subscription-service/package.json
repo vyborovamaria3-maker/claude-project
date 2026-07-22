@@ -1,0 +1,29 @@
+{
+  "name": "solana-subscription-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Solana subscription service with Telegram authentication, payments, Mini App and PWA frontend.",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "apps/bot",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web,bot -c cyan,green,magenta \"npm run dev -w @solsub/api\" \"npm run dev -w @solsub/web\" \"npm run dev -w @solsub/bot\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate -w @solsub/api",
+    "prisma:migrate": "npm run prisma:migrate -w @solsub/api",
+    "prisma:seed": "npm run prisma:seed -w @solsub/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "typescript": "^5.8.3"
+  }
+}

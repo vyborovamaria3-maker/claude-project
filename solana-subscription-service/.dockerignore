@@ -1,0 +1,15 @@
+node_modules
+.next
+dist
+coverage
+*.log
+*.sqlite
+*.db
+*.db-shm
+*.db-wal
+data
+postgres_data
+compose-start.out.log
+compose-start.err.log
+.git
+.cache

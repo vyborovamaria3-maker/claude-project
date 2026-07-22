@@ -1,0 +1,4 @@
+interface:
+  display_name: "GMGN Market Workflow"
+  short_description: "GMGN market, token, wallet, and launch workflows"
+  default_prompt: "Use this skill for GMGN market discovery, token analysis, wallet analysis, strategy orders, and launchpad workflows."

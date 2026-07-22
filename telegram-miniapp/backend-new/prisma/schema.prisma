@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(uuid())
+  telegramId      BigInt    @unique
+  username        String?
+  subscriptionEnd DateTime?
+  createdAt       DateTime  @default(now())
+  payments        Payment[]
+
+  @@index([telegramId])
+  @@index([subscriptionEnd])
+}
+
+model Payment {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  amount        Float     // сумма в USDT
+  txSignature   String?   @unique
+  memo          String    @unique // идентификатор платежа (telegramId_timestamp)
+  status        String    @default("pending") // pending, confirmed, failed
+  plan          String    // тип подписки (premium)
+  createdAt     DateTime  @default(now())
+  confirmedAt   DateTime?
+
+  @@index([memo])
+  @@index([status])
+  @@index([userId])
+}

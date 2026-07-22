@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+data
+logs
+*.log
+**/*.log
+coverage
+tmp
+.codex

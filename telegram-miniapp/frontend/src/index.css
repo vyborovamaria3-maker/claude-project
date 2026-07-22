@@ -1,0 +1,100 @@
+@import '@telegram-apps/telegram-ui/dist/styles.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --bg-0: #050816;
+  --bg-1: #0b1021;
+  --card: rgba(10, 15, 31, 0.68);
+  --card-border: rgba(255, 255, 255, 0.1);
+  --text-muted: rgba(255, 255, 255, 0.7);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.18), transparent 25%),
+    radial-gradient(circle at 85% 15%, rgba(168, 85, 247, 0.16), transparent 24%),
+    radial-gradient(circle at 50% 85%, rgba(34, 197, 94, 0.12), transparent 26%),
+    linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+  color: white;
+  font-family: Inter, Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.16), transparent 30%),
+    radial-gradient(circle at 80% 20%, rgba(217, 70, 239, 0.14), transparent 28%),
+    radial-gradient(circle at 50% 75%, rgba(34, 197, 94, 0.1), transparent 24%);
+  filter: saturate(1.2);
+}
+
+.app-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.65), transparent 90%);
+}
+
+.glass-panel,
+.glass-card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  box-shadow:
+    0 20px 70px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(24px);
+}
+
+.glass-panel::before,
+.glass-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 35%, rgba(255, 255, 255, 0.03));
+  opacity: 0.45;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}

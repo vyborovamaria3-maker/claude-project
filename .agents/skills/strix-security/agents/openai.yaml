@@ -1,0 +1,4 @@
+interface:
+  display_name: "Strix Security"
+  short_description: "Confirm vulnerabilities and propose fixes"
+  default_prompt: "Use $strix-security to scan, confirm, patch, and report application vulnerabilities."

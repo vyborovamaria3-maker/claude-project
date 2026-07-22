@@ -1,0 +1,27 @@
+services:
+  nitter:
+    image: zedeus/nitter:latest
+    container_name: nitter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./nitter.conf:/src/nitter.conf:ro
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: nitter-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
