@@ -18,6 +18,8 @@
 
 # Logs and local databases
 **/*.log
+**/*.err.log
+**/*.out.log
 **/*.db
 **/*.db-*
 **/*.db-wal
@@ -25,7 +27,9 @@
 **/__pycache__/
 **/*.pyc
 **/*.tsbuildinfo
+**/*.egg-info/
 
 # Nested repositories and temporary clones
 repo/
 work/free-test-deploy/
+work/logs/
