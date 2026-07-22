@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ponytail Reuse"
+  short_description: "Reuse-first engineering workflow"
+  default_prompt: "Use $ponytail-reuse to solve this with maximum reuse and minimal new code."

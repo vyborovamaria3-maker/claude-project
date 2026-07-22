@@ -1,0 +1,16 @@
+{
+  "name": "claude-project-root",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "db:report": "npm --prefix solana-launcher run db:report",
+    "db:audit": "npm --prefix solana-launcher run db:audit",
+    "migrations:import": "npm --prefix solana-launcher run migrations:import --",
+    "wallets:tag": "npm --prefix solana-launcher run wallets:tag",
+    "subscription:dev": "npm --prefix solana-subscription-service run dev",
+    "subscription:build": "npm --prefix solana-subscription-service run build",
+    "subscription:test": "npm --prefix solana-subscription-service run test",
+    "subscription:typecheck": "npm --prefix solana-subscription-service run typecheck",
+    "subscription:compose": "docker compose -f solana-subscription-service/docker-compose.yml up --build"
+  }
+}

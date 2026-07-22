@@ -1,0 +1,83 @@
+﻿{
+    "version":  1,
+    "skills":  {
+                   "gmgn-cooking":  {
+                                        "source":  "GMGNAI/gmgn-skills",
+                                        "sourceType":  "github",
+                                        "skillPath":  "skills/gmgn-cooking/SKILL.md",
+                                        "computedHash":  "1ea431fcbfc4fbc1a4a814d9cd7f55401b7504faadef37380498e553585d2fee"
+                                    },
+                   "gmgn-market":  {
+                                       "source":  "GMGNAI/gmgn-skills",
+                                       "sourceType":  "github",
+                                       "skillPath":  "skills/gmgn-market/SKILL.md",
+                                       "computedHash":  "932e0976e97b64a341658106913927e7b144bb1b99ddec900bb97e2932f97cb8"
+                                   },
+                   "gmgn-portfolio":  {
+                                          "source":  "GMGNAI/gmgn-skills",
+                                          "sourceType":  "github",
+                                          "skillPath":  "skills/gmgn-portfolio/SKILL.md",
+                                          "computedHash":  "753b9d158f25a3e73ef19c16a34e393b842ab51df0c6df1b85b5d9b60a295024"
+                                      },
+                   "gmgn-swap":  {
+                                     "source":  "GMGNAI/gmgn-skills",
+                                     "sourceType":  "github",
+                                     "skillPath":  "skills/gmgn-swap/SKILL.md",
+                                     "computedHash":  "64f620cbf1ce5499ba8227420bb101b51555c4d9e31283f63031f60b8790f581"
+                                 },
+                   "gmgn-token":  {
+                                      "source":  "GMGNAI/gmgn-skills",
+                                      "sourceType":  "github",
+                                      "skillPath":  "skills/gmgn-token/SKILL.md",
+                                      "computedHash":  "6dd870ade4f129fee76e5717a336bb8d0a80377b20b06336055615323e0e326f"
+                                  },
+                   "gmgn-track":  {
+                                      "source":  "GMGNAI/gmgn-skills",
+                                      "sourceType":  "github",
+                                      "skillPath":  "skills/gmgn-track/SKILL.md",
+                                      "computedHash":  "def41e626b447df7def7c449573071942633c0c342321e95b1f941d9d12efd3e"
+                                  },
+                   "gmgn-market-workflow":  {
+                                                "source":  "local",
+                                                "sourceType":  "local",
+                                                "skillPath":  ".agents/skills/gmgn-market-workflow/SKILL.md",
+                                                "computedHash":  "562a7e56acd6d9f2e4685e695548ac05378fd91635c06e1f49273fbcb816c538"
+                                            },
+                   "gmgn-pumpfun-data":  {
+                                             "source":  "local",
+                                             "sourceType":  "local",
+                                             "skillPath":  ".agents/skills/gmgn-pumpfun-data/SKILL.md",
+                                             "computedHash":  "38187ee40650d39972fb457dfaf8ed650cc8f2104d60e5ec3f9d7a1d37ffed49"
+                                         },
+                   "gmgn-analysis-suite":  {
+                                              "source":  "local",
+                                              "sourceType":  "local",
+                                              "skillPath":  ".agents/skills/gmgn-analysis-suite/SKILL.md",
+                                              "computedHash":  "48bcc16feb37a05cb494dbdbe59bb519af9e0ccb2cee1961e08ac3e99e91b4e7"
+                                          },
+                   "gmgn-market-intel":  {
+                                            "source":  "local",
+                                            "sourceType":  "local",
+                                            "skillPath":  ".agents/skills/gmgn-market-intel/SKILL.md",
+                                            "computedHash":  "3898b6e0c861ba8f814a31538ab216016a44dbc90bdc94c0c2f879c3b4067b0b"
+                                        },
+                   "gmgn-wallet-intel":  {
+                                            "source":  "local",
+                                            "sourceType":  "local",
+                                            "skillPath":  ".agents/skills/gmgn-wallet-intel/SKILL.md",
+                                            "computedHash":  "d8a2e5fef3b1ca8bd90e0f8428d516baf00bb01a9c93ca7606d8b357ee85c591"
+                                        },
+                   "gmgn-launch-intel":  {
+                                           "source":  "local",
+                                           "sourceType":  "local",
+                                           "skillPath":  ".agents/skills/gmgn-launch-intel/SKILL.md",
+                                           "computedHash":  "a768e2cccd2283095adf49498627113225d4c47de5bab579076ad4161498a7b1"
+                                       },
+                   "web-product-workflow":  {
+                                                "source":  "local",
+                                                "sourceType":  "local",
+                                                "skillPath":  ".agents/skills/web-product-workflow/SKILL.md",
+                                                "computedHash":  "831f31984f037860a9a8e517b56a334e09acc39dd033abc17690e923983ac587"
+                                            }
+               }
+}

@@ -1,0 +1,31 @@
+# Local secrets and Codex runtime config
+.codex/
+.codex/config.toml
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Browser/session state
+**/storage-state.json
+**/*.storage-state.json
+**/data/x-auth/
+
+# Build outputs and dependencies
+**/node_modules/
+**/.next/
+**/dist/
+**/build/
+
+# Logs and local databases
+**/*.log
+**/*.db
+**/*.db-*
+**/*.db-wal
+**/*.snapshot.json
+**/__pycache__/
+**/*.pyc
+**/*.tsbuildinfo
+
+# Nested repositories and temporary clones
+repo/
+work/free-test-deploy/

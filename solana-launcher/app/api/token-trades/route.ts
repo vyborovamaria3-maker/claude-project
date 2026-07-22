@@ -1,0 +1,70 @@
+import { NextRequest, NextResponse } from "next/server";
+
+// data-tag: api.token_trades
+// Proxy to swap-api.pump.fun/v2/coins/{mint}/trades — public, real on-chain.
+// frontend-api.pump.fun was used previously but now returns 530 (blocked).
+//
+// Returns trades normalized to the legacy shape consumed by useTradeStream:
+//   { signature, sol_amount (lamports), token_amount (micro-tokens), is_buy,
+//     timestamp (unix seconds), user, usd_market_cap?, slot? }
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const tradeCache = new Map<string, { data: unknown[]; ts: number }>();
+const CACHE_TTL = 250; // 250ms — low-latency cache for realtime charting
+
+type V2Trade = {
+  tx: string;
+  timestamp: string;        // ISO 8601
+  userAddress: string;
+  type: "buy" | "sell";
+  program?: string;
+  priceUsd: string;
+  amountUsd: string;
+  amountSol: string;
+  baseAmount: string;        // token units (already decimal-adjusted)
+  quoteAmount: string;       // SOL
+};
+
+type V2Resp = { trades?: V2Trade[]; pagination?: { hasMore?: boolean; nextCursor?: string } };
+
+export async function GET(req: NextRequest) {
+  const mint = req.nextUrl.searchParams.get("mint");
+  const limit = Math.min(Number(req.nextUrl.searchParams.get("limit")) || 50, 100);
+  if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });
+
+  const cached = tradeCache.get(mint);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return NextResponse.json(cached.data, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  try {
+    const r = await fetch(
+      `https://swap-api.pump.fun/v2/coins/${mint}/trades?limit=${limit}`,
+      { headers: { Accept: "application/json" }, cache: "no-store" }
+    );
+    if (!r.ok) return NextResponse.json([], { status: 200 });
+    const data = (await r.json()) as V2Resp;
+    const trades = data.trades || [];
+
+    // Normalize to legacy shape — useTradeStream expects sol_amount in lamports,
+    // token_amount in micro-tokens, timestamp in unix seconds.
+    const normalized = trades.map(t => ({
+      signature: t.tx,
+      sol_amount: Math.round((Number(t.amountSol) || 0) * 1e9),
+      token_amount: Math.round((Number(t.baseAmount) || 0) * 1e6),
+      is_buy: t.type === "buy",
+      timestamp: Math.floor(new Date(t.timestamp).getTime() / 1000),
+      user: t.userAddress,
+      priceUsd: Number(t.priceUsd) || 0,
+      amountUsd: Number(t.amountUsd) || 0,
+      program: t.program,
+    }));
+
+    tradeCache.set(mint, { data: normalized, ts: Date.now() });
+    return NextResponse.json(normalized, { headers: { "Cache-Control": "no-store" } });
+  } catch {
+    return NextResponse.json([], { status: 200 });
+  }
+}

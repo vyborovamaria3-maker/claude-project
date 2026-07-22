@@ -1,0 +1,4 @@
+interface:
+  display_name: "GMGN Pump.fun Data"
+  short_description: "Pump.fun market data and Solana memecoin extraction"
+  default_prompt: "Use this skill for Pump.fun token, trader, market, holder, pair, or trend data extraction and interpretation."

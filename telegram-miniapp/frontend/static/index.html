@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Mini App</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #1a1a2e);
+      --text: var(--tg-theme-text-color, #eee);
+      --hint: var(--tg-theme-hint-color, #888);
+      --button: var(--tg-theme-button-color, #4a7dfc);
+      --button-text: var(--tg-theme-button-text-color, #fff);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; padding: 16px;
+    }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; overflow-x: auto; }
+    .tab {
+      flex: 1; min-width: 80px; padding: 12px;
+      background: rgba(255,255,255,0.05); border: none;
+      border-radius: 12px; color: var(--hint); font-size: 13px;
+      cursor: pointer; transition: all 0.2s; text-align: center;
+    }
+    .tab.active { background: var(--button); color: var(--button-text); }
+    .card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px; padding: 20px;
+      margin-bottom: 12px;
+    }
+    .title { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: var(--hint); margin-bottom: 16px; }
+    .btn {
+      width: 100%; padding: 14px; border: none; border-radius: 12px;
+      background: var(--button); color: var(--button-text);
+      font-size: 16px; font-weight: 600; cursor: pointer;
+      margin-top: 12px; transition: opacity 0.2s;
+    }
+    .btn:active { opacity: 0.8; }
+    .input, .select {
+      width: 100%; padding: 12px; border-radius: 10px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text); font-size: 15px; margin-top: 8px;
+    }
+    .label { font-size: 13px; color: var(--hint); margin-top: 12px; display: block; }
+    .status {
+      padding: 12px; border-radius: 10px;
+      background: rgba(74, 125, 252, 0.1); border: 1px solid rgba(74, 125, 252, 0.2);
+      font-size: 13px; margin-bottom: 16px; word-break: break-word;
+    }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .swap-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .hidden { display: none; }
+    h3 { font-size: 16px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="status" id="status">Готово к оплате 1000 USDT (демо)</div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="setTab('home')">Оплата</button>
+    <button class="tab" onclick="setTab('access')">Доступ</button>
+    <button class="tab" onclick="setTab('watchlist')">Watchlist</button>
+    <button class="tab" onclick="setTab('swap')">Swap</button>
+  </div>
+
+  <!-- Оплата -->
+  <div id="home" class="page">
+    <div class="card">
+      <div class="title">Подписка Premium</div>
+      <div class="subtitle">1000 USDT (демо-оплата)</div>
+      <label class="label">Выберите сеть</label>
+      <select class="select" id="network">
+        <option>Ethereum</option><option>BSC</option><option>Polygon</option>
+        <option>Solana</option><option>Arbitrum</option><option>Optimism</option>
+      </select>
+      <button class="btn" onclick="pay()">Оплатить 1000 USDT</button>
+    </div>
+  </div>
+
+  <!-- Доступ -->
+  <div id="access" class="page hidden">
+    <div class="card">
+      <div class="title">Установить пароль</div>
+      <div class="subtitle">Минимум 6 символов</div>
+      <label class="label">Пароль</label>
+      <input class="input" type="password" id="password" placeholder="••••••" />
+      <button class="btn" onclick="setPassword()">Сохранить пароль</button>
+    </div>
+  </div>
+
+  <!-- Watchlist -->
+  <div id="watchlist" class="page hidden">
+    <div class="card">
+      <div class="title">Добавить в watchlist</div>
+      <label class="label">Тикер (например: BTC)</label>
+      <input class="input" id="symbol" placeholder="BTC" />
+      <label class="label">Заметка (необязательно)</label>
+      <input class="input" id="note" placeholder="Моя заметка" />
+      <button class="btn" onclick="addWatchlist()">Добавить</button>
+    </div>
+    <div class="card">
+      <div class="title">Мой watchlist</div>
+      <div id="watchlist-items" style="margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <!-- Swap -->
+  <div id="swap" class="page hidden">
+    <div class="card">
+      <div class="title">Swap-просмотр</div>
+      <div class="subtitle">Демо данные</div>
+      <div class="swap-row"><span>ETH → USDT</span><span>1 ETH = 3,850 USDT</span></div>
+      <div class="swap-row"><span>BTC → ETH</span><span>1 BTC = 18.2 ETH</span></div>
+      <div class="swap-row"><span>SOL → USDC</span><span>1 SOL = 145 USDC</span></div>
+      <div class="swap-row"><span>ARB → ETH</span><span>1 ARB = 0.00042 ETH</span></div>
+    </div>
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+
+    const statusEl = document.getElementById('status');
+    let watchlist = [];
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+    }
+
+    function setTab(name) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+      document.querySelector(`.tab:nth-child(${['home','access','watchlist','swap'].indexOf(name)+1})`).classList.add('active');
+      document.getElementById(name).classList.remove('hidden');
+      if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    }
+
+    function sendData(data) {
+      if (tg.sendData) {
+        tg.sendData(JSON.stringify(data));
+      }
+      console.log('sendData:', data);
+    }
+
+    function pay() {
+      const network = document.getElementById('network').value;
+      sendData({ action: 'payment', amount_usdt: 1000, network });
+      setStatus(`Оплачено (mock) 1000 USDT в сети ${network}`);
+    }
+
+    function setPassword() {
+      const pw = document.getElementById('password').value;
+      if (pw.length < 6) { setStatus('Пароль минимум 6 символов'); return; }
+      sendData({ action: 'access', password: pw });
+      setStatus('Пароль сохранён, логин в сообщении от бота');
+      document.getElementById('password').value = '';
+    }
+
+    function addWatchlist() {
+      const sym = document.getElementById('symbol').value.trim().toUpperCase();
+      const note = document.getElementById('note').value.trim();
+      if (!sym) { setStatus('Введите тикер'); return; }
+      sendData({ action: 'watchlist', symbol: sym, note });
+      watchlist.push({ symbol: sym, note });
+      renderWatchlist();
+      setStatus(`Добавлен ${sym} в watchlist`);
+      document.getElementById('symbol').value = '';
+      document.getElementById('note').value = '';
+    }
+
+    function renderWatchlist() {
+      const el = document.getElementById('watchlist-items');
+      if (watchlist.length === 0) { el.innerHTML = '<div style="color:#888;font-size:13px;">Пусто</div>'; return; }
+      el.innerHTML = watchlist.map(i => `<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);"><strong>${i.symbol}</strong> ${i.note ? '- ' + i.note : ''}</div>`).join('');
+    }
+
+    renderWatchlist();
+  </script>
+</body>
+</html>

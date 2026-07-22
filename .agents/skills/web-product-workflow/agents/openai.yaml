@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Product Workflow"
+  short_description: "Architecture, scraping, and React UI components"
+  default_prompt: "Use this skill for site architecture, web scraping, and React UI component work."

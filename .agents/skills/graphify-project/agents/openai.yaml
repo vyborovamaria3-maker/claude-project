@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graphify Project"
+  short_description: "Build a project knowledge graph"
+  default_prompt: "Use $graphify-project to map this project into HTML, Markdown, and JSON graph artifacts."
