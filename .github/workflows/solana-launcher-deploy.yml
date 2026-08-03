@@ -61,7 +61,7 @@ jobs:
 
           PROJECT_DIR="/var/www/claude-project"
           APP_DIR="$PROJECT_DIR/solana-launcher"
-          COMPOSE_FILE="$PROJECT_DIR/solana-launcher/docker-compose.server.yml"
+          COMPOSE_FILE="$PROJECT_DIR/solana-launcher/docker-compose.yml"
 
           cd "$PROJECT_DIR"
           git fetch origin main
