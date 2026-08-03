@@ -68,8 +68,8 @@ jobs:
           git reset --hard origin/main
 
           cd "$APP_DIR"
-          docker compose --env-file .env.server -f "$COMPOSE_FILE" build frontend backend celery-worker telegram-bot
-          docker compose --env-file .env.server -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis rabbitmq backend celery-worker frontend telegram-bot nginx prometheus
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" build frontend backend celery-worker
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis rabbitmq backend celery-worker frontend nginx prometheus tunnel
           docker compose --env-file .env.server -f "$COMPOSE_FILE" exec -T backend alembic upgrade head
 
           DEPLOY_SCRIPT
