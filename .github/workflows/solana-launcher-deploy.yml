@@ -63,12 +63,12 @@ jobs:
           APP_DIR="$PROJECT_DIR/solana-launcher"
           COMPOSE_FILE="$PROJECT_DIR/solana-launcher/docker-compose.yml"
 
-          cd "$PROJECT_DIR"
-          if [ -n "$(find .git -not -writable -print -quit)" ]; then
-            sudo -n chown -R "$(id -u):$(id -g)" .git
-          fi
-          git fetch origin main
-          git reset --hard origin/main
+          # The existing server checkout has root-owned .git objects. Refresh
+          # through a temporary public clone instead of writing that metadata.
+          STAGING_DIR="$(mktemp -d /tmp/claude-project-deploy.XXXXXX)"
+          trap 'rm -rf "$STAGING_DIR"' EXIT
+          git clone --depth 1 --branch main https://github.com/dima09090/claude-project.git "$STAGING_DIR/repo"
+          (cd "$STAGING_DIR/repo" && tar --exclude='./.git' -cf - .) | (cd "$PROJECT_DIR" && tar -xf -)
 
           cd "$APP_DIR"
           # Build one image at a time: the VPS has limited RAM and Docker
