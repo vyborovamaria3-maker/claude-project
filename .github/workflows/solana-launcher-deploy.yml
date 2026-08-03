@@ -20,7 +20,7 @@ jobs:
   deploy:
     name: Deploy to production server
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
 
     steps:
       - name: Configure SSH
@@ -68,8 +68,25 @@ jobs:
           git reset --hard origin/main
 
           cd "$APP_DIR"
-          docker compose --env-file .env.server -f "$COMPOSE_FILE" build frontend backend celery-worker
-          docker compose --env-file .env.server -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis rabbitmq backend celery-worker frontend nginx prometheus tunnel
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" build frontend backend celery-worker telegram-bot
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis rabbitmq backend celery-worker frontend telegram-bot nginx prometheus
           docker compose --env-file .env.server -f "$COMPOSE_FILE" exec -T backend alembic upgrade head
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1/ >/dev/null \
+              && curl -fsS http://127.0.0.1/miniapp >/dev/null \
+              && curl -fsS http://127.0.0.1/fastapi/health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker compose --env-file .env.server -f "$COMPOSE_FILE" ps
+              exit 1
+            fi
+            sleep 4
+          done
+
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" ps --status running --services | grep -Fx frontend
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" ps --status running --services | grep -Fx telegram-bot
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" ps --status running --services | grep -Fx nginx
 
           DEPLOY_SCRIPT

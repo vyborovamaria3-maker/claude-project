@@ -1,0 +1,21 @@
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+ENV PYTHON=/usr/bin/python3 \
+    npm_config_python=/usr/bin/python3 \
+    TELEMETRY_DISABLED=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+RUN npm ci --legacy-peer-deps --include=dev \
+    && npm rebuild better-sqlite3 --build-from-source
+
+COPY . .
+
+ENV NODE_ENV=production
+
+CMD ["npm", "run", "bot:start"]

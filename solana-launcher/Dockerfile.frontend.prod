@@ -1,0 +1,52 @@
+FROM node:20-bookworm-slim AS dependencies
+
+WORKDIR /app
+
+ENV PYTHON=/usr/bin/python3 \
+    npm_config_python=/usr/bin/python3
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+RUN npm ci --legacy-peer-deps \
+    && npm rebuild better-sqlite3 --build-from-source
+
+FROM dependencies AS builder
+
+WORKDIR /app
+
+ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
+ARG NEXT_PUBLIC_FRONTEND_URL=http://localhost:3000
+ARG NEXT_PUBLIC_BACKEND_URL=
+ARG NEXT_PUBLIC_TELEGRAM_BOT_URL=https://t.me/Soft777bot
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
+    NEXT_PUBLIC_FRONTEND_URL=$NEXT_PUBLIC_FRONTEND_URL \
+    NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL \
+    NEXT_PUBLIC_TELEGRAM_BOT_URL=$NEXT_PUBLIC_TELEGRAM_BOT_URL
+
+COPY . .
+RUN npm run build
+
+FROM node:20-bookworm-slim AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/next.config.js ./next.config.js
+
+RUN mkdir -p /app/data
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start", "--", "-H", "0.0.0.0", "-p", "3000"]

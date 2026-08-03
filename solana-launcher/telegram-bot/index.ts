@@ -13,28 +13,34 @@ dotenv.config({ path: '.env', override: false });
 dotenv.config({ path: '.env.local', override: true });
 dotenv.config({ path: '.env.development.local', override: true });
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
+let botInstance: Telegraf | null = null;
 
-if (!token) {
-  throw new Error('TELEGRAM_BOT_TOKEN is not set in environment variables');
+function getBot(): Telegraf {
+  if (botInstance) return botInstance;
+
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    throw new Error('TELEGRAM_BOT_TOKEN is not set in environment variables');
+  }
+
+  const bot = new Telegraf(token);
+  bot.use(loggingMiddleware);
+  bot.use(sessionMiddleware);
+  setupAgentHandlers(bot);
+  setupTaskHandlers(bot);
+  setupStatusHandlers(bot);
+  setupSubscriptionHandlers(bot);
+  bot.catch((err, ctx) => {
+    console.error(`Error for ${ctx.updateType}:`, err);
+    void ctx.reply('Something went wrong. Please try again later.');
+  });
+
+  botInstance = bot;
+  return bot;
 }
 
-const bot = new Telegraf(token);
-
-bot.use(loggingMiddleware);
-bot.use(sessionMiddleware);
-
-setupAgentHandlers(bot);
-setupTaskHandlers(bot);
-setupStatusHandlers(bot);
-setupSubscriptionHandlers(bot);
-
-bot.catch((err, ctx) => {
-  console.error(`Error for ${ctx.updateType}:`, err);
-  ctx.reply('Something went wrong. Please try again later.');
-});
-
 async function startBot() {
+  const bot = getBot();
   const frontendUrl = (
     process.env.FRONTEND_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
@@ -52,12 +58,29 @@ async function startBot() {
 
   if (process.env.NODE_ENV === 'production') {
     const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
-    if (webhookUrl) {
-      await bot.telegram.setWebhook(webhookUrl);
-      console.log(`Webhook set to: ${webhookUrl}`);
-    } else {
-      console.warn('TELEGRAM_WEBHOOK_URL not set, webhook may not work properly');
+    if (!webhookUrl || !webhookUrl.startsWith('https://')) {
+      throw new Error('TELEGRAM_WEBHOOK_URL must be a public HTTPS URL');
     }
+
+    await bot.telegram.setMyCommands([
+      { command: 'start', description: 'Open Mini App' },
+      { command: 'subscribe', description: 'Open subscription' },
+      { command: 'help', description: 'Show help' },
+      { command: 'agents', description: 'List AI agents' },
+      { command: 'tasks', description: 'List your tasks' },
+    ]);
+    await bot.telegram.setWebhook(webhookUrl, {
+      secret_token: process.env.TELEGRAM_WEBHOOK_SECRET || undefined,
+      allowed_updates: ['message', 'callback_query', 'pre_checkout_query'],
+    });
+    console.log(`Webhook set to: ${webhookUrl}`);
+
+    // Telegram sends updates to the Next.js webhook route. Keep this service
+    // alive so Compose can monitor configuration/auth failures and restart it.
+    await new Promise<void>((resolve) => {
+      process.once('SIGINT', resolve);
+      process.once('SIGTERM', resolve);
+    });
   } else {
     console.log('Starting Telegram bot in polling mode...');
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
@@ -69,9 +92,6 @@ async function startBot() {
     console.log('Bot started with polling');
   }
 }
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 const isCliRun =
   process.env.npm_lifecycle_event === 'bot:dev' ||
@@ -85,4 +105,4 @@ if (isCliRun) {
   });
 }
 
-export { bot, startBot };
+export { getBot, startBot };

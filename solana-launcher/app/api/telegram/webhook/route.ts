@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { bot } from '../../../../telegram-bot/index';
+import { getBot } from '../../../../telegram-bot/index';
 import { validateUpdateStructure, checkWebhookRateLimit } from '../../../../lib/telegram/webhook-validator';
 import type { Update } from 'telegraf/types';
 
@@ -7,6 +7,15 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
 export async function POST(req: NextRequest) {
   try {
+    const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    const receivedSecret = req.headers.get('x-telegram-bot-api-secret-token');
+    if (expectedSecret && receivedSecret !== expectedSecret) {
+      return NextResponse.json(
+        { ok: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     // Validate Content-Type
     const contentType = req.headers.get('content-type');
     if (!contentType?.includes('application/json')) {
@@ -50,7 +59,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Process the update with Telegraf
-    await bot.handleUpdate(body as Update);
+    await getBot().handleUpdate(body as Update);
     
     return NextResponse.json({ ok: true });
   } catch (error) {
