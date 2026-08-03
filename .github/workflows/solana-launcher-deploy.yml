@@ -61,14 +61,15 @@ jobs:
 
           PROJECT_DIR="/var/www/claude-project"
           APP_DIR="$PROJECT_DIR/solana-launcher"
+          COMPOSE_FILE="$PROJECT_DIR/solana-launcher/docker-compose.server.yml"
 
           cd "$PROJECT_DIR"
           git fetch origin main
           git reset --hard origin/main
 
           cd "$APP_DIR"
-          docker compose --env-file .env.server -f docker-compose.server.yml build frontend backend celery-worker telegram-bot
-          docker compose --env-file .env.server -f docker-compose.server.yml up -d --remove-orphans postgres redis rabbitmq backend celery-worker frontend telegram-bot nginx prometheus
-          docker compose --env-file .env.server -f docker-compose.server.yml exec -T backend alembic upgrade head
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" build frontend backend celery-worker telegram-bot
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis rabbitmq backend celery-worker frontend telegram-bot nginx prometheus
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" exec -T backend alembic upgrade head
 
           DEPLOY_SCRIPT
