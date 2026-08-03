@@ -68,7 +68,12 @@ jobs:
           git reset --hard origin/main
 
           cd "$APP_DIR"
-          docker compose --env-file .env.server -f "$COMPOSE_FILE" build frontend backend celery-worker telegram-bot
+          # Build one image at a time: the VPS has limited RAM and Docker
+          # otherwise starts several npm/pip compilers concurrently (exit 137).
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" build backend
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" build celery-worker
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" build frontend
+          docker compose --env-file .env.server -f "$COMPOSE_FILE" build telegram-bot
           docker compose --env-file .env.server -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis rabbitmq backend celery-worker frontend telegram-bot nginx prometheus
           docker compose --env-file .env.server -f "$COMPOSE_FILE" exec -T backend alembic upgrade head
 
