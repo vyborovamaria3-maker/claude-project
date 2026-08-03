@@ -64,6 +64,9 @@ jobs:
           COMPOSE_FILE="$PROJECT_DIR/solana-launcher/docker-compose.yml"
 
           cd "$PROJECT_DIR"
+          if [ -n "$(find .git -not -writable -print -quit)" ]; then
+            sudo -n chown -R "$(id -u):$(id -g)" .git
+          fi
           git fetch origin main
           git reset --hard origin/main
 
