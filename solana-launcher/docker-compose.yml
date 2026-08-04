@@ -46,7 +46,8 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 20s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 60s
 
   backend:
     build:
@@ -70,7 +71,7 @@ services:
       redis:
         condition: service_healthy
       rabbitmq:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "8000:8000"
 
@@ -94,7 +95,7 @@ services:
       redis:
         condition: service_healthy
       rabbitmq:
-        condition: service_healthy
+        condition: service_started
 
   frontend:
     build:

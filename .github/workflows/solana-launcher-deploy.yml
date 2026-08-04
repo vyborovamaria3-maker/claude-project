@@ -104,6 +104,8 @@ jobs:
 
           docker compose --env-file .env.server -f "$COMPOSE_FILE" ps --status running --services | grep -Fx frontend
           docker compose --env-file .env.server -f "$COMPOSE_FILE" ps --status running --services | grep -Fx nginx
-          docker compose --env-file .env.server -f "$COMPOSE_FILE" exec -T frontend node scripts/configure-telegram.mjs
+          if ! docker compose --env-file .env.server -f "$COMPOSE_FILE" exec -T frontend node scripts/configure-telegram.mjs; then
+            echo "::warning::Application is healthy, but Telegram webhook configuration failed. Update TELEGRAM_BOT_TOKEN in .env.server."
+          fi
 
           DEPLOY_SCRIPT
