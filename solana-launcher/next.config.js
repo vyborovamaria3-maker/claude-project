@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone',
   allowedDevOrigins: ['expansive-shelve-vitally.ngrok-free.dev'],
   // Note: Next.js 14 forces `eval-source-map` in dev and overrides any custom
   // webpack `devtool` setting. The CSP/eval DevTools warning in dev is harmless
