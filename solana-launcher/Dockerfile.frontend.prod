@@ -47,4 +47,11 @@ RUN mkdir -p /app/data
 
 EXPOSE 3000
 
+
+# Next standalone tracing can omit Playwright runtime metadata.
+# Copy both packages explicitly because server-side code imports Playwright.
+COPY --from=builder /app/node_modules/playwright ./node_modules/playwright
+COPY --from=builder /app/node_modules/playwright-core ./node_modules/playwright-core
+RUN test -f /app/node_modules/playwright-core/browsers.json
+
 CMD ["node", "server.js"]
