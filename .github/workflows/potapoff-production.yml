@@ -30,13 +30,13 @@ jobs:
         include:
           - service: backend
             context: ./solana-launcher/backend
-            dockerfile: ./solana-launcher/backend/Dockerfile
+            dockerfile: Dockerfile
           - service: frontend
             context: ./solana-launcher
-            dockerfile: ./solana-launcher/Dockerfile.frontend.prod
+            dockerfile: Dockerfile.frontend.prod
           - service: telegram-bot
             context: ./solana-launcher
-            dockerfile: ./solana-launcher/Dockerfile.telegram-bot
+            dockerfile: Dockerfile.telegram-bot
 
     steps:
       - uses: actions/checkout@v4
