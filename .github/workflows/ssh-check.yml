@@ -12,35 +12,44 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Configure SSH
+      - name: Validate secrets
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
           set -euo pipefail
-
-          test -n "$SSH_PRIVATE_KEY"
           test -n "$SERVER_HOST"
           test -n "$SERVER_PORT"
+          test -n "$SERVER_USER"
+          test -n "$SERVER_SSH_KEY"
+          test -n "$GHCR_USERNAME"
+          test -n "$GHCR_TOKEN"
 
+      - name: Configure SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-
           ssh-keyscan -p "$SERVER_PORT" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Check server access
+      - name: Check server and Docker access
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           set -euo pipefail
-
           ssh \
             -i ~/.ssh/deploy_key \
             -o IdentitiesOnly=yes \
@@ -52,6 +61,19 @@ jobs:
               echo "SSH_CONNECTION_OK"
               whoami
               hostname
-              docker version --format "{{.Server.Version}}"
-              docker ps --format "table {{.Names}}\t{{.Status}}"
+              docker version --format "Docker server: {{.Server.Version}}"
+              test -d /opt/potapoff-deploy
+              test -r /opt/potapoff-deploy/.env.server
+              echo "DEPLOY_DIRECTORY_OK"
             '
+
+      - name: Check GHCR credentials
+        env:
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" |
+            docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+          docker logout ghcr.io
+          echo "GHCR_LOGIN_OK"
