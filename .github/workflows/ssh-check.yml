@@ -49,21 +49,29 @@ jobs:
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           ssh \
+            -vvv \
             -i ~/.ssh/deploy_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -p "$SERVER_PORT" \
             "$SERVER_USER@$SERVER_HOST" \
             '
-              set -e
+              set -eux
               echo "SSH_CONNECTION_OK"
-              whoami
+              echo "WHOAMI=$(whoami)"
+              id
+              pwd
               hostname
-              docker version --format "Docker server: {{.Server.Version}}"
+              ls -ld /opt
+              ls -ld /opt/potapoff-deploy || true
+              ls -la /opt/potapoff-deploy || true
               test -d /opt/potapoff-deploy
+              echo "DIR_OK"
               test -r /opt/potapoff-deploy/.env.server
+              echo "ENV_OK"
+              docker version --format "Docker server: {{.Server.Version}}"
               echo "DEPLOY_DIRECTORY_OK"
             '
 
