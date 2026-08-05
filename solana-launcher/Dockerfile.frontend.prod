@@ -54,4 +54,5 @@ COPY --from=builder /app/node_modules/playwright ./node_modules/playwright
 COPY --from=builder /app/node_modules/playwright-core ./node_modules/playwright-core
 RUN test -f /app/node_modules/playwright-core/browsers.json
 
-CMD ["node", "server.js"]
+ENV PORT=3000
+CMD ["sh", "-c", "export HOSTNAME=0.0.0.0 PORT=3000; exec node server.js"]
