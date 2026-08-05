@@ -29,17 +29,25 @@ jobs:
       matrix:
         include:
           - service: backend
-            context: ./solana-launcher/backend
-            dockerfile: Dockerfile
+            context: solana-launcher/backend
+            dockerfile: solana-launcher/backend/Dockerfile
           - service: frontend
-            context: ./solana-launcher
-            dockerfile: Dockerfile.frontend.prod
+            context: solana-launcher
+            dockerfile: solana-launcher/Dockerfile.frontend.prod
           - service: telegram-bot
-            context: ./solana-launcher
-            dockerfile: Dockerfile.telegram-bot
+            context: solana-launcher
+            dockerfile: solana-launcher/Dockerfile.telegram-bot
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify Docker build files
+        run: |
+          set -euo pipefail
+          test -f solana-launcher/backend/Dockerfile
+          test -f solana-launcher/Dockerfile.frontend.prod
+          test -f solana-launcher/Dockerfile.telegram-bot
+          echo "DOCKERFILES_OK"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -51,8 +59,8 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
+          context: ${{ github.workspace }}/${{ matrix.context }}
+          file: ${{ github.workspace }}/${{ matrix.dockerfile }}
           push: true
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
