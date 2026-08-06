@@ -134,6 +134,7 @@ services:
     logging: *default-logging
 
   telegram-bot:
+    profiles: ["telegram"]
     image: ghcr.io/dima09090/claude-project/telegram-bot:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
     env_file:
