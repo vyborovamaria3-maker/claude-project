@@ -1,0 +1,1195 @@
+diff --git a/solana-launcher/app/dashboard/page.tsx b/solana-launcher/app/dashboard/page.tsx
+index 318bb7a..3e75959 100644
+--- a/solana-launcher/app/dashboard/page.tsx
++++ b/solana-launcher/app/dashboard/page.tsx
+@@ -1,5 +1,5 @@
+-import { redirect } from "next/navigation";
++import DashboardHomePage from "@/components/DashboardHomePage";
+ 
+-export default function DashboardAliasPage() {
+-  redirect("/");
++export default function DashboardPage() {
++  return <DashboardHomePage />;
+ }
+diff --git a/solana-launcher/app/layout.tsx b/solana-launcher/app/layout.tsx
+index d695997..b3d8491 100644
+--- a/solana-launcher/app/layout.tsx
++++ b/solana-launcher/app/layout.tsx
+@@ -19,8 +19,8 @@ const jetBrainsMono = JetBrains_Mono({
+ });
+ 
+ export const metadata: Metadata = {
+-  title: "POTAPoff - Solana Launch Platform",
+-  description: "Futuristic Solana token launch and trading dashboard",
++  title: "POTAPoff — Solana Intelligence & Execution",
++  description: "Launch, analyze and execute on Solana from one risk-aware operating workspace.",
+ };
+ 
+ export const viewport: Viewport = {
+diff --git a/solana-launcher/app/page.tsx b/solana-launcher/app/page.tsx
+index ea4c68a..ff196a0 100644
+--- a/solana-launcher/app/page.tsx
++++ b/solana-launcher/app/page.tsx
+@@ -1,533 +1,5 @@
+-"use client";
++import PublicLandingPage from "@/components/PublicLandingPage";
+ 
+-import Link from "next/link";
+-import { type ReactNode, useMemo, useState } from "react";
+-import {
+-  Activity,
+-  ArrowUpRight,
+-  BarChart3,
+-  Bot,
+-  Clock3,
+-  Gauge,
+-  LineChart,
+-  Package,
+-  Rocket,
+-  ShieldCheck,
+-  Sparkles,
+-  Target,
+-  TrendingUp,
+-  Zap,
+-} from "lucide-react";
+-import ChartMetricSelector, { type ChartMetric } from "@/components/ChartMetricSelector";
+-import PeriodSelector, { type Period } from "@/components/PeriodSelector";
+-import PnLChart from "@/components/PnLChart";
+-import PnLTable from "@/components/PnLTable";
+-import { useOptionalI18n } from "@/components/providers/I18nProvider";
+-import { currentUser, getPeriodStats } from "@/lib/mockData";
+-import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+-
+-type Kpi = {
+-  label: string;
+-  value: string;
+-  detail: string;
+-  icon: typeof Activity;
+-  tone: "green" | "purple" | "blue" | "amber";
+-};
+-
+-export default function DashboardPage() {
+-  const [period, setPeriod] = useState<Period>("30D");
+-  const [metric, setMetric] = useState<ChartMetric>("pnl");
+-  const i18n = useOptionalI18n();
+-  const t = i18n?.t ?? fallbackText;
+-  const isMobile = useIsMobileViewport();
+-  const periodStats = useMemo(() => getPeriodStats(period), [period]);
+-
+-  const launchScore = Math.round(
+-    Math.min(99, periodStats.averageAthUsd / 2500 + periodStats.migrationRate * 35 + periodStats.successfulLaunches * 6)
+-  );
+-  const tradeScore = Math.round(
+-    Math.min(99, periodStats.winRate * 70 + Math.max(0, periodStats.pnl.sol) * 12 + periodStats.trades * 2)
+-  );
+-  const systemScore = Math.round(
+-    Math.min(99, 40 + periodStats.walletsUsed * 6 + Math.max(0, 20 - periodStats.feesPaid.sol * 18))
+-  );
+-
+-  const launchKpis = useMemo<Kpi[]>(
+-    () => [
+-      {
+-        label: t("dashboard.launchAnalytics.myLaunches"),
+-        value: String(periodStats.tokensCreated),
+-        detail: t("dashboard.launchAnalytics.launchActivity", { period }),
+-        icon: Package,
+-        tone: "green",
+-      },
+-      {
+-        label: t("dashboard.launchAnalytics.averageAth"),
+-        value: "$" + periodStats.averageAthUsd.toLocaleString(undefined, { maximumFractionDigits: 0 }),
+-        detail: t("dashboard.launchAnalytics.activeLaunches", {
+-          activeTokens: periodStats.activeTokens,
+-          successfulLaunches: periodStats.successfulLaunches,
+-        }),
+-        icon: Rocket,
+-        tone: "blue",
+-      },
+-      {
+-        label: t("dashboard.launchAnalytics.migrations"),
+-        value: String(periodStats.migrations),
+-        detail: t("dashboard.launchAnalytics.migrationRate", { rate: (periodStats.migrationRate * 100).toFixed(0) }),
+-        icon: ShieldCheck,
+-        tone: "purple",
+-      },
+-      {
+-        label: t("dashboard.launchAnalytics.launchFees"),
+-        value: periodStats.launchFeesSol.toFixed(3) + " SOL",
+-        detail: t("dashboard.launchAnalytics.onlyCreatedTokens"),
+-        icon: Zap,
+-        tone: "amber",
+-      },
+-    ],
+-    [period, periodStats, t]
+-  );
+-
+-  const tradeKpis = useMemo<Kpi[]>(
+-    () => [
+-      {
+-        label: t("dashboard.tradeAnalytics.myTrades"),
+-        value: String(periodStats.trades),
+-        detail: t("dashboard.tradeAnalytics.executedTrades", { period }),
+-        icon: Activity,
+-        tone: "purple",
+-      },
+-      {
+-        label: t("dashboard.tradeAnalytics.tradePnl"),
+-        value: (periodStats.pnl.sol >= 0 ? "+" : "") + periodStats.pnl.sol.toFixed(3) + " SOL",
+-        detail: "$" + periodStats.pnl.usd.toFixed(0),
+-        icon: TrendingUp,
+-        tone: "green",
+-      },
+-      {
+-        label: t("dashboard.tradeAnalytics.tradeVolume"),
+-        value: periodStats.tradingVolume.sol.toFixed(2) + " SOL",
+-        detail: t("dashboard.tradeAnalytics.tradeFlow"),
+-        icon: LineChart,
+-        tone: "blue",
+-      },
+-      {
+-        label: t("dashboard.tradeAnalytics.winRate"),
+-        value: (periodStats.winRate * 100).toFixed(1) + "%",
+-        detail: t("dashboard.tradeAnalytics.avgHold", { minutes: periodStats.avgHoldMinutes.toFixed(0) }),
+-        icon: Gauge,
+-        tone: "amber",
+-      },
+-    ],
+-    [period, periodStats, t]
+-  );
+-
+-  const launchInsights = isMobile
+-    ? [
+-        t("dashboard.mobileInsights.avgLaunchBudget", { value: periodStats.avgLaunchBudgetSol.toFixed(2) }),
+-        t("dashboard.mobileInsights.migrationCount", {
+-          count: periodStats.migrations,
+-          rate: (periodStats.migrationRate * 100).toFixed(0),
+-        }),
+-      ]
+-    : [
+-        t("dashboard.launchAnalytics.avgLaunchBudget", { value: periodStats.avgLaunchBudgetSol.toFixed(2) }),
+-        t("dashboard.launchAnalytics.migrationCount", {
+-          count: periodStats.migrations,
+-          rate: (periodStats.migrationRate * 100).toFixed(0),
+-        }),
+-        t("dashboard.launchAnalytics.bestToken", {
+-          token: periodStats.ath.token,
+-          mcap: periodStats.ath.mcap.toLocaleString(),
+-        }),
+-      ];
+-
+-  const tradeInsights = isMobile
+-    ? [
+-        t("dashboard.mobileInsights.bestTrade", {
+-          value: (periodStats.bestTradePnlSol >= 0 ? "+" : "") + periodStats.bestTradePnlSol.toFixed(3),
+-        }),
+-        t("dashboard.mobileInsights.tradeFeesPaid", { value: periodStats.tradeFeesSol.toFixed(3) }),
+-      ]
+-    : [
+-        t("dashboard.tradeAnalytics.bestTrade", {
+-          value: (periodStats.bestTradePnlSol >= 0 ? "+" : "") + periodStats.bestTradePnlSol.toFixed(3),
+-        }),
+-        t("dashboard.tradeAnalytics.tradeFeesPaid", { value: periodStats.tradeFeesSol.toFixed(3) }),
+-        t("dashboard.tradeAnalytics.walletsUsed", { count: periodStats.walletsUsed }),
+-      ];
+-
+-  if (isMobile) {
+-    return (
+-      <div data-tag="page.dashboard" className="w-full max-w-[1440px] mx-auto space-y-5 py-6">
+-        <HeroSection
+-          title={t("dashboard.title")}
+-          copy={t("dashboard.mobileCopy")}
+-          badge={t("dashboard.mobileSummary")}
+-          owner={t("dashboard.workspaceOwner", { username: currentUser.username, period })}
+-          launchScore={launchScore}
+-          tradeScore={tradeScore}
+-          systemScore={systemScore}
+-        />
+-
+-        <SectionStack>
+-          <DashboardPanel
+-            title={t("dashboard.launchAnalytics.title")}
+-            subtitle={t("dashboard.launchAnalytics.subtitle")}
+-            icon={Rocket}
+-            accent="green"
+-            kpis={launchKpis}
+-            href="/token-launch"
+-            cta={t("dashboard.openLaunch")}
+-            insightsLabel={t("dashboard.insights")}
+-            insights={launchInsights}
+-          />
+-          <DashboardPanel
+-            title={t("dashboard.tradeAnalytics.title")}
+-            subtitle={t("dashboard.tradeAnalytics.subtitle")}
+-            icon={BarChart3}
+-            accent="purple"
+-            kpis={tradeKpis}
+-            href="/trade/analysis"
+-            cta={t("dashboard.openTrade")}
+-            insightsLabel={t("dashboard.insights")}
+-            insights={tradeInsights}
+-          />
+-        </SectionStack>
+-
+-        <QuickLinks
+-          items={[
+-            { href: "/token-launch/new", label: t("dashboard.startNewBundle") },
+-            { href: "/trade/analysis", label: t("dashboard.analyzeToken") },
+-            { href: "/settings", label: t("dashboard.tuneWorkspace") },
+-          ]}
+-        />
+-      </div>
+-    );
+-  }
+-
+-  return (
+-    <div data-tag="page.dashboard" className="w-full max-w-[1440px] mx-auto space-y-6 py-6">
+-      <HeroSection
+-        title={t("dashboard.title")}
+-        copy={t("dashboard.heroCopy")}
+-        badge={t("dashboard.operatorBadge")}
+-        owner={t("dashboard.workspaceOwner", { username: currentUser.username, period })}
+-        launchScore={launchScore}
+-        tradeScore={tradeScore}
+-        systemScore={systemScore}
+-      />
+-
+-      <section className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+-        <DashboardPanel
+-          title={t("dashboard.launchAnalytics.title")}
+-          subtitle={t("dashboard.launchAnalytics.subtitle")}
+-          icon={Rocket}
+-          accent="green"
+-          kpis={launchKpis}
+-          href="/token-launch"
+-          cta={t("dashboard.openLaunch")}
+-          insightsLabel={t("dashboard.insights")}
+-          insights={launchInsights}
+-        />
+-        <DashboardPanel
+-          title={t("dashboard.tradeAnalytics.title")}
+-          subtitle={t("dashboard.tradeAnalytics.subtitle")}
+-          icon={BarChart3}
+-          accent="purple"
+-          kpis={tradeKpis}
+-          href="/trade/analysis"
+-          cta={t("dashboard.openTrade")}
+-          insightsLabel={t("dashboard.insights")}
+-          insights={tradeInsights}
+-        />
+-      </section>
+-
+-      <section className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.8fr] gap-5">
+-        <div className="glass rounded-2xl border border-bg-border p-5 md:p-6">
+-          <SectionHeader
+-            title={t("dashboard.performanceTimeline.title")}
+-            copy={t("dashboard.performanceTimeline.copy")}
+-            actions={
+-              <>
+-                <ChartMetricSelector active={metric} onChange={setMetric} />
+-                <PeriodSelector active={period} onChange={setPeriod} />
+-              </>
+-            }
+-          />
+-          <PnLChart metric={metric} period={period} />
+-        </div>
+-
+-        <div className="glass rounded-2xl border border-bg-border p-5 md:p-6 space-y-4">
+-          <SectionHeader title={t("dashboard.workAnalysis.title")} copy={t("dashboard.workAnalysis.copy")} />
+-          <div className="space-y-3">
+-            <HealthRow
+-              label={t("dashboard.launchQuality")}
+-              value={periodStats.averageAthUsd > 0 ? "$" + periodStats.averageAthUsd.toLocaleString(undefined, { maximumFractionDigits: 0 }) : t("dashboard.noLaunches")}
+-              pct={Math.min(100, periodStats.averageAthUsd / 2500)}
+-            />
+-            <HealthRow label={t("dashboard.walletUtilization")} value={`${periodStats.walletsUsed} wallets`} pct={Math.min(100, periodStats.walletsUsed * 12)} />
+-            <HealthRow label={t("dashboard.tradeThroughput")} value={`${periodStats.trades} trades`} pct={Math.min(100, periodStats.trades * 5)} />
+-            <HealthRow label={t("dashboard.feeEfficiency")} value={periodStats.feesPaid.sol.toFixed(3) + " SOL"} pct={Math.max(10, 100 - periodStats.feesPaid.sol * 40)} />
+-          </div>
+-        </div>
+-      </section>
+-
+-      <PnLTable period={period} />
+-
+-      <QuickLinks
+-        items={[
+-          { href: "/token-launch/new", label: t("dashboard.startNewBundle"), helper: t("dashboard.action.startBundle") },
+-          { href: "/trade/analysis", label: t("dashboard.analyzeToken"), helper: t("dashboard.action.analyzeToken") },
+-          { href: "/settings", label: t("dashboard.tuneWorkspace"), helper: t("dashboard.action.tuneWorkspace") },
+-        ]}
+-      />
+-    </div>
+-  );
+-}
+-
+-function HeroSection({
+-  title,
+-  copy,
+-  badge,
+-  owner,
+-  launchScore,
+-  tradeScore,
+-  systemScore,
+-}: {
+-  title: string;
+-  copy: string;
+-  badge: string;
+-  owner: string;
+-  launchScore: number;
+-  tradeScore: number;
+-  systemScore: number;
+-}) {
+-  return (
+-    <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(20,241,149,0.18),transparent_34%),radial-gradient(circle_at_top_right,rgba(153,69,255,0.18),transparent_32%),rgba(8,10,18,0.78)] p-6 md:p-8">
+-      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+-        <div>
+-          <div className="inline-flex items-center gap-2 rounded-full border border-neon-green/30 bg-neon-green/10 px-3 py-1 text-xs font-semibold text-neon-green">
+-            <Sparkles className="w-3.5 h-3.5" /> {badge}
+-          </div>
+-          <h1 className="mt-4 text-3xl md:text-5xl font-bold text-white tracking-tight">{title}</h1>
+-          <p className="mt-3 max-w-2xl text-sm md:text-base text-white/55">{copy}</p>
+-          <p className="mt-2 text-xs text-white/35">{owner}</p>
+-        </div>
+-        <div className="grid grid-cols-3 gap-2 min-w-[280px]">
+-          <MiniScore label="Launch" value={launchScore} />
+-          <MiniScore label="Trade" value={tradeScore} />
+-          <MiniScore label="System" value={systemScore} />
+-        </div>
+-      </div>
+-    </section>
+-  );
+-}
+-
+-function SectionHeader({
+-  title,
+-  copy,
+-  actions,
+-}: {
+-  title: string;
+-  copy: string;
+-  actions?: ReactNode;
+-}) {
+-  return (
+-    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5">
+-      <div>
+-        <h2 className="text-lg font-bold text-white">{title}</h2>
+-        <p className="text-xs text-white/45 mt-1">{copy}</p>
+-      </div>
+-      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+-    </div>
+-  );
+-}
+-
+-function SectionStack({ children }: { children: ReactNode }) {
+-  return <section className="grid grid-cols-1 gap-5">{children}</section>;
+-}
+-
+-function QuickLinks({
+-  items,
+-}: {
+-  items: Array<{ href: string; label: string; helper?: string }>;
+-}) {
+-  return (
+-    <section className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+-      {items.map((item) => (
+-        <Link
+-          key={item.href}
+-          href={item.href}
+-          className="group glass rounded-2xl border border-bg-border p-5 transition hover:border-neon-green/40 hover:shadow-neon-green"
+-        >
+-          <div className="flex items-start justify-between gap-4">
+-            <div>
+-              <h3 className="text-base font-bold text-white">{item.label}</h3>
+-              {item.helper ? <p className="mt-1 text-sm text-white/45">{item.helper}</p> : null}
+-            </div>
+-            <ArrowUpRight className="w-4 h-4 text-white/25 group-hover:text-neon-green transition" />
+-          </div>
+-        </Link>
+-      ))}
+-    </section>
+-  );
+-}
+-
+-function MiniScore({ label, value }: { label: string; value: number }) {
+-  return (
+-    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+-      <div className="text-[10px] uppercase tracking-widest text-white/40">{label}</div>
+-      <div className="mt-1 text-2xl font-bold text-white">{value}</div>
+-      <div className="mt-2 h-1.5 rounded-full bg-white/10 overflow-hidden">
+-        <div className="h-full rounded-full bg-neon-green" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+-      </div>
+-    </div>
+-  );
+-}
+-
+-function DashboardPanel({
+-  title,
+-  subtitle,
+-  icon: Icon,
+-  accent,
+-  kpis,
+-  insights,
+-  href,
+-  cta,
+-  insightsLabel,
+-}: {
+-  title: string;
+-  subtitle: string;
+-  icon: typeof Rocket;
+-  accent: "green" | "purple";
+-  kpis: readonly Kpi[];
+-  insights: string[];
+-  href: string;
+-  cta: string;
+-  insightsLabel: string;
+-}) {
+-  const accentClass =
+-    accent === "green"
+-      ? "text-neon-green border-neon-green/30 bg-neon-green/10"
+-      : "text-neon-purple border-neon-purple/30 bg-neon-purple/10";
+-
+-  return (
+-    <div className="glass rounded-2xl border border-bg-border p-5 md:p-6 space-y-5">
+-      <div className="flex items-start justify-between gap-4">
+-        <div className="flex items-start gap-3">
+-          <div className={`w-11 h-11 rounded-2xl border flex items-center justify-center ${accentClass}`}>
+-            <Icon className="w-5 h-5" />
+-          </div>
+-          <div>
+-            <h2 className="text-lg font-bold text-white">{title}</h2>
+-            <p className="text-xs text-white/45 mt-1">{subtitle}</p>
+-          </div>
+-        </div>
+-        <Link
+-          href={href}
+-          className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition hover:bg-white/5 ${accentClass}`}
+-        >
+-          {cta}
+-          <ArrowUpRight className="w-3.5 h-3.5" />
+-        </Link>
+-      </div>
+-
+-      <div className="grid grid-cols-2 gap-3">
+-        {kpis.map((kpi) => (
+-          <MetricCard key={kpi.label} {...kpi} />
+-        ))}
+-      </div>
+-
+-      <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-white/40 mb-3">
+-          <Clock3 className="w-3.5 h-3.5" />
+-          {insightsLabel}
+-        </div>
+-        <div className="space-y-2">
+-          {insights.map((item) => (
+-            <div key={item} className="flex items-start gap-2 text-sm text-white/65">
+-              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-neon-green shrink-0" />
+-              <span>{item}</span>
+-            </div>
+-          ))}
+-        </div>
+-      </div>
+-    </div>
+-  );
+-}
+-
+-function MetricCard({ label, value, detail, icon: Icon, tone }: Kpi) {
+-  const tones: Record<Kpi["tone"], string> = {
+-    green: "text-neon-green bg-neon-green/10 border-neon-green/20",
+-    purple: "text-neon-purple bg-neon-purple/10 border-neon-purple/20",
+-    blue: "text-neon-blue bg-neon-blue/10 border-neon-blue/20",
+-    amber: "text-amber-300 bg-amber-300/10 border-amber-300/20",
+-  };
+-
+-  return (
+-    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+-      <div className={`w-9 h-9 rounded-xl border flex items-center justify-center ${tones[tone]}`}>
+-        <Icon className="w-4 h-4" />
+-      </div>
+-      <div className="mt-3 text-[10px] uppercase tracking-widest text-white/35">{label}</div>
+-      <div className="mt-1 text-xl font-bold text-white">{value}</div>
+-      <div className="mt-1 text-xs text-white/40">{detail}</div>
+-    </div>
+-  );
+-}
+-
+-function HealthRow({ label, value, pct }: { label: string; value: string; pct: number }) {
+-  return (
+-    <div>
+-      <div className="flex items-center justify-between gap-4 text-sm">
+-        <span className="text-white/65">{label}</span>
+-        <span className="font-semibold text-white">{value}</span>
+-      </div>
+-      <div className="mt-2 h-2 rounded-full bg-white/10 overflow-hidden">
+-        <div
+-          className="h-full rounded-full bg-[linear-gradient(90deg,var(--theme-accent),#9945ff)]"
+-          style={{ width: `${Math.max(4, Math.min(100, pct))}%` }}
+-        />
+-      </div>
+-    </div>
+-  );
+-}
+-
+-function fallbackText(key: string, vars?: Record<string, string | number>) {
+-  const templates: Record<string, string> = {
+-    "dashboard.title": "Launch control center",
+-    "dashboard.mobileCopy": "A compact view of launches, trading and system health.",
+-    "dashboard.heroCopy": "A compact view of launches, trading and system health.",
+-    "dashboard.mobileSummary": "Mobile summary",
+-    "dashboard.operatorBadge": "Operator panel",
+-    "dashboard.workspaceOwner": "Workspace: {{username}} | period {{period}}",
+-    "dashboard.launchAnalytics.title": "Launch analytics",
+-    "dashboard.launchAnalytics.subtitle": "Token creation, migrations and launch performance",
+-    "dashboard.tradeAnalytics.title": "Trade analytics",
+-    "dashboard.tradeAnalytics.subtitle": "Volume, PnL and execution quality",
+-    "dashboard.performanceTimeline.title": "Performance timeline",
+-    "dashboard.performanceTimeline.copy": "Switch metric and period to inspect the curve.",
+-    "dashboard.workAnalysis.title": "Work analysis",
+-    "dashboard.workAnalysis.copy": "Operational health across launch and trading activity.",
+-    "dashboard.openLaunch": "Open launches",
+-    "dashboard.openTrade": "Open trades",
+-    "dashboard.insights": "Insights",
+-    "dashboard.startNewBundle": "Start new bundle",
+-    "dashboard.analyzeToken": "Analyze token",
+-    "dashboard.tuneWorkspace": "Tune workspace",
+-    "dashboard.action.startBundle": "Create a new launch flow.",
+-    "dashboard.action.analyzeToken": "Inspect token dynamics and quality.",
+-    "dashboard.action.tuneWorkspace": "Adjust workspace settings and defaults.",
+-    "dashboard.launchQuality": "Launch quality",
+-    "dashboard.walletUtilization": "Wallet utilization",
+-    "dashboard.tradeThroughput": "Trade throughput",
+-    "dashboard.feeEfficiency": "Fee efficiency",
+-    "dashboard.noLaunches": "No launches yet",
+-  };
+-
+-  const template = templates[key] ?? key;
+-  if (!vars) return template;
+-  return template.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(vars[k] ?? ""));
++export default function HomePage() {
++  return <PublicLandingPage />;
+ }
+diff --git a/solana-launcher/components/AppShell.tsx b/solana-launcher/components/AppShell.tsx
+index 9a6c3d3..6e84a8f 100644
+--- a/solana-launcher/components/AppShell.tsx
++++ b/solana-launcher/components/AppShell.tsx
+@@ -19,10 +19,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
+ 
+   if (isPublic) {
+     return (
+-      <main className={siteDesign.shell.publicMainClassName}>
++      <div className={siteDesign.shell.publicMainClassName}>
+         <div className={siteDesign.shell.publicBackgroundClassName} />
+         {children}
+-      </main>
++      </div>
+     );
+   }
+ 
+diff --git a/solana-launcher/components/LoginPage.tsx b/solana-launcher/components/LoginPage.tsx
+index cd60e5b..d2eba69 100644
+--- a/solana-launcher/components/LoginPage.tsx
++++ b/solana-launcher/components/LoginPage.tsx
+@@ -69,7 +69,7 @@ export default function LoginPage() {
+     if (token) {
+       saveToken({ access_token: token, expires_in: 86400 });
+       setSuccess(t("login.success"));
+-      router.replace("/");
++      router.replace("/dashboard");
+       router.refresh();
+     }
+   }, [router, t]);
+diff --git a/solana-launcher/components/PasswordLoginForm.tsx b/solana-launcher/components/PasswordLoginForm.tsx
+index eb4ab3c..a26fbb9 100644
+--- a/solana-launcher/components/PasswordLoginForm.tsx
++++ b/solana-launcher/components/PasswordLoginForm.tsx
+@@ -41,7 +41,7 @@ export default function PasswordLoginForm() {
+       }
+ 
+       localStorage.setItem("potapoff.access_token", data.access_token);
+-      window.location.href = "/";
++      window.location.href = "/dashboard";
+     } catch (err) {
+       setError(err instanceof Error ? err.message : "Ошибка входа");
+     } finally {
+diff --git a/solana-launcher/components/PublicLandingPage.tsx b/solana-launcher/components/PublicLandingPage.tsx
+index 280ebb6..de7289d 100644
+--- a/solana-launcher/components/PublicLandingPage.tsx
++++ b/solana-launcher/components/PublicLandingPage.tsx
+@@ -1,229 +1,346 @@
+ "use client";
+ 
+-import Link from "next/link";
+-import {
+-  ArrowRight,
+-  BarChart3,
+-  CheckCircle2,
+-  Rocket,
+-  Search,
+-  ShieldCheck,
+-  Smartphone,
+-  Sparkles,
+-  TrendingUp,
+-  Zap,
+-} from "lucide-react";
+-import { useI18n } from "@/components/providers/I18nProvider";
+-import { landingDesign, type LandingIconKey, type LandingTone } from "@/lib/landingDesign";
+-import LanguageSwitcher from "./LanguageSwitcher";
+-import Strands from "./Strands";
+-
+-const icons = {
+-  arrowRight: ArrowRight,
+-  barChart: BarChart3,
+-  check: CheckCircle2,
+-  rocket: Rocket,
+-  search: Search,
+-  shield: ShieldCheck,
+-  smartphone: Smartphone,
+-  sparkles: Sparkles,
+-  trending: TrendingUp,
+-  zap: Zap,
+-} satisfies Record<LandingIconKey, typeof Sparkles>;
+-
+-const actionStyles = {
+-  primary:
+-    "inline-flex items-center justify-center gap-2 rounded-2xl border border-neon-green/30 bg-neon-green/15 px-6 py-3.5 text-sm font-semibold text-neon-green transition hover:border-neon-green/50 hover:bg-neon-green/20",
+-  ghost:
+-    "inline-flex items-center justify-center gap-2 rounded-2xl border border-white/12 px-6 py-3.5 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.03]",
+-} satisfies Record<LandingTone, string>;
+-
+-function ActionLink({
+-  href,
+-  label,
+-  icon,
+-  tone = "ghost",
+-}: {
+-  href: string;
+-  label: string;
+-  icon?: LandingIconKey;
+-  tone?: LandingTone;
+-}) {
+-  const Icon = icon ? icons[icon] : null;
++import { useEffect } from "react";
++import { LANDING_BODY, LANDING_CSS } from "@/components/landing/landingContent";
+ 
+-  return (
+-    <Link href={href} className={actionStyles[tone]}>
+-      {label}
+-      {Icon ? <Icon className="h-4 w-4" /> : null}
+-    </Link>
+-  );
++type AuthResponse = {
++  access_token?: string;
++  expires_in?: number;
++  redirect_url?: string;
++  detail?: string;
++};
++
++const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
++
++function mapLoginError(status: number, detail?: string) {
++  if (status === 401) return "Неверный логин или пароль.";
++  if (status === 403) return "Срок подписки истёк. Продлите доступ через Telegram.";
++  if (status === 422) return "Проверьте формат логина и пароля.";
++  if (status === 429) return "Слишком много попыток. Подождите минуту и попробуйте снова.";
++  if (status === 503) return "Сервис авторизации недоступен. Проверьте, что backend запущен.";
++  return detail || "Не удалось выполнить вход. Попробуйте ещё раз.";
++}
++
++function getAuthEndpoint() {
++  const queryApi = new URLSearchParams(window.location.search).get("api");
++  const configuredApi = queryApi || document.documentElement.dataset.apiBase || "";
++
++  if (configuredApi) {
++    return `${configuredApi.replace(/\/$/, "")}/api/v1/auth/login-password`;
++  }
++
++  return "/api/v1/auth/login-password";
+ }
+ 
+ export default function PublicLandingPage() {
+-  const { t } = useI18n();
+-  const translate = (key: string) => t(key as Parameters<typeof t>[0]);
+-  const BrandIcon = icons[landingDesign.header.brandIcon];
+-  const BadgeIcon = icons[landingDesign.hero.badgeIcon];
++  useEffect(() => {
++    const cleanups: Array<() => void> = [];
++    const timers: number[] = [];
++    const abortController = new AbortController();
+ 
+-  return (
+-    <div className={landingDesign.shell.pageClassName}>
+-      <div className={landingDesign.shell.containerClassName}>
+-        <header className="flex items-center justify-between gap-4 rounded-3xl border border-white/10 bg-black/20 px-5 py-4 backdrop-blur-xl">
+-          <div>
+-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-white/45">
+-              <BrandIcon className="h-3.5 w-3.5 text-neon-green" />
+-              {translate(landingDesign.header.brandKey)}
+-            </div>
+-            <p className="mt-1 text-sm text-white/45">{translate(landingDesign.header.subtitleKey)}</p>
+-          </div>
+-          <div className="flex items-center gap-3">
+-            <LanguageSwitcher />
+-            {landingDesign.header.actions.map((action) => (
+-              <ActionLink
+-                key={action.href}
+-                href={action.href}
+-                label={translate(action.labelKey)}
+-                icon={action.icon}
+-                tone={action.tone}
+-              />
+-            ))}
+-          </div>
+-        </header>
+-
+-        <main className="grid flex-1 items-center gap-12 py-14 lg:grid-cols-[1.05fr_0.95fr] lg:py-16">
+-          <section className="max-w-2xl">
+-            <div className="inline-flex items-center gap-2 rounded-full border border-neon-green/25 bg-neon-green/10 px-4 py-2 text-xs font-semibold text-neon-green">
+-              <BadgeIcon className="h-3.5 w-3.5" />
+-              {translate(landingDesign.hero.badgeKey)}
+-            </div>
+-
+-            <h1 className="mt-6 text-4xl font-black text-white sm:text-5xl lg:text-6xl">
+-              {translate(landingDesign.hero.titleKey)}
+-            </h1>
+-
+-            <p className="mt-5 max-w-xl text-base leading-7 text-white/55 sm:text-lg">
+-              {translate(landingDesign.hero.subtitleKey)}
+-            </p>
+-
+-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+-              {landingDesign.hero.actions.map((action) => (
+-                <ActionLink key={action.href} href={action.href} label={translate(action.labelKey)} tone={action.tone} />
+-              ))}
+-            </div>
+-
+-            <div className="mt-8 flex flex-wrap items-center gap-4">
+-              {landingDesign.trustBadges.map((badge) => {
+-                const Icon = icons[badge.icon];
+-                return (
+-                  <div
+-                    key={badge.labelKey}
+-                    className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/60"
+-                  >
+-                    <Icon className="h-3.5 w-3.5 text-neon-green" />
+-                    {translate(badge.labelKey)}
+-                  </div>
+-                );
+-              })}
+-            </div>
+-
+-            <div className="mt-10 grid grid-cols-3 gap-3 sm:gap-4">
+-              {landingDesign.metrics.map((metric) => (
+-                <div key={metric.labelKey} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+-                  <div className="text-2xl font-bold text-white sm:text-3xl">{metric.value}</div>
+-                  <div className="mt-1 text-xs uppercase tracking-[0.2em] text-white/40">{translate(metric.labelKey)}</div>
+-                </div>
+-              ))}
+-            </div>
+-          </section>
+-
+-          <section className="relative">
+-            <div className={landingDesign.visual.outerGlowClassName} />
+-            <div className={landingDesign.visual.frameClassName}>
+-              <div className={landingDesign.visual.stageClassName}>
+-                <div className="pointer-events-none absolute inset-0">
+-                  <Strands className="absolute inset-0 opacity-100" {...landingDesign.visual.strandProps} />
+-                </div>
+-                <div className={landingDesign.visual.overlayClassName} />
+-                <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),transparent_26%,transparent_74%,rgba(255,255,255,0.07))]" />
+-                <div className="relative">
+-                  <div className="flex items-center justify-between gap-3">
+-                    <div>
+-                      <p className="text-xs uppercase tracking-[0.3em] text-white/55">
+-                        {translate(landingDesign.visual.kickerKey)}
+-                      </p>
+-                      <h2 className="mt-2 text-xl font-bold text-white">{translate(landingDesign.visual.titleKey)}</h2>
+-                    </div>
+-                    <div className="rounded-full border border-fuchsia-200/40 bg-fuchsia-300/20 px-3 py-1 text-xs font-semibold text-fuchsia-50 shadow-[0_0_28px_rgba(232,121,249,0.35)]">
+-                      {landingDesign.visual.badge}
+-                    </div>
+-                  </div>
+-
+-                  <div className="mt-6 grid min-h-[350px] items-end gap-3">
+-                    <div className="rounded-[1.4rem] border border-white/14 bg-black/36 p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_50px_rgba(139,92,246,0.18)] backdrop-blur-md">
+-                      <div className="flex items-center justify-between gap-3">
+-                        <div className="text-xs uppercase tracking-[0.28em] text-white/55">
+-                          {landingDesign.visual.panelLabel}
+-                        </div>
+-                        <div className="rounded-full border border-neon-green/35 bg-neon-green/20 px-3 py-1 text-xs font-semibold text-neon-green shadow-[0_0_22px_rgba(34,197,94,0.2)]">
+-                          {translate(landingDesign.visual.statusKey)}
+-                        </div>
+-                      </div>
+-                      <p className="mt-3 text-sm leading-6 text-white/92">{landingDesign.visual.body}</p>
+-                    </div>
+-                  </div>
+-                </div>
+-              </div>
+-            </div>
+-          </section>
+-        </main>
+-
+-        <section className="pb-10">
+-          <div className="mb-8 text-center">
+-            <h2 className="text-2xl font-bold text-white sm:text-3xl">{t("landing.howItWorksTitle")}</h2>
+-            <p className="mt-2 text-sm text-white/50">{t("landing.howItWorksSubtitle")}</p>
+-          </div>
+-          <div className="grid gap-4 sm:grid-cols-3">
+-            {landingDesign.steps.map((step) => {
+-              const Icon = icons[step.icon];
+-              return (
+-                <div key={step.num} className="relative rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+-                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-neon-green">{step.num}</div>
+-                  <div className="mt-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-neon-green/20 bg-neon-green/10 text-neon-green">
+-                    <Icon className="h-5 w-5" />
+-                  </div>
+-                  <h3 className="mt-4 text-base font-semibold text-white">{translate(step.titleKey)}</h3>
+-                  <p className="mt-2 text-sm leading-6 text-white/45">{translate(step.descKey)}</p>
+-                </div>
+-              );
+-            })}
+-          </div>
+-        </section>
+-
+-        <section id="features" className="grid gap-4 pb-10 sm:grid-cols-2 xl:grid-cols-4">
+-          {landingDesign.features.map((feature) => {
+-            const Icon = icons[feature.icon];
+-            return (
+-              <div key={feature.titleKey} className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-neon-green/20 bg-neon-green/10 text-neon-green">
+-                  <Icon className="h-5 w-5" />
+-                </div>
+-                <h3 className="mt-4 text-base font-semibold text-white">{translate(feature.titleKey)}</h3>
+-                <p className="mt-2 text-sm leading-6 text-white/45">{translate(feature.textKey)}</p>
+-              </div>
++    const listen = (
++      target: EventTarget,
++      event: string,
++      handler: EventListenerOrEventListenerObject,
++      options?: AddEventListenerOptions | boolean,
++    ) => {
++      target.addEventListener(event, handler, options);
++      cleanups.push(() => target.removeEventListener(event, handler, options));
++    };
++
++    const listenElement = (
++      target: Element,
++      event: string,
++      handler: EventListenerOrEventListenerObject,
++      options?: AddEventListenerOptions | boolean,
++    ) => {
++      target.addEventListener(event, handler, options);
++      cleanups.push(() => target.removeEventListener(event, handler, options));
++    };
++
++    const toggle = document.getElementById("menuToggle") as HTMLButtonElement | null;
++    const menu = document.getElementById("mobileMenu") as HTMLElement | null;
++
++    const setMenu = (open: boolean) => {
++      if (!toggle || !menu) return;
++      menu.classList.toggle("open", open);
++      toggle.setAttribute("aria-expanded", String(open));
++      toggle.setAttribute("aria-label", open ? "Закрыть меню" : "Открыть меню");
++      menu.setAttribute("aria-hidden", String(!open));
++    };
++
++    if (toggle && menu) {
++      listenElement(toggle, "click", () => setMenu(!menu.classList.contains("open")));
++
++      menu.querySelectorAll("a").forEach((anchor) => {
++        listenElement(anchor, "click", () => setMenu(false));
++      });
++
++      listen(document, "click", ((event: MouseEvent) => {
++        const target = event.target as Node | null;
++        if (
++          target &&
++          menu.classList.contains("open") &&
++          !menu.contains(target) &&
++          !toggle.contains(target)
++        ) {
++          setMenu(false);
++        }
++      }) as EventListener);
++
++      listen(window, "resize", () => {
++        if (window.innerWidth > 1100) setMenu(false);
++      }, { passive: true });
++    }
++
++    const syncVisualViewportHeight = () => {
++      const height = window.visualViewport?.height ?? window.innerHeight;
++      document.documentElement.style.setProperty("--visual-viewport-height", `${height}px`);
++    };
++
++    syncVisualViewportHeight();
++    listen(window, "resize", syncVisualViewportHeight, { passive: true });
++
++    if (window.visualViewport) {
++      window.visualViewport.addEventListener("resize", syncVisualViewportHeight, { passive: true });
++      cleanups.push(() => window.visualViewport?.removeEventListener("resize", syncVisualViewportHeight));
++    }
++
++    const year = document.getElementById("year");
++    if (year) year.textContent = String(new Date().getFullYear());
++
++    const observer = new IntersectionObserver(
++      (entries) => {
++        entries.forEach((entry) => {
++          if (!entry.isIntersecting) return;
++          entry.target.classList.add("visible");
++          observer.unobserve(entry.target);
++        });
++      },
++      { threshold: 0.12 },
++    );
++
++    document.querySelectorAll(".reveal:not(.visible)").forEach((element) => observer.observe(element));
++    cleanups.push(() => observer.disconnect());
++
++    const loginModal = document.getElementById("login") as HTMLElement | null;
++    const loginForm = document.getElementById("platformLoginForm") as HTMLFormElement | null;
++    const loginInput = document.getElementById("loginInput") as HTMLInputElement | null;
++    const passwordInput = document.getElementById("passwordInput") as HTMLInputElement | null;
++    const passwordToggle = document.getElementById("passwordToggle") as HTMLButtonElement | null;
++    const passwordEyeUse = document.getElementById("passwordEyeUse") as SVGUseElement | null;
++    const loginAlert = document.getElementById("loginAlert") as HTMLElement | null;
++    const loginSubmit = document.getElementById("loginSubmit") as HTMLButtonElement | null;
++    const initialSubmitMarkup = loginSubmit?.innerHTML ?? "";
++    let lastFocusedElement: HTMLElement | null = null;
++
++    const clearAlert = () => {
++      if (!loginAlert) return;
++      loginAlert.className = "login-alert";
++      loginAlert.textContent = "";
++    };
++
++    const showAlert = (message: string, type: "error" | "success" = "error") => {
++      if (!loginAlert) return;
++      loginAlert.className = `login-alert show${type === "success" ? " success" : ""}`;
++      const iconId = type === "success" ? "check" : "alert";
++      loginAlert.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#${iconId}"/></svg><span></span>`;
++      const messageElement = loginAlert.querySelector("span");
++      if (messageElement) messageElement.textContent = message;
++    };
++
++    const validateLogin = () => {
++      if (!loginInput) return false;
++      const isValid = LOGIN_RE.test(loginInput.value.trim());
++      loginInput.setAttribute("aria-invalid", String(!isValid));
++      return isValid;
++    };
++
++    const validatePassword = () => {
++      if (!passwordInput) return false;
++      const isValid = passwordInput.value.length === 32;
++      passwordInput.setAttribute("aria-invalid", String(!isValid));
++      return isValid;
++    };
++
++    const openLogin = (event?: Event) => {
++      event?.preventDefault();
++      if (!loginModal || !loginInput) return;
++
++      lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
++      loginModal.classList.add("open");
++      loginModal.setAttribute("aria-hidden", "false");
++      document.body.classList.add("modal-open");
++
++      if (window.location.hash !== "#login") {
++        window.history.pushState(null, "", "#login");
++      }
++
++      const timer = window.setTimeout(() => loginInput.focus(), 80);
++      timers.push(timer);
++    };
++
++    const closeLogin = (event?: Event) => {
++      event?.preventDefault();
++      if (!loginModal) return;
++
++      loginModal.classList.remove("open");
++      loginModal.setAttribute("aria-hidden", "true");
++      document.body.classList.remove("modal-open");
++
++      if (window.location.hash === "#login") {
++        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
++      }
++
++      lastFocusedElement?.focus();
++    };
++
++    document.querySelectorAll("[data-open-login]").forEach((button) => {
++      listenElement(button, "click", openLogin);
++    });
++
++    document.querySelectorAll("[data-close-login]").forEach((button) => {
++      listenElement(button, "click", closeLogin);
++    });
++
++    listen(window, "hashchange", () => {
++      if (window.location.hash === "#login") openLogin();
++      else if (loginModal?.classList.contains("open")) closeLogin();
++    });
++
++    listen(document, "keydown", ((event: KeyboardEvent) => {
++      if (event.key !== "Escape") return;
++
++      if (loginModal?.classList.contains("open")) {
++        closeLogin(event);
++      } else if (menu?.classList.contains("open")) {
++        setMenu(false);
++        toggle?.focus();
++      }
++    }) as EventListener);
++
++    if (window.location.hash === "#login") openLogin();
++
++    if (passwordToggle && passwordInput && passwordEyeUse) {
++      listenElement(passwordToggle, "click", () => {
++        const isVisible = passwordInput.type === "text";
++        passwordInput.type = isVisible ? "password" : "text";
++        passwordToggle.setAttribute("aria-pressed", String(!isVisible));
++        passwordToggle.setAttribute("aria-label", isVisible ? "Показать пароль" : "Скрыть пароль");
++        passwordEyeUse.setAttribute("href", isVisible ? "#eye" : "#eye-off");
++        passwordInput.focus();
++      });
++    }
++
++    if (loginInput) {
++      listenElement(loginInput, "input", () => {
++        clearAlert();
++        validateLogin();
++      });
++    }
++
++    if (passwordInput) {
++      listenElement(passwordInput, "input", () => {
++        clearAlert();
++        validatePassword();
++      });
++    }
++
++    if (loginForm && loginInput && passwordInput && loginSubmit) {
++      listenElement(loginForm, "submit", (event) => {
++        event.preventDefault();
++        clearAlert();
++
++        const loginOk = validateLogin();
++        const passwordOk = validatePassword();
++
++        if (!loginOk || !passwordOk) {
++          showAlert("Исправьте выделенные поля и повторите вход.");
++          (loginOk ? passwordInput : loginInput).focus();
++          return;
++        }
++
++        loginSubmit.disabled = true;
++        loginSubmit.innerHTML = '<span class="login-spinner" aria-hidden="true"></span><span>Проверяем доступ…</span>';
++
++        void (async () => {
++          try {
++            const response = await fetch(getAuthEndpoint(), {
++              method: "POST",
++              headers: { "Content-Type": "application/json" },
++              body: JSON.stringify({
++                login: loginInput.value.trim(),
++                password: passwordInput.value.toUpperCase(),
++              }),
++              signal: abortController.signal,
++            });
++
++            const raw = await response.text();
++            let data: AuthResponse = {};
++
++            try {
++              data = raw ? (JSON.parse(raw) as AuthResponse) : {};
++            } catch {
++              data = { detail: raw };
++            }
++
++            if (!response.ok) {
++              throw new Error(mapLoginError(response.status, data.detail));
++            }
++
++            if (!data.access_token) {
++              throw new Error("Сервер не вернул токен доступа.");
++            }
++
++            window.localStorage.setItem("potapoff.access_token", data.access_token);
++            window.localStorage.setItem(
++              "potapoff.auth_meta",
++              JSON.stringify({
++                access_token: data.access_token,
++                expires_in: data.expires_in || 86400,
++                saved_at: Date.now(),
++              }),
+             );
+-          })}
+-        </section>
+-
+-        <section className="mb-10 rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(139,92,246,0.08))] p-8 text-center sm:p-10">
+-          <h2 className="text-2xl font-bold text-white sm:text-3xl">{translate(landingDesign.cta.titleKey)}</h2>
+-          <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-white/55">{translate(landingDesign.cta.subtitleKey)}</p>
+-          <p className="mt-6 text-sm font-semibold text-white/80">{translate(landingDesign.cta.buttonKey)}</p>
+-        </section>
+-
+-        <footer className="flex flex-col gap-3 border-t border-white/10 py-5 text-sm text-white/40 sm:flex-row sm:items-center sm:justify-between">
+-          <p>{t("landing.footer.copy", { year: new Date().getFullYear() })}</p>
+-        </footer>
+-      </div>
+-    </div>
++
++            showAlert("Вход выполнен. Открываем рабочую панель…", "success");
++            loginSubmit.innerHTML = '<svg class="icon"><use href="#check"/></svg><span>Доступ подтверждён</span>';
++
++            const timer = window.setTimeout(() => {
++              window.location.assign(data.redirect_url || "/dashboard");
++            }, 700);
++            timers.push(timer);
++          } catch (error) {
++            if (abortController.signal.aborted) return;
++
++            const message =
++              error instanceof TypeError
++                ? "Не удалось связаться с API авторизации."
++                : error instanceof Error
++                  ? error.message
++                  : "Ошибка входа.";
++
++            showAlert(message);
++            loginSubmit.disabled = false;
++            loginSubmit.innerHTML = initialSubmitMarkup;
++          }
++        })();
++      });
++    }
++
++    return () => {
++      abortController.abort();
++      observer.disconnect();
++      timers.forEach((timer) => window.clearTimeout(timer));
++      cleanups.reverse().forEach((cleanup) => cleanup());
++      document.body.classList.remove("modal-open");
++      document.documentElement.style.removeProperty("--visual-viewport-height");
++    };
++  }, []);
++
++  return (
++    <>
++      <style dangerouslySetInnerHTML={{ __html: LANDING_CSS }} />
++      <div className="potapoff-landing" dangerouslySetInnerHTML={{ __html: LANDING_BODY }} />
++    </>
+   );
+ }
+diff --git a/solana-launcher/lib/siteDesign.ts b/solana-launcher/lib/siteDesign.ts
+index 80ca248..997447d 100644
+--- a/solana-launcher/lib/siteDesign.ts
++++ b/solana-launcher/lib/siteDesign.ts
+@@ -27,7 +27,7 @@ export interface SiteNavItem {
+ }
+ 
+ export const siteDesign = {
+-  publicRoutes: ["/login", "/auth", "/miniapp"],
++  publicRoutes: ["/", "/login", "/auth", "/miniapp"],
+ 
+   /**
+    * Main redesign controls for the whole app.
