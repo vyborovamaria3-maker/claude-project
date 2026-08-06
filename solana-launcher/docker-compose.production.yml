@@ -142,8 +142,8 @@ services:
       - .env.server
     environment:
       NODE_ENV: production
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
-      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:?TELEGRAM_WEBHOOK_URL is required}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_TELEGRAM_BOT_URL: ${NEXT_PUBLIC_TELEGRAM_BOT_URL:-https://t.me/Soft777bot}
@@ -164,8 +164,6 @@ services:
         condition: service_healthy
       backend:
         condition: service_healthy
-      telegram-bot:
-        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 15s
