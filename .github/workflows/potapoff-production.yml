@@ -34,9 +34,6 @@ jobs:
           - service: frontend
             context: solana-launcher
             dockerfile: solana-launcher/Dockerfile.frontend.prod
-          - service: telegram-bot
-            context: solana-launcher
-            dockerfile: solana-launcher/Dockerfile.telegram-bot
 
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +43,6 @@ jobs:
           set -euo pipefail
           test -f solana-launcher/backend/Dockerfile
           test -f solana-launcher/Dockerfile.frontend.prod
-          test -f solana-launcher/Dockerfile.telegram-bot
           echo "DOCKERFILES_OK"
 
       - uses: docker/setup-buildx-action@v3
@@ -125,7 +121,10 @@ jobs:
             "$SERVER_USER@$SERVER_HOST:/opt/potapoff-deploy/prometheus/prometheus.yml"
 
           ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
-            'chmod 700 /opt/potapoff-deploy/scripts/*.sh'
+            'chmod 700 /opt/potapoff-deploy/scripts/*.sh &&
+             chmod 755 /opt/potapoff-deploy/nginx /opt/potapoff-deploy/prometheus &&
+             chmod 644 /opt/potapoff-deploy/nginx/nginx.conf &&
+             chmod 644 /opt/potapoff-deploy/prometheus/prometheus.yml'
 
       - name: Login server to GHCR
         env:
