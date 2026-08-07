@@ -1,0 +1,48 @@
+name: Memecoin Intelligence CI
+
+on:
+  pull_request:
+    paths:
+      - "memecoin-intelligence/**"
+      - ".github/workflows/memecoin-intelligence.yml"
+  push:
+    branches: [main]
+    paths:
+      - "memecoin-intelligence/**"
+      - ".github/workflows/memecoin-intelligence.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: memecoin-intelligence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: memecoin-intelligence/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Syntax and regression tests
+        run: npm test
+
+  security:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: memecoin-intelligence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Dependency audit
+        run: npm audit --audit-level=high
