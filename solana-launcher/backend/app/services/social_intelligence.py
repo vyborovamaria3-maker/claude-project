@@ -23,6 +23,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
 
@@ -62,7 +66,8 @@ async def nearest_token_snapshot(session: AsyncSession, mint_address: str, at: d
     candidates = [metric for metric in (before, after) if metric is not None]
     if not candidates:
         return None, None
-    metric = min(candidates, key=lambda item: abs((item.timestamp - at).total_seconds()))
+    target = _aware(at)
+    metric = min(candidates, key=lambda item: abs((_aware(item.timestamp) - target).total_seconds()))
     return metric.price_usd, metric.market_cap
 
 
@@ -134,7 +139,7 @@ async def evaluate_calls(session: AsyncSession, *, limit: int = 1000) -> dict[st
         elif call.call_price_usd and call.peak_price_usd:
             roi = call.peak_price_usd / call.call_price_usd
         call.roi_multiple = roi
-        observed_hours = max((metrics[-1].timestamp - call.called_at).total_seconds() / 3600.0, 0.0)
+        observed_hours = max((_aware(metrics[-1].timestamp) - _aware(call.called_at)).total_seconds() / 3600.0, 0.0)
         if token.status == TokenStatus.RUGGED.value:
             call.outcome = "rug"
         elif roi is not None and roi >= 2.0:
