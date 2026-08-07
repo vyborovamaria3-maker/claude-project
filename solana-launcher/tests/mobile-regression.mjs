@@ -30,14 +30,16 @@ async function assertNoHorizontalOverflow(page, route) {
   );
 }
 
-async function openRoute(page, route) {
+async function openRoute(page, route, pageErrors) {
+  pageErrors.length = 0;
+
   const response = await page.goto(`${baseURL}${route}`, {
     waitUntil: "domcontentloaded",
     timeout: 60_000,
   });
 
   assert.ok(response, `${route}: no navigation response`);
-  assert.ok(response.status() < 500, `${route}: returned HTTP ${response.status()}`);
+  assert.ok(response.status() < 400, `${route}: returned HTTP ${response.status()}`);
 
   await page.waitForTimeout(900);
   await assertNoHorizontalOverflow(page, route);
@@ -47,6 +49,12 @@ async function openRoute(page, route) {
     path: path.join(outputDir, `${name || "home"}.png`),
     fullPage: true,
   });
+
+  assert.equal(
+    pageErrors.length,
+    0,
+    `${route}: browser page errors detected:\n${pageErrors.map((error) => `- ${error}`).join("\n")}`
+  );
 }
 
 async function run() {
@@ -58,17 +66,22 @@ async function run() {
     locale: "ru-RU",
   });
   const page = await context.newPage();
+  const pageErrors = [];
 
   page.on("pageerror", (error) => {
-    console.error(`[pageerror] ${error.message}`);
+    const message = error?.stack || error?.message || String(error);
+    pageErrors.push(message);
+    console.error(`[pageerror] ${message}`);
   });
 
   for (const route of routes) {
     console.log(`mobile smoke: ${route}`);
-    await openRoute(page, route);
+    await openRoute(page, route, pageErrors);
   }
 
-  await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  pageErrors.length = 0;
+  const homeResponse = await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  assert.ok(homeResponse && homeResponse.status() < 400, `/: returned HTTP ${homeResponse?.status() ?? "no response"}`);
   await page.waitForTimeout(500);
 
   const menuButton = page.getByRole("button", { name: "Open navigation" });
@@ -84,8 +97,11 @@ async function run() {
   await tradeDashboardLink.click();
   await page.waitForURL(/\/trade-dashboard/, { timeout: 15_000 });
   await assertNoHorizontalOverflow(page, "/trade-dashboard after mobile nav");
+  assert.equal(pageErrors.length, 0, `mobile navigation produced browser errors:\n${pageErrors.join("\n")}`);
 
-  await page.goto(`${baseURL}/launch-dashboard`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  pageErrors.length = 0;
+  const launchResponse = await page.goto(`${baseURL}/launch-dashboard`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  assert.ok(launchResponse && launchResponse.status() < 400, `/launch-dashboard: returned HTTP ${launchResponse?.status() ?? "no response"}`);
   await page.waitForTimeout(500);
   const periodSelector = page.locator('[data-tag="dashboard.period_selector"]').first();
   await periodSelector.waitFor({ state: "visible", timeout: 10_000 });
@@ -100,8 +116,11 @@ async function run() {
     periodMetrics.scrollWidth <= periodMetrics.clientWidth + 2 || ["auto", "scroll"].includes(periodMetrics.overflowX),
     `period selector clips content without horizontal scrolling: ${JSON.stringify(periodMetrics)}`
   );
+  assert.equal(pageErrors.length, 0, `/launch-dashboard produced browser errors:\n${pageErrors.join("\n")}`);
 
-  await page.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  pageErrors.length = 0;
+  const loginResponse = await page.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  assert.ok(loginResponse && loginResponse.status() < 400, `/login: returned HTTP ${loginResponse?.status() ?? "no response"}`);
   const inputs = page.locator("input");
   assert.ok((await inputs.count()) >= 2, "login page should expose login and password fields");
   await inputs.nth(0).fill("mobile_user");
@@ -113,6 +132,7 @@ async function run() {
     const box = await inputs.nth(index).boundingBox();
     assert.ok(box && box.width <= viewportWidth + 1, `login input ${index} exceeds viewport`);
   }
+  assert.equal(pageErrors.length, 0, `/login produced browser errors:\n${pageErrors.join("\n")}`);
 
   await browser.close();
   console.log("mobile regression smoke passed");
