@@ -20,7 +20,8 @@ from app.models.social_intelligence import (
     TelegramTokenMention,
     TelegramUser,
 )
-from app.services.social_intelligence import nearest_token_snapshot, upsert_channel_score, upsert_social_relation
+from app.services.social_intelligence import nearest_token_snapshot, upsert_channel_score
+from app.services.social_relations import upsert_social_relation
 from app.services.telegram_parser import ParsedTelegramMessage, normalize_telegram_target, parse_telegram_message
 
 
