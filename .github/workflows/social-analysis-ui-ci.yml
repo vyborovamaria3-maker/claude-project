@@ -5,11 +5,14 @@ on:
     paths:
       - "solana-launcher/app/trade/analysis/**"
       - "solana-launcher/app/x-analysis/**"
+      - "solana-launcher/app/api/build-info/**"
       - "solana-launcher/components/trade/SocialIntelligencePanel.tsx"
       - "solana-launcher/components/providers/AppProviders.tsx"
       - "solana-launcher/components/providers/EncodingRepair.tsx"
       - "solana-launcher/public/sw.js"
       - "solana-launcher/scripts/healthcheck-production.sh"
+      - "solana-launcher/Dockerfile.frontend.prod"
+      - ".github/workflows/potapoff-production.yml"
       - ".github/workflows/social-analysis-ui-ci.yml"
   push:
     branches:
@@ -26,6 +29,7 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_BACKEND_URL: "/fastapi"
+      NEXT_PUBLIC_BUILD_SHA: "ci-test-build"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
