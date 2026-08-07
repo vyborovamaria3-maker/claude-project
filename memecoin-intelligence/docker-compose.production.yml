@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-memecoin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-memecoin}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      WEB_ORIGIN: ${WEB_ORIGIN:-https://localhost}
+      SECURITY_HEADERS_STRICT: "true"
+      SECURITY_RBAC_ENABLED: "true"
+      INTERNAL_ADMIN_API_KEY: ${INTERNAL_ADMIN_API_KEY:?set INTERNAL_ADMIN_API_KEY}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-memecoin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+      TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
+      TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-mock}
+      TELEGRAM_AI_BASE_URL: ${TELEGRAM_AI_BASE_URL:-http://qwen:8000/v1}
+      TELEGRAM_AI_API_KEY: ${TELEGRAM_AI_API_KEY:-}
+    command: ["npm", "start"]
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      SECURITY_HEADERS_STRICT: "true"
+      SECURITY_RBAC_ENABLED: "true"
+      INTERNAL_ADMIN_API_KEY: ${INTERNAL_ADMIN_API_KEY:?set INTERNAL_ADMIN_API_KEY}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-memecoin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+      TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
+      TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-mock}
+      TELEGRAM_AI_BASE_URL: ${TELEGRAM_AI_BASE_URL:-http://qwen:8000/v1}
+      TELEGRAM_AI_API_KEY: ${TELEGRAM_AI_API_KEY:-}
+    command: ["npm", "run", "start:worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

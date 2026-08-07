@@ -44,7 +44,21 @@ const schema = z.object({
   TELEGRAM_AI_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),
 });
 
-export const env = schema.parse(process.env);
+const parsedEnv = schema.parse(process.env);
+
+if (parsedEnv.NODE_ENV === 'production') {
+  if (!parsedEnv.SECURITY_HEADERS_STRICT) {
+    throw new Error('SECURITY_HEADERS_STRICT must be enabled in production');
+  }
+  if (!parsedEnv.SECURITY_RBAC_ENABLED) {
+    throw new Error('SECURITY_RBAC_ENABLED must be enabled in production');
+  }
+  if (!parsedEnv.INTERNAL_ADMIN_API_KEY && !parsedEnv.INTERNAL_API_KEY) {
+    throw new Error('INTERNAL_ADMIN_API_KEY or INTERNAL_API_KEY is required in production');
+  }
+}
+
+export const env = parsedEnv;
 
 // Backward-compatible export for callers that still use securityConfig.
 export const securityConfig = {
