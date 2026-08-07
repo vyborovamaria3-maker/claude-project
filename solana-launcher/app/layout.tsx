@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
 import { JetBrains_Mono, Manrope } from "next/font/google";
 import "./globals.css";
+import "./responsive.css";
 import AppShell from "@/components/AppShell";
 import AppProviders from "@/components/providers/AppProviders";
 import { isRtlLocale, LOCALE_COOKIE_NAME, resolveSupportedLocale } from "@/lib/i18n/locales";
