@@ -8,6 +8,8 @@ on:
       - "solana-launcher/components/SidebarNav.tsx"
       - "solana-launcher/lib/siteDesign.ts"
       - "solana-launcher/docker-compose.production.yml"
+      - "solana-launcher/scripts/deploy-production.sh"
+      - "solana-launcher/scripts/healthcheck-production.sh"
       - ".github/workflows/telegram-intelligence-v19-ci.yml"
   push:
     branches:
