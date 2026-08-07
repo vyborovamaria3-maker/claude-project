@@ -18,8 +18,6 @@ test -r "$BACKUP_SCRIPT"
 test -r "$HEALTH_SCRIPT"
 test -r "$PROMETHEUS_CONFIG"
 
-chmod 0644 "$PROMETHEUS_CONFIG"
-
 COMPOSE=(
   docker compose
   --env-file .env.server
