@@ -104,18 +104,29 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" '
             set -u
             cd /opt/potapoff-deploy
+            IMAGE_TAG=$(cat .current-image-tag 2>/dev/null || true)
+            export IMAGE_TAG
             echo "=== CURRENT TAG ==="
-            cat .current-image-tag 2>/dev/null || true
+            printf "%s\n" "$IMAGE_TAG"
             echo "=== PREVIOUS TAG ==="
             cat .previous-image-tag 2>/dev/null || true
             echo "=== COMPOSE PS ==="
             docker compose --env-file .env.server -f docker-compose.production.yml ps || true
+            echo "=== FRONTEND INSPECT ==="
+            frontend_id=$(docker compose --env-file .env.server -f docker-compose.production.yml ps -q frontend 2>/dev/null || true)
+            if [ -n "$frontend_id" ]; then
+              docker inspect --format "state={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} exit={{.State.ExitCode}} restarts={{.RestartCount}} image={{.Config.Image}}" "$frontend_id" || true
+            else
+              echo "frontend container missing"
+            fi
             echo "=== LOCAL ENDPOINTS ==="
             for path in / /trade/analysis /trade/analysis/social /api/build-info /fastapi/health; do
               code=$(curl --connect-timeout 2 --max-time 5 -sS -o /tmp/check.out -w "%{http_code}" "http://127.0.0.1$path" || true)
               echo "$path HTTP=$code"
               if [ "$path" = "/api/build-info" ]; then cat /tmp/check.out 2>/dev/null || true; echo; fi
             done
-            echo "=== RECENT APP LOGS ==="
-            docker compose --env-file .env.server -f docker-compose.production.yml logs --tail 60 backend frontend nginx 2>&1 || true
+            echo "=== FRONTEND LOGS ==="
+            docker compose --env-file .env.server -f docker-compose.production.yml logs --tail 120 frontend 2>&1 || true
+            echo "=== NGINX LOGS ==="
+            docker compose --env-file .env.server -f docker-compose.production.yml logs --tail 80 nginx 2>&1 || true
           '
