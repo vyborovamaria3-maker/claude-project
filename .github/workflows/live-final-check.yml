@@ -1,0 +1,64 @@
+name: Live Final Check
+
+on:
+  push:
+    branches:
+      - agent/live-site-smoke
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify canonical social analysis production routes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="https://potapoff.fun"
+          expected="6ee4ed5f39d85a7da5eb964e68960fa0911b1766"
+
+          build_info="$(curl -fsS --connect-timeout 5 --max-time 15 "$base/api/build-info")"
+          echo "BUILD_INFO=$build_info"
+          printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$expected\""
+
+          for path in /trade/analysis /trade/analysis/social; do
+            code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/page.html -w '%{http_code}' "$base$path")"
+            echo "$path HTTP=$code"
+            test "$code" = "200"
+            grep -Fq 'X + Telegram' /tmp/page.html
+            if grep -qE 'Рђ|РўСЂ|РњРѕ|вЂ|В·' /tmp/page.html; then
+              echo "MOJIBAKE_FOUND path=$path" >&2
+              exit 1
+            fi
+          done
+
+          echo "=== LEGACY X REDIRECT ==="
+          curl -sSI --connect-timeout 5 --max-time 15 "$base/x-analysis" | tr -d '\r' | tee /tmp/x.headers
+          x_code="$(awk 'NR==1 {print $2}' /tmp/x.headers)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^location:[[:space:]]*/, ""); print; exit}' /tmp/x.headers)"
+          echo "X_REDIRECT HTTP=$x_code LOCATION=$location"
+          [[ "$x_code" == "307" || "$x_code" == "308" ]]
+          [[ "$location" == *"/trade/analysis/social"* ]]
+
+          final_code="$(curl -sSL --connect-timeout 5 --max-time 15 -o /tmp/x-final.html -w '%{http_code}' "$base/x-analysis")"
+          echo "X_FINAL HTTP=$final_code"
+          test "$final_code" = "200"
+          grep -Fq 'X + Telegram' /tmp/x-final.html
+          if grep -qE 'Рђ|РўСЂ|РњРѕ|вЂ|В·' /tmp/x-final.html; then
+            echo "MOJIBAKE_FOUND after redirect" >&2
+            exit 1
+          fi
+
+          echo "=== SERVICE WORKER ==="
+          curl -fsSI --connect-timeout 5 --max-time 15 "$base/sw.js" | tr -d '\r' | tee /tmp/sw.headers
+          grep -iEq '^cache-control:.*no-cache' /tmp/sw.headers
+          grep -iEq '^cache-control:.*no-store' /tmp/sw.headers
+
+          echo "LIVE_FINAL_OK build=$expected"
