@@ -1,0 +1,117 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+ 
+@source "./";
+ 
+/* ---------------------------------------------------------------------------
+   SIGNAL ROOM — design tokens
+   Dark instrumentation aesthetic for a market-monitoring workspace.
+   See DESIGN.md for the full brief.
+--------------------------------------------------------------------------- */
+ 
+@theme {
+  /* Surfaces — cold near-black, layered by elevation */
+  --color-ink-900: #0a0c0e;
+  --color-ink-850: #0f1215;
+  --color-ink-800: #14181c;
+  --color-ink-700: #1b2026;
+  --color-ink-600: #262d35;
+  --color-ink-500: #38424d;
+ 
+  /* Text */
+  --color-chalk: #e8ecef;
+  --color-chalk-dim: #a7b0b9;
+  --color-chalk-faint: #6b7681;
+ 
+  /* Accents */
+  --color-signal: #b8f135;       /* primary accent — acid lime */
+  --color-signal-dim: #8fbe27;
+  --color-signal-glow: rgba(184, 241, 53, 0.14);
+  --color-ember: #ff6b4a;        /* negative / alerts */
+  --color-ember-glow: rgba(255, 107, 74, 0.13);
+  --color-amber: #ffb020;        /* warning / neutral highlight */
+ 
+  /* Typography */
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+ 
+  /* Radii — tight, instrument-panel feel */
+  --radius-panel: 4px;
+  --radius-card: 8px;
+ 
+  /* Motion */
+  --animate-fade-in: fade-in 0.35s ease-out both;
+  --animate-slide-up: slide-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pulse-signal: pulse-signal 2.4s ease-in-out infinite;
+  --animate-ticker-in: ticker-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+ 
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+ 
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+ 
+@keyframes pulse-signal {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+ 
+@keyframes ticker-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+ 
+/* Base UI: establish a stacking context at the root so portalled
+   popups (Dialog, Select, Menu, Tooltip) layer above page content. */
+html {
+  isolation: isolate;
+  color-scheme: dark;
+}
+ 
+body {
+  position: relative;
+  background-color: var(--color-ink-900);
+  color: var(--color-chalk);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+ 
+/* Faint grid backdrop — reads as an instrument surface, not decoration */
+.grid-backdrop {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+ 
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+}
+ 
+/* Numeric data always renders in mono with tabular figures */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+ 
+::selection {
+  background: var(--color-signal);
+  color: var(--color-ink-900);
+}
+ 
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--color-ink-900); }
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border-radius: 999px;
+  border: 2px solid var(--color-ink-900);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-ink-500); }
+ 

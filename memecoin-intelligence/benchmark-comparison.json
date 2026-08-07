@@ -1,0 +1,20 @@
+{
+  "datasetRows": 1500,
+  "uniqueAccounts": 1413,
+  "v3.1.0": {
+    "networkMs": 3997.988875,
+    "rssBytes": 332607488
+  },
+  "v3.2.0": {
+    "networkMs": 739.515032,
+    "rssBytes": 141340672,
+    "candidatePairs": 59919,
+    "possiblePairs": 997578
+  },
+  "improvement": {
+    "speedup": 5.406,
+    "networkTimeReductionPercent": 81.5,
+    "rssReductionPercent": 57.5,
+    "pairPruningPercent": 93.99
+  }
+}
