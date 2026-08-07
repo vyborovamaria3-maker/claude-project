@@ -19,23 +19,23 @@ class TelegramAttachSessionRequest(BaseModel):
 
 
 class XTweetIngest(BaseModel):
-    id: str
+    id: str = Field(min_length=1, max_length=128)
     text: str = ""
     author_handle: str | None = None
     author_display_name: str | None = None
     url: str | None = None
-    views: int = 0
-    likes: int = 0
-    retweets: int = 0
-    replies: int = 0
+    views: int = Field(default=0, ge=0)
+    likes: int = Field(default=0, ge=0)
+    retweets: int = Field(default=0, ge=0)
+    replies: int = Field(default=0, ge=0)
     is_verified: bool = False
     posted_at: int | float | None = None
-    suspicion_score: float | None = None
+    suspicion_score: float | None = Field(default=None, ge=0, le=100)
 
 
 class XSocialIngestRequest(BaseModel):
-    token_mint: str | None = None
-    token_symbol: str | None = None
-    token_twitter_handle: str | None = None
-    strategy: str | None = None
+    token_mint: str = Field(min_length=32, max_length=64)
+    token_symbol: str | None = Field(default=None, max_length=32)
+    token_twitter_handle: str | None = Field(default=None, max_length=64)
+    strategy: str | None = Field(default=None, max_length=32)
     tweets: list[XTweetIngest] = Field(default_factory=list, max_length=500)
