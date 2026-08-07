@@ -44,7 +44,14 @@ class Settings(BaseSettings):
     admin_display_name: str = Field(default="POTAPoff Admin", alias="ADMIN_DISPLAY_NAME")
     admin_session_secret: str = Field(default="admin-session-secret", alias="ADMIN_SESSION_SECRET")
     frontend_url: str = Field(default="http://localhost:3001", alias="FRONTEND_URL")
+    frontend_internal_url: str = Field(default="http://frontend:3000", alias="FRONTEND_INTERNAL_URL")
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_api_id: int | None = Field(default=None, alias="TG_API_ID")
+    telegram_api_hash: str = Field(default="", alias="TG_API_HASH")
+    telegram_session_string: str = Field(default="", alias="TG_SESSION_STRING")
+    telegram_session_path: str = Field(default="data/telegram-intelligence", alias="TG_SESSION_PATH")
+    telegram_monitor_channels: str = Field(default="", alias="TG_MONITOR_CHANNELS")
+    telegram_autostart: bool = Field(default=False, alias="TG_AUTOSTART")
     phantom_nonce_ttl_minutes: int = Field(default=5, alias="PHANTOM_NONCE_TTL_MINUTES")
     telegram_auth_max_age_hours: int = Field(default=24, alias="TELEGRAM_AUTH_MAX_AGE_HOURS")
     auth_rate_limit_window_seconds: int = Field(default=60, alias="AUTH_RATE_LIMIT_WINDOW_SECONDS")
@@ -66,18 +73,17 @@ class Settings(BaseSettings):
     collector_insider_refresh_seconds: int = Field(default=86400, alias="COLLECTOR_INSIDER_REFRESH_SECONDS")
     backend_api_key: str = Field(default="", alias="BACKEND_API_KEY")
 
-
     @field_validator("secret_key", mode="after")
     @classmethod
     def validate_secret_key(cls, v: str) -> str:
         if len(v) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters long. Generate a strong key with: openssl rand -hex 32")
-        # Check for common weak patterns
         weak_patterns = ["change-me", "changeme", "secret", "default", "password", "123456", "admin"]
         v_lower = v.lower()
         if any(pattern in v_lower for pattern in weak_patterns):
-            raise ValueError(f"SECRET_KEY contains weak pattern. Do not use default or predictable secrets.")
+            raise ValueError("SECRET_KEY contains weak pattern. Do not use default or predictable secrets.")
         return v
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
