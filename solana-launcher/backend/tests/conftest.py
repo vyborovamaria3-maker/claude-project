@@ -8,12 +8,15 @@ from app.db.base import Base
 from app.main import create_app
 
 
+TEST_SECRET_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+
 @pytest_asyncio.fixture
 async def test_app():
     settings = Settings(
         database_url="sqlite+aiosqlite://",
         debug=True,
-        secret_key="test-secret",
+        secret_key=TEST_SECRET_KEY,
         admin_session_secret="test-admin-session-secret",
         admin_username="admin@example.com",
         admin_password="password123",
