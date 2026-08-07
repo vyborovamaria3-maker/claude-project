@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -21,7 +21,7 @@ from app.models.social_intelligence import (
     TelegramUser,
 )
 from app.services.social_intelligence import nearest_token_snapshot, upsert_channel_score, upsert_social_relation
-from app.services.telegram_parser import ParsedTelegramMessage, parse_telegram_message
+from app.services.telegram_parser import ParsedTelegramMessage, normalize_telegram_target, parse_telegram_message
 
 
 def utcnow() -> datetime:
@@ -60,7 +60,12 @@ class TelegramIntelligenceService:
         self.settings = settings
         self.sessionmaker = sessionmaker
         configured = session_string or settings.telegram_session_string
-        session = StringSession(configured) if configured else settings.telegram_session_path
+        if configured:
+            session = StringSession(configured)
+        else:
+            session_path = Path(settings.telegram_session_path)
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session = str(session_path)
         self.client = TelegramClient(session, settings.telegram_api_id, settings.telegram_api_hash)
         self._handler = None
         self._monitored: list[str] = []
@@ -84,9 +89,17 @@ class TelegramIntelligenceService:
             full = await self.client(GetFullChannelRequest(entity))
             about = getattr(full.full_chat, "about", "") or ""
             participants = int(getattr(full.full_chat, "participants_count", 0) or 0)
+            linked_chat_id = getattr(full.full_chat, "linked_chat_id", None)
+            linked_chat = next(
+                (chat for chat in getattr(full, "chats", []) if getattr(chat, "id", None) == linked_chat_id),
+                None,
+            )
+            linked_username = getattr(linked_chat, "username", None) if linked_chat is not None else None
         except Exception:
             about = ""
             participants = int(getattr(entity, "participants_count", 0) or 0)
+            linked_chat_id = None
+            linked_username = None
         row = (
             await session.execute(select(TelegramChannel).where(TelegramChannel.telegram_id == int(entity.id)))
         ).scalar_one_or_none()
@@ -98,13 +111,18 @@ class TelegramIntelligenceService:
             "participants": participants,
             "about": about,
         }
+        meta = {
+            "broadcast": bool(getattr(entity, "broadcast", False)),
+            "linked_chat_id": linked_chat_id,
+            "linked_username": linked_username,
+        }
         if row is None:
             row = TelegramChannel(
                 telegram_id=int(entity.id),
                 first_seen_at=now,
                 last_seen_at=now,
                 last_scanned_at=now,
-                meta={"broadcast": bool(getattr(entity, "broadcast", False))},
+                meta=meta,
                 **values,
             )
             session.add(row)
@@ -114,6 +132,7 @@ class TelegramIntelligenceService:
                     setattr(row, key, value)
             row.last_seen_at = now
             row.last_scanned_at = now
+            row.meta = {**(row.meta or {}), **meta}
         await session.flush()
         return row
 
@@ -151,7 +170,12 @@ class TelegramIntelligenceService:
         return row
 
     async def save_message(
-        self, session: AsyncSession, channel: TelegramChannel, message: Any
+        self,
+        session: AsyncSession,
+        channel: TelegramChannel,
+        message: Any,
+        *,
+        update_score: bool = True,
     ) -> tuple[ParsedTelegramMessage, int]:
         text = getattr(message, "message", None) or ""
         parsed = parse_telegram_message(text)
@@ -166,6 +190,7 @@ class TelegramIntelligenceService:
                 )
             )
         ).scalar_one_or_none()
+        is_new_message = stored is None
         values = {
             "sender_id": sender.id if sender else None,
             "sender_telegram_id": int(sender_telegram_id) if sender_telegram_id else None,
@@ -189,29 +214,30 @@ class TelegramIntelligenceService:
         await session.flush()
 
         source_handle = (channel.username or str(channel.telegram_id)).lower()
-        for target in parsed.telegram_usernames:
-            if target != source_handle:
+        if is_new_message:
+            for target in parsed.telegram_usernames:
+                if target != source_handle:
+                    await upsert_social_relation(
+                        session,
+                        source_platform="telegram",
+                        source_handle=source_handle,
+                        target_platform="telegram",
+                        target_handle=target,
+                        relation_type="mention",
+                        evidence=text,
+                        occurred_at=published_at,
+                    )
+            for target in parsed.x_usernames:
                 await upsert_social_relation(
                     session,
                     source_platform="telegram",
                     source_handle=source_handle,
-                    target_platform="telegram",
+                    target_platform="x",
                     target_handle=target,
-                    relation_type="mention",
+                    relation_type="link",
                     evidence=text,
                     occurred_at=published_at,
                 )
-        for target in parsed.x_usernames:
-            await upsert_social_relation(
-                session,
-                source_platform="telegram",
-                source_handle=source_handle,
-                target_platform="x",
-                target_handle=target,
-                relation_type="link",
-                evidence=text,
-                occurred_at=published_at,
-            )
 
         ticker = parsed.tickers[0] if parsed.tickers else None
         created = 0
@@ -311,7 +337,7 @@ class TelegramIntelligenceService:
                 event.occurred_at = published_at
                 event.metrics = metrics
         await session.flush()
-        if parsed.addresses:
+        if update_score and parsed.addresses:
             await upsert_channel_score(session, channel.id)
         return parsed, created
 
@@ -324,12 +350,30 @@ class TelegramIntelligenceService:
         saved = mentions = 0
         async with self.sessionmaker() as session:
             channel = await self.upsert_channel(session, entity)
+            source_handle = (channel.username or str(channel.telegram_id)).lower()
+            profile = parse_telegram_message(channel.about)
+            discovered_tg.update(profile.telegram_links)
+            discovered_x.update(profile.x_usernames)
+            linked_username = str((channel.meta or {}).get("linked_username") or "").lower()
+            if linked_username:
+                discovered_tg.add(linked_username)
+                await upsert_social_relation(
+                    session,
+                    source_platform="telegram",
+                    source_handle=source_handle,
+                    target_platform="telegram",
+                    target_handle=linked_username,
+                    relation_type="discussion",
+                    evidence="linked discussion chat",
+                )
             async for message in self.client.iter_messages(entity, limit=max(1, min(post_limit, 5000))):
-                parsed, created = await self.save_message(session, channel, message)
-                discovered_tg.update(parsed.telegram_usernames)
+                parsed, created = await self.save_message(session, channel, message, update_score=False)
+                discovered_tg.update(parsed.telegram_links)
                 discovered_x.update(parsed.x_usernames)
                 saved += 1
                 mentions += created
+            if mentions:
+                await upsert_channel_score(session, channel.id)
             channel.last_scanned_at = utcnow()
             await session.commit()
         return {
@@ -352,7 +396,7 @@ class TelegramIntelligenceService:
         post_limit: int = 200,
         entity_limit: int = 100,
     ) -> dict[str, Any]:
-        queue = [(seed.strip().lstrip("@"), 0) for seed in seeds if seed.strip()]
+        queue = [(normalize_telegram_target(seed), 0) for seed in seeds if normalize_telegram_target(seed)]
         seen: set[str] = set()
         results: list[dict[str, Any]] = []
         while queue and len(results) < max(1, min(entity_limit, 1000)):
@@ -378,7 +422,7 @@ class TelegramIntelligenceService:
     async def start_monitor(self, channels: list[str]) -> dict[str, Any]:
         if self._handler is not None:
             return {"running": True, "channels": self._monitored}
-        cleaned = [item.strip().lstrip("@") for item in channels if item.strip()]
+        cleaned = [normalize_telegram_target(item) for item in channels if normalize_telegram_target(item)]
         if not cleaned:
             raise ValueError("At least one Telegram channel is required")
         resolved = []
@@ -420,54 +464,3 @@ class TelegramIntelligenceService:
             "channels": self._monitored,
             "connected": self.client.is_connected(),
         }
-
-
-class TelegramMonitorManager:
-    def __init__(self, settings: Settings, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
-        self.settings = settings
-        self.sessionmaker = sessionmaker
-        self.service: TelegramIntelligenceService | None = None
-        self._lock = asyncio.Lock()
-        self._runtime_session_string: str | None = None
-
-    async def get_service(self) -> TelegramIntelligenceService:
-        async with self._lock:
-            if self.service is None:
-                self.service = TelegramIntelligenceService(
-                    self.settings, self.sessionmaker, session_string=self._runtime_session_string
-                )
-                await self.service.connect()
-            return self.service
-
-    async def attach_session(self, session_string: str) -> dict[str, Any]:
-        candidate = TelegramIntelligenceService(self.settings, self.sessionmaker, session_string=session_string)
-        await candidate.connect()
-        me = await candidate.client.get_me()
-        await candidate.disconnect()
-        async with self._lock:
-            if self.service is not None:
-                await self.service.disconnect()
-            self.service = None
-            self._runtime_session_string = session_string
-        return {
-            "authorized": True,
-            "user_id": int(getattr(me, "id", 0) or 0),
-            "username": getattr(me, "username", None),
-        }
-
-    async def close(self) -> None:
-        async with self._lock:
-            if self.service is not None:
-                await self.service.disconnect()
-                self.service = None
-
-    def status(self) -> dict[str, Any]:
-        if self.service is None:
-            return {
-                "configured": bool(self.settings.telegram_api_id and self.settings.telegram_api_hash),
-                "session_configured": bool(self._runtime_session_string or self.settings.telegram_session_string),
-                "running": False,
-                "channels": [],
-                "connected": False,
-            }
-        return {"configured": True, "session_configured": True, **self.service.monitor_status()}
