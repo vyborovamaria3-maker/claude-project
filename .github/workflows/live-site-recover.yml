@@ -1,0 +1,91 @@
+name: Live Site Recovery
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$SERVER_PORT" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+
+      - name: Recover production with known-good new images
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" '
+            set -Eeuo pipefail
+            cd /opt/potapoff-deploy
+            TARGET_TAG="4ada2f02a9a537df4ae4a63afb467123c6622d39"
+            OLD_TAG="$(cat .current-image-tag 2>/dev/null || true)"
+            COMPOSE=(docker compose --env-file .env.server -f docker-compose.production.yml)
+
+            recover_old() {
+              code=$?
+              trap - ERR
+              echo "RECOVERY_TARGET_FAILED; restoring old tag=$OLD_TAG" >&2
+              if [ -n "$OLD_TAG" ]; then
+                export IMAGE_TAG="$OLD_TAG"
+                "${COMPOSE[@]}" up -d --remove-orphans || true
+                "${COMPOSE[@]}" restart nginx || true
+                for attempt in $(seq 1 30); do
+                  if curl -fsS http://127.0.0.1/ >/dev/null 2>&1 \
+                    && curl -fsS http://127.0.0.1/fastapi/health >/dev/null 2>&1; then
+                    echo "OLD_STACK_RECOVERED tag=$OLD_TAG"
+                    break
+                  fi
+                  sleep 3
+                done
+              fi
+              exit "$code"
+            }
+            trap recover_old ERR
+
+            echo "RECOVERING target=$TARGET_TAG old=$OLD_TAG"
+            export IMAGE_TAG="$TARGET_TAG"
+            "${COMPOSE[@]}" pull backend celery-worker frontend
+            "${COMPOSE[@]}" up -d --remove-orphans
+            "${COMPOSE[@]}" restart nginx
+            "${COMPOSE[@]}" exec -T backend alembic upgrade heads
+
+            for attempt in $(seq 1 45); do
+              build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
+              if curl -fsS http://127.0.0.1/ >/dev/null 2>&1 \
+                && curl -fsS http://127.0.0.1/trade/analysis >/dev/null 2>&1 \
+                && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null 2>&1 \
+                && curl -fsS http://127.0.0.1/fastapi/health >/dev/null 2>&1 \
+                && printf "%s" "$build_info" | grep -Fq "\"buildSha\":\"$TARGET_TAG\""; then
+                printf "%s\n" "$OLD_TAG" > .previous-image-tag
+                printf "%s\n" "$TARGET_TAG" > .current-image-tag
+                trap - ERR
+                echo "RECOVERY_OK target=$TARGET_TAG build_info=$build_info"
+                exit 0
+              fi
+              sleep 3
+            done
+
+            echo "Target stack did not become healthy" >&2
+            false
+          '
