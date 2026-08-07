@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>POTAPoff Control Center v1</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <main id="loginView" class="login-shell hidden">
+    <section class="login-card">
+      <div class="brand-mark">P</div>
+      <p class="eyebrow">POTAPoff / secure console</p>
+      <h1>Administrator</h1>
+      <p class="muted">Единая read-only панель для баз, блокчейна, Telegram, X, пользователей и логов.</p>
+      <form id="loginForm" class="stack">
+        <label>Логин<input id="loginUsername" autocomplete="username" required /></label>
+        <label>Пароль<input id="loginPassword" type="password" autocomplete="current-password" required /></label>
+        <button class="primary" type="submit">Войти</button>
+      </form>
+      <p id="loginError" class="error-text"></p>
+    </section>
+  </main>
+
+  <div id="appView" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark small">P</div>
+        <div><strong>POTAPoff</strong><span>Control Center v1</span></div>
+      </div>
+      <nav id="navigation">
+        <button data-view="overview" class="nav-item active"><span>01</span>Обзор</button>
+        <button data-view="database" class="nav-item"><span>02</span>Базы данных</button>
+        <button data-view="blockchain" class="nav-item"><span>03</span>Блокчейн</button>
+        <button data-view="telegram" class="nav-item"><span>04</span>Telegram</button>
+        <button data-view="x" class="nav-item"><span>05</span>X / Twitter</button>
+        <button data-view="users" class="nav-item"><span>06</span>Пользователи</button>
+        <button data-view="logs" class="nav-item"><span>07</span>Логи</button>
+        <button data-view="search" class="nav-item"><span>08</span>Глобальный поиск</button>
+        <button data-view="graph" class="nav-item"><span>09</span>Граф связей</button>
+        <button data-view="queues" class="nav-item"><span>10</span>Очереди</button>
+        <button data-view="monitoring" class="nav-item"><span>11</span>Мониторинг</button>
+        <button data-view="control" class="nav-item"><span>12</span>Control Center</button>
+        <button data-view="audit" class="nav-item"><span>13</span>Аудит</button>
+      </nav>
+      <div class="sidebar-footer">
+        <span id="adminIdentity">admin</span>
+        <button id="logoutButton" class="ghost">Выйти</button>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">CENTRAL OPERATIONS</p>
+          <h2 id="viewTitle">Обзор системы</h2>
+        </div>
+        <div class="topbar-actions">
+          <span id="systemClock" class="mono"></span>
+          <button id="refreshButton" class="secondary">Обновить</button>
+        </div>
+      </header>
+
+      <div id="content" class="content"></div>
+    </section>
+  </div>
+
+  <template id="loadingTemplate">
+    <div class="loading"><span></span><p>Загрузка данных…</p></div>
+  </template>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

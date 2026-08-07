@@ -1,0 +1,53 @@
+services:
+  admin:
+    build: .
+    container_name: potapoff-admin
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8080"
+    volumes:
+      - ./sources.json:/config/sources.json:ro
+      - ./logs.json:/config/logs.json:ro
+      - ../solana-launcher/data:/data/launcher:ro
+      - ../telegram-miniapp/backend-new/prisma:/data/miniapp:ro
+      - admin-state:/var/lib/potapoff-admin
+      - /var/log/potapoff:/logs/apps:ro
+      - admin-logs:/logs/docker:ro
+    networks:
+      - admin-internal
+      - potapoff-shared
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  log-collector:
+    image: fluent/fluent-bit:3.2
+    profiles: ["host-logs"]
+    restart: unless-stopped
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./deploy/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./deploy/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - admin-logs:/output
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+networks:
+  admin-internal:
+    internal: true
+  potapoff-shared:
+    external: true
+
+volumes:
+  admin-state:
+  admin-logs:

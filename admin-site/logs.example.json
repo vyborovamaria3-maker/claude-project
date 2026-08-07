@@ -1,0 +1,42 @@
+[
+  {
+    "id": "docker-all",
+    "label": "All Docker containers",
+    "path": "/logs/docker/containers.log"
+  },
+  {
+    "id": "frontend",
+    "label": "Solana Launcher frontend",
+    "path": "/logs/apps/solana-launcher/frontend.log"
+  },
+  {
+    "id": "backend",
+    "label": "POTAPoff backend",
+    "path": "/logs/apps/solana-launcher/backend.log"
+  },
+  {
+    "id": "subscription-api",
+    "label": "Subscription API",
+    "path": "/logs/apps/subscription/api.log"
+  },
+  {
+    "id": "subscription-bot",
+    "label": "Subscription bot",
+    "path": "/logs/apps/subscription/bot.log"
+  },
+  {
+    "id": "telegram",
+    "label": "Telegram collector",
+    "path": "/logs/apps/telegram/collector.log"
+  },
+  {
+    "id": "x",
+    "label": "X collector",
+    "path": "/logs/apps/x/collector.log"
+  },
+  {
+    "id": "worker",
+    "label": "Analytics workers",
+    "path": "/logs/apps/workers/worker.log"
+  }
+]
