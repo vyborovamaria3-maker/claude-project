@@ -53,7 +53,11 @@ export default function SidebarNav() {
   const pathname = usePathname();
 
   const activeTab: SiteNavMode = useMemo(
-    () => (pathname.startsWith("/trade") || pathname === "/x-analysis" ? "trade" : "launch"),
+    () => (
+      pathname.startsWith("/trade") || pathname === "/x-analysis" || pathname === "/telegram-intelligence"
+        ? "trade"
+        : "launch"
+    ),
     [pathname]
   );
 
