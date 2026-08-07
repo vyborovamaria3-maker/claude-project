@@ -1,13 +1,38 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, Copy, CreditCard, Loader2, ShieldCheck } from "lucide-react";
+import { motion } from "framer-motion";
+import {
+  ArrowRight,
+  Check,
+  Copy,
+  CreditCard,
+  KeyRound,
+  Loader2,
+  LockKeyhole,
+  ShieldCheck,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
+
+type TelegramUser = {
+  id?: number;
+  first_name?: string;
+  username?: string;
+};
 
 type MiniAppWebApp = {
   initData?: string;
+  initDataUnsafe?: { user?: TelegramUser };
   ready?: () => void;
   expand?: () => void;
+  setHeaderColor?: (color: string) => void;
+  setBackgroundColor?: (color: string) => void;
   openInvoice?: (url: string, callback?: (status: string) => void) => void;
+  HapticFeedback?: {
+    impactOccurred?: (style: "light" | "medium" | "heavy") => void;
+    notificationOccurred?: (type: "error" | "success" | "warning") => void;
+  };
 };
 
 type OrderState = {
@@ -15,6 +40,14 @@ type OrderState = {
   login: string;
   status: "pending" | "paid";
   password: string | null;
+};
+
+type CreateInvoiceResponse = {
+  error?: string;
+  payload?: string;
+  invoiceLink?: string;
+  devCheckout?: boolean;
+  amountUsd?: number;
 };
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
@@ -28,38 +61,65 @@ export default function MiniAppPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState<"login" | "password" | null>(null);
+  const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Preparing secure checkout…");
 
   const webApp =
     typeof window !== "undefined" ? (window.Telegram?.WebApp as MiniAppWebApp | undefined) : undefined;
   const initData = webApp?.initData || "";
   const isTelegram = Boolean(initData);
+  const canCreateInvoice = isTelegram || process.env.NODE_ENV !== "production";
+  const paid = order?.status === "paid" && Boolean(order.password);
+
   const loginError = useMemo(() => {
     if (!login) return "";
-    return LOGIN_RE.test(login) ? "" : "Use 4-32 chars: letters, digits, or underscore.";
+    return LOGIN_RE.test(login) ? "" : "Use 4-32 characters: letters, digits, or underscore.";
   }, [login]);
 
+  const displayName = telegramUser?.first_name || telegramUser?.username || "Trader";
+
   useEffect(() => {
-    webApp?.ready?.();
-    webApp?.expand?.();
+    if (!webApp) {
+      setStatusMessage("Browser preview. Open the Mini App from Telegram to pay.");
+      return;
+    }
+
+    webApp.ready?.();
+    webApp.expand?.();
+    webApp.setHeaderColor?.("#06100c");
+    webApp.setBackgroundColor?.("#06100c");
+    setTelegramUser(webApp.initDataUnsafe?.user || null);
+    setStatusMessage(
+      webApp.initData
+        ? "Telegram connected. Choose your site login to continue."
+        : "Browser preview. Open the Mini App from Telegram to pay."
+    );
   }, [webApp]);
 
   useEffect(() => {
     if (!payload || order?.status === "paid") return;
 
-    const id = window.setInterval(async () => {
-      const response = await fetch(`/api/miniapp/order?payload=${encodeURIComponent(payload)}`, {
-        cache: "no-store",
-      });
-      if (!response.ok) return;
-      const data = (await response.json()) as OrderState;
-      setOrder(data);
-      if (data.status === "paid") {
-        window.clearInterval(id);
-      }
+    const id = window.setInterval(() => {
+      void refreshOrder(payload);
     }, 2000);
 
     return () => window.clearInterval(id);
   }, [payload, order?.status]);
+
+  useEffect(() => {
+    if (order?.status !== "paid") return;
+    setStatusMessage("Payment confirmed. Your access credentials are ready.");
+    webApp?.HapticFeedback?.notificationOccurred?.("success");
+  }, [order?.status, webApp]);
+
+  async function refreshOrder(payloadValue: string) {
+    const response = await fetch(`/api/miniapp/order?payload=${encodeURIComponent(payloadValue)}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) return;
+    const data = (await response.json()) as OrderState;
+    setOrder(data);
+  }
 
   async function createInvoice() {
     setError("");
@@ -72,27 +132,50 @@ export default function MiniAppPage() {
       if (!LOGIN_RE.test(login)) {
         throw new Error("Enter a valid login first.");
       }
+      if (!canCreateInvoice) {
+        throw new Error("Open this Mini App from Telegram to create a payment.");
+      }
+
+      webApp?.HapticFeedback?.impactOccurred?.("light");
+      setStatusMessage("Creating a secure Telegram invoice…");
 
       const response = await fetch("/api/miniapp/create-invoice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ initData, login }),
       });
-      const data = await response.json();
+      const data = (await response.json()) as CreateInvoiceResponse;
 
       if (!response.ok) {
         throw new Error(data.error || "Could not create the Telegram invoice.");
+      }
+      if (!data.payload) {
+        throw new Error("The payment order was not created.");
       }
 
       setPayload(data.payload);
       setInvoiceLink(data.invoiceLink || "");
       setDevCheckout(Boolean(data.devCheckout));
+      setStatusMessage(data.invoiceLink ? "Invoice ready. Complete payment in Telegram." : "Test invoice ready.");
 
       if (data.invoiceLink) {
-        webApp?.openInvoice?.(data.invoiceLink);
+        webApp?.openInvoice?.(data.invoiceLink, (status) => {
+          if (status === "paid") {
+            setStatusMessage("Payment received. Activating your access…");
+            void refreshOrder(data.payload as string);
+          } else if (status === "cancelled") {
+            setStatusMessage("Payment cancelled. You can open the invoice again when ready.");
+          } else if (status === "failed") {
+            setStatusMessage("Telegram reported a payment failure. Please try again.");
+            webApp?.HapticFeedback?.notificationOccurred?.("error");
+          }
+        });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Payment error.");
+      const message = err instanceof Error ? err.message : "Payment error.";
+      setError(message);
+      setStatusMessage("Checkout needs attention.");
+      webApp?.HapticFeedback?.notificationOccurred?.("error");
     } finally {
       setLoading(false);
     }
@@ -112,8 +195,7 @@ export default function MiniAppPage() {
       if (!response.ok) {
         throw new Error(data.error || "Could not confirm the test payment.");
       }
-      const orderResponse = await fetch(`/api/miniapp/order?payload=${encodeURIComponent(payload)}`);
-      setOrder(await orderResponse.json());
+      await refreshOrder(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Confirmation error.");
     } finally {
@@ -122,103 +204,91 @@ export default function MiniAppPage() {
   }
 
   async function copy(value: string, key: "login" | "password") {
-    await navigator.clipboard.writeText(value);
-    setCopied(key);
-    window.setTimeout(() => setCopied(null), 1200);
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(key);
+      webApp?.HapticFeedback?.notificationOccurred?.("success");
+      window.setTimeout(() => setCopied(null), 1200);
+    } catch {
+      setError("Could not copy automatically. Press and hold the value to copy it.");
+    }
   }
 
-  const paid = order?.status === "paid" && order.password;
-
   return (
-    <main className="min-h-screen bg-[#07110d] text-white">
-      <section className="mx-auto flex min-h-screen w-full max-w-md flex-col px-5 py-6">
-        <div className="mb-5 flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.28em] text-emerald-300/70">Soft777</p>
-            <h1 className="mt-1 text-2xl font-black">Solana Launcher Pro</h1>
+    <main className="relative min-h-[100dvh] overflow-x-hidden bg-[#06100c] text-white">
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+        <div className="absolute -left-24 -top-20 h-72 w-72 rounded-full bg-emerald-400/10 blur-3xl" />
+        <div className="absolute -right-28 top-64 h-80 w-80 rounded-full bg-cyan-400/10 blur-3xl" />
+      </div>
+
+      <section className="relative mx-auto flex min-h-[100dvh] w-full max-w-lg flex-col gap-4 px-4 pb-8 pt-4 sm:px-5 sm:pt-5">
+        <header className="flex items-center justify-between gap-3 rounded-3xl border border-white/10 bg-white/[0.045] p-3 backdrop-blur-xl">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-300 to-cyan-400 text-[#06100c] shadow-[0_14px_40px_rgba(52,211,153,0.18)]">
+              <Sparkles className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-[10px] font-semibold uppercase tracking-[0.25em] text-white/45">Soft777 Mini App</p>
+              <h1 className="truncate text-lg font-bold tracking-tight">Solana Launcher Pro</h1>
+            </div>
           </div>
-          <div className="rounded-full border border-emerald-300/25 bg-emerald-300/10 p-3 text-emerald-300">
-            <ShieldCheck className="h-5 w-5" />
+          <div
+            className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+              isTelegram
+                ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-200"
+                : "border-amber-300/25 bg-amber-300/10 text-amber-100"
+            }`}
+          >
+            {isTelegram ? "Connected" : "Preview"}
           </div>
+        </header>
+
+        <motion.section
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="overflow-hidden rounded-[28px] border border-white/10 bg-gradient-to-br from-white/[0.075] to-white/[0.025] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.22)]"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300/65">Premium access</p>
+              <h2 className="mt-2 text-2xl font-black tracking-tight">Welcome, {displayName}</h2>
+              <p className="mt-2 max-w-sm text-sm leading-6 text-white/62">
+                Activate 30-day access from Telegram and receive your site login credentials after payment confirmation.
+              </p>
+            </div>
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-emerald-300/20 bg-emerald-300/10 text-emerald-200">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-3 gap-2">
+            <Metric label="Price" value="$1000" />
+            <Metric label="Access" value="30 days" />
+            <Metric label="Delivery" value="Telegram" />
+          </div>
+        </motion.section>
+
+        <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-5 text-white/72">
+          {statusMessage}
         </div>
 
-        <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
-          <div className="flex items-baseline justify-between">
-            <span className="text-sm text-white/60">Software subscription</span>
-            <span className="text-3xl font-black">$1000</span>
-          </div>
-          <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs text-white/55">
-            <div className="rounded-md bg-black/25 px-2 py-2">30 days</div>
-            <div className="rounded-md bg-black/25 px-2 py-2">Solana tools</div>
-            <div className="rounded-md bg-black/25 px-2 py-2">Access key</div>
-          </div>
-        </div>
-
-        {!paid ? (
-          <div className="mt-5 space-y-4">
-            <label className="block">
-              <span className="text-xs uppercase tracking-[0.2em] text-white/45">Login for site access</span>
-              <input
-                value={login}
-                onChange={(event) => setLogin(event.target.value)}
-                maxLength={32}
-                placeholder="for example rafael_pro"
-                className="mt-2 w-full rounded-lg border border-white/10 bg-black/35 px-4 py-3 text-base text-white outline-none transition focus:border-emerald-300/60"
-              />
-            </label>
-
-            {loginError && <p className="text-sm text-amber-300">{loginError}</p>}
-            {!isTelegram && (
-              <p className="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
-                Dev preview is open outside Telegram. Real Telegram initData and invoice UI work inside the Mini App.
-              </p>
-            )}
-            {error && (
-              <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                {error}
-              </p>
-            )}
-
-            <button
-              type="button"
-              onClick={createInvoice}
-              disabled={loading || Boolean(loginError) || !login}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 py-3 font-black text-[#06100c] transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-              Pay subscription
-            </button>
-
-            {invoiceLink && (
-              <a
-                href={invoiceLink}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded-lg border border-emerald-300/25 px-4 py-3 text-center text-sm font-semibold text-emerald-200"
-              >
-                Open Telegram invoice
-              </a>
-            )}
-
-            {devCheckout && (
-              <button
-                type="button"
-                onClick={completeDevPayment}
-                disabled={loading}
-                className="w-full rounded-lg border border-white/12 bg-white/8 px-4 py-3 text-sm font-semibold text-white"
-              >
-                Dev: confirm payment
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="mt-5 rounded-lg border border-emerald-300/25 bg-emerald-300/10 p-4">
-            <div className="mb-4 flex items-center gap-2 text-emerald-200">
-              <Check className="h-5 w-5" />
-              <h2 className="text-lg font-bold">Access activated</h2>
+        {paid && order ? (
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-[28px] border border-emerald-300/25 bg-emerald-300/[0.08] p-5"
+          >
+            <div className="flex items-center gap-3 text-emerald-100">
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-300/15">
+                <Check className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300/65">Activated</p>
+                <h2 className="text-lg font-bold">Your access is ready</h2>
+              </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="mt-5 space-y-3">
               <CredentialRow
                 label="Login"
                 value={order.login}
@@ -233,13 +303,145 @@ export default function MiniAppPage() {
               />
             </div>
 
-            <p className="mt-4 rounded-lg border border-white/10 bg-black/25 px-4 py-3 text-sm text-white/75">
-              Your access credentials are ready. Use them in the website login form outside Telegram.
-            </p>
-          </div>
+            <a
+              href="/login"
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-[#06100c] transition active:scale-[0.99]"
+            >
+              Open site login
+              <ArrowRight className="h-4 w-4" />
+            </a>
+          </motion.section>
+        ) : (
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl"
+          >
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/[0.06] text-white/80 ring-1 ring-white/10">
+                <UserRound className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">Step 1</p>
+                <h2 className="text-lg font-bold">Choose your site login</h2>
+                <p className="mt-1 text-sm leading-5 text-white/55">This login will be paired with the password generated after payment.</p>
+              </div>
+            </div>
+
+            <label className="mt-5 block">
+              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">Login</span>
+              <div className="mt-2 flex items-center gap-2 rounded-2xl border border-white/10 bg-black/25 px-3 focus-within:border-emerald-300/50">
+                <UserRound className="h-4 w-4 shrink-0 text-white/35" />
+                <input
+                  value={login}
+                  onChange={(event) => setLogin(event.target.value)}
+                  maxLength={32}
+                  autoComplete="username"
+                  inputMode="text"
+                  placeholder="for example dima_pro"
+                  className="min-w-0 flex-1 bg-transparent py-3.5 text-base text-white outline-none placeholder:text-white/25"
+                />
+              </div>
+            </label>
+
+            {loginError && <p className="mt-2 text-sm text-amber-200">{loginError}</p>}
+            {!isTelegram && process.env.NODE_ENV === "production" && (
+              <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2.5 text-sm leading-5 text-amber-100">
+                Payment is available only when this page is opened from the Telegram bot.
+              </p>
+            )}
+            {error && (
+              <p className="mt-3 rounded-2xl border border-red-300/20 bg-red-400/[0.08] px-3 py-2.5 text-sm leading-5 text-red-100">
+                {error}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={createInvoice}
+              disabled={loading || Boolean(loginError) || !login || !canCreateInvoice}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] shadow-[0_16px_48px_rgba(52,211,153,0.18)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+              {loading ? "Creating invoice…" : "Pay subscription"}
+            </button>
+
+            {invoiceLink && (
+              <a
+                href={invoiceLink}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/25 bg-emerald-300/[0.06] px-4 py-3 text-sm font-semibold text-emerald-100"
+              >
+                Open Telegram invoice
+                <ArrowRight className="h-4 w-4" />
+              </a>
+            )}
+
+            {devCheckout && process.env.NODE_ENV !== "production" && (
+              <button
+                type="button"
+                onClick={completeDevPayment}
+                disabled={loading}
+                className="mt-3 w-full rounded-2xl border border-white/12 bg-white/[0.05] px-4 py-3 text-sm font-semibold text-white"
+              >
+                Dev: confirm payment
+              </button>
+            )}
+          </motion.section>
         )}
+
+        <section className="rounded-[28px] border border-white/10 bg-black/15 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/40">How it works</p>
+          <div className="mt-4 grid gap-3">
+            <FlowStep icon={UserRound} number="01" title="Choose login" text="Use 4-32 letters, digits, or underscore." />
+            <FlowStep icon={CreditCard} number="02" title="Pay in Telegram" text="The invoice opens inside the Telegram payment flow." />
+            <FlowStep icon={KeyRound} number="03" title="Receive access" text="After confirmation, your password appears here and in the bot." />
+          </div>
+        </section>
+
+        <div className="flex items-center justify-center gap-2 pb-2 text-xs text-white/35">
+          <LockKeyhole className="h-3.5 w-3.5" />
+          Payment and access are processed server-side.
+        </div>
       </section>
     </main>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-2xl border border-white/10 bg-black/20 px-2 py-3 text-center">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/35">{label}</p>
+      <p className="mt-1 truncate text-sm font-bold text-white/90">{value}</p>
+    </div>
+  );
+}
+
+function FlowStep({
+  icon: Icon,
+  number,
+  title,
+  text,
+}: {
+  icon: typeof UserRound;
+  number: string;
+  title: string;
+  text: string;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3">
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/[0.055] ring-1 ring-white/10">
+        <Icon className="h-4 w-4 text-emerald-200" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold tracking-[0.18em] text-emerald-300/55">{number}</span>
+          <p className="text-sm font-semibold">{title}</p>
+        </div>
+        <p className="mt-1 text-xs leading-5 text-white/48">{text}</p>
+      </div>
+    </div>
   );
 }
 
@@ -255,14 +457,14 @@ function CredentialRow({
   onCopy: () => void;
 }) {
   return (
-    <div className="rounded-md border border-white/10 bg-black/30 p-3">
-      <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/40">{label}</div>
+    <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">{label}</div>
       <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 break-all text-sm text-white">{value}</code>
+        <code className="min-w-0 flex-1 select-all break-all text-sm text-white">{value}</code>
         <button
           type="button"
           onClick={onCopy}
-          className="rounded-md border border-white/10 p-2 text-white/70"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-white/70"
           aria-label={`Copy ${label}`}
         >
           {copied ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
