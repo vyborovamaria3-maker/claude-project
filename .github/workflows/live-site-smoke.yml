@@ -1,0 +1,46 @@
+name: Live Site Smoke Check
+
+on:
+  push:
+    branches:
+      - agent/live-site-smoke
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check production routes and cache headers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="https://potapoff.fun"
+
+          echo "=== DNS ==="
+          getent ahosts potapoff.fun || true
+
+          echo "=== BUILD INFO ==="
+          build_info="$(curl -fsS --retry 4 --retry-delay 2 "$base/api/build-info")"
+          echo "$build_info"
+
+          for path in / /trade/analysis /trade/analysis/social /x-analysis; do
+            echo "=== $path ==="
+            code="$(curl -sS --retry 4 --retry-delay 2 -o /tmp/page.html -w '%{http_code}' "$base$path")"
+            echo "HTTP=$code"
+            test "$code" = "200"
+            bytes="$(wc -c < /tmp/page.html | tr -d ' ')"
+            echo "BYTES=$bytes"
+            grep -Eo 'X \+ Telegram|Social Intelligence|On-chain|Анализ X|РђРЅР°Р»РёР· X' /tmp/page.html | head -20 || true
+            if grep -qE 'Рђ|РўСЂ|РњРѕ|вЂ|В·' /tmp/page.html; then
+              echo "MOJIBAKE_IN_SERVER_HTML=yes"
+            else
+              echo "MOJIBAKE_IN_SERVER_HTML=no"
+            fi
+          done
+
+          echo "=== SERVICE WORKER HEADERS ==="
+          curl -fsSI --retry 4 --retry-delay 2 "$base/sw.js" | tr -d '\r' | tee /tmp/sw.headers
+          grep -i '^cache-control:' /tmp/sw.headers || true
+
+          echo "LIVE_SMOKE_OK"
