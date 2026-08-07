@@ -77,7 +77,6 @@ jobs:
           echo "LIVE_SMOKE_OK"
 
   server:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: production
