@@ -6,6 +6,7 @@ import { resolveSupportedLocale, SOURCE_LOCALE } from "@/lib/i18n/locales";
 import { QueryClientProvider } from "@/lib/react-query";
 import { createAppQueryClient } from "@/lib/queryClient";
 import { I18nProvider } from "@/components/providers/I18nProvider";
+import EncodingRepair from "@/components/providers/EncodingRepair";
 
 export default function AppProviders({
   children,
@@ -21,25 +22,32 @@ export default function AppProviders({
     if (process.env.NODE_ENV !== "production") return;
     if (!("serviceWorker" in navigator)) return;
 
-    const register = () => {
-      navigator.serviceWorker.register("/sw.js").catch((error) => {
+    const register = async () => {
+      try {
+        const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+        await registration.update();
+      } catch (error) {
         console.warn("Service worker registration failed", error);
-      });
+      }
     };
 
     if (document.readyState === "complete") {
-      register();
+      void register();
       return;
     }
 
-    window.addEventListener("load", register, { once: true });
-    return () => window.removeEventListener("load", register);
+    const onLoad = () => void register();
+    window.addEventListener("load", onLoad, { once: true });
+    return () => window.removeEventListener("load", onLoad);
   }, []);
 
   return (
     <I18nProvider initialLocale={locale}>
       <HeroUIProvider>
-        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        <QueryClientProvider client={queryClient}>
+          <EncodingRepair />
+          {children}
+        </QueryClientProvider>
       </HeroUIProvider>
     </I18nProvider>
   );

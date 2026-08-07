@@ -20,13 +20,15 @@ ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
 ARG NEXT_PUBLIC_FRONTEND_URL=http://localhost:3000
 ARG NEXT_PUBLIC_BACKEND_URL=
 ARG NEXT_PUBLIC_TELEGRAM_BOT_URL=https://t.me/Soft777bot
+ARG NEXT_PUBLIC_BUILD_SHA=unknown
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
     NEXT_PUBLIC_FRONTEND_URL=$NEXT_PUBLIC_FRONTEND_URL \
     NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL \
-    NEXT_PUBLIC_TELEGRAM_BOT_URL=$NEXT_PUBLIC_TELEGRAM_BOT_URL
+    NEXT_PUBLIC_TELEGRAM_BOT_URL=$NEXT_PUBLIC_TELEGRAM_BOT_URL \
+    NEXT_PUBLIC_BUILD_SHA=$NEXT_PUBLIC_BUILD_SHA
 
 COPY . .
 RUN npm run build
@@ -35,8 +37,11 @@ FROM node:20-bookworm-slim AS runner
 
 WORKDIR /app
 
+ARG NEXT_PUBLIC_BUILD_SHA=unknown
+
 ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_BUILD_SHA=$NEXT_PUBLIC_BUILD_SHA
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
@@ -46,7 +51,6 @@ COPY --from=builder /app/scripts/configure-telegram.mjs ./scripts/configure-tele
 RUN mkdir -p /app/data
 
 EXPOSE 3000
-
 
 # Next standalone tracing can omit Playwright runtime metadata.
 # Copy both packages explicitly because server-side code imports Playwright.
