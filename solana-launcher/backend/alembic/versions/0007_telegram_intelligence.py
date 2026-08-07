@@ -6,7 +6,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0007_telegram_intelligence"
-down_revision = "0006_merge_0004_heads"
+down_revision = ("0006_merge_0004_heads", "0005_user_roles")
 branch_labels = None
 depends_on = None
 
