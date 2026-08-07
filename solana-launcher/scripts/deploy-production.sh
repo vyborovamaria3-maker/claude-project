@@ -57,6 +57,13 @@ sync_telegram_intelligence() {
   fi
 }
 
+restart_nginx() {
+  # nginx resolves Docker service names when its configuration is loaded.
+  # backend/frontend are recreated on each tagged deploy and may receive new
+  # container IPs, so a long-lived nginx process can keep proxying to stale IPs.
+  "${COMPOSE[@]}" restart nginx
+}
+
 rollback() {
   local exit_code=$?
 
@@ -80,6 +87,7 @@ rollback() {
   stop_telegram
 
   "${COMPOSE[@]}" up -d --remove-orphans
+  restart_nginx
   sync_telegram_intelligence
 
   "$HEALTH_SCRIPT"
@@ -108,6 +116,7 @@ export IMAGE_TAG="$NEW_TAG"
 stop_telegram
 
 "${COMPOSE[@]}" up -d --remove-orphans
+restart_nginx
 sync_telegram_intelligence
 
 "${COMPOSE[@]}" exec -T backend alembic upgrade heads
