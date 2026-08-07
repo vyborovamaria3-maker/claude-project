@@ -18,7 +18,7 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     env:
-      SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
     defaults:
       run:
         working-directory: solana-launcher/backend
@@ -74,6 +74,6 @@ jobs:
           IMAGE_TAG: test
           POSTGRES_PASSWORD: test-postgres
           RABBITMQ_PASSWORD: test-rabbit
-          SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef
+          SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
           TELEGRAM_BOT_TOKEN: test-token
         run: docker compose -f docker-compose.production.yml config >/dev/null
