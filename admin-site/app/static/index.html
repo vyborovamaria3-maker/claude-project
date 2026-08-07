@@ -6,6 +6,9 @@
   <meta name="color-scheme" content="dark" />
   <title>POTAPoff Control Center v1</title>
   <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/analysis-profiles-v2.css" />
+  <link rel="stylesheet" href="/static/analysis-profiles-v3.css" />
+  <link rel="stylesheet" href="/static/theme-picker.css" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -44,7 +47,8 @@
         <button data-view="queues" class="nav-item"><span>10</span>Очереди</button>
         <button data-view="monitoring" class="nav-item"><span>11</span>Мониторинг</button>
         <button data-view="control" class="nav-item"><span>12</span>Control Center</button>
-        <button data-view="audit" class="nav-item"><span>13</span>Аудит</button>
+        <button id="analysisProfilesNav" class="nav-item"><span>13</span>Параметры анализа</button>
+        <button data-view="audit" class="nav-item"><span>14</span>Аудит</button>
       </nav>
       <div class="sidebar-footer">
         <span id="adminIdentity">admin</span>
@@ -72,6 +76,8 @@
     <div class="loading"><span></span><p>Загрузка данных…</p></div>
   </template>
 
+  <script src="/static/theme-picker.js" defer></script>
   <script src="/static/app.js" defer></script>
+  <script src="/static/analysis-profiles-v3.js" defer></script>
 </body>
 </html>
