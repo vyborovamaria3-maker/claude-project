@@ -11,7 +11,7 @@ from typing import Any
 from .analysis_catalog import CATALOG_BY_ID, DOMAINS, VALUE_TYPES, catalog_for
 
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
-_SOURCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]{0,159}$")
+_SOURCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}(?:\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,7}$")
 _THRESHOLD_RE = re.compile(r"^\s*(<=|>=|==|!=|<|>)?\s*(.+?)\s*$")
 _SCALAR_RE = re.compile(r"^\$?\s*(-?\d+(?:\.\d+)?)\s*([kKmMbB])?\s*(%)?\s*$")
 _DURATION_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?\s*$", re.IGNORECASE)
