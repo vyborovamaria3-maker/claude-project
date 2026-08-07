@@ -63,6 +63,10 @@ jobs:
         working-directory: solana-launcher
     steps:
       - uses: actions/checkout@v4
+      - name: Create CI env files
+        run: |
+          : > backend.env
+          : > .env.server
       - name: Validate production Compose
         env:
           IMAGE_TAG: test
