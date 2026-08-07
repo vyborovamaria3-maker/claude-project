@@ -1,13 +1,13 @@
-import IORedis from 'ioredis';
+import { Redis } from 'ioredis';
 import { env } from '@/server/config/env.js';
 
-let client: IORedis | null = null;
+let client: Redis | null = null;
 let disabledUntil = 0;
 
-function getClient(): IORedis | null {
+function getClient(): Redis | null {
   if (Date.now() < disabledUntil) return null;
   if (!client) {
-    client = new IORedis(env.REDIS_URL, {
+    client = new Redis(env.REDIS_URL, {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
@@ -19,7 +19,7 @@ function getClient(): IORedis | null {
   return client;
 }
 
-async function ready(): Promise<IORedis | null> {
+async function ready(): Promise<Redis | null> {
   const redis = getClient();
   if (!redis) return null;
   try {
