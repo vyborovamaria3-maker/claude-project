@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import math
 import re
 import sqlite3
@@ -14,7 +13,9 @@ from .analysis_catalog import CATALOG_BY_ID, DOMAINS, VALUE_TYPES, catalog_for
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _SOURCE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]{0,159}$")
 _THRESHOLD_RE = re.compile(r"^\s*(<=|>=|==|!=|<|>)?\s*(.+?)\s*$")
-_NUMBER_RE = re.compile(r"^\$?\s*(-?\d+(?:\.\d+)?)\s*([kKmMbB])?\s*(%|ms|s|m|h|d)?\s*$")
+_SCALAR_RE = re.compile(r"^\$?\s*(-?\d+(?:\.\d+)?)\s*([kKmMbB])?\s*(%)?\s*$")
+_DURATION_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?\s*$", re.IGNORECASE)
+_VALID_SCALES = {"raw", "ratio", "percent100", "seconds", "milliseconds", "hours", "days", "millions"}
 
 
 def _utcnow() -> str:
@@ -22,20 +23,14 @@ def _utcnow() -> str:
 
 
 def _parse_number(text: str, *, value_type: str, scale: str) -> float:
-    match = _NUMBER_RE.fullmatch(text.strip())
-    if not match:
-        raise ValueError("Invalid threshold value")
-    number = float(match.group(1))
-    suffix = (match.group(2) or "").lower()
-    unit = (match.group(3) or "").lower()
-    number *= {"": 1.0, "k": 1_000.0, "m": 1_000_000.0, "b": 1_000_000_000.0}[suffix]
-    if value_type == "percent":
-        if unit != "%":
-            raise ValueError("Percent threshold must end with %")
-        return number / 100.0 if scale == "ratio" else number
+    raw = text.strip()
     if value_type == "duration":
-        factors = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0, "": 1.0}
-        seconds = number * factors[unit]
+        match = _DURATION_RE.fullmatch(raw)
+        if not match:
+            raise ValueError("Invalid duration threshold")
+        number = float(match.group(1))
+        unit = (match.group(2) or "s").lower()
+        seconds = number * {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}[unit]
         if scale == "milliseconds":
             return seconds * 1000.0
         if scale == "hours":
@@ -43,8 +38,20 @@ def _parse_number(text: str, *, value_type: str, scale: str) -> float:
         if scale == "days":
             return seconds / 86400.0
         return seconds
-    if unit:
-        raise ValueError("Unexpected unit in threshold")
+
+    match = _SCALAR_RE.fullmatch(raw)
+    if not match:
+        raise ValueError("Invalid threshold value")
+    number = float(match.group(1))
+    suffix = (match.group(2) or "").lower()
+    percent = bool(match.group(3))
+    number *= {"": 1.0, "k": 1_000.0, "m": 1_000_000.0, "b": 1_000_000_000.0}[suffix]
+    if value_type == "percent":
+        if not percent:
+            raise ValueError("Percent threshold must end with %")
+        return number / 100.0 if scale == "ratio" else number
+    if percent:
+        raise ValueError("Unexpected percent sign in threshold")
     if scale == "millions":
         return number / 1_000_000.0 if suffix else number
     return number
@@ -54,6 +61,8 @@ def validate_threshold(expression: str, *, value_type: str, scale: str = "raw") 
     expression = expression.strip()
     if not expression:
         return ""
+    if scale not in _VALID_SCALES:
+        raise ValueError("Invalid value scale")
     match = _THRESHOLD_RE.fullmatch(expression)
     if not match:
         raise ValueError("Invalid threshold")
@@ -92,7 +101,7 @@ def resolve_path(payload: Any, path: str) -> Any:
 
 def _coerce_actual(value: Any, value_type: str) -> Any:
     if isinstance(value, list):
-        numeric = [float(x) for x in value if isinstance(x, (int, float)) and not isinstance(x, bool)]
+        numeric = [float(item) for item in value if isinstance(item, (int, float)) and not isinstance(item, bool) and math.isfinite(float(item))]
         return sum(numeric) / len(numeric) if numeric else None
     if value_type == "boolean":
         return value if isinstance(value, bool) else None
@@ -100,7 +109,9 @@ def _coerce_actual(value: Any, value_type: str) -> Any:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
             return None
         return float(value)
-    return value
+    if value is None:
+        return None
+    return str(value) if value_type in {"text", "timestamp"} else value
 
 
 def evaluate_threshold(actual: Any, expression: str, *, value_type: str, scale: str = "raw") -> bool | None:
@@ -220,7 +231,7 @@ class AnalysisProfileStore:
             raise ValueError("Invalid data source path")
         if value_type not in VALUE_TYPES:
             raise ValueError("Invalid value type")
-        if scale not in {"raw", "ratio", "percent100", "seconds", "milliseconds", "hours", "days", "millions"}:
+        if scale not in _VALID_SCALES:
             raise ValueError("Invalid value scale")
         if not label.strip() or len(label) > 120 or len(description) > 500:
             raise ValueError("Invalid label or description")
@@ -240,6 +251,22 @@ class AnalysisProfileStore:
             )
             db.commit()
         return next(row for row in self.list(domain) if row["key"] == key)
+
+    def update_custom(self, domain: str, key: str, *, enabled: bool, threshold: str, username: str) -> dict[str, Any]:
+        row = next((item for item in self.list(domain) if item["key"] == key and item.get("custom")), None)
+        if row is None:
+            raise KeyError("Unknown custom analysis parameter")
+        threshold = validate_threshold(threshold, value_type=row["type"], scale=row["scale"])
+        now = _utcnow()
+        with contextlib.closing(self.connect()) as db:
+            cur = db.execute(
+                "UPDATE analysis_parameter_overrides SET enabled=?,threshold=?,updated_by=?,updated_at=? WHERE domain=? AND key=? AND custom=1 AND deleted=0",
+                (1 if enabled else 0, threshold, username, now, domain, key),
+            )
+            db.commit()
+            if cur.rowcount != 1:
+                raise KeyError("Unknown custom analysis parameter")
+        return next(item for item in self.list(domain) if item["key"] == key)
 
     def delete_custom(self, domain: str, key: str, username: str) -> bool:
         now = _utcnow()
@@ -270,43 +297,56 @@ class AnalysisProfileStore:
             raise ValueError("Backtest limit is 5000 records")
         params = [row for row in self.list(domain) if row["enabled"] and row["runtime_state"] != "legacy" and row["threshold"]]
         per_parameter = {row["key"]: {"passed": 0, "failed": 0, "missing": 0} for row in params}
-        rows_out = []
-        passed_all = 0
+        sample = []
+        complete_records = 0
+        strict_passed = 0
+        partial_passed = 0
         evaluated_records = 0
         for index, record in enumerate(records):
             results = []
-            record_failed = False
-            record_evaluated = False
+            passed = 0
+            failed = 0
+            missing = 0
             for row in params:
                 actual = resolve_path(record, row["source"])
                 result = evaluate_threshold(actual, row["threshold"], value_type=row["type"], scale=row["scale"])
                 bucket = per_parameter[row["key"]]
                 if result is None:
                     bucket["missing"] += 1
+                    missing += 1
                     status = "missing"
                 elif result:
                     bucket["passed"] += 1
-                    record_evaluated = True
+                    passed += 1
                     status = "pass"
                 else:
                     bucket["failed"] += 1
-                    record_evaluated = True
-                    record_failed = True
+                    failed += 1
                     status = "fail"
                 results.append({"key": row["key"], "actual": actual, "threshold": row["threshold"], "status": status})
-            if record_evaluated:
+            if passed + failed > 0:
                 evaluated_records += 1
-                if not record_failed:
-                    passed_all += 1
+            if failed == 0 and passed > 0:
+                partial_passed += 1
+            complete = bool(params) and missing == 0
+            strict_pass = complete and failed == 0
+            if complete:
+                complete_records += 1
+                if strict_pass:
+                    strict_passed += 1
             if index < 200:
-                rows_out.append({"index": index, "passed": record_evaluated and not record_failed, "results": results})
+                sample.append({"index": index, "complete": complete, "passed": strict_pass, "partial_pass": failed == 0 and passed > 0, "results": results})
         return {
             "domain": domain,
             "records": len(records),
             "evaluated_records": evaluated_records,
+            "complete_records": complete_records,
             "enabled_thresholds": len(params),
-            "passed_all": passed_all,
-            "pass_rate": round(passed_all / evaluated_records, 6) if evaluated_records else None,
+            "passed_all": strict_passed,
+            "pass_rate": round(strict_passed / complete_records, 6) if complete_records else None,
+            "coverage": round(complete_records / len(records), 6) if records else None,
+            "partial_passed": partial_passed,
+            "partial_pass_rate": round(partial_passed / evaluated_records, 6) if evaluated_records else None,
             "parameters": per_parameter,
-            "sample": rows_out,
+            "sample": sample,
         }
