@@ -93,6 +93,8 @@ for attempt in $(seq 1 45); do
 
   if curl -fsS http://127.0.0.1/ >/dev/null \
     && curl -fsS http://127.0.0.1/miniapp >/dev/null \
+    && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
+    && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
     && curl -fsS http://127.0.0.1/fastapi/health >/dev/null; then
     endpoints_ok=1
   fi
@@ -100,14 +102,14 @@ for attempt in $(seq 1 45); do
   bad_services="$(check_services)"
 
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK"
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok"
     exit 0
   fi
 
   sleep 4
 done
 
-echo "HEALTHCHECK_FAILED" >&2
+echo "HEALTHCHECK_FAILED image_tag=$IMAGE_TAG" >&2
 echo "Bad services: ${bad_services:-unknown}" >&2
 
 "${COMPOSE[@]}" ps || true
