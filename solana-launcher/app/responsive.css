@@ -127,6 +127,15 @@ pre {
   }
 }
 
+/* The dashboard hero previously forced a 280px score grid. On a 320px
+   viewport the available content width is smaller after page + hero padding. */
+@media (max-width: 360px) {
+  .min-w-\[280px\] {
+    min-width: 0 !important;
+    width: 100%;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
