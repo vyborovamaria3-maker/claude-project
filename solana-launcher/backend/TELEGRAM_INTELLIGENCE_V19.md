@@ -6,6 +6,8 @@ This module integrates the v18 Telegram crawler into the existing `solana-launch
 
 v18 used a standalone SQLite database. v19 keeps the Telethon/MTProto idea and Solana parser, but stores intelligence in the main SQLAlchemy database and adds realtime monitoring, sender identity, call outcomes, channel/caller scoring and a shared Telegram/X event timeline.
 
+The crawler also reads channel descriptions, follows explicit `t.me` links, detects Telegram-linked discussion chats and stores TG↔TG/X graph edges with chronological first/last-seen timestamps.
+
 ## Telegram user session
 
 Telegram Intelligence uses a **user MTProto session**, not `TELEGRAM_BOT_TOKEN`.
@@ -18,6 +20,10 @@ TG_API_HASH=...
 TG_SESSION_STRING=...
 TG_MONITOR_CHANNELS=channel_one,channel_two
 TG_AUTOSTART=false
+TG_HISTORY_LIMIT=300
+TG_GRAPH_DEPTH=1
+TG_ENTITY_LIMIT=100
+TG_EVALUATE_INTERVAL_SECONDS=300
 ```
 
 Generate a StringSession locally from `solana-launcher/backend`:
@@ -34,7 +40,6 @@ The generated `TG_SESSION_STRING` is equivalent to an active Telegram login. Kee
 
 Read endpoints:
 
-- `GET /api/v1/telegram/session/status`
 - `GET /api/v1/telegram/channels`
 - `GET /api/v1/telegram/calls`
 - `GET /api/v1/telegram/token/{mint}`
@@ -44,6 +49,8 @@ Read endpoints:
 
 Admin endpoints (normal POTAPoff superuser JWT required):
 
+- `GET /api/v1/telegram/session/status`
+- `GET /api/v1/telegram/monitor/status`
 - `POST /api/v1/telegram/scan`
 - `POST /api/v1/telegram/monitor/start`
 - `POST /api/v1/telegram/monitor/stop`
@@ -54,6 +61,7 @@ Admin endpoints (normal POTAPoff superuser JWT required):
 Internal endpoint:
 
 - `POST /api/v1/social/x/ingest` with `X-Backend-API-Key` equal to `BACKEND_API_KEY`.
+- `token_mint` is required and validated as a real 32-byte Base58 Solana address.
 
 ## Historical crawling
 
@@ -71,13 +79,39 @@ POST /api/v1/telegram/scan
 
 The crawler resolves public channels/groups visible to the authorized account, saves message history, extracts valid 32-byte Base58 Solana addresses, `$TICKER`s, explicit `t.me` / X links and grows the Telegram discovery graph up to the requested depth.
 
+Bare `@mentions` are stored as relations but are not automatically crawled. This prevents a busy chat from turning every mentioned user into a crawl job. Explicit `t.me` links and Telegram-linked discussion chats are eligible for graph expansion.
+
+Historical rescans are idempotent for stored messages and do not inflate relation counts. Channel scoring is recalculated once at the end of a history scan instead of after every CA message.
+
 ## Realtime
 
 `POST /api/v1/telegram/monitor/start` attaches a Telethon `NewMessage` handler to the requested channels/groups. New messages pass through the same parser/storage path as historical messages.
 
 The in-process monitor is intentionally optional. `TG_AUTOSTART=true` starts `TG_MONITOR_CHANNELS` during FastAPI lifespan. If the Telegram session is expired, the backend still starts; Telegram monitoring remains disabled until the session is fixed.
 
-For deployments with more than one backend worker, run a single dedicated collector process or move the monitor to a worker service. Multiple FastAPI workers would otherwise duplicate Telegram events before database deduplication.
+### Recommended production worker
+
+Production Compose contains a dedicated optional service named `telegram-intelligence`, using the same backend image but running:
+
+```bash
+python -m app.cli.telegram_monitor
+```
+
+Start it with the Compose profile:
+
+```bash
+docker compose -f docker-compose.production.yml --profile telegram-intelligence up -d telegram-intelligence
+```
+
+The worker:
+
+1. scans `TG_MONITOR_CHANNELS` and the configured discovery graph;
+2. loads recent history using `TG_HISTORY_LIMIT`;
+3. follows explicit Telegram links/discussion chats up to `TG_GRAPH_DEPTH` / `TG_ENTITY_LIMIT`;
+4. starts realtime monitoring for successfully discovered channels/groups;
+5. periodically reevaluates pending call outcomes every `TG_EVALUATE_INTERVAL_SECONDS`.
+
+When the dedicated worker is enabled, keep `TG_AUTOSTART=false` on the FastAPI service to avoid duplicate Telethon clients.
 
 ## Tables
 
@@ -111,11 +145,13 @@ The Next.js page is available at:
 /telegram-intelligence
 ```
 
-It can scan channel graphs, start/stop monitoring, evaluate calls, inspect channel/caller rankings, and query a combined Telegram/X token timeline. Mutating actions reuse the existing `potapoff.access_token` JWT stored by the current login flow.
+It is linked from the main trade sidebar and can scan channel graphs, start/stop in-process monitoring, evaluate calls, inspect channel/caller rankings, and query a combined Telegram/X token timeline. Mutating/control actions reuse the existing `potapoff.access_token` JWT stored by the current login flow.
 
 ## Security notes
 
 - Never commit `TG_SESSION_STRING`, `.session` files, Telegram codes or 2FA passwords.
 - `/session/login` accepts only an already-authorized session and never echoes it back.
+- Telegram session/monitor status endpoints require a superuser JWT.
 - Internal X ingestion is disabled unless `BACKEND_API_KEY` is configured.
 - Crawling is limited to entities the configured Telegram account can legitimately access.
+- The root `.gitignore` explicitly excludes Telethon `*.session` and `*.session-journal` files.
