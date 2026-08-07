@@ -135,8 +135,6 @@ export const siteDesign = {
       { href: "/database", labelKey: "nav.database", icon: "database", tag: "nav.database" },
       { href: "/database/wallets", labelKey: "nav.databaseWallets", icon: "wallet", tag: "nav.database_wallets" },
       { href: "/market-overview", labelKey: "nav.marketOverview", icon: "barChart", tag: "nav.market_overview" },
-      { href: "/x-analysis", labelKey: "nav.xAnalysis", icon: "twitter", tag: "nav.x_analysis" },
-      { href: "/telegram-intelligence", labelKey: "Telegram Intelligence", icon: "globe", tag: "nav.telegram_intelligence" },
       { href: "/settings", labelKey: "nav.settings", icon: "settings", tag: "nav.settings" },
     ] satisfies SiteNavItem[],
   },
