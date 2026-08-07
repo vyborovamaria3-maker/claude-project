@@ -36,7 +36,7 @@ export default function PeriodSelector({ active, onChange }: Props) {
   return (
     <div
       data-tag="dashboard.period_selector"
-      className="flex items-center gap-1 rounded-full border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.09),rgba(255,255,255,0.03))] p-1.5 shadow-[0_14px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-md"
+      className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto overscroll-x-contain rounded-full border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.09),rgba(255,255,255,0.03))] p-1.5 shadow-[0_14px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-md [-webkit-overflow-scrolling:touch]"
     >
       {PERIODS.map((p) => (
         <button
@@ -45,7 +45,7 @@ export default function PeriodSelector({ active, onChange }: Props) {
           data-tag={`dashboard.period.${p.id.toLowerCase()}`}
           onClick={() => onChange(p.id)}
           className={clsx(
-            "relative overflow-hidden rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all duration-300 ease-out transform-gpu will-change-transform active:scale-[0.98]",
+            "relative shrink-0 overflow-hidden rounded-full px-2.5 py-1.5 text-xs font-semibold transition-all duration-300 ease-out transform-gpu will-change-transform active:scale-[0.98] sm:px-3.5",
             active === p.id
               ? "bg-[linear-gradient(180deg,rgba(255,255,255,0.12),rgba(255,255,255,0.05))] text-white border border-neon-green/35 shadow-[0_0_0_1px_rgba(0,255,133,0.12),0_0_18px_rgba(0,255,133,0.18)] -translate-y-px"
               : "text-white/50 border border-transparent hover:-translate-y-0.5 hover:text-white hover:bg-white/[0.05] hover:border-white/10"
