@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,9 +24,11 @@ from app.services.social_intelligence import (
     token_timeline,
     top_callers,
 )
-from app.services.telegram_intelligence import TelegramMonitorManager, TelegramSessionError
+from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
+from app.services.telegram_runtime import TelegramMonitorManager
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 social_router = APIRouter()
 
@@ -35,7 +38,10 @@ def _manager(request: Request) -> TelegramMonitorManager:
 
 
 @router.get("/session/status")
-async def telegram_session_status(request: Request) -> dict:
+async def telegram_session_status(
+    request: Request,
+    current_user=Depends(get_current_superuser),
+) -> dict:
     return _manager(request).status()
 
 
@@ -93,7 +99,10 @@ async def stop_monitor(request: Request, current_user=Depends(get_current_superu
 
 
 @router.get("/monitor/status")
-async def monitor_status(request: Request) -> dict:
+async def monitor_status(
+    request: Request,
+    current_user=Depends(get_current_superuser),
+) -> dict:
     return _manager(request).status()
 
 
@@ -189,7 +198,11 @@ async def refresh_x(
         )
         return await ingest_x_events(session, payload)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"X refresh failed: {exc}") from exc
+        logger.exception("X intelligence refresh failed for mint %s", mint)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="X intelligence refresh failed",
+        ) from exc
 
 
 @social_router.post("/x/ingest")
@@ -204,4 +217,6 @@ async def x_ingest(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="BACKEND_API_KEY is not configured")
     if not x_backend_api_key or not hmac.compare_digest(x_backend_api_key, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid backend API key")
+    if not is_solana_address(payload.token_mint):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
     return await ingest_x_events(session, payload.model_dump())
