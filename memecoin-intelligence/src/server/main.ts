@@ -14,9 +14,11 @@ await app.register(cors, { origin: env.WEB_ORIGIN.split(',').map((v) => v.trim()
 await app.register(helmet, securityHeadersOptions({ strict: env.SECURITY_HEADERS_STRICT, nodeEnv: env.NODE_ENV }));
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
 app.setErrorHandler((error, _request, reply) => {
-  const status = (error as any).statusCode && (error as any).statusCode < 500 ? (error as any).statusCode : 500;
+  const candidateStatus = (error as { statusCode?: unknown }).statusCode;
+  const status = typeof candidateStatus === 'number' && candidateStatus < 500 ? candidateStatus : 500;
+  const message = error instanceof Error ? error.message : 'Request failed';
   app.log.error(error);
-  reply.status(status).send({ error: status === 500 ? 'Internal server error' : error.message });
+  reply.status(status).send({ error: status === 500 ? 'Internal server error' : message });
 });
 await registerRoutes(app);
 
