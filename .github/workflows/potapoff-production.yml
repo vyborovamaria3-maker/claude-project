@@ -68,6 +68,7 @@ jobs:
             NEXT_PUBLIC_FRONTEND_URL=https://potapoff.fun
             NEXT_PUBLIC_BACKEND_URL=https://potapoff.fun/fastapi
             NEXT_PUBLIC_TELEGRAM_BOT_URL=https://t.me/Soft777bot
+            NEXT_PUBLIC_BUILD_SHA=${{ github.sha }}
 
   deploy:
     needs: build
