@@ -1,5 +1,15 @@
 from app.models.analytics import CollectorJob, Token, TokenMetric, TokenStatus, Wallet, WalletLink, WalletTrade
 from app.models.auth_log import AuthLog
+from app.models.social_intelligence import (
+    SocialEvent,
+    SocialRelation,
+    TelegramCall,
+    TelegramChannel,
+    TelegramChannelScore,
+    TelegramMessage,
+    TelegramTokenMention,
+    TelegramUser,
+)
 from app.models.user import User
 
 __all__ = [
@@ -12,4 +22,12 @@ __all__ = [
     "WalletLink",
     "WalletTrade",
     "User",
+    "TelegramChannel",
+    "TelegramUser",
+    "TelegramMessage",
+    "TelegramTokenMention",
+    "TelegramCall",
+    "TelegramChannelScore",
+    "SocialEvent",
+    "SocialRelation",
 ]

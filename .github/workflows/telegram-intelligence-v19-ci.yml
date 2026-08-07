@@ -1,0 +1,79 @@
+name: Telegram Intelligence v19 CI
+
+on:
+  pull_request:
+    paths:
+      - "solana-launcher/backend/**"
+      - "solana-launcher/app/telegram-intelligence/**"
+      - "solana-launcher/components/SidebarNav.tsx"
+      - "solana-launcher/lib/siteDesign.ts"
+      - "solana-launcher/docker-compose.production.yml"
+      - ".github/workflows/telegram-intelligence-v19-ci.yml"
+  push:
+    branches:
+      - agent/telegram-intelligence-v19
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
+    defaults:
+      run:
+        working-directory: solana-launcher/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: solana-launcher/backend/pyproject.toml
+      - name: Install backend
+        run: python -m pip install -e ".[dev]"
+      - name: Compile Python
+        run: python -m compileall -q app tests
+      - name: Check Alembic heads
+        run: |
+          heads="$(alembic heads | grep -c '(head)')"
+          test "$heads" -eq 1
+          alembic heads
+      - name: Telegram intelligence tests
+        run: pytest -q tests/test_telegram_intelligence.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: solana-launcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+      - name: Install frontend
+        run: npm ci --legacy-peer-deps
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+  compose:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: solana-launcher
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create CI env files
+        run: |
+          : > backend.env
+          : > .env.server
+      - name: Validate production Compose
+        env:
+          IMAGE_TAG: test
+          POSTGRES_PASSWORD: test-postgres
+          RABBITMQ_PASSWORD: test-rabbit
+          SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
+          TELEGRAM_BOT_TOKEN: test-token
+        run: docker compose -f docker-compose.production.yml config >/dev/null

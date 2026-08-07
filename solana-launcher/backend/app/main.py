@@ -18,6 +18,7 @@ from app.metrics import instrument_app
 from app import models  # noqa: F401
 from app.schemas.token import Message
 from app.services.etl import get_or_create_jobs
+from app.services.telegram_runtime import TelegramMonitorManager
 from app.services.users import ensure_admin_user
 
 
@@ -32,7 +33,19 @@ async def lifespan(app: FastAPI):
     await ensure_admin_user(app.state.sessionmaker, settings)
     async with app.state.sessionmaker() as session:
         await get_or_create_jobs(session)
+
+    if settings.telegram_autostart and settings.telegram_monitor_channels.strip():
+        try:
+            service = await app.state.telegram_intelligence.get_service()
+            channels = [item.strip() for item in settings.telegram_monitor_channels.split(",") if item.strip()]
+            if channels:
+                await service.start_monitor(channels)
+        except Exception:
+            # Telegram intelligence is optional; a stale session must not prevent API startup.
+            pass
+
     yield
+    await app.state.telegram_intelligence.close()
     if app.state.redis is not None:
         await app.state.redis.aclose()
     await app.state.engine.dispose()
@@ -53,6 +66,7 @@ def create_app(
     app.state.sessionmaker = sessionmaker
     app.state.redis = None
     app.state.rate_limiter = RateLimiter(None)
+    app.state.telegram_intelligence = TelegramMonitorManager(settings, sessionmaker)
 
     app.add_middleware(SessionMiddleware, secret_key=settings.admin_session_secret)
     app.add_middleware(
