@@ -1,7 +1,8 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { X } from "lucide-react";
 import SidebarTop from "@/components/SidebarTop";
 import MasterWalletBar from "@/components/MasterWalletBar";
 import SidebarNav from "@/components/SidebarNav";
@@ -16,6 +17,22 @@ const PUBLIC_ROUTES = new Set(siteDesign.publicRoutes);
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublic = useMemo(() => PUBLIC_ROUTES.has(pathname), [pathname]);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileNavOpen]);
 
   if (isPublic) {
     return (
@@ -28,20 +45,50 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <div className={siteDesign.shell.sidebarClassName} style={{ width: "16rem" }}>
+      <aside
+        className={`${siteDesign.shell.sidebarClassName} hidden lg:flex`}
+        style={{ width: "16rem" }}
+        aria-label="Desktop navigation"
+      >
         <SidebarTop />
         <MasterWalletBar />
         <SidebarNav />
-      </div>
-      <div
-        className={siteDesign.shell.contentClassName}
-        style={{ marginLeft: "16rem", width: "calc(100vw - 16rem)" }}
-      >
+      </aside>
+
+      {mobileNavOpen ? (
+        <div className="fixed inset-0 z-[90] lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            aria-label="Close navigation"
+            onClick={() => setMobileNavOpen(false)}
+          />
+
+          <div className="absolute inset-y-0 left-0 flex w-[min(20rem,88vw)] max-w-full flex-col overflow-y-auto border-r border-bg-border bg-bg shadow-2xl">
+            <div className="relative shrink-0">
+              <SidebarTop />
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(false)}
+                className="absolute right-3 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-bg-border bg-bg-card/90 text-content-muted transition hover:border-primary-border hover:text-content"
+                aria-label="Close navigation"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <MasterWalletBar />
+            <SidebarNav />
+          </div>
+        </div>
+      ) : null}
+
+      <div className={`${siteDesign.shell.contentClassName} w-full lg:ml-64 lg:w-[calc(100vw-16rem)]`}>
         <div className={siteDesign.shell.appBackgroundClassName} />
-        <Header />
+        <Header onMenuToggle={() => setMobileNavOpen(true)} />
         <TrendingBar />
         <main className={siteDesign.shell.mainClassName}>{children}</main>
       </div>
+
       <DesktopOnlyOverlays />
       <ThemePickerToggle />
     </>
