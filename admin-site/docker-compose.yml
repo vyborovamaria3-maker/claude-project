@@ -4,8 +4,8 @@ services:
     container_name: potapoff-admin
     restart: unless-stopped
     env_file: .env
-    expose:
-      - "8080"
+    ports:
+      - "127.0.0.1:18080:8080"
     volumes:
       - ./sources.json:/config/sources.json:ro
       - ./logs.json:/config/logs.json:ro
@@ -24,6 +24,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   log-collector:
     image: fluent/fluent-bit:3.2
