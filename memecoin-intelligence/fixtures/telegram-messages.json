@@ -1,0 +1,80 @@
+[
+  {
+    "id": "tg-1001",
+    "channelId": "channel-alpha",
+    "channelUsername": "alpha_calls",
+    "channelTitle": "Alpha Calls",
+    "senderId": "alpha-admin",
+    "text": "New Solana meme launch. $TEST contract 3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump. Early community: https://t.me/test_portal",
+    "sentAt": "2026-08-01T08:00:00Z",
+    "views": 12000,
+    "forwards": 120,
+    "reactions": 340,
+    "links": ["https://t.me/test_portal"]
+  },
+  {
+    "id": "tg-1002",
+    "channelId": "channel-beta",
+    "channelUsername": "sol_meme_radar",
+    "channelTitle": "Sol Meme Radar",
+    "senderId": "beta-admin",
+    "text": "New Solana meme launch. $TEST contract 3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump. Early community: https://t.me/test_portal",
+    "sentAt": "2026-08-01T08:01:20Z",
+    "views": 7200,
+    "forwards": 88,
+    "reactions": 190,
+    "links": ["https://t.me/test_portal"]
+  },
+  {
+    "id": "tg-1003",
+    "channelId": "channel-gamma",
+    "channelUsername": "pump_watchers",
+    "channelTitle": "Pump Watchers",
+    "senderId": "gamma-admin",
+    "text": "$TEST looks bullish. CA 3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump. Join https://t.me/test_portal",
+    "sentAt": "2026-08-01T08:02:10Z",
+    "views": 4100,
+    "forwards": 55,
+    "reactions": 110,
+    "links": ["https://t.me/test_portal"]
+  },
+  {
+    "id": "tg-1004",
+    "channelId": "channel-alpha",
+    "channelUsername": "alpha_calls",
+    "channelTitle": "Alpha Calls",
+    "senderId": "alpha-admin",
+    "text": "Volume is increasing, but this is still very early and risky.",
+    "sentAt": "2026-08-01T08:08:00Z",
+    "views": 13200,
+    "forwards": 44,
+    "reactions": 280,
+    "links": []
+  },
+  {
+    "id": "tg-1005",
+    "channelId": "channel-delta",
+    "channelUsername": "sol_safety",
+    "channelTitle": "Sol Safety",
+    "senderId": "delta-researcher",
+    "text": "Warning: promotional volume alone does not prove demand. Verify liquidity and contract risks before buying $TEST.",
+    "sentAt": "2026-08-01T08:12:00Z",
+    "views": 5600,
+    "forwards": 22,
+    "reactions": 170,
+    "links": []
+  },
+  {
+    "id": "tg-1006",
+    "channelId": "channel-beta",
+    "channelUsername": "sol_meme_radar",
+    "channelTitle": "Sol Meme Radar",
+    "senderId": "beta-admin",
+    "text": "Community update for $TEST: https://t.me/test_portal",
+    "sentAt": "2026-08-01T08:15:00Z",
+    "views": 8300,
+    "forwards": 31,
+    "reactions": 150,
+    "links": ["https://t.me/test_portal"]
+  }
+]

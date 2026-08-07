@@ -1,0 +1,26 @@
+[
+  {
+    "id": "fixture-1",
+    "url": "https://x.com/alpha/status/1",
+    "text": "Early look at 3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump $TEST community https://x.com/i/communities/123456",
+    "createdAt": "2026-07-30T10:00:00Z",
+    "likes": 40, "retweets": 12, "replies": 4, "quotes": 2, "views": 5000,
+    "author": { "handle": "alpha", "name": "Alpha", "followers": 15000, "following": 200, "posts": 4100, "isVerified": true, "joinedAt": "2020-01-10T00:00:00Z" }
+  },
+  {
+    "id": "fixture-2",
+    "url": "https://x.com/radar/status/2",
+    "text": "$TEST early gem 3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump",
+    "createdAt": "2026-07-30T10:03:00Z",
+    "likes": 25, "retweets": 8, "replies": 3, "quotes": 1, "views": 2800,
+    "author": { "handle": "radar", "name": "Meme Radar", "followers": 8200, "following": 340, "posts": 9100, "isVerified": false, "joinedAt": "2022-04-01T00:00:00Z" }
+  },
+  {
+    "id": "fixture-3",
+    "url": "https://x.com/pumpdesk/status/3",
+    "text": "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump looks active. $TEST",
+    "createdAt": "2026-07-30T10:05:00Z",
+    "likes": 8, "retweets": 3, "replies": 1, "quotes": 0, "views": 900,
+    "author": { "handle": "pumpdesk", "name": "Pump Desk", "followers": 1200, "following": 1300, "posts": 21000, "isVerified": false, "joinedAt": "2026-07-01T00:00:00Z" }
+  }
+]

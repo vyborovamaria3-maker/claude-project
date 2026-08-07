@@ -1,0 +1,47 @@
+{
+  "version": "3.2.0",
+  "file": "/mnt/data/memecoin-intelligence-v3.2.0-ultra/fixtures/generated/posts-100000.ndjson",
+  "dataset": {
+    "rows": 100000,
+    "sampleRows": 5000,
+    "coordinatedTruth": 18050,
+    "contracts": 100000,
+    "links": 12040,
+    "words": 532089
+  },
+  "throughput": {
+    "featureRowsPerSecond": 61444,
+    "networkRowsPerSecond": 2085
+  },
+  "timingsMs": {
+    "featureExtraction": 1627.50317,
+    "network": 2397.8098410000002
+  },
+  "network": {
+    "nodes": 3959,
+    "edges": 190983,
+    "clusters": 292,
+    "candidatePairs": 241844,
+    "possiblePairs": 7834861,
+    "pruningPercent": 96.91,
+    "coordinationScore": 36
+  },
+  "memory": {
+    "rssBytes": 284999680,
+    "heapUsedBytes": 178189480,
+    "externalBytes": 1798103
+  },
+  "profile": {
+    "stream-and-features": {
+      "durationMs": 1627.50317,
+      "heapDeltaBytes": 15769416,
+      "rssDeltaBytes": 43888640
+    },
+    "network": {
+      "durationMs": 2397.8098410000002,
+      "heapDeltaBytes": 157718080,
+      "rssDeltaBytes": 193298432
+    }
+  },
+  "generatedAt": "2026-08-01T07:15:03.526Z"
+}
