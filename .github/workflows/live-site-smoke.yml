@@ -9,41 +9,69 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check production routes and cache headers
+      - name: Inspect latest production workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
+          api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY"
+          runs="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/workflows/potapoff-production.yml/runs?branch=main&per_page=5")"
+          echo "$runs" | jq -r '.workflow_runs[] | "RUN id=\(.id) status=\(.status) conclusion=\(.conclusion) event=\(.event) head_sha=\(.head_sha) created=\(.created_at) updated=\(.updated_at)"'
+          latest_id="$(echo "$runs" | jq -r '.workflow_runs[0].id // empty')"
+          if [[ -n "$latest_id" ]]; then
+            echo "=== LATEST PRODUCTION JOBS ==="
+            curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$api/actions/runs/$latest_id/jobs?per_page=100" \
+              | jq -r '.jobs[] | "JOB \(.name) status=\(.status) conclusion=\(.conclusion)" , (.steps[]? | "  STEP \(.number) \(.name) status=\(.status) conclusion=\(.conclusion)")'
+          fi
+
+      - name: Check production routes and cache headers
+        shell: bash
+        run: |
+          set -u
           base="https://potapoff.fun"
+          failed=0
 
           echo "=== DNS ==="
           getent ahosts potapoff.fun || true
 
           echo "=== BUILD INFO ==="
-          build_info="$(curl -fsS --retry 4 --retry-delay 2 "$base/api/build-info")"
-          echo "$build_info"
+          build_code="$(curl -sS --retry 4 --retry-delay 2 -o /tmp/build.json -w '%{http_code}' "$base/api/build-info" || true)"
+          echo "HTTP=$build_code"
+          cat /tmp/build.json 2>/dev/null || true
+          echo
+          [[ "$build_code" == "200" ]] || failed=1
 
           for path in / /trade/analysis /trade/analysis/social /x-analysis; do
             echo "=== $path ==="
-            code="$(curl -sS --retry 4 --retry-delay 2 -o /tmp/page.html -w '%{http_code}' "$base$path")"
+            code="$(curl -sS --retry 4 --retry-delay 2 -o /tmp/page.html -w '%{http_code}' "$base$path" || true)"
             echo "HTTP=$code"
-            test "$code" = "200"
-            bytes="$(wc -c < /tmp/page.html | tr -d ' ')"
+            bytes="$(wc -c < /tmp/page.html 2>/dev/null | tr -d ' ' || echo 0)"
             echo "BYTES=$bytes"
-            grep -Eo 'X \+ Telegram|Social Intelligence|On-chain|Анализ X|РђРЅР°Р»РёР· X' /tmp/page.html | head -20 || true
-            if grep -qE 'Рђ|РўСЂ|РњРѕ|вЂ|В·' /tmp/page.html; then
+            grep -Eo 'X \+ Telegram|Social Intelligence|On-chain|Анализ X|РђРЅР°Р»РёР· X' /tmp/page.html 2>/dev/null | head -20 || true
+            if grep -qE 'Рђ|РўСЂ|РњРѕ|вЂ|В·' /tmp/page.html 2>/dev/null; then
               echo "MOJIBAKE_IN_SERVER_HTML=yes"
             else
               echo "MOJIBAKE_IN_SERVER_HTML=no"
             fi
+            [[ "$code" == "200" ]] || failed=1
           done
 
           echo "=== SERVICE WORKER HEADERS ==="
-          curl -fsSI --retry 4 --retry-delay 2 "$base/sw.js" | tr -d '\r' | tee /tmp/sw.headers
+          curl -sSI --retry 4 --retry-delay 2 "$base/sw.js" | tr -d '\r' | tee /tmp/sw.headers || failed=1
           grep -i '^cache-control:' /tmp/sw.headers || true
 
+          if [[ "$failed" -ne 0 ]]; then
+            echo "LIVE_SMOKE_FAILED"
+            exit 1
+          fi
           echo "LIVE_SMOKE_OK"
