@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/live-site-smoke
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
