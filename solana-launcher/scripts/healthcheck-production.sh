@@ -90,19 +90,21 @@ check_services() {
 
 for attempt in $(seq 1 45); do
   endpoints_ok=0
+  build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
 
   if curl -fsS http://127.0.0.1/ >/dev/null \
     && curl -fsS http://127.0.0.1/miniapp >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
-    && curl -fsS http://127.0.0.1/fastapi/health >/dev/null; then
+    && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
+    && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
     endpoints_ok=1
   fi
 
   bad_services="$(check_services)"
 
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok"
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok frontend_build=verified"
     exit 0
   fi
 
@@ -111,6 +113,7 @@ done
 
 echo "HEALTHCHECK_FAILED image_tag=$IMAGE_TAG" >&2
 echo "Bad services: ${bad_services:-unknown}" >&2
+echo "Build info: ${build_info:-unavailable}" >&2
 
 "${COMPOSE[@]}" ps || true
 
