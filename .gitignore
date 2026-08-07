@@ -9,6 +9,8 @@
 **/storage-state.json
 **/*.storage-state.json
 **/data/x-auth/
+**/*.session
+**/*.session-journal
 
 # Build outputs and dependencies
 **/node_modules/
