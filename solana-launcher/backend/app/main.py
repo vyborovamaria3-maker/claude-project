@@ -18,7 +18,7 @@ from app.metrics import instrument_app
 from app import models  # noqa: F401
 from app.schemas.token import Message
 from app.services.etl import get_or_create_jobs
-from app.services.telegram_intelligence import TelegramMonitorManager
+from app.services.telegram_runtime import TelegramMonitorManager
 from app.services.users import ensure_admin_user
 
 
