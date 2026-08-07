@@ -61,81 +61,85 @@ async function run() {
   await fs.mkdir(outputDir, { recursive: true });
 
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    ...devices["iPhone 13"],
-    locale: "ru-RU",
-  });
-  const page = await context.newPage();
-  const pageErrors = [];
 
-  page.on("pageerror", (error) => {
-    const message = error?.stack || error?.message || String(error);
-    pageErrors.push(message);
-    console.error(`[pageerror] ${message}`);
-  });
+  try {
+    const context = await browser.newContext({
+      ...devices["iPhone 13"],
+      locale: "ru-RU",
+    });
+    const page = await context.newPage();
+    const pageErrors = [];
 
-  for (const route of routes) {
-    console.log(`mobile smoke: ${route}`);
-    await openRoute(page, route, pageErrors);
+    page.on("pageerror", (error) => {
+      const message = error?.stack || error?.message || String(error);
+      pageErrors.push(message);
+      console.error(`[pageerror] ${message}`);
+    });
+
+    for (const route of routes) {
+      console.log(`mobile smoke: ${route}`);
+      await openRoute(page, route, pageErrors);
+    }
+
+    pageErrors.length = 0;
+    const homeResponse = await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    assert.ok(homeResponse && homeResponse.status() < 400, `/: returned HTTP ${homeResponse?.status() ?? "no response"}`);
+    await page.waitForTimeout(500);
+
+    const menuButton = page.getByRole("button", { name: "Open navigation" });
+    await menuButton.waitFor({ state: "visible", timeout: 10_000 });
+    const menuBox = await menuButton.boundingBox();
+    assert.ok(menuBox && menuBox.width >= 40 && menuBox.height >= 40, "mobile menu touch target is too small");
+    await menuButton.click();
+
+    const dialog = page.getByRole("dialog", { name: "Navigation" });
+    await dialog.waitFor({ state: "visible", timeout: 10_000 });
+
+    const tradeDashboardLink = dialog.locator('a[href="/trade-dashboard"]').first();
+    await tradeDashboardLink.click();
+    await page.waitForURL(/\/trade-dashboard/, { timeout: 15_000 });
+    await assertNoHorizontalOverflow(page, "/trade-dashboard after mobile nav");
+    assert.equal(pageErrors.length, 0, `mobile navigation produced browser errors:\n${pageErrors.join("\n")}`);
+
+    pageErrors.length = 0;
+    const launchResponse = await page.goto(`${baseURL}/launch-dashboard`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    assert.ok(launchResponse && launchResponse.status() < 400, `/launch-dashboard: returned HTTP ${launchResponse?.status() ?? "no response"}`);
+    await page.waitForTimeout(500);
+    const periodSelector = page.locator('[data-tag="dashboard.period_selector"]').first();
+    await periodSelector.waitFor({ state: "visible", timeout: 10_000 });
+
+    const periodMetrics = await periodSelector.evaluate((node) => ({
+      clientWidth: node.clientWidth,
+      scrollWidth: node.scrollWidth,
+      overflowX: getComputedStyle(node).overflowX,
+    }));
+
+    assert.ok(
+      periodMetrics.scrollWidth <= periodMetrics.clientWidth + 2 || ["auto", "scroll"].includes(periodMetrics.overflowX),
+      `period selector clips content without horizontal scrolling: ${JSON.stringify(periodMetrics)}`
+    );
+    assert.equal(pageErrors.length, 0, `/launch-dashboard produced browser errors:\n${pageErrors.join("\n")}`);
+
+    pageErrors.length = 0;
+    const loginResponse = await page.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    assert.ok(loginResponse && loginResponse.status() < 400, `/login: returned HTTP ${loginResponse?.status() ?? "no response"}`);
+    const inputs = page.locator("input");
+    assert.ok((await inputs.count()) >= 2, "login page should expose login and password fields");
+    await inputs.nth(0).fill("mobile_user");
+    await inputs.nth(1).fill("12345678901234567890123456789012");
+    await assertNoHorizontalOverflow(page, "/login after filling form");
+
+    const viewportWidth = await page.evaluate(() => document.documentElement.clientWidth);
+    for (let index = 0; index < Math.min(2, await inputs.count()); index += 1) {
+      const box = await inputs.nth(index).boundingBox();
+      assert.ok(box && box.width <= viewportWidth + 1, `login input ${index} exceeds viewport`);
+    }
+    assert.equal(pageErrors.length, 0, `/login produced browser errors:\n${pageErrors.join("\n")}`);
+
+    console.log("mobile regression smoke passed");
+  } finally {
+    await browser.close();
   }
-
-  pageErrors.length = 0;
-  const homeResponse = await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  assert.ok(homeResponse && homeResponse.status() < 400, `/: returned HTTP ${homeResponse?.status() ?? "no response"}`);
-  await page.waitForTimeout(500);
-
-  const menuButton = page.getByRole("button", { name: "Open navigation" });
-  await menuButton.waitFor({ state: "visible", timeout: 10_000 });
-  const menuBox = await menuButton.boundingBox();
-  assert.ok(menuBox && menuBox.width >= 40 && menuBox.height >= 40, "mobile menu touch target is too small");
-  await menuButton.click();
-
-  const dialog = page.getByRole("dialog", { name: "Navigation" });
-  await dialog.waitFor({ state: "visible", timeout: 10_000 });
-
-  const tradeDashboardLink = dialog.locator('a[href="/trade-dashboard"]').first();
-  await tradeDashboardLink.click();
-  await page.waitForURL(/\/trade-dashboard/, { timeout: 15_000 });
-  await assertNoHorizontalOverflow(page, "/trade-dashboard after mobile nav");
-  assert.equal(pageErrors.length, 0, `mobile navigation produced browser errors:\n${pageErrors.join("\n")}`);
-
-  pageErrors.length = 0;
-  const launchResponse = await page.goto(`${baseURL}/launch-dashboard`, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  assert.ok(launchResponse && launchResponse.status() < 400, `/launch-dashboard: returned HTTP ${launchResponse?.status() ?? "no response"}`);
-  await page.waitForTimeout(500);
-  const periodSelector = page.locator('[data-tag="dashboard.period_selector"]').first();
-  await periodSelector.waitFor({ state: "visible", timeout: 10_000 });
-
-  const periodMetrics = await periodSelector.evaluate((node) => ({
-    clientWidth: node.clientWidth,
-    scrollWidth: node.scrollWidth,
-    overflowX: getComputedStyle(node).overflowX,
-  }));
-
-  assert.ok(
-    periodMetrics.scrollWidth <= periodMetrics.clientWidth + 2 || ["auto", "scroll"].includes(periodMetrics.overflowX),
-    `period selector clips content without horizontal scrolling: ${JSON.stringify(periodMetrics)}`
-  );
-  assert.equal(pageErrors.length, 0, `/launch-dashboard produced browser errors:\n${pageErrors.join("\n")}`);
-
-  pageErrors.length = 0;
-  const loginResponse = await page.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  assert.ok(loginResponse && loginResponse.status() < 400, `/login: returned HTTP ${loginResponse?.status() ?? "no response"}`);
-  const inputs = page.locator("input");
-  assert.ok((await inputs.count()) >= 2, "login page should expose login and password fields");
-  await inputs.nth(0).fill("mobile_user");
-  await inputs.nth(1).fill("12345678901234567890123456789012");
-  await assertNoHorizontalOverflow(page, "/login after filling form");
-
-  const viewportWidth = await page.evaluate(() => document.documentElement.clientWidth);
-  for (let index = 0; index < Math.min(2, await inputs.count()); index += 1) {
-    const box = await inputs.nth(index).boundingBox();
-    assert.ok(box && box.width <= viewportWidth + 1, `login input ${index} exceeds viewport`);
-  }
-  assert.equal(pageErrors.length, 0, `/login produced browser errors:\n${pageErrors.join("\n")}`);
-
-  await browser.close();
-  console.log("mobile regression smoke passed");
 }
 
 run().catch((error) => {
