@@ -1,0 +1,35 @@
+name: Social Analysis UI CI
+
+on:
+  pull_request:
+    paths:
+      - "solana-launcher/app/trade/analysis/**"
+      - "solana-launcher/components/trade/SocialIntelligencePanel.tsx"
+      - ".github/workflows/social-analysis-ui-ci.yml"
+  push:
+    branches:
+      - agent/social-analysis-integration
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: solana-launcher
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_BACKEND_URL: "/fastapi"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Next production build
+        run: npm run build
