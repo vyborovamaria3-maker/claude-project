@@ -52,12 +52,13 @@ def build_analysis_router() -> APIRouter:
 
     @router.get("/api/analysis-profiles")
     def analysis_profiles(
+        request: Request,
         domain: str | None = Query(None),
         admin=Depends(require_admin),
     ) -> dict[str, Any]:
         if domain is not None:
             _domain_or_404(domain)
-        rows = router_store(router).list(domain)
+        rows = request.app.state.analysis_profiles.list(domain)
         counts = {
             name: {
                 "total": sum(1 for row in rows if row["domain"] == name),
@@ -83,8 +84,8 @@ def build_analysis_router() -> APIRouter:
             row = request.app.state.analysis_profiles.update_builtin(
                 domain, key, enabled=body.enabled, threshold=body.threshold, username=admin["sub"]
             )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown analysis parameter") from None
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         _audit(request, admin, "analysis_parameter_update", f"{domain}.{key}", {"enabled": body.enabled, "threshold": row["threshold"]})
@@ -145,13 +146,3 @@ def build_analysis_router() -> APIRouter:
         return result
 
     return router
-
-
-def router_store(router: APIRouter):
-    # Kept only so route declaration remains easy to unit-test without global state.
-    # At runtime GET routes use the current app store via dependency injection in middleware;
-    # the attribute is assigned by create_app after router creation.
-    store = getattr(router, "analysis_store", None)
-    if store is None:
-        raise RuntimeError("Analysis router store not initialized")
-    return store
