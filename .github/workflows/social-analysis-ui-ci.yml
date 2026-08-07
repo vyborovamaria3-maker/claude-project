@@ -4,11 +4,17 @@ on:
   pull_request:
     paths:
       - "solana-launcher/app/trade/analysis/**"
+      - "solana-launcher/app/x-analysis/**"
       - "solana-launcher/components/trade/SocialIntelligencePanel.tsx"
+      - "solana-launcher/components/providers/AppProviders.tsx"
+      - "solana-launcher/components/providers/EncodingRepair.tsx"
+      - "solana-launcher/public/sw.js"
+      - "solana-launcher/scripts/healthcheck-production.sh"
       - ".github/workflows/social-analysis-ui-ci.yml"
   push:
     branches:
       - agent/social-analysis-integration
+      - agent/fix-social-deploy-cache-encoding
   workflow_dispatch:
 
 jobs:
@@ -31,5 +37,9 @@ jobs:
         run: npm ci --legacy-peer-deps
       - name: TypeScript check
         run: npx tsc --noEmit
+      - name: Service worker syntax check
+        run: node --check public/sw.js
+      - name: Production healthcheck syntax
+        run: bash -n scripts/healthcheck-production.sh
       - name: Next production build
         run: npm run build
