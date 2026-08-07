@@ -1,0 +1,170 @@
+name: Admin Control Center CI & Security
+
+on:
+  pull_request:
+    paths:
+      - "admin-site/**"
+      - ".github/workflows/admin-control-center.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "admin-site/**"
+      - ".github/workflows/admin-control-center.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: admin-control-center-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Regression and syntax checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: admin-site/requirements.txt
+
+      - name: Install application dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r admin-site/requirements.txt
+
+      - name: Run deep regression suite
+        run: bash admin-site/scripts/test-deep.sh
+
+  security:
+    name: Python and dependency security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: admin-site/requirements.txt
+
+      - name: Install audit tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r admin-site/requirements.txt
+          pip install bandit pip-audit
+
+      - name: Bandit security scan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bandit -r admin-site/app -f json -o bandit-report.json || true
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("bandit-report.json").read_text())
+          allowed = {
+              ("B608", "admin-site/app/database.py", 194),
+              ("B608", "admin-site/app/database.py", 203),
+              ("B608", "admin-site/app/database.py", 206),
+          }
+          blocking = []
+          for item in report.get("results", []):
+              severity = item.get("issue_severity", "LOW")
+              confidence = item.get("issue_confidence", "LOW")
+              key = (item.get("test_id"), item.get("filename"), item.get("line_number"))
+              if severity in {"MEDIUM", "HIGH"} and confidence in {"MEDIUM", "HIGH"} and key not in allowed:
+                  blocking.append(item)
+          if blocking:
+              for item in blocking:
+                  print(item.get("test_id"), item.get("filename"), item.get("line_number"), item.get("issue_text"))
+              raise SystemExit("Bandit found new blocking security findings")
+          print("Bandit: no new blocking findings; B608 allow-list is limited to validated/quoted table identifiers.")
+          PY
+
+      - name: Dependency CVE audit
+        run: pip-audit -r admin-site/requirements.txt
+
+      - name: Reject obvious committed secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if grep -RInE \
+            --exclude-dir=.git \
+            --exclude='*.md' \
+            --exclude='*.example' \
+            '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|[0-9]{8,10}:[A-Za-z0-9_-]{30,}|AKIA[0-9A-Z]{16})' \
+            admin-site; then
+            echo "Potential committed secret detected" >&2
+            exit 1
+          fi
+
+  docker:
+    name: Compose, image and container security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare CI configuration
+        run: |
+          cp admin-site/.env.example admin-site/.env
+          cp admin-site/sources.example.json admin-site/sources.json
+          cp admin-site/logs.example.json admin-site/logs.json
+
+      - name: Validate Docker Compose
+        run: docker compose -f admin-site/docker-compose.yml config --quiet
+
+      - name: Build Control Center image
+        run: docker build --pull -t potapoff-control-center:${{ github.sha }} admin-site
+
+      - name: Scan image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: potapoff-control-center:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
+
+      - name: Scan repository for secrets and misconfigurations
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: admin-site
+          scanners: "secret,misconfig"
+          format: table
+          exit-code: "1"
+          severity: "HIGH,CRITICAL"
+
+      - name: Generate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: potapoff-control-center:${{ github.sha }}
+          format: cyclonedx
+          output: admin-control-center-sbom.cdx.json
+          exit-code: "0"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-control-center-sbom
+          path: admin-control-center-sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 14

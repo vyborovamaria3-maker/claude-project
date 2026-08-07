@@ -1,0 +1,40 @@
+[
+  {
+    "id": "launcher",
+    "label": "Solana Launcher / analytics",
+    "kind": "sqlite",
+    "dsn": "file:/data/launcher/trade.db?mode=ro",
+    "role": "analytics"
+  },
+  {
+    "id": "potapoff",
+    "label": "POTAPoff backend",
+    "kind": "postgres",
+    "dsn": "postgresql://potapoff:${POTAPOFF_DB_PASSWORD}@potapoff-postgres:5432/potapoff",
+    "schema": "public",
+    "role": "core"
+  },
+  {
+    "id": "subscription",
+    "label": "Subscription service",
+    "kind": "postgres",
+    "dsn": "postgresql://solsub:${SUBSCRIPTION_DB_PASSWORD}@subscription-postgres:5432/solsub",
+    "schema": "public",
+    "role": "subscription"
+  },
+  {
+    "id": "miniapp",
+    "label": "Telegram mini app",
+    "kind": "sqlite",
+    "dsn": "file:/data/miniapp/dev.db?mode=ro",
+    "role": "miniapp"
+  },
+  {
+    "id": "memecoin",
+    "label": "Memecoin intelligence",
+    "kind": "postgres",
+    "dsn": "postgresql://memecoin:${MEMECOIN_DB_PASSWORD}@memecoin-postgres:5432/memecoin",
+    "schema": "public",
+    "role": "intelligence"
+  }
+]
