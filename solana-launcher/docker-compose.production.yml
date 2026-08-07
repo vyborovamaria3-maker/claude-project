@@ -71,6 +71,7 @@ services:
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       FRONTEND_URL: https://potapoff.fun
+      FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
     depends_on:
       postgres:
@@ -102,6 +103,32 @@ services:
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *default-logging
+
+  telegram-intelligence:
+    profiles: ["telegram-intelligence"]
+    image: ghcr.io/dima09090/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    env_file:
+      - backend.env
+      - .env.server
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+      TG_API_ID: ${TG_API_ID:-}
+      TG_API_HASH: ${TG_API_HASH:-}
+      TG_SESSION_STRING: ${TG_SESSION_STRING:-}
+      TG_MONITOR_CHANNELS: ${TG_MONITOR_CHANNELS:-}
+      TG_HISTORY_LIMIT: ${TG_HISTORY_LIMIT:-300}
+      TG_GRAPH_DEPTH: ${TG_GRAPH_DEPTH:-1}
+      TG_ENTITY_LIMIT: ${TG_ENTITY_LIMIT:-100}
+      TG_EVALUATE_INTERVAL_SECONDS: ${TG_EVALUATE_INTERVAL_SECONDS:-300}
+    command: ["python", "-m", "app.cli.telegram_monitor"]
     depends_on:
       backend:
         condition: service_healthy
