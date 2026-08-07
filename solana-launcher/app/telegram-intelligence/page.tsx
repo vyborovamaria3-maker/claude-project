@@ -93,7 +93,7 @@ export default function TelegramIntelligencePage() {
     setError(null);
     try {
       const [session, channelData, callData, callerData] = await Promise.all([
-        api<Record<string, unknown>>("/api/v1/telegram/session/status"),
+        api<Record<string, unknown>>("/api/v1/telegram/session/status", { headers: authHeaders() }),
         api<{ items: ChannelRow[] }>("/api/v1/telegram/channels?limit=100"),
         api<{ items: CallRow[] }>("/api/v1/telegram/calls?limit=100"),
         api<{ items: CallerRow[] }>("/api/v1/telegram/top-callers?limit=50"),
