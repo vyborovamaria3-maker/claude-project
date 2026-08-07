@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bell, Globe, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Bell, Globe, CheckCircle2, AlertTriangle, Menu } from "lucide-react";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useI18n } from "@/components/providers/I18nProvider";
 import { siteDesign } from "@/lib/siteDesign";
@@ -48,7 +48,7 @@ function useRpcHealth() {
   return { status, latency };
 }
 
-export default function Header() {
+export default function Header({ onMenuToggle }: { onMenuToggle?: () => void }) {
   const { status: rpcStatus, latency } = useRpcHealth();
   const { t } = useI18n();
 
@@ -57,10 +57,10 @@ export default function Header() {
       return (
         <div
           data-tag="system.status_banner"
-          className="flex items-center gap-3 flex-1 min-w-0 rounded-xl border border-warning-border bg-warning-soft px-3 py-2.5 text-warning shadow-surface-soft"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-warning-border bg-warning-soft px-2.5 py-2 text-warning shadow-surface-soft sm:gap-3 sm:px-3 sm:py-2.5"
         >
-          <AlertTriangle className="w-4 h-4 text-warning shrink-0" />
-          <div className="min-w-0 text-xs">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+          <div className="min-w-0 truncate text-xs">
             <span className="font-semibold text-warning">{t("header.rpcDegraded.title")}</span>{" "}
             <span className="hidden sm:inline text-content-muted">{t("header.rpcDegraded.body")}</span>
           </div>
@@ -71,10 +71,10 @@ export default function Header() {
     return (
       <div
         data-tag="system.status_banner"
-        className="flex items-center gap-3 flex-1 min-w-0 rounded-xl border border-success-border bg-success-soft px-3 py-2.5 text-success shadow-surface-soft"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-success-border bg-success-soft px-2.5 py-2 text-success shadow-surface-soft sm:gap-3 sm:px-3 sm:py-2.5"
       >
-        <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
-        <div className="min-w-0 text-xs">
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+        <div className="min-w-0 truncate text-xs">
           <span className="font-semibold text-success">
             {rpcStatus === "checking" ? t("header.rpcChecking") : t("header.rpcOk.title")}
           </span>{" "}
@@ -90,6 +90,15 @@ export default function Header() {
       className={siteDesign.header.shellClassName}
     >
       <div className={siteDesign.header.innerClassName}>
+        <button
+          type="button"
+          onClick={onMenuToggle}
+          className={`${siteDesign.buttonClasses.icon} flex h-10 w-10 shrink-0 items-center justify-center lg:hidden`}
+          aria-label="Open navigation"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+
         {statusBanner}
 
         {latency !== null && (
@@ -101,7 +110,7 @@ export default function Header() {
           </div>
         )}
 
-        <button className={siteDesign.buttonClasses.icon} aria-label={t(siteDesign.header.notificationAriaKey as Parameters<typeof t>[0])}>
+        <button className={`${siteDesign.buttonClasses.icon} shrink-0`} aria-label={t(siteDesign.header.notificationAriaKey as Parameters<typeof t>[0])}>
           <Bell className="w-4 h-4" />
           <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary shadow-neon-green" />
         </button>
