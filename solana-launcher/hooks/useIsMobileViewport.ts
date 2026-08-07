@@ -4,13 +4,11 @@ import { useEffect, useState } from "react";
 
 const MOBILE_VIEWPORT_QUERY = "(max-width: 1023px)";
 
-function detectMobileViewport() {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia(MOBILE_VIEWPORT_QUERY).matches;
-}
-
 export function useIsMobileViewport() {
-  const [isMobile, setIsMobile] = useState(() => detectMobileViewport());
+  // Keep the initial client render identical to SSR. Reading matchMedia inside
+  // the useState initializer makes mobile clients hydrate with different HTML
+  // than the server rendered, which triggers React hydration error #418.
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(MOBILE_VIEWPORT_QUERY);
