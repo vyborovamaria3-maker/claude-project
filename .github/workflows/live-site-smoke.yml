@@ -45,7 +45,7 @@ jobs:
           getent ahosts potapoff.fun || true
 
           echo "=== BUILD INFO ==="
-          build_code="$(curl -sS --retry 4 --retry-delay 2 -o /tmp/build.json -w '%{http_code}' "$base/api/build-info" || true)"
+          build_code="$(curl --connect-timeout 5 --max-time 15 -sS --retry 2 --retry-delay 2 -o /tmp/build.json -w '%{http_code}' "$base/api/build-info" || true)"
           echo "HTTP=$build_code"
           cat /tmp/build.json 2>/dev/null || true
           echo
@@ -53,7 +53,7 @@ jobs:
 
           for path in / /trade/analysis /trade/analysis/social /x-analysis; do
             echo "=== $path ==="
-            code="$(curl -sS --retry 4 --retry-delay 2 -o /tmp/page.html -w '%{http_code}' "$base$path" || true)"
+            code="$(curl --connect-timeout 5 --max-time 15 -sS --retry 2 --retry-delay 2 -o /tmp/page.html -w '%{http_code}' "$base$path" || true)"
             echo "HTTP=$code"
             bytes="$(wc -c < /tmp/page.html 2>/dev/null | tr -d ' ' || echo 0)"
             echo "BYTES=$bytes"
@@ -67,7 +67,7 @@ jobs:
           done
 
           echo "=== SERVICE WORKER HEADERS ==="
-          curl -sSI --retry 4 --retry-delay 2 "$base/sw.js" | tr -d '\r' | tee /tmp/sw.headers || failed=1
+          curl --connect-timeout 5 --max-time 15 -sSI --retry 2 --retry-delay 2 "$base/sw.js" | tr -d '\r' | tee /tmp/sw.headers || failed=1
           grep -i '^cache-control:' /tmp/sw.headers || true
 
           if [[ "$failed" -ne 0 ]]; then
@@ -75,3 +75,48 @@ jobs:
             exit 1
           fi
           echo "LIVE_SMOKE_OK"
+
+  server:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$SERVER_PORT" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+
+      - name: Inspect production containers
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" '
+            set -u
+            cd /opt/potapoff-deploy
+            echo "=== CURRENT TAG ==="
+            cat .current-image-tag 2>/dev/null || true
+            echo "=== PREVIOUS TAG ==="
+            cat .previous-image-tag 2>/dev/null || true
+            echo "=== COMPOSE PS ==="
+            docker compose --env-file .env.server -f docker-compose.production.yml ps || true
+            echo "=== LOCAL ENDPOINTS ==="
+            for path in / /trade/analysis /trade/analysis/social /api/build-info /fastapi/health; do
+              code=$(curl --connect-timeout 2 --max-time 5 -sS -o /tmp/check.out -w "%{http_code}" "http://127.0.0.1$path" || true)
+              echo "$path HTTP=$code"
+              if [ "$path" = "/api/build-info" ]; then cat /tmp/check.out 2>/dev/null || true; echo; fi
+            done
+            echo "=== RECENT APP LOGS ==="
+            docker compose --env-file .env.server -f docker-compose.production.yml logs --tail 60 backend frontend nginx 2>&1 || true
+          '
