@@ -90,7 +90,7 @@
       </section>
       <div class="section-grid analysis-bottom-grid">
         <section class="section">
-          <div class="section-head"><div><h3>Добавить параметр</h3><p>Custom-параметры получают отдельный contract `${esc(currentDomain)}.custom`.</p></div></div>
+          <div class="section-head"><div><h3>Добавить параметр</h3><p>Custom-параметры получают отдельный contract ${esc(currentDomain)}.custom.</p></div></div>
           <div class="analysis-form">
             <input id="analysisKey" placeholder="custom_metric">
             <input id="analysisLabel" placeholder="Название">
