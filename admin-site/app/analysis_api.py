@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import contextlib
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .analysis_catalog import DOMAINS
-from .analysis_profiles import validate_threshold
 from .auth import require_admin
 
 
@@ -50,25 +47,6 @@ def _audit(request: Request, admin: dict[str, Any], action: str, resource: str, 
     )
 
 
-def _update_custom(store, domain: str, key: str, body: AnalysisUpdateBody, username: str) -> dict[str, Any] | None:
-    row = next((item for item in store.list(domain) if item["key"] == key and item.get("custom")), None)
-    if row is None:
-        return None
-    threshold = validate_threshold(body.threshold, value_type=row["type"], scale=row["scale"])
-    now = datetime.now(timezone.utc).isoformat()
-    with contextlib.closing(store.connect()) as db:
-        cur = db.execute(
-            """UPDATE analysis_parameter_overrides
-               SET enabled=?, threshold=?, updated_by=?, updated_at=?
-               WHERE domain=? AND key=? AND custom=1 AND deleted=0""",
-            (1 if body.enabled else 0, threshold, username, now, domain, key),
-        )
-        db.commit()
-        if cur.rowcount != 1:
-            return None
-    return next(item for item in store.list(domain) if item["key"] == key)
-
-
 def build_analysis_router() -> APIRouter:
     router = APIRouter()
 
@@ -107,11 +85,11 @@ def build_analysis_router() -> APIRouter:
             row = store.update_builtin(domain, key, enabled=body.enabled, threshold=body.threshold, username=admin["sub"])
         except KeyError:
             try:
-                row = _update_custom(store, domain, key, body, admin["sub"])
+                row = store.update_custom(domain, key, enabled=body.enabled, threshold=body.threshold, username=admin["sub"])
+            except KeyError:
+                raise HTTPException(status_code=404, detail="Unknown analysis parameter") from None
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from None
-            if row is None:
-                raise HTTPException(status_code=404, detail="Unknown analysis parameter") from None
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         _audit(request, admin, "analysis_parameter_update", f"{domain}.{key}", {"enabled": body.enabled, "threshold": row["threshold"]})
@@ -168,7 +146,7 @@ def build_analysis_router() -> APIRouter:
             result = request.app.state.analysis_profiles.backtest(domain, body.records)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        _audit(request, admin, "analysis_backtest", domain, {"records": len(body.records), "pass_rate": result["pass_rate"]})
+        _audit(request, admin, "analysis_backtest", domain, {"records": len(body.records), "pass_rate": result["pass_rate"], "coverage": result["coverage"]})
         return result
 
     return router
