@@ -9,6 +9,7 @@ import {
   createSubscriptionOrder,
   updateSubscriptionInvoice,
 } from "@/lib/telegram/subscription-store";
+import { getBot } from "@/telegram-bot/index";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,6 +50,13 @@ export async function POST(req: NextRequest) {
     });
 
     if (!providerToken) {
+      if (process.env.NODE_ENV === "production") {
+        return NextResponse.json(
+          { error: "Telegram payment provider is not configured" },
+          { status: 503 }
+        );
+      }
+
       return NextResponse.json({
         payload,
         devCheckout: true,
@@ -56,39 +64,32 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const telegramResponse = await fetch(
-      `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/createInvoiceLink`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: "Solana Launcher Pro",
-          description: "30-day subscription to Solana Launcher software",
-          payload,
-          provider_token: providerToken,
-          currency: "USD",
-          prices: [{ label: "Solana Launcher Pro", amount: SUBSCRIPTION_PRICE_USD * 100 }],
-          need_name: false,
-          need_email: false,
-          is_flexible: false,
-        }),
-        cache: "no-store",
-      }
-    );
-
-    const telegramData = (await telegramResponse.json()) as { ok: boolean; result?: string; description?: string };
-    if (!telegramData.ok || !telegramData.result) {
+    let invoiceLink: string;
+    try {
+      invoiceLink = await getBot().telegram.callApi("createInvoiceLink", {
+        title: "Solana Launcher Pro",
+        description: "30-day subscription to Solana Launcher software",
+        payload,
+        provider_token: providerToken,
+        currency: "USD",
+        prices: [{ label: "Solana Launcher Pro", amount: SUBSCRIPTION_PRICE_USD * 100 }],
+        need_name: false,
+        need_email: false,
+        is_flexible: false,
+      });
+    } catch (error) {
+      console.error("[Mini App] Telegram invoice creation failed:", error);
       return NextResponse.json(
-        { error: telegramData.description || "Telegram invoice creation failed" },
+        { error: "Telegram invoice creation failed" },
         { status: 502 }
       );
     }
 
-    updateSubscriptionInvoice(payload, telegramData.result);
+    updateSubscriptionInvoice(payload, invoiceLink);
 
     return NextResponse.json({
       payload,
-      invoiceLink: telegramData.result,
+      invoiceLink,
       amountUsd: SUBSCRIPTION_PRICE_USD,
     });
   } catch (error) {
