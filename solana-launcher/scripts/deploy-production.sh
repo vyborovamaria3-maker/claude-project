@@ -32,12 +32,31 @@ if [[ -f .current-image-tag ]]; then
   PREVIOUS_TAG="$(cat .current-image-tag)"
 fi
 
+telegram_intelligence_enabled() {
+  grep -Eq '^TG_API_ID=.+$' .env.server \
+    && grep -Eq '^TG_API_HASH=.+$' .env.server \
+    && grep -Eq '^TG_SESSION_STRING=.+$' .env.server
+}
+
 stop_telegram() {
   "${COMPOSE[@]}" --profile telegram stop telegram-bot \
     >/dev/null 2>&1 || true
 
   "${COMPOSE[@]}" --profile telegram rm -f telegram-bot \
     >/dev/null 2>&1 || true
+}
+
+sync_telegram_intelligence() {
+  if telegram_intelligence_enabled; then
+    echo "Starting Telegram Intelligence worker"
+    "${COMPOSE[@]}" --profile telegram-intelligence up -d telegram-intelligence
+  else
+    echo "Telegram Intelligence credentials are not configured; worker remains disabled"
+    "${COMPOSE[@]}" --profile telegram-intelligence stop telegram-intelligence \
+      >/dev/null 2>&1 || true
+    "${COMPOSE[@]}" --profile telegram-intelligence rm -f telegram-intelligence \
+      >/dev/null 2>&1 || true
+  fi
 }
 
 rollback() {
@@ -63,6 +82,7 @@ rollback() {
   stop_telegram
 
   "${COMPOSE[@]}" up -d --remove-orphans
+  sync_telegram_intelligence
 
   "$HEALTH_SCRIPT"
 
@@ -90,6 +110,7 @@ export IMAGE_TAG="$NEW_TAG"
 stop_telegram
 
 "${COMPOSE[@]}" up -d --remove-orphans
+sync_telegram_intelligence
 
 "${COMPOSE[@]}" exec -T backend alembic upgrade heads
 
