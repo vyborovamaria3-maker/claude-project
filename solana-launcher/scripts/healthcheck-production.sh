@@ -26,6 +26,12 @@ REQUIRED_SERVICES=(
   prometheus
 )
 
+telegram_intelligence_enabled() {
+  grep -Eq '^TG_API_ID=.+$' .env.server \
+    && grep -Eq '^TG_API_HASH=.+$' .env.server \
+    && grep -Eq '^TG_SESSION_STRING=.+$' .env.server
+}
+
 check_services() {
   local service
   local container_id
@@ -65,6 +71,20 @@ check_services() {
     fi
   done
 
+  if telegram_intelligence_enabled; then
+    container_id="$(
+      "${COMPOSE[@]}" --profile telegram-intelligence ps -q telegram-intelligence 2>/dev/null || true
+    )"
+    if [[ -z "$container_id" ]]; then
+      bad+=("telegram-intelligence:missing")
+    else
+      state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+      if [[ "$state" != "running" ]]; then
+        bad+=("telegram-intelligence:$state")
+      fi
+    fi
+  fi
+
   printf '%s' "${bad[*]:-}"
 }
 
@@ -102,5 +122,9 @@ echo "Bad services: ${bad_services:-unknown}" >&2
   frontend \
   nginx \
   prometheus || true
+
+if telegram_intelligence_enabled; then
+  "${COMPOSE[@]}" --profile telegram-intelligence logs --tail 120 telegram-intelligence || true
+fi
 
 exit 1
