@@ -120,10 +120,10 @@ jobs:
             solana-launcher/nginx/nginx.conf \
             "$SERVER_USER@$SERVER_HOST:/opt/potapoff-deploy/nginx/nginx.conf"
 
-          local_prometheus_sha="$(sha256sum solana-launcher/prometheus/prometheus.yml | awk '{print $1}')"
+          local_prometheus_sha="$(sha256sum solana-launcher/prometheus/prometheus.yml | cut -d ' ' -f1)"
           remote_prometheus_sha="$(
             "${SSH[@]}" \
-              "sha256sum /opt/potapoff-deploy/prometheus/prometheus.yml 2>/dev/null | awk '{print \\$1}'" \
+              "sha256sum /opt/potapoff-deploy/prometheus/prometheus.yml 2>/dev/null | cut -d ' ' -f1" \
               || true
           )"
 
@@ -154,9 +154,9 @@ jobs:
 
           "${SSH[@]}" \
             'chmod 700 /opt/potapoff-deploy/scripts/*.sh &&
-             chmod 755 /opt/potapoff-deploy/nginx /opt/potapoff-deploy/prometheus &&
+             chmod 755 /opt/potapoff-deploy/nginx &&
              chmod 644 /opt/potapoff-deploy/nginx/nginx.conf &&
-             chmod 644 /opt/potapoff-deploy/prometheus/prometheus.yml'
+             test -r /opt/potapoff-deploy/prometheus/prometheus.yml'
 
       - name: Login server to GHCR
         env:
