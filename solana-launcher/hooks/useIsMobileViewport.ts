@@ -2,33 +2,25 @@
 
 import { useEffect, useState } from "react";
 
+const MOBILE_VIEWPORT_QUERY = "(max-width: 1023px)";
+
 function detectMobileViewport() {
   if (typeof window === "undefined") return false;
-
-  const coarsePointer = window.matchMedia?.("(hover: none) and (pointer: coarse)")?.matches ?? false;
-  const noHover = window.matchMedia?.("(any-hover: none)")?.matches ?? false;
-  const touchCapable = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
-
-  return coarsePointer || noHover || touchCapable;
+  return window.matchMedia(MOBILE_VIEWPORT_QUERY).matches;
 }
 
 export function useIsMobileViewport() {
   const [isMobile, setIsMobile] = useState(() => detectMobileViewport());
 
   useEffect(() => {
-    const update = () => setIsMobile(detectMobileViewport());
+    const mediaQuery = window.matchMedia(MOBILE_VIEWPORT_QUERY);
+    const update = () => setIsMobile(mediaQuery.matches);
 
     update();
-
-    const mediaQueries = ["(hover: none) and (pointer: coarse)", "(any-hover: none)"]
-      .map((query) => window.matchMedia(query));
-
-    mediaQueries.forEach((mq) => mq.addEventListener("change", update));
-    window.addEventListener("resize", update);
+    mediaQuery.addEventListener("change", update);
 
     return () => {
-      mediaQueries.forEach((mq) => mq.removeEventListener("change", update));
-      window.removeEventListener("resize", update);
+      mediaQuery.removeEventListener("change", update);
     };
   }, []);
 
