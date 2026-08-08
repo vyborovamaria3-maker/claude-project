@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -7,6 +9,8 @@ from pydantic import BaseModel, Field
 
 from .analysis_catalog import CATALOG_BY_ID, DOMAINS
 from .auth import require_admin
+
+logger = logging.getLogger(__name__)
 
 
 class EditorBody(BaseModel):
@@ -26,14 +30,19 @@ def _domain_or_404(domain: str) -> None:
 
 def _audit(request: Request, admin: dict[str, Any], action: str, resource: str, details: dict[str, Any] | None = None) -> None:
     ip = request.client.host if request.client else "unknown"
-    request.app.state.audit.record(
-        action=action,
-        success=True,
-        username=admin["sub"],
-        ip_address=ip,
-        resource=resource,
-        details=details or {},
-    )
+    try:
+        request.app.state.audit.record(
+            action=action,
+            success=True,
+            username=admin["sub"],
+            ip_address=ip,
+            resource=resource,
+            details=details or {},
+        )
+    except sqlite3.Error:
+        # Profile writes commit before audit logging. Preserve truthful API semantics:
+        # a durable profile change remains a success even if the audit store is unavailable.
+        logger.exception("Failed to persist admin audit event action=%s resource=%s", action, resource)
 
 
 def build_analysis_editor_router() -> APIRouter:
