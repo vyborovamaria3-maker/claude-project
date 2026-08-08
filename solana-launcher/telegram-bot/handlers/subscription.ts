@@ -34,6 +34,7 @@ export function setupSubscriptionHandlers(bot: Telegraf) {
     const valid =
       order &&
       order.status === "pending" &&
+      query.from.id === order.telegram_user_id &&
       query.currency === "USD" &&
       query.total_amount === order.amount_usd * 100;
 
@@ -60,6 +61,16 @@ export function setupSubscriptionHandlers(bot: Telegraf) {
     const order = await getSubscriptionOrder(payment.invoice_payload);
     if (!order) {
       await ctx.reply("Payment received, but the order was not found. Please contact the administrator.");
+      return;
+    }
+
+    if (ctx.from?.id !== order.telegram_user_id) {
+      console.error("[Telegram Payment] User mismatch", {
+        payload: payment.invoice_payload,
+        payerTelegramId: ctx.from?.id,
+        orderTelegramId: order.telegram_user_id,
+      });
+      await ctx.reply("Payment user did not match the order owner. Access was not changed; please contact the administrator.");
       return;
     }
 
