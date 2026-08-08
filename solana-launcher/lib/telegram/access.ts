@@ -23,7 +23,6 @@ export function generateAccessPassword() {
   return password;
 }
 
-export function createOrderPayload(telegramUserId: number, login: string) {
-  const nonce = crypto.randomBytes(6).toString("hex");
-  return `sub:${telegramUserId}:${login}:${nonce}`;
+export function createOrderPayload() {
+  return `sub:${crypto.randomBytes(32).toString("hex")}`;
 }
