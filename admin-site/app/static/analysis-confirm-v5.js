@@ -12,9 +12,10 @@
   function isAnalysisMutation(input, init = {}) {
     const method = String(init.method || "GET").toUpperCase();
     const url = typeof input === "string" ? input : String(input?.url || "");
+    const path = url.split("?", 1)[0];
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
     if (!url.includes("/api/analysis-profiles/")) return false;
-    if (url.split("?", 1)[0].endsWith("/backtest")) return false;
+    if (method === "POST" && path.endsWith("/backtest")) return false;
     return true;
   }
 
