@@ -8,8 +8,8 @@ const browsers = [
   ["webkit", webkit],
 ];
 const profiles = [
-  { name: "mobile", viewport: { width: 390, height: 844 }, isMobile: true },
-  { name: "desktop", viewport: { width: 1440, height: 900 }, isMobile: false },
+  { name: "mobile", viewport: { width: 390, height: 844 } },
+  { name: "desktop", viewport: { width: 1440, height: 900 } },
 ];
 const routes = ["/login", "/", "/trade-dashboard"];
 
@@ -20,8 +20,6 @@ async function runBrowser(name, browserType) {
       const context = await browser.newContext({
         viewport: profile.viewport,
         screen: profile.viewport,
-        isMobile: profile.isMobile,
-        hasTouch: profile.isMobile,
         locale: "ru-RU",
         colorScheme: "dark",
         reducedMotion: "reduce",
