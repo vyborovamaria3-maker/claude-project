@@ -173,7 +173,7 @@ export async function findVerifiedSolanaPayment(input: {
     ) {
       continue;
     }
-    if (signatureInfo.blockTime !== null && signatureInfo.blockTime < createdAfter) continue;
+    if (signatureInfo.blockTime != null && signatureInfo.blockTime < createdAfter) continue;
 
     const transaction = await connection.getParsedTransaction(signatureInfo.signature, {
       commitment: "confirmed",
