@@ -1,17 +1,29 @@
 import { getBackendBaseUrl } from "../authProxy";
 
+export type SubscriptionCurrency = "SOL" | "USDT" | "DEMO";
+
+export type SubscriptionSettings = {
+  monthly_price_sol: string;
+  monthly_price_usdt: string;
+  free_demo_enabled: boolean;
+  demo_days: number;
+  solana_recipient_wallet: string;
+};
+
 export type SubscriptionOrder = {
   payload: string;
   telegram_user_id: number;
   username: string | null;
   login: string;
-  currency: "XTR";
+  currency: SubscriptionCurrency;
   total_amount: number;
-  status: "pending" | "paid";
+  access_days: number;
+  status: "pending" | "paid" | "cancelled";
   password: string | null;
-  invoice_link: string | null;
-  provider_charge_id: string | null;
-  telegram_payment_charge_id: string | null;
+  recipient_wallet: string | null;
+  payment_reference: string | null;
+  payment_url: string | null;
+  payment_signature: string | null;
   created_at: string;
   updated_at: string;
   paid_at: string | null;
@@ -19,7 +31,7 @@ export type SubscriptionOrder = {
   already_paid: boolean;
 };
 
-class SubscriptionStoreError extends Error {
+export class SubscriptionStoreError extends Error {
   status: number;
 
   constructor(message: string, status: number) {
@@ -81,16 +93,23 @@ async function requestBackend<T>(path: string, init?: RequestInit): Promise<T> {
   return parsed as T;
 }
 
+export async function getSubscriptionSettings(): Promise<SubscriptionSettings> {
+  return requestBackend<SubscriptionSettings>("/settings");
+}
+
 export async function createSubscriptionOrder(input: {
   payload: string;
   telegramUserId: number;
   username?: string | null;
   login: string;
-  currency: "XTR";
+  currency: SubscriptionCurrency;
   totalAmount: number;
-  invoiceLink?: string | null;
+  accessDays: number;
+  recipientWallet?: string | null;
+  paymentReference?: string | null;
+  paymentUrl?: string | null;
 }): Promise<SubscriptionOrder> {
-  const order = await requestBackend<SubscriptionOrder>("/orders", {
+  return requestBackend<SubscriptionOrder>("/orders", {
     method: "POST",
     body: JSON.stringify({
       payload: input.payload,
@@ -99,13 +118,12 @@ export async function createSubscriptionOrder(input: {
       login: input.login,
       currency: input.currency,
       total_amount: input.totalAmount,
+      access_days: input.accessDays,
+      recipient_wallet: input.recipientWallet ?? null,
+      payment_reference: input.paymentReference ?? null,
+      payment_url: input.paymentUrl ?? null,
     }),
   });
-
-  if (input.invoiceLink) {
-    return updateSubscriptionInvoice(order.payload, input.invoiceLink);
-  }
-  return order;
 }
 
 export async function getSubscriptionOrder(payload: string): Promise<SubscriptionOrder | null> {
@@ -122,8 +140,7 @@ export async function getSubscriptionOrder(payload: string): Promise<Subscriptio
 export async function markSubscriptionPaid(input: {
   payload: string;
   password: string;
-  providerChargeId?: string | null;
-  telegramPaymentChargeId?: string | null;
+  paymentSignature?: string | null;
 }): Promise<SubscriptionOrder> {
   return requestBackend<SubscriptionOrder>(
     `/orders/${encodeURIComponent(input.payload)}/complete`,
@@ -131,22 +148,8 @@ export async function markSubscriptionPaid(input: {
       method: "POST",
       body: JSON.stringify({
         password: input.password,
-        provider_charge_id: input.providerChargeId ?? null,
-        telegram_payment_charge_id: input.telegramPaymentChargeId ?? null,
+        payment_signature: input.paymentSignature ?? null,
       }),
-    }
-  );
-}
-
-export async function updateSubscriptionInvoice(
-  payload: string,
-  invoiceLink: string
-): Promise<SubscriptionOrder> {
-  return requestBackend<SubscriptionOrder>(
-    `/orders/${encodeURIComponent(payload)}/invoice`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({ invoice_link: invoiceLink }),
     }
   );
 }
