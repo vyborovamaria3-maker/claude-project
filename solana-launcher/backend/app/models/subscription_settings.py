@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, DateTime, Integer, Numeric, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.db.base import Base
 
@@ -35,3 +35,21 @@ class SubscriptionSettings(Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
+
+    @validates("monthly_price_sol", "monthly_price_usdt")
+    def validate_price(self, _key: str, value: Decimal) -> Decimal:
+        normalized = Decimal(value)
+        if normalized < 0:
+            raise ValueError("Subscription prices cannot be negative")
+        return normalized
+
+    @validates("demo_days")
+    def validate_demo_days(self, _key: str, value: int) -> int:
+        normalized = int(value)
+        if normalized < 1 or normalized > 3650:
+            raise ValueError("Demo days must be between 1 and 3650")
+        return normalized
+
+    @validates("solana_recipient_wallet")
+    def validate_wallet(self, _key: str, value: str) -> str:
+        return (value or "").strip()
