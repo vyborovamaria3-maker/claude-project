@@ -202,18 +202,18 @@ for rel, old, new in [
     ),
     (
         "app/api/trade/leaderboard/route.ts",
-        '  const limit = Math.min(Number(req.nextUrl.searchParams.get("limit") || 100), 200);',
-        '  const parsedLimit = Number(req.nextUrl.searchParams.get("limit") || 100);\n  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 200)) : 100;',
+        '  const limit = Math.min(Number(searchParams.get("limit") || 50), 200);',
+        '  const parsedLimit = Number(searchParams.get("limit") || 50);\n  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 200)) : 50;',
     ),
     (
         "app/api/trade/dev-wallet/route.ts",
-        '    const limit = Math.min(Number(req.nextUrl.searchParams.get("limit") || 50), 200);',
-        '    const parsedLimit = Number(req.nextUrl.searchParams.get("limit") || 50);\n    const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 200)) : 50;',
+        '  const limit = Math.min(Number(searchParams.get("limit") ?? 100), 1000);',
+        '  const parsedLimit = Number(searchParams.get("limit") ?? 100);\n  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 1000)) : 100;',
     ),
     (
         "app/api/trade/pumpfun-feed/route.ts",
-        '  const limit = Math.min(Number(req.nextUrl.searchParams.get("limit") || 50), 200);',
-        '  const parsedLimit = Number(req.nextUrl.searchParams.get("limit") || 50);\n  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 200)) : 50;',
+        '  const limit = Math.min(Number(searchParams.get("limit") || 50), 200);',
+        '  const parsedLimit = Number(searchParams.get("limit") || 50);\n  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 200)) : 50;',
     ),
 ]:
     replace(ROOT / rel, old, new)
