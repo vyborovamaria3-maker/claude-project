@@ -28,16 +28,13 @@ jobs:
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
 
-      - name: Install dependencies
+      - name: Install app dependencies
         run: npm ci --legacy-peer-deps
-
-      - name: Install quality tools
-        run: npm install --no-save --package-lock=false --legacy-peer-deps @axe-core/playwright@4.10.2 lighthouse@12.8.2
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
 
-      - name: Build frontend
+      - name: Build frontend from locked app dependencies
         run: npm run build
 
       - name: Start frontend
@@ -58,9 +55,18 @@ jobs:
           BASE_URL: http://127.0.0.1:3000
         run: node tests/cross-browser-smoke.mjs
 
+      - name: Install isolated quality tools
+        run: |
+          rm -rf /tmp/potapoff-quality-tools
+          mkdir -p /tmp/potapoff-quality-tools
+          cd /tmp/potapoff-quality-tools
+          npm init -y >/dev/null
+          npm install --no-package-lock axe-core@4.10.2 lighthouse@12.8.2
+
       - name: Axe WCAG regression
         env:
           BASE_URL: http://127.0.0.1:3000
+          AXE_SOURCE_PATH: /tmp/potapoff-quality-tools/node_modules/axe-core/axe.min.js
         run: node tests/a11y-regression.mjs
 
       - name: Lighthouse mobile report
@@ -68,7 +74,7 @@ jobs:
           mkdir -p test-results/lighthouse
           CHROME_PATH="$(node -e "const { chromium } = require('playwright'); process.stdout.write(chromium.executablePath())")"
           export CHROME_PATH
-          npx lighthouse http://127.0.0.1:3000/login \
+          /tmp/potapoff-quality-tools/node_modules/.bin/lighthouse http://127.0.0.1:3000/login \
             --quiet \
             --chrome-flags="--headless --no-sandbox --disable-gpu" \
             --only-categories=performance,accessibility,best-practices,seo \
