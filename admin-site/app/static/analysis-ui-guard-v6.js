@@ -58,7 +58,7 @@
   }
 
   document.addEventListener("click", (event) => {
-    const navigation = event.target.closest?.(".analysis-tab[data-domain], #navigation [data-view], #refreshButton");
+    const navigation = event.target.closest?.(".analysis-tab[data-domain], #navigation [data-view], #analysisProfilesNav, #refreshButton, #logoutButton");
     if (!navigation) return;
     if (!loadCount && !mutationCount && !toggleBusy) return;
     event.preventDefault();
