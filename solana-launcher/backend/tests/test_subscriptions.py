@@ -105,13 +105,43 @@ async def test_subscription_order_lifecycle_is_persistent_and_idempotent(client,
         assert verify_password(password, user.hashed_password)
 
 
+async def test_same_user_reuses_pending_order_for_same_login(client):
+    first_payload = order_payload("c")
+    first = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json={
+            "payload": first_payload,
+            "telegram_user_id": 301,
+            "username": "first",
+            "login": "retry_login",
+            "amount_usd": 1000,
+        },
+    )
+    assert first.status_code == 201
+
+    retry = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json={
+            "payload": order_payload("d"),
+            "telegram_user_id": 301,
+            "username": "first",
+            "login": "retry_login",
+            "amount_usd": 1000,
+        },
+    )
+    assert retry.status_code == 201
+    assert retry.json()["payload"] == first_payload
+
+
 async def test_pending_order_reserves_login_for_other_telegram_users(client):
     first = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json={
-            "payload": order_payload("c"),
-            "telegram_user_id": 301,
+            "payload": order_payload("e"),
+            "telegram_user_id": 401,
             "username": "first",
             "login": "reserved_login",
             "amount_usd": 1000,
@@ -123,8 +153,8 @@ async def test_pending_order_reserves_login_for_other_telegram_users(client):
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json={
-            "payload": order_payload("d"),
-            "telegram_user_id": 302,
+            "payload": order_payload("f"),
+            "telegram_user_id": 402,
             "username": "second",
             "login": "reserved_login",
             "amount_usd": 1000,
