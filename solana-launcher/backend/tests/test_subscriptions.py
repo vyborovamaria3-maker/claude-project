@@ -1,10 +1,9 @@
 from decimal import Decimal
 
-from sqlalchemy import select
-
 from app.core.security import verify_password
 from app.models.subscription_order import SubscriptionOrder
 from app.models.user import User
+from sqlalchemy import select
 
 INTERNAL_HEADERS = {"X-Dev-Internal": "miniapp-subscription"}
 RECIPIENT = "11111111111111111111111111111111"
