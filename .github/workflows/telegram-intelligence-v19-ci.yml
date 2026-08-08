@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - "solana-launcher/backend/**"
+      - "solana-launcher/app/miniapp/**"
+      - "solana-launcher/app/api/miniapp/**"
+      - "solana-launcher/lib/telegram/**"
+      - "solana-launcher/telegram-bot/**"
       - "solana-launcher/app/telegram-intelligence/**"
       - "solana-launcher/components/SidebarNav.tsx"
       - "solana-launcher/lib/siteDesign.ts"
@@ -35,6 +39,16 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Compile Python
         run: python -m compileall -q app tests
+      - name: Lint subscription flow
+        run: >-
+          ruff check
+          app/admin.py
+          app/api/v1/subscriptions.py
+          app/models/subscription_order.py
+          app/models/subscription_settings.py
+          app/schemas/subscription.py
+          app/services/subscriptions.py
+          tests/test_subscriptions.py
       - name: Check Alembic heads
         run: |
           heads="$(alembic heads | grep -c '(head)')"
@@ -42,6 +56,8 @@ jobs:
           alembic heads
       - name: Telegram intelligence tests
         run: pytest -q tests/test_telegram_intelligence.py
+      - name: Subscription order tests
+        run: pytest -q tests/test_subscriptions.py
 
   frontend:
     runs-on: ubuntu-latest

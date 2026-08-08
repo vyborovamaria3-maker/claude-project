@@ -84,7 +84,7 @@ async function startBot() {
     ]);
     await bot.telegram.setWebhook(webhookUrl, {
       secret_token: process.env.TELEGRAM_WEBHOOK_SECRET || undefined,
-      allowed_updates: ['message', 'callback_query', 'pre_checkout_query'],
+      allowed_updates: ['message', 'callback_query'],
     });
     console.log(`Webhook set to: ${webhookUrl}`);
 

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateAccessPassword } from "@/lib/telegram/access";
-import { registerPaidAccess } from "@/lib/telegram/register-access";
 import {
   getSubscriptionOrder,
   markSubscriptionPaid,
@@ -16,7 +15,7 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json()) as { payload?: string };
   const payload = body.payload || "";
-  const order = getSubscriptionOrder(payload);
+  const order = await getSubscriptionOrder(payload);
   if (!order) {
     return NextResponse.json({ error: "order not found" }, { status: 404 });
   }
@@ -26,13 +25,11 @@ export async function POST(req: NextRequest) {
   }
 
   const password = generateAccessPassword();
-  await registerPaidAccess({
-    telegramId: order.telegram_user_id,
-    login: order.login,
+  const completed = await markSubscriptionPaid({
+    payload,
     password,
-    telegramUsername: order.username,
+    paymentSignature: order.currency === "DEMO" ? null : `dev:${payload}`,
   });
-  markSubscriptionPaid({ payload, password });
 
-  return NextResponse.json({ ok: true, password });
+  return NextResponse.json({ ok: true, password: completed.password || password });
 }

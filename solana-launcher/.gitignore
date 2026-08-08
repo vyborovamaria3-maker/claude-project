@@ -31,9 +31,10 @@ yarn-error.log*
 .idea/
 *.log
 
-# Local SQLite trade DB
+# Local SQLite trade DB and local credential stores
 data/*.db
 data/*.db-*
+data/subscription-orders.json
 data/x-auth/
 storage-state.json
 *.storage-state.json
