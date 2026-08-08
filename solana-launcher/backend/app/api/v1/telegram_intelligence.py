@@ -45,16 +45,21 @@ def _source_set(raw: str | None) -> set[str]:
 
 
 async def _channel_scores(session: AsyncSession) -> dict[str, float]:
-    channels, _ = await list_channels(session, limit=500, offset=0)
     result: dict[str, float] = {}
-    for item in channels:
-        score = float(item.get("score") or 0.0)
-        username = str(item.get("username") or "").strip()
-        telegram_id = str(item.get("telegram_id") or "").strip()
-        if username:
-            result[normalize_social_source(username)] = score
-        if telegram_id:
-            result[normalize_social_source(telegram_id)] = score
+    offset = 0
+    while True:
+        channels, total = await list_channels(session, limit=500, offset=offset)
+        for item in channels:
+            score = float(item.get("score") or 0.0)
+            username = str(item.get("username") or "").strip()
+            telegram_id = str(item.get("telegram_id") or "").strip()
+            if username:
+                result[normalize_social_source(username)] = score
+            if telegram_id:
+                result[normalize_social_source(telegram_id)] = score
+        offset += len(channels)
+        if not channels or offset >= total:
+            break
     return result
 
 
@@ -179,10 +184,11 @@ async def calls(
 @router.post("/calls/evaluate")
 async def evaluate(
     limit: int = Query(default=1000, ge=1, le=5000),
+    window_hours: int = Query(default=72, ge=6, le=24 * 30),
     session: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_superuser),
 ) -> dict:
-    return await evaluate_calls(session, limit=limit)
+    return await evaluate_calls(session, limit=limit, window_hours=window_hours)
 
 
 @router.get("/token/{mint}")

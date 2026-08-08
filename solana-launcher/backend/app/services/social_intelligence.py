@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
@@ -9,7 +9,7 @@ import httpx
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.analytics import Token, TokenMetric, TokenStatus
+from app.models.analytics import Token, TokenMetric
 from app.models.social_intelligence import (
     SocialEvent,
     SocialRelation,
@@ -72,10 +72,19 @@ async def nearest_token_snapshot(session: AsyncSession, mint_address: str, at: d
 
 
 async def upsert_channel_score(session: AsyncSession, channel_id: int) -> TelegramChannelScore:
-    calls = list((await session.execute(select(TelegramCall).where(TelegramCall.channel_id == channel_id))).scalars().all())
+    calls = list(
+        (
+            await session.execute(
+                select(TelegramCall).where(
+                    TelegramCall.channel_id == channel_id,
+                    TelegramCall.is_explicit_call.is_(True),
+                )
+            )
+        ).scalars().all()
+    )
     evaluated_rows = [call for call in calls if call.outcome != "pending"]
-    wins = sum(1 for call in evaluated_rows if call.outcome == "win")
-    rugs = sum(1 for call in evaluated_rows if call.outcome == "rug")
+    wins = sum(1 for call in evaluated_rows if call.outcome in {"win", "win_then_rug"})
+    rugs = sum(1 for call in evaluated_rows if call.outcome in {"rug", "win_then_rug"})
     early = sum(1 for call in calls if call.call_market_cap_usd is not None and call.call_market_cap_usd <= 50_000)
     roi_values = [call.roi_multiple for call in evaluated_rows if call.roi_multiple is not None]
     avg_roi = mean(roi_values) if roi_values else 0.0
@@ -100,11 +109,50 @@ async def upsert_channel_score(session: AsyncSession, channel_id: int) -> Telegr
     return score
 
 
-async def evaluate_calls(session: AsyncSession, *, limit: int = 1000) -> dict[str, int]:
+def classify_call_outcome(
+    *,
+    roi_multiple: float | None,
+    final_to_peak: float | None,
+    observed_hours: float,
+    min_observation_hours: float = 6.0,
+) -> str:
+    """Classify only from data observable inside the evaluation window.
+
+    A rug-like collapse is an >=80% drawdown from the observed peak after the minimum
+    observation period. This intentionally avoids using the token's current/final status,
+    which would leak future information into historical call evaluation.
+    """
+    rug_like = (
+        observed_hours >= min_observation_hours
+        and final_to_peak is not None
+        and 0 <= final_to_peak <= 0.20
+    )
+    won = roi_multiple is not None and roi_multiple >= 2.0
+    if won and rug_like:
+        return "win_then_rug"
+    if rug_like:
+        return "rug"
+    if won:
+        return "win"
+    if roi_multiple is not None and observed_hours >= min_observation_hours:
+        return "loss"
+    return "pending"
+
+
+async def evaluate_calls(
+    session: AsyncSession,
+    *,
+    limit: int = 1000,
+    window_hours: int = 72,
+) -> dict[str, int]:
+    safe_window_hours = max(6, min(int(window_hours), 24 * 30))
     rows = list(
         (
             await session.execute(
-                select(TelegramCall).order_by(TelegramCall.called_at.desc()).limit(max(1, min(limit, 5000)))
+                select(TelegramCall)
+                .where(TelegramCall.is_explicit_call.is_(True))
+                .order_by(TelegramCall.called_at.desc())
+                .limit(max(1, min(limit, 5000)))
             )
         ).scalars().all()
     )
@@ -114,11 +162,16 @@ async def evaluate_calls(session: AsyncSession, *, limit: int = 1000) -> dict[st
         token = (await session.execute(select(Token).where(Token.mint_address == call.mint_address))).scalar_one_or_none()
         if token is None:
             continue
+        window_end = _aware(call.called_at) + timedelta(hours=safe_window_hours)
         metrics = list(
             (
                 await session.execute(
                     select(TokenMetric)
-                    .where(TokenMetric.token_id == token.id, TokenMetric.timestamp >= call.called_at)
+                    .where(
+                        TokenMetric.token_id == token.id,
+                        TokenMetric.timestamp >= call.called_at,
+                        TokenMetric.timestamp <= window_end,
+                    )
                     .order_by(TokenMetric.timestamp.asc())
                 )
             ).scalars().all()
@@ -140,14 +193,22 @@ async def evaluate_calls(session: AsyncSession, *, limit: int = 1000) -> dict[st
             roi = call.peak_price_usd / call.call_price_usd
         call.roi_multiple = roi
         observed_hours = max((_aware(metrics[-1].timestamp) - _aware(call.called_at)).total_seconds() / 3600.0, 0.0)
-        if token.status == TokenStatus.RUGGED.value:
-            call.outcome = "rug"
-        elif roi is not None and roi >= 2.0:
-            call.outcome = "win"
-        elif roi is not None and observed_hours >= 6.0:
-            call.outcome = "loss"
-        else:
-            call.outcome = "pending"
+        final_to_peak = None
+        if caps and call.peak_market_cap_usd and call.peak_market_cap_usd > 0:
+            final_to_peak = caps[-1] / call.peak_market_cap_usd
+        elif prices and call.peak_price_usd and call.peak_price_usd > 0:
+            final_to_peak = prices[-1] / call.peak_price_usd
+        call.outcome = classify_call_outcome(
+            roi_multiple=roi,
+            final_to_peak=final_to_peak,
+            observed_hours=observed_hours,
+        )
+        call.meta = {
+            **(call.meta or {}),
+            "evaluation_window_hours": safe_window_hours,
+            "observed_hours": round(observed_hours, 4),
+            "final_to_peak": final_to_peak,
+        }
         call.evaluated_at = _utcnow()
         touched_channels.add(call.channel_id)
         evaluated += 1
@@ -155,7 +216,7 @@ async def evaluate_calls(session: AsyncSession, *, limit: int = 1000) -> dict[st
     for channel_id in touched_channels:
         await upsert_channel_score(session, channel_id)
     await session.commit()
-    return {"evaluated": evaluated, "channels_updated": len(touched_channels)}
+    return {"evaluated": evaluated, "channels_updated": len(touched_channels), "window_hours": safe_window_hours}
 
 
 async def list_channels(session: AsyncSession, *, limit: int = 100, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
@@ -229,16 +290,29 @@ async def list_calls(
     ], total
 
 
+def normalize_caller_username(value: str | None) -> str:
+    return (value or "unknown").strip().lower().lstrip("@") or "unknown"
+
+
 async def top_callers(session: AsyncSession, *, limit: int = 50) -> list[dict[str, Any]]:
-    calls = list((await session.execute(select(TelegramCall).where(TelegramCall.caller_username.is_not(None)))).scalars().all())
+    calls = list(
+        (
+            await session.execute(
+                select(TelegramCall).where(
+                    TelegramCall.caller_username.is_not(None),
+                    TelegramCall.is_explicit_call.is_(True),
+                )
+            )
+        ).scalars().all()
+    )
     grouped: dict[str, list[TelegramCall]] = defaultdict(list)
     for call in calls:
-        grouped[call.caller_username or "unknown"].append(call)
+        grouped[normalize_caller_username(call.caller_username)].append(call)
     result = []
     for username, rows in grouped.items():
         evaluated = [row for row in rows if row.outcome != "pending"]
-        wins = sum(1 for row in evaluated if row.outcome == "win")
-        rugs = sum(1 for row in evaluated if row.outcome == "rug")
+        wins = sum(1 for row in evaluated if row.outcome in {"win", "win_then_rug"})
+        rugs = sum(1 for row in evaluated if row.outcome in {"rug", "win_then_rug"})
         rois = [row.roi_multiple for row in evaluated if row.roi_multiple is not None]
         avg_roi = mean(rois) if rois else 0.0
         early = sum(1 for row in rows if row.call_market_cap_usd is not None and row.call_market_cap_usd <= 50_000)
@@ -302,6 +376,7 @@ async def ingest_x_events(session: AsyncSession, payload: dict[str, Any]) -> dic
     tweets = payload.get("tweets") or []
     inserted = 0
     updated = 0
+    skipped_missing_timestamp = 0
     for tweet in tweets:
         external_id = str(tweet.get("id") or "").strip()
         if not external_id:
@@ -311,7 +386,8 @@ async def ingest_x_events(session: AsyncSession, payload: dict[str, Any]) -> dic
             seconds = posted_at_raw / 1000 if posted_at_raw > 10_000_000_000 else posted_at_raw
             occurred_at = datetime.fromtimestamp(seconds, tz=timezone.utc)
         else:
-            occurred_at = _utcnow()
+            skipped_missing_timestamp += 1
+            continue
         existing = (
             await session.execute(
                 select(SocialEvent).where(
@@ -329,6 +405,7 @@ async def ingest_x_events(session: AsyncSession, payload: dict[str, Any]) -> dic
             "replies": int(tweet.get("replies") or 0),
             "verified": bool(tweet.get("is_verified")),
             "suspicion_score": tweet.get("suspicion_score"),
+            "suspicious": float(tweet.get("suspicion_score") or 0) >= 50.0,
         }
         if existing is None:
             session.add(
@@ -358,7 +435,7 @@ async def ingest_x_events(session: AsyncSession, payload: dict[str, Any]) -> dic
             existing.payload = {"strategy": payload.get("strategy")}
             updated += 1
     await session.commit()
-    return {"inserted": inserted, "updated": updated}
+    return {"inserted": inserted, "updated": updated, "skipped_missing_timestamp": skipped_missing_timestamp}
 
 
 async def refresh_x_for_mint(*, backend_frontend_url: str, mint_address: str, symbol: str | None = None) -> dict[str, Any]:

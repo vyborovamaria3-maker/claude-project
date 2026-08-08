@@ -14,6 +14,7 @@ const routes = [
   "/launch-dashboard",
   "/trade-dashboard",
   "/trade/analysis",
+  "/trade/analysis/social",
   "/market-overview",
 ];
 

@@ -26,7 +26,7 @@ def normalize_social_source(value: str) -> str:
         if normalized.startswith(prefix):
             normalized = normalized[len(prefix):]
             break
-    return normalized.strip("/").split("/", 1)[0]
+    return normalized.strip("/").split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
 
 
 def social_event_engagement(item: dict[str, Any]) -> int:

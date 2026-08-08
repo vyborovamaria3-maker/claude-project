@@ -198,11 +198,12 @@ async function collectTweets(page: Page, query: string, limit: number): Promise<
     const batch = await page.locator('article[data-testid="tweet"]').evaluateAll((articles) => {
       const parseMetric = (text: string) => {
         if (!text) return 0;
-        const cleaned = text.replace(/,/g, ".").trim();
-        const match = cleaned.match(/([0-9]+(?:\.[0-9]+)?)([KMBКМБ]?)/i);
+        const cleaned = text.replace(/\s+/g, "").trim();
+        const match = cleaned.match(/([0-9]+(?:[.,][0-9]+)?)([KMBКМБ]?)/i);
         if (!match) return 0;
-        const value = Number(match[1]);
         const suffix = match[2]?.toUpperCase();
+        const numeric = suffix ? match[1].replace(",", ".") : match[1].replace(/[.,]/g, "");
+        const value = Number(numeric);
         if (suffix === "K" || suffix === "К") return Math.round(value * 1_000);
         if (suffix === "M" || suffix === "М") return Math.round(value * 1_000_000);
         if (suffix === "B" || suffix === "Б") return Math.round(value * 1_000_000_000);

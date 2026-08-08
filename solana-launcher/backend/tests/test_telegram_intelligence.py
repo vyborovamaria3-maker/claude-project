@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from app.services.social_filters import filter_timeline_payload, normalize_social_source, social_event_engagement
-from app.services.social_intelligence import score_channel_metrics
+from app.services.social_intelligence import classify_call_outcome, normalize_caller_username, score_channel_metrics
 from app.services.telegram_parser import extract_solana_addresses, is_solana_address, parse_telegram_message
 
 ADDR = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
@@ -32,7 +32,7 @@ def test_score_penalizes_rugs() -> None:
 
 def test_social_source_normalizes_telegram_urls() -> None:
     assert normalize_social_source("@Alpha_Calls") == "alpha_calls"
-    assert normalize_social_source("https://t.me/Alpha_Calls/12345") == "alpha_calls"
+    assert normalize_social_source("https://t.me/Alpha_Calls/12345?single#post") == "alpha_calls"
 
 
 def test_social_event_engagement_uses_platform_metrics() -> None:
@@ -97,3 +97,17 @@ def test_timeline_filters_by_window_source_score_and_explicit_call() -> None:
     assert filtered["platforms"] == {"telegram": 1}
     assert filtered["timeline"][0]["source_handle"] == "alpha_calls"
     assert filtered["timeline"][0]["rank"] == 1
+
+
+def test_caller_username_normalization() -> None:
+    assert normalize_caller_username("@AlphaCalls") == "alphacalls"
+    assert normalize_caller_username("alphacalls") == "alphacalls"
+    assert normalize_caller_username("  ALPHACALLS  ") == "alphacalls"
+
+
+def test_call_outcome_is_window_local_and_preserves_win_then_rug() -> None:
+    assert classify_call_outcome(roi_multiple=2.5, final_to_peak=0.8, observed_hours=24) == "win"
+    assert classify_call_outcome(roi_multiple=3.0, final_to_peak=0.1, observed_hours=24) == "win_then_rug"
+    assert classify_call_outcome(roi_multiple=1.2, final_to_peak=0.1, observed_hours=24) == "rug"
+    assert classify_call_outcome(roi_multiple=1.5, final_to_peak=0.9, observed_hours=8) == "loss"
+    assert classify_call_outcome(roi_multiple=1.5, final_to_peak=0.1, observed_hours=2) == "pending"

@@ -49,7 +49,7 @@ type PumpTrade = {
   sol_amount: number;
   token_amount: number;
   is_buy: boolean;
-  timestamp: number; // unix seconds
+  timestamp: number | null; // unix seconds; null when upstream timestamp is invalid
   user: string;
   priceUsd?: number;
   amountUsd?: number;
@@ -82,6 +82,7 @@ async function fetchTrades(p: SharedPoll): Promise<void> {
         p.seenSigs.delete(iter.next().value!);
       }
 
+      if (row.timestamp == null || !Number.isFinite(row.timestamp) || row.timestamp <= 0) continue;
       const solAmount = row.sol_amount / 1e9;
       const tokenAmount = row.token_amount / 1e6;
       if (!solAmount || !tokenAmount) continue;

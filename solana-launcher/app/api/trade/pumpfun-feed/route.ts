@@ -65,7 +65,8 @@ async function fetchFeed(type: FeedType, limit: number): Promise<PumpToken[]> {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const type = (searchParams.get("type") as FeedType) || "new";
-  const limit = Math.min(Number(searchParams.get("limit") || 50), 200);
+  const parsedLimit = Number(searchParams.get("limit") || 50);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 200)) : 50;
 
   if (!["new", "bonding", "graduated"].includes(type)) {
     return NextResponse.json({ error: "invalid type" }, { status: 400 });
