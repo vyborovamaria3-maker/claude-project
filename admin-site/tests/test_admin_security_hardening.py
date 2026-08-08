@@ -100,6 +100,14 @@ class AdminSecurityHardeningTest(unittest.TestCase):
         self.assertIn("function cell(value)", app_js)
         self.assertIn("escapeHtml(text", app_js)
 
+    def test_login_form_preserves_invalid_credentials_message(self):
+        response = self.client.post("/api/login", json={"username":"admin","password":"wrong"})
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "Invalid credentials")
+        app_js = (ADMIN_ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("new URL(path, window.location.origin).pathname", app_js)
+        self.assertIn('pathname === "/api/login" ? detail : "Требуется вход"', app_js)
+
 
 if __name__ == "__main__":
     unittest.main()

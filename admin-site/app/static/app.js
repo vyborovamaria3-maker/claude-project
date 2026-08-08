@@ -27,7 +27,13 @@ function toast(message, isError = false) { const el = $("#toast"); el.textConten
 
 async function api(path, options = {}) {
   const response = await fetch(path, { credentials: "same-origin", headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
-  if (response.status === 401) { showLogin(); throw new Error("Требуется вход"); }
+  if (response.status === 401) {
+    let detail = "Требуется вход";
+    try { detail = (await response.json()).detail || detail; } catch {}
+    const pathname = new URL(path, window.location.origin).pathname;
+    showLogin();
+    throw new Error(pathname === "/api/login" ? detail : "Требуется вход");
+  }
   if (!response.ok) { let detail = `HTTP ${response.status}`; try { detail = (await response.json()).detail || detail; } catch {} throw new Error(detail); }
   const type = response.headers.get("content-type") || "";
   return type.includes("application/json") ? response.json() : response.text();
