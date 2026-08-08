@@ -10,16 +10,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "payload required" }, { status: 400 });
   }
 
-  const order = getSubscriptionOrder(payload);
-  if (!order) {
-    return NextResponse.json({ error: "order not found" }, { status: 404 });
-  }
+  try {
+    const order = await getSubscriptionOrder(payload);
+    if (!order) {
+      return NextResponse.json({ error: "order not found" }, { status: 404 });
+    }
 
-  return NextResponse.json({
-    payload: order.payload,
-    login: order.login,
-    status: order.status,
-    password: order.status === "paid" ? order.password : null,
-    paidAt: order.paid_at,
-  });
+    return NextResponse.json({
+      payload: order.payload,
+      login: order.login,
+      status: order.status,
+      password: order.status === "paid" ? order.password : null,
+      paidAt: order.paid_at,
+      subscriptionExpiresAt: order.subscription_expires_at,
+    });
+  } catch (error) {
+    console.error("[Mini App] Unable to read order:", error);
+    return NextResponse.json({ error: "Unable to read order" }, { status: 503 });
+  }
 }
