@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash
@@ -91,7 +92,11 @@ async def create_subscription_order(
         status="pending",
     )
     session.add(order)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise SubscriptionConflictError("This login is already reserved") from exc
     await session.refresh(order)
     return order
 
@@ -192,6 +197,10 @@ async def complete_subscription_order(
     order.telegram_payment_charge_id = completion.telegram_payment_charge_id
     order.paid_at = now
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise SubscriptionConflictError("Subscription payment conflicts with existing data") from exc
     await session.refresh(order)
     return order, completion.password, expires_at, False
