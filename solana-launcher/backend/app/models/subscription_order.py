@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import BigInteger, DateTime, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -28,16 +28,18 @@ class SubscriptionOrder(Base):
     password_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     invoice_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_charge_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    telegram_payment_charge_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    telegram_payment_charge_id: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
