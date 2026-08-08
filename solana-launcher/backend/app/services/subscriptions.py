@@ -63,7 +63,8 @@ async def create_subscription_order(
         same_order = (
             existing.telegram_user_id == payload.telegram_user_id
             and existing.login == payload.login
-            and existing.amount_usd == payload.amount_usd
+            and existing.currency == payload.currency
+            and existing.total_amount == payload.total_amount
         )
         if not same_order:
             raise SubscriptionConflictError("Subscription payload already belongs to another order")
@@ -83,8 +84,11 @@ async def create_subscription_order(
     if pending_order is not None:
         if pending_order.telegram_user_id != payload.telegram_user_id:
             raise SubscriptionConflictError("This login is reserved by another pending order")
-        if pending_order.amount_usd != payload.amount_usd:
-            raise SubscriptionConflictError("Pending subscription amount does not match")
+        if (
+            pending_order.currency != payload.currency
+            or pending_order.total_amount != payload.total_amount
+        ):
+            raise SubscriptionConflictError("Pending subscription price does not match")
         return pending_order
 
     order = SubscriptionOrder(
@@ -92,7 +96,8 @@ async def create_subscription_order(
         telegram_user_id=payload.telegram_user_id,
         username=payload.username,
         login=payload.login,
-        amount_usd=payload.amount_usd,
+        currency=payload.currency,
+        total_amount=payload.total_amount,
         status="pending",
     )
     session.add(order)
