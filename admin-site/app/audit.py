@@ -5,6 +5,7 @@ import contextlib
 import json
 import sqlite3
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,16 @@ class AuditStore:
                 """
             )
             db.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_created ON admin_audit(created_at DESC)")
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS revoked_admin_sessions (
+                    nonce TEXT PRIMARY KEY,
+                    expires_at INTEGER NOT NULL,
+                    revoked_at TEXT NOT NULL
+                )
+                """
+            )
+            db.execute("CREATE INDEX IF NOT EXISTS ix_revoked_admin_sessions_expires ON revoked_admin_sessions(expires_at)")
             db.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -62,6 +73,31 @@ class AuditStore:
                 ),
             )
             db.commit()
+
+    def revoke_session(self, nonce: str, expires_at: int) -> None:
+        if not nonce:
+            raise ValueError("Session nonce is required")
+        now = int(time.time())
+        if expires_at <= now:
+            return
+        with self._lock, contextlib.closing(self._connect()) as db:
+            db.execute("DELETE FROM revoked_admin_sessions WHERE expires_at<=?", (now,))
+            db.execute(
+                "INSERT INTO revoked_admin_sessions(nonce, expires_at, revoked_at) VALUES(?,?,?) "
+                "ON CONFLICT(nonce) DO UPDATE SET expires_at=excluded.expires_at, revoked_at=excluded.revoked_at",
+                (nonce, int(expires_at), datetime.now(timezone.utc).isoformat()),
+            )
+            db.commit()
+
+    def is_session_revoked(self, nonce: str) -> bool:
+        if not nonce:
+            return True
+        now = int(time.time())
+        with self._lock, contextlib.closing(self._connect()) as db:
+            db.execute("DELETE FROM revoked_admin_sessions WHERE expires_at<=?", (now,))
+            row = db.execute("SELECT 1 FROM revoked_admin_sessions WHERE nonce=? LIMIT 1", (nonce,)).fetchone()
+            db.commit()
+            return row is not None
 
     def list(self, limit: int = 200) -> list[dict[str, Any]]:
         with contextlib.closing(self._connect()) as db:

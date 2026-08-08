@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -7,6 +9,8 @@ from pydantic import BaseModel, Field
 
 from .analysis_catalog import DOMAINS
 from .auth import require_admin
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisUpdateBody(BaseModel):
@@ -38,14 +42,19 @@ def _domain_or_404(domain: str) -> str:
 
 def _audit(request: Request, admin: dict[str, Any], action: str, resource: str, details: dict[str, Any] | None = None) -> None:
     ip = request.client.host if request.client else "unknown"
-    request.app.state.audit.record(
-        action=action,
-        success=True,
-        username=admin["sub"],
-        ip_address=ip,
-        resource=resource,
-        details=details or {},
-    )
+    try:
+        request.app.state.audit.record(
+            action=action,
+            success=True,
+            username=admin["sub"],
+            ip_address=ip,
+            resource=resource,
+            details=details or {},
+        )
+    except sqlite3.Error:
+        # The profile mutation has already committed. Do not return a false HTTP failure
+        # for data that is durably saved; surface the audit-store problem in server logs.
+        logger.exception("Failed to persist admin audit event action=%s resource=%s", action, resource)
 
 
 def build_analysis_router() -> APIRouter:
