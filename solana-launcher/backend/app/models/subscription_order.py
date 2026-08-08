@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, text
+from sqlalchemy import BigInteger, DateTime, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -22,7 +22,8 @@ class SubscriptionOrder(Base):
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     login: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    amount_usd: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    total_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[str] = mapped_column(String(16), index=True, default="pending", nullable=False)
     password_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     invoice_link: Mapped[str | None] = mapped_column(Text, nullable=True)
