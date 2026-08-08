@@ -9,8 +9,30 @@ from .analysis_profiles import _KEY_RE, _SOURCE_RE, _VALID_SCALES, validate_thre
 from .analysis_profiles_v3 import ContractAwareAnalysisProfileStore
 
 
+_ALLOWED_SCALES_BY_TYPE = {
+    "number": {"raw", "millions"},
+    "percent": {"ratio", "percent100"},
+    "currency": {"raw", "millions"},
+    "duration": {"raw", "seconds", "milliseconds", "hours", "days"},
+    "boolean": {"raw"},
+    "score": {"raw"},
+    "text": {"raw"},
+    "timestamp": {"raw"},
+    "object": {"raw"},
+}
+
+
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_type_scale(value_type: str, scale: str) -> None:
+    if value_type not in VALUE_TYPES:
+        raise ValueError("Invalid value type")
+    if scale not in _VALID_SCALES:
+        raise ValueError("Invalid value scale")
+    if scale not in _ALLOWED_SCALES_BY_TYPE.get(value_type, set()):
+        raise ValueError(f"Scale {scale} is incompatible with value type {value_type}")
 
 
 class LiveAnalysisProfileStore(ContractAwareAnalysisProfileStore):
@@ -51,6 +73,36 @@ class LiveAnalysisProfileStore(ContractAwareAnalysisProfileStore):
             raise ValueError("Hidden system parameter must be restored before editing")
         return super().update_builtin(domain, key, enabled=enabled, threshold=threshold, username=username)
 
+    def create_custom(
+        self,
+        domain: str,
+        *,
+        key: str,
+        label: str,
+        source: str,
+        value_type: str,
+        scale: str,
+        threshold: str,
+        enabled: bool,
+        description: str,
+        username: str,
+    ) -> dict[str, Any]:
+        _validate_type_scale(value_type, scale)
+        if value_type == "object" and threshold.strip():
+            raise ValueError("Object parameter is display-only and cannot have a threshold")
+        return super().create_custom(
+            domain,
+            key=key,
+            label=label,
+            source=source,
+            value_type=value_type,
+            scale=scale,
+            threshold=threshold,
+            enabled=enabled,
+            description=description,
+            username=username,
+        )
+
     def edit_custom(
         self,
         domain: str,
@@ -74,10 +126,7 @@ class LiveAnalysisProfileStore(ContractAwareAnalysisProfileStore):
             raise KeyError("Unknown custom analysis parameter")
         if not _SOURCE_RE.fullmatch(source):
             raise ValueError("Invalid data source path")
-        if value_type not in VALUE_TYPES:
-            raise ValueError("Invalid value type")
-        if scale not in _VALID_SCALES:
-            raise ValueError("Invalid value scale")
+        _validate_type_scale(value_type, scale)
         if not label.strip() or len(label) > 120 or len(description) > 500:
             raise ValueError("Invalid label or description")
         if value_type == "object" and threshold.strip():
