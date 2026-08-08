@@ -9,11 +9,13 @@ STATIC = ROOT / "app" / "static"
 
 
 class AnalysisConfirmationFrontendContractTest(unittest.TestCase):
-    def test_confirmation_script_loads_before_editor(self):
+    def test_confirmation_script_loads_before_editor_and_cancel_cleanup_after(self):
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         confirm_pos = html.index('/static/analysis-confirm-v5.js')
         editor_pos = html.index('/static/analysis-profiles-v4.js')
+        cancel_pos = html.index('/static/analysis-cancel-silence-v5.js')
         self.assertLess(confirm_pos, editor_pos)
+        self.assertLess(editor_pos, cancel_pos)
         self.assertIn('/static/analysis-confirm-v5.css', html)
 
     def test_all_mutating_methods_are_guarded_and_backtest_is_not(self):
@@ -32,6 +34,15 @@ class AnalysisConfirmationFrontendContractTest(unittest.TestCase):
         self.assertIn('audit trail', js)
         self.assertIn('ON → OFF', js)
         self.assertIn('OFF → ON', js)
+
+    def test_cancel_cleanup_is_silent_for_button_backdrop_and_escape(self):
+        js = (STATIC / "analysis-cancel-silence-v5.js").read_text(encoding="utf-8")
+        self.assertIn('#analysisConfirmCancel', js)
+        self.assertIn('event.target === modal', js)
+        self.assertIn('event.key === "Escape"', js)
+        self.assertIn('analysisEditorStatus', js)
+        self.assertIn('#toast', js)
+        self.assertIn('отменено пользователем', js)
 
     def test_editor_exposes_all_user_actions(self):
         js = (STATIC / "analysis-profiles-v4.js").read_text(encoding="utf-8")
