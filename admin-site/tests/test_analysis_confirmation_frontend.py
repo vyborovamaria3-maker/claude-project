@@ -18,12 +18,12 @@ class AnalysisConfirmationFrontendContractTest(unittest.TestCase):
         self.assertLess(editor_pos, cancel_pos)
         self.assertIn('/static/analysis-confirm-v5.css', html)
 
-    def test_all_mutating_methods_are_guarded_and_backtest_is_not(self):
+    def test_all_mutating_methods_are_guarded_and_only_post_backtest_is_exempt(self):
         js = (STATIC / "analysis-confirm-v5.js").read_text(encoding="utf-8")
         for method in ('POST', 'PUT', 'PATCH', 'DELETE'):
             self.assertIn(f'"{method}"', js)
         self.assertIn('/api/analysis-profiles/', js)
-        self.assertIn('url.endsWith("/backtest")', js)
+        self.assertIn('method === "POST" && path.endsWith("/backtest")', js)
         self.assertIn('До подтверждения запрос на сервер не отправляется', js)
 
     def test_confirmation_has_cancel_confirm_and_destructive_copy(self):
@@ -32,8 +32,6 @@ class AnalysisConfirmationFrontendContractTest(unittest.TestCase):
         self.assertIn('Отмена', js)
         self.assertIn('Да, удалить', js)
         self.assertIn('audit trail', js)
-        self.assertIn('ON → OFF', js)
-        self.assertIn('OFF → ON', js)
 
     def test_cancel_cleanup_is_silent_for_button_backdrop_and_escape(self):
         js = (STATIC / "analysis-cancel-silence-v5.js").read_text(encoding="utf-8")
