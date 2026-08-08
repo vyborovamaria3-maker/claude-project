@@ -1,5 +1,6 @@
 import re
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -11,7 +12,8 @@ class SubscriptionOrderCreate(BaseModel):
     telegram_user_id: int = Field(ge=1)
     username: str | None = Field(default=None, max_length=255)
     login: str = Field(min_length=4, max_length=32)
-    amount_usd: int = Field(gt=0, le=1_000_000)
+    currency: Literal["XTR"]
+    total_amount: int = Field(gt=0, le=10_000_000)
 
     @field_validator("login")
     @classmethod
@@ -37,7 +39,8 @@ class SubscriptionOrderRead(BaseModel):
     telegram_user_id: int
     username: str | None
     login: str
-    amount_usd: int
+    currency: str
+    total_amount: int
     status: str
     password: str | None = None
     invoice_link: str | None
