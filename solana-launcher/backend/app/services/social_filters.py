@@ -21,7 +21,12 @@ def _parse_datetime(value: Any) -> datetime | None:
 
 
 def normalize_social_source(value: str) -> str:
-    return value.strip().lower().lstrip("@").removeprefix("https://t.me/").strip("/")
+    normalized = value.strip().lower().lstrip("@")
+    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+            break
+    return normalized.strip("/").split("/", 1)[0]
 
 
 def social_event_engagement(item: dict[str, Any]) -> int:
