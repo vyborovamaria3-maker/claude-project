@@ -113,6 +113,7 @@
       if (activeDomain() === domain) await window.AdminAnalysisProfiles?.reload();
     } finally {
       toggleBusy = false;
+      if (document.contains(button)) button.disabled = false;
     }
   }, true);
 })();
