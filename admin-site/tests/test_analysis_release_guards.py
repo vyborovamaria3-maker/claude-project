@@ -51,6 +51,7 @@ class AnalysisReleaseGuardTest(unittest.TestCase):
         self.assertIn('.analysis-tab[data-domain], #navigation [data-view], #refreshButton', js)
         self.assertIn('loadCount', js)
         self.assertIn('mutationCount', js)
+        self.assertIn('if (document.contains(button)) button.disabled = false', js)
 
     def test_backtest_stays_outside_confirmation_and_busy_mutation_tracking(self):
         confirm = (ADMIN_ROOT / "app" / "static" / "analysis-confirm-v5.js").read_text(encoding="utf-8")
