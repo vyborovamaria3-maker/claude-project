@@ -21,6 +21,8 @@ class AnalysisReleaseGuardTest(unittest.TestCase):
             self.assertTrue(first["hidden"])
             second = store.hide_builtin("wallet", "migration_rate", "admin")
             self.assertTrue(second["hidden"])
+            with self.assertRaises(ValueError):
+                store.update_builtin("wallet", "migration_rate", enabled=False, threshold=">= 12%", username="admin")
             restored = store.restore_builtin("wallet", "migration_rate", "admin")
             self.assertTrue(restored["enabled"])
             self.assertEqual(restored["threshold"], ">= 37%")
@@ -59,11 +61,11 @@ class AnalysisReleaseGuardTest(unittest.TestCase):
         self.assertIn('typeof window.showLogin === "function"', js)
         self.assertIn('window.showLogin()', js)
 
-    def test_backtest_stays_outside_confirmation_and_busy_mutation_tracking(self):
+    def test_only_post_backtest_is_exempt_from_confirmation_and_busy_tracking(self):
         confirm = (ADMIN_ROOT / "app" / "static" / "analysis-confirm-v5.js").read_text(encoding="utf-8")
         guard = (ADMIN_ROOT / "app" / "static" / "analysis-ui-guard-v6.js").read_text(encoding="utf-8")
-        self.assertIn('endsWith("/backtest")', confirm)
-        self.assertIn('const isBacktest = path.endsWith("/backtest")', guard)
+        self.assertIn('method === "POST" && path.endsWith("/backtest")', confirm)
+        self.assertIn('const isBacktest = method === "POST" && path.endsWith("/backtest")', guard)
         self.assertIn('!isBacktest', guard)
 
 
