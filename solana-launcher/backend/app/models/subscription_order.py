@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -8,6 +8,15 @@ from app.db.base import Base
 
 class SubscriptionOrder(Base):
     __tablename__ = "subscription_orders"
+    __table_args__ = (
+        Index(
+            "uq_subscription_orders_pending_login",
+            "login",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
+    )
 
     payload: Mapped[str] = mapped_column(String(128), primary_key=True)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
