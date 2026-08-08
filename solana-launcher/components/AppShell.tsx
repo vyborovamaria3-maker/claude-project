@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import SidebarTop from "@/components/SidebarTop";
 import MasterWalletBar from "@/components/MasterWalletBar";
@@ -18,6 +18,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublic = useMemo(() => PUBLIC_ROUTES.has(pathname), [pathname]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -28,11 +30,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileNavOpen(false);
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
 
     return () => {
       document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      const previous = previousFocusRef.current;
+      if (previous?.isConnected) previous.focus();
     };
   }, [mobileNavOpen]);
+
+  const openMobileNav = () => {
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setMobileNavOpen(true);
+  };
 
   if (isPublic) {
     return (
@@ -68,6 +88,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="relative shrink-0">
               <SidebarTop />
               <button
+                ref={closeButtonRef}
                 type="button"
                 onClick={() => setMobileNavOpen(false)}
                 className="absolute right-3 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-xl border border-bg-border bg-bg-card/90 text-content-muted transition hover:border-primary-border hover:text-content"
@@ -84,7 +105,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className={`${siteDesign.shell.contentClassName} w-full lg:ml-64 lg:w-[calc(100vw-16rem)]`}>
         <div className={siteDesign.shell.appBackgroundClassName} />
-        <Header onMenuToggle={() => setMobileNavOpen(true)} />
+        <Header onMenuToggle={openMobileNav} />
         <TrendingBar />
         <main className={siteDesign.shell.mainClassName}>{children}</main>
       </div>
