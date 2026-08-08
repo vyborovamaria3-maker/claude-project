@@ -23,7 +23,7 @@ function miniAppKeyboard() {
 export function setupSubscriptionHandlers(bot: Telegraf) {
   bot.command("subscribe", async (ctx) => {
     await ctx.reply(
-      "Open the Mini App, choose your login, pay the $1000 subscription, and receive a 32-character password for site access.",
+      "Open the Mini App, choose your login, pay for 30-day access with Telegram Stars, and receive a 32-character password for site access.",
       miniAppKeyboard()
     );
   });
@@ -35,8 +35,9 @@ export function setupSubscriptionHandlers(bot: Telegraf) {
       order &&
       order.status === "pending" &&
       query.from.id === order.telegram_user_id &&
-      query.currency === "USD" &&
-      query.total_amount === order.amount_usd * 100;
+      query.currency === order.currency &&
+      query.currency === "XTR" &&
+      query.total_amount === order.total_amount;
 
     if (!valid) {
       await ctx.answerPreCheckoutQuery(
@@ -74,12 +75,17 @@ export function setupSubscriptionHandlers(bot: Telegraf) {
       return;
     }
 
-    if (payment.currency !== "USD" || payment.total_amount !== order.amount_usd * 100) {
+    if (
+      payment.currency !== order.currency ||
+      payment.currency !== "XTR" ||
+      payment.total_amount !== order.total_amount
+    ) {
       console.error("[Telegram Payment] Amount or currency mismatch", {
         payload: payment.invoice_payload,
         currency: payment.currency,
         totalAmount: payment.total_amount,
-        expectedAmount: order.amount_usd * 100,
+        expectedCurrency: order.currency,
+        expectedAmount: order.total_amount,
       });
       await ctx.reply("Payment data did not match the order. Access was not changed; please contact the administrator.");
       return;
