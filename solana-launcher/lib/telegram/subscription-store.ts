@@ -1,8 +1,4 @@
-import fs from "fs";
-import path from "path";
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const STORE_PATH = path.join(DATA_DIR, "subscription-orders.json");
+import { getBackendBaseUrl } from "../authProxy";
 
 export type SubscriptionOrder = {
   payload: string;
@@ -16,101 +12,136 @@ export type SubscriptionOrder = {
   provider_charge_id: string | null;
   telegram_payment_charge_id: string | null;
   created_at: string;
+  updated_at: string;
   paid_at: string | null;
+  subscription_expires_at: string | null;
+  already_paid: boolean;
 };
 
-function ensureStore() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+class SubscriptionStoreError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "SubscriptionStoreError";
+    this.status = status;
+  }
+}
+
+function internalHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const apiKey = process.env.BACKEND_API_KEY?.trim();
+  if (apiKey) {
+    headers["X-API-Key"] = apiKey;
+    return headers;
+  }
+  if (process.env.NODE_ENV !== "production") {
+    headers["X-Dev-Internal"] = "miniapp-subscription";
+    return headers;
+  }
+  throw new Error("BACKEND_API_KEY is required for subscription order access");
+}
+
+async function requestBackend<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${getBackendBaseUrl()}/api/v1/subscriptions${path}`, {
+    ...init,
+    headers: {
+      ...internalHeaders(),
+      ...(init?.headers || {}),
+    },
+    cache: "no-store",
+  });
+
+  const text = await response.text();
+  let parsed: unknown = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
   }
 
-  if (!fs.existsSync(STORE_PATH)) {
-    fs.writeFileSync(STORE_PATH, JSON.stringify({ orders: [] }, null, 2), "utf-8");
+  if (!response.ok) {
+    const detail =
+      parsed && typeof parsed === "object" && "detail" in parsed
+        ? String((parsed as { detail?: unknown }).detail || "")
+        : "";
+    throw new SubscriptionStoreError(
+      detail || `Subscription backend request failed: ${response.status}`,
+      response.status
+    );
   }
+
+  return parsed as T;
 }
 
-function readOrders(): SubscriptionOrder[] {
-  ensureStore();
-  const raw = fs.readFileSync(STORE_PATH, "utf-8");
-  const parsed = JSON.parse(raw) as { orders?: SubscriptionOrder[] };
-  return Array.isArray(parsed.orders) ? parsed.orders : [];
-}
-
-function writeOrders(orders: SubscriptionOrder[]) {
-  ensureStore();
-  fs.writeFileSync(STORE_PATH, JSON.stringify({ orders }, null, 2), "utf-8");
-}
-
-export function createSubscriptionOrder(input: {
+export async function createSubscriptionOrder(input: {
   payload: string;
   telegramUserId: number;
   username?: string | null;
   login: string;
   amountUsd: number;
   invoiceLink?: string | null;
-}) {
-  const orders = readOrders();
-  const existingIndex = orders.findIndex((order) => order.payload === input.payload);
-  const next: SubscriptionOrder = {
-    payload: input.payload,
-    telegram_user_id: input.telegramUserId,
-    username: input.username ?? null,
-    login: input.login,
-    amount_usd: input.amountUsd,
-    status: "pending",
-    password: null,
-    invoice_link: input.invoiceLink ?? null,
-    provider_charge_id: null,
-    telegram_payment_charge_id: null,
-    created_at: new Date().toISOString(),
-    paid_at: null,
-  };
+}): Promise<SubscriptionOrder> {
+  const order = await requestBackend<SubscriptionOrder>("/orders", {
+    method: "POST",
+    body: JSON.stringify({
+      payload: input.payload,
+      telegram_user_id: input.telegramUserId,
+      username: input.username ?? null,
+      login: input.login,
+      amount_usd: input.amountUsd,
+    }),
+  });
 
-  if (existingIndex >= 0) {
-    orders[existingIndex] = {
-      ...orders[existingIndex],
-      invoice_link: input.invoiceLink ?? orders[existingIndex].invoice_link,
-    };
-  } else {
-    orders.push(next);
+  if (input.invoiceLink) {
+    return updateSubscriptionInvoice(input.payload, input.invoiceLink);
   }
-
-  writeOrders(orders);
+  return order;
 }
 
-export function getSubscriptionOrder(payload: string): SubscriptionOrder | null {
-  return readOrders().find((order) => order.payload === payload) ?? null;
+export async function getSubscriptionOrder(payload: string): Promise<SubscriptionOrder | null> {
+  try {
+    return await requestBackend<SubscriptionOrder>(`/orders/${encodeURIComponent(payload)}`);
+  } catch (error) {
+    if (error instanceof SubscriptionStoreError && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
-export function markSubscriptionPaid(input: {
+export async function markSubscriptionPaid(input: {
   payload: string;
   password: string;
   providerChargeId?: string | null;
   telegramPaymentChargeId?: string | null;
-}) {
-  const orders = readOrders();
-  const index = orders.findIndex((order) => order.payload === input.payload);
-  if (index < 0) return;
-
-  orders[index] = {
-    ...orders[index],
-    status: "paid",
-    password: input.password,
-    provider_charge_id: input.providerChargeId ?? null,
-    telegram_payment_charge_id: input.telegramPaymentChargeId ?? null,
-    paid_at: new Date().toISOString(),
-  };
-  writeOrders(orders);
+}): Promise<SubscriptionOrder> {
+  return requestBackend<SubscriptionOrder>(
+    `/orders/${encodeURIComponent(input.payload)}/complete`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        password: input.password,
+        provider_charge_id: input.providerChargeId ?? null,
+        telegram_payment_charge_id: input.telegramPaymentChargeId ?? null,
+      }),
+    }
+  );
 }
 
-export function updateSubscriptionInvoice(payload: string, invoiceLink: string) {
-  const orders = readOrders();
-  const index = orders.findIndex((order) => order.payload === payload);
-  if (index < 0) return;
-
-  orders[index] = {
-    ...orders[index],
-    invoice_link: invoiceLink,
-  };
-  writeOrders(orders);
+export async function updateSubscriptionInvoice(
+  payload: string,
+  invoiceLink: string
+): Promise<SubscriptionOrder> {
+  return requestBackend<SubscriptionOrder>(
+    `/orders/${encodeURIComponent(payload)}/invoice`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ invoice_link: invoiceLink }),
+    }
+  );
 }
