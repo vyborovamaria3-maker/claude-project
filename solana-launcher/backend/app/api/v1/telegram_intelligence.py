@@ -14,6 +14,7 @@ from app.schemas.social_intelligence import (
     TelegramScanRequest,
     XSocialIngestRequest,
 )
+from app.services.social_filters import filter_timeline_payload, normalize_social_source
 from app.services.social_intelligence import (
     evaluate_calls,
     ingest_x_events,
@@ -37,6 +38,53 @@ def _manager(request: Request) -> TelegramMonitorManager:
     return request.app.state.telegram_intelligence
 
 
+def _source_set(raw: str | None) -> set[str]:
+    if not raw:
+        return set()
+    return {normalize_social_source(value) for value in raw.split(",") if value.strip()}
+
+
+async def _channel_scores(session: AsyncSession) -> dict[str, float]:
+    channels, _ = await list_channels(session, limit=500, offset=0)
+    result: dict[str, float] = {}
+    for item in channels:
+        score = float(item.get("score") or 0.0)
+        username = str(item.get("username") or "").strip()
+        telegram_id = str(item.get("telegram_id") or "").strip()
+        if username:
+            result[normalize_social_source(username)] = score
+        if telegram_id:
+            result[normalize_social_source(telegram_id)] = score
+    return result
+
+
+async def _filtered_timeline(
+    session: AsyncSession,
+    mint: str,
+    *,
+    platform: str | None,
+    hours: int | None,
+    sources: str | None,
+    explicit_calls_only: bool,
+    min_engagement: int,
+    min_channel_score: float,
+    limit: int,
+) -> dict:
+    timeline = await token_timeline(session, mint)
+    scores = await _channel_scores(session) if min_channel_score > 0 else {}
+    return filter_timeline_payload(
+        timeline,
+        platform=platform,
+        hours=hours,
+        sources=_source_set(sources),
+        explicit_calls_only=explicit_calls_only,
+        min_engagement=min_engagement,
+        min_channel_score=min_channel_score,
+        channel_scores=scores,
+        limit=limit,
+    )
+
+
 @router.get("/session/status")
 async def telegram_session_status(
     request: Request,
@@ -51,8 +99,6 @@ async def telegram_attach_session(
     request: Request,
     current_user=Depends(get_current_superuser),
 ) -> dict:
-    # Attach only a pre-authorized StringSession. Phone/SMS login is intentionally kept out
-    # of HTTP APIs and the session secret is never returned to clients.
     try:
         return await _manager(request).attach_session(payload.session_string)
     except (TelegramSessionError, ValueError) as exc:
@@ -140,15 +186,29 @@ async def evaluate(
 
 
 @router.get("/token/{mint}")
-async def telegram_token(mint: str, session: AsyncSession = Depends(get_db)) -> dict:
+async def telegram_token(
+    mint: str,
+    hours: int | None = Query(default=None, ge=1, le=8760),
+    sources: str | None = Query(default=None, description="Comma-separated Telegram channel usernames"),
+    explicit_calls_only: bool = Query(default=False),
+    min_engagement: int = Query(default=0, ge=0, le=1_000_000_000),
+    min_channel_score: float = Query(default=0.0, ge=0.0, le=100.0),
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
     if not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
-    timeline = await token_timeline(session, mint)
-    timeline["timeline"] = [item for item in timeline["timeline"] if item["platform"] == "telegram"]
-    timeline["mentions"] = len(timeline["timeline"])
-    timeline["platforms"] = {"telegram": timeline["mentions"]} if timeline["mentions"] else {}
-    timeline["origin"] = timeline["timeline"][0] if timeline["timeline"] else None
-    return timeline
+    return await _filtered_timeline(
+        session,
+        mint,
+        platform="telegram",
+        hours=hours,
+        sources=sources,
+        explicit_calls_only=explicit_calls_only,
+        min_engagement=min_engagement,
+        min_channel_score=min_channel_score,
+        limit=limit,
+    )
 
 
 @router.get("/top-callers")
@@ -176,10 +236,32 @@ async def social_relations(
 
 
 @social_router.get("/token/{mint}")
-async def social_token(mint: str, session: AsyncSession = Depends(get_db)) -> dict:
+async def social_token(
+    mint: str,
+    platform: str | None = Query(default=None),
+    hours: int | None = Query(default=None, ge=1, le=8760),
+    sources: str | None = Query(default=None, description="Comma-separated source handles"),
+    explicit_calls_only: bool = Query(default=False),
+    min_engagement: int = Query(default=0, ge=0, le=1_000_000_000),
+    min_channel_score: float = Query(default=0.0, ge=0.0, le=100.0),
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
     if not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
-    return await token_timeline(session, mint)
+    if platform and platform not in {"telegram", "x"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x")
+    return await _filtered_timeline(
+        session,
+        mint,
+        platform=platform,
+        hours=hours,
+        sources=sources,
+        explicit_calls_only=explicit_calls_only,
+        min_engagement=min_engagement,
+        min_channel_score=min_channel_score,
+        limit=limit,
+    )
 
 
 @social_router.post("/x/refresh/{mint}")
