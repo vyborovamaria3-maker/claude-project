@@ -20,11 +20,12 @@ async function walk(dir) {
 
 function pageFileToRoute(file) {
   const rel = path.relative(appDir, file).replaceAll(path.sep, "/");
-  if (!/\/page\.(tsx|ts|jsx|js)$/.test(`/${rel}`)) return null;
-  const rawSegments = rel.replace(/\/page\.(tsx|ts|jsx|js)$/, "").split("/").filter(Boolean);
+  if (!/(^|\/)page\.(tsx|ts|jsx|js)$/.test(rel)) return null;
+  const withoutPage = rel.replace(/(^|\/)page\.(tsx|ts|jsx|js)$/, "");
+  const rawSegments = withoutPage.split("/").filter(Boolean);
   if (rawSegments.some((segment) => segment === "api" || segment.startsWith("@") || segment.includes("[") || segment.includes("]"))) return null;
   const segments = rawSegments.filter((segment) => !(segment.startsWith("(") && segment.endsWith(")")));
-  return `/${segments.join("/")}`.replace(/\/$/, "") || "/";
+  return segments.length ? `/${segments.join("/")}` : "/";
 }
 
 async function discoverRoutes() {
@@ -35,6 +36,40 @@ async function discoverRoutes() {
 
 function isGenericServerError(text) {
   return /Application error|Internal Server Error|Unhandled Runtime Error|This page could not be found/i.test(text);
+}
+
+async function evaluateStable(page) {
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => {});
+      await page.waitForTimeout(350);
+      return await page.evaluate(() => ({
+        viewport: document.documentElement.clientWidth,
+        htmlWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body?.scrollWidth || 0,
+        text: document.body?.innerText?.slice(0, 10000) || "",
+        href: location.href,
+        badHrefs: Array.from(document.querySelectorAll("a[href]"))
+          .map((node) => node.getAttribute("href") || "")
+          .filter((href) => /(^|[/?#])(undefined|null)([/?#]|$)/i.test(href)),
+        controlsOutsideViewport: Array.from(document.querySelectorAll("input, select, textarea, button"))
+          .filter((node) => {
+            const rect = node.getBoundingClientRect();
+            const style = getComputedStyle(node);
+            if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) return false;
+            return rect.left < -2 || rect.right > document.documentElement.clientWidth + 2;
+          })
+          .slice(0, 20)
+          .map((node) => `${node.tagName.toLowerCase()}#${node.id || ""}.${node.className || ""}`),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const redirectRace = /Execution context was destroyed|Target page, context or browser has been closed/i.test(message);
+      if (!redirectRace || attempt === 4) throw error;
+      await page.waitForTimeout(500);
+    }
+  }
+  throw new Error("unreachable");
 }
 
 async function auditRoute(page, route, viewportName, failures) {
@@ -56,26 +91,13 @@ async function auditRoute(page, route, viewportName, failures) {
   if (!response) failures.push(`${viewportName} ${route}: no navigation response`);
   else if (response.status() >= 500) failures.push(`${viewportName} ${route}: HTTP ${response.status()}`);
 
-  await page.waitForTimeout(500);
-
-  const state = await page.evaluate(() => ({
-    viewport: document.documentElement.clientWidth,
-    htmlWidth: document.documentElement.scrollWidth,
-    bodyWidth: document.body?.scrollWidth || 0,
-    text: document.body?.innerText?.slice(0, 10000) || "",
-    badHrefs: Array.from(document.querySelectorAll("a[href]"))
-      .map((node) => node.getAttribute("href") || "")
-      .filter((href) => /(^|[/?#])(undefined|null)([/?#]|$)/i.test(href)),
-    controlsOutsideViewport: Array.from(document.querySelectorAll("input, select, textarea, button"))
-      .filter((node) => {
-        const rect = node.getBoundingClientRect();
-        const style = getComputedStyle(node);
-        if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) return false;
-        return rect.left < -2 || rect.right > document.documentElement.clientWidth + 2;
-      })
-      .slice(0, 20)
-      .map((node) => `${node.tagName.toLowerCase()}#${node.id || ""}.${node.className || ""}`),
-  }));
+  let state;
+  try {
+    state = await evaluateStable(page);
+  } catch (error) {
+    failures.push(`${viewportName} ${route}: unable to inspect stable page: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
 
   const widest = Math.max(state.htmlWidth, state.bodyWidth);
   if (widest > state.viewport + 2) failures.push(`${viewportName} ${route}: horizontal overflow ${widest}px > ${state.viewport}px`);
@@ -87,13 +109,16 @@ async function auditRoute(page, route, viewportName, failures) {
   const relevantConsole = badConsole.filter((line) => !/Failed to load resource|ERR_CONNECTION_REFUSED|fetch failed|NetworkError/i.test(line));
   if (relevantConsole.length) failures.push(`${viewportName} ${route}: console.error ${relevantConsole.slice(0, 5).join(" | ")}`);
 
-  console.log(`AUDIT ${viewportName} ${route} status=${response?.status() ?? "none"} overflow=${widest - state.viewport}`);
+  const finalPath = new URL(state.href).pathname;
+  const redirect = finalPath !== route ? ` redirect=${finalPath}` : "";
+  console.log(`AUDIT ${viewportName} ${route} status=${response?.status() ?? "none"} overflow=${widest - state.viewport}${redirect}`);
 }
 
 async function run() {
   await fs.mkdir(outputDir, { recursive: true });
   const routes = await discoverRoutes();
   assert.ok(routes.length >= 10, `suspiciously few routes discovered: ${routes.length}`);
+  assert.ok(routes.includes("/"), "root route was not discovered");
   console.log(`Discovered ${routes.length} static routes`);
   console.log(routes.join("\n"));
 
@@ -112,6 +137,8 @@ async function run() {
           const page = await context.newPage();
           try {
             await auditRoute(page, route, name, failures);
+          } catch (error) {
+            failures.push(`${name} ${route}: unexpected audit error: ${error instanceof Error ? error.message : String(error)}`);
           } finally {
             await page.close();
           }
@@ -135,7 +162,9 @@ async function run() {
   }
 }
 
-run().catch((error) => {
+run().catch(async (error) => {
+  await fs.mkdir(outputDir, { recursive: true });
+  await fs.writeFile(path.join(outputDir, "fatal.txt"), String(error?.stack || error));
   console.error(error);
   process.exitCode = 1;
 });
