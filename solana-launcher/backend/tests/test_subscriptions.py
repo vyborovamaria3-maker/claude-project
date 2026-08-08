@@ -12,16 +12,26 @@ def order_payload(char: str) -> str:
     return "sub:" + char * 64
 
 
+def order_body(*, payload: str, telegram_user_id: int, login: str, username: str | None = None):
+    return {
+        "payload": payload,
+        "telegram_user_id": telegram_user_id,
+        "username": username,
+        "login": login,
+        "currency": "XTR",
+        "total_amount": 2500,
+    }
+
+
 async def test_subscription_api_requires_internal_auth(client):
     response = await client.post(
         "/api/v1/subscriptions/orders",
-        json={
-            "payload": order_payload("a"),
-            "telegram_user_id": 101,
-            "username": "alice",
-            "login": "alice_pro",
-            "amount_usd": 1000,
-        },
+        json=order_body(
+            payload=order_payload("a"),
+            telegram_user_id=101,
+            username="alice",
+            login="alice_pro",
+        ),
     )
     assert response.status_code == 403
 
@@ -33,16 +43,17 @@ async def test_subscription_order_lifecycle_is_persistent_and_idempotent(client,
     create_response = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
-        json={
-            "payload": payload,
-            "telegram_user_id": 202,
-            "username": "bob",
-            "login": "bob_pro",
-            "amount_usd": 1000,
-        },
+        json=order_body(
+            payload=payload,
+            telegram_user_id=202,
+            username="bob",
+            login="bob_pro",
+        ),
     )
     assert create_response.status_code == 201
     assert create_response.json()["status"] == "pending"
+    assert create_response.json()["currency"] == "XTR"
+    assert create_response.json()["total_amount"] == 2500
     assert create_response.json()["password"] is None
 
     invoice_response = await client.patch(
@@ -110,26 +121,24 @@ async def test_same_user_reuses_pending_order_for_same_login(client):
     first = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
-        json={
-            "payload": first_payload,
-            "telegram_user_id": 301,
-            "username": "first",
-            "login": "retry_login",
-            "amount_usd": 1000,
-        },
+        json=order_body(
+            payload=first_payload,
+            telegram_user_id=301,
+            username="first",
+            login="retry_login",
+        ),
     )
     assert first.status_code == 201
 
     retry = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
-        json={
-            "payload": order_payload("d"),
-            "telegram_user_id": 301,
-            "username": "first",
-            "login": "retry_login",
-            "amount_usd": 1000,
-        },
+        json=order_body(
+            payload=order_payload("d"),
+            telegram_user_id=301,
+            username="first",
+            login="retry_login",
+        ),
     )
     assert retry.status_code == 201
     assert retry.json()["payload"] == first_payload
@@ -139,25 +148,23 @@ async def test_pending_order_reserves_login_for_other_telegram_users(client):
     first = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
-        json={
-            "payload": order_payload("e"),
-            "telegram_user_id": 401,
-            "username": "first",
-            "login": "reserved_login",
-            "amount_usd": 1000,
-        },
+        json=order_body(
+            payload=order_payload("e"),
+            telegram_user_id=401,
+            username="first",
+            login="reserved_login",
+        ),
     )
     assert first.status_code == 201
 
     second = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
-        json={
-            "payload": order_payload("f"),
-            "telegram_user_id": 402,
-            "username": "second",
-            "login": "reserved_login",
-            "amount_usd": 1000,
-        },
+        json=order_body(
+            payload=order_payload("f"),
+            telegram_user_id=402,
+            username="second",
+            login="reserved_login",
+        ),
     )
     assert second.status_code == 409
