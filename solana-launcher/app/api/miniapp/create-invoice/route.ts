@@ -38,10 +38,16 @@ export async function POST(req: NextRequest) {
     }
 
     const user = resolveTelegramUser(body.initData || "");
-    const payload = createOrderPayload(user.id, login);
     const providerToken = process.env.TELEGRAM_PAYMENT_PROVIDER_TOKEN || "";
+    if (!providerToken && process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        { error: "Telegram payment provider is not configured" },
+        { status: 503 }
+      );
+    }
 
-    createSubscriptionOrder({
+    const payload = createOrderPayload();
+    await createSubscriptionOrder({
       payload,
       telegramUserId: user.id,
       username: user.username || null,
@@ -50,13 +56,6 @@ export async function POST(req: NextRequest) {
     });
 
     if (!providerToken) {
-      if (process.env.NODE_ENV === "production") {
-        return NextResponse.json(
-          { error: "Telegram payment provider is not configured" },
-          { status: 503 }
-        );
-      }
-
       return NextResponse.json({
         payload,
         devCheckout: true,
@@ -85,7 +84,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    updateSubscriptionInvoice(payload, invoiceLink);
+    await updateSubscriptionInvoice(payload, invoiceLink);
 
     return NextResponse.json({
       payload,
@@ -93,6 +92,7 @@ export async function POST(req: NextRequest) {
       amountUsd: SUBSCRIPTION_PRICE_USD,
     });
   } catch (error) {
+    console.error("[Mini App] Unable to create invoice:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to create invoice" },
       { status: 400 }
