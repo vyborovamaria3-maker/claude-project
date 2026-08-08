@@ -28,49 +28,69 @@ type MiniAppWebApp = {
   expand?: () => void;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
-  openInvoice?: (url: string, callback?: (status: string) => void) => void;
   HapticFeedback?: {
     impactOccurred?: (style: "light" | "medium" | "heavy") => void;
     notificationOccurred?: (type: "error" | "success" | "warning") => void;
   };
 };
 
-type OrderState = {
-  payload: string;
-  login: string;
-  status: "pending" | "paid";
-  password: string | null;
-  subscriptionExpiresAt?: string | null;
+type SubscriptionConfig = {
+  monthlyPriceSol: string;
+  monthlyPriceUsdt: string;
+  freeDemoEnabled: boolean;
+  demoDays: number;
+  recipientConfigured: boolean;
+  error?: string;
 };
 
-type CreateInvoiceResponse = {
+type PaidOrder = {
+  payload: string;
+  login: string;
+  status: "paid";
+  password: string | null;
+  subscriptionExpiresAt?: string | null;
+  paymentSignature?: string | null;
+};
+
+type CheckoutState = {
+  payload: string;
+  currency: "SOL" | "USDT";
+  displayAmount: string;
+  paymentUrl: string;
+};
+
+type CheckoutResponse = {
   error?: string;
   payload?: string;
-  invoiceLink?: string;
-  currency?: "XTR";
-  totalAmount?: number;
-  reused?: boolean;
+  mode?: "PAYMENT" | "DEMO";
+  status?: string;
+  currency?: "SOL" | "USDT";
+  displayAmount?: string;
+  paymentUrl?: string;
+  login?: string;
+  password?: string | null;
+  subscriptionExpiresAt?: string | null;
 };
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 
 export default function MiniAppPage() {
   const [login, setLogin] = useState("");
-  const [payload, setPayload] = useState("");
-  const [invoiceLink, setInvoiceLink] = useState("");
-  const [invoiceAmountStars, setInvoiceAmountStars] = useState<number | null>(null);
-  const [order, setOrder] = useState<OrderState | null>(null);
+  const [config, setConfig] = useState<SubscriptionConfig | null>(null);
+  const [checkout, setCheckout] = useState<CheckoutState | null>(null);
+  const [order, setOrder] = useState<PaidOrder | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState<"login" | "password" | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [copied, setCopied] = useState<"login" | "password" | "payment" | null>(null);
   const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
-  const [statusMessage, setStatusMessage] = useState("Preparing secure checkout…");
+  const [statusMessage, setStatusMessage] = useState("Loading subscription settings…");
 
   const webApp =
     typeof window !== "undefined" ? (window.Telegram?.WebApp as MiniAppWebApp | undefined) : undefined;
   const initData = webApp?.initData || "";
   const isTelegram = Boolean(initData);
-  const canCreateInvoice = isTelegram || process.env.NODE_ENV !== "production";
+  const canCheckout = isTelegram || process.env.NODE_ENV !== "production";
   const paid = order?.status === "paid" && Boolean(order.password);
 
   const loginError = useMemo(() => {
@@ -79,107 +99,95 @@ export default function MiniAppPage() {
   }, [login]);
 
   const displayName = telegramUser?.first_name || telegramUser?.username || "Trader";
+  const solEnabled = Number(config?.monthlyPriceSol || "0") > 0;
+  const usdtEnabled = Number(config?.monthlyPriceUsdt || "0") > 0;
 
   useEffect(() => {
-    if (!webApp) {
-      setStatusMessage("Browser preview. Open the Mini App from Telegram to pay.");
-      return;
+    if (webApp) {
+      webApp.ready?.();
+      webApp.expand?.();
+      webApp.setHeaderColor?.("#06100c");
+      webApp.setBackgroundColor?.("#06100c");
+      setTelegramUser(webApp.initDataUnsafe?.user || null);
     }
 
-    webApp.ready?.();
-    webApp.expand?.();
-    webApp.setHeaderColor?.("#06100c");
-    webApp.setBackgroundColor?.("#06100c");
-    setTelegramUser(webApp.initDataUnsafe?.user || null);
-    setStatusMessage(
-      webApp.initData
-        ? "Telegram connected. Choose your site login to continue."
-        : "Browser preview. Open the Mini App from Telegram to pay."
-    );
+    void (async () => {
+      try {
+        const response = await fetch("/api/miniapp/config", { cache: "no-store" });
+        const data = (await response.json()) as SubscriptionConfig;
+        if (!response.ok) throw new Error(data.error || "Unable to load subscription settings.");
+        setConfig(data);
+        setStatusMessage(
+          data.freeDemoEnabled
+            ? `Free demo is enabled for ${data.demoDays} days.`
+            : "Choose SOL or USDT on Solana to activate 30-day access."
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to load subscription settings.";
+        setError(message);
+        setStatusMessage("Subscription checkout is temporarily unavailable.");
+      }
+    })();
   }, [webApp]);
 
   useEffect(() => {
-    if (!payload || order?.status === "paid") return;
+    if (!checkout || paid) return;
+    const timer = window.setInterval(() => {
+      void verifyPayment(checkout.payload, false);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [checkout, paid]);
 
-    const id = window.setInterval(() => {
-      void refreshOrder(payload);
-    }, 2000);
-
-    return () => window.clearInterval(id);
-  }, [payload, order?.status]);
-
-  useEffect(() => {
-    if (order?.status !== "paid") return;
-    setStatusMessage("Payment confirmed. Your access credentials are ready.");
-    webApp?.HapticFeedback?.notificationOccurred?.("success");
-  }, [order?.status, webApp]);
-
-  async function refreshOrder(payloadValue: string) {
-    const response = await fetch("/api/miniapp/order", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payload: payloadValue, initData }),
-      cache: "no-store",
-    });
-    if (!response.ok) return;
-    const data = (await response.json()) as OrderState;
-    setOrder(data);
-  }
-
-  async function createInvoice() {
+  async function createCheckout(method: "SOL" | "USDT" | "DEMO") {
     setError("");
     setLoading(true);
     setOrder(null);
-    setInvoiceLink("");
-    setInvoiceAmountStars(null);
+    setCheckout(null);
 
     try {
-      if (!LOGIN_RE.test(login)) {
-        throw new Error("Enter a valid login first.");
-      }
-      if (!canCreateInvoice) {
-        throw new Error("Open this Mini App from Telegram to create a payment.");
-      }
+      if (!LOGIN_RE.test(login)) throw new Error("Enter a valid login first.");
+      if (!canCheckout) throw new Error("Open this Mini App from Telegram to activate access.");
 
       webApp?.HapticFeedback?.impactOccurred?.("light");
-      setStatusMessage("Creating a secure Telegram Stars invoice…");
+      setStatusMessage(method === "DEMO" ? "Activating free demo…" : `Creating ${method} payment request…`);
 
       const response = await fetch("/api/miniapp/create-invoice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initData, login }),
+        body: JSON.stringify({ initData, login, method }),
       });
-      const data = (await response.json()) as CreateInvoiceResponse;
+      const data = (await response.json()) as CheckoutResponse;
+      if (!response.ok) throw new Error(data.error || "Could not create subscription checkout.");
+      if (!data.payload) throw new Error("Subscription order was not created correctly.");
 
-      if (!response.ok) {
-        throw new Error(data.error || "Could not create the Telegram Stars invoice.");
-      }
-      if (!data.payload || !data.invoiceLink || data.currency !== "XTR" || !data.totalAmount) {
-        throw new Error("The Telegram Stars payment order was not created correctly.");
+      if (data.mode === "DEMO") {
+        if (!data.password || !data.login) throw new Error("Demo access was not activated correctly.");
+        setOrder({
+          payload: data.payload,
+          login: data.login,
+          status: "paid",
+          password: data.password,
+          subscriptionExpiresAt: data.subscriptionExpiresAt,
+        });
+        setStatusMessage("Free demo activated. Your site credentials are ready.");
+        webApp?.HapticFeedback?.notificationOccurred?.("success");
+        return;
       }
 
-      setPayload(data.payload);
-      setInvoiceLink(data.invoiceLink);
-      setInvoiceAmountStars(data.totalAmount);
+      if (!data.currency || !data.displayAmount || !data.paymentUrl) {
+        throw new Error("Solana payment request was not created correctly.");
+      }
+      setCheckout({
+        payload: data.payload,
+        currency: data.currency,
+        displayAmount: data.displayAmount,
+        paymentUrl: data.paymentUrl,
+      });
       setStatusMessage(
-        data.reused
-          ? `Existing invoice ready: ${data.totalAmount} Telegram Stars.`
-          : `Invoice ready: ${data.totalAmount} Telegram Stars.`
+        `Send exactly ${data.displayAmount} ${data.currency} using the Solana Pay button. Confirmation is checked automatically.`
       );
-
-      webApp?.openInvoice?.(data.invoiceLink, (status) => {
-        if (status === "paid") {
-          setStatusMessage("Payment received. Activating your access…");
-          void refreshOrder(data.payload as string);
-        } else if (status === "cancelled") {
-          setStatusMessage("Payment cancelled. You can open the invoice again when ready.");
-        } else if (status === "failed") {
-          setStatusMessage("Telegram reported a payment failure. Please try again.");
-          webApp?.HapticFeedback?.notificationOccurred?.("error");
-        }
-      });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Payment error.";
+      const message = err instanceof Error ? err.message : "Checkout error.";
       setError(message);
       setStatusMessage("Checkout needs attention.");
       webApp?.HapticFeedback?.notificationOccurred?.("error");
@@ -188,7 +196,39 @@ export default function MiniAppPage() {
     }
   }
 
-  async function copy(value: string, key: "login" | "password") {
+  async function verifyPayment(payload: string, showPending: boolean) {
+    if (checking) return;
+    setChecking(true);
+    try {
+      const response = await fetch("/api/miniapp/verify-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, payload }),
+      });
+      const data = (await response.json()) as PaidOrder & { error?: string; status: "paid" | "pending" };
+      if (response.status === 202 || data.status === "pending") {
+        if (showPending) setStatusMessage("Payment is not confirmed yet. Waiting for the Solana transaction…");
+        return;
+      }
+      if (!response.ok) throw new Error(data.error || "Unable to verify payment.");
+      if (data.status !== "paid" || !data.password) throw new Error("Payment confirmation is incomplete.");
+
+      setOrder(data);
+      setCheckout(null);
+      setStatusMessage("Payment confirmed on Solana. Your access credentials are ready.");
+      webApp?.HapticFeedback?.notificationOccurred?.("success");
+    } catch (err) {
+      if (showPending) {
+        const message = err instanceof Error ? err.message : "Unable to verify payment.";
+        setError(message);
+        webApp?.HapticFeedback?.notificationOccurred?.("error");
+      }
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function copy(value: string, key: "login" | "password" | "payment") {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(key);
@@ -197,6 +237,12 @@ export default function MiniAppPage() {
     } catch {
       setError("Could not copy automatically. Press and hold the value to copy it.");
     }
+  }
+
+  function openPayment() {
+    if (!checkout?.paymentUrl) return;
+    webApp?.HapticFeedback?.impactOccurred?.("medium");
+    window.location.href = checkout.paymentUrl;
   }
 
   return (
@@ -209,7 +255,7 @@ export default function MiniAppPage() {
       <section className="relative mx-auto flex min-h-[100dvh] w-full max-w-lg flex-col gap-4 px-4 pb-8 pt-4 sm:px-5 sm:pt-5">
         <header className="flex items-center justify-between gap-3 rounded-3xl border border-white/10 bg-white/[0.045] p-3 backdrop-blur-xl">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-300 to-cyan-400 text-[#06100c] shadow-[0_14px_40px_rgba(52,211,153,0.18)]">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-300 to-cyan-400 text-[#06100c]">
               <Sparkles className="h-5 w-5" />
             </div>
             <div className="min-w-0">
@@ -217,28 +263,18 @@ export default function MiniAppPage() {
               <h1 className="truncate text-lg font-bold tracking-tight">Solana Launcher Pro</h1>
             </div>
           </div>
-          <div
-            className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
-              isTelegram
-                ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-200"
-                : "border-amber-300/25 bg-amber-300/10 text-amber-100"
-            }`}
-          >
+          <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${isTelegram ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-200" : "border-amber-300/25 bg-amber-300/10 text-amber-100"}`}>
             {isTelegram ? "Connected" : "Preview"}
           </div>
         </header>
 
-        <motion.section
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="overflow-hidden rounded-[28px] border border-white/10 bg-gradient-to-br from-white/[0.075] to-white/[0.025] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.22)]"
-        >
+        <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-white/10 bg-gradient-to-br from-white/[0.075] to-white/[0.025] p-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300/65">Premium access</p>
               <h2 className="mt-2 text-2xl font-black tracking-tight">Welcome, {displayName}</h2>
-              <p className="mt-2 max-w-sm text-sm leading-6 text-white/62">
-                Activate 30-day access from Telegram and receive your site login credentials after payment confirmation.
+              <p className="mt-2 text-sm leading-6 text-white/62">
+                Activate site access with SOL or USDT on the Solana network. Payments are verified on-chain before credentials are issued.
               </p>
             </div>
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-emerald-300/20 bg-emerald-300/10 text-emerald-200">
@@ -247,12 +283,9 @@ export default function MiniAppPage() {
           </div>
 
           <div className="mt-5 grid grid-cols-3 gap-2">
-            <Metric
-              label="Price"
-              value={invoiceAmountStars ? `${invoiceAmountStars} Stars` : "Telegram Stars"}
-            />
-            <Metric label="Access" value="30 days" />
-            <Metric label="Delivery" value="Telegram" />
+            <Metric label="SOL" value={config?.freeDemoEnabled ? "Free demo" : solEnabled ? `${config?.monthlyPriceSol}` : "Off"} />
+            <Metric label="USDT" value={config?.freeDemoEnabled ? "Free demo" : usdtEnabled ? `${config?.monthlyPriceUsdt}` : "Off"} />
+            <Metric label="Access" value={config?.freeDemoEnabled ? `${config.demoDays} days` : "30 days"} />
           </div>
         </motion.section>
 
@@ -261,15 +294,9 @@ export default function MiniAppPage() {
         </div>
 
         {paid && order ? (
-          <motion.section
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-[28px] border border-emerald-300/25 bg-emerald-300/[0.08] p-5"
-          >
+          <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-emerald-300/25 bg-emerald-300/[0.08] p-5">
             <div className="flex items-center gap-3 text-emerald-100">
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-300/15">
-                <Check className="h-5 w-5" />
-              </div>
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-300/15"><Check className="h-5 w-5" /></div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300/65">Activated</p>
                 <h2 className="text-lg font-bold">Your access is ready</h2>
@@ -277,18 +304,8 @@ export default function MiniAppPage() {
             </div>
 
             <div className="mt-5 space-y-3">
-              <CredentialRow
-                label="Login"
-                value={order.login}
-                copied={copied === "login"}
-                onCopy={() => copy(order.login, "login")}
-              />
-              <CredentialRow
-                label="Password"
-                value={order.password || ""}
-                copied={copied === "password"}
-                onCopy={() => copy(order.password || "", "password")}
-              />
+              <CredentialRow label="Login" value={order.login} copied={copied === "login"} onCopy={() => copy(order.login, "login")} />
+              <CredentialRow label="Password" value={order.password || ""} copied={copied === "password"} onCopy={() => copy(order.password || "", "password")} />
             </div>
 
             {order.subscriptionExpiresAt && (
@@ -297,28 +314,41 @@ export default function MiniAppPage() {
               </p>
             )}
 
-            <a
-              href="/login"
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-[#06100c] transition active:scale-[0.99]"
-            >
-              Open site login
-              <ArrowRight className="h-4 w-4" />
+            <a href="/login" className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-[#06100c]">
+              Open site login <ArrowRight className="h-4 w-4" />
             </a>
           </motion.section>
-        ) : (
-          <motion.section
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl"
-          >
+        ) : checkout ? (
+          <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-cyan-300/20 bg-cyan-300/[0.06] p-5">
             <div className="flex items-start gap-3">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/[0.06] text-white/80 ring-1 ring-white/10">
-                <UserRound className="h-5 w-5" />
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-100"><CreditCard className="h-5 w-5" /></div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200/60">Solana payment</p>
+                <h2 className="text-lg font-bold">{checkout.displayAmount} {checkout.currency}</h2>
+                <p className="mt-1 text-sm leading-5 text-white/55">Use the payment request below so the unique order reference is included on-chain.</p>
               </div>
+            </div>
+
+            <button type="button" onClick={openPayment} className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] active:scale-[0.99]">
+              Open in Solana wallet <ArrowRight className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => copy(checkout.paymentUrl, "payment")} className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white/80">
+              {copied === "payment" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied === "payment" ? "Payment link copied" : "Copy Solana Pay link"}
+            </button>
+            <button type="button" disabled={checking} onClick={() => verifyPayment(checkout.payload, true)} className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.08] px-4 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-50">
+              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+              I paid — verify transaction
+            </button>
+          </motion.section>
+        ) : (
+          <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl">
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/[0.06] text-white/80 ring-1 ring-white/10"><UserRound className="h-5 w-5" /></div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">Step 1</p>
                 <h2 className="text-lg font-bold">Choose your site login</h2>
-                <p className="mt-1 text-sm leading-5 text-white/55">This login will be paired with the password generated after payment.</p>
+                <p className="mt-1 text-sm leading-5 text-white/55">Your password is generated only after payment confirmation or demo activation.</p>
               </div>
             </div>
 
@@ -326,66 +356,38 @@ export default function MiniAppPage() {
               <span className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">Login</span>
               <div className="mt-2 flex items-center gap-2 rounded-2xl border border-white/10 bg-black/25 px-3 focus-within:border-emerald-300/50">
                 <UserRound className="h-4 w-4 shrink-0 text-white/35" />
-                <input
-                  value={login}
-                  onChange={(event) => setLogin(event.target.value)}
-                  maxLength={32}
-                  autoComplete="username"
-                  inputMode="text"
-                  placeholder="for example dima_pro"
-                  className="min-w-0 flex-1 bg-transparent py-3.5 text-base text-white outline-none placeholder:text-white/25"
-                />
+                <input value={login} onChange={(event) => setLogin(event.target.value)} maxLength={32} autoComplete="username" inputMode="text" placeholder="for example dima_pro" className="min-w-0 flex-1 bg-transparent py-3.5 text-base text-white outline-none placeholder:text-white/25" />
               </div>
             </label>
 
             {loginError && <p className="mt-2 text-sm text-amber-200">{loginError}</p>}
             {!isTelegram && process.env.NODE_ENV === "production" && (
-              <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2.5 text-sm leading-5 text-amber-100">
-                Payment is available only when this page is opened from the Telegram bot.
-              </p>
+              <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2.5 text-sm leading-5 text-amber-100">Activation is available only when this page is opened from the Telegram bot.</p>
             )}
-            {error && (
-              <p className="mt-3 rounded-2xl border border-red-300/20 bg-red-400/[0.08] px-3 py-2.5 text-sm leading-5 text-red-100">
-                {error}
-              </p>
+            {error && <p className="mt-3 rounded-2xl border border-red-300/20 bg-red-400/[0.08] px-3 py-2.5 text-sm leading-5 text-red-100">{error}</p>}
+
+            {config?.freeDemoEnabled ? (
+              <button type="button" onClick={() => createCheckout("DEMO")} disabled={loading || Boolean(loginError) || !login || !canCheckout} className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] disabled:cursor-not-allowed disabled:opacity-40">
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                Activate free {config.demoDays}-day demo
+              </button>
+            ) : (
+              <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <PaymentButton label={solEnabled ? `Pay ${config?.monthlyPriceSol} SOL` : "SOL unavailable"} disabled={loading || !solEnabled || !config?.recipientConfigured || Boolean(loginError) || !login || !canCheckout} loading={loading} onClick={() => createCheckout("SOL")} />
+                <PaymentButton label={usdtEnabled ? `Pay ${config?.monthlyPriceUsdt} USDT` : "USDT unavailable"} disabled={loading || !usdtEnabled || !config?.recipientConfigured || Boolean(loginError) || !login || !canCheckout} loading={loading} onClick={() => createCheckout("USDT")} />
+              </div>
             )}
 
-            <button
-              type="button"
-              onClick={createInvoice}
-              disabled={loading || Boolean(loginError) || !login || !canCreateInvoice}
-              className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] shadow-[0_16px_48px_rgba(52,211,153,0.18)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-              {loading ? "Creating invoice…" : "Pay with Telegram Stars"}
-            </button>
-
-            {invoiceLink && (
-              <a
-                href={invoiceLink}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/25 bg-emerald-300/[0.06] px-4 py-3 text-sm font-semibold text-emerald-100"
-              >
-                Open Telegram Stars invoice
-                <ArrowRight className="h-4 w-4" />
-              </a>
+            {config && !config.freeDemoEnabled && !config.recipientConfigured && (
+              <p className="mt-3 text-xs leading-5 text-white/45">Payment destination is not configured yet. Set the recipient wallet in the admin subscription settings.</p>
             )}
           </motion.section>
         )}
 
-        <section className="rounded-[28px] border border-white/10 bg-black/15 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/40">How it works</p>
-          <div className="mt-4 grid gap-3">
-            <FlowStep icon={UserRound} number="01" title="Choose login" text="Use 4-32 letters, digits, or underscore." />
-            <FlowStep icon={CreditCard} number="02" title="Pay with Stars" text="Digital access is purchased through Telegram Stars inside the app." />
-            <FlowStep icon={KeyRound} number="03" title="Receive access" text="After confirmation, your password appears here and in the bot." />
-          </div>
-        </section>
-
-        <div className="flex items-center justify-center gap-2 pb-2 text-xs text-white/35">
-          <LockKeyhole className="h-3.5 w-3.5" />
-          Payment and access are processed server-side.
+        <div className="grid grid-cols-3 gap-2 text-[11px] text-white/45">
+          <TrustItem icon={<LockKeyhole className="h-4 w-4" />} text="On-chain verification" />
+          <TrustItem icon={<ShieldCheck className="h-4 w-4" />} text="Unique payment reference" />
+          <TrustItem icon={<KeyRound className="h-4 w-4" />} text="Private credentials" />
         </div>
       </section>
     </main>
@@ -393,66 +395,17 @@ export default function MiniAppPage() {
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded-2xl border border-white/10 bg-black/20 px-2 py-3 text-center">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/35">{label}</p>
-      <p className="mt-1 truncate text-sm font-bold text-white/90">{value}</p>
-    </div>
-  );
+  return <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">{label}</p><p className="mt-1 truncate text-sm font-bold text-white/85">{value}</p></div>;
 }
 
-function FlowStep({
-  icon: Icon,
-  number,
-  title,
-  text,
-}: {
-  icon: typeof UserRound;
-  number: string;
-  title: string;
-  text: string;
-}) {
-  return (
-    <div className="flex items-start gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3">
-      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/[0.055] ring-1 ring-white/10">
-        <Icon className="h-4 w-4 text-emerald-200" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold tracking-[0.18em] text-emerald-300/55">{number}</span>
-          <p className="text-sm font-semibold">{title}</p>
-        </div>
-        <p className="mt-1 text-xs leading-5 text-white/48">{text}</p>
-      </div>
-    </div>
-  );
+function PaymentButton({ label, disabled, loading, onClick }: { label: string; disabled: boolean; loading: boolean; onClick: () => void }) {
+  return <button type="button" onClick={onClick} disabled={disabled} className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] disabled:cursor-not-allowed disabled:opacity-35">{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}{label}</button>;
 }
 
-function CredentialRow({
-  label,
-  value,
-  copied,
-  onCopy,
-}: {
-  label: string;
-  value: string;
-  copied: boolean;
-  onCopy: () => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">{label}</div>
-      <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 select-all break-all text-sm text-white">{value}</code>
-        <button
-          type="button"
-          onClick={onCopy}
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-white/70"
-          aria-label={`Copy ${label}`}
-        >
-          {copied ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
-        </button>
-      </div>
-    </div>
-  );
+function CredentialRow({ label, value, copied, onCopy }: { label: string; value: string; copied: boolean; onCopy: () => void }) {
+  return <div className="rounded-2xl border border-white/10 bg-black/25 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-white/35">{label}</p><div className="mt-1 flex items-center gap-2"><code className="min-w-0 flex-1 break-all text-sm text-white/85">{value}</code><button type="button" onClick={onCopy} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.05] text-white/70">{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}</button></div></div>;
+}
+
+function TrustItem({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return <div className="flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-2xl border border-white/10 bg-white/[0.025] px-2 py-2 text-center">{icon}<span>{text}</span></div>;
 }
