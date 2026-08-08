@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
       paymentUrl: order.payment_url,
       paymentReference: order.payment_reference,
       accessDays: order.access_days,
-      reused: order.payload !== undefined && order.payment_reference !== paymentReference,
+      reused: order.payment_reference !== paymentReference,
     });
   } catch (error) {
     console.error("[Mini App] Unable to create subscription checkout:", error);
