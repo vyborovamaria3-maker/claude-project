@@ -24,10 +24,13 @@ package_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n"
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+const nextConfig = [...nextVitals, ...nextTs];
+const inheritedPlugins = Object.assign({}, ...nextConfig.map((config) => config.plugins || {}));
+
 export default defineConfig([
-  ...nextVitals,
-  ...nextTs,
+  ...nextConfig,
   {
+    plugins: inheritedPlugins,
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "prefer-const": "warn",
@@ -41,6 +44,7 @@ export default defineConfig([
   },
   {
     files: ["**/*.cjs"],
+    plugins: inheritedPlugins,
     rules: {
       "@typescript-eslint/no-require-imports": "off",
     },
