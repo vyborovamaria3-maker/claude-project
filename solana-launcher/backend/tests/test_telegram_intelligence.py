@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app.services.social_filters import filter_timeline_payload, social_event_engagement
+from app.services.social_filters import filter_timeline_payload, normalize_social_source, social_event_engagement
 from app.services.social_intelligence import score_channel_metrics
 from app.services.telegram_parser import extract_solana_addresses, is_solana_address, parse_telegram_message
 
@@ -28,6 +28,11 @@ def test_score_penalizes_rugs() -> None:
     risky = score_channel_metrics(calls=20, evaluated=10, wins=8, rugs=5, early=10, avg_roi=5.0)
     assert clean > risky
     assert 0 <= risky <= 100
+
+
+def test_social_source_normalizes_telegram_urls() -> None:
+    assert normalize_social_source("@Alpha_Calls") == "alpha_calls"
+    assert normalize_social_source("https://t.me/Alpha_Calls/12345") == "alpha_calls"
 
 
 def test_social_event_engagement_uses_platform_metrics() -> None:
@@ -79,7 +84,7 @@ def test_timeline_filters_by_window_source_score_and_explicit_call() -> None:
         payload,
         platform="telegram",
         hours=24,
-        sources={"@alpha_calls"},
+        sources={"https://t.me/alpha_calls/999"},
         explicit_calls_only=True,
         min_engagement=5,
         min_channel_score=50,
