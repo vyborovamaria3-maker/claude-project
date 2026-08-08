@@ -48,7 +48,7 @@ class AnalysisReleaseGuardTest(unittest.TestCase):
         self.assertIn('row.enabled', js)
         self.assertIn('AdminAnalysisConfirm?.ask', js)
         self.assertIn('__analysisConfirmed: true', js)
-        self.assertIn('.analysis-tab[data-domain], #navigation [data-view], #refreshButton', js)
+        self.assertIn('.analysis-tab[data-domain], #navigation [data-view], #analysisProfilesNav, #refreshButton, #logoutButton', js)
         self.assertIn('loadCount', js)
         self.assertIn('mutationCount', js)
         self.assertIn('if (document.contains(button)) button.disabled = false', js)
