@@ -74,14 +74,18 @@ async def create_subscription_order(
         raise SubscriptionConflictError("This login is already in use")
 
     pending_result = await session.execute(
-        select(SubscriptionOrder.payload)
+        select(SubscriptionOrder)
         .where(SubscriptionOrder.login == payload.login)
         .where(SubscriptionOrder.status == "pending")
-        .where(SubscriptionOrder.telegram_user_id != payload.telegram_user_id)
         .limit(1)
     )
-    if pending_result.scalar_one_or_none() is not None:
-        raise SubscriptionConflictError("This login is reserved by another pending order")
+    pending_order = pending_result.scalar_one_or_none()
+    if pending_order is not None:
+        if pending_order.telegram_user_id != payload.telegram_user_id:
+            raise SubscriptionConflictError("This login is reserved by another pending order")
+        if pending_order.amount_usd != payload.amount_usd:
+            raise SubscriptionConflictError("Pending subscription amount does not match")
+        return pending_order
 
     order = SubscriptionOrder(
         payload=payload.payload,
