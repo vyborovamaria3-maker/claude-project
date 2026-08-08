@@ -41,24 +41,52 @@ async function assertNoHorizontalOverflow(page, label) {
 async function assertBasicAccessibility(page, label) {
   const result = await page.evaluate(() => {
     const lang = document.documentElement.getAttribute("lang")?.trim() || "";
+    const viewportMeta = document.querySelector('meta[name="viewport"]')?.getAttribute("content") || "";
+    const visible = (element) => {
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+    };
+    const accessibleName = (element) => [
+      element.textContent,
+      element.getAttribute("aria-label"),
+      element.getAttribute("title"),
+      element.getAttribute("alt"),
+    ].filter(Boolean).join(" ").trim();
+
     const unnamedButtons = [...document.querySelectorAll("button")]
-      .filter((button) => {
-        const style = getComputedStyle(button);
-        const visible = style.display !== "none" && style.visibility !== "hidden" && button.getClientRects().length > 0;
-        if (!visible) return false;
-        const name = [button.textContent, button.getAttribute("aria-label"), button.getAttribute("title")]
-          .filter(Boolean)
-          .join(" ")
-          .trim();
-        return !name;
-      })
+      .filter((button) => visible(button) && !accessibleName(button))
+      .length;
+    const unnamedLinks = [...document.querySelectorAll("a[href]")]
+      .filter((link) => visible(link) && !accessibleName(link))
+      .length;
+    const imagesMissingAlt = [...document.querySelectorAll("img")]
+      .filter((image) => !image.hasAttribute("alt"))
+      .length;
+    const positiveTabIndex = [...document.querySelectorAll("[tabindex]")]
+      .filter((element) => Number(element.getAttribute("tabindex")) > 0)
+      .length;
+    const unlabeledDialogs = [...document.querySelectorAll('[role="dialog"], dialog')]
+      .filter((dialog) => visible(dialog) && !dialog.getAttribute("aria-label") && !dialog.getAttribute("aria-labelledby"))
       .length;
 
-    return { lang, unnamedButtons };
+    return {
+      lang,
+      viewportMeta,
+      unnamedButtons,
+      unnamedLinks,
+      imagesMissingAlt,
+      positiveTabIndex,
+      unlabeledDialogs,
+    };
   });
 
   assert.ok(result.lang, `${label}: <html> must have a lang attribute`);
+  assert.match(result.viewportMeta, /width\s*=\s*device-width/i, `${label}: viewport meta must use device-width`);
   assert.equal(result.unnamedButtons, 0, `${label}: visible buttons without an accessible name detected`);
+  assert.equal(result.unnamedLinks, 0, `${label}: visible links without an accessible name detected`);
+  assert.equal(result.imagesMissingAlt, 0, `${label}: images without alt attributes detected`);
+  assert.equal(result.positiveTabIndex, 0, `${label}: positive tabindex values break natural keyboard order`);
+  assert.equal(result.unlabeledDialogs, 0, `${label}: visible dialogs must have an accessible label`);
 }
 
 async function openRoute(page, route, profileName, pageErrors) {
@@ -94,6 +122,43 @@ async function openRoute(page, route, profileName, pageErrors) {
   console.log(`pass ${label}`);
 }
 
+async function assertMobileNavigationKeyboardFlow(page, profileName, pageErrors) {
+  pageErrors.length = 0;
+  await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await page.waitForTimeout(300);
+
+  const menuButton = page.getByRole("button", { name: "Open navigation" });
+  await menuButton.waitFor({ state: "visible" });
+  const menuBox = await menuButton.boundingBox();
+  assert.ok(menuBox && menuBox.width >= 40 && menuBox.height >= 40, `${profileName}: mobile menu touch target is too small`);
+
+  await menuButton.focus();
+  await page.keyboard.press("Enter");
+
+  const dialog = page.getByRole("dialog", { name: "Navigation" });
+  await dialog.waitFor({ state: "visible" });
+  const focusedInsideDialog = await page.evaluate(() => {
+    const active = document.activeElement;
+    const dialogElement = document.querySelector('[role="dialog"][aria-label="Navigation"]');
+    return Boolean(active && dialogElement?.contains(active));
+  });
+  assert.ok(focusedInsideDialog, `${profileName}: focus must move into mobile navigation dialog`);
+
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
+  await assertNoHorizontalOverflow(page, `${profileName} after Escape closes nav`);
+  assert.equal(pageErrors.length, 0, `${profileName}: keyboard navigation produced browser errors`);
+
+  await menuButton.focus();
+  await page.keyboard.press("Enter");
+  await dialog.waitFor({ state: "visible" });
+  const tradeDashboardLink = dialog.locator('a[href="/trade-dashboard"]').first();
+  await tradeDashboardLink.click();
+  await page.waitForURL(/\/trade-dashboard/);
+  await assertNoHorizontalOverflow(page, `${profileName} trade-dashboard after nav`);
+  assert.equal(pageErrors.length, 0, `${profileName}: mobile navigation produced browser errors`);
+}
+
 async function runProfile(browser, profile) {
   const context = await browser.newContext({
     viewport: profile.viewport,
@@ -122,24 +187,9 @@ async function runProfile(browser, profile) {
       await openRoute(page, route, profile.name, pageErrors);
     }
 
+    await assertMobileNavigationKeyboardFlow(page, profile.name, pageErrors);
+
     pageErrors.length = 0;
-    await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForTimeout(300);
-
-    const menuButton = page.getByRole("button", { name: "Open navigation" });
-    await menuButton.waitFor({ state: "visible" });
-    const menuBox = await menuButton.boundingBox();
-    assert.ok(menuBox && menuBox.width >= 40 && menuBox.height >= 40, `${profile.name}: mobile menu touch target is too small`);
-    await menuButton.click();
-
-    const dialog = page.getByRole("dialog", { name: "Navigation" });
-    await dialog.waitFor({ state: "visible" });
-    const tradeDashboardLink = dialog.locator('a[href="/trade-dashboard"]').first();
-    await tradeDashboardLink.click();
-    await page.waitForURL(/\/trade-dashboard/);
-    await assertNoHorizontalOverflow(page, `${profile.name} trade-dashboard after nav`);
-    assert.equal(pageErrors.length, 0, `${profile.name}: mobile navigation produced browser errors`);
-
     await page.goto(`${baseURL}/launch-dashboard`, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForTimeout(300);
     const periodSelector = page.locator('[data-tag="dashboard.period_selector"]').first();
@@ -153,7 +203,9 @@ async function runProfile(browser, profile) {
       periodMetrics.scrollWidth <= periodMetrics.clientWidth + 2 || ["auto", "scroll"].includes(periodMetrics.overflowX),
       `${profile.name}: period selector clips without horizontal scrolling: ${JSON.stringify(periodMetrics)}`
     );
+    assert.equal(pageErrors.length, 0, `${profile.name}: launch dashboard produced browser errors`);
 
+    pageErrors.length = 0;
     await page.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded", timeout: 30_000 });
     const inputs = page.locator("input");
     assert.ok((await inputs.count()) >= 2, `${profile.name}: login page should expose login and password fields`);
@@ -165,6 +217,7 @@ async function runProfile(browser, profile) {
       const fontSizes = await inputs.evaluateAll((nodes) => nodes.slice(0, 2).map((node) => Number.parseFloat(getComputedStyle(node).fontSize)));
       assert.ok(fontSizes.every((size) => size >= 16), `${profile.name}: mobile inputs must use >=16px font to prevent iOS auto-zoom`);
     }
+    assert.equal(pageErrors.length, 0, `${profile.name}: login interaction produced browser errors`);
   } finally {
     await context.close();
   }
