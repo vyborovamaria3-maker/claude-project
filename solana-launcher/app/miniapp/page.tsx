@@ -52,6 +52,16 @@ type PaidOrder = {
   paymentSignature?: string | null;
 };
 
+type VerifyPaymentResponse = {
+  status?: "paid" | "pending";
+  error?: string;
+  payload?: string;
+  login?: string;
+  password?: string | null;
+  subscriptionExpiresAt?: string | null;
+  paymentSignature?: string | null;
+};
+
 type CheckoutState = {
   payload: string;
   currency: "SOL" | "USDT";
@@ -205,15 +215,24 @@ export default function MiniAppPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ initData, payload }),
       });
-      const data = (await response.json()) as PaidOrder & { error?: string; status: "paid" | "pending" };
+      const data = (await response.json()) as VerifyPaymentResponse;
       if (response.status === 202 || data.status === "pending") {
         if (showPending) setStatusMessage("Payment is not confirmed yet. Waiting for the Solana transaction…");
         return;
       }
       if (!response.ok) throw new Error(data.error || "Unable to verify payment.");
-      if (data.status !== "paid" || !data.password) throw new Error("Payment confirmation is incomplete.");
+      if (data.status !== "paid" || !data.payload || !data.login || !data.password) {
+        throw new Error("Payment confirmation is incomplete.");
+      }
 
-      setOrder(data);
+      setOrder({
+        payload: data.payload,
+        login: data.login,
+        status: "paid",
+        password: data.password,
+        subscriptionExpiresAt: data.subscriptionExpiresAt,
+        paymentSignature: data.paymentSignature,
+      });
       setCheckout(null);
       setStatusMessage("Payment confirmed on Solana. Your access credentials are ready.");
       webApp?.HapticFeedback?.notificationOccurred?.("success");
