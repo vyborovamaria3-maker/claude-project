@@ -149,8 +149,8 @@ replace(
 migration = ROOT / "app/api/migrations/xlsx/route.ts"
 replace(
     migration,
-    '  const limit = Number.isFinite(parsedLimit) ? Math.min(parsedLimit, 500) : 100;',
-    '  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 500)) : 100;',
+    '  const limit = Number.isFinite(parsedLimit) ? Math.min(parsedLimit, 1000) : 100;',
+    '  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 1000)) : 100;',
 )
 
 # Regression coverage for Telegram URL normalization.
