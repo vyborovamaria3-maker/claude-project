@@ -20,7 +20,6 @@ class Token(Base):
     __table_args__ = (
         UniqueConstraint("mint_address", name="uq_tokens_mint_address"),
         Index("ix_tokens_status_migration_date", "status", "migration_date"),
-        Index("ix_tokens_creator_wallet", "creator_wallet"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -103,7 +102,6 @@ class WalletTrade(Base):
     __table_args__ = (
         Index("ix_wallet_trades_wallet_token", "wallet_id", "token_id"),
         Index("ix_wallet_trades_profit", "realized_profit_usd"),
-        Index("ix_wallet_trades_buy_timestamp", "buy_timestamp"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
