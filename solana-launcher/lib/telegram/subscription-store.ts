@@ -103,7 +103,7 @@ export async function createSubscriptionOrder(input: {
   });
 
   if (input.invoiceLink) {
-    return updateSubscriptionInvoice(input.payload, input.invoiceLink);
+    return updateSubscriptionInvoice(order.payload, input.invoiceLink);
   }
   return order;
 }
