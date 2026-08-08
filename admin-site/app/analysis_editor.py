@@ -43,6 +43,14 @@ class LiveAnalysisProfileStore(ContractAwareAnalysisProfileStore):
         )
         return rows
 
+    def update_builtin(self, domain: str, key: str, *, enabled: bool, threshold: str, username: str) -> dict[str, Any]:
+        current = next((row for row in self.list(domain) if row["key"] == key), None)
+        if current is None:
+            raise KeyError("Unknown analysis parameter")
+        if current.get("hidden"):
+            raise ValueError("Hidden system parameter must be restored before editing")
+        return super().update_builtin(domain, key, enabled=enabled, threshold=threshold, username=username)
+
     def edit_custom(
         self,
         domain: str,
