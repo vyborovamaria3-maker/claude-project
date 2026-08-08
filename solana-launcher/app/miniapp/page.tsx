@@ -115,7 +115,10 @@ export default function MiniAppPage() {
   }, [order?.status, webApp]);
 
   async function refreshOrder(payloadValue: string) {
-    const response = await fetch(`/api/miniapp/order?payload=${encodeURIComponent(payloadValue)}`, {
+    const response = await fetch("/api/miniapp/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payload: payloadValue, initData }),
       cache: "no-store",
     });
     if (!response.ok) return;
