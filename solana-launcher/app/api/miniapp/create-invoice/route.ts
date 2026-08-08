@@ -14,7 +14,14 @@ import { getBot } from "@/telegram-bot/index";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SUBSCRIPTION_PRICE_USD = 1000;
+function getSubscriptionPriceStars(): number {
+  const value = process.env.TELEGRAM_SUBSCRIPTION_PRICE_STARS?.trim() || "";
+  const stars = Number(value);
+  if (!Number.isSafeInteger(stars) || stars <= 0) {
+    throw new Error("Telegram Stars subscription price is not configured");
+  }
+  return stars;
+}
 
 function resolveTelegramUser(initData: string) {
   if (initData) {
@@ -38,37 +45,24 @@ export async function POST(req: NextRequest) {
     }
 
     const user = resolveTelegramUser(body.initData || "");
-    const providerToken = process.env.TELEGRAM_PAYMENT_PROVIDER_TOKEN || "";
-    if (!providerToken && process.env.NODE_ENV === "production") {
-      return NextResponse.json(
-        { error: "Telegram payment provider is not configured" },
-        { status: 503 }
-      );
-    }
-
+    const totalAmount = getSubscriptionPriceStars();
     const requestedPayload = createOrderPayload();
     const order = await createSubscriptionOrder({
       payload: requestedPayload,
       telegramUserId: user.id,
       username: user.username || null,
       login,
-      amountUsd: SUBSCRIPTION_PRICE_USD,
+      currency: "XTR",
+      totalAmount,
     });
     const payload = order.payload;
-
-    if (!providerToken) {
-      return NextResponse.json({
-        payload,
-        devCheckout: true,
-        amountUsd: SUBSCRIPTION_PRICE_USD,
-      });
-    }
 
     if (order.invoice_link) {
       return NextResponse.json({
         payload,
         invoiceLink: order.invoice_link,
-        amountUsd: SUBSCRIPTION_PRICE_USD,
+        currency: order.currency,
+        totalAmount: order.total_amount,
         reused: true,
       });
     }
@@ -79,17 +73,14 @@ export async function POST(req: NextRequest) {
         title: "Solana Launcher Pro",
         description: "30-day subscription to Solana Launcher software",
         payload,
-        provider_token: providerToken,
-        currency: "USD",
-        prices: [{ label: "Solana Launcher Pro", amount: SUBSCRIPTION_PRICE_USD * 100 }],
-        need_name: false,
-        need_email: false,
-        is_flexible: false,
+        provider_token: "",
+        currency: "XTR",
+        prices: [{ label: "Solana Launcher Pro - 30 days", amount: totalAmount }],
       });
     } catch (error) {
-      console.error("[Mini App] Telegram invoice creation failed:", error);
+      console.error("[Mini App] Telegram Stars invoice creation failed:", error);
       return NextResponse.json(
-        { error: "Telegram invoice creation failed" },
+        { error: "Telegram Stars invoice creation failed" },
         { status: 502 }
       );
     }
@@ -99,13 +90,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       payload,
       invoiceLink,
-      amountUsd: SUBSCRIPTION_PRICE_USD,
+      currency: "XTR",
+      totalAmount,
     });
   } catch (error) {
     console.error("[Mini App] Unable to create invoice:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unable to create invoice" },
-      { status: 400 }
-    );
+    const message = error instanceof Error ? error.message : "Unable to create invoice";
+    const status = message.includes("not configured") ? 503 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }
