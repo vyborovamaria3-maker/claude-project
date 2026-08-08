@@ -1,8 +1,6 @@
 (() => {
   const nativeFetch = window.fetch.bind(window);
   let pending = null;
-  let clickBypass = false;
-  let preconfirmedMutation = false;
 
   const esc = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -16,7 +14,7 @@
     const url = typeof input === "string" ? input : String(input?.url || "");
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
     if (!url.includes("/api/analysis-profiles/")) return false;
-    if (url.endsWith("/backtest")) return false;
+    if (url.split("?", 1)[0].endsWith("/backtest")) return false;
     return true;
   }
 
@@ -29,7 +27,8 @@
     const method = String(init.method || "GET").toUpperCase();
     const url = typeof input === "string" ? input : String(input?.url || "");
     const body = parseBody(init);
-    const parts = url.split("/").filter(Boolean);
+    const path = url.split("?", 1)[0];
+    const parts = path.split("/").filter(Boolean);
     const apiIndex = parts.indexOf("analysis-profiles");
     const domain = apiIndex >= 0 ? parts[apiIndex + 1] || "" : "";
     const key = apiIndex >= 0 ? parts[apiIndex + 2] || "" : "";
@@ -59,7 +58,10 @@
     if (domain) changes.unshift(["Раздел", domain]);
     if (key) changes.push(["Параметр", decodeURIComponent(key)]);
     if (body) {
-      const labels = { label: "Название", source: "Source path", value_type: "Тип", scale: "Scale", threshold: "Threshold", description: "Описание", enabled: "Selected", key: "Key" };
+      const labels = {
+        label: "Название", source: "Source path", value_type: "Тип", scale: "Scale",
+        threshold: "Threshold", description: "Описание", enabled: "Selected", key: "Key"
+      };
       for (const [field, label] of Object.entries(labels)) {
         if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
         if (field === "enabled" && changes.some(([name]) => name === "Selected")) continue;
@@ -93,7 +95,9 @@
     modal.querySelector("#analysisConfirmCancel").addEventListener("click", () => settle(false));
     modal.querySelector("#analysisConfirmAccept").addEventListener("click", () => settle(true));
     modal.addEventListener("click", (event) => { if (event.target === modal) settle(false); });
-    document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !modal.classList.contains("hidden")) settle(false); });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.classList.contains("hidden")) settle(false);
+    });
     return modal;
   }
 
@@ -120,38 +124,19 @@
     return new Promise((resolve) => { pending = { resolve }; });
   }
 
-  function askForRequest(input, init) {
-    return ask(describe(input, init));
+  function cleanInit(init = {}) {
+    const next = { ...init };
+    delete next.__analysisConfirmed;
+    return next;
   }
 
-  document.addEventListener("click", async (event) => {
-    const button = event.target.closest?.("[data-toggle]");
-    if (!button || clickBypass) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-    const key = button.dataset.toggle || "";
-    const currentlyOn = button.classList.contains("on") || button.textContent.includes("ON");
-    const accepted = await ask({
-      title: "Подтвердить переключение",
-      danger: false,
-      changes: [["Параметр", key], ["Selected", currentlyOn ? "ON → OFF" : "OFF → ON"]],
-    });
-    if (!accepted) return;
-    preconfirmedMutation = true;
-    clickBypass = true;
-    button.click();
-    clickBypass = false;
-  }, true);
-
   window.fetch = async function confirmedFetch(input, init = {}) {
-    if (!isAnalysisMutation(input, init)) return nativeFetch(input, init);
-    if (preconfirmedMutation) {
-      preconfirmedMutation = false;
-      return nativeFetch(input, init);
-    }
-    const accepted = await askForRequest(input, init);
+    if (!isAnalysisMutation(input, init)) return nativeFetch(input, cleanInit(init));
+    if (init.__analysisConfirmed === true) return nativeFetch(input, cleanInit(init));
+    const accepted = await ask(describe(input, init));
     if (!accepted) throw new DOMException("Изменение отменено пользователем", "AbortError");
-    return nativeFetch(input, init);
+    return nativeFetch(input, cleanInit(init));
   };
+
+  window.AdminAnalysisConfirm = Object.freeze({ ask, describe });
 })();
