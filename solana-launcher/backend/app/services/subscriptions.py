@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
@@ -27,8 +27,8 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _fernet(secret_key: str) -> Fernet:
@@ -168,7 +168,9 @@ async def complete_subscription_order(
             .limit(1)
         )
         if charge_result.scalar_one_or_none() is not None:
-            raise SubscriptionConflictError("Telegram payment charge is already linked to another order")
+            raise SubscriptionConflictError(
+                "Telegram payment charge is already linked to another order"
+            )
 
     login_owner = await _login_owner(session, order.login)
     if login_owner is not None and login_owner.telegram_id != str(order.telegram_user_id):
@@ -179,7 +181,7 @@ async def complete_subscription_order(
     )
     user = user_result.scalar_one_or_none()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if user is None:
         user = User(
             telegram_id=str(order.telegram_user_id),
@@ -210,6 +212,8 @@ async def complete_subscription_order(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        raise SubscriptionConflictError("Subscription payment conflicts with existing data") from exc
+        raise SubscriptionConflictError(
+            "Subscription payment conflicts with existing data"
+        ) from exc
     await session.refresh(order)
     return order, completion.password, expires_at, False
