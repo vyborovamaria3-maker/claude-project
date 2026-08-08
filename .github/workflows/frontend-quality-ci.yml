@@ -1,0 +1,93 @@
+name: Frontend Quality CI
+
+on:
+  pull_request:
+    paths:
+      - "solana-launcher/**"
+      - ".github/workflows/frontend-quality-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  accessibility-and-performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: solana-launcher
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install quality tools
+        run: npm install --no-save --package-lock=false --legacy-peer-deps @axe-core/playwright@4.10.2 lighthouse@12.8.2
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Start frontend
+        run: |
+          npm start -- -p 3000 > /tmp/potapoff-quality-next.log 2>&1 &
+          echo $! > /tmp/potapoff-quality-next.pid
+          for i in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/login >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/potapoff-quality-next.log
+          exit 1
+
+      - name: Axe WCAG regression
+        env:
+          BASE_URL: http://127.0.0.1:3000
+        run: node tests/a11y-regression.mjs
+
+      - name: Lighthouse mobile report
+        run: |
+          mkdir -p test-results/lighthouse
+          CHROME_PATH="$(node -e "const { chromium } = require('playwright'); process.stdout.write(chromium.executablePath())")"
+          export CHROME_PATH
+          npx lighthouse http://127.0.0.1:3000/login \
+            --quiet \
+            --chrome-flags="--headless --no-sandbox --disable-gpu" \
+            --only-categories=performance,accessibility,best-practices,seo \
+            --output=json \
+            --output-path=test-results/lighthouse/login.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('test-results/lighthouse/login.json', 'utf8'));
+          const scores = Object.fromEntries(Object.entries(report.categories).map(([key, value]) => [key, value.score || 0]));
+          console.log('Lighthouse scores:', scores);
+          if (scores.accessibility < 0.90) throw new Error(`Accessibility score too low: ${scores.accessibility}`);
+          if (scores['best-practices'] < 0.85) throw new Error(`Best practices score too low: ${scores['best-practices']}`);
+          if (scores.seo < 0.80) throw new Error(`SEO score too low: ${scores.seo}`);
+          if (scores.performance < 0.65) throw new Error(`Performance score too low: ${scores.performance}`);
+          NODE
+
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-quality-reports
+          path: solana-launcher/test-results
+          if-no-files-found: ignore
+
+      - name: Print frontend log on failure
+        if: failure()
+        run: cat /tmp/potapoff-quality-next.log || true
