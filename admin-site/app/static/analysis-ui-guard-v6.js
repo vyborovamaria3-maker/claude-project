@@ -9,7 +9,7 @@
     const raw = typeof input === "string" ? input : String(input?.url || "");
     const path = raw.split("?", 1)[0];
     const isAnalysis = raw.includes("/api/analysis-profiles");
-    const isBacktest = path.endsWith("/backtest");
+    const isBacktest = method === "POST" && path.endsWith("/backtest");
     const mutation = isAnalysis && !isBacktest && ["POST", "PUT", "PATCH", "DELETE"].includes(method);
     const listLoad = isAnalysis && method === "GET" && path.endsWith("/api/analysis-profiles");
     return { isAnalysis, mutation, listLoad };
