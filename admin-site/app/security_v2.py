@@ -4,6 +4,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import ipaddress
 import os
 import sqlite3
 import struct
@@ -34,11 +35,27 @@ def _as_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _effective_client_ip(request: Request) -> str:
+    settings = request.app.state.settings
+    direct = request.client.host if request.client else "unknown"
+    if not settings.trust_proxy:
+        return direct
+    values = [item.strip() for item in request.headers.get("x-forwarded-for", "").split(",") if item.strip()]
+    if not values:
+        return direct
+    index = len(values) - settings.trusted_proxy_hops - 1
+    if index < 0:
+        return direct
+    candidate = values[index]
+    try:
+        ipaddress.ip_address(candidate)
+        return candidate
+    except ValueError:
+        return direct
+
+
 def _ip_binding(request: Request) -> str:
-    value = request.client.host if request.client else "unknown"
-    # Exact binding is deliberate for an admin console; trusted proxy handling already
-    # normalizes client_ip in the base app before network policy is evaluated.
-    return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
+    return hashlib.sha256(_effective_client_ip(request).encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _ua_binding(request: Request) -> str:
@@ -75,12 +92,9 @@ def verify_totp(secret: str, code: str, *, at: int | None = None, window: int = 
         return False
     now = int(time.time()) if at is None else int(at)
     try:
-        for delta in range(-window, window + 1):
-            if hmac.compare_digest(totp_code(secret, at=now + delta * 30), candidate):
-                return True
+        return any(hmac.compare_digest(totp_code(secret, at=now + delta * 30), candidate) for delta in range(-window, window + 1))
     except ValueError:
         return False
-    return False
 
 
 @dataclass(frozen=True)
@@ -134,8 +148,7 @@ class AdminSessionStore:
                   ip_hash TEXT,
                   user_agent_hash TEXT
                 );
-                CREATE INDEX IF NOT EXISTS ix_admin_security_sessions_expires
-                  ON admin_security_sessions(expires_at);
+                CREATE INDEX IF NOT EXISTS ix_admin_security_sessions_expires ON admin_security_sessions(expires_at);
                 """
             )
             db.commit()
@@ -156,15 +169,11 @@ class AdminSessionStore:
             row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
             if row is None:
                 db.execute(
-                    """INSERT INTO admin_security_sessions(
-                         nonce,username,issued_at,expires_at,last_seen_at,mfa_verified_at,reauth_until,ip_hash,user_agent_hash
-                       ) VALUES(?,?,?,?,?,?,?,?,?)""",
-                    (
-                        nonce, str(payload["sub"]), int(payload["iat"]), int(payload["exp"]), now,
-                        None, None,
-                        _ip_binding(request) if policy.bind_ip else None,
-                        _ua_binding(request) if policy.bind_user_agent else None,
-                    ),
+                    """INSERT INTO admin_security_sessions(nonce,username,issued_at,expires_at,last_seen_at,mfa_verified_at,reauth_until,ip_hash,user_agent_hash)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (nonce, str(payload["sub"]), int(payload["iat"]), int(payload["exp"]), now, None, None,
+                     _ip_binding(request) if policy.bind_ip else None,
+                     _ua_binding(request) if policy.bind_user_agent else None),
                 )
                 db.commit()
                 row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
@@ -180,13 +189,11 @@ class AdminSessionStore:
                 return self.get_or_create(payload, request, policy)
             item = dict(row)
             if now - int(item["last_seen_at"]) > policy.idle_timeout_seconds:
-                db.execute("DELETE FROM admin_security_sessions WHERE nonce=?", (nonce,))
-                db.commit()
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session expired due to inactivity")
+                raise HTTPException(status_code=401, detail="Admin session expired due to inactivity")
             if policy.bind_ip and item.get("ip_hash") and not hmac.compare_digest(item["ip_hash"], _ip_binding(request)):
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session client binding changed")
+                raise HTTPException(status_code=401, detail="Admin session client binding changed")
             if policy.bind_user_agent and item.get("user_agent_hash") and not hmac.compare_digest(item["user_agent_hash"], _ua_binding(request)):
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session client binding changed")
+                raise HTTPException(status_code=401, detail="Admin session client binding changed")
             db.execute("UPDATE admin_security_sessions SET last_seen_at=? WHERE nonce=?", (now, nonce))
             db.commit()
             item["last_seen_at"] = now
@@ -214,19 +221,11 @@ class AdminSessionStore:
             db.commit()
 
 
-_SAFE_PATHS = {
-    "/api/health", "/api/login", "/api/logout", "/api/me",
-    "/api/security/mfa/verify", "/api/security/reauth", "/api/security/session",
-}
-
-
 def _dangerous_mutation(request: Request) -> bool:
     if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return False
     path = request.url.path
-    if path in {"/api/login", "/api/logout", "/api/security/mfa/verify", "/api/security/reauth"}:
-        return False
-    if path.endswith("/backtest"):
+    if path in {"/api/login", "/api/logout", "/api/security/mfa/verify", "/api/security/reauth"} or path.endswith("/backtest"):
         return False
     return path.startswith("/api/")
 
@@ -236,7 +235,6 @@ def install_security(app: FastAPI) -> None:
     store = AdminSessionStore(app.state.settings.audit_db_path)
     app.state.security_policy = policy
     app.state.security_sessions = store
-
     router = APIRouter()
 
     def signed_payload(request: Request) -> dict[str, Any]:
@@ -253,29 +251,20 @@ def install_security(app: FastAPI) -> None:
         payload = signed_payload(request)
         row = store.validate_and_touch(payload, request, policy)
         now = int(time.time())
-        return {
-            "authenticated": True,
-            "mfa_required": policy.require_mfa,
-            "mfa_verified": bool(row.get("mfa_verified_at")),
-            "reauth_required": policy.require_reauth,
-            "reauth_valid": int(row.get("reauth_until") or 0) > now,
-            "idle_timeout_seconds": policy.idle_timeout_seconds,
-            "expires_at": int(payload["exp"]),
-        }
+        return {"authenticated": True, "mfa_required": policy.require_mfa, "mfa_verified": bool(row.get("mfa_verified_at")),
+                "reauth_required": policy.require_reauth, "reauth_valid": int(row.get("reauth_until") or 0) > now,
+                "idle_timeout_seconds": policy.idle_timeout_seconds, "expires_at": int(payload["exp"])}
 
     @router.post("/api/security/mfa/verify")
     def verify_mfa(body: MfaBody, request: Request) -> dict[str, Any]:
         payload = signed_payload(request)
         store.validate_and_touch(payload, request, policy)
-        if not policy.require_mfa:
-            store.mark_mfa(str(payload["nonce"]))
-            return {"ok": True, "mfa_required": False}
-        if not verify_totp(policy.totp_secret, body.code):
-            app.state.audit.record(action="mfa", success=False, username=payload["sub"], ip_address=request.client.host if request.client else "unknown")
+        if policy.require_mfa and not verify_totp(policy.totp_secret, body.code):
+            app.state.audit.record(action="mfa", success=False, username=payload["sub"], ip_address=_effective_client_ip(request))
             raise HTTPException(status_code=401, detail="Invalid MFA code")
         store.mark_mfa(str(payload["nonce"]))
-        app.state.audit.record(action="mfa", success=True, username=payload["sub"], ip_address=request.client.host if request.client else "unknown")
-        return {"ok": True, "mfa_required": True}
+        app.state.audit.record(action="mfa", success=True, username=payload["sub"], ip_address=_effective_client_ip(request))
+        return {"ok": True, "mfa_required": policy.require_mfa}
 
     @router.post("/api/security/reauth")
     def reauth(body: ReauthBody, request: Request) -> dict[str, Any]:
@@ -284,14 +273,14 @@ def install_security(app: FastAPI) -> None:
         if policy.require_mfa and not row.get("mfa_verified_at"):
             raise HTTPException(status_code=428, detail="MFA verification required first")
         if not check_admin_password(app.state.settings, payload["sub"], body.password):
-            app.state.audit.record(action="reauth", success=False, username=payload["sub"], ip_address=request.client.host if request.client else "unknown")
+            app.state.audit.record(action="reauth", success=False, username=payload["sub"], ip_address=_effective_client_ip(request))
             raise HTTPException(status_code=401, detail="Invalid credentials")
         if policy.require_mfa and not verify_totp(policy.totp_secret, body.code):
-            app.state.audit.record(action="reauth", success=False, username=payload["sub"], ip_address=request.client.host if request.client else "unknown", details={"reason":"mfa"})
+            app.state.audit.record(action="reauth", success=False, username=payload["sub"], ip_address=_effective_client_ip(request), details={"reason":"mfa"})
             raise HTTPException(status_code=401, detail="Invalid MFA code")
         until = int(time.time()) + policy.reauth_ttl_seconds
         store.mark_reauth(str(payload["nonce"]), until)
-        app.state.audit.record(action="reauth", success=True, username=payload["sub"], ip_address=request.client.host if request.client else "unknown", details={"valid_until":until})
+        app.state.audit.record(action="reauth", success=True, username=payload["sub"], ip_address=_effective_client_ip(request), details={"valid_until":until})
         return {"ok": True, "valid_until": until}
 
     app.include_router(router)
@@ -304,6 +293,7 @@ def install_security(app: FastAPI) -> None:
         token = request.cookies.get(app.state.settings.session_cookie, "")
         if not token:
             return await call_next(request)
+        payload: dict[str, Any] | None = None
         try:
             payload = verify_session(app.state.settings, token)
             if app.state.audit.is_session_revoked(str(payload.get("nonce", ""))):
@@ -321,5 +311,11 @@ def install_security(app: FastAPI) -> None:
                 return JSONResponse(status_code=428, content={"detail":"Recent re-authentication required","code":"reauth_required"})
             return await call_next(request)
         except HTTPException as exc:
+            if exc.status_code == 401 and payload is not None:
+                nonce = str(payload.get("nonce", ""))
+                try:
+                    app.state.audit.revoke_session(nonce, int(payload.get("exp", 0)))
+                finally:
+                    store.delete(nonce)
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=exc.status_code, content={"detail":str(exc.detail)})
