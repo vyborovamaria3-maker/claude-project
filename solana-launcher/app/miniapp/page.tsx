@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -92,6 +92,7 @@ export default function MiniAppPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
+  const checkingRef = useRef(false);
   const [copied, setCopied] = useState<"login" | "password" | "payment" | null>(null);
   const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
   const [statusMessage, setStatusMessage] = useState("Loading subscription settings…");
@@ -207,7 +208,8 @@ export default function MiniAppPage() {
   }
 
   async function verifyPayment(payload: string, showPending: boolean) {
-    if (checking) return;
+    if (checkingRef.current) return;
+    checkingRef.current = true;
     setChecking(true);
     try {
       const response = await fetch("/api/miniapp/verify-payment", {
@@ -243,6 +245,7 @@ export default function MiniAppPage() {
         webApp?.HapticFeedback?.notificationOccurred?.("error");
       }
     } finally {
+      checkingRef.current = false;
       setChecking(false);
     }
   }
