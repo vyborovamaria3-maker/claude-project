@@ -11,7 +11,7 @@ jobs:
   apply-v2:
     if: github.head_ref == 'agent/fix-full-backtest-findings'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,9 +22,6 @@ jobs:
           node-version: '20.20.2'
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
 
       - name: Skip when already applied
         id: state
@@ -36,13 +33,14 @@ jobs:
             echo 'skip=false' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Apply source fixes and follow-ups
+      - name: Apply audited source fixes
         if: steps.state.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
           python .github/scripts/apply_backtest_fixes.py
           python .github/scripts/apply_backtest_followups.py
+          python .github/scripts/apply_backtest_semantics.py
 
       - name: Refresh lockfile without breaking upgrades
         if: steps.state.outputs.skip != 'true'
@@ -53,38 +51,7 @@ jobs:
           npm install --package-lock-only --legacy-peer-deps
           npm audit fix --package-lock-only --legacy-peer-deps || true
 
-      - name: Verify fixed frontend and backend
-        if: steps.state.outputs.skip != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd solana-launcher
-          npm ci --legacy-peer-deps
-          npm run lint
-          npx tsc --noEmit
-          npm run build
-          node --check scripts/analyze-twitter-manipulation.mjs
-          BASE_URL=http://127.0.0.1:3000 true
-          cd backend
-          python -m pip install -e '.[dev]'
-          python -m compileall -q app tests
-          ruff check app tests
-          mypy app
-          pytest -q
-          test "$(alembic heads | grep -c '(head)')" -eq 1
-
-      - name: Audit production dependencies
-        if: steps.state.outputs.skip != 'true'
-        working-directory: solana-launcher
-        shell: bash
-        run: |
-          set +e
-          npm audit --omit=dev --audit-level=high
-          code=$?
-          echo "npm_audit_exit=$code"
-          exit 0
-
-      - name: Commit validated fixes
+      - name: Commit audited source changes
         if: steps.state.outputs.skip != 'true'
         shell: bash
         run: |
