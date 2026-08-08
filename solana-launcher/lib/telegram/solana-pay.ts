@@ -162,21 +162,15 @@ export async function findVerifiedSolanaPayment(input: {
     throw new Error("Subscription order timestamp is invalid");
   }
 
-  const connection = new Connection(input.rpcUrl, "confirmed");
+  const connection = new Connection(input.rpcUrl, "finalized");
   const signatures = await connection.getSignaturesForAddress(reference, { limit: 20 });
 
   for (const signatureInfo of signatures) {
-    if (signatureInfo.err) continue;
-    if (
-      signatureInfo.confirmationStatus !== "confirmed" &&
-      signatureInfo.confirmationStatus !== "finalized"
-    ) {
-      continue;
-    }
+    if (signatureInfo.err || signatureInfo.confirmationStatus !== "finalized") continue;
     if (signatureInfo.blockTime != null && signatureInfo.blockTime < createdAfter) continue;
 
     const transaction = await connection.getParsedTransaction(signatureInfo.signature, {
-      commitment: "confirmed",
+      commitment: "finalized",
       maxSupportedTransactionVersion: 0,
     });
     if (!transaction || transaction.meta?.err) continue;
