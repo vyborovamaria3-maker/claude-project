@@ -32,6 +32,38 @@ telegram_intelligence_enabled() {
     && grep -Eq '^TG_SESSION_STRING=.+$' .env.server
 }
 
+telegram_bot_enabled() {
+  grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' .env.server \
+    && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' .env.server \
+    && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' .env.server
+}
+
+env_value() {
+  local key="$1"
+  sed -n "s/^${key}=//p" .env.server | tail -n 1
+}
+
+check_telegram_webhook() {
+  local token
+  local webhook_url
+  local webhook_secret
+  local info
+
+  token="$(env_value TELEGRAM_BOT_TOKEN)"
+  webhook_url="$(env_value TELEGRAM_WEBHOOK_URL)"
+  webhook_secret="$(env_value TELEGRAM_WEBHOOK_SECRET)"
+
+  curl -fsS -H "x-webhook-secret: $webhook_secret" "$webhook_url" \
+    | grep -Fq '"status":"ok"' \
+    || return 1
+
+  info="$(printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' "$token" | curl -fsS --config -)" \
+    || return 1
+
+  printf '%s' "$info" | grep -Fq '"ok":true' \
+    && printf '%s' "$info" | grep -Fq "\"url\":\"$webhook_url\""
+}
+
 check_services() {
   local service
   local container_id
@@ -85,6 +117,20 @@ check_services() {
     fi
   fi
 
+  if telegram_bot_enabled && [[ "${SKIP_TELEGRAM_BOT_HEALTH:-0}" != "1" ]]; then
+    container_id="$(
+      "${COMPOSE[@]}" --profile telegram ps -q telegram-bot 2>/dev/null || true
+    )"
+    if [[ -z "$container_id" ]]; then
+      bad+=("telegram-bot:missing")
+    else
+      state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+      if [[ "$state" != "running" ]]; then
+        bad+=("telegram-bot:$state")
+      fi
+    fi
+  fi
+
   printf '%s' "${bad[*]:-}"
 }
 
@@ -92,11 +138,26 @@ for attempt in $(seq 1 45); do
   endpoints_ok=0
   build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
 
+  admin_location="$(
+    curl -fsSI http://127.0.0.1/admin/ 2>/dev/null \
+      | tr -d '\r' \
+      | awk 'tolower($1) == "location:" {print $2; exit}' \
+      || true
+  )"
+  telegram_ok=1
+  if telegram_bot_enabled \
+    && [[ "${SKIP_TELEGRAM_BOT_HEALTH:-0}" != "1" ]] \
+    && ! check_telegram_webhook; then
+    telegram_ok=0
+  fi
+
   if curl -fsS http://127.0.0.1/ >/dev/null \
     && curl -fsS http://127.0.0.1/miniapp >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
     && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
+    && [[ "$admin_location" == "https://potapoff.fun/admin/login" ]] \
+    && [[ "$telegram_ok" -eq 1 ]] \
     && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
     endpoints_ok=1
   fi
@@ -130,6 +191,10 @@ echo "Build info: ${build_info:-unavailable}" >&2
 
 if telegram_intelligence_enabled; then
   "${COMPOSE[@]}" --profile telegram-intelligence logs --tail 120 telegram-intelligence || true
+fi
+
+if telegram_bot_enabled; then
+  "${COMPOSE[@]}" --profile telegram logs --tail 120 telegram-bot || true
 fi
 
 exit 1

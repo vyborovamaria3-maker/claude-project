@@ -9,7 +9,14 @@ export async function POST(req: NextRequest) {
   try {
     const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
     const receivedSecret = req.headers.get('x-telegram-bot-api-secret-token');
-    if (expectedSecret && receivedSecret !== expectedSecret) {
+    if (process.env.NODE_ENV === 'production' && !expectedSecret) {
+      console.error('[Telegram Webhook] TELEGRAM_WEBHOOK_SECRET is not configured');
+      return NextResponse.json(
+        { ok: false, error: 'Webhook is not configured' },
+        { status: 503 }
+      );
+    }
+    if (!expectedSecret || receivedSecret !== expectedSecret) {
       return NextResponse.json(
         { ok: false, error: 'Unauthorized' },
         { status: 401 }
@@ -73,11 +80,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  // Only allow health checks from localhost or with secret token
+  // Health checks always authenticate; Host is client-controlled through the proxy.
   const secretToken = req.headers.get('x-webhook-secret');
-  const isLocalhost = req.headers.get('host')?.includes('localhost');
-  
-  if (!isLocalhost && secretToken !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!expectedSecret || secretToken !== expectedSecret) {
     return NextResponse.json(
       { status: 'error', message: 'Unauthorized' },
       { status: 401 }

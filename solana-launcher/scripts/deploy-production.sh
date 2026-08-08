@@ -25,6 +25,7 @@ COMPOSE=(
 )
 
 PREVIOUS_TAG=""
+BOT_IMAGE_AVAILABLE=1
 
 if [[ -f .current-image-tag ]]; then
   PREVIOUS_TAG="$(cat .current-image-tag)"
@@ -36,12 +37,28 @@ telegram_intelligence_enabled() {
     && grep -Eq '^TG_SESSION_STRING=.+$' .env.server
 }
 
+telegram_bot_enabled() {
+  grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' .env.server \
+    && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' .env.server \
+    && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' .env.server
+}
+
 stop_telegram() {
   "${COMPOSE[@]}" --profile telegram stop telegram-bot \
     >/dev/null 2>&1 || true
 
   "${COMPOSE[@]}" --profile telegram rm -f telegram-bot \
     >/dev/null 2>&1 || true
+}
+
+sync_telegram_bot() {
+  if telegram_bot_enabled && [[ "$BOT_IMAGE_AVAILABLE" -eq 1 ]]; then
+    echo "Starting Telegram bot"
+    "${COMPOSE[@]}" --profile telegram up -d telegram-bot
+  else
+    echo "Telegram bot configuration or image is unavailable; bot remains disabled"
+    stop_telegram
+  fi
 }
 
 sync_telegram_intelligence() {
@@ -84,13 +101,21 @@ rollback() {
     celery-worker \
     frontend
 
+  if telegram_bot_enabled; then
+    if ! "${COMPOSE[@]}" --profile telegram pull telegram-bot; then
+      BOT_IMAGE_AVAILABLE=0
+      echo "Previous Telegram bot image is unavailable; continuing core rollback" >&2
+    fi
+  fi
+
   stop_telegram
 
   "${COMPOSE[@]}" up -d --remove-orphans
   restart_nginx
+  sync_telegram_bot
   sync_telegram_intelligence
 
-  "$HEALTH_SCRIPT"
+  SKIP_TELEGRAM_BOT_HEALTH="$((1 - BOT_IMAGE_AVAILABLE))" "$HEALTH_SCRIPT"
 
   echo "ROLLBACK_OK tag=$PREVIOUS_TAG"
 
@@ -113,10 +138,15 @@ export IMAGE_TAG="$NEW_TAG"
   celery-worker \
   frontend
 
+if telegram_bot_enabled; then
+  "${COMPOSE[@]}" --profile telegram pull telegram-bot
+fi
+
 stop_telegram
 
 "${COMPOSE[@]}" up -d --remove-orphans
 restart_nginx
+sync_telegram_bot
 sync_telegram_intelligence
 
 "${COMPOSE[@]}" exec -T backend alembic upgrade heads
