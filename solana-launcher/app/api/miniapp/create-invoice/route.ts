@@ -46,20 +46,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const payload = createOrderPayload();
-    await createSubscriptionOrder({
-      payload,
+    const requestedPayload = createOrderPayload();
+    const order = await createSubscriptionOrder({
+      payload: requestedPayload,
       telegramUserId: user.id,
       username: user.username || null,
       login,
       amountUsd: SUBSCRIPTION_PRICE_USD,
     });
+    const payload = order.payload;
 
     if (!providerToken) {
       return NextResponse.json({
         payload,
         devCheckout: true,
         amountUsd: SUBSCRIPTION_PRICE_USD,
+      });
+    }
+
+    if (order.invoice_link) {
+      return NextResponse.json({
+        payload,
+        invoiceLink: order.invoice_link,
+        amountUsd: SUBSCRIPTION_PRICE_USD,
+        reused: true,
       });
     }
 
