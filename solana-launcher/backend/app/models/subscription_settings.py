@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import base58
 from sqlalchemy import Boolean, DateTime, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
@@ -52,4 +53,13 @@ class SubscriptionSettings(Base):
 
     @validates("solana_recipient_wallet")
     def validate_wallet(self, _key: str, value: str) -> str:
-        return (value or "").strip()
+        normalized = (value or "").strip()
+        if not normalized:
+            return ""
+        try:
+            decoded = base58.b58decode(normalized)
+        except ValueError as exc:
+            raise ValueError("Recipient must be a valid Solana public key") from exc
+        if len(decoded) != 32:
+            raise ValueError("Recipient must be a valid Solana public key")
+        return normalized
