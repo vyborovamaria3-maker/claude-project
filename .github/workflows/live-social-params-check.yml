@@ -1,0 +1,48 @@
+name: Live Social Parameters Check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for production and verify social parameters
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="https://potapoff.fun"
+          expected="44f5975b584a7d767239ed6b92797fa9bf9728fe"
+          ready=0
+
+          for attempt in $(seq 1 60); do
+            build_info="$(curl -sS --connect-timeout 5 --max-time 15 "$base/api/build-info" || true)"
+            echo "attempt=$attempt build_info=$build_info"
+            if printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$expected\""; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+
+          test "$ready" = "1"
+
+          code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/social.html -w '%{http_code}' "$base/trade/analysis/social")"
+          echo "social HTTP=$code bytes=$(wc -c < /tmp/social.html)"
+          test "$code" = "200"
+          grep -Fq 'Параметры анализа' /tmp/social.html
+          grep -Fq 'X / Twitter' /tmp/social.html
+          grep -Fq 'Telegram' /tmp/social.html
+          grep -Fq 'Min channel score' /tmp/social.html
+          grep -Fq 'Анализировать X + Telegram' /tmp/social.html
+
+          tg_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/tg.json -w '%{http_code}' \
+            "$base/fastapi/api/v1/social/token/3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump?platform=telegram&hours=24&explicit_calls_only=true&min_engagement=0&min_channel_score=0&limit=20")"
+          echo "tg-filter HTTP=$tg_code body=$(cat /tmp/tg.json)"
+          test "$tg_code" = "200"
+
+          echo "LIVE_SOCIAL_PARAMS_OK build=$expected"
