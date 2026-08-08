@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-import AxeBuilder from "@axe-core/playwright";
 
 const baseURL = process.env.BASE_URL || "http://127.0.0.1:3000";
+const axeSourcePath = process.env.AXE_SOURCE_PATH;
 const routes = ["/auth", "/login", "/", "/launch-dashboard", "/trade-dashboard", "/trade/analysis", "/market-overview"];
 
 const profiles = [
@@ -10,6 +10,8 @@ const profiles = [
   { name: "tablet", viewport: { width: 768, height: 1024 }, isMobile: false },
   { name: "desktop", viewport: { width: 1440, height: 900 }, isMobile: false },
 ];
+
+assert.ok(axeSourcePath, "AXE_SOURCE_PATH is required");
 
 async function run() {
   const browser = await chromium.launch({ headless: true });
@@ -32,10 +34,17 @@ async function run() {
           const response = await page.goto(`${baseURL}${route}`, { waitUntil: "domcontentloaded", timeout: 30_000 });
           assert.ok(response && response.status() < 400, `${label}: navigation failed with ${response?.status() ?? "no response"}`);
           await page.waitForTimeout(500);
+          await page.addScriptTag({ path: axeSourcePath });
 
-          const results = await new AxeBuilder({ page })
-            .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-            .analyze();
+          const results = await page.evaluate(async () => {
+            if (!window.axe) throw new Error("axe-core failed to load");
+            return window.axe.run(document, {
+              runOnly: {
+                type: "tag",
+                values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+              },
+            });
+          });
 
           const blocking = results.violations.filter((violation) => ["critical", "serious"].includes(violation.impact || ""));
           if (blocking.length) {
