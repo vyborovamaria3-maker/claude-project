@@ -43,7 +43,7 @@ export default defineConfig([
     },
   },
   {
-    files: ["**/*.cjs"],
+    files: ["**/*.cjs", "tests/**/*.js"],
     plugins: inheritedPlugins,
     rules: {
       "@typescript-eslint/no-require-imports": "off",
