@@ -12,7 +12,7 @@ permissions:
 jobs:
   accessibility-and-performance:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: solana-launcher
@@ -34,8 +34,8 @@ jobs:
       - name: Install quality tools
         run: npm install --no-save --package-lock=false --legacy-peer-deps @axe-core/playwright@4.10.2 lighthouse@12.8.2
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Build frontend
         run: npm run build
@@ -52,6 +52,11 @@ jobs:
           done
           cat /tmp/potapoff-quality-next.log
           exit 1
+
+      - name: Cross-browser smoke
+        env:
+          BASE_URL: http://127.0.0.1:3000
+        run: node tests/cross-browser-smoke.mjs
 
       - name: Axe WCAG regression
         env:
