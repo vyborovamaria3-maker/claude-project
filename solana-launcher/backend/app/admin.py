@@ -45,7 +45,13 @@ class UserAdmin(ModelView, model=User):
         "is_superuser",
         "created_at",
     ]
-    column_searchable_list = ["email", "wallet_address", "telegram_id", "telegram_username", "full_name"]
+    column_searchable_list = [
+        "email",
+        "wallet_address",
+        "telegram_id",
+        "telegram_username",
+        "full_name",
+    ]
     column_sortable_list = ["id", "email", "created_at"]
     form_excluded_columns = ["hashed_password"]
     can_create = False
