@@ -39,9 +39,17 @@ def upgrade() -> None:
     )
     op.create_index("ix_subscription_orders_login", "subscription_orders", ["login"])
     op.create_index("ix_subscription_orders_status", "subscription_orders", ["status"])
+    op.create_index(
+        "uq_subscription_orders_pending_login",
+        "subscription_orders",
+        ["login"],
+        unique=True,
+        postgresql_where=sa.text("status = 'pending'"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("uq_subscription_orders_pending_login", table_name="subscription_orders")
     op.drop_index("ix_subscription_orders_status", table_name="subscription_orders")
     op.drop_index("ix_subscription_orders_login", table_name="subscription_orders")
     op.drop_index("ix_subscription_orders_telegram_user_id", table_name="subscription_orders")
