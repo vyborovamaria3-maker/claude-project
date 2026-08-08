@@ -107,14 +107,22 @@ class LiveAnalysisProfileStore(ContractAwareAnalysisProfileStore):
             raise KeyError("Unknown builtin analysis parameter")
         if domain not in DOMAINS:
             raise ValueError("Unknown analysis domain")
+        current = next(row for row in self.list(domain) if row["key"] == key)
         now = _utcnow()
         with contextlib.closing(self.connect()) as db:
             db.execute(
                 """INSERT INTO analysis_parameter_overrides(domain,key,enabled,threshold,custom,deleted,updated_by,updated_at)
-                   VALUES(?,?,0,'',0,1,?,?)
-                   ON CONFLICT(domain,key) DO UPDATE SET enabled=0, deleted=1,
-                     custom=0, updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
-                (domain, key, username, now),
+                   VALUES(?,?,?,?,0,1,?,?)
+                   ON CONFLICT(domain,key) DO UPDATE SET deleted=1, custom=0,
+                     updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
+                (
+                    domain,
+                    key,
+                    1 if current.get("enabled") else 0,
+                    current.get("threshold", ""),
+                    username,
+                    now,
+                ),
             )
             db.commit()
         return next(row for row in self.list(domain) if row["key"] == key)
@@ -125,20 +133,27 @@ class LiveAnalysisProfileStore(ContractAwareAnalysisProfileStore):
             raise KeyError("Unknown builtin analysis parameter")
         now = _utcnow()
         with contextlib.closing(self.connect()) as db:
-            db.execute(
-                """INSERT INTO analysis_parameter_overrides(domain,key,enabled,threshold,custom,deleted,updated_by,updated_at)
-                   VALUES(?,?,?,?,0,0,?,?)
-                   ON CONFLICT(domain,key) DO UPDATE SET deleted=0, enabled=excluded.enabled,
-                     threshold=excluded.threshold, custom=0, updated_by=excluded.updated_by,
-                     updated_at=excluded.updated_at""",
-                (
-                    domain,
-                    key,
-                    1 if base.get("default_enabled") and base.get("runtime_state") != "legacy" else 0,
-                    base.get("threshold", ""),
-                    username,
-                    now,
-                ),
-            )
+            existing = db.execute(
+                "SELECT enabled,threshold FROM analysis_parameter_overrides WHERE domain=? AND key=? AND custom=0",
+                (domain, key),
+            ).fetchone()
+            if existing:
+                db.execute(
+                    "UPDATE analysis_parameter_overrides SET deleted=0,updated_by=?,updated_at=? WHERE domain=? AND key=? AND custom=0",
+                    (username, now, domain, key),
+                )
+            else:
+                db.execute(
+                    """INSERT INTO analysis_parameter_overrides(domain,key,enabled,threshold,custom,deleted,updated_by,updated_at)
+                       VALUES(?,?,?,?,0,0,?,?)""",
+                    (
+                        domain,
+                        key,
+                        1 if base.get("default_enabled") and base.get("runtime_state") != "legacy" else 0,
+                        base.get("threshold", ""),
+                        username,
+                        now,
+                    ),
+                )
             db.commit()
         return next(row for row in self.list(domain) if row["key"] == key)
