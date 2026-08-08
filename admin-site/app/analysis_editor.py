@@ -108,6 +108,8 @@ class LiveAnalysisProfileStore(ContractAwareAnalysisProfileStore):
         if domain not in DOMAINS:
             raise ValueError("Unknown analysis domain")
         current = next(row for row in self.list(domain) if row["key"] == key)
+        if current.get("hidden"):
+            return current
         now = _utcnow()
         with contextlib.closing(self.connect()) as db:
             db.execute(
