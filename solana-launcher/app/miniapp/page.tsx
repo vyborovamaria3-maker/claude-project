@@ -40,14 +40,16 @@ type OrderState = {
   login: string;
   status: "pending" | "paid";
   password: string | null;
+  subscriptionExpiresAt?: string | null;
 };
 
 type CreateInvoiceResponse = {
   error?: string;
   payload?: string;
   invoiceLink?: string;
-  devCheckout?: boolean;
-  amountUsd?: number;
+  currency?: "XTR";
+  totalAmount?: number;
+  reused?: boolean;
 };
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
@@ -56,7 +58,7 @@ export default function MiniAppPage() {
   const [login, setLogin] = useState("");
   const [payload, setPayload] = useState("");
   const [invoiceLink, setInvoiceLink] = useState("");
-  const [devCheckout, setDevCheckout] = useState(false);
+  const [invoiceAmountStars, setInvoiceAmountStars] = useState<number | null>(null);
   const [order, setOrder] = useState<OrderState | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -126,7 +128,7 @@ export default function MiniAppPage() {
     setLoading(true);
     setOrder(null);
     setInvoiceLink("");
-    setDevCheckout(false);
+    setInvoiceAmountStars(null);
 
     try {
       if (!LOGIN_RE.test(login)) {
@@ -137,7 +139,7 @@ export default function MiniAppPage() {
       }
 
       webApp?.HapticFeedback?.impactOccurred?.("light");
-      setStatusMessage("Creating a secure Telegram invoice…");
+      setStatusMessage("Creating a secure Telegram Stars invoice…");
 
       const response = await fetch("/api/miniapp/create-invoice", {
         method: "POST",
@@ -147,57 +149,37 @@ export default function MiniAppPage() {
       const data = (await response.json()) as CreateInvoiceResponse;
 
       if (!response.ok) {
-        throw new Error(data.error || "Could not create the Telegram invoice.");
+        throw new Error(data.error || "Could not create the Telegram Stars invoice.");
       }
-      if (!data.payload) {
-        throw new Error("The payment order was not created.");
+      if (!data.payload || !data.invoiceLink || data.currency !== "XTR" || !data.totalAmount) {
+        throw new Error("The Telegram Stars payment order was not created correctly.");
       }
 
       setPayload(data.payload);
-      setInvoiceLink(data.invoiceLink || "");
-      setDevCheckout(Boolean(data.devCheckout));
-      setStatusMessage(data.invoiceLink ? "Invoice ready. Complete payment in Telegram." : "Test invoice ready.");
+      setInvoiceLink(data.invoiceLink);
+      setInvoiceAmountStars(data.totalAmount);
+      setStatusMessage(
+        data.reused
+          ? `Existing invoice ready: ${data.totalAmount} Telegram Stars.`
+          : `Invoice ready: ${data.totalAmount} Telegram Stars.`
+      );
 
-      if (data.invoiceLink) {
-        webApp?.openInvoice?.(data.invoiceLink, (status) => {
-          if (status === "paid") {
-            setStatusMessage("Payment received. Activating your access…");
-            void refreshOrder(data.payload as string);
-          } else if (status === "cancelled") {
-            setStatusMessage("Payment cancelled. You can open the invoice again when ready.");
-          } else if (status === "failed") {
-            setStatusMessage("Telegram reported a payment failure. Please try again.");
-            webApp?.HapticFeedback?.notificationOccurred?.("error");
-          }
-        });
-      }
+      webApp?.openInvoice?.(data.invoiceLink, (status) => {
+        if (status === "paid") {
+          setStatusMessage("Payment received. Activating your access…");
+          void refreshOrder(data.payload as string);
+        } else if (status === "cancelled") {
+          setStatusMessage("Payment cancelled. You can open the invoice again when ready.");
+        } else if (status === "failed") {
+          setStatusMessage("Telegram reported a payment failure. Please try again.");
+          webApp?.HapticFeedback?.notificationOccurred?.("error");
+        }
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Payment error.";
       setError(message);
       setStatusMessage("Checkout needs attention.");
       webApp?.HapticFeedback?.notificationOccurred?.("error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function completeDevPayment() {
-    if (!payload) return;
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch("/api/miniapp/dev-complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payload }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Could not confirm the test payment.");
-      }
-      await refreshOrder(payload);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Confirmation error.");
     } finally {
       setLoading(false);
     }
@@ -262,7 +244,10 @@ export default function MiniAppPage() {
           </div>
 
           <div className="mt-5 grid grid-cols-3 gap-2">
-            <Metric label="Price" value="$1000" />
+            <Metric
+              label="Price"
+              value={invoiceAmountStars ? `${invoiceAmountStars} Stars` : "Telegram Stars"}
+            />
             <Metric label="Access" value="30 days" />
             <Metric label="Delivery" value="Telegram" />
           </div>
@@ -302,6 +287,12 @@ export default function MiniAppPage() {
                 onCopy={() => copy(order.password || "", "password")}
               />
             </div>
+
+            {order.subscriptionExpiresAt && (
+              <p className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/55">
+                Access valid until {new Date(order.subscriptionExpiresAt).toLocaleDateString()}.
+              </p>
+            )}
 
             <a
               href="/login"
@@ -363,7 +354,7 @@ export default function MiniAppPage() {
               className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] shadow-[0_16px_48px_rgba(52,211,153,0.18)] transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-              {loading ? "Creating invoice…" : "Pay subscription"}
+              {loading ? "Creating invoice…" : "Pay with Telegram Stars"}
             </button>
 
             {invoiceLink && (
@@ -373,20 +364,9 @@ export default function MiniAppPage() {
                 rel="noreferrer"
                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/25 bg-emerald-300/[0.06] px-4 py-3 text-sm font-semibold text-emerald-100"
               >
-                Open Telegram invoice
+                Open Telegram Stars invoice
                 <ArrowRight className="h-4 w-4" />
               </a>
-            )}
-
-            {devCheckout && process.env.NODE_ENV !== "production" && (
-              <button
-                type="button"
-                onClick={completeDevPayment}
-                disabled={loading}
-                className="mt-3 w-full rounded-2xl border border-white/12 bg-white/[0.05] px-4 py-3 text-sm font-semibold text-white"
-              >
-                Dev: confirm payment
-              </button>
             )}
           </motion.section>
         )}
@@ -395,7 +375,7 @@ export default function MiniAppPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/40">How it works</p>
           <div className="mt-4 grid gap-3">
             <FlowStep icon={UserRound} number="01" title="Choose login" text="Use 4-32 letters, digits, or underscore." />
-            <FlowStep icon={CreditCard} number="02" title="Pay in Telegram" text="The invoice opens inside the Telegram payment flow." />
+            <FlowStep icon={CreditCard} number="02" title="Pay with Stars" text="Digital access is purchased through Telegram Stars inside the app." />
             <FlowStep icon={KeyRound} number="03" title="Receive access" text="After confirmation, your password appears here and in the bot." />
           </div>
         </section>
