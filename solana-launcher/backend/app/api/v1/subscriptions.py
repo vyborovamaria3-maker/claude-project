@@ -107,11 +107,17 @@ async def read_order(
     settings = _require_internal_access(request)
     order = await get_subscription_order(session, payload)
     if order is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription order not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription order not found",
+        )
     try:
         return await _as_response(session, order, settings=settings)
     except SubscriptionPasswordError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
 
 
 @router.patch("/orders/{payload}/invoice", response_model=SubscriptionOrderRead)
@@ -124,7 +130,10 @@ async def update_invoice(
     settings = _require_internal_access(request)
     order = await update_subscription_invoice(session, payload, body.invoice_link)
     if order is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription order not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription order not found",
+        )
     return await _as_response(session, order, settings=settings)
 
 
@@ -148,7 +157,10 @@ async def complete_order(
     except SubscriptionConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SubscriptionPasswordError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
     return await _as_response(
         session,
         order,
