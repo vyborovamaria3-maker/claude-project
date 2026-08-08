@@ -45,12 +45,14 @@ function internalHeaders(): Record<string, string> {
 }
 
 async function requestBackend<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  for (const [key, value] of Object.entries(internalHeaders())) {
+    headers.set(key, value);
+  }
+
   const response = await fetch(`${getBackendBaseUrl()}/api/v1/subscriptions${path}`, {
     ...init,
-    headers: {
-      ...internalHeaders(),
-      ...(init?.headers || {}),
-    },
+    headers,
     cache: "no-store",
   });
 
