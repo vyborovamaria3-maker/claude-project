@@ -9,7 +9,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const kind = searchParams.get("kind") || "wallets";
   const orderBy = searchParams.get("orderBy") || "pnl";
-  const limit = Math.min(Number(searchParams.get("limit") || 50), 200);
+  const parsedLimit = Number(searchParams.get("limit") || 50);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 200)) : 50;
 
   if (kind === "devs") {
     const order = (["tokens", "migration", "300k"].includes(orderBy) ? orderBy : "tokens") as

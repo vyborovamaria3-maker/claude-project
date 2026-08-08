@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PublicKey } from "@solana/web3.js";
 
 // data-tag: api.token_trades
 // Proxy to swap-api.pump.fun/v2/coins/{mint}/trades — public, real on-chain.
@@ -30,18 +31,25 @@ type V2Trade = {
 type V2Resp = { trades?: V2Trade[]; pagination?: { hasMore?: boolean; nextCursor?: string } };
 
 export async function GET(req: NextRequest) {
-  const mint = req.nextUrl.searchParams.get("mint");
-  const limit = Math.min(Number(req.nextUrl.searchParams.get("limit")) || 50, 100);
+  const mint = req.nextUrl.searchParams.get("mint")?.trim() || "";
+  const parsedLimit = Number(req.nextUrl.searchParams.get("limit") || 50);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 100)) : 50;
   if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });
+  try {
+    if (new PublicKey(mint).toBase58() !== mint) throw new Error("non-canonical mint");
+  } catch {
+    return NextResponse.json({ error: "invalid Solana mint" }, { status: 400 });
+  }
 
-  const cached = tradeCache.get(mint);
+  const cacheKey = `${mint}:${limit}`;
+  const cached = tradeCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.data, { headers: { "Cache-Control": "no-store" } });
   }
 
   try {
     const r = await fetch(
-      `https://swap-api.pump.fun/v2/coins/${mint}/trades?limit=${limit}`,
+      `https://swap-api.pump.fun/v2/coins/${encodeURIComponent(mint)}/trades?limit=${limit}`,
       { headers: { Accept: "application/json" }, cache: "no-store" }
     );
     if (!r.ok) return NextResponse.json([], { status: 200 });
@@ -50,19 +58,22 @@ export async function GET(req: NextRequest) {
 
     // Normalize to legacy shape — useTradeStream expects sol_amount in lamports,
     // token_amount in micro-tokens, timestamp in unix seconds.
-    const normalized = trades.map(t => ({
-      signature: t.tx,
-      sol_amount: Math.round((Number(t.amountSol) || 0) * 1e9),
-      token_amount: Math.round((Number(t.baseAmount) || 0) * 1e6),
-      is_buy: t.type === "buy",
-      timestamp: Math.floor(new Date(t.timestamp).getTime() / 1000),
-      user: t.userAddress,
-      priceUsd: Number(t.priceUsd) || 0,
-      amountUsd: Number(t.amountUsd) || 0,
-      program: t.program,
-    }));
+    const normalized = trades.map(t => {
+      const timestampMs = Date.parse(t.timestamp);
+      return {
+        signature: t.tx,
+        sol_amount: Math.round((Number(t.amountSol) || 0) * 1e9),
+        token_amount: Math.round((Number(t.baseAmount) || 0) * 1e6),
+        is_buy: t.type === "buy",
+        timestamp: Number.isFinite(timestampMs) ? Math.floor(timestampMs / 1000) : null,
+        user: t.userAddress,
+        priceUsd: Number(t.priceUsd) || 0,
+        amountUsd: Number(t.amountUsd) || 0,
+        program: t.program,
+      };
+    });
 
-    tradeCache.set(mint, { data: normalized, ts: Date.now() });
+    tradeCache.set(cacheKey, { data: normalized, ts: Date.now() });
     return NextResponse.json(normalized, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json([], { status: 200 });

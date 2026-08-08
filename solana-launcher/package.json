@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",
@@ -32,7 +32,6 @@
     "@heroui/theme": "^2.4.12",
     "@lightprotocol/compressed-token": "^0.23.3",
     "@lightprotocol/stateless.js": "^0.23.3",
-    "@lingo.dev/compiler": "^0.4.3",
     "@sankyu/react-circle-flags": "^1.6.7",
     "@solana/spl-token": "^0.4.9",
     "@solana/wallet-adapter-base": "^0.9.27",
@@ -51,7 +50,7 @@
     "immer": "^11.1.8",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^0.453.0",
-    "next": "^16.2.6",
+    "next": "^16.2.11",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.12.7",
@@ -59,7 +58,6 @@
     "tailwind-merge": "^2.5.4",
     "telegraf": "^4.16.3",
     "ws": "^8.20.1",
-    "xlsx": "^0.18.5",
     "zustand": "^5.0.13"
   },
   "devDependencies": {
@@ -75,6 +73,9 @@
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.6",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "xlsx": "^0.18.5",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.10"
   }
 }

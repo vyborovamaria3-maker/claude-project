@@ -273,7 +273,7 @@ class TelegramIntelligenceService:
             call = (
                 await session.execute(select(TelegramCall).where(TelegramCall.mention_id == mention.id))
             ).scalar_one_or_none()
-            if call is None:
+            if call is None and parsed.explicit_call:
                 price, market_cap = await nearest_token_snapshot(session, mint, published_at)
                 session.add(
                     TelegramCall(

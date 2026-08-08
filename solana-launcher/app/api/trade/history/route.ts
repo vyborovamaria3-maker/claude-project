@@ -14,7 +14,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const kind = sp.get("kind") ?? "mints"; // mints | wallets | wallet
-  const limit = Math.min(Number(sp.get("limit") ?? 100), 500);
+  const parsedLimit = Number(sp.get("limit") ?? 100);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 500)) : 100;
 
   if (kind === "mints") {
     return NextResponse.json({ mints: listAnalyzedMints(limit) });

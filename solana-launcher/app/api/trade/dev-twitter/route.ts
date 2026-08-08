@@ -3,7 +3,8 @@
 // Aggregates Twitter/X mentions via Playwright/Nitter with optional analysis filters.
 
 import { NextRequest, NextResponse } from "next/server";
-import { scrapeTwitter, fetchTokenMeta, buildQuery, normalizeTwitterHandle, type CollectionStrategy } from "../../../../lib/trade/twitter-scraper";
+import { PublicKey } from "@solana/web3.js";
+import { scrapeTwitter, fetchTokenMeta, buildQuery, hasTwitterAuth, normalizeTwitterHandle, type CollectionStrategy } from "../../../../lib/trade/twitter-scraper";
 import { getDb } from "../../../../lib/trade/db";
 import { getTokenTwitterSocialStats } from "../../../../lib/twitterSocialStats";
 
@@ -80,7 +81,7 @@ export interface TweetData {
   likes: number;
   retweets: number;
   views: number;
-  timestamp: number;
+  timestamp: number | null;
   isSuspicious: boolean;
 }
 
@@ -111,11 +112,26 @@ function parseBoolean(value: string | null, fallback = false): boolean {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
+function isSolanaMint(value: string): boolean {
+  try {
+    return new PublicKey(value).toBase58() === value;
+  } catch {
+    return false;
+  }
+}
+
 function tweetEngagement(tweet: { likes: number; retweets: number; replies: number }): number {
   return Math.max(tweet.likes || 0, 0) + Math.max(tweet.retweets || 0, 0) + Math.max(tweet.replies || 0, 0);
 }
 
-function persistTwitterStats(stats: TwitterStats, query: string, rawResult: Awaited<ReturnType<typeof scrapeTwitter>>) {
+type TwitterScrapeResult = Awaited<ReturnType<typeof scrapeTwitter>>;
+
+function persistTwitterStats(
+  stats: TwitterStats,
+  query: string,
+  tweets: TwitterScrapeResult["tweets"],
+  accounts: TwitterScrapeResult["accounts"],
+) {
   const db = getDb();
   const now = stats.lastUpdated;
   const tx = db.transaction(() => {
@@ -169,7 +185,7 @@ function persistTwitterStats(stats: TwitterStats, query: string, rawResult: Awai
          fetched_at = excluded.fetched_at`
     );
 
-    for (const tweet of rawResult.tweets) {
+    for (const tweet of tweets) {
       const analyzed = tweet as typeof tweet & { isSuspicious?: boolean; suspicionScore?: number; suspicionReasons?: string[] };
       tweetStmt.run(
         tweet.id,
@@ -229,7 +245,7 @@ function persistTwitterStats(stats: TwitterStats, query: string, rawResult: Awai
          last_tweeted_at = excluded.last_tweeted_at`
     );
 
-    for (const account of rawResult.accounts.values()) {
+    for (const account of accounts.values()) {
       const analyzed = account as typeof account & { botScore?: number; isBot?: boolean; isSubscriptionPromoter?: boolean; botReasons?: string[] };
       accountStmt.run(
         account.handle,
@@ -270,7 +286,7 @@ function persistTwitterStats(stats: TwitterStats, query: string, rawResult: Awai
 
 export async function GET(req: NextRequest) {
   const mint = req.nextUrl.searchParams.get("mint") || "";
-  const symbolParam = req.nextUrl.searchParams.get("symbol") || "";
+  const symbolParam = (req.nextUrl.searchParams.get("symbol") || "").trim().replace(/^\$/, "");
   const strategyParam = req.nextUrl.searchParams.get("strategy") || "auto";
   const providedHandle = normalizeTwitterHandle(req.nextUrl.searchParams.get("twitter"));
   const scopeParam = req.nextUrl.searchParams.get("scope") || "mentions";
@@ -281,14 +297,28 @@ export async function GET(req: NextRequest) {
   const excludeSuspicious = parseBoolean(req.nextUrl.searchParams.get("excludeSuspicious"));
 
   if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });
+  if (!isSolanaMint(mint)) return NextResponse.json({ error: "invalid Solana mint" }, { status: 400 });
   if (!["nitter", "playwright", "auto"].includes(strategyParam)) {
     return NextResponse.json({ error: "strategy must be one of: nitter, playwright, auto" }, { status: 400 });
   }
   if (!["mentions", "official"].includes(scopeParam)) {
     return NextResponse.json({ error: "scope must be one of: mentions, official" }, { status: 400 });
   }
+  if (symbolParam && !/^[A-Za-z0-9_]{1,32}$/.test(symbolParam)) {
+    return NextResponse.json({ error: "symbol contains unsupported characters" }, { status: 400 });
+  }
+  if (providedHandle && !/^[A-Za-z0-9_]{1,30}$/.test(providedHandle)) {
+    return NextResponse.json({ error: "invalid X handle" }, { status: 400 });
+  }
 
-  const strategy = strategyParam as CollectionStrategy;
+  const requestedStrategy = strategyParam as CollectionStrategy;
+  if (verifiedOnly && requestedStrategy === "nitter") {
+    return NextResponse.json({ error: "verifiedOnly requires Playwright/X browser session; Nitter does not expose verification reliably" }, { status: 400 });
+  }
+  if (verifiedOnly && !hasTwitterAuth()) {
+    return NextResponse.json({ error: "verifiedOnly requires an authenticated X browser session" }, { status: 409 });
+  }
+  const strategy: CollectionStrategy = verifiedOnly && requestedStrategy === "auto" ? "playwright" : requestedStrategy;
   const scope = scopeParam as "mentions" | "official";
   const cacheKey = [
     mint,
@@ -315,7 +345,7 @@ export async function GET(req: NextRequest) {
   }
 
   const meta = providedHandle && symbolParam ? null : await fetchTokenMeta(mint);
-  const symbol = meta?.symbol || symbolParam || mint.slice(0, 6);
+  const symbol = symbolParam || meta?.symbol || mint.slice(0, 6);
   const twitterHandle = providedHandle || normalizeTwitterHandle(meta?.twitter);
   const query = buildQuery({ mint, symbol, tokenTwitterHandle: twitterHandle, scope });
 
@@ -355,22 +385,54 @@ export async function GET(req: NextRequest) {
       likes: tweet.likes,
       retweets: tweet.retweets,
       views: tweet.views,
-      timestamp: tweet.postedAt || Date.now(),
+      timestamp: tweet.postedAt,
       isSuspicious: Boolean(analyzed.isSuspicious),
     };
   });
 
-  const authorAggregates = new Map<string, { tweets: number; engagement: number }>();
+  const authorAggregates = new Map<string, {
+    tweets: number;
+    engagement: number;
+    views: number;
+    likes: number;
+    retweets: number;
+    firstTweetedAt: number | null;
+    lastTweetedAt: number | null;
+  }>();
   for (const tweet of filteredTweets) {
-    const current = authorAggregates.get(tweet.authorHandle) || { tweets: 0, engagement: 0 };
+    const current = authorAggregates.get(tweet.authorHandle) || {
+      tweets: 0, engagement: 0, views: 0, likes: 0, retweets: 0, firstTweetedAt: null, lastTweetedAt: null,
+    };
     current.tweets += 1;
     current.engagement += tweetEngagement(tweet);
+    current.views += tweet.views || 0;
+    current.likes += tweet.likes || 0;
+    current.retweets += tweet.retweets || 0;
+    if (tweet.postedAt != null) {
+      current.firstTweetedAt = Math.min(current.firstTweetedAt ?? Infinity, tweet.postedAt);
+      current.lastTweetedAt = Math.max(current.lastTweetedAt ?? 0, tweet.postedAt);
+    }
     authorAggregates.set(tweet.authorHandle, current);
+  }
+
+  const filteredAccounts: TwitterScrapeResult["accounts"] = new Map();
+  for (const [handle, aggregate] of authorAggregates) {
+    const account = result.accounts.get(handle);
+    if (!account) continue;
+    filteredAccounts.set(handle, {
+      ...account,
+      tweetsCount: aggregate.tweets,
+      totalViews: aggregate.views,
+      totalLikes: aggregate.likes,
+      totalRetweets: aggregate.retweets,
+      firstTweetedAt: aggregate.firstTweetedAt,
+      lastTweetedAt: aggregate.lastTweetedAt,
+    });
   }
 
   const shillers: ShillerEntry[] = Array.from(authorAggregates.entries())
     .map(([handle, aggregate]) => {
-      const account = result.accounts.get(handle) as (ReturnType<typeof result.accounts.get> & { isBot?: boolean }) | undefined;
+      const account = filteredAccounts.get(handle) as (ReturnType<typeof filteredAccounts.get> & { isBot?: boolean }) | undefined;
       return {
         handle,
         tweets: aggregate.tweets,
@@ -398,7 +460,7 @@ export async function GET(req: NextRequest) {
   const totalRetweets = filteredTweets.reduce((sum, tweet) => sum + tweet.retweets, 0);
   const totalEngagement = filteredTweets.reduce((sum, tweet) => sum + tweetEngagement(tweet), 0);
   const suspiciousTweets = filteredTweets.filter((tweet) => Boolean((tweet as typeof tweet & { isSuspicious?: boolean }).isSuspicious));
-  const botAccounts = Array.from(authorAggregates.keys()).filter((handle) => Boolean((result.accounts.get(handle) as { isBot?: boolean } | undefined)?.isBot));
+  const botAccounts = Array.from(authorAggregates.keys()).filter((handle) => Boolean((filteredAccounts.get(handle) as { isBot?: boolean } | undefined)?.isBot));
   const botRiskScore = filteredTweets.length || authorAggregates.size
     ? Math.round(
         (suspiciousTweets.length / Math.max(filteredTweets.length, 1)) * 50
@@ -406,7 +468,7 @@ export async function GET(req: NextRequest) {
       )
     : 0;
   const botRisk: "low" | "medium" | "high" = botRiskScore >= 65 ? "high" : botRiskScore >= 35 ? "medium" : "low";
-  const verifiedAuthors = Array.from(authorAggregates.keys()).filter((handle) => Boolean(result.accounts.get(handle)?.isVerified)).length;
+  const verifiedAuthors = Array.from(authorAggregates.keys()).filter((handle) => Boolean(filteredAccounts.get(handle)?.isVerified)).length;
   const engagementRate = totalViews > 0 ? totalEngagement / totalViews : 0;
   const byViews = [...topTweets].sort((a, b) => b.views - a.views).slice(0, 5);
   const byLikes = [...topTweets].sort((a, b) => b.likes - a.likes).slice(0, 5);
@@ -456,7 +518,7 @@ export async function GET(req: NextRequest) {
     discovery: getTokenTwitterSocialStats(mint),
   };
 
-  persistTwitterStats(stats, query, result);
+  persistTwitterStats(stats, query, filteredTweets, filteredAccounts);
   CACHE.set(cacheKey, { data: stats, ts: Date.now() });
   return NextResponse.json(stats);
 }

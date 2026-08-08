@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
   let address = searchParams.get("address");
   const top = searchParams.get("top") as "tokens" | "migration" | "300k" | null;
   const includeTokens = searchParams.get("tokens") === "1";
-  const limit = Math.min(Number(searchParams.get("limit") ?? 100), 1000);
+  const parsedLimit = Number(searchParams.get("limit") ?? 100);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(Math.trunc(parsedLimit), 1000)) : 100;
 
   // ── Leaderboard mode ──────────────────────────────────────────
   if (top) {

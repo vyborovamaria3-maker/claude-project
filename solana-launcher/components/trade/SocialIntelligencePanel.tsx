@@ -76,7 +76,7 @@ interface TweetRow {
   likes: number;
   retweets: number;
   views: number;
-  timestamp: number;
+  timestamp: number | null;
   isSuspicious: boolean;
 }
 
@@ -216,17 +216,29 @@ function lookbackLabel(value: Lookback): string {
 }
 
 function normalizeOptions(value: Partial<AnalysisOptions>): AnalysisOptions {
+  const lookbackValues: Lookback[] = ["1", "6", "24", "72", "168", "720", "all"];
+  const strategyValues: XStrategy[] = ["auto", "nitter", "playwright"];
+  const scopeValues: XScope[] = ["mentions", "official"];
+  const lookback = lookbackValues.includes(value.lookback as Lookback) ? value.lookback as Lookback : DEFAULT_OPTIONS.lookback;
+  const xStrategy = strategyValues.includes(value.xStrategy as XStrategy) ? value.xStrategy as XStrategy : DEFAULT_OPTIONS.xStrategy;
+  const xScope = scopeValues.includes(value.xScope as XScope) ? value.xScope as XScope : DEFAULT_OPTIONS.xScope;
+
   return {
     ...DEFAULT_OPTIONS,
-    ...value,
     symbol: String(value.symbol ?? DEFAULT_OPTIONS.symbol),
     twitterHandle: String(value.twitterHandle ?? DEFAULT_OPTIONS.twitterHandle),
     tgSources: String(value.tgSources ?? DEFAULT_OPTIONS.tgSources),
+    lookback,
+    xStrategy,
+    xScope,
     xLimit: Math.max(5, Math.min(100, Number(value.xLimit ?? DEFAULT_OPTIONS.xLimit) || DEFAULT_OPTIONS.xLimit)),
     xMinEngagement: Math.max(0, Number(value.xMinEngagement ?? DEFAULT_OPTIONS.xMinEngagement) || 0),
+    xVerifiedOnly: typeof value.xVerifiedOnly === "boolean" ? value.xVerifiedOnly : DEFAULT_OPTIONS.xVerifiedOnly,
+    xExcludeSuspicious: typeof value.xExcludeSuspicious === "boolean" ? value.xExcludeSuspicious : DEFAULT_OPTIONS.xExcludeSuspicious,
     tgLimit: Math.max(1, Math.min(1000, Number(value.tgLimit ?? DEFAULT_OPTIONS.tgLimit) || DEFAULT_OPTIONS.tgLimit)),
     tgMinEngagement: Math.max(0, Number(value.tgMinEngagement ?? DEFAULT_OPTIONS.tgMinEngagement) || 0),
     tgMinChannelScore: Math.max(0, Math.min(100, Number(value.tgMinChannelScore ?? DEFAULT_OPTIONS.tgMinChannelScore) || 0)),
+    tgExplicitCallsOnly: typeof value.tgExplicitCallsOnly === "boolean" ? value.tgExplicitCallsOnly : DEFAULT_OPTIONS.tgExplicitCallsOnly,
   };
 }
 
@@ -399,7 +411,7 @@ export default function SocialIntelligencePanel() {
         source_name: null,
         source_url: `https://x.com/${tweet.author}`,
         text: tweet.text,
-        occurred_at: new Date(tweet.timestamp).toISOString(),
+        occurred_at: tweet.timestamp == null ? "" : new Date(tweet.timestamp).toISOString(),
         metrics: {
           likes: tweet.likes,
           retweets: tweet.retweets,
@@ -417,7 +429,11 @@ export default function SocialIntelligencePanel() {
         seen.add(key);
         return sourceFilter === "all" || item.platform === sourceFilter;
       })
-      .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
+      .sort((a, b) => {
+        const bTime = Date.parse(b.occurred_at);
+        const aTime = Date.parse(a.occurred_at);
+        return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+      })
       .slice(0, 80);
   }, [timeline, twitter, sourceFilter]);
 

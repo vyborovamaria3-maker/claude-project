@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
   
   const { searchParams } = req.nextUrl;
   const parsedLimit = Number(searchParams.get("limit") ?? 100);
-  const limit = Number.isFinite(parsedLimit) ? Math.min(parsedLimit, 1000) : 100;
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(parsedLimit, 1000)) : 100;
   const filePath = searchParams.get("filePath")?.trim() || null;
 
   const files = listMigrationXlsxFiles(limit);
