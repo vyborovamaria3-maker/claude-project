@@ -36,7 +36,7 @@ jobs:
             dockerfile: solana-launcher/Dockerfile.frontend.prod
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Verify Docker build files
         run: |
@@ -77,7 +77,7 @@ jobs:
     environment: production
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configure SSH
         env:
