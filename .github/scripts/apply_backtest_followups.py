@@ -287,6 +287,17 @@ replace(
     tradeCache.set(cacheKey, { data: normalized, ts: Date.now() });''',
 )
 
+stream = ROOT / "hooks/useTradeStream.ts"
+replace(stream, "  timestamp: number; // unix seconds", "  timestamp: number | null; // unix seconds; null when upstream timestamp is invalid")
+replace(
+    stream,
+    '''      const solAmount = row.sol_amount / 1e9;
+      const tokenAmount = row.token_amount / 1e6;''',
+    '''      if (row.timestamp == null || !Number.isFinite(row.timestamp) || row.timestamp <= 0) continue;
+      const solAmount = row.sol_amount / 1e9;
+      const tokenAmount = row.token_amount / 1e6;''',
+)
+
 # Regression coverage for Telegram URL normalization.
 tests = ROOT / "backend/tests/test_telegram_intelligence.py"
 replace(
