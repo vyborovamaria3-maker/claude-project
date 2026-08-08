@@ -12,6 +12,7 @@ from app.db.base import Base
 from app.models import analytics  # noqa: F401
 from app.models import auth_log  # noqa: F401
 from app.models import subscription_order  # noqa: F401
+from app.models import subscription_settings  # noqa: F401
 from app.models import user  # noqa: F401
 
 config = context.config
