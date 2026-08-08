@@ -27,6 +27,28 @@ class AnalysisReleaseGuardTest(unittest.TestCase):
             self.assertTrue(restored["enabled"])
             self.assertEqual(restored["threshold"], ">= 37%")
 
+    def test_custom_type_scale_pairs_are_validated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = LiveAnalysisProfileStore(str(Path(tmp) / "control.db"))
+            with self.assertRaises(ValueError):
+                store.create_custom(
+                    "wallet", key="bad_percent_hours", label="Bad", source="metrics.bad",
+                    value_type="percent", scale="hours", threshold=">= 20%", enabled=True,
+                    description="", username="admin",
+                )
+            with self.assertRaises(ValueError):
+                store.create_custom(
+                    "token", key="bad_bool_millions", label="Bad", source="metrics.bad",
+                    value_type="boolean", scale="millions", threshold="true", enabled=True,
+                    description="", username="admin",
+                )
+            good = store.create_custom(
+                "wallet", key="good_percent", label="Good", source="metrics.good",
+                value_type="percent", scale="ratio", threshold=">= 20%", enabled=True,
+                description="", username="admin",
+            )
+            self.assertEqual(good["scale"], "ratio")
+
     def test_confirmation_has_no_global_next_request_bypass(self):
         js = (ADMIN_ROOT / "app" / "static" / "analysis-confirm-v5.js").read_text(encoding="utf-8")
         self.assertNotIn("preconfirmedMutation", js)
@@ -44,13 +66,18 @@ class AnalysisReleaseGuardTest(unittest.TestCase):
         self.assertLess(guard_pos, editor_pos)
         self.assertGreater(cancel_pos, editor_pos)
 
-    def test_race_guard_handles_toggle_from_server_snapshot_and_blocks_busy_navigation(self):
+    def test_race_guard_handles_toggle_and_duplicate_mutation_clicks(self):
         js = (ADMIN_ROOT / "app" / "static" / "analysis-ui-guard-v6.js").read_text(encoding="utf-8")
         self.assertIn('snapshot = await jsonRequest', js)
         self.assertIn('row.enabled', js)
         self.assertIn('AdminAnalysisConfirm?.ask', js)
         self.assertIn('__analysisConfirmed: true', js)
-        self.assertIn('.analysis-tab[data-domain], #navigation [data-view], #analysisProfilesNav, #refreshButton, #logoutButton', js)
+        for marker in (
+            '.analysis-tab[data-domain]', '#navigation [data-view]', '#analysisProfilesNav',
+            '#refreshButton', '#logoutButton', '#analysisEditorSave', '#analysisEditorDelete',
+            '#analysisEditorRestore', '#analysisCreate',
+        ):
+            self.assertIn(marker, js)
         self.assertIn('loadCount', js)
         self.assertIn('mutationCount', js)
         self.assertIn('if (document.contains(button)) button.disabled = false', js)
