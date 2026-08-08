@@ -72,6 +72,16 @@ async def create_subscription_order(
     if login_owner is not None and login_owner.telegram_id != str(payload.telegram_user_id):
         raise SubscriptionConflictError("This login is already in use")
 
+    pending_result = await session.execute(
+        select(SubscriptionOrder.payload)
+        .where(SubscriptionOrder.login == payload.login)
+        .where(SubscriptionOrder.status == "pending")
+        .where(SubscriptionOrder.telegram_user_id != payload.telegram_user_id)
+        .limit(1)
+    )
+    if pending_result.scalar_one_or_none() is not None:
+        raise SubscriptionConflictError("This login is reserved by another pending order")
+
     order = SubscriptionOrder(
         payload=payload.payload,
         telegram_user_id=payload.telegram_user_id,
@@ -132,6 +142,19 @@ async def complete_subscription_order(
         if expires_at is None:
             raise SubscriptionPasswordError("Paid subscription has no active user")
         return order, password, expires_at, True
+
+    if completion.telegram_payment_charge_id:
+        charge_result = await session.execute(
+            select(SubscriptionOrder.payload)
+            .where(
+                SubscriptionOrder.telegram_payment_charge_id
+                == completion.telegram_payment_charge_id
+            )
+            .where(SubscriptionOrder.payload != payload)
+            .limit(1)
+        )
+        if charge_result.scalar_one_or_none() is not None:
+            raise SubscriptionConflictError("Telegram payment charge is already linked to another order")
 
     login_owner = await _login_owner(session, order.login)
     if login_owner is not None and login_owner.telegram_id != str(order.telegram_user_id):
