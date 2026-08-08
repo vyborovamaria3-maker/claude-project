@@ -34,6 +34,9 @@ jobs:
           - service: frontend
             context: solana-launcher
             dockerfile: solana-launcher/Dockerfile.frontend.prod
+          - service: telegram-bot
+            context: solana-launcher
+            dockerfile: solana-launcher/Dockerfile.telegram-bot
 
     steps:
       - uses: actions/checkout@v6
@@ -43,6 +46,7 @@ jobs:
           set -euo pipefail
           test -f solana-launcher/backend/Dockerfile
           test -f solana-launcher/Dockerfile.frontend.prod
+          test -f solana-launcher/Dockerfile.telegram-bot
           echo "DOCKERFILES_OK"
 
       - uses: docker/setup-buildx-action@v3
