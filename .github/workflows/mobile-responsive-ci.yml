@@ -24,7 +24,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
 
@@ -53,12 +53,12 @@ jobs:
           cat /tmp/potapoff-next.log
           exit 1
 
-      - name: Walk site as iPhone user
+      - name: Walk site across phone and tablet widths
         env:
           BASE_URL: http://127.0.0.1:3000
         run: node tests/mobile-regression.mjs
 
-      - name: Upload phone screenshots
+      - name: Upload responsive screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
