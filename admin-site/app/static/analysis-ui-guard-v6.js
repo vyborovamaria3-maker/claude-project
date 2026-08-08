@@ -12,7 +12,7 @@
     const isBacktest = path.endsWith("/backtest");
     const mutation = isAnalysis && !isBacktest && ["POST", "PUT", "PATCH", "DELETE"].includes(method);
     const listLoad = isAnalysis && method === "GET" && path.endsWith("/api/analysis-profiles");
-    return { mutation, listLoad };
+    return { isAnalysis, mutation, listLoad };
   };
 
   window.fetch = async function guardedAnalysisFetch(input, init = {}) {
@@ -20,7 +20,11 @@
     if (info.mutation) mutationCount += 1;
     if (info.listLoad) loadCount += 1;
     try {
-      return await trackedFetch(input, init);
+      const response = await trackedFetch(input, init);
+      if (info.isAnalysis && response.status === 401 && typeof window.showLogin === "function") {
+        window.showLogin();
+      }
+      return response;
     } finally {
       if (info.mutation) mutationCount = Math.max(0, mutationCount - 1);
       if (info.listLoad) loadCount = Math.max(0, loadCount - 1);
