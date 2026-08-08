@@ -11,6 +11,7 @@ from app.models.social_intelligence import (
     TelegramUser,
 )
 from app.models.subscription_order import SubscriptionOrder
+from app.models.subscription_settings import SubscriptionSettings
 from app.models.user import User
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "WalletTrade",
     "User",
     "SubscriptionOrder",
+    "SubscriptionSettings",
     "TelegramChannel",
     "TelegramUser",
     "TelegramMessage",
