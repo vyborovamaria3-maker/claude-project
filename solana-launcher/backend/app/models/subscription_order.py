@@ -16,6 +16,13 @@ class SubscriptionOrder(Base):
             postgresql_where=text("status = 'pending'"),
             sqlite_where=text("status = 'pending'"),
         ),
+        Index(
+            "uq_subscription_orders_demo_user",
+            "telegram_user_id",
+            unique=True,
+            postgresql_where=text("currency = 'DEMO'"),
+            sqlite_where=text("currency = 'DEMO'"),
+        ),
     )
 
     payload: Mapped[str] = mapped_column(String(128), primary_key=True)
