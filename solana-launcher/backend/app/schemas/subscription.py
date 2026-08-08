@@ -1,6 +1,9 @@
+import re
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
+
+LOGIN_RE = re.compile(r"^[A-Za-z0-9_]{4,32}$")
 
 
 class SubscriptionOrderCreate(BaseModel):
@@ -14,8 +17,8 @@ class SubscriptionOrderCreate(BaseModel):
     @classmethod
     def validate_login(cls, value: str) -> str:
         normalized = value.strip()
-        if not all(char.isalnum() or char == "_" for char in normalized):
-            raise ValueError("login must only contain letters, digits, or underscore")
+        if not LOGIN_RE.fullmatch(normalized):
+            raise ValueError("login must be 4-32 ASCII letters, digits, or underscore")
         return normalized
 
 
