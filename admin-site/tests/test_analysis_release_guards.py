@@ -53,6 +53,12 @@ class AnalysisReleaseGuardTest(unittest.TestCase):
         self.assertIn('mutationCount', js)
         self.assertIn('if (document.contains(button)) button.disabled = false', js)
 
+    def test_expired_analysis_session_returns_to_login(self):
+        js = (ADMIN_ROOT / "app" / "static" / "analysis-ui-guard-v6.js").read_text(encoding="utf-8")
+        self.assertIn('response.status === 401', js)
+        self.assertIn('typeof window.showLogin === "function"', js)
+        self.assertIn('window.showLogin()', js)
+
     def test_backtest_stays_outside_confirmation_and_busy_mutation_tracking(self):
         confirm = (ADMIN_ROOT / "app" / "static" / "analysis-confirm-v5.js").read_text(encoding="utf-8")
         guard = (ADMIN_ROOT / "app" / "static" / "analysis-ui-guard-v6.js").read_text(encoding="utf-8")
