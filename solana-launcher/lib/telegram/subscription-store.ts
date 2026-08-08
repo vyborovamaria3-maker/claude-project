@@ -5,7 +5,8 @@ export type SubscriptionOrder = {
   telegram_user_id: number;
   username: string | null;
   login: string;
-  amount_usd: number;
+  currency: "XTR";
+  total_amount: number;
   status: "pending" | "paid";
   password: string | null;
   invoice_link: string | null;
@@ -85,7 +86,8 @@ export async function createSubscriptionOrder(input: {
   telegramUserId: number;
   username?: string | null;
   login: string;
-  amountUsd: number;
+  currency: "XTR";
+  totalAmount: number;
   invoiceLink?: string | null;
 }): Promise<SubscriptionOrder> {
   const order = await requestBackend<SubscriptionOrder>("/orders", {
@@ -95,7 +97,8 @@ export async function createSubscriptionOrder(input: {
       telegram_user_id: input.telegramUserId,
       username: input.username ?? null,
       login: input.login,
-      amount_usd: input.amountUsd,
+      currency: input.currency,
+      total_amount: input.totalAmount,
     }),
   });
 
