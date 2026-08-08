@@ -128,9 +128,18 @@ def upgrade() -> None:
         postgresql_where=sa.text("status = 'pending'"),
         sqlite_where=sa.text("status = 'pending'"),
     )
+    op.create_index(
+        "uq_subscription_orders_demo_user",
+        "subscription_orders",
+        ["telegram_user_id"],
+        unique=True,
+        postgresql_where=sa.text("currency = 'DEMO'"),
+        sqlite_where=sa.text("currency = 'DEMO'"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("uq_subscription_orders_demo_user", table_name="subscription_orders")
     op.drop_index("uq_subscription_orders_pending_login", table_name="subscription_orders")
     op.drop_index("ix_subscription_orders_status", table_name="subscription_orders")
     op.drop_index("ix_subscription_orders_login", table_name="subscription_orders")
