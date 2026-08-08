@@ -25,7 +25,11 @@ export async function POST(req: NextRequest) {
   }
 
   const password = generateAccessPassword();
-  const completed = await markSubscriptionPaid({ payload, password });
+  const completed = await markSubscriptionPaid({
+    payload,
+    password,
+    paymentSignature: order.currency === "DEMO" ? null : `dev:${payload}`,
+  });
 
   return NextResponse.json({ ok: true, password: completed.password || password });
 }
