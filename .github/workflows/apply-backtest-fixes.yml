@@ -1,0 +1,201 @@
+name: Apply Backtest Fixes
+
+on:
+  push:
+    branches: [agent/fix-full-backtest-findings]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[backtest-fix-bot]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-full-backtest-findings
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.20.2'
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Apply exact source fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          root = Path('solana-launcher')
+
+          def replace(path: Path, old: str, new: str, count: int = 1):
+              text = path.read_text()
+              actual = text.count(old)
+              if actual < count:
+                  raise SystemExit(f'{path}: expected at least {count} occurrence(s), found {actual}: {old[:100]!r}')
+              text = text.replace(old, new, count)
+              path.write_text(text)
+
+          # package.json: Next 16 security patch, real ESLint CLI, remove unused runtime compiler,
+          # keep vulnerable xlsx out of production runtime dependencies.
+          package_path = root / 'package.json'
+          package = json.loads(package_path.read_text())
+          package['scripts']['lint'] = 'eslint .'
+          package['dependencies']['next'] = '^16.2.11'
+          package['dependencies'].pop('@lingo.dev/compiler', None)
+          xlsx = package['dependencies'].pop('xlsx', '^0.18.5')
+          package['devDependencies']['xlsx'] = xlsx
+          package['devDependencies']['eslint'] = '^10.8.0'
+          package['devDependencies']['eslint-config-next'] = '^16.2.10'
+          package_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + '\n')
+
+          # X scraper metric parser: comma without K/M/B is a thousands separator, not decimal.
+          scraper = root / 'lib/trade/twitter-scraper.ts'
+          replace(
+              scraper,
+              '''        const cleaned = text.replace(/,/g, ".").trim();\n        const match = cleaned.match(/([0-9]+(?:\\.[0-9]+)?)([KMBКМБ]?)/i);\n        if (!match) return 0;\n        const value = Number(match[1]);\n        const suffix = match[2]?.toUpperCase();''',
+              '''        const cleaned = text.replace(/\\s+/g, "").trim();\n        const match = cleaned.match(/([0-9]+(?:[.,][0-9]+)?)([KMBКМБ]?)/i);\n        if (!match) return 0;\n        const suffix = match[2]?.toUpperCase();\n        const numeric = suffix ? match[1].replace(",", ".") : match[1].replace(/[.,]/g, "");\n        const value = Number(numeric);'''
+          )
+
+          # Standalone X research script: same metric fix + never fabricate tweet/account time.
+          script = root / 'scripts/analyze-twitter-manipulation.mjs'
+          replace(
+              script,
+              '''        const cleaned = text.replace(/,/g, ".").trim();\n        const match = cleaned.match(/([0-9]+(?:\\.[0-9]+)?)([KMBКМБ]?)/i);\n        if (!match) return 0;\n        const value = Number(match[1]);\n        const suffix = match[2]?.toUpperCase();''',
+              '''        const cleaned = text.replace(/\\s+/g, "").trim();\n        const match = cleaned.match(/([0-9]+(?:[.,][0-9]+)?)([KMBКМБ]?)/i);\n        if (!match) return 0;\n        const suffix = match[2]?.toUpperCase();\n        const numeric = suffix ? match[1].replace(",", ".") : match[1].replace(/[.,]/g, "");\n        const value = Number(numeric);'''
+          )
+          replace(
+              script,
+              '''    account.firstTweetedAt = Math.min(account.firstTweetedAt || Infinity, tweet.postedAt || Date.now());\n    account.lastTweetedAt = Math.max(account.lastTweetedAt || 0, tweet.postedAt || Date.now());''',
+              '''    if (tweet.postedAt != null) {\n      account.firstTweetedAt = Math.min(account.firstTweetedAt ?? Infinity, tweet.postedAt);\n      account.lastTweetedAt = Math.max(account.lastTweetedAt ?? 0, tweet.postedAt);\n    }'''
+          )
+
+          # X API: real Solana validation, verified-only cannot use Nitter, explicit ticker wins,
+          # preserve unknown timestamps, and persist the same filtered dataset the UI sees.
+          route = root / 'app/api/trade/dev-twitter/route.ts'
+          replace(
+              route,
+              '''import { NextRequest, NextResponse } from "next/server";\nimport { scrapeTwitter, fetchTokenMeta, buildQuery, normalizeTwitterHandle, type CollectionStrategy } from "../../../../lib/trade/twitter-scraper";''',
+              '''import { NextRequest, NextResponse } from "next/server";\nimport { PublicKey } from "@solana/web3.js";\nimport { scrapeTwitter, fetchTokenMeta, buildQuery, hasTwitterAuth, normalizeTwitterHandle, type CollectionStrategy } from "../../../../lib/trade/twitter-scraper";'''
+          )
+          replace(route, '  timestamp: number;\n', '  timestamp: number | null;\n')
+          replace(
+              route,
+              '''function persistTwitterStats(stats: TwitterStats, query: string, rawResult: Awaited<ReturnType<typeof scrapeTwitter>>) {''',
+              '''type TwitterScrapeResult = Awaited<ReturnType<typeof scrapeTwitter>>;\n\nfunction persistTwitterStats(\n  stats: TwitterStats,\n  query: string,\n  tweets: TwitterScrapeResult["tweets"],\n  accounts: TwitterScrapeResult["accounts"],\n) {'''
+          )
+          replace(route, '    for (const tweet of rawResult.tweets) {', '    for (const tweet of tweets) {')
+          replace(route, '    for (const account of rawResult.accounts.values()) {', '    for (const account of accounts.values()) {')
+          replace(
+              route,
+              '''function parseBoolean(value: string | null, fallback = false): boolean {\n  if (value == null) return fallback;\n  return ["1", "true", "yes", "on"].includes(value.toLowerCase());\n}\n''',
+              '''function parseBoolean(value: string | null, fallback = false): boolean {\n  if (value == null) return fallback;\n  return ["1", "true", "yes", "on"].includes(value.toLowerCase());\n}\n\nfunction isSolanaMint(value: string): boolean {\n  try {\n    return new PublicKey(value).toBase58() === value;\n  } catch {\n    return false;\n  }\n}\n'''
+          )
+          replace(
+              route,
+              '''  if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });\n  if (!["nitter", "playwright", "auto"].includes(strategyParam)) {''',
+              '''  if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });\n  if (!isSolanaMint(mint)) return NextResponse.json({ error: "invalid Solana mint" }, { status: 400 });\n  if (!["nitter", "playwright", "auto"].includes(strategyParam)) {'''
+          )
+          replace(
+              route,
+              '''  const strategy = strategyParam as CollectionStrategy;\n  const scope = scopeParam as "mentions" | "official";''',
+              '''  const requestedStrategy = strategyParam as CollectionStrategy;\n  if (verifiedOnly && requestedStrategy === "nitter") {\n    return NextResponse.json({ error: "verifiedOnly requires Playwright/X browser session; Nitter does not expose verification reliably" }, { status: 400 });\n  }\n  if (verifiedOnly && !hasTwitterAuth()) {\n    return NextResponse.json({ error: "verifiedOnly requires an authenticated X browser session" }, { status: 409 });\n  }\n  const strategy: CollectionStrategy = verifiedOnly && requestedStrategy === "auto" ? "playwright" : requestedStrategy;\n  const scope = scopeParam as "mentions" | "official";'''
+          )
+          replace(route, '  const symbol = meta?.symbol || symbolParam || mint.slice(0, 6);', '  const symbol = symbolParam || meta?.symbol || mint.slice(0, 6);')
+          replace(route, '      timestamp: tweet.postedAt || Date.now(),', '      timestamp: tweet.postedAt,')
+          replace(
+              route,
+              '''  const authorAggregates = new Map<string, { tweets: number; engagement: number }>();\n  for (const tweet of filteredTweets) {\n    const current = authorAggregates.get(tweet.authorHandle) || { tweets: 0, engagement: 0 };\n    current.tweets += 1;\n    current.engagement += tweetEngagement(tweet);\n    authorAggregates.set(tweet.authorHandle, current);\n  }\n''',
+              '''  const authorAggregates = new Map<string, {\n    tweets: number;\n    engagement: number;\n    views: number;\n    likes: number;\n    retweets: number;\n    firstTweetedAt: number | null;\n    lastTweetedAt: number | null;\n  }>();\n  for (const tweet of filteredTweets) {\n    const current = authorAggregates.get(tweet.authorHandle) || {\n      tweets: 0, engagement: 0, views: 0, likes: 0, retweets: 0, firstTweetedAt: null, lastTweetedAt: null,\n    };\n    current.tweets += 1;\n    current.engagement += tweetEngagement(tweet);\n    current.views += tweet.views || 0;\n    current.likes += tweet.likes || 0;\n    current.retweets += tweet.retweets || 0;\n    if (tweet.postedAt != null) {\n      current.firstTweetedAt = Math.min(current.firstTweetedAt ?? Infinity, tweet.postedAt);\n      current.lastTweetedAt = Math.max(current.lastTweetedAt ?? 0, tweet.postedAt);\n    }\n    authorAggregates.set(tweet.authorHandle, current);\n  }\n\n  const filteredAccounts: TwitterScrapeResult["accounts"] = new Map();\n  for (const [handle, aggregate] of authorAggregates) {\n    const account = result.accounts.get(handle);\n    if (!account) continue;\n    filteredAccounts.set(handle, {\n      ...account,\n      tweetsCount: aggregate.tweets,\n      totalViews: aggregate.views,\n      totalLikes: aggregate.likes,\n      totalRetweets: aggregate.retweets,\n      firstTweetedAt: aggregate.firstTweetedAt,\n      lastTweetedAt: aggregate.lastTweetedAt,\n    });\n  }\n'''
+          )
+          replace(route, '      const account = result.accounts.get(handle) as (ReturnType<typeof result.accounts.get> & { isBot?: boolean }) | undefined;', '      const account = filteredAccounts.get(handle) as (ReturnType<typeof filteredAccounts.get> & { isBot?: boolean }) | undefined;', 1)
+          replace(route, '  const botAccounts = Array.from(authorAggregates.keys()).filter((handle) => Boolean((result.accounts.get(handle) as { isBot?: boolean } | undefined)?.isBot));', '  const botAccounts = Array.from(authorAggregates.keys()).filter((handle) => Boolean((filteredAccounts.get(handle) as { isBot?: boolean } | undefined)?.isBot));')
+          replace(route, '  const verifiedAuthors = Array.from(authorAggregates.keys()).filter((handle) => Boolean(result.accounts.get(handle)?.isVerified)).length;', '  const verifiedAuthors = Array.from(authorAggregates.keys()).filter((handle) => Boolean(filteredAccounts.get(handle)?.isVerified)).length;')
+          replace(route, '  persistTwitterStats(stats, query, result);', '  persistTwitterStats(stats, query, filteredTweets, filteredAccounts);')
+
+          # UI: unknown X timestamps remain unknown instead of becoming "now".
+          panel = root / 'components/trade/SocialIntelligencePanel.tsx'
+          replace(panel, '  timestamp: number;\n', '  timestamp: number | null;\n')
+          replace(
+              panel,
+              '''        occurred_at: new Date(tweet.timestamp).toISOString(),''',
+              '''        occurred_at: tweet.timestamp == null ? "" : new Date(tweet.timestamp).toISOString(),'''
+          )
+          replace(
+              panel,
+              '''      .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())''',
+              '''      .sort((a, b) => {\n        const bTime = Date.parse(b.occurred_at);\n        const aTime = Date.parse(a.occurred_at);\n        return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);\n      })'''
+          )
+
+          # Backend: missing X timestamp is not "now"; caller usernames are case-insensitive.
+          social = root / 'backend/app/services/social_intelligence.py'
+          replace(
+              social,
+              '''async def top_callers(session: AsyncSession, *, limit: int = 50) -> list[dict[str, Any]]:\n    calls = list((await session.execute(select(TelegramCall).where(TelegramCall.caller_username.is_not(None)))).scalars().all())\n    grouped: dict[str, list[TelegramCall]] = defaultdict(list)\n    for call in calls:\n        grouped[call.caller_username or "unknown"].append(call)''',
+              '''def normalize_caller_username(value: str | None) -> str:\n    return (value or "unknown").strip().lower().lstrip("@") or "unknown"\n\n\nasync def top_callers(session: AsyncSession, *, limit: int = 50) -> list[dict[str, Any]]:\n    calls = list((await session.execute(select(TelegramCall).where(TelegramCall.caller_username.is_not(None)))).scalars().all())\n    grouped: dict[str, list[TelegramCall]] = defaultdict(list)\n    for call in calls:\n        grouped[normalize_caller_username(call.caller_username)].append(call)'''
+          )
+          replace(
+              social,
+              '''    inserted = 0\n    updated = 0\n    for tweet in tweets:''',
+              '''    inserted = 0\n    updated = 0\n    skipped_missing_timestamp = 0\n    for tweet in tweets:'''
+          )
+          replace(
+              social,
+              '''        if isinstance(posted_at_raw, (int, float)):\n            seconds = posted_at_raw / 1000 if posted_at_raw > 10_000_000_000 else posted_at_raw\n            occurred_at = datetime.fromtimestamp(seconds, tz=timezone.utc)\n        else:\n            occurred_at = _utcnow()''',
+              '''        if isinstance(posted_at_raw, (int, float)):\n            seconds = posted_at_raw / 1000 if posted_at_raw > 10_000_000_000 else posted_at_raw\n            occurred_at = datetime.fromtimestamp(seconds, tz=timezone.utc)\n        else:\n            skipped_missing_timestamp += 1\n            continue'''
+          )
+          replace(social, '    return {"inserted": inserted, "updated": updated}\n', '    return {"inserted": inserted, "updated": updated, "skipped_missing_timestamp": skipped_missing_timestamp}\n', 1)
+
+          # Backend regression test for caller normalization.
+          tests = root / 'backend/tests/test_telegram_intelligence.py'
+          replace(tests, 'from app.services.social_intelligence import score_channel_metrics', 'from app.services.social_intelligence import normalize_caller_username, score_channel_metrics')
+          tests.write_text(tests.read_text() + '''\n\ndef test_caller_username_normalization() -> None:\n    assert normalize_caller_username("@AlphaCalls") == "alphacalls"\n    assert normalize_caller_username("alphacalls") == "alphacalls"\n    assert normalize_caller_username("  ALPHACALLS  ") == "alphacalls"\n''')
+
+          # Mobile regression must include the newly important Social Analysis screen.
+          mobile = root / 'tests/mobile-regression.mjs'
+          replace(mobile, '  "/trade/analysis",\n  "/market-overview",', '  "/trade/analysis",\n  "/trade/analysis/social",\n  "/market-overview",')
+
+          # Next 16 ESLint flat config.
+          (root / 'eslint.config.mjs').write_text('''import { defineConfig, globalIgnores } from "eslint/config";\nimport nextVitals from "eslint-config-next/core-web-vitals";\nimport nextTs from "eslint-config-next/typescript";\n\nexport default defineConfig([\n  ...nextVitals,\n  ...nextTs,\n  globalIgnores([\n    ".next/**",\n    "out/**",\n    "build/**",\n    "next-env.d.ts",\n    "test-results/**",\n    "data/**",\n  ]),\n]);\n''')
+          PY
+
+      - name: Refresh lockfile without breaking upgrades
+        working-directory: solana-launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --legacy-peer-deps
+          npm audit fix --package-lock-only --legacy-peer-deps || true
+
+      - name: Verify fixed tree before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd solana-launcher
+          npm ci --legacy-peer-deps
+          npm run lint
+          npx tsc --noEmit
+          npm run build
+          cd backend
+          python -m pip install -e '.[dev]'
+          ruff check app tests
+          mypy app
+          pytest -q
+
+      - name: Commit generated fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'backtest-fix-bot'
+          git config user.email 'backtest-fix-bot@users.noreply.github.com'
+          git add solana-launcher .github/workflows/apply-backtest-fixes.yml
+          git diff --cached --stat
+          git commit -m 'fix: address full backtest findings [backtest-fix-bot]'
+          git push origin HEAD:agent/fix-full-backtest-findings
