@@ -11,10 +11,10 @@ from app.db.session import get_db
 from app.models.subscription_order import SubscriptionOrder
 from app.models.user import User
 from app.schemas.subscription import (
-    SubscriptionInvoiceUpdate,
     SubscriptionOrderComplete,
     SubscriptionOrderCreate,
     SubscriptionOrderRead,
+    SubscriptionSettingsRead,
 )
 from app.services.subscriptions import (
     SubscriptionConflictError,
@@ -23,7 +23,7 @@ from app.services.subscriptions import (
     create_subscription_order,
     decrypt_order_password,
     get_subscription_order,
-    update_subscription_invoice,
+    get_subscription_settings,
 )
 
 router = APIRouter()
@@ -71,16 +71,34 @@ async def _as_response(
         login=order.login,
         currency=order.currency,
         total_amount=order.total_amount,
+        access_days=order.access_days,
         status=order.status,
         password=password,
-        invoice_link=order.invoice_link,
-        provider_charge_id=order.provider_charge_id,
-        telegram_payment_charge_id=order.telegram_payment_charge_id,
+        recipient_wallet=order.recipient_wallet,
+        payment_reference=order.payment_reference,
+        payment_url=order.payment_url,
+        payment_signature=order.payment_signature,
         created_at=order.created_at,
         updated_at=order.updated_at,
         paid_at=order.paid_at,
         subscription_expires_at=await _subscription_expiry(session, order),
         already_paid=already_paid,
+    )
+
+
+@router.get("/settings", response_model=SubscriptionSettingsRead)
+async def read_settings(
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> SubscriptionSettingsRead:
+    _require_internal_access(request)
+    settings = await get_subscription_settings(session)
+    return SubscriptionSettingsRead(
+        monthly_price_sol=settings.monthly_price_sol,
+        monthly_price_usdt=settings.monthly_price_usdt,
+        free_demo_enabled=settings.free_demo_enabled,
+        demo_days=settings.demo_days,
+        solana_recipient_wallet=settings.solana_recipient_wallet,
     )
 
 
@@ -118,23 +136,6 @@ async def read_order(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
-
-
-@router.patch("/orders/{payload}/invoice", response_model=SubscriptionOrderRead)
-async def update_invoice(
-    payload: str,
-    body: SubscriptionInvoiceUpdate,
-    request: Request,
-    session: AsyncSession = Depends(get_db),
-) -> SubscriptionOrderRead:
-    settings = _require_internal_access(request)
-    order = await update_subscription_invoice(session, payload, body.invoice_link)
-    if order is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Subscription order not found",
-        )
-    return await _as_response(session, order, settings=settings)
 
 
 @router.post("/orders/{payload}/complete", response_model=SubscriptionOrderRead)
