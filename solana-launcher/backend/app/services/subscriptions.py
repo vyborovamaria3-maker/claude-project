@@ -74,14 +74,17 @@ async def _login_owner(session: AsyncSession, login: str) -> User | None:
     return result.scalar_one_or_none()
 
 
-async def _demo_already_used(session: AsyncSession, telegram_user_id: int) -> bool:
+async def _existing_demo_order(
+    session: AsyncSession,
+    telegram_user_id: int,
+) -> SubscriptionOrder | None:
     result = await session.execute(
-        select(SubscriptionOrder.payload)
+        select(SubscriptionOrder)
         .where(SubscriptionOrder.telegram_user_id == telegram_user_id)
         .where(SubscriptionOrder.currency == "DEMO")
         .limit(1)
     )
-    return result.scalar_one_or_none() is not None
+    return result.scalar_one_or_none()
 
 
 def _validate_order_shape(payload: SubscriptionOrderCreate) -> None:
@@ -118,8 +121,12 @@ async def create_subscription_order(
             raise SubscriptionConflictError("Subscription payload already belongs to another order")
         return existing
 
-    if payload.currency == "DEMO" and await _demo_already_used(session, payload.telegram_user_id):
-        raise SubscriptionConflictError("Free demo access has already been used")
+    if payload.currency == "DEMO":
+        demo_order = await _existing_demo_order(session, payload.telegram_user_id)
+        if demo_order is not None:
+            if demo_order.status == "pending" and demo_order.login == payload.login:
+                return demo_order
+            raise SubscriptionConflictError("Free demo access has already been used")
 
     login_owner = await _login_owner(session, payload.login)
     if login_owner is not None and login_owner.telegram_id != str(payload.telegram_user_id):
