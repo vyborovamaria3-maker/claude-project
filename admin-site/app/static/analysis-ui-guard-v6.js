@@ -62,8 +62,11 @@
   }
 
   document.addEventListener("click", (event) => {
-    const navigation = event.target.closest?.(".analysis-tab[data-domain], #navigation [data-view], #analysisProfilesNav, #refreshButton, #logoutButton");
-    if (!navigation) return;
+    const guarded = event.target.closest?.(
+      ".analysis-tab[data-domain], #navigation [data-view], #analysisProfilesNav, #refreshButton, #logoutButton, " +
+      "#analysisEditorSave, #analysisEditorDelete, #analysisEditorRestore, #analysisCreate"
+    );
+    if (!guarded) return;
     if (!loadCount && !mutationCount && !toggleBusy) return;
     event.preventDefault();
     event.stopPropagation();
