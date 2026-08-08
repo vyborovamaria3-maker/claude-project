@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - "solana-launcher/backend/**"
+      - "solana-launcher/app/miniapp/**"
+      - "solana-launcher/app/api/miniapp/**"
+      - "solana-launcher/lib/telegram/**"
+      - "solana-launcher/telegram-bot/**"
       - "solana-launcher/app/telegram-intelligence/**"
       - "solana-launcher/components/SidebarNav.tsx"
       - "solana-launcher/lib/siteDesign.ts"
@@ -38,8 +42,10 @@ jobs:
       - name: Lint subscription flow
         run: >-
           ruff check
+          app/admin.py
           app/api/v1/subscriptions.py
           app/models/subscription_order.py
+          app/models/subscription_settings.py
           app/schemas/subscription.py
           app/services/subscriptions.py
           tests/test_subscriptions.py
