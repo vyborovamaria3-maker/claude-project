@@ -1,0 +1,40 @@
+name: Production deployment monitor
+
+on:
+  workflow_run:
+    workflows: ["POTAPoff production"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  record-result:
+    if: ${{ github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Record production result
+        env:
+          RESULT: ${{ github.event.workflow_run.conclusion }}
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p .deployment
+          {
+            echo "result=$RESULT"
+            echo "sha=$DEPLOY_SHA"
+            echo "run_id=$RUN_ID"
+            echo "recorded_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > .deployment/last-production.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .deployment/last-production.txt
+          git commit -m "Record production deployment: $RESULT" || exit 0
+          git push origin HEAD:main
