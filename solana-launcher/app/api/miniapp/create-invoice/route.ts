@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createOrderPayload,
-  generateAccessPassword,
   normalizeAccessLogin,
   validateAccessLogin,
 } from "@/lib/telegram/access";
@@ -81,7 +80,6 @@ export async function POST(req: NextRequest) {
           ? order
           : await markSubscriptionPaid({
               payload: order.payload,
-              password: generateAccessPassword(),
             });
 
       return NextResponse.json({
@@ -95,10 +93,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (settings.free_demo_enabled) {
+    if (!settings.paid_subscriptions_enabled) {
       return NextResponse.json(
-        { error: "Free demo mode is enabled; paid checkout is currently disabled" },
-        { status: 409 }
+        { error: "Paid subscriptions are disabled in admin" },
+        { status: 403 }
       );
     }
 
