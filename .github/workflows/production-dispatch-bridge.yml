@@ -1,7 +1,7 @@
 name: Production dispatch bridge
 
 on:
-  issues:
+  pull_request:
     types: [opened]
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   dispatch:
-    if: ${{ github.event.issue.title == '[DEPLOY] POTAPoff landing v2' }}
+    if: ${{ github.event.pull_request.title == '[DEPLOY] POTAPoff landing v2' }}
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch POTAPoff production
