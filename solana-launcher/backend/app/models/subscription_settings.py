@@ -22,6 +22,7 @@ class SubscriptionSettings(Base):
         nullable=False,
         default=Decimal("0"),
     )
+    paid_subscriptions_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     free_demo_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     demo_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     solana_recipient_wallet: Mapped[str] = mapped_column(String(64), nullable=False, default="")
