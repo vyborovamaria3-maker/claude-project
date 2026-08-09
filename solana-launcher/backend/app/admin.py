@@ -3,6 +3,7 @@ from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
 
 from app.core.config import Settings
+from app.models.auth_log import AuthLog
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
 from app.models.user import User
@@ -52,6 +53,30 @@ class UserAdmin(ModelView, model=User):
         "is_active",
         "is_superuser",
         "created_at",
+    ]
+    column_details_list = [
+        "id",
+        "email",
+        "full_name",
+        "wallet_address",
+        "telegram_id",
+        "telegram_username",
+        "first_name",
+        "last_name",
+        "photo_url",
+        "telegram_language_code",
+        "telegram_is_premium",
+        "telegram_added_to_attachment_menu",
+        "telegram_allows_write_to_pm",
+        "telegram_profile",
+        "subscription_expires_at",
+        "last_login_at",
+        "last_ip",
+        "ip_addresses",
+        "is_active",
+        "is_superuser",
+        "created_at",
+        "updated_at",
     ]
     column_searchable_list = [
         "email",
@@ -126,6 +151,23 @@ class SubscriptionOrderAdmin(ModelView, model=SubscriptionOrder):
         "created_at",
         "paid_at",
     ]
+    column_details_list = [
+        "payload",
+        "telegram_user_id",
+        "username",
+        "telegram_profile",
+        "login",
+        "currency",
+        "total_amount",
+        "access_days",
+        "status",
+        "recipient_wallet",
+        "payment_reference",
+        "payment_signature",
+        "created_at",
+        "updated_at",
+        "paid_at",
+    ]
     column_searchable_list = [
         "payload",
         "login",
@@ -134,6 +176,40 @@ class SubscriptionOrderAdmin(ModelView, model=SubscriptionOrder):
         "payment_signature",
     ]
     column_sortable_list = ["created_at", "paid_at", "status", "currency"]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
+class AuthLogAdmin(ModelView, model=AuthLog):
+    name = "Access event"
+    name_plural = "Access events"
+    icon = "fa-solid fa-shield-halved"
+    column_list = [
+        "created_at",
+        "event_type",
+        "provider",
+        "success",
+        "user_id",
+        "telegram_id",
+        "ip_address",
+    ]
+    column_details_list = [
+        "id",
+        "created_at",
+        "event_type",
+        "provider",
+        "success",
+        "user_id",
+        "telegram_id",
+        "wallet_address",
+        "ip_address",
+        "user_agent",
+        "meta",
+        "error_message",
+    ]
+    column_searchable_list = ["event_type", "provider", "telegram_id"]
+    column_sortable_list = ["created_at", "event_type", "provider", "success"]
     can_create = False
     can_edit = False
     can_delete = False
@@ -150,4 +226,5 @@ def setup_admin(app, engine, settings: Settings) -> Admin:
     admin.add_view(UserAdmin)
     admin.add_view(SubscriptionSettingsAdmin)
     admin.add_view(SubscriptionOrderAdmin)
+    admin.add_view(AuthLogAdmin)
     return admin
