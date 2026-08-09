@@ -24,14 +24,15 @@ git fetch origin main
 git reset --hard origin/main
 git clean -fd
 
-test -f POTAPoff-landing-deploy-overlay-v2.zip
-python3 -m zipfile -e POTAPoff-landing-deploy-overlay-v2.zip .
-
-test -f solana-launcher/components/PublicLandingPage.tsx
-test -f solana-launcher/components/DashboardHomePage.tsx
-test -f solana-launcher/components/landing/landingContent.ts
+test -s solana-launcher/app/page.tsx
+test -s solana-launcher/app/dashboard/page.tsx
+test -s solana-launcher/components/PublicLandingPage.tsx
+test -s solana-launcher/components/landing/landingContent.ts
 grep -q 'PublicLandingPage' solana-launcher/app/page.tsx
-grep -q 'DashboardHomePage' solana-launcher/app/dashboard/page.tsx
+grep -q 'LANDING_CSS' solana-launcher/components/PublicLandingPage.tsx
+grep -q 'LANDING_BODY' solana-launcher/components/PublicLandingPage.tsx
+grep -q 'pathname === "/"' solana-launcher/components/AppShell.tsx
+grep -q 'window.location.href = "/dashboard"' solana-launcher/components/PasswordLoginForm.tsx
 git diff --check
 
 cd "$DEPLOY_DIR"
@@ -80,6 +81,7 @@ for attempt in $(seq 1 45); do
   if [[ "$state" == "running" && ( "$health" == "healthy" || "$health" == "none" ) ]]; then
     if curl -fsS http://127.0.0.1/ >/tmp/potapoff-landing.html \
       && grep -Fq 'Единый рабочий слой' /tmp/potapoff-landing.html \
+      && curl -fsS http://127.0.0.1/dashboard >/dev/null \
       && curl -fsS http://127.0.0.1/miniapp >/dev/null \
       && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
       && curl -fsS http://127.0.0.1/api/build-info | grep -Fq "\"buildSha\":\"$NEW_TAG\""; then
