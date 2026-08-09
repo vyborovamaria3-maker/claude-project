@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 INTERNAL_HEADERS = {"X-Dev-Internal": "miniapp-subscription"}
 RECIPIENT = "11111111111111111111111111111111"
+PASSWORD_ALPHABET = set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
 
 
 def order_payload(char: str) -> str:
@@ -75,6 +76,7 @@ async def test_subscription_settings_have_safe_defaults(client):
     data = response.json()
     assert Decimal(str(data["monthly_price_sol"])) == 0
     assert Decimal(str(data["monthly_price_usdt"])) == 0
+    assert data["paid_subscriptions_enabled"] is False
     assert data["free_demo_enabled"] is False
     assert data["demo_days"] == 30
     assert data["solana_recipient_wallet"] == ""
@@ -82,7 +84,6 @@ async def test_subscription_settings_have_safe_defaults(client):
 
 async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(client, test_app):
     payload = order_payload("b")
-    password = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
     create_response = await client.post(
         "/api/v1/subscriptions/orders",
@@ -107,12 +108,15 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
     complete_response = await client.post(
         f"/api/v1/subscriptions/orders/{payload}/complete",
         headers=INTERNAL_HEADERS,
-        json={"password": password, "payment_signature": "signature-b"},
+        json={"payment_signature": "signature-b"},
     )
     assert complete_response.status_code == 200
     completed = complete_response.json()
+    password = completed["password"]
     assert completed["status"] == "paid"
-    assert completed["password"] == password
+    assert isinstance(password, str)
+    assert len(password) == 32
+    assert set(password) <= PASSWORD_ALPHABET
     assert completed["payment_signature"] == "signature-b"
     assert completed["already_paid"] is False
     assert completed["subscription_expires_at"]
@@ -120,7 +124,7 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
     duplicate_response = await client.post(
         f"/api/v1/subscriptions/orders/{payload}/complete",
         headers=INTERNAL_HEADERS,
-        json={"password": "Z" * 32, "payment_signature": "signature-b"},
+        json={"payment_signature": "signature-b"},
     )
     assert duplicate_response.status_code == 200
     duplicate = duplicate_response.json()
@@ -143,15 +147,15 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
         assert verify_password(password, user.hashed_password)
 
 
-async def test_paid_order_requires_verified_signature(client):
+async def test_completion_rejects_caller_supplied_password(client):
     payload = order_payload("c")
     create = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=paid_order_body(
             payload=payload,
-            telegram_user_id=250,
-            login="signature_test",
+            telegram_user_id=240,
+            login="server_password",
             ref="ref-c",
         ),
     )
@@ -160,13 +164,35 @@ async def test_paid_order_requires_verified_signature(client):
     complete = await client.post(
         f"/api/v1/subscriptions/orders/{payload}/complete",
         headers=INTERNAL_HEADERS,
-        json={"password": "A" * 32, "payment_signature": None},
+        json={"payment_signature": "signature-c", "password": "A" * 32},
+    )
+    assert complete.status_code == 422
+
+
+async def test_paid_order_requires_verified_signature(client):
+    payload = order_payload("d")
+    create = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=payload,
+            telegram_user_id=250,
+            login="signature_test",
+            ref="ref-d",
+        ),
+    )
+    assert create.status_code == 201
+
+    complete = await client.post(
+        f"/api/v1/subscriptions/orders/{payload}/complete",
+        headers=INTERNAL_HEADERS,
+        json={"payment_signature": None},
     )
     assert complete.status_code == 409
 
 
 async def test_same_user_reuses_matching_pending_order(client):
-    first_payload = order_payload("d")
+    first_payload = order_payload("e")
     first = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
@@ -175,7 +201,7 @@ async def test_same_user_reuses_matching_pending_order(client):
             telegram_user_id=301,
             username="first",
             login="retry_login",
-            ref="ref-d",
+            ref="ref-e",
         ),
     )
     assert first.status_code == 201
@@ -184,20 +210,20 @@ async def test_same_user_reuses_matching_pending_order(client):
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=paid_order_body(
-            payload=order_payload("e"),
+            payload=order_payload("f"),
             telegram_user_id=301,
             username="first",
             login="retry_login",
-            ref="ref-e",
+            ref="ref-f",
         ),
     )
     assert retry.status_code == 201
     assert retry.json()["payload"] == first_payload
-    assert retry.json()["payment_reference"] == "ref-d"
+    assert retry.json()["payment_reference"] == "ref-e"
 
 
 async def test_same_user_can_switch_payment_method(client):
-    first_payload = order_payload("f")
+    first_payload = order_payload("g")
     first = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
@@ -205,12 +231,12 @@ async def test_same_user_can_switch_payment_method(client):
             payload=first_payload,
             telegram_user_id=350,
             login="switch_login",
-            ref="ref-f",
+            ref="ref-g",
         ),
     )
     assert first.status_code == 201
 
-    second_payload = order_payload("g")
+    second_payload = order_payload("h")
     second = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
@@ -218,7 +244,7 @@ async def test_same_user_can_switch_payment_method(client):
             payload=second_payload,
             telegram_user_id=350,
             login="switch_login",
-            ref="ref-g",
+            ref="ref-h",
             currency="USDT",
             total_amount=50_000_000,
         ),
@@ -240,11 +266,11 @@ async def test_pending_order_reserves_login_for_other_telegram_users(client):
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=paid_order_body(
-            payload=order_payload("h"),
+            payload=order_payload("i"),
             telegram_user_id=401,
             username="first",
             login="reserved_login",
-            ref="ref-h",
+            ref="ref-i",
         ),
     )
     assert first.status_code == 201
@@ -253,18 +279,18 @@ async def test_pending_order_reserves_login_for_other_telegram_users(client):
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=paid_order_body(
-            payload=order_payload("i"),
+            payload=order_payload("j"),
             telegram_user_id=402,
             username="second",
             login="reserved_login",
-            ref="ref-i",
+            ref="ref-j",
         ),
     )
     assert second.status_code == 409
 
 
-async def test_free_demo_is_one_time_and_needs_no_payment_signature(client):
-    payload = order_payload("j")
+async def test_free_demo_is_one_time_and_needs_no_payment_signature(client, test_app):
+    payload = order_payload("k")
     create = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
@@ -283,16 +309,25 @@ async def test_free_demo_is_one_time_and_needs_no_payment_signature(client):
     complete = await client.post(
         f"/api/v1/subscriptions/orders/{payload}/complete",
         headers=INTERNAL_HEADERS,
-        json={"password": "B" * 32, "payment_signature": None},
+        json={},
     )
     assert complete.status_code == 200
-    assert complete.json()["status"] == "paid"
+    completed = complete.json()
+    assert completed["status"] == "paid"
+    assert isinstance(completed["password"], str)
+    assert len(completed["password"]) == 32
+
+    async with test_app.state.sessionmaker() as session:
+        user_result = await session.execute(select(User).where(User.telegram_id == "501"))
+        user = user_result.scalar_one()
+        assert user.email == "demo_login"
+        assert verify_password(completed["password"], user.hashed_password)
 
     duplicate_demo = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=demo_order_body(
-            payload=order_payload("k"),
+            payload=order_payload("l"),
             telegram_user_id=501,
             login="demo_login",
             days=14,
