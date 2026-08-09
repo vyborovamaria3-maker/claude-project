@@ -1,0 +1,1 @@
+Clean deployment trigger created after production bridge and observer were installed on main.
