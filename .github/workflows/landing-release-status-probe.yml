@@ -1,0 +1,36 @@
+name: Landing release status probe
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.event.pull_request.title == '[STATUS] POTAPoff landing release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read latest manual landing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh api -X GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/landing-release.yml/runs" \
+            -f event=workflow_dispatch \
+            -f per_page=5 \
+            > /tmp/runs.json
+
+          jq '{total_count, latest: (.workflow_runs[0] | {id, name, event, status, conclusion, run_number, run_attempt, head_branch, head_sha, created_at, updated_at, html_url})}' /tmp/runs.json \
+            > /tmp/latest.json
+          cat /tmp/latest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landing-release-status
+          path: /tmp/latest.json
+          retention-days: 1
