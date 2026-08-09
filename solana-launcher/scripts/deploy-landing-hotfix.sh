@@ -8,6 +8,7 @@ DEPLOY_DIR="/opt/potapoff-deploy"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
 IMAGE="ghcr.io/dima09090/claude-project/frontend:$NEW_TAG"
 LOCK_FILE="$DEPLOY_DIR/.landing-deploy.lock"
+LANDING_MARKER='Запускайте токены, анализируйте кошельки'
 
 exec 9>"$LOCK_FILE"
 flock -w 1800 9
@@ -33,6 +34,7 @@ grep -q 'LANDING_CSS' solana-launcher/components/PublicLandingPage.tsx
 grep -q 'LANDING_BODY' solana-launcher/components/PublicLandingPage.tsx
 grep -q 'pathname === "/"' solana-launcher/components/AppShell.tsx
 grep -q 'window.location.href = "/dashboard"' solana-launcher/components/PasswordLoginForm.tsx
+grep -Fq "$LANDING_MARKER" solana-launcher/components/landing/landingContent.ts
 git diff --check
 
 cd "$DEPLOY_DIR"
@@ -80,7 +82,7 @@ for attempt in $(seq 1 45); do
 
   if [[ "$state" == "running" && ( "$health" == "healthy" || "$health" == "none" ) ]]; then
     if curl -fsS http://127.0.0.1/ >/tmp/potapoff-landing.html \
-      && grep -Fq 'Единый рабочий слой' /tmp/potapoff-landing.html \
+      && grep -Fq "$LANDING_MARKER" /tmp/potapoff-landing.html \
       && curl -fsS http://127.0.0.1/dashboard >/dev/null \
       && curl -fsS http://127.0.0.1/miniapp >/dev/null \
       && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
