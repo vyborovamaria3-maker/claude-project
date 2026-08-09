@@ -38,9 +38,17 @@ class UserAdmin(ModelView, model=User):
     column_list = [
         "id",
         "email",
-        "wallet_address",
         "telegram_id",
         "telegram_username",
+        "first_name",
+        "last_name",
+        "telegram_language_code",
+        "telegram_is_premium",
+        "telegram_added_to_attachment_menu",
+        "telegram_allows_write_to_pm",
+        "subscription_expires_at",
+        "last_login_at",
+        "last_ip",
         "is_active",
         "is_superuser",
         "created_at",
@@ -51,8 +59,16 @@ class UserAdmin(ModelView, model=User):
         "telegram_id",
         "telegram_username",
         "full_name",
+        "first_name",
+        "last_name",
     ]
-    column_sortable_list = ["id", "email", "created_at"]
+    column_sortable_list = [
+        "id",
+        "email",
+        "created_at",
+        "last_login_at",
+        "subscription_expires_at",
+    ]
     form_excluded_columns = ["hashed_password"]
     can_create = False
     can_edit = False
@@ -100,6 +116,7 @@ class SubscriptionOrderAdmin(ModelView, model=SubscriptionOrder):
     column_list = [
         "payload",
         "telegram_user_id",
+        "username",
         "login",
         "currency",
         "total_amount",
@@ -112,6 +129,7 @@ class SubscriptionOrderAdmin(ModelView, model=SubscriptionOrder):
     column_searchable_list = [
         "payload",
         "login",
+        "username",
         "payment_reference",
         "payment_signature",
     ]
