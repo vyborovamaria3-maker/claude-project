@@ -191,3 +191,5 @@ jobs:
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
             "/opt/potapoff-deploy/scripts/deploy-production.sh '${GITHUB_SHA}'"
+
+# manual production redeploy 2026-08-09T12:29:00Z
