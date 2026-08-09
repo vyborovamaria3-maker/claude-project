@@ -131,6 +131,11 @@ async def _existing_demo_order(
 
 
 def _validate_order_shape(payload: SubscriptionOrderCreate) -> None:
+    if payload.telegram_profile is not None:
+        profile_id = payload.telegram_profile.get("id")
+        if not isinstance(profile_id, int) or profile_id != payload.telegram_user_id:
+            raise SubscriptionConflictError("Telegram profile does not match Telegram user id")
+
     if payload.currency == "DEMO":
         if payload.total_amount != 0:
             raise SubscriptionConflictError("Demo order must be free")
@@ -324,6 +329,7 @@ async def complete_subscription_order(
     order.payment_signature = completion.payment_signature
     order.paid_at = now
 
+    await session.flush()
     session.add(
         AuthLog(
             user_id=user.id,
