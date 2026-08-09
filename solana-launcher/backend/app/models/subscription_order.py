@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -28,6 +28,7 @@ class SubscriptionOrder(Base):
     payload: Mapped[str] = mapped_column(String(128), primary_key=True)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    telegram_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     login: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False)
     total_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
