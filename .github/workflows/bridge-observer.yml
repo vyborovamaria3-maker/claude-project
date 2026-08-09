@@ -17,30 +17,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          for attempt in $(seq 1 24); do
-            gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow production-dispatch-bridge.yml \
-              --limit 10 \
-              --json databaseId,event,status,conclusion,createdAt,displayTitle,headSha \
-              > /tmp/bridge-runs.json
+          set -u
+          echo 'found=false' > /tmp/bridge-result.txt
+          echo '{"workflow_runs":[]}' > /tmp/bridge-runs.json
+          : > /tmp/bridge-error.txt
 
-            if jq -e '[.[] | select(.event == "pull_request_target")] | length > 0' /tmp/bridge-runs.json >/dev/null; then
-              jq -r '([.[] | select(.event == "pull_request_target")][0]) as $r | "found=true\nrun_id=\($r.databaseId)\nstatus=\($r.status)\nconclusion=\($r.conclusion)\ncreated_at=\($r.createdAt)\ntitle=\($r.displayTitle)\nhead_sha=\($r.headSha)"' /tmp/bridge-runs.json > /tmp/bridge-result.txt
-              cat /tmp/bridge-result.txt
-              break
+          for attempt in $(seq 1 18); do
+            if gh api "repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request_target&per_page=20" \
+              > /tmp/bridge-runs.json 2> /tmp/bridge-error.txt; then
+              if jq -e '[.workflow_runs[] | select(.name == "Production dispatch bridge")] | length > 0' /tmp/bridge-runs.json >/dev/null 2>&1; then
+                jq -r '([.workflow_runs[] | select(.name == "Production dispatch bridge")][0]) as $r | "found=true\nrun_id=\($r.id)\nstatus=\($r.status)\nconclusion=\($r.conclusion)\ncreated_at=\($r.created_at)\ntitle=\($r.display_title)\nhead_sha=\($r.head_sha)"' /tmp/bridge-runs.json > /tmp/bridge-result.txt
+                cat /tmp/bridge-result.txt
+                exit 0
+              fi
+              echo "found=false attempt=$attempt" > /tmp/bridge-result.txt
+            else
+              {
+                echo "found=api_error"
+                cat /tmp/bridge-error.txt
+              } > /tmp/bridge-result.txt
             fi
-
-            echo 'found=false' > /tmp/bridge-result.txt
             cat /tmp/bridge-result.txt
             sleep 10
           done
 
-      - uses: actions/upload-artifact@v4
+          exit 0
+
+      - name: Upload observer result
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: bridge-observer-result
           path: |
             /tmp/bridge-result.txt
             /tmp/bridge-runs.json
+            /tmp/bridge-error.txt
           retention-days: 1
