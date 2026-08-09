@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 LOGIN_RE = re.compile(r"^[A-Za-z0-9_]{4,32}$")
 
@@ -11,6 +11,7 @@ LOGIN_RE = re.compile(r"^[A-Za-z0-9_]{4,32}$")
 class SubscriptionSettingsRead(BaseModel):
     monthly_price_sol: Decimal
     monthly_price_usdt: Decimal
+    paid_subscriptions_enabled: bool
     free_demo_enabled: bool
     demo_days: int
     solana_recipient_wallet: str
@@ -38,7 +39,8 @@ class SubscriptionOrderCreate(BaseModel):
 
 
 class SubscriptionOrderComplete(BaseModel):
-    password: str = Field(min_length=32, max_length=32)
+    model_config = ConfigDict(extra="forbid")
+
     payment_signature: str | None = Field(default=None, max_length=128)
 
 
