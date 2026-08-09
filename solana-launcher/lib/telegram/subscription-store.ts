@@ -1,4 +1,5 @@
 import { getBackendBaseUrl } from "../authProxy";
+import type { TelegramInitUser } from "./init-data";
 
 export type SubscriptionCurrency = "SOL" | "USDT" | "DEMO";
 
@@ -102,6 +103,7 @@ export async function createSubscriptionOrder(input: {
   payload: string;
   telegramUserId: number;
   username?: string | null;
+  telegramProfile?: TelegramInitUser | null;
   login: string;
   currency: SubscriptionCurrency;
   totalAmount: number;
@@ -116,6 +118,7 @@ export async function createSubscriptionOrder(input: {
       payload: input.payload,
       telegram_user_id: input.telegramUserId,
       username: input.username ?? null,
+      telegram_profile: input.telegramProfile ?? null,
       login: input.login,
       currency: input.currency,
       total_amount: input.totalAmount,
