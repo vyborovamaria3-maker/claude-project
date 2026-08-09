@@ -26,23 +26,14 @@ jobs:
               --json databaseId,event,status,conclusion,createdAt,displayTitle,headSha \
               > /tmp/bridge-runs.json
 
-            python - <<'PY' > /tmp/bridge-result.txt
-import json
-from pathlib import Path
-runs=json.loads(Path('/tmp/bridge-runs.json').read_text())
-target=[r for r in runs if r.get('event') == 'pull_request_target']
-if not target:
-    print('found=false')
-else:
-    r=target[0]
-    print('found=true')
-    for k in ('databaseId','event','status','conclusion','createdAt','displayTitle','headSha'):
-        print(f'{k}={r.get(k)}')
-PY
-            cat /tmp/bridge-result.txt
-            if grep -q '^found=true' /tmp/bridge-result.txt; then
+            if jq -e '[.[] | select(.event == "pull_request_target")] | length > 0' /tmp/bridge-runs.json >/dev/null; then
+              jq -r '([.[] | select(.event == "pull_request_target")][0]) as $r | "found=true\nrun_id=\($r.databaseId)\nstatus=\($r.status)\nconclusion=\($r.conclusion)\ncreated_at=\($r.createdAt)\ntitle=\($r.displayTitle)\nhead_sha=\($r.headSha)"' /tmp/bridge-runs.json > /tmp/bridge-result.txt
+              cat /tmp/bridge-result.txt
               break
             fi
+
+            echo 'found=false' > /tmp/bridge-result.txt
+            cat /tmp/bridge-result.txt
             sleep 10
           done
 
