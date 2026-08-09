@@ -2,7 +2,7 @@ name: Bridge observer
 
 on:
   pull_request:
-    types: [synchronize]
+    types: [opened, synchronize]
 
 permissions:
   actions: read
