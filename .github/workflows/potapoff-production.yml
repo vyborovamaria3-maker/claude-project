@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - "solana-launcher/**"
-      - "POTAPoff-landing-deploy-overlay-v2.zip"
       - ".github/workflows/potapoff-production.yml"
   workflow_dispatch:
   workflow_call:
@@ -43,30 +42,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Apply verified landing overlay
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f POTAPoff-landing-deploy-overlay-v2.zip ]]; then
-            unzip -o POTAPoff-landing-deploy-overlay-v2.zip
-            test -f solana-launcher/components/PublicLandingPage.tsx
-            test -f solana-launcher/components/DashboardHomePage.tsx
-            test -f solana-launcher/components/landing/landingContent.ts
-            grep -q 'PublicLandingPage' solana-launcher/app/page.tsx
-            grep -q 'DashboardHomePage' solana-launcher/app/dashboard/page.tsx
-            git diff --check
-            echo "LANDING_OVERLAY_APPLIED"
-          else
-            echo "No landing overlay archive present; building repository sources as-is"
-          fi
-
       - name: Verify Docker build files
         run: |
           set -euo pipefail
           test -f solana-launcher/backend/Dockerfile
           test -f solana-launcher/Dockerfile.frontend.prod
           test -f solana-launcher/Dockerfile.telegram-bot
-          echo "DOCKERFILES_OK"
+          test -f solana-launcher/components/PublicLandingPage.tsx
+          test -f solana-launcher/components/landing/landingContent.ts
+          grep -q 'PublicLandingPage' solana-launcher/app/page.tsx
+          grep -q 'pathname === "/"' solana-launcher/components/AppShell.tsx
+          grep -q 'window.location.href = "/dashboard"' solana-launcher/components/PasswordLoginForm.tsx
+          git diff --check
+          echo "SOURCES_OK"
 
       - uses: docker/setup-buildx-action@v3
 
