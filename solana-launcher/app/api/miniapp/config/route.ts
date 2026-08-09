@@ -10,6 +10,7 @@ export async function GET() {
     return NextResponse.json({
       monthlyPriceSol: String(settings.monthly_price_sol),
       monthlyPriceUsdt: String(settings.monthly_price_usdt),
+      paidSubscriptionsEnabled: settings.paid_subscriptions_enabled,
       freeDemoEnabled: settings.free_demo_enabled,
       demoDays: settings.demo_days,
       recipientConfigured: Boolean(settings.solana_recipient_wallet?.trim()),
