@@ -37,6 +37,7 @@ type MiniAppWebApp = {
 type SubscriptionConfig = {
   monthlyPriceSol: string;
   monthlyPriceUsdt: string;
+  paidSubscriptionsEnabled: boolean;
   freeDemoEnabled: boolean;
   demoDays: number;
   recipientConfigured: boolean;
@@ -110,8 +111,9 @@ export default function MiniAppPage() {
   }, [login]);
 
   const displayName = telegramUser?.first_name || telegramUser?.username || "Trader";
-  const solEnabled = Number(config?.monthlyPriceSol || "0") > 0;
-  const usdtEnabled = Number(config?.monthlyPriceUsdt || "0") > 0;
+  const paidModeEnabled = Boolean(config?.paidSubscriptionsEnabled);
+  const solEnabled = paidModeEnabled && Number(config?.monthlyPriceSol || "0") > 0;
+  const usdtEnabled = paidModeEnabled && Number(config?.monthlyPriceUsdt || "0") > 0;
 
   useEffect(() => {
     if (webApp) {
@@ -128,11 +130,18 @@ export default function MiniAppPage() {
         const data = (await response.json()) as SubscriptionConfig;
         if (!response.ok) throw new Error(data.error || "Unable to load subscription settings.");
         setConfig(data);
-        setStatusMessage(
-          data.freeDemoEnabled
-            ? `Free demo is enabled for ${data.demoDays} days.`
-            : "Choose SOL or USDT on Solana to activate 30-day access."
-        );
+
+        if (data.freeDemoEnabled && data.paidSubscriptionsEnabled) {
+          setStatusMessage(
+            `Free ${data.demoDays}-day demo is available, or choose a paid 30-day subscription.`
+          );
+        } else if (data.freeDemoEnabled) {
+          setStatusMessage(`Free demo is enabled for ${data.demoDays} days.`);
+        } else if (data.paidSubscriptionsEnabled) {
+          setStatusMessage("Choose SOL or USDT on Solana to activate 30-day access.");
+        } else {
+          setStatusMessage("Access activation is currently disabled by the administrator.");
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to load subscription settings.";
         setError(message);
@@ -172,7 +181,9 @@ export default function MiniAppPage() {
       if (!data.payload) throw new Error("Subscription order was not created correctly.");
 
       if (data.mode === "DEMO") {
-        if (!data.password || !data.login) throw new Error("Demo access was not activated correctly.");
+        if (!data.password || data.password.length !== 32 || !data.login) {
+          throw new Error("Demo access credentials were not generated correctly.");
+        }
         setOrder({
           payload: data.payload,
           login: data.login,
@@ -180,7 +191,7 @@ export default function MiniAppPage() {
           password: data.password,
           subscriptionExpiresAt: data.subscriptionExpiresAt,
         });
-        setStatusMessage("Free demo activated. Your site credentials are ready.");
+        setStatusMessage("Free demo activated. Your login and 32-character password are ready.");
         webApp?.HapticFeedback?.notificationOccurred?.("success");
         return;
       }
@@ -223,7 +234,13 @@ export default function MiniAppPage() {
         return;
       }
       if (!response.ok) throw new Error(data.error || "Unable to verify payment.");
-      if (data.status !== "paid" || !data.payload || !data.login || !data.password) {
+      if (
+        data.status !== "paid" ||
+        !data.payload ||
+        !data.login ||
+        !data.password ||
+        data.password.length !== 32
+      ) {
         throw new Error("Payment confirmation is incomplete.");
       }
 
@@ -236,7 +253,7 @@ export default function MiniAppPage() {
         paymentSignature: data.paymentSignature,
       });
       setCheckout(null);
-      setStatusMessage("Payment confirmed on Solana. Your access credentials are ready.");
+      setStatusMessage("Payment confirmed on Solana. Your login and 32-character password are ready.");
       webApp?.HapticFeedback?.notificationOccurred?.("success");
     } catch (err) {
       if (showPending) {
@@ -296,7 +313,7 @@ export default function MiniAppPage() {
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300/65">Premium access</p>
               <h2 className="mt-2 text-2xl font-black tracking-tight">Welcome, {displayName}</h2>
               <p className="mt-2 text-sm leading-6 text-white/62">
-                Activate site access with SOL or USDT on the Solana network. Payments are verified on-chain before credentials are issued.
+                Choose your own site login. After demo activation or verified payment, the backend generates a unique 32-character password and stores the account securely.
               </p>
             </div>
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-emerald-300/20 bg-emerald-300/10 text-emerald-200">
@@ -305,9 +322,9 @@ export default function MiniAppPage() {
           </div>
 
           <div className="mt-5 grid grid-cols-3 gap-2">
-            <Metric label="SOL" value={config?.freeDemoEnabled ? "Free demo" : solEnabled ? `${config?.monthlyPriceSol}` : "Off"} />
-            <Metric label="USDT" value={config?.freeDemoEnabled ? "Free demo" : usdtEnabled ? `${config?.monthlyPriceUsdt}` : "Off"} />
-            <Metric label="Access" value={config?.freeDemoEnabled ? `${config.demoDays} days` : "30 days"} />
+            <Metric label="SOL" value={solEnabled ? `${config?.monthlyPriceSol}` : "Off"} />
+            <Metric label="USDT" value={usdtEnabled ? `${config?.monthlyPriceUsdt}` : "Off"} />
+            <Metric label="Demo" value={config?.freeDemoEnabled ? `${config.demoDays} days` : "Off"} />
           </div>
         </motion.section>
 
@@ -330,6 +347,10 @@ export default function MiniAppPage() {
               <CredentialRow label="Password" value={order.password || ""} copied={copied === "password"} onCopy={() => copy(order.password || "", "password")} />
             </div>
 
+            <p className="mt-3 text-xs leading-5 text-white/50">
+              Save these credentials. The password contains exactly 32 characters and was generated by the backend.
+            </p>
+
             {order.subscriptionExpiresAt && (
               <p className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/55">
                 Access valid until {new Date(order.subscriptionExpiresAt).toLocaleDateString()}.
@@ -337,7 +358,7 @@ export default function MiniAppPage() {
             )}
 
             <a href="/login" className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-[#06100c]">
-              Open site login <ArrowRight className="h-4 w-4" />
+              Войти на сайт <ArrowRight className="h-4 w-4" />
             </a>
           </motion.section>
         ) : checkout ? (
@@ -370,7 +391,7 @@ export default function MiniAppPage() {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">Step 1</p>
                 <h2 className="text-lg font-bold">Choose your site login</h2>
-                <p className="mt-1 text-sm leading-5 text-white/55">Your password is generated only after payment confirmation or demo activation.</p>
+                <p className="mt-1 text-sm leading-5 text-white/55">You choose the login. The backend creates the 32-character password automatically after activation.</p>
               </div>
             </div>
 
@@ -388,27 +409,35 @@ export default function MiniAppPage() {
             )}
             {error && <p className="mt-3 rounded-2xl border border-red-300/20 bg-red-400/[0.08] px-3 py-2.5 text-sm leading-5 text-red-100">{error}</p>}
 
-            {config?.freeDemoEnabled ? (
+            {config?.freeDemoEnabled && (
               <button type="button" onClick={() => createCheckout("DEMO")} disabled={loading || Boolean(loginError) || !login || !canCheckout} className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] disabled:cursor-not-allowed disabled:opacity-40">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                 Activate free {config.demoDays}-day demo
               </button>
-            ) : (
-              <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <PaymentButton label={solEnabled ? `Pay ${config?.monthlyPriceSol} SOL` : "SOL unavailable"} disabled={loading || !solEnabled || !config?.recipientConfigured || Boolean(loginError) || !login || !canCheckout} loading={loading} onClick={() => createCheckout("SOL")} />
-                <PaymentButton label={usdtEnabled ? `Pay ${config?.monthlyPriceUsdt} USDT` : "USDT unavailable"} disabled={loading || !usdtEnabled || !config?.recipientConfigured || Boolean(loginError) || !login || !canCheckout} loading={loading} onClick={() => createCheckout("USDT")} />
+            )}
+
+            {config?.paidSubscriptionsEnabled && (
+              <div className={`${config.freeDemoEnabled ? "mt-3" : "mt-5"} grid grid-cols-1 gap-2 sm:grid-cols-2`}>
+                <PaymentButton label={solEnabled ? `Pay ${config.monthlyPriceSol} SOL` : "SOL unavailable"} disabled={loading || !solEnabled || !config.recipientConfigured || Boolean(loginError) || !login || !canCheckout} loading={loading} onClick={() => createCheckout("SOL")} />
+                <PaymentButton label={usdtEnabled ? `Pay ${config.monthlyPriceUsdt} USDT` : "USDT unavailable"} disabled={loading || !usdtEnabled || !config.recipientConfigured || Boolean(loginError) || !login || !canCheckout} loading={loading} onClick={() => createCheckout("USDT")} />
               </div>
             )}
 
-            {config && !config.freeDemoEnabled && !config.recipientConfigured && (
+            {config && !config.freeDemoEnabled && !config.paidSubscriptionsEnabled && (
+              <p className="mt-5 rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-sm leading-5 text-white/55">
+                Demo and paid access are currently disabled in the admin panel.
+              </p>
+            )}
+
+            {config?.paidSubscriptionsEnabled && !config.recipientConfigured && (
               <p className="mt-3 text-xs leading-5 text-white/45">Payment destination is not configured yet. Set the recipient wallet in the admin subscription settings.</p>
             )}
           </motion.section>
         )}
 
         <div className="grid grid-cols-3 gap-2 text-[11px] text-white/45">
-          <TrustItem icon={<LockKeyhole className="h-4 w-4" />} text="On-chain verification" />
-          <TrustItem icon={<ShieldCheck className="h-4 w-4" />} text="Unique payment reference" />
+          <TrustItem icon={<LockKeyhole className="h-4 w-4" />} text="Backend password" />
+          <TrustItem icon={<ShieldCheck className="h-4 w-4" />} text="On-chain verification" />
           <TrustItem icon={<KeyRound className="h-4 w-4" />} text="Private credentials" />
         </div>
       </section>
@@ -425,7 +454,7 @@ function PaymentButton({ label, disabled, loading, onClick }: { label: string; d
 }
 
 function CredentialRow({ label, value, copied, onCopy }: { label: string; value: string; copied: boolean; onCopy: () => void }) {
-  return <div className="rounded-2xl border border-white/10 bg-black/25 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-white/35">{label}</p><div className="mt-1 flex items-center gap-2"><code className="min-w-0 flex-1 break-all text-sm text-white/85">{value}</code><button type="button" onClick={onCopy} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.05] text-white/70">{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}</button></div></div>;
+  return <div className="rounded-2xl border border-white/10 bg-black/25 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-white/35">{label}</p><div className="mt-1 flex items-center gap-2"><code className="min-w-0 flex-1 break-all text-sm text-white/85">{value}</code><button type="button" onClick={onCopy} aria-label={`Copy ${label.toLowerCase()}`} title={`Copy ${label.toLowerCase()}`} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.05] text-white/70">{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}</button></div></div>;
 }
 
 function TrustItem({ icon, text }: { icon: React.ReactNode; text: string }) {
