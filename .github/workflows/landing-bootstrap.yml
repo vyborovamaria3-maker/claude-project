@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "POTAPoff-landing-deploy-overlay-v2.zip"
+      - ".github/workflows/landing-bootstrap.yml"
   workflow_dispatch:
 
 permissions:
