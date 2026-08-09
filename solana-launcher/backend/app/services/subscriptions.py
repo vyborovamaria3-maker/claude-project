@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -22,6 +23,14 @@ class SubscriptionConflictError(ValueError):
 
 class SubscriptionPasswordError(RuntimeError):
     pass
+
+
+PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+PASSWORD_LENGTH = 32
+
+
+def generate_subscription_password() -> str:
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(PASSWORD_LENGTH))
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -255,13 +264,14 @@ async def complete_subscription_order(
         user.email = order.login
         user.is_active = True
 
+    password = generate_subscription_password()
     base_expiry = current_expiry if current_expiry and current_expiry > now else now
     expires_at = base_expiry + timedelta(days=order.access_days)
-    user.hashed_password = get_password_hash(completion.password)
+    user.hashed_password = get_password_hash(password)
     user.subscription_expires_at = expires_at
 
     order.status = "paid"
-    order.password_ciphertext = encrypt_order_password(completion.password, secret_key)
+    order.password_ciphertext = encrypt_order_password(password, secret_key)
     order.payment_signature = completion.payment_signature
     order.paid_at = now
 
@@ -273,4 +283,4 @@ async def complete_subscription_order(
             "Subscription payment conflicts with existing data"
         ) from exc
     await session.refresh(order)
-    return order, completion.password, expires_at, False
+    return order, password, expires_at, False
