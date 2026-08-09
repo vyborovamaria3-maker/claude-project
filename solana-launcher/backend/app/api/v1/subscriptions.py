@@ -96,6 +96,7 @@ async def read_settings(
     return SubscriptionSettingsRead(
         monthly_price_sol=settings.monthly_price_sol,
         monthly_price_usdt=settings.monthly_price_usdt,
+        paid_subscriptions_enabled=settings.paid_subscriptions_enabled,
         free_demo_enabled=settings.free_demo_enabled,
         demo_days=settings.demo_days,
         solana_recipient_wallet=settings.solana_recipient_wallet,
