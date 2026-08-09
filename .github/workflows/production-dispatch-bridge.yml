@@ -2,21 +2,14 @@ name: Production dispatch bridge
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize]
 
 permissions:
-  actions: write
   contents: read
+  packages: write
 
 jobs:
-  dispatch:
+  deploy:
     if: ${{ github.event.pull_request.title == '[DEPLOY] POTAPoff landing v2' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dispatch POTAPoff production
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh workflow run potapoff-production.yml --repo "${GITHUB_REPOSITORY}" --ref main
-          echo "POTAPoff production dispatched"
+    uses: ./.github/workflows/potapoff-production.yml
+    secrets: inherit
