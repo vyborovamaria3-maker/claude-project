@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateAccessPassword } from "@/lib/telegram/access";
 import { getDevTelegramUser, verifyTelegramInitData } from "@/lib/telegram/init-data";
 import {
   getSubscriptionOrder,
@@ -73,7 +72,6 @@ export async function POST(req: NextRequest) {
 
     const completed = await markSubscriptionPaid({
       payload: order.payload,
-      password: generateAccessPassword(),
       paymentSignature: signature,
     });
 
