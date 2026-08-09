@@ -1,233 +1,346 @@
 "use client";
 
-import Link from "next/link";
-import {
-  ArrowRight,
-  BarChart3,
-  CheckCircle2,
-  Rocket,
-  Search,
-  ShieldCheck,
-  Smartphone,
-  Sparkles,
-  TrendingUp,
-  Zap,
-} from "lucide-react";
-import { useI18n } from "@/components/providers/I18nProvider";
-import { landingDesign, type LandingIconKey, type LandingTone } from "@/lib/landingDesign";
-import LanguageSwitcher from "./LanguageSwitcher";
-import Strands from "./Strands";
+import { useEffect } from "react";
+import { LANDING_BODY, LANDING_CSS } from "@/components/landing/landingContent";
 
-const icons = {
-  arrowRight: ArrowRight,
-  barChart: BarChart3,
-  check: CheckCircle2,
-  rocket: Rocket,
-  search: Search,
-  shield: ShieldCheck,
-  smartphone: Smartphone,
-  sparkles: Sparkles,
-  trending: TrendingUp,
-  zap: Zap,
-} satisfies Record<LandingIconKey, typeof Sparkles>;
+type AuthResponse = {
+  access_token?: string;
+  expires_in?: number;
+  redirect_url?: string;
+  detail?: string;
+};
 
-const actionStyles = {
-  primary:
-    "inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-neon-green/30 bg-neon-green/15 px-5 py-3 text-center text-sm font-semibold text-neon-green transition hover:border-neon-green/50 hover:bg-neon-green/20 sm:w-auto sm:px-6 sm:py-3.5",
-  ghost:
-    "inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-white/12 px-5 py-3 text-center text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.03] sm:w-auto sm:px-6 sm:py-3.5",
-} satisfies Record<LandingTone, string>;
+const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 
-function ActionLink({
-  href,
-  label,
-  icon,
-  tone = "ghost",
-}: {
-  href: string;
-  label: string;
-  icon?: LandingIconKey;
-  tone?: LandingTone;
-}) {
-  const Icon = icon ? icons[icon] : null;
+function mapLoginError(status: number, detail?: string) {
+  if (status === 401) return "Неверный логин или пароль.";
+  if (status === 403) return "Срок подписки истёк. Продлите доступ через Telegram.";
+  if (status === 422) return "Проверьте формат логина и пароля.";
+  if (status === 429) return "Слишком много попыток. Подождите минуту и попробуйте снова.";
+  if (status === 503) return "Сервис авторизации недоступен. Проверьте, что backend запущен.";
+  return detail || "Не удалось выполнить вход. Попробуйте ещё раз.";
+}
 
-  return (
-    <Link href={href} className={actionStyles[tone]}>
-      <span className="min-w-0 break-words">{label}</span>
-      {Icon ? <Icon className="h-4 w-4 shrink-0" /> : null}
-    </Link>
-  );
+function getAuthEndpoint() {
+  const queryApi = new URLSearchParams(window.location.search).get("api");
+  const configuredApi = queryApi || document.documentElement.dataset.apiBase || "";
+
+  if (configuredApi) {
+    return `${configuredApi.replace(/\/$/, "")}/api/v1/auth/login-password`;
+  }
+
+  return "/api/v1/auth/login-password";
 }
 
 export default function PublicLandingPage() {
-  const { t } = useI18n();
-  const translate = (key: string) => t(key as Parameters<typeof t>[0]);
-  const BrandIcon = icons[landingDesign.header.brandIcon];
-  const BadgeIcon = icons[landingDesign.hero.badgeIcon];
+  useEffect(() => {
+    const cleanups: Array<() => void> = [];
+    const timers: number[] = [];
+    const abortController = new AbortController();
+
+    const listen = (
+      target: EventTarget,
+      event: string,
+      handler: EventListenerOrEventListenerObject,
+      options?: AddEventListenerOptions | boolean,
+    ) => {
+      target.addEventListener(event, handler, options);
+      cleanups.push(() => target.removeEventListener(event, handler, options));
+    };
+
+    const listenElement = (
+      target: Element,
+      event: string,
+      handler: EventListenerOrEventListenerObject,
+      options?: AddEventListenerOptions | boolean,
+    ) => {
+      target.addEventListener(event, handler, options);
+      cleanups.push(() => target.removeEventListener(event, handler, options));
+    };
+
+    const toggle = document.getElementById("menuToggle") as HTMLButtonElement | null;
+    const menu = document.getElementById("mobileMenu") as HTMLElement | null;
+
+    const setMenu = (open: boolean) => {
+      if (!toggle || !menu) return;
+      menu.classList.toggle("open", open);
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-label", open ? "Закрыть меню" : "Открыть меню");
+      menu.setAttribute("aria-hidden", String(!open));
+    };
+
+    if (toggle && menu) {
+      listenElement(toggle, "click", () => setMenu(!menu.classList.contains("open")));
+
+      menu.querySelectorAll("a").forEach((anchor) => {
+        listenElement(anchor, "click", () => setMenu(false));
+      });
+
+      listen(document, "click", ((event: MouseEvent) => {
+        const target = event.target as Node | null;
+        if (
+          target &&
+          menu.classList.contains("open") &&
+          !menu.contains(target) &&
+          !toggle.contains(target)
+        ) {
+          setMenu(false);
+        }
+      }) as EventListener);
+
+      listen(window, "resize", () => {
+        if (window.innerWidth > 1100) setMenu(false);
+      }, { passive: true });
+    }
+
+    const syncVisualViewportHeight = () => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty("--visual-viewport-height", `${height}px`);
+    };
+
+    syncVisualViewportHeight();
+    listen(window, "resize", syncVisualViewportHeight, { passive: true });
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", syncVisualViewportHeight, { passive: true });
+      cleanups.push(() => window.visualViewport?.removeEventListener("resize", syncVisualViewportHeight));
+    }
+
+    const year = document.getElementById("year");
+    if (year) year.textContent = String(new Date().getFullYear());
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("visible");
+          observer.unobserve(entry.target);
+        });
+      },
+      { threshold: 0.12 },
+    );
+
+    document.querySelectorAll(".reveal:not(.visible)").forEach((element) => observer.observe(element));
+    cleanups.push(() => observer.disconnect());
+
+    const loginModal = document.getElementById("login") as HTMLElement | null;
+    const loginForm = document.getElementById("platformLoginForm") as HTMLFormElement | null;
+    const loginInput = document.getElementById("loginInput") as HTMLInputElement | null;
+    const passwordInput = document.getElementById("passwordInput") as HTMLInputElement | null;
+    const passwordToggle = document.getElementById("passwordToggle") as HTMLButtonElement | null;
+    const passwordEyeUse = document.getElementById("passwordEyeUse") as SVGUseElement | null;
+    const loginAlert = document.getElementById("loginAlert") as HTMLElement | null;
+    const loginSubmit = document.getElementById("loginSubmit") as HTMLButtonElement | null;
+    const initialSubmitMarkup = loginSubmit?.innerHTML ?? "";
+    let lastFocusedElement: HTMLElement | null = null;
+
+    const clearAlert = () => {
+      if (!loginAlert) return;
+      loginAlert.className = "login-alert";
+      loginAlert.textContent = "";
+    };
+
+    const showAlert = (message: string, type: "error" | "success" = "error") => {
+      if (!loginAlert) return;
+      loginAlert.className = `login-alert show${type === "success" ? " success" : ""}`;
+      const iconId = type === "success" ? "check" : "alert";
+      loginAlert.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#${iconId}"/></svg><span></span>`;
+      const messageElement = loginAlert.querySelector("span");
+      if (messageElement) messageElement.textContent = message;
+    };
+
+    const validateLogin = () => {
+      if (!loginInput) return false;
+      const isValid = LOGIN_RE.test(loginInput.value.trim());
+      loginInput.setAttribute("aria-invalid", String(!isValid));
+      return isValid;
+    };
+
+    const validatePassword = () => {
+      if (!passwordInput) return false;
+      const isValid = passwordInput.value.length === 32;
+      passwordInput.setAttribute("aria-invalid", String(!isValid));
+      return isValid;
+    };
+
+    const openLogin = (event?: Event) => {
+      event?.preventDefault();
+      if (!loginModal || !loginInput) return;
+
+      lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      loginModal.classList.add("open");
+      loginModal.setAttribute("aria-hidden", "false");
+      document.body.classList.add("modal-open");
+
+      if (window.location.hash !== "#login") {
+        window.history.pushState(null, "", "#login");
+      }
+
+      const timer = window.setTimeout(() => loginInput.focus(), 80);
+      timers.push(timer);
+    };
+
+    const closeLogin = (event?: Event) => {
+      event?.preventDefault();
+      if (!loginModal) return;
+
+      loginModal.classList.remove("open");
+      loginModal.setAttribute("aria-hidden", "true");
+      document.body.classList.remove("modal-open");
+
+      if (window.location.hash === "#login") {
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      }
+
+      lastFocusedElement?.focus();
+    };
+
+    document.querySelectorAll("[data-open-login]").forEach((button) => {
+      listenElement(button, "click", openLogin);
+    });
+
+    document.querySelectorAll("[data-close-login]").forEach((button) => {
+      listenElement(button, "click", closeLogin);
+    });
+
+    listen(window, "hashchange", () => {
+      if (window.location.hash === "#login") openLogin();
+      else if (loginModal?.classList.contains("open")) closeLogin();
+    });
+
+    listen(document, "keydown", ((event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+
+      if (loginModal?.classList.contains("open")) {
+        closeLogin(event);
+      } else if (menu?.classList.contains("open")) {
+        setMenu(false);
+        toggle?.focus();
+      }
+    }) as EventListener);
+
+    if (window.location.hash === "#login") openLogin();
+
+    if (passwordToggle && passwordInput && passwordEyeUse) {
+      listenElement(passwordToggle, "click", () => {
+        const isVisible = passwordInput.type === "text";
+        passwordInput.type = isVisible ? "password" : "text";
+        passwordToggle.setAttribute("aria-pressed", String(!isVisible));
+        passwordToggle.setAttribute("aria-label", isVisible ? "Показать пароль" : "Скрыть пароль");
+        passwordEyeUse.setAttribute("href", isVisible ? "#eye" : "#eye-off");
+        passwordInput.focus();
+      });
+    }
+
+    if (loginInput) {
+      listenElement(loginInput, "input", () => {
+        clearAlert();
+        validateLogin();
+      });
+    }
+
+    if (passwordInput) {
+      listenElement(passwordInput, "input", () => {
+        clearAlert();
+        validatePassword();
+      });
+    }
+
+    if (loginForm && loginInput && passwordInput && loginSubmit) {
+      listenElement(loginForm, "submit", (event) => {
+        event.preventDefault();
+        clearAlert();
+
+        const loginOk = validateLogin();
+        const passwordOk = validatePassword();
+
+        if (!loginOk || !passwordOk) {
+          showAlert("Исправьте выделенные поля и повторите вход.");
+          (loginOk ? passwordInput : loginInput).focus();
+          return;
+        }
+
+        loginSubmit.disabled = true;
+        loginSubmit.innerHTML = '<span class="login-spinner" aria-hidden="true"></span><span>Проверяем доступ…</span>';
+
+        void (async () => {
+          try {
+            const response = await fetch(getAuthEndpoint(), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                login: loginInput.value.trim(),
+                password: passwordInput.value.toUpperCase(),
+              }),
+              signal: abortController.signal,
+            });
+
+            const raw = await response.text();
+            let data: AuthResponse = {};
+
+            try {
+              data = raw ? (JSON.parse(raw) as AuthResponse) : {};
+            } catch {
+              data = { detail: raw };
+            }
+
+            if (!response.ok) {
+              throw new Error(mapLoginError(response.status, data.detail));
+            }
+
+            if (!data.access_token) {
+              throw new Error("Сервер не вернул токен доступа.");
+            }
+
+            window.localStorage.setItem("potapoff.access_token", data.access_token);
+            window.localStorage.setItem(
+              "potapoff.auth_meta",
+              JSON.stringify({
+                access_token: data.access_token,
+                expires_in: data.expires_in || 86400,
+                saved_at: Date.now(),
+              }),
+            );
+
+            showAlert("Вход выполнен. Открываем рабочую панель…", "success");
+            loginSubmit.innerHTML = '<svg class="icon"><use href="#check"/></svg><span>Доступ подтверждён</span>';
+
+            const timer = window.setTimeout(() => {
+              window.location.assign(data.redirect_url || "/dashboard");
+            }, 700);
+            timers.push(timer);
+          } catch (error) {
+            if (abortController.signal.aborted) return;
+
+            const message =
+              error instanceof TypeError
+                ? "Не удалось связаться с API авторизации."
+                : error instanceof Error
+                  ? error.message
+                  : "Ошибка входа.";
+
+            showAlert(message);
+            loginSubmit.disabled = false;
+            loginSubmit.innerHTML = initialSubmitMarkup;
+          }
+        })();
+      });
+    }
+
+    return () => {
+      abortController.abort();
+      observer.disconnect();
+      timers.forEach((timer) => window.clearTimeout(timer));
+      cleanups.reverse().forEach((cleanup) => cleanup());
+      document.body.classList.remove("modal-open");
+      document.documentElement.style.removeProperty("--visual-viewport-height");
+    };
+  }, []);
 
   return (
-    <div className={`${landingDesign.shell.pageClassName} min-w-0`}>
-      <div className={`${landingDesign.shell.containerClassName} min-w-0 px-3 py-3 sm:px-6 sm:py-5 lg:px-10 lg:py-6`}>
-        <header className="flex min-w-0 flex-col gap-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between sm:rounded-3xl sm:px-5">
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-white/45 sm:text-xs sm:tracking-[0.3em]">
-              <BrandIcon className="h-3.5 w-3.5 shrink-0 text-neon-green" />
-              <span className="min-w-0 break-words">{translate(landingDesign.header.brandKey)}</span>
-            </div>
-            <p className="mt-1 break-words text-xs leading-5 text-white/45 sm:text-sm">{translate(landingDesign.header.subtitleKey)}</p>
-          </div>
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <div className="self-start sm:self-auto">
-              <LanguageSwitcher />
-            </div>
-            {landingDesign.header.actions.map((action) => (
-              <ActionLink
-                key={action.href}
-                href={action.href}
-                label={translate(action.labelKey)}
-                icon={action.icon}
-                tone={action.tone}
-              />
-            ))}
-          </div>
-        </header>
-
-        <main className="grid min-w-0 flex-1 items-center gap-8 py-9 sm:gap-10 sm:py-12 lg:grid-cols-[1.05fr_0.95fr] lg:gap-12 lg:py-16">
-          <section className="min-w-0 max-w-2xl">
-            <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-neon-green/25 bg-neon-green/10 px-3 py-2 text-[11px] font-semibold text-neon-green sm:px-4 sm:text-xs">
-              <BadgeIcon className="h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0 break-words">{translate(landingDesign.hero.badgeKey)}</span>
-            </div>
-
-            <h1 className="mt-5 break-words text-3xl font-black leading-[1.05] text-white sm:mt-6 sm:text-5xl lg:text-6xl">
-              {translate(landingDesign.hero.titleKey)}
-            </h1>
-
-            <p className="mt-4 max-w-xl break-words text-sm leading-6 text-white/55 sm:mt-5 sm:text-lg sm:leading-7">
-              {translate(landingDesign.hero.subtitleKey)}
-            </p>
-
-            <div className="mt-7 flex min-w-0 flex-col gap-3 sm:mt-8 sm:flex-row sm:flex-wrap">
-              {landingDesign.hero.actions.map((action) => (
-                <ActionLink key={action.href} href={action.href} label={translate(action.labelKey)} tone={action.tone} />
-              ))}
-            </div>
-
-            <div className="mt-7 flex min-w-0 flex-wrap items-center gap-2.5 sm:mt-8 sm:gap-4">
-              {landingDesign.trustBadges.map((badge) => {
-                const Icon = icons[badge.icon];
-                return (
-                  <div
-                    key={badge.labelKey}
-                    className="flex max-w-full items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] text-white/60 sm:text-xs"
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0 text-neon-green" />
-                    <span className="min-w-0 break-words">{translate(badge.labelKey)}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-8 grid min-w-0 grid-cols-1 gap-3 sm:mt-10 sm:grid-cols-3 sm:gap-4">
-              {landingDesign.metrics.map((metric) => (
-                <div key={metric.labelKey} className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                  <div className="break-words text-2xl font-bold text-white sm:text-3xl">{metric.value}</div>
-                  <div className="mt-1 break-words text-[10px] uppercase tracking-[0.16em] text-white/40 sm:text-xs sm:tracking-[0.2em]">
-                    {translate(metric.labelKey)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="relative min-w-0">
-            <div className={landingDesign.visual.outerGlowClassName} />
-            <div className={`${landingDesign.visual.frameClassName} min-w-0 p-2.5 sm:p-6`}>
-              <div className={`${landingDesign.visual.stageClassName} min-h-[340px] min-w-0 p-4 sm:min-h-[460px] sm:p-6`}>
-                <div className="pointer-events-none absolute inset-0">
-                  <Strands className="absolute inset-0 opacity-100" {...landingDesign.visual.strandProps} />
-                </div>
-                <div className={landingDesign.visual.overlayClassName} />
-                <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),transparent_26%,transparent_74%,rgba(255,255,255,0.07))]" />
-                <div className="relative min-w-0">
-                  <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="break-words text-[10px] uppercase tracking-[0.22em] text-white/55 sm:text-xs sm:tracking-[0.3em]">
-                        {translate(landingDesign.visual.kickerKey)}
-                      </p>
-                      <h2 className="mt-2 break-words text-lg font-bold text-white sm:text-xl">{translate(landingDesign.visual.titleKey)}</h2>
-                    </div>
-                    <div className="w-fit max-w-full rounded-full border border-fuchsia-200/40 bg-fuchsia-300/20 px-3 py-1 text-xs font-semibold text-fuchsia-50 shadow-[0_0_28px_rgba(232,121,249,0.35)]">
-                      {landingDesign.visual.badge}
-                    </div>
-                  </div>
-
-                  <div className="mt-5 grid min-h-[230px] min-w-0 items-end gap-3 sm:mt-6 sm:min-h-[350px]">
-                    <div className="min-w-0 rounded-[1.2rem] border border-white/14 bg-black/36 p-3 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_50px_rgba(139,92,246,0.18)] backdrop-blur-md sm:rounded-[1.4rem] sm:p-4">
-                      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                        <div className="min-w-0 break-words text-[10px] uppercase tracking-[0.2em] text-white/55 sm:text-xs sm:tracking-[0.28em]">
-                          {landingDesign.visual.panelLabel}
-                        </div>
-                        <div className="w-fit max-w-full rounded-full border border-neon-green/35 bg-neon-green/20 px-3 py-1 text-xs font-semibold text-neon-green shadow-[0_0_22px_rgba(34,197,94,0.2)]">
-                          {translate(landingDesign.visual.statusKey)}
-                        </div>
-                      </div>
-                      <p className="mt-3 break-words text-xs leading-5 text-white/92 sm:text-sm sm:leading-6">{landingDesign.visual.body}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-        </main>
-
-        <section className="min-w-0 pb-8 sm:pb-10">
-          <div className="mb-6 text-center sm:mb-8">
-            <h2 className="break-words text-xl font-bold text-white sm:text-3xl">{t("landing.howItWorksTitle")}</h2>
-            <p className="mt-2 break-words text-sm leading-6 text-white/50">{t("landing.howItWorksSubtitle")}</p>
-          </div>
-          <div className="grid min-w-0 gap-4 sm:grid-cols-3">
-            {landingDesign.steps.map((step) => {
-              const Icon = icons[step.icon];
-              return (
-                <div key={step.num} className="relative min-w-0 rounded-2xl border border-white/10 bg-white/[0.03] p-5 sm:rounded-3xl sm:p-6">
-                  <div className="text-[10px] font-black uppercase tracking-[0.3em] text-neon-green">{step.num}</div>
-                  <div className="mt-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-neon-green/20 bg-neon-green/10 text-neon-green">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <h3 className="mt-4 break-words text-base font-semibold text-white">{translate(step.titleKey)}</h3>
-                  <p className="mt-2 break-words text-sm leading-6 text-white/45">{translate(step.descKey)}</p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        <section id="features" className="grid min-w-0 gap-4 pb-8 sm:grid-cols-2 sm:pb-10 xl:grid-cols-4">
-          {landingDesign.features.map((feature) => {
-            const Icon = icons[feature.icon];
-            return (
-              <div key={feature.titleKey} className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.03] p-5 sm:rounded-3xl">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-neon-green/20 bg-neon-green/10 text-neon-green">
-                  <Icon className="h-5 w-5" />
-                </div>
-                <h3 className="mt-4 break-words text-base font-semibold text-white">{translate(feature.titleKey)}</h3>
-                <p className="mt-2 break-words text-sm leading-6 text-white/45">{translate(feature.textKey)}</p>
-              </div>
-            );
-          })}
-        </section>
-
-        <section className="mb-8 min-w-0 rounded-2xl border border-white/10 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(139,92,246,0.08))] p-5 text-center sm:mb-10 sm:rounded-[2rem] sm:p-10">
-          <h2 className="break-words text-xl font-bold text-white sm:text-3xl">{translate(landingDesign.cta.titleKey)}</h2>
-          <p className="mx-auto mt-3 max-w-lg break-words text-sm leading-6 text-white/55">{translate(landingDesign.cta.subtitleKey)}</p>
-          <p className="mt-5 break-words text-sm font-semibold text-white/80 sm:mt-6">{translate(landingDesign.cta.buttonKey)}</p>
-        </section>
-
-        <footer className="flex min-w-0 flex-col gap-3 border-t border-white/10 py-5 text-sm text-white/40 sm:flex-row sm:items-center sm:justify-between">
-          <p className="break-words">{t("landing.footer.copy", { year: new Date().getFullYear() })}</p>
-        </footer>
-      </div>
-    </div>
+    <>
+      <style dangerouslySetInnerHTML={{ __html: LANDING_CSS }} />
+      <div className="potapoff-landing" dangerouslySetInnerHTML={{ __html: LANDING_BODY }} />
+    </>
   );
 }
