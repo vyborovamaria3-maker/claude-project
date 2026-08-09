@@ -64,6 +64,7 @@ class SubscriptionSettingsAdmin(ModelView, model=SubscriptionSettings):
     name_plural = "Subscription settings"
     icon = "fa-solid fa-credit-card"
     column_list = [
+        "paid_subscriptions_enabled",
         "monthly_price_sol",
         "monthly_price_usdt",
         "free_demo_enabled",
@@ -72,6 +73,7 @@ class SubscriptionSettingsAdmin(ModelView, model=SubscriptionSettings):
         "updated_at",
     ]
     form_columns = [
+        "paid_subscriptions_enabled",
         "monthly_price_sol",
         "monthly_price_usdt",
         "free_demo_enabled",
@@ -79,6 +81,7 @@ class SubscriptionSettingsAdmin(ModelView, model=SubscriptionSettings):
         "solana_recipient_wallet",
     ]
     column_labels = {
+        "paid_subscriptions_enabled": "Paid subscriptions enabled",
         "monthly_price_sol": "Monthly price, SOL",
         "monthly_price_usdt": "Monthly price, USDT (Solana)",
         "free_demo_enabled": "Free demo enabled",
