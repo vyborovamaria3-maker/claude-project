@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -21,6 +21,7 @@ class SubscriptionOrderCreate(BaseModel):
     payload: str = Field(min_length=16, max_length=128)
     telegram_user_id: int = Field(ge=1)
     username: str | None = Field(default=None, max_length=255)
+    telegram_profile: dict[str, Any] | None = None
     login: str = Field(min_length=4, max_length=32)
     currency: Literal["SOL", "USDT", "DEMO"]
     total_amount: int = Field(ge=0, le=9_000_000_000_000_000)
