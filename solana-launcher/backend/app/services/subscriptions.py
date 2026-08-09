@@ -4,6 +4,7 @@ import base64
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash
+from app.models.auth_log import AuthLog
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
 from app.models.user import User
@@ -57,6 +59,38 @@ def decrypt_order_password(ciphertext: str | None, secret_key: str) -> str | Non
         return _fernet(secret_key).decrypt(ciphertext.encode("ascii")).decode("utf-8")
     except (InvalidToken, ValueError) as exc:
         raise SubscriptionPasswordError("Unable to decrypt subscription password") from exc
+
+
+def _profile_text(profile: dict[str, Any], key: str, max_length: int = 255) -> str | None:
+    value = profile.get(key)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized[:max_length]
+
+
+def _profile_bool(profile: dict[str, Any], key: str) -> bool | None:
+    value = profile.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def _apply_telegram_profile(user: User, order: SubscriptionOrder) -> None:
+    profile = dict(order.telegram_profile or {})
+    user.telegram_username = order.username or _profile_text(profile, "username")
+    user.first_name = _profile_text(profile, "first_name")
+    user.last_name = _profile_text(profile, "last_name")
+    user.photo_url = _profile_text(profile, "photo_url", 4096)
+    user.telegram_language_code = _profile_text(profile, "language_code", 32)
+    user.telegram_is_premium = _profile_bool(profile, "is_premium")
+    user.telegram_added_to_attachment_menu = _profile_bool(profile, "added_to_attachment_menu")
+    user.telegram_allows_write_to_pm = _profile_bool(profile, "allows_write_to_pm")
+    user.telegram_profile = profile or None
+
+    display_name = " ".join(part for part in (user.first_name, user.last_name) if part)
+    if display_name:
+        user.full_name = display_name[:255]
 
 
 async def get_subscription_settings(session: AsyncSession) -> SubscriptionSettings:
@@ -166,6 +200,7 @@ async def create_subscription_order(
         payload=payload.payload,
         telegram_user_id=payload.telegram_user_id,
         username=payload.username,
+        telegram_profile=payload.telegram_profile,
         login=payload.login,
         currency=payload.currency,
         total_amount=payload.total_amount,
@@ -176,6 +211,20 @@ async def create_subscription_order(
         status="pending",
     )
     session.add(order)
+    session.add(
+        AuthLog(
+            event_type="subscription_access_requested",
+            provider="telegram_miniapp",
+            success=True,
+            telegram_id=str(payload.telegram_user_id),
+            meta={
+                "login": payload.login,
+                "currency": payload.currency,
+                "access_days": payload.access_days,
+                "order_payload": payload.payload,
+            },
+        )
+    )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -252,7 +301,6 @@ async def complete_subscription_order(
     if user is None:
         user = User(
             telegram_id=str(order.telegram_user_id),
-            telegram_username=order.username,
             email=order.login,
             is_active=True,
         )
@@ -260,9 +308,10 @@ async def complete_subscription_order(
         current_expiry = None
     else:
         current_expiry = _as_utc(user.subscription_expires_at)
-        user.telegram_username = order.username
         user.email = order.login
         user.is_active = True
+
+    _apply_telegram_profile(user, order)
 
     password = generate_subscription_password()
     base_expiry = current_expiry if current_expiry and current_expiry > now else now
@@ -274,6 +323,22 @@ async def complete_subscription_order(
     order.password_ciphertext = encrypt_order_password(password, secret_key)
     order.payment_signature = completion.payment_signature
     order.paid_at = now
+
+    session.add(
+        AuthLog(
+            user_id=user.id,
+            event_type="subscription_credentials_issued",
+            provider="telegram_miniapp",
+            success=True,
+            telegram_id=str(order.telegram_user_id),
+            meta={
+                "login": order.login,
+                "currency": order.currency,
+                "access_days": order.access_days,
+                "order_payload": order.payload,
+            },
+        )
+    )
 
     try:
         await session.commit()
