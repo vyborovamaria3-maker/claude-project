@@ -63,7 +63,7 @@ export default function SidebarNav() {
 
   const navItems = siteDesign.nav[activeTab];
   const allNavItems = useMemo(
-    () => [...navItems, ...siteDesign.nav.common],
+    () => [...navItems, ...siteDesign.nav.common].filter((item) => !item.href.startsWith("/database")),
     [navItems]
   );
 
