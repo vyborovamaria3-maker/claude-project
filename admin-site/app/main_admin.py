@@ -7,6 +7,17 @@ from .analysis_editor import LiveAnalysisProfileStore
 from .analysis_editor_api import build_analysis_editor_router
 from .main import create_app as create_base_app
 from .security_v2 import install_security
+from .services import TELEGRAM_TABLES
+
+
+for _table in (
+    "telegram_users",
+    "telegram_calls",
+    "telegram_channel_scores",
+    "telegram_token_mentions",
+):
+    if _table not in TELEGRAM_TABLES:
+        TELEGRAM_TABLES.append(_table)
 
 
 def create_app() -> FastAPI:
