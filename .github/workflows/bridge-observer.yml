@@ -1,0 +1,55 @@
+name: Bridge observer
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  observe:
+    if: ${{ github.event.pull_request.title == '[DEPLOY] POTAPoff landing v2' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Observe deployment bridge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 24); do
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow production-dispatch-bridge.yml \
+              --limit 10 \
+              --json databaseId,event,status,conclusion,createdAt,displayTitle,headSha \
+              > /tmp/bridge-runs.json
+
+            python - <<'PY' > /tmp/bridge-result.txt
+import json
+from pathlib import Path
+runs=json.loads(Path('/tmp/bridge-runs.json').read_text())
+target=[r for r in runs if r.get('event') == 'pull_request_target']
+if not target:
+    print('found=false')
+else:
+    r=target[0]
+    print('found=true')
+    for k in ('databaseId','event','status','conclusion','createdAt','displayTitle','headSha'):
+        print(f'{k}={r.get(k)}')
+PY
+            cat /tmp/bridge-result.txt
+            if grep -q '^found=true' /tmp/bridge-result.txt; then
+              break
+            fi
+            sleep 10
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-observer-result
+          path: |
+            /tmp/bridge-result.txt
+            /tmp/bridge-runs.json
+          retention-days: 1
