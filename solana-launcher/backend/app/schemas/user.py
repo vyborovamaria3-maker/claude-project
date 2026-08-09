@@ -13,6 +13,11 @@ class UserBase(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     photo_url: str | None = None
+    telegram_language_code: str | None = None
+    telegram_is_premium: bool | None = None
+    telegram_added_to_attachment_menu: bool | None = None
+    telegram_allows_write_to_pm: bool | None = None
+    telegram_profile: dict | None = None
 
 
 class UserCreate(UserBase):
