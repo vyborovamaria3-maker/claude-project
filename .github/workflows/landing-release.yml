@@ -56,9 +56,10 @@ jobs:
       - name: Verify public site
         run: |
           set -Eeuo pipefail
+          LANDING_MARKER='Запускайте токены, анализируйте кошельки'
           for attempt in $(seq 1 18); do
             if curl -fsSL --max-time 15 https://www.potapoff.fun/ > /tmp/landing.html \
-              && grep -Fq 'Единый рабочий слой' /tmp/landing.html \
+              && grep -Fq "$LANDING_MARKER" /tmp/landing.html \
               && curl -fsSL --max-time 15 https://www.potapoff.fun/dashboard >/dev/null; then
               echo "POTAPOFF_LANDING_LIVE"
               exit 0
