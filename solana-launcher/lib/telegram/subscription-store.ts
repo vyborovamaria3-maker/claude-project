@@ -5,6 +5,7 @@ export type SubscriptionCurrency = "SOL" | "USDT" | "DEMO";
 export type SubscriptionSettings = {
   monthly_price_sol: string;
   monthly_price_usdt: string;
+  paid_subscriptions_enabled: boolean;
   free_demo_enabled: boolean;
   demo_days: number;
   solana_recipient_wallet: string;
@@ -139,7 +140,6 @@ export async function getSubscriptionOrder(payload: string): Promise<Subscriptio
 
 export async function markSubscriptionPaid(input: {
   payload: string;
-  password: string;
   paymentSignature?: string | null;
 }): Promise<SubscriptionOrder> {
   return requestBackend<SubscriptionOrder>(
@@ -147,7 +147,6 @@ export async function markSubscriptionPaid(input: {
     {
       method: "POST",
       body: JSON.stringify({
-        password: input.password,
         payment_signature: input.paymentSignature ?? null,
       }),
     }
