@@ -1,0 +1,27 @@
+name: Landing release status comment
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  report:
+    if: ${{ github.event.issue.pull_request && github.event.comment.body == '/status-landing-release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report latest landing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -Eeuo pipefail
+          JSON="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/actions/workflows/landing-release.yml/runs" -f event=workflow_dispatch -f per_page=5)"
+          BODY="$(printf '%s' "$JSON" | jq -r 'if (.workflow_runs|length)==0 then "LANDING_RELEASE_STATUS no_runs" else .workflow_runs[0] | "LANDING_RELEASE_STATUS run_id=\(.id) status=\(.status) conclusion=\(.conclusion // "null") run_number=\(.run_number) attempt=\(.run_attempt) head_branch=\(.head_branch) head_sha=\(.head_sha) created_at=\(.created_at) updated_at=\(.updated_at) url=\(.html_url)" end')"
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$BODY" >/dev/null
