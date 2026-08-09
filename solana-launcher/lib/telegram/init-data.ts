@@ -5,6 +5,12 @@ export type TelegramInitUser = {
   username?: string;
   first_name?: string;
   last_name?: string;
+  language_code?: string;
+  is_premium?: boolean;
+  added_to_attachment_menu?: boolean;
+  allows_write_to_pm?: boolean;
+  photo_url?: string;
+  [key: string]: unknown;
 };
 
 const INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
@@ -82,5 +88,9 @@ export function getDevTelegramUser(): TelegramInitUser {
     id: Number(process.env.DEV_TELEGRAM_USER_ID || 8881301382),
     username: process.env.DEV_TELEGRAM_USERNAME || "Soft777bot",
     first_name: "Dev",
+    language_code: "en",
+    is_premium: false,
+    added_to_attachment_menu: false,
+    allows_write_to_pm: true,
   };
 }
