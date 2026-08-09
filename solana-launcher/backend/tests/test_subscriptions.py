@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from app.core.security import verify_password
+from app.models.auth_log import AuthLog
 from app.models.subscription_order import SubscriptionOrder
 from app.models.user import User
 from sqlalchemy import select
@@ -23,11 +24,13 @@ def paid_order_body(
     currency: str = "SOL",
     total_amount: int = 250_000_000,
     username: str | None = None,
+    telegram_profile: dict | None = None,
 ):
     return {
         "payload": payload,
         "telegram_user_id": telegram_user_id,
         "username": username,
+        "telegram_profile": telegram_profile,
         "login": login,
         "currency": currency,
         "total_amount": total_amount,
@@ -38,11 +41,19 @@ def paid_order_body(
     }
 
 
-def demo_order_body(*, payload: str, telegram_user_id: int, login: str, days: int = 7):
+def demo_order_body(
+    *,
+    payload: str,
+    telegram_user_id: int,
+    login: str,
+    days: int = 7,
+    telegram_profile: dict | None = None,
+):
     return {
         "payload": payload,
         "telegram_user_id": telegram_user_id,
         "username": "demo",
+        "telegram_profile": telegram_profile,
         "login": login,
         "currency": "DEMO",
         "total_amount": 0,
@@ -84,6 +95,17 @@ async def test_subscription_settings_have_safe_defaults(client):
 
 async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(client, test_app):
     payload = order_payload("b")
+    telegram_profile = {
+        "id": 202,
+        "username": "bob",
+        "first_name": "Bob",
+        "last_name": "Trader",
+        "language_code": "ru",
+        "is_premium": True,
+        "added_to_attachment_menu": True,
+        "allows_write_to_pm": True,
+        "photo_url": "https://example.test/bob.jpg",
+    }
 
     create_response = await client.post(
         "/api/v1/subscriptions/orders",
@@ -92,6 +114,7 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
             payload=payload,
             telegram_user_id=202,
             username="bob",
+            telegram_profile=telegram_profile,
             login="bob_pro",
             ref="ref-b",
         ),
@@ -139,12 +162,33 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
         assert order.password_ciphertext
         assert order.password_ciphertext != password
         assert order.payment_signature == "signature-b"
+        assert order.telegram_profile == telegram_profile
 
         user_result = await session.execute(select(User).where(User.telegram_id == "202"))
         user = user_result.scalar_one()
         assert user.email == "bob_pro"
         assert user.hashed_password
         assert verify_password(password, user.hashed_password)
+        assert user.telegram_username == "bob"
+        assert user.first_name == "Bob"
+        assert user.last_name == "Trader"
+        assert user.full_name == "Bob Trader"
+        assert user.telegram_language_code == "ru"
+        assert user.telegram_is_premium is True
+        assert user.telegram_added_to_attachment_menu is True
+        assert user.telegram_allows_write_to_pm is True
+        assert user.photo_url == "https://example.test/bob.jpg"
+        assert user.telegram_profile == telegram_profile
+
+        access_logs = await session.execute(
+            select(AuthLog)
+            .where(AuthLog.telegram_id == "202")
+            .where(AuthLog.provider == "telegram_miniapp")
+            .order_by(AuthLog.created_at)
+        )
+        events = [row.event_type for row in access_logs.scalars().all()]
+        assert "subscription_access_requested" in events
+        assert "subscription_credentials_issued" in events
 
 
 async def test_completion_rejects_caller_supplied_password(client):
@@ -299,6 +343,12 @@ async def test_free_demo_is_one_time_and_needs_no_payment_signature(client, test
             telegram_user_id=501,
             login="demo_login",
             days=14,
+            telegram_profile={
+                "id": 501,
+                "first_name": "Demo",
+                "language_code": "en",
+                "is_premium": False,
+            },
         ),
     )
     assert create.status_code == 201
@@ -321,6 +371,9 @@ async def test_free_demo_is_one_time_and_needs_no_payment_signature(client, test
         user_result = await session.execute(select(User).where(User.telegram_id == "501"))
         user = user_result.scalar_one()
         assert user.email == "demo_login"
+        assert user.first_name == "Demo"
+        assert user.telegram_language_code == "en"
+        assert user.telegram_is_premium is False
         assert verify_password(completed["password"], user.hashed_password)
 
     duplicate_demo = await client.post(
