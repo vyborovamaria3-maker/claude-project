@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateAccessPassword } from "@/lib/telegram/access";
 import {
   getSubscriptionOrder,
   markSubscriptionPaid,
@@ -24,12 +23,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, password: order.password });
   }
 
-  const password = generateAccessPassword();
   const completed = await markSubscriptionPaid({
     payload,
-    password,
     paymentSignature: order.currency === "DEMO" ? null : `dev:${payload}`,
   });
 
-  return NextResponse.json({ ok: true, password: completed.password || password });
+  return NextResponse.json({ ok: true, password: completed.password });
 }
