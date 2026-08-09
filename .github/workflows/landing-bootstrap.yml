@@ -1,0 +1,83 @@
+name: Landing bootstrap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "POTAPoff-landing-deploy-overlay-v2.zip"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: landing-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply landing overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f POTAPoff-landing-deploy-overlay-v2.zip
+          unzip -o POTAPoff-landing-deploy-overlay-v2.zip
+          rm -f README-DEPLOY.txt
+          rm -f POTAPoff-landing-deploy-overlay-v2.zip
+          rm -f POTAPoff-landing-integration.patch
+
+          test -f solana-launcher/components/PublicLandingPage.tsx
+          test -f solana-launcher/components/DashboardHomePage.tsx
+          test -f solana-launcher/components/landing/landingContent.ts
+          grep -q 'PublicLandingPage' solana-launcher/app/page.tsx
+          grep -q 'DashboardHomePage' solana-launcher/app/dashboard/page.tsx
+          grep -q 'publicRoutes: \["/"' solana-launcher/lib/siteDesign.ts
+          grep -q 'window.location.href = "/dashboard"' solana-launcher/components/PasswordLoginForm.tsx
+          git diff --check
+
+      - name: Verify Next.js production build
+        working-directory: solana-launcher
+        env:
+          NEXT_PUBLIC_APP_URL: https://potapoff.fun
+          NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
+          NEXT_PUBLIC_BACKEND_URL: https://potapoff.fun/fastapi
+          NEXT_PUBLIC_TELEGRAM_BOT_URL: https://t.me/Soft777bot
+        run: |
+          set -euo pipefail
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Commit verified landing
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No landing changes to commit"
+            exit 0
+          fi
+          git commit -m "Deploy responsive POTAPoff landing"
+          git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Start POTAPoff production deployment
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run potapoff-production.yml --ref main
+          echo "Production deployment dispatched"
