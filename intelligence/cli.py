@@ -13,7 +13,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from intelligence.bootstrap import IntelligenceRuntime, build_sqlite_runtime
+from intelligence.bootstrap import (
+    IntelligenceRuntime,
+    build_postgres_runtime,
+    build_sqlite_runtime,
+)
 from intelligence.errors.exceptions import IntelligenceError
 from intelligence.health.doctor import run_registry_health_check, summarize_health
 from intelligence.security.sanitizer import sanitize_payload, sanitize_text
@@ -27,9 +31,20 @@ RuntimeFactory = Callable[[str | Path], IntelligenceRuntime]
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="potapoff-intelligence")
     parser.add_argument(
+        "--backend",
+        choices=("sqlite", "postgres"),
+        default=os.getenv("POTAPOFF_INTELLIGENCE_BACKEND", "sqlite").strip().lower(),
+        help="Durable runtime backend",
+    )
+    parser.add_argument(
         "--db",
         default=os.getenv("POTAPOFF_INTELLIGENCE_DB", DEFAULT_DB_PATH),
         help="SQLite runtime database path",
+    )
+    parser.add_argument(
+        "--postgres-dsn",
+        default=os.getenv("POTAPOFF_INTELLIGENCE_POSTGRES_DSN", ""),
+        help="PostgreSQL DSN; prefer injecting this from a secret manager",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -76,6 +91,17 @@ def _job_payload(job: IntelligenceJob) -> dict[str, Any]:
         "error": sanitize_text(job.error) if job.error else None,
         "payload": sanitize_payload(job.payload),
     }
+
+
+def _runtime_from_args(args: argparse.Namespace) -> IntelligenceRuntime:
+    if args.backend == "postgres":
+        dsn = str(args.postgres_dsn).strip()
+        if not dsn:
+            raise ValueError(
+                "PostgreSQL backend requires POTAPOFF_INTELLIGENCE_POSTGRES_DSN or --postgres-dsn"
+            )
+        return build_postgres_runtime(dsn)
+    return build_sqlite_runtime(args.db)
 
 
 async def _doctor(runtime: IntelligenceRuntime) -> int:
@@ -139,12 +165,10 @@ def _documents(runtime: IntelligenceRuntime, limit: int) -> int:
                     "id": document.id,
                     "source": document.source,
                     "provider": document.provider,
-                    "url": document.url,
                     "author": document.author,
                     "published_at": document.published_at,
                     "collected_at": document.collected_at,
                     "entities": document.entities,
-                    "metrics": document.metrics,
                     "raw_hash": document.raw_hash,
                 }
                 for document in selected
@@ -157,13 +181,14 @@ def _documents(runtime: IntelligenceRuntime, limit: int) -> int:
 def main(
     argv: Sequence[str] | None = None,
     *,
-    runtime_factory: RuntimeFactory = build_sqlite_runtime,
+    runtime_factory: RuntimeFactory | None = None,
 ) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
-        with runtime_factory(args.db) as runtime:
+        runtime = runtime_factory(args.db) if runtime_factory is not None else _runtime_from_args(args)
+        with runtime:
             if args.command == "doctor":
                 return asyncio.run(_doctor(runtime))
             if args.command == "enqueue":
