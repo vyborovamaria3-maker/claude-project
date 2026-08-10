@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timezone
 
 from intelligence.core.models import IntelligenceDocument
 from intelligence.errors.exceptions import NormalizationError, ProviderError
 from intelligence.providers.web.client import JinaReaderClient
+from intelligence.providers.web.normalizer import web_content_to_document
 from intelligence.providers.web.provider import WebIntelligenceProvider
 
 
@@ -92,10 +94,23 @@ class WebProviderTests(unittest.IsolatedAsyncioTestCase):
             id="1",
             source="github",
             content="x",
-            collected_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+            collected_at=datetime.now(timezone.utc),
         )
         with self.assertRaises(NormalizationError):
             provider.normalize(document)
+
+    async def test_empty_reader_content_is_rejected(self) -> None:
+        provider = WebIntelligenceProvider(client=FakeJinaClient("   \n"))
+        with self.assertRaises(NormalizationError):
+            await provider.collect("https://example.com/empty")
+
+
+class WebNormalizerTests(unittest.TestCase):
+    def test_hash_is_stable_for_same_normalized_evidence(self) -> None:
+        first = web_content_to_document("https://example.com/a", "Same body")
+        second = web_content_to_document("https://example.com/a", "Same body")
+        self.assertEqual(first.raw_hash, second.raw_hash)
+        self.assertNotEqual(first.id, second.id)
 
 
 if __name__ == "__main__":
