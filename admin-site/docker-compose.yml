@@ -5,9 +5,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      ADMIN_INTELLIGENCE_BACKEND: ${ADMIN_INTELLIGENCE_BACKEND:-sqlite}
       ADMIN_INTELLIGENCE_DB: /data/intelligence/intelligence.sqlite3
-      ADMIN_INTELLIGENCE_POSTGRES_DSN: ${ADMIN_INTELLIGENCE_POSTGRES_DSN:-}
     ports:
       - "127.0.0.1:18080:8080"
     volumes:
@@ -41,10 +39,9 @@ services:
       context: ../intelligence
     container_name: potapoff-intelligence
     restart: unless-stopped
+    env_file: .env.intelligence
     environment:
-      POTAPOFF_INTELLIGENCE_BACKEND: ${POTAPOFF_INTELLIGENCE_BACKEND:-sqlite}
       POTAPOFF_INTELLIGENCE_DB: /var/lib/potapoff-intelligence/intelligence.sqlite3
-      POTAPOFF_INTELLIGENCE_POSTGRES_DSN: ${POTAPOFF_INTELLIGENCE_POSTGRES_DSN:-}
     volumes:
       - intelligence-state:/var/lib/potapoff-intelligence
     networks:
