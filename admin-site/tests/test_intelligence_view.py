@@ -5,8 +5,16 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
-from app.intelligence_view import IntelligenceViewError, IntelligenceViewStore, build_intelligence_router
+import psycopg
+
+from app.intelligence_view import (
+    IntelligenceViewError,
+    IntelligenceViewStore,
+    PostgresIntelligenceViewStore,
+    build_intelligence_router,
+)
 
 
 _SCHEMA = """
@@ -151,6 +159,113 @@ class IntelligenceViewStoreTests(unittest.TestCase):
         )
         self.assertEqual(methods, {"GET"})
         self.assertEqual(len(router.dependencies), 1)
+
+
+class FakePgResult:
+    def __init__(self, *, one: Any = None, many: list[Any] | None = None) -> None:
+        self.one = one
+        self.many = many or []
+
+    def fetchone(self) -> Any:
+        return self.one
+
+    def fetchall(self) -> list[Any]:
+        return list(self.many)
+
+
+class FakePgConnection:
+    def __init__(self, results: list[FakePgResult]) -> None:
+        self.results = list(results)
+        self.calls: list[tuple[str, Any]] = []
+
+    def __enter__(self) -> "FakePgConnection":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        return None
+
+    def execute(self, query: str, params: Any = None) -> FakePgResult:
+        self.calls.append((query, params))
+        if query.strip().upper() == "SET TRANSACTION READ ONLY":
+            return FakePgResult()
+        if not self.results:
+            raise AssertionError("unexpected PostgreSQL query")
+        return self.results.pop(0)
+
+
+class PgConnectFactory:
+    def __init__(self, connections: list[FakePgConnection]) -> None:
+        self.connections = list(connections)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def __call__(self, dsn: str, **kwargs: Any) -> FakePgConnection:
+        self.calls.append((dsn, kwargs))
+        if not self.connections:
+            raise AssertionError("unexpected PostgreSQL connection")
+        return self.connections.pop(0)
+
+
+class PostgresIntelligenceViewStoreTests(unittest.TestCase):
+    def test_recent_jobs_forces_read_only_transaction_and_native_jsonb(self) -> None:
+        row = {
+            "id": "job-1",
+            "status": "completed",
+            "created_at": "2026-08-10T01:00:00+00:00",
+            "started_at": "2026-08-10T01:00:01+00:00",
+            "finished_at": "2026-08-10T01:00:02+00:00",
+            "result_document_ids_json": ["doc-1"],
+            "error": None,
+        }
+        connection = FakePgConnection([FakePgResult(many=[row])])
+        factory = PgConnectFactory([connection])
+        store = PostgresIntelligenceViewStore(
+            "postgresql://readonly@db/intelligence",
+            connect_factory=factory,
+        )
+
+        rows = store.recent_jobs(10)
+
+        self.assertEqual(rows[0]["result_document_ids"], ["doc-1"])
+        self.assertEqual(connection.calls[0][0].strip().upper(), "SET TRANSACTION READ ONLY")
+        self.assertIn("LIMIT %s", connection.calls[1][0])
+        self.assertEqual(connection.calls[1][1], (10,))
+        self.assertEqual(factory.calls[0][1]["connect_timeout"], 2)
+        self.assertIn("row_factory", factory.calls[0][1])
+
+    def test_recent_documents_rejects_invalid_native_jsonb_shape(self) -> None:
+        row = {
+            "id": "doc-1",
+            "source": "web",
+            "provider": "jina-reader",
+            "author": "example.com",
+            "published_at": None,
+            "collected_at": "2026-08-10T02:00:00+00:00",
+            "entities_json": ["ok", 123],
+            "raw_hash": "a" * 64,
+        }
+        connection = FakePgConnection([FakePgResult(many=[row])])
+        store = PostgresIntelligenceViewStore(
+            "postgresql://readonly@db/intelligence",
+            connect_factory=PgConnectFactory([connection]),
+        )
+        with self.assertRaises(IntelligenceViewError):
+            store.recent_documents(10)
+
+    def test_postgres_connection_failure_is_generic_and_dsn_safe(self) -> None:
+        class FailingFactory:
+            def __call__(self, dsn: str, **kwargs: Any) -> Any:
+                raise psycopg.OperationalError("password=driver-secret host=internal-db")
+
+        store = PostgresIntelligenceViewStore(
+            "postgresql://readonly:dsn-secret@internal-db/intelligence",
+            connect_factory=FailingFactory(),
+        )
+        with self.assertRaises(IntelligenceViewError) as captured:
+            store.summary()
+        message = str(captured.exception)
+        self.assertNotIn("driver-secret", message)
+        self.assertNotIn("dsn-secret", message)
+        self.assertNotIn("internal-db", message)
 
 
 if __name__ == "__main__":
