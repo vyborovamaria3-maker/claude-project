@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 const root = process.cwd();
 
@@ -23,6 +24,9 @@ assert(routeAuth.includes("potapoff_access_token"), "paid Next routes must suppo
 const loginProxy = read("app/api/v1/auth/login-password/route.ts");
 assert(loginProxy.includes("httpOnly: true"), "paid login must issue an HttpOnly server-session cookie");
 assert(loginProxy.includes('sameSite: "strict"'), "paid login cookie must use strict SameSite policy");
+
+const logoutProxy = read("app/api/v1/auth/logout/route.ts");
+assert(logoutProxy.includes("maxAge: 0"), "logout must expire the HttpOnly paid-session cookie");
 
 const apify = read("app/api/integrations/apify/pumpfun-sync/route.ts");
 assert(apify.includes("requireProdAuth"), "Apify pumpfun-sync must require paid auth");
@@ -59,6 +63,7 @@ assert(
   packageJson.devDependencies?.xlsx === "file:./scripts/xlsx-safe-package",
   "legacy external SheetJS package must not be restored",
 );
+execFileSync(process.execPath, [path.join(root, "scripts/xlsx-safe-package/test.mjs")], { stdio: "inherit" });
 
 const workflowDir = path.resolve(root, "../.github/workflows");
 for (const entry of fs.readdirSync(workflowDir, { withFileTypes: true })) {
