@@ -26,7 +26,11 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+        )
         subject = payload.get("sub")
         if subject is None:
             raise credentials_exception
@@ -45,7 +49,12 @@ async def get_current_user(
     return user
 
 
-async def get_current_superuser(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_superuser(
+    current_user: User = Depends(get_current_user),
+) -> User:
     if not current_user.is_superuser:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
     return current_user
