@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
 
-from intelligence.bootstrap import build_memory_runtime
+from intelligence.bootstrap import build_memory_runtime, build_sqlite_runtime
 from intelligence.core.models import IntelligenceDocument, ProviderHealth
 from intelligence.health.doctor import run_health_check, run_registry_health_check, summarize_health
 from intelligence.providers.base import IntelligenceProvider
 from intelligence.providers.registry import ProviderRegistry
+from intelligence.storage.memory_store import MemoryDocumentStore
+from intelligence.storage.sqlite_store import SQLiteDocumentStore
+from intelligence.worker.queue import MemoryJobQueue
+from intelligence.worker.sqlite_queue import SQLiteJobQueue
 
 
 class FakeProvider(IntelligenceProvider):
@@ -65,8 +71,25 @@ class BootstrapTests(unittest.TestCase):
         runtime = build_memory_runtime(registry=registry)
         self.assertIs(runtime.registry, registry)
         self.assertEqual(runtime.registry.names(), ("fake",))
+        self.assertIsInstance(runtime.queue, MemoryJobQueue)
+        self.assertIsInstance(runtime.store, MemoryDocumentStore)
         self.assertIs(runtime.worker.queue, runtime.queue)
         self.assertIs(runtime.worker.store, runtime.store)
+
+    def test_sqlite_runtime_uses_durable_queue_and_store(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "runtime.sqlite3"
+            registry = ProviderRegistry([FakeProvider("fake")])
+            runtime = build_sqlite_runtime(path, registry=registry)
+            try:
+                self.assertIs(runtime.registry, registry)
+                self.assertIsInstance(runtime.queue, SQLiteJobQueue)
+                self.assertIsInstance(runtime.store, SQLiteDocumentStore)
+                submitted = runtime.queue.submit({"provider": "fake", "query": "x"})
+                self.assertIsNotNone(runtime.queue.get(submitted.id))
+            finally:
+                runtime.queue.close()
+                runtime.store.close()
 
 
 class DoctorTests(unittest.IsolatedAsyncioTestCase):
