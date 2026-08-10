@@ -403,6 +403,33 @@ export default function MiniAppPage() {
             <a href="/login" className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-[#06100c]">
               Войти на сайт <ArrowRight className="h-4 w-4" />
             </a>
+
+            {config?.paidSubscriptionsEnabled && (
+              <div className="mt-4 border-t border-white/10 pt-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">
+                  Extend access by 30 days
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <PaymentButton
+                    label={solEnabled ? `Pay ${config.monthlyPriceSol} SOL` : "SOL unavailable"}
+                    disabled={loading || !solEnabled || !config.recipientConfigured || !canCheckout}
+                    loading={loading}
+                    onClick={() => createCheckout("SOL")}
+                  />
+                  <PaymentButton
+                    label={usdtEnabled ? `Pay ${config.monthlyPriceUsdt} USDT` : "USDT unavailable"}
+                    disabled={loading || !usdtEnabled || !config.recipientConfigured || !canCheckout}
+                    loading={loading}
+                    onClick={() => createCheckout("USDT")}
+                  />
+                </div>
+                {!config.recipientConfigured && (
+                  <p className="mt-2 text-xs leading-5 text-white/45">
+                    Paid renewal is temporarily unavailable until the payment wallet is configured.
+                  </p>
+                )}
+              </div>
+            )}
           </motion.section>
         ) : checkout ? (
           <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-cyan-300/20 bg-cyan-300/[0.06] p-5">
