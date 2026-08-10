@@ -17,6 +17,16 @@ class JobStatus(StrEnum):
     RETRY = "retry"
 
 
+_ALLOWED_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
+    JobStatus.CREATED: frozenset({JobStatus.QUEUED, JobStatus.FAILED}),
+    JobStatus.QUEUED: frozenset({JobStatus.RUNNING, JobStatus.FAILED}),
+    JobStatus.RUNNING: frozenset({JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.RETRY}),
+    JobStatus.RETRY: frozenset({JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.FAILED}),
+    JobStatus.COMPLETED: frozenset(),
+    JobStatus.FAILED: frozenset({JobStatus.RETRY}),
+}
+
+
 @dataclass(slots=True)
 class IntelligenceJob:
     payload: dict
@@ -27,6 +37,15 @@ class IntelligenceJob:
     finished_at: datetime | None = None
     result_document_ids: list[str] = field(default_factory=list)
     error: str | None = None
+
+
+def validate_transition(current: JobStatus, target: JobStatus) -> None:
+    if not isinstance(current, JobStatus) or not isinstance(target, JobStatus):
+        raise QueueError("invalid intelligence job status")
+    if current == target:
+        return
+    if target not in _ALLOWED_TRANSITIONS[current]:
+        raise QueueError(f"invalid intelligence job transition: {current.value}->{target.value}")
 
 
 class MemoryJobQueue:
@@ -45,16 +64,22 @@ class MemoryJobQueue:
 
     def update_status(self, job_id: str, status: JobStatus, error: str | None = None) -> None:
         job = self._require(job_id)
+        validate_transition(job.status, status)
         now = datetime.now(timezone.utc)
         if status == JobStatus.RUNNING and job.started_at is None:
             job.started_at = now
         if status in {JobStatus.COMPLETED, JobStatus.FAILED}:
             job.finished_at = now
+        if status == JobStatus.RETRY:
+            job.finished_at = None
         job.status = status
         job.error = error
 
     def set_results(self, job_id: str, document_ids: list[str]) -> None:
-        self._require(job_id).result_document_ids = list(dict.fromkeys(document_ids))
+        job = self._require(job_id)
+        if job.status not in {JobStatus.RUNNING, JobStatus.COMPLETED}:
+            raise QueueError("results can only be attached to a running or completed job")
+        job.result_document_ids = list(dict.fromkeys(document_ids))
 
     def claim_next(self) -> IntelligenceJob | None:
         candidates = [job for job in self._jobs.values() if job.status == JobStatus.QUEUED]
