@@ -3,16 +3,24 @@ import { getBackendBaseUrl } from "@/lib/authProxy";
 
 const REQUIRE_AUTH = process.env.NODE_ENV === "production";
 const AUTH_TIMEOUT_MS = 5_000;
+const ACCESS_COOKIE = "potapoff_access_token";
 
 type AuthenticatedUser = {
   is_superuser?: boolean;
 };
 
+function bearerHeader(req: NextRequest): string | null {
+  const explicit = req.headers.get("authorization");
+  if (explicit?.startsWith("Bearer ")) return explicit;
+  const cookieToken = req.cookies.get(ACCESS_COOKIE)?.value;
+  return cookieToken ? `Bearer ${cookieToken}` : null;
+}
+
 async function resolveProdUser(req: NextRequest): Promise<AuthenticatedUser | NextResponse | null> {
   if (!REQUIRE_AUTH) return null;
 
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const authHeader = bearerHeader(req);
+  if (!authHeader) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
