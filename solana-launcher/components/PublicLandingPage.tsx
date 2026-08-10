@@ -51,7 +51,6 @@ type MarketData = {
 type AuthResponse = {
   access_token?: string;
   expires_in?: number;
-  redirect_url?: string;
   detail?: string;
 };
 
@@ -60,6 +59,7 @@ type ChartCoord = MarketPoint & { x: number; y: number };
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 const THEME_KEY = "potapoff.landing_theme";
+const AUTH_ENDPOINT = "/api/v1/auth/login-password";
 const CHART_WIDTH = 760;
 const CHART_HEIGHT = 300;
 const AUTH_TIMEOUT_MS = 12_000;
@@ -183,14 +183,6 @@ function authError(status: number, detail?: string) {
   if (status === 429) return "Слишком много попыток. Подождите минуту и попробуйте снова.";
   if (status === 503) return "Сервис авторизации временно недоступен.";
   return detail || "Не удалось выполнить вход.";
-}
-
-function getAuthEndpoint() {
-  const queryApi = new URLSearchParams(window.location.search).get("api");
-  const configuredApi = queryApi || document.documentElement.dataset.apiBase || "";
-  return configuredApi
-    ? `${configuredApi.replace(/\/$/, "")}/api/v1/auth/login-password`
-    : "/api/v1/auth/login-password";
 }
 
 const features = [
@@ -484,11 +476,15 @@ export default function PublicLandingPage() {
     authAbortRef.current?.abort();
     const controller = new AbortController();
     authAbortRef.current = controller;
-    const timeout = window.setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, AUTH_TIMEOUT_MS);
 
     setSubmitting(true);
     try {
-      const response = await fetch(getAuthEndpoint(), {
+      const response = await fetch(AUTH_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login: login.trim(), password: password.toUpperCase() }),
@@ -516,12 +512,10 @@ export default function PublicLandingPage() {
       );
       setAuthSuccess(true);
       setAuthMessage("Доступ подтверждён. Открываем платформу…");
-      redirectTimerRef.current = window.setTimeout(
-        () => window.location.assign(data.redirect_url || "/dashboard"),
-        500,
-      );
+      redirectTimerRef.current = window.setTimeout(() => window.location.assign("/dashboard"), 500);
     } catch (error) {
-      if (controller.signal.aborted) {
+      if (controller.signal.aborted && !timedOut) return;
+      if (timedOut) {
         setAuthMessage("Сервис авторизации не ответил вовремя. Попробуйте ещё раз.");
       } else {
         setAuthMessage(error instanceof Error ? error.message : "Ошибка входа.");
@@ -661,7 +655,7 @@ export default function PublicLandingPage() {
                       </defs>
                       <g className={styles.chartGrid}>
                         {[55, 110, 165, 220, 275].map((y) => <line key={y} x1="16" x2="744" y1={y} y2={y} />)}
-                        {[150, 300, 450, 600].map((x) => <line key={x} x1={x} x2={x} y1="18" y2="282" />)}
+                        {[150, 300, 450, 600].map((x) => <line key={x} x2={x} y1="18" y2="282" />)}
                       </g>
                       <path className={styles.chartArea} d={paths.area} />
                       <path className={styles.chartLine} d={paths.line} />
