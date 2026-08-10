@@ -8,6 +8,7 @@ const DAY = 24 * HOUR;
 const MAX_FUTURE_SKEW = 5 * 60 * 1000;
 const LIVE_MAX_AGE = 10 * 60 * 1000;
 const MIN_WINDOW_SPAN = 23 * HOUR;
+const MAX_STALE_FALLBACK_AGE = 6 * HOUR;
 const MAX_CHART_POINTS = 120;
 
 type PriceRow = [number, number];
@@ -69,9 +70,12 @@ function normalizeRows(rows: unknown, now: number): PriceRow[] {
     .sort((a, b) => a[0] - b[0]);
 }
 
-function lastFiniteValue(rows: unknown, now: number): number | null {
+function lastFiniteValueAtOrBefore(rows: unknown, cutoff: number, now: number): number | null {
   const normalized = normalizeRows(rows, now);
-  return normalized.length ? normalized[normalized.length - 1][1] : null;
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    if (normalized[index][0] <= cutoff) return normalized[index][1];
+  }
+  return null;
 }
 
 /**
@@ -104,7 +108,6 @@ function sampleRealPoints(rows: PriceRow[], maxPoints: number): PriceRow[] {
 
   return Array.from(selected)
     .sort((a, b) => a - b)
-    .slice(0, maxPoints)
     .map((index) => rows[index]);
 }
 
@@ -166,8 +169,8 @@ export async function GET() {
       change24h: ((last - first) / first) * 100,
       high24h: Math.max(...values),
       low24h: Math.min(...values),
-      volume24h: lastFiniteValue(data.total_volumes, servedAt),
-      marketCap: lastFiniteValue(data.market_caps, servedAt),
+      volume24h: lastFiniteValueAtOrBefore(data.total_volumes, sourceEnd, servedAt),
+      marketCap: lastFiniteValueAtOrBefore(data.market_caps, sourceEnd, servedAt),
       updatedAt: sourceEnd,
       servedAt,
       windowStart: prices[0][0],
@@ -187,7 +190,11 @@ export async function GET() {
       headers: marketHeaders(stale),
     });
   } catch (error) {
-    if (lastGoodPayload) {
+    const fallbackAge = lastGoodPayload
+      ? Math.max(0, servedAt - lastGoodPayload.updatedAt)
+      : Number.POSITIVE_INFINITY;
+
+    if (lastGoodPayload && fallbackAge <= MAX_STALE_FALLBACK_AGE) {
       const fallback: MarketPayload = {
         ...lastGoodPayload,
         servedAt,
