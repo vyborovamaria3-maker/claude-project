@@ -147,7 +147,7 @@ function marketHeaders(stale: boolean) {
 export async function GET() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 6_000);
-  const servedAt = Date.now();
+  let servedAt = Date.now();
 
   try {
     const apiKey = process.env.COINGECKO_API_KEY?.trim();
@@ -168,6 +168,7 @@ export async function GET() {
     }
 
     const data = (await response.json()) as CoinGeckoChart;
+    servedAt = Date.now();
     const normalized = normalizeRows(data.prices, servedAt);
     if (normalized.length < 24) throw new Error("Not enough valid Solana market points");
 
@@ -220,6 +221,7 @@ export async function GET() {
       headers: marketHeaders(stale),
     });
   } catch (error) {
+    servedAt = Date.now();
     const fallbackAge = lastGoodPayload
       ? Math.max(0, servedAt - lastGoodPayload.updatedAt)
       : Number.POSITIVE_INFINITY;
