@@ -105,6 +105,7 @@ class PostgresDocumentStoreTests(unittest.TestCase):
         self.assertIsInstance(params[8], Jsonb)
         self.assertIsInstance(params[9], Jsonb)
         self.assertIn("row_factory", factory.calls[0][1])
+        self.assertEqual(factory.calls[0][1]["connect_timeout"], 5)
 
     def test_save_duplicate_hash_returns_existing_document(self) -> None:
         connection = FakeConnection(
