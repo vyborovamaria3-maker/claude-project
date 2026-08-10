@@ -23,6 +23,13 @@ function omitFilePath<T extends { filePath: string }>(row: T): Omit<T, "filePath
 }
 
 export async function GET(req: NextRequest) {
+  // The production database dashboard lives in the separately authenticated
+  // admin-site. Keep this legacy route available only for local diagnostics so
+  // migration datasets cannot reappear on the public application surface.
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const authError = await requireProdAuth(req);
   if (authError) return authError;
 
