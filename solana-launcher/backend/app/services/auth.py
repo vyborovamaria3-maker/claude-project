@@ -61,6 +61,8 @@ def apply_telegram_profile(
     *,
     fallback_username: str | None = None,
 ) -> None:
+    """Merge a server-verified Telegram user object without erasing older optional data."""
+
     def text(key: str, max_length: int = 255) -> str | None:
         value = profile.get(key)
         if not isinstance(value, str):
@@ -79,15 +81,33 @@ def apply_telegram_profile(
         raise ValueError("Telegram profile does not belong to this user")
 
     user.telegram_id = str(profile_id)
-    user.telegram_username = text("username") or fallback_username
-    user.first_name = text("first_name")
-    user.last_name = text("last_name")
-    user.photo_url = text("photo_url", 4096)
-    user.telegram_language_code = text("language_code", 32)
-    user.telegram_is_premium = boolean("is_premium")
-    user.telegram_added_to_attachment_menu = boolean("added_to_attachment_menu")
-    user.telegram_allows_write_to_pm = boolean("allows_write_to_pm")
-    user.telegram_profile = dict(profile)
+
+    text_fields = (
+        ("username", "telegram_username", 255),
+        ("first_name", "first_name", 255),
+        ("last_name", "last_name", 255),
+        ("photo_url", "photo_url", 4096),
+        ("language_code", "telegram_language_code", 32),
+    )
+    for key, attribute, max_length in text_fields:
+        if key in profile:
+            setattr(user, attribute, text(key, max_length))
+
+    if "username" not in profile and fallback_username and not user.telegram_username:
+        user.telegram_username = fallback_username[:255]
+
+    bool_fields = (
+        ("is_premium", "telegram_is_premium"),
+        ("added_to_attachment_menu", "telegram_added_to_attachment_menu"),
+        ("allows_write_to_pm", "telegram_allows_write_to_pm"),
+    )
+    for key, attribute in bool_fields:
+        if key in profile:
+            setattr(user, attribute, boolean(key))
+
+    merged_profile = dict(user.telegram_profile or {})
+    merged_profile.update(profile)
+    user.telegram_profile = merged_profile
 
     display_name = " ".join(
         part for part in (user.first_name, user.last_name) if part
@@ -271,69 +291,6 @@ async def create_auth_log(
     if commit:
         await session.commit()
     return log
-
-
-async def create_or_update_email_user(
-    session: AsyncSession,
-    *,
-    email: str,
-    full_name: str | None,
-    password: str,
-) -> User:
-    existing_user = await get_user_by_email(session, email)
-    if existing_user is not None:
-        raise ValueError("User with this email already exists")
-
-    from app.core.security import get_password_hash
-
-    user = User(
-        email=email,
-        full_name=full_name,
-        hashed_password=get_password_hash(password),
-        is_active=True,
-    )
-    session.add(user)
-    await session.commit()
-    await session.refresh(user)
-    return user
-
-
-async def authenticate_user(
-    session: AsyncSession,
-    email: str,
-    password: str,
-) -> User | None:
-    from app.core.security import verify_password
-
-    user = await get_user_by_email(session, email)
-    if (
-        user is None
-        or not user.hashed_password
-        or not verify_password(password, user.hashed_password)
-    ):
-        return None
-    return user
-
-
-async def ensure_admin_user(sessionmaker, settings) -> User:
-    from app.core.security import get_password_hash
-
-    async with sessionmaker() as session:
-        existing_user = await get_user_by_email(session, settings.admin_username)
-        if existing_user is not None:
-            return existing_user
-
-        user = User(
-            email=settings.admin_username,
-            full_name=settings.admin_display_name,
-            hashed_password=get_password_hash(settings.admin_password),
-            is_active=True,
-            is_superuser=True,
-        )
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
-        return user
 
 
 async def sync_login_metadata(
