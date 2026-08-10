@@ -589,11 +589,10 @@ async def telegram_callback(
         user_agent=user_agent,
     )
 
-    redirect_url = f"{settings.frontend_url}/?token={result.access_token}"
     return TelegramCallbackResponse(
         access_token=result.access_token,
         expires_in=result.expires_in,
-        redirect_url=redirect_url,
+        redirect_url=settings.frontend_url,
     )
 
 
