@@ -7,6 +7,7 @@ import {
   Check,
   Globe2,
   Menu,
+  Palette,
   Radar,
   Radio,
   Rocket,
@@ -38,7 +39,10 @@ type AuthResponse = {
   detail?: string;
 };
 
+type LandingTheme = "gold" | "solana";
+
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
+const THEME_KEY = "potapoff.landing_theme";
 
 function formatUsd(value: number | null | undefined, maximumFractionDigits = 2) {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -64,8 +68,16 @@ function formatPercent(value: number | null | undefined) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+function formatMarketTime(timestamp: number | null | undefined) {
+  if (!timestamp || !Number.isFinite(timestamp)) return "";
+  return new Intl.DateTimeFormat("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
 function chartPaths(points: MarketPoint[], width = 760, height = 300) {
-  if (points.length < 2) return { line: "", area: "" };
+  if (points.length < 2) return { line: "", area: "", mini: "" };
   const prices = points.map((point) => point.price);
   const rawMin = Math.min(...prices);
   const rawMax = Math.max(...prices);
@@ -84,9 +96,12 @@ function chartPaths(points: MarketPoint[], width = 760, height = 300) {
     return [x, y] as const;
   });
 
-  const line = coords.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
+  const line = coords
+    .map(([x, y], index) => `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`)
+    .join(" ");
   const area = `${line} L${coords[coords.length - 1][0].toFixed(2)},${height} L${coords[0][0].toFixed(2)},${height} Z`;
-  return { line, area };
+  const mini = coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  return { line, area, mini };
 }
 
 function authError(status: number, detail?: string) {
@@ -134,10 +149,10 @@ const features = [
 ];
 
 const proof = [
-  { icon: Radio, title: "Live market data", text: "Цена SOL и 24ч график обновляются автоматически." },
-  { icon: Globe2, title: "Solana-first", text: "Инструменты собраны вокруг ежедневной работы с Solana." },
-  { icon: Zap, title: "Один workspace", text: "Запуск, анализ и мониторинг в одной рабочей среде." },
-  { icon: ShieldCheck, title: "Лёгкий интерфейс", text: "Анимации без тяжёлого canvas и лишних chart-бандлов." },
+  { icon: ShieldCheck, title: "Контекст перед действием", text: "Проверка рынка и активности до следующего шага." },
+  { icon: Radio, title: "Live SOL market", text: "Цена и 24ч график приходят из реального market feed." },
+  { icon: Zap, title: "Быстрый workflow", text: "Запуск, анализ и мониторинг без лишних переходов." },
+  { icon: Globe2, title: "Solana-first", text: "Интерфейс и инструменты сфокусированы на экосистеме Solana." },
 ];
 
 export default function PublicLandingPage() {
@@ -149,9 +164,19 @@ export default function PublicLandingPage() {
   const [authSuccess, setAuthSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [market, setMarket] = useState<MarketData | null>(null);
+  const [theme, setTheme] = useState<LandingTheme>("gold");
 
   const paths = useMemo(() => chartPaths(market?.points ?? []), [market]);
   const marketPositive = (market?.change24h ?? 0) >= 0;
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(THEME_KEY);
+    if (saved === "gold" || saved === "solana") setTheme(saved);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -166,7 +191,7 @@ export default function PublicLandingPage() {
         const data = (await response.json()) as MarketData;
         if (Number.isFinite(data.price) && Array.isArray(data.points)) setMarket(data);
       } catch {
-        // The card intentionally degrades to a neutral unavailable state.
+        // The hero remains usable even when the market source is temporarily unavailable.
       }
     };
 
@@ -182,6 +207,11 @@ export default function PublicLandingPage() {
   }, []);
 
   useEffect(() => {
+    if (!("IntersectionObserver" in window)) {
+      document.querySelectorAll("[data-reveal]").forEach((node) => node.setAttribute("data-visible", "true"));
+      return;
+    }
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -190,7 +220,7 @@ export default function PublicLandingPage() {
           observer.unobserve(entry.target);
         });
       },
-      { threshold: 0.12, rootMargin: "0px 0px -24px" },
+      { threshold: 0.1, rootMargin: "0px 0px -24px" },
     );
 
     document.querySelectorAll("[data-reveal]").forEach((node) => observer.observe(node));
@@ -210,6 +240,8 @@ export default function PublicLandingPage() {
       document.body.style.overflow = "";
     };
   }, [loginOpen]);
+
+  const toggleTheme = () => setTheme((value) => (value === "gold" ? "solana" : "gold"));
 
   const openLogin = () => {
     setMenuOpen(false);
@@ -232,7 +264,7 @@ export default function PublicLandingPage() {
     setAuthSuccess(false);
 
     if (!LOGIN_RE.test(login.trim())) {
-      setAuthMessage("Логин: 4–32 символа, латиница, цифры или _. ");
+      setAuthMessage("Логин: 4–32 символа, латиница, цифры или _.");
       return;
     }
     if (password.length !== 32) {
@@ -278,12 +310,12 @@ export default function PublicLandingPage() {
   };
 
   return (
-    <main className={styles.page}>
+    <main className={styles.page} data-theme={theme}>
       <header className={styles.header}>
         <div className={`${styles.shell} ${styles.headerInner}`}>
           <a className={styles.brand} href="#top" aria-label="POTAPoff — главная">
             <span className={styles.brandMark} aria-hidden="true"><span /><span /><span /></span>
-            <span>POTAP<span className={styles.brandGold}>off</span></span>
+            <span>POTAP<span className={styles.brandAccent}>off</span></span>
           </a>
 
           <nav className={styles.nav} aria-label="Основная навигация">
@@ -294,8 +326,13 @@ export default function PublicLandingPage() {
           </nav>
 
           <div className={styles.headerActions}>
+            <button className={styles.themeToggle} type="button" onClick={toggleTheme} aria-label={`Переключить тему. Сейчас ${theme === "gold" ? "Gold" : "Solana"}`}>
+              <Palette size={15} />
+              <span className={styles.themeSwatches} aria-hidden="true"><i /><i /></span>
+              <span className={styles.themeLabel}>{theme === "gold" ? "Gold" : "Solana"}</span>
+            </button>
             <button className={`${styles.button} ${styles.buttonGhost} ${styles.buttonSmall}`} onClick={openLogin}>Войти</button>
-            <button className={`${styles.button} ${styles.buttonSmall}`} onClick={openLogin}>Открыть платформу <ArrowRight size={16} /></button>
+            <button className={`${styles.button} ${styles.buttonSmall} ${styles.desktopCta}`} onClick={openLogin}>Открыть платформу <ArrowRight size={16} /></button>
             <button className={styles.menuButton} onClick={() => setMenuOpen((value) => !value)} aria-label="Открыть меню" aria-expanded={menuOpen}>
               {menuOpen ? <X size={19} /> : <Menu size={19} />}
             </button>
@@ -316,32 +353,33 @@ export default function PublicLandingPage() {
 
       <div id="top" className={styles.shell}>
         <section id="product" className={styles.hero}>
-          <div data-reveal>
+          <div className={styles.heroCopyBlock} data-reveal>
             <div className={styles.eyebrow}><span className={styles.liveDot} /> Профессиональная платформа для Solana</div>
             <h1 className={styles.heroTitle}>POTAPoff — <span className={styles.heroAccent}>интеллектуальное преимущество</span></h1>
             <p className={styles.heroCopy}>
               Запускайте токены, анализируйте кошельки и отслеживайте рынок Solana в одной рабочей среде.
-              Меньше шума. Больше контекста. Быстрее решения.
+              Данные. Скорость. Контроль.
             </p>
             <div className={styles.heroActions}>
               <button className={styles.button} onClick={openLogin}>Открыть платформу <ArrowRight size={17} /></button>
               <a className={`${styles.button} ${styles.buttonGhost}`} href="#features">Смотреть возможности</a>
             </div>
             <div className={styles.heroMeta}>
-              <span><i /> Solana-first workflow</span>
-              <span><i /> Live market data</span>
-              <span><i /> Адаптивно на всех устройствах</span>
+              <span><i /> Реальный SOL/USD</span>
+              <span><i /> Лёгкий SVG-график</span>
+              <span><i /> Телефон · планшет · desktop</span>
             </div>
           </div>
 
           <div id="market" className={styles.marketStage} data-reveal>
+            <div className={styles.marketGlow} aria-hidden="true" />
             <div className={styles.marketCard}>
               <div className={styles.marketHead}>
                 <div className={styles.marketPair}>
                   <div className={styles.solanaCoin} aria-hidden="true"><span /></div>
-                  <div><div className={styles.pairLabel}>SOL / USD</div><div className={styles.pairSub}>Solana · 24 часа</div></div>
+                  <div><div className={styles.pairLabel}>SOL / USD</div><div className={styles.pairSub}>Solana · последние 24 часа</div></div>
                 </div>
-                <div className={styles.marketStatus}><span className={styles.liveDot} /> LIVE DATA</div>
+                <div className={styles.marketStatus}><span className={styles.liveDot} /> LIVE</div>
               </div>
 
               <div className={styles.marketPriceRow}>
@@ -354,14 +392,14 @@ export default function PublicLandingPage() {
                   <>
                     <svg className={styles.chartSvg} viewBox="0 0 760 300" preserveAspectRatio="none" role="img" aria-label="График цены Solana за последние 24 часа">
                       <defs>
-                        <linearGradient id="marketLineGradient" x1="0" x2="1">
-                          <stop offset="0%" stopColor="#997444" />
-                          <stop offset="52%" stopColor="#e7bd62" />
-                          <stop offset="100%" stopColor="#ffe7a4" />
+                        <linearGradient id="potap-market-line" x1="0" x2="1">
+                          <stop offset="0%" stopColor="var(--chart-a)" />
+                          <stop offset="52%" stopColor="var(--chart-b)" />
+                          <stop offset="100%" stopColor="var(--chart-c)" />
                         </linearGradient>
-                        <linearGradient id="marketAreaGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#e7bd62" stopOpacity="0.18" />
-                          <stop offset="100%" stopColor="#e7bd62" stopOpacity="0" />
+                        <linearGradient id="potap-market-area" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--chart-b)" stopOpacity="0.19" />
+                          <stop offset="100%" stopColor="var(--chart-b)" stopOpacity="0" />
                         </linearGradient>
                       </defs>
                       <g className={styles.chartGrid}>
@@ -373,8 +411,10 @@ export default function PublicLandingPage() {
                     </svg>
                     <div className={styles.chartLabel}>{formatUsd(market?.price)}</div>
                   </>
-                ) : <div className={styles.chartFallback}>Получаем реальные данные SOL…</div>}
+                ) : <div className={styles.chartFallback}>Получаем рыночные данные SOL…</div>}
               </div>
+
+              <div className={styles.chartTimeline} aria-hidden="true"><span>−24ч</span><span>−18ч</span><span>−12ч</span><span>−6ч</span><span>сейчас</span></div>
 
               <div className={styles.marketStats}>
                 <div className={styles.marketStat}><div className={styles.marketStatLabel}>24ч максимум</div><div className={styles.marketStatValue}>{formatUsd(market?.high24h)}</div></div>
@@ -382,7 +422,7 @@ export default function PublicLandingPage() {
                 <div className={styles.marketStat}><div className={styles.marketStatLabel}>Объём 24ч</div><div className={styles.marketStatValue}>{formatCompactUsd(market?.volume24h)}</div></div>
                 <div className={styles.marketStat}><div className={styles.marketStatLabel}>Market cap</div><div className={styles.marketStatValue}>{formatCompactUsd(market?.marketCap)}</div></div>
               </div>
-              <span className={styles.marketSource}>Market data: CoinGecko · обновление ~60 сек</span>
+              <span className={styles.marketSource}>CoinGecko · обновлено {formatMarketTime(market?.updatedAt) || "—"}</span>
             </div>
 
             {market && (
@@ -392,7 +432,7 @@ export default function PublicLandingPage() {
                   <div className={styles.floatValue}>{formatUsd(market.high24h - market.low24h)}</div>
                 </div>
                 <div className={`${styles.floatCard} ${styles.floatB}`}>
-                  <div className={styles.floatLabel}>Изменение</div>
+                  <div className={styles.floatLabel}>Изменение 24ч</div>
                   <div className={`${styles.floatValue} ${marketPositive ? styles.positive : styles.negative}`}>{formatPercent(market.change24h)}</div>
                 </div>
               </>
@@ -411,9 +451,9 @@ export default function PublicLandingPage() {
 
         <section id="features" className={styles.section}>
           <div className={styles.sectionHead} data-reveal>
-            <div className={styles.kicker}>Инструменты, которые работают вместе</div>
-            <h2 className={styles.sectionTitle}>Смотрите глубже. Действуйте быстрее.</h2>
-            <p className={styles.sectionCopy}>POTAPoff объединяет ключевые этапы работы с Solana в единый продукт — без маркетингового шума и лишних переключений.</p>
+            <div className={styles.kicker}>Всё, что нужно для преимущества на рынке</div>
+            <h2 className={styles.sectionTitle}>Один продукт вместо набора разрозненных инструментов.</h2>
+            <p className={styles.sectionCopy}>От первого сигнала до запуска и проверки контекста — POTAPoff объединяет ежедневный Solana workflow в одном интерфейсе.</p>
           </div>
           <div className={styles.featureGrid}>
             {features.map(({ icon: Icon, title, text, link }) => (
@@ -430,15 +470,16 @@ export default function PublicLandingPage() {
         <section id="workspace" className={styles.section}>
           <div className={styles.workspace} data-reveal>
             <div className={styles.workspaceCopy}>
-              <div className={styles.kicker}>Единый рабочий стол</div>
+              <div className={styles.kicker}>Профессиональная рабочая среда</div>
               <h3>Рынок, кошельки и запуск — в одном контексте</h3>
-              <p>Не ещё одна панель ради панели. Интерфейс строится вокруг действий: увидеть сигнал, проверить контекст и перейти к следующему шагу без потери фокуса.</p>
+              <p>Интерфейс строится вокруг действий: увидеть сигнал, проверить контекст и перейти к следующему шагу без потери фокуса.</p>
               <div className={styles.workspaceList}>
                 <span><i><Check size={12} /></i> Live SOL market context</span>
                 <span><i><Check size={12} /></i> Wallet и bundle intelligence</span>
                 <span><i><Check size={12} /></i> Быстрый переход к запуску токена</span>
                 <span><i><Check size={12} /></i> Один responsive workflow</span>
               </div>
+              <button className={styles.button} onClick={openLogin}>Открыть workspace <ArrowRight size={16} /></button>
             </div>
 
             <div className={styles.workspacePreview} aria-hidden="true">
@@ -453,15 +494,7 @@ export default function PublicLandingPage() {
                     <div className={styles.previewMetric}><small>Изменение</small><strong className={marketPositive ? styles.positive : styles.negative}>{market ? formatPercent(market.change24h) : "—"}</strong></div>
                   </div>
                   <div className={styles.previewChart}>
-                    {paths.line ? (
-                      <svg viewBox="0 0 760 300" preserveAspectRatio="none"><polyline points={(market?.points ?? []).map((point, index, list) => {
-                        const vals = list.map((item) => item.price);
-                        const min = Math.min(...vals);
-                        const max = Math.max(...vals);
-                        const range = Math.max(max - min, 1);
-                        return `${(index / Math.max(list.length - 1, 1)) * 760},${275 - ((point.price - min) / range) * 245}`;
-                      }).join(" ")} /></svg>
-                    ) : <Activity size={28} />}
+                    {paths.mini ? <svg viewBox="0 0 760 300" preserveAspectRatio="none"><polyline points={paths.mini} /></svg> : <Activity size={28} />}
                   </div>
                 </div>
               </div>
@@ -470,10 +503,10 @@ export default function PublicLandingPage() {
         </section>
 
         <section className={styles.cta} data-reveal>
-          <div><h2>Ваше преимущество начинается с лучшего контекста.</h2><p>Откройте POTAPoff и соберите весь Solana workflow в одном месте.</p></div>
+          <div><div className={styles.ctaCrown} aria-hidden="true">✦</div><h2>Будущее Solana начинается с лучшего контекста.</h2><p>Откройте POTAPoff и соберите весь рабочий процесс в одном месте.</p></div>
           <div className={styles.ctaActions}>
-            <button className={styles.button} onClick={openLogin}>Открыть платформу <ArrowRight size={17} /></button>
-            <a className={`${styles.button} ${styles.buttonGhost}`} href="#market">Посмотреть live SOL</a>
+            <button className={styles.button} onClick={openLogin}>Открыть POTAPoff <ArrowRight size={17} /></button>
+            <button className={`${styles.button} ${styles.buttonGhost}`} type="button" onClick={toggleTheme}>Тема: {theme === "gold" ? "Gold" : "Solana"}</button>
           </div>
         </section>
       </div>
@@ -481,7 +514,7 @@ export default function PublicLandingPage() {
       <footer className={styles.footer}>
         <div className={`${styles.shell} ${styles.footerInner}`}>
           <div>
-            <div className={styles.brand}><span className={styles.brandMark} aria-hidden="true"><span /><span /><span /></span><span>POTAP<span className={styles.brandGold}>off</span></span></div>
+            <div className={styles.brand}><span className={styles.brandMark} aria-hidden="true"><span /><span /><span /></span><span>POTAP<span className={styles.brandAccent}>off</span></span></div>
             <div className={styles.footerCopy}>Профессиональная рабочая среда для запуска, анализа и мониторинга в экосистеме Solana.</div>
           </div>
           <div className={styles.footerLinks}><a href="#features">Возможности</a><a href="#market">Рынок SOL</a><a href="#workspace">Workspace</a></div>
