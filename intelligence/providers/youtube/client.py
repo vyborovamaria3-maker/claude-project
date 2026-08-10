@@ -106,9 +106,10 @@ class YouTubeClient:
             subtitle_files = sorted(Path(temp_dir).glob("*.vtt"))
             if not subtitle_files:
                 return None
-            payload = subtitle_files[0].read_bytes()
-            if len(payload) > self.max_output_bytes:
+            subtitle_file = subtitle_files[0]
+            if subtitle_file.stat().st_size > self.max_output_bytes:
                 raise ProviderError("YouTube transcript exceeds configured size limit")
+            payload = subtitle_file.read_bytes()
             return _vtt_to_text(payload.decode("utf-8", errors="replace")) or None
 
     def health(self) -> int:
