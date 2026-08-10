@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 LOGIN_RE = re.compile(r"^[A-Za-z0-9_]{4,32}$")
 
@@ -37,6 +37,23 @@ class SubscriptionOrderCreate(BaseModel):
         if not LOGIN_RE.fullmatch(normalized):
             raise ValueError("login must be 4-32 ASCII letters, digits, or underscore")
         return normalized
+
+    @model_validator(mode="after")
+    def validate_telegram_identity(self):
+        profile = self.telegram_profile
+        if profile is None:
+            return self
+
+        profile_id = profile.get("id")
+        if not isinstance(profile_id, int) or isinstance(profile_id, bool):
+            raise ValueError("telegram_profile.id must be an integer")
+        if profile_id != self.telegram_user_id:
+            raise ValueError("telegram_profile.id must match telegram_user_id")
+
+        profile_username = profile.get("username")
+        if self.username and profile_username and self.username != profile_username:
+            raise ValueError("username must match telegram_profile.username")
+        return self
 
 
 class SubscriptionOrderComplete(BaseModel):
