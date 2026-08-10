@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from intelligence.core.models import IntelligenceDocument
 from intelligence.errors.exceptions import StorageError
+from intelligence.storage.integrity import validate_document_integrity
 
 
 _SELECT_COLUMNS = """
@@ -38,6 +39,7 @@ class PostgresDocumentStore:
         """Kept for runtime lifecycle compatibility; connections are per-operation."""
 
     def save(self, document: IntelligenceDocument) -> IntelligenceDocument:
+        validate_document_integrity(document)
         try:
             with self._connect() as connection:
                 row = connection.execute(
