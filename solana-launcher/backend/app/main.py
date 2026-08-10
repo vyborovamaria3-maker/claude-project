@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -9,6 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app import models  # noqa: F401
 from app.admin import setup_admin
+from app.api.deps import get_current_user
 from app.api.v1 import analytics
 from app.api.v1.router import api_router
 from app.core.config import Settings, get_settings
@@ -90,7 +91,13 @@ def create_app(
     )
 
     setup_admin(app, engine, settings)
-    app.include_router(analytics.router, prefix="/api")
+    # Keep the historical /api analytics alias for compatibility, but do not
+    # let it bypass the paid-access guard used by /api/v1/analytics.
+    app.include_router(
+        analytics.router,
+        prefix="/api",
+        dependencies=[Depends(get_current_user)],
+    )
     app.include_router(api_router, prefix=settings.api_v1_prefix)
 
     instrument_app(app)
