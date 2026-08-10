@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -47,6 +48,16 @@ class SQLiteJobQueueTests(unittest.TestCase):
                 self.assertEqual(loaded.status, JobStatus.QUEUED)
                 self.assertEqual(loaded.payload["query"], "one")
 
+    def test_file_backed_queue_enables_wal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "runtime.sqlite3"
+            with SQLiteJobQueue(path):
+                with sqlite3.connect(path) as reader:
+                    mode = reader.execute("PRAGMA journal_mode").fetchone()
+                    self.assertIsNotNone(mode)
+                    assert mode is not None
+                    self.assertEqual(str(mode[0]).lower(), "wal")
+
     def test_claim_is_atomic_across_queue_instances(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "runtime.sqlite3"
@@ -58,6 +69,35 @@ class SQLiteJobQueueTests(unittest.TestCase):
                 self.assertEqual(claimed.id, submitted.id)
                 self.assertEqual(claimed.status, JobStatus.RUNNING)
                 self.assertIsNone(second.claim_next())
+
+    def test_repeated_running_and_completed_status_preserve_timestamps(self) -> None:
+        with SQLiteJobQueue(":memory:") as queue:
+            submitted = queue.submit({"provider": "fake", "query": "one"})
+            queue.update_status(submitted.id, JobStatus.RUNNING)
+            running = queue.get(submitted.id)
+            self.assertIsNotNone(running)
+            assert running is not None
+            first_started_at = running.started_at
+            self.assertIsNotNone(first_started_at)
+
+            queue.update_status(submitted.id, JobStatus.RUNNING)
+            running_again = queue.get(submitted.id)
+            self.assertIsNotNone(running_again)
+            assert running_again is not None
+            self.assertEqual(running_again.started_at, first_started_at)
+
+            queue.update_status(submitted.id, JobStatus.COMPLETED)
+            completed = queue.get(submitted.id)
+            self.assertIsNotNone(completed)
+            assert completed is not None
+            first_finished_at = completed.finished_at
+            self.assertIsNotNone(first_finished_at)
+
+            queue.update_status(submitted.id, JobStatus.COMPLETED)
+            completed_again = queue.get(submitted.id)
+            self.assertIsNotNone(completed_again)
+            assert completed_again is not None
+            self.assertEqual(completed_again.finished_at, first_finished_at)
 
     def test_completed_job_cannot_return_to_running(self) -> None:
         with SQLiteJobQueue(":memory:") as queue:
