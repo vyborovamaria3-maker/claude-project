@@ -226,6 +226,59 @@ async function assertAuthSameOrigin(browser) {
   await context.close();
 }
 
+async function assertClientFreshnessGuard(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const now = Date.now();
+  const updatedAt = now - 11 * 60 * 1000;
+  const points = Array.from({ length: 24 }, (_, index) => ({
+    time: updatedAt - (23 - index) * 60 * 60 * 1000,
+    price: 100 + index * 0.1,
+  }));
+  const prices = points.map((point) => point.price);
+  const first = points[0];
+  const last = points.at(-1);
+  const payload = {
+    price: last.price,
+    change24h: ((last.price - first.price) / first.price) * 100,
+    high24h: Math.max(...prices),
+    low24h: Math.min(...prices),
+    volume24h: 1_000_000,
+    marketCap: 50_000_000_000,
+    updatedAt,
+    servedAt: now,
+    windowStart: first.time,
+    windowEnd: updatedAt,
+    sourcePointCount: points.length,
+    plottedPointCount: points.length,
+    stale: false,
+    staleReason: null,
+    points,
+    source: "CoinGecko",
+    quote: "USD",
+  };
+
+  await context.route("**/api/market/solana", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify(payload),
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+  const status = page.locator("[data-landing-market-status]");
+  await page.waitForFunction(() =>
+    document.querySelector("[data-landing-market-status]")?.textContent?.includes("ЗАДЕРЖКА"),
+  );
+  const statusText = (await status.textContent()) || "";
+  assert.match(statusText, /ЗАДЕРЖКА/u, "client must downgrade an over-10m payload even when stale=false");
+  assert.doesNotMatch(statusText, /LIVE/u, "client showed LIVE for an over-10m payload");
+
+  await context.close();
+}
+
 async function assertMobileMenu(page, viewport) {
   if (viewport.width > 980) return;
 
@@ -306,6 +359,7 @@ async function assertMarketPayload(context) {
   const headers = response.headers();
   assert.equal(headers["x-potapoff-market-source"], "CoinGecko");
   assert.equal(headers["x-potapoff-market-stale"], data.stale ? "1" : "0");
+  assert.match(headers["cache-control"] || "", /\bno-store\b/iu, "market response must not be shared-cacheable");
 }
 
 async function waitForChart(page) {
@@ -474,6 +528,9 @@ try {
 
   await assertAuthSameOrigin(browser);
   console.log("✓ auth remains same-origin");
+
+  await assertClientFreshnessGuard(browser);
+  console.log("✓ client market freshness guard");
 
   for (const viewport of viewports) {
     await runViewport(browser, viewport);
