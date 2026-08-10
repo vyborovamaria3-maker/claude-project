@@ -17,6 +17,7 @@ const viewports = [
   { name: "phone-375", width: 375, height: 667 },
   { name: "iphone-390", width: 390, height: 844 },
   { name: "phone-430", width: 430, height: 932 },
+  { name: "iphone-landscape", width: 844, height: 390 },
   { name: "tablet-768", width: 768, height: 1024 },
   { name: "tablet-landscape", width: 1024, height: 768 },
   { name: "desktop", width: 1440, height: 900 },
@@ -329,7 +330,7 @@ async function assertChartInteraction(page, useTouch = false) {
 }
 
 async function runViewport(browser, viewport) {
-  const isPhone = viewport.width <= 430;
+  const isPhone = Math.min(viewport.width, viewport.height) <= 430;
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     reducedMotion: "no-preference",
