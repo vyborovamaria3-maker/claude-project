@@ -62,7 +62,9 @@ class Settings:
     session_ttl_seconds: int = 8 * 60 * 60
     secure_cookie: bool = True
     audit_db_path: str = "/var/lib/potapoff-admin/audit.db"
+    intelligence_backend: str = "sqlite"
     intelligence_db_path: str = "/data/intelligence/intelligence.sqlite3"
+    intelligence_postgres_dsn: str = ""
     sources: list[DataSourceConfig] = field(default_factory=list)
     logs: list[LogConfig] = field(default_factory=list)
     allowed_networks: list[ipaddress._BaseNetwork] = field(default_factory=list)
@@ -95,9 +97,11 @@ class Settings:
             session_ttl_seconds=int(os.getenv("ADMIN_SESSION_TTL_SECONDS", str(8 * 60 * 60))),
             secure_cookie=_as_bool(os.getenv("ADMIN_SECURE_COOKIE", "true")),
             audit_db_path=os.getenv("ADMIN_AUDIT_DB", "/var/lib/potapoff-admin/audit.db"),
+            intelligence_backend=os.getenv("ADMIN_INTELLIGENCE_BACKEND", "sqlite").strip().lower(),
             intelligence_db_path=os.getenv(
                 "ADMIN_INTELLIGENCE_DB", "/data/intelligence/intelligence.sqlite3"
             ),
+            intelligence_postgres_dsn=os.getenv("ADMIN_INTELLIGENCE_POSTGRES_DSN", "").strip(),
             sources=[DataSourceConfig.from_dict(item) for item in sources],
             logs=[LogConfig.from_dict(item) for item in logs],
             allowed_networks=networks,
@@ -125,7 +129,15 @@ class Settings:
             raise RuntimeError("Set ADMIN_PASSWORD_HASH (recommended) or ADMIN_PASSWORD")
         if self.session_ttl_seconds < 300 or self.session_ttl_seconds > 24 * 60 * 60:
             raise RuntimeError("ADMIN_SESSION_TTL_SECONDS must be between 300 and 86400")
-        if self.environment.lower() == "production" and not Path(self.intelligence_db_path).is_absolute():
+        if self.intelligence_backend not in {"sqlite", "postgres"}:
+            raise RuntimeError("ADMIN_INTELLIGENCE_BACKEND must be sqlite or postgres")
+        if self.intelligence_backend == "postgres" and not self.intelligence_postgres_dsn:
+            raise RuntimeError("ADMIN_INTELLIGENCE_POSTGRES_DSN is required for postgres backend")
+        if (
+            self.environment.lower() == "production"
+            and self.intelligence_backend == "sqlite"
+            and not Path(self.intelligence_db_path).is_absolute()
+        ):
             raise RuntimeError("ADMIN_INTELLIGENCE_DB must be an absolute path in production")
         parsed_rpc = urlparse(self.solana_rpc_url)
         if parsed_rpc.scheme not in ({"https"} if self.environment.lower() == "production" else {"http", "https"}):
