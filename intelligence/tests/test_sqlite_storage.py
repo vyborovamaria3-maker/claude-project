@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from intelligence.core.hashing import build_document_hash
 from intelligence.core.models import IntelligenceDocument
 from intelligence.errors.exceptions import StorageError
 from intelligence.storage.sqlite_store import SQLiteDocumentStore
@@ -14,22 +14,25 @@ from intelligence.storage.sqlite_store import SQLiteDocumentStore
 def make_document(
     document_id: str = "doc-1",
     *,
-    raw_hash: str | None = "a" * 64,
+    with_hash: bool = True,
     collected_at: datetime | None = None,
+    url: str = "https://example.com/evidence",
 ) -> IntelligenceDocument:
-    return IntelligenceDocument(
+    document = IntelligenceDocument(
         id=document_id,
         source="web",
         content="Evidence body",
         collected_at=collected_at or datetime(2026, 8, 10, 4, 0, tzinfo=timezone.utc),
-        url="https://example.com/evidence",
+        url=url,
         author="example.com",
         provider="jina-reader",
         published_at=datetime(2026, 8, 9, 3, 0, tzinfo=timezone.utc),
         entities=["webpage", "example.com"],
         metrics={"characters": 13, "nested": {"ok": True}},
-        raw_hash=raw_hash,
     )
+    if with_hash:
+        document.raw_hash = build_document_hash(document)
+    return document
 
 
 class SQLiteDocumentStoreTests(unittest.TestCase):
@@ -58,15 +61,16 @@ class SQLiteDocumentStoreTests(unittest.TestCase):
             duplicate = store.save(make_document("second"))
             self.assertEqual(duplicate.id, first.id)
             self.assertEqual(len(store.list_all()), 1)
-            found = store.find_by_hash("a" * 64)
+            assert first.raw_hash is not None
+            found = store.find_by_hash(first.raw_hash)
             self.assertIsNotNone(found)
             assert found is not None
             self.assertEqual(found.id, first.id)
 
     def test_documents_without_hash_are_not_deduplicated(self) -> None:
         with SQLiteDocumentStore(":memory:") as store:
-            store.save(make_document("first", raw_hash=None))
-            store.save(make_document("second", raw_hash=None))
+            store.save(make_document("first", with_hash=False))
+            store.save(make_document("second", with_hash=False))
             self.assertEqual(len(store.list_all()), 2)
 
     def test_file_store_survives_reopen_and_uses_wal(self) -> None:
@@ -88,15 +92,15 @@ class SQLiteDocumentStoreTests(unittest.TestCase):
             store.save(
                 make_document(
                     "old",
-                    raw_hash="b" * 64,
                     collected_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+                    url="https://example.com/evidence/old",
                 )
             )
             store.save(
                 make_document(
                     "new",
-                    raw_hash="c" * 64,
                     collected_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
+                    url="https://example.com/evidence/new",
                 )
             )
             rows = store.list_recent(1)
@@ -114,11 +118,11 @@ class SQLiteDocumentStoreTests(unittest.TestCase):
 
     def test_constraint_failure_rolls_back_and_store_remains_usable(self) -> None:
         with SQLiteDocumentStore(":memory:") as store:
-            store.save(make_document("same-id", raw_hash="a" * 64))
+            store.save(make_document("same-id", url="https://example.com/one"))
             with self.assertRaises(StorageError):
-                store.save(make_document("same-id", raw_hash="b" * 64))
+                store.save(make_document("same-id", url="https://example.com/two"))
 
-            recovered = store.save(make_document("after-error", raw_hash="c" * 64))
+            recovered = store.save(make_document("after-error", url="https://example.com/three"))
             self.assertEqual(recovered.id, "after-error")
             self.assertEqual(len(store.list_all()), 2)
 
