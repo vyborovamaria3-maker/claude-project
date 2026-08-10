@@ -42,6 +42,23 @@ class FakeProvider(IntelligenceProvider):
         )
 
 
+class BarrierHealthProvider(FakeProvider):
+    def __init__(self, name: str, state: dict[str, object]) -> None:
+        super().__init__(name)
+        self._state = state
+
+    async def health(self) -> ProviderHealth:
+        self._state["started"] = int(self._state.get("started", 0)) + 1
+        if self._state["started"] >= 2:
+            event = self._state["event"]
+            assert isinstance(event, asyncio.Event)
+            event.set()
+        event = self._state["event"]
+        assert isinstance(event, asyncio.Event)
+        await asyncio.wait_for(event.wait(), timeout=0.5)
+        return ProviderHealth(provider=self.name, healthy=True, latency_ms=1)
+
+
 class BootstrapTests(unittest.TestCase):
     def test_memory_runtime_reuses_supplied_registry(self) -> None:
         registry = ProviderRegistry([FakeProvider("fake")])
@@ -61,14 +78,11 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.provider for item in results], ["alpha", "middle", "zeta"])
 
     async def test_health_checks_run_concurrently(self) -> None:
-        providers = [FakeProvider("a", delay=0.08), FakeProvider("b", delay=0.08)]
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        results = await run_health_check(providers)
-        elapsed = loop.time() - started
+        state: dict[str, object] = {"started": 0, "event": asyncio.Event()}
+        providers = [BarrierHealthProvider("a", state), BarrierHealthProvider("b", state)]
+        results = await asyncio.wait_for(run_health_check(providers), timeout=1.0)
         self.assertEqual(len(results), 2)
-        # Sequential execution would be roughly 0.16s. Keep margin for busy CI hosts.
-        self.assertLess(elapsed, 0.14)
+        self.assertEqual(state["started"], 2)
 
     async def test_successful_health_details_are_sanitized(self) -> None:
         results = await run_health_check(
