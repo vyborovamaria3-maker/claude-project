@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_superuser
+from app.api.deps import get_current_superuser, get_current_user
 from app.db.session import get_db
 from app.schemas.social_intelligence import (
     TelegramAttachSessionRequest,
@@ -231,7 +231,9 @@ async def social_relations(
     platform: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    del current_user
     if platform and platform not in {"telegram", "x"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x")
     return {
@@ -252,7 +254,9 @@ async def social_token(
     min_channel_score: float = Query(default=0.0, ge=0.0, le=100.0),
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
+    del current_user
     if not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
     if platform and platform not in {"telegram", "x"}:
