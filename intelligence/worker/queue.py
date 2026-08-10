@@ -48,3 +48,14 @@ class MemoryJobQueue:
             job.finished_at = now
         job.status = status
         job.error = error
+
+    def set_results(self, job_id: str, document_ids: list[str]) -> None:
+        self._jobs[job_id].result_document_ids = list(dict.fromkeys(document_ids))
+
+    def claim_next(self) -> IntelligenceJob | None:
+        candidates = [job for job in self._jobs.values() if job.status == JobStatus.QUEUED]
+        if not candidates:
+            return None
+        job = min(candidates, key=lambda item: (item.created_at, item.id))
+        self.update_status(job.id, JobStatus.RUNNING)
+        return job
