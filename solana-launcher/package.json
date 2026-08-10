@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "security:test": "node scripts/security-regression.mjs",
+    "landing:test": "node scripts/landing-regression.mjs",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",
