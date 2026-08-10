@@ -103,8 +103,8 @@ class IntelligenceViewStore:
             with self._connect() as connection:
                 rows = connection.execute(
                     """
-                    SELECT id, source, provider, url, author, published_at,
-                           collected_at, entities_json, metrics_json, raw_hash
+                    SELECT id, source, provider, author, published_at,
+                           collected_at, entities_json, raw_hash
                     FROM intelligence_documents
                     ORDER BY collected_at DESC, id DESC
                     LIMIT ?
@@ -119,12 +119,10 @@ class IntelligenceViewStore:
                 "id": row["id"],
                 "source": row["source"],
                 "provider": row["provider"],
-                "url": row["url"],
                 "author": row["author"],
                 "published_at": row["published_at"],
                 "collected_at": row["collected_at"],
                 "entities": _safe_json_list(row["entities_json"]),
-                "metrics": _safe_json_dict(row["metrics_json"]),
                 "raw_hash": row["raw_hash"],
             }
             for row in rows
@@ -142,16 +140,6 @@ def _safe_json_list(value: str) -> list[Any]:
     except (TypeError, json.JSONDecodeError):
         raise IntelligenceViewError("intelligence_runtime_data_invalid") from None
     if not isinstance(parsed, list):
-        raise IntelligenceViewError("intelligence_runtime_data_invalid")
-    return parsed
-
-
-def _safe_json_dict(value: str) -> dict[str, Any]:
-    try:
-        parsed = json.loads(value)
-    except (TypeError, json.JSONDecodeError):
-        raise IntelligenceViewError("intelligence_runtime_data_invalid") from None
-    if not isinstance(parsed, dict):
         raise IntelligenceViewError("intelligence_runtime_data_invalid")
     return parsed
 
