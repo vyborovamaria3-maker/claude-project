@@ -71,6 +71,8 @@ class GitHubIntelligenceProvider(IntelligenceProvider):
         releases: int,
     ) -> RepositorySnapshot:
         try:
+            open_issues_and_prs = int(repository.get("open_issues_count", 0))
+            issues_only = max(0, open_issues_and_prs - pull_requests)
             return RepositorySnapshot(
                 name=str(repository["name"]),
                 full_name=str(repository["full_name"]),
@@ -80,7 +82,7 @@ class GitHubIntelligenceProvider(IntelligenceProvider):
                 watchers=int(repository.get("subscribers_count", repository.get("watchers_count", 0))),
                 contributors=contributors,
                 commits_30d=commits,
-                issues_open=int(repository.get("open_issues_count", 0)),
+                issues_open=issues_only,
                 pull_requests_open=pull_requests,
                 releases=releases,
                 archived=bool(repository.get("archived", False)),
