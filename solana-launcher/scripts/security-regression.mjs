@@ -54,7 +54,8 @@ assert(dockerignore.includes(".env.*"), "Docker build context must exclude env f
 
 const nginx = read("nginx/nginx.conf");
 assert(nginx.includes("location = /metrics"), "metrics location must be explicit");
-assert(nginx.includes("deny all;"), "metrics must not be public");
+assert(nginx.includes("return 404;"), "metrics must not be exposed by public ingress");
+assert(!nginx.includes("proxy_pass http://backend:8000/metrics"), "public ingress must not proxy backend metrics");
 assert(!nginx.includes("$proxy_add_x_forwarded_for"), "ingress must not preserve an untrusted forwarded chain");
 
 const backendDocker = read("backend/Dockerfile");
