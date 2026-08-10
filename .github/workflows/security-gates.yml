@@ -56,7 +56,11 @@ jobs:
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install pip-audit
-      - name: Entitlement and production-secret regression
-        run: pytest -q tests/test_entitlement.py tests/test_production_admin_config.py
+      - name: Auth, entitlement and production-secret regression
+        run: >-
+          pytest -q
+          tests/test_entitlement.py
+          tests/test_production_admin_config.py
+          tests/test_auth_response_security.py
       - name: Python dependency audit
         run: pip-audit
