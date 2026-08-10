@@ -210,7 +210,11 @@ class PostgresJobQueue:
 
     def _connect(self) -> Any:
         try:
-            return self._connect_factory(self._dsn, row_factory=dict_row)
+            return self._connect_factory(
+                self._dsn,
+                row_factory=dict_row,
+                connect_timeout=5,
+            )
         except psycopg.Error as exc:
             raise QueueError("failed to connect to PostgreSQL intelligence queue") from exc
 
