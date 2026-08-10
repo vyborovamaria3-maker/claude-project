@@ -24,24 +24,31 @@ main[data-theme="solana"] svg {
   max-width: 100%;
 }
 
-main[data-theme="gold"] header > div:first-child,
-main[data-theme="solana"] header > div:first-child,
+main[data-theme="gold"] [data-landing-header-inner],
+main[data-theme="solana"] [data-landing-header-inner],
 main[data-theme="gold"] #top,
 main[data-theme="solana"] #top {
   min-width: 0;
 }
 
+main[data-theme="gold"] [data-landing-chart]:focus-visible,
+main[data-theme="solana"] [data-landing-chart]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 @supports (padding-left: env(safe-area-inset-left)) {
-  main[data-theme="gold"] header > div:first-child,
-  main[data-theme="solana"] header > div:first-child,
+  main[data-theme="gold"] [data-landing-header-inner],
+  main[data-theme="solana"] [data-landing-header-inner],
   main[data-theme="gold"] #top,
   main[data-theme="solana"] #top {
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }
 
-  main[data-theme="gold"] footer > div,
-  main[data-theme="solana"] footer > div {
+  main[data-theme="gold"] [data-landing-footer-inner],
+  main[data-theme="solana"] [data-landing-footer-inner] {
     padding-bottom: max(34px, env(safe-area-inset-bottom));
   }
 }
@@ -53,8 +60,8 @@ main[data-theme="solana"] #top {
     gap: clamp(34px, 6vw, 54px);
   }
 
-  main[data-theme="gold"] #product > div:first-child,
-  main[data-theme="solana"] #product > div:first-child {
+  main[data-theme="gold"] [data-landing-hero-copy],
+  main[data-theme="solana"] [data-landing-hero-copy] {
     width: min(100%, 760px);
   }
 
@@ -64,14 +71,14 @@ main[data-theme="solana"] #top {
     justify-self: center;
   }
 
-  main[data-theme="gold"] #market > div:nth-child(2),
-  main[data-theme="solana"] #market > div:nth-child(2) {
+  main[data-theme="gold"] [data-landing-market-card],
+  main[data-theme="solana"] [data-landing-market-card] {
     width: 100%;
     transform: none;
   }
 
-  main[data-theme="gold"] #workspace > div,
-  main[data-theme="solana"] #workspace > div {
+  main[data-theme="gold"] [data-landing-workspace-card],
+  main[data-theme="solana"] [data-landing-workspace-card] {
     min-width: 0;
   }
 }
@@ -82,15 +89,15 @@ main[data-theme="solana"] #top {
     padding-top: env(safe-area-inset-top, 0px);
   }
 
-  main[data-theme="gold"] header > div:first-child,
-  main[data-theme="solana"] header > div:first-child {
+  main[data-theme="gold"] [data-landing-header-inner],
+  main[data-theme="solana"] [data-landing-header-inner] {
     min-height: 64px;
   }
 
-  main[data-theme="gold"] button[aria-controls="landing-mobile-menu"],
-  main[data-theme="solana"] button[aria-controls="landing-mobile-menu"],
-  main[data-theme="gold"] button[aria-label^="Переключить тему"],
-  main[data-theme="solana"] button[aria-label^="Переключить тему"] {
+  main[data-theme="gold"] [data-landing-menu-toggle],
+  main[data-theme="solana"] [data-landing-menu-toggle],
+  main[data-theme="gold"] [data-landing-theme-toggle],
+  main[data-theme="solana"] [data-landing-theme-toggle] {
     width: 44px;
     height: 44px;
     min-height: 44px;
@@ -138,8 +145,8 @@ main[data-theme="solana"] #top {
     text-wrap: balance;
   }
 
-  main[data-theme="gold"] #product > div:first-child > p,
-  main[data-theme="solana"] #product > div:first-child > p {
+  main[data-theme="gold"] [data-landing-hero-copy] > p,
+  main[data-theme="solana"] [data-landing-hero-copy] > p {
     max-width: 36rem;
     font-size: 15px;
     line-height: 1.58;
@@ -166,14 +173,14 @@ main[data-theme="solana"] #top {
     filter: blur(11px);
   }
 
-  main[data-theme="gold"] #market > div:nth-child(2),
-  main[data-theme="solana"] #market > div:nth-child(2) {
+  main[data-theme="gold"] [data-landing-market-card],
+  main[data-theme="solana"] [data-landing-market-card] {
     padding: 17px;
     border-radius: 20px;
   }
 
-  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
-  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
     height: clamp(215px, 59vw, 260px);
     min-height: 0;
     touch-action: pan-y;
@@ -184,8 +191,8 @@ main[data-theme="solana"] #top {
     min-width: 0;
   }
 
-  main[data-theme="gold"] #workspace > div,
-  main[data-theme="solana"] #workspace > div {
+  main[data-theme="gold"] [data-landing-workspace-card],
+  main[data-theme="solana"] [data-landing-workspace-card] {
     padding: 20px 16px;
   }
 
@@ -196,8 +203,8 @@ main[data-theme="solana"] #top {
     min-height: 44px;
   }
 
-  main[data-theme="gold"] #workspace + section button,
-  main[data-theme="solana"] #workspace + section button {
+  main[data-theme="gold"] [data-landing-cta] button,
+  main[data-theme="solana"] [data-landing-cta] button {
     min-height: 48px;
   }
 
@@ -226,24 +233,24 @@ main[data-theme="solana"] #top {
     font-size: clamp(2.35rem, 11.8vw, 3.35rem);
   }
 
-  main[data-theme="gold"] #market > div:nth-child(2) > div:first-child,
-  main[data-theme="solana"] #market > div:nth-child(2) > div:first-child {
+  main[data-theme="gold"] [data-landing-market-head],
+  main[data-theme="solana"] [data-landing-market-head] {
     gap: 10px;
   }
 
-  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
-  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
     height: clamp(205px, 57vw, 235px);
   }
 
   /* The miniature workspace sidebar stops being useful on a phone and steals chart width. */
-  main[data-theme="gold"] #workspace > div > div:nth-child(2) > div:nth-child(2),
-  main[data-theme="solana"] #workspace > div > div:nth-child(2) > div:nth-child(2) {
+  main[data-theme="gold"] [data-landing-preview-body],
+  main[data-theme="solana"] [data-landing-preview-body] {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-theme="gold"] #workspace > div > div:nth-child(2) > div:nth-child(2) > div:first-child,
-  main[data-theme="solana"] #workspace > div > div:nth-child(2) > div:nth-child(2) > div:first-child {
+  main[data-theme="gold"] [data-landing-preview-nav],
+  main[data-theme="solana"] [data-landing-preview-nav] {
     display: none;
   }
 
@@ -252,8 +259,8 @@ main[data-theme="solana"] #top {
     border-radius: 18px;
   }
 
-  main[data-theme="gold"] footer > div,
-  main[data-theme="solana"] footer > div {
+  main[data-theme="gold"] [data-landing-footer-inner],
+  main[data-theme="solana"] [data-landing-footer-inner] {
     gap: 22px;
   }
 }
@@ -266,18 +273,18 @@ main[data-theme="solana"] #top {
     line-height: .98;
   }
 
-  main[data-theme="gold"] #product > div:first-child > p,
-  main[data-theme="solana"] #product > div:first-child > p {
+  main[data-theme="gold"] [data-landing-hero-copy] > p,
+  main[data-theme="solana"] [data-landing-hero-copy] > p {
     font-size: 14px;
   }
 
-  main[data-theme="gold"] #market > div:nth-child(2),
-  main[data-theme="solana"] #market > div:nth-child(2) {
+  main[data-theme="gold"] [data-landing-market-card],
+  main[data-theme="solana"] [data-landing-market-card] {
     padding: 15px;
   }
 
-  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
-  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
     height: clamp(195px, 56vw, 218px);
   }
 
@@ -288,15 +295,15 @@ main[data-theme="solana"] #top {
     padding-top: 60px;
   }
 
-  main[data-theme="gold"] #workspace > div,
-  main[data-theme="solana"] #workspace > div {
+  main[data-theme="gold"] [data-landing-workspace-card],
+  main[data-theme="solana"] [data-landing-workspace-card] {
     padding: 18px 14px;
   }
 }
 
 @media (max-width: 350px) {
-  main[data-theme="gold"] header > div:first-child,
-  main[data-theme="solana"] header > div:first-child {
+  main[data-theme="gold"] [data-landing-header-inner],
+  main[data-theme="solana"] [data-landing-header-inner] {
     gap: 5px;
   }
 
@@ -310,24 +317,24 @@ main[data-theme="solana"] #top {
     font-size: 2.18rem;
   }
 
-  main[data-theme="gold"] #market > div:nth-child(2) > div:first-child,
-  main[data-theme="solana"] #market > div:nth-child(2) > div:first-child {
+  main[data-theme="gold"] [data-landing-market-head],
+  main[data-theme="solana"] [data-landing-market-head] {
     align-items: flex-start;
     flex-wrap: wrap;
   }
 
-  main[data-theme="gold"] #market > div:nth-child(2) > div:first-child > div:last-child,
-  main[data-theme="solana"] #market > div:nth-child(2) > div:first-child > div:last-child {
+  main[data-theme="gold"] [data-landing-market-status],
+  main[data-theme="solana"] [data-landing-market-status] {
     margin-left: auto;
   }
 
-  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
-  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
     height: 188px;
   }
 
-  main[data-theme="gold"] #landing-mobile-menu > div,
-  main[data-theme="solana"] #landing-mobile-menu > div {
+  main[data-theme="gold"] [data-landing-mobile-actions],
+  main[data-theme="solana"] [data-landing-mobile-actions] {
     grid-template-columns: 1fr;
   }
 }
@@ -338,8 +345,8 @@ main[data-theme="solana"] #top {
     padding-top: 34px;
   }
 
-  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
-  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
     height: 220px;
   }
 }
