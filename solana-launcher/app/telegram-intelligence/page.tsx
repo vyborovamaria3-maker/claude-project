@@ -67,7 +67,16 @@ function authHeaders(json = false): HeadersInit {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BACKEND}${path}`, { cache: "no-store", ...init });
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Authorization") && typeof window !== "undefined") {
+    const token = localStorage.getItem("potapoff.access_token");
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await fetch(`${BACKEND}${path}`, {
+    cache: "no-store",
+    ...init,
+    headers,
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.detail || payload.error || `HTTP ${response.status}`);
   return payload as T;
