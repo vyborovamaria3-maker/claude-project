@@ -75,6 +75,19 @@ class CLITests(unittest.TestCase):
             code = main(argv, runtime_factory=factory)
         return code, stdout.getvalue().strip(), stderr.getvalue().strip()
 
+    def test_runtime_health_probes_queue_and_store_without_mutation(self) -> None:
+        factory = RuntimeFactory()
+        queued = factory.queue.submit({"provider": "fake", "query": "keep-queued"})
+        code, stdout, stderr = self.run_cli(
+            ["--db", ":memory:", "runtime-health"],
+            factory,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout), {"healthy": True})
+        self.assertEqual(factory.queue.get(queued.id).status, JobStatus.QUEUED)
+        self.assertEqual(factory.store.list_all(), [])
+
     def test_enqueue_outputs_bounded_non_secret_metadata(self) -> None:
         factory = RuntimeFactory()
         code, stdout, stderr = self.run_cli(
