@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 const baseURL = process.env.BASE_URL || "http://127.0.0.1:3000";
 const outputDir = path.resolve("test-results/mobile");
 const WATCHDOG_MS = 240_000;
+const TEST_ACCESS_TOKEN = "local-responsive-backtest-token";
 
 const routes = [
   "/auth",
@@ -160,6 +161,51 @@ async function assertMobileNavigationKeyboardFlow(page, profileName, pageErrors)
   assert.equal(pageErrors.length, 0, `${profileName}: mobile navigation produced browser errors`);
 }
 
+async function installAuthenticatedBacktestSession(context) {
+  await context.addInitScript((token) => {
+    window.localStorage.setItem("potapoff.access_token", token);
+  }, TEST_ACCESS_TOKEN);
+
+  await context.route("**/api/v1/auth/me", async (route) => {
+    const authorization = route.request().headers().authorization || "";
+    if (authorization !== `Bearer ${TEST_ACCESS_TOKEN}`) {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Unauthorized" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "00000000-0000-0000-0000-000000000001",
+        email: null,
+        access_login: "backtest_user",
+        is_active: true,
+        is_superuser: false,
+      }),
+    });
+  });
+}
+
+async function assertPrivateRouteRequiresAccess(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(`${baseURL}/launch-dashboard`, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    await page.waitForURL(/\/login(?:$|[?#])/, { timeout: 10_000 });
+    assert.equal(new URL(page.url()).pathname, "/login");
+    console.log("pass private-route subscription gate");
+  } finally {
+    await context.close();
+  }
+}
+
 async function runProfile(browser, profile) {
   const context = await browser.newContext({
     viewport: profile.viewport,
@@ -171,6 +217,7 @@ async function runProfile(browser, profile) {
     colorScheme: "dark",
     reducedMotion: "reduce",
   });
+  await installAuthenticatedBacktestSession(context);
 
   try {
     const page = await context.newPage();
@@ -236,6 +283,7 @@ async function run() {
   const browser = await chromium.launch({ headless: true });
 
   try {
+    await assertPrivateRouteRequiresAccess(browser);
     for (const profile of deviceProfiles) {
       console.log(`\n=== ${profile.name} ${profile.viewport.width}x${profile.viewport.height} ===`);
       await runProfile(browser, profile);
