@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import PublicLandingPage from "@/components/PublicLandingPage";
 
 export const metadata: Metadata = {
@@ -14,6 +14,14 @@ export const metadata: Metadata = {
     type: "website",
     siteName: "POTAPoff",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+  viewportFit: "cover",
 };
 
 export default function HomePage() {
