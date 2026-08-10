@@ -8,12 +8,21 @@ from intelligence.core.models import IntelligenceDocument
 @dataclass(slots=True)
 class MemoryDocumentStore:
     documents: dict[str, IntelligenceDocument]
+    _hash_index: dict[str, str]
 
     def __init__(self) -> None:
         self.documents = {}
+        self._hash_index = {}
 
     def save(self, document: IntelligenceDocument) -> IntelligenceDocument:
+        if document.raw_hash:
+            existing_id = self._hash_index.get(document.raw_hash)
+            if existing_id is not None:
+                return self.documents[existing_id]
+
         self.documents[document.id] = document
+        if document.raw_hash:
+            self._hash_index[document.raw_hash] = document.id
         return document
 
     def get(self, document_id: str) -> IntelligenceDocument | None:
@@ -23,7 +32,5 @@ class MemoryDocumentStore:
         return list(self.documents.values())
 
     def find_by_hash(self, raw_hash: str) -> IntelligenceDocument | None:
-        return next(
-            (doc for doc in self.documents.values() if doc.raw_hash == raw_hash),
-            None,
-        )
+        document_id = self._hash_index.get(raw_hash)
+        return self.documents.get(document_id) if document_id is not None else None
