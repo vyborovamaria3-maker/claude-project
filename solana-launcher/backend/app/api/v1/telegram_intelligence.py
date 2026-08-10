@@ -21,10 +21,10 @@ from app.services.social_intelligence import (
     list_calls,
     list_channels,
     list_social_relations,
-    refresh_x_for_mint,
     token_timeline,
     top_callers,
 )
+from app.services.social_refresh import refresh_x_for_mint_authenticated
 from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
 from app.services.telegram_runtime import TelegramMonitorManager
@@ -284,9 +284,11 @@ async def refresh_x(
     if not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
     try:
-        payload = await refresh_x_for_mint(
-            backend_frontend_url=request.app.state.settings.frontend_internal_url,
+        settings = request.app.state.settings
+        payload = await refresh_x_for_mint_authenticated(
+            backend_frontend_url=settings.frontend_internal_url,
             mint_address=mint,
+            backend_api_key=settings.backend_api_key,
         )
         return await ingest_x_events(session, payload)
     except Exception as exc:
