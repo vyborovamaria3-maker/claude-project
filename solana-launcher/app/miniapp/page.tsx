@@ -151,7 +151,7 @@ export default function MiniAppPage() {
   }, [webApp]);
 
   useEffect(() => {
-    if (!canCheckout || paid) return;
+    if (!canCheckout || paid || checkout) return;
 
     void (async () => {
       try {
@@ -191,20 +191,19 @@ export default function MiniAppPage() {
         setError(message);
       }
     })();
-  }, [canCheckout, initData, paid]);
+  }, [canCheckout, checkout, initData, paid]);
 
   useEffect(() => {
-    if (!checkout || paid) return;
+    if (!checkout) return;
     const timer = window.setInterval(() => {
       void verifyPayment(checkout.payload, false);
     }, 4000);
     return () => window.clearInterval(timer);
-  }, [checkout, paid]);
+  }, [checkout]);
 
   async function createCheckout(method: "SOL" | "USDT" | "DEMO") {
     setError("");
     setLoading(true);
-    setOrder(null);
     setCheckout(null);
 
     try {
@@ -248,6 +247,10 @@ export default function MiniAppPage() {
         displayAmount: data.displayAmount,
         paymentUrl: data.paymentUrl,
       });
+      // Hide the old active credential card only after a renewal checkout has
+      // actually been created. This prevents access recovery from racing and
+      // cancelling the renewal request.
+      setOrder(null);
       setStatusMessage(
         `Send exactly ${data.displayAmount} ${data.currency} using the Solana Pay button. Confirmation is checked automatically.`
       );
