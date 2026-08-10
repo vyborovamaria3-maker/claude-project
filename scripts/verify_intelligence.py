@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -35,8 +36,13 @@ class VerificationError(RuntimeError):
     pass
 
 
+def _display_command(command: Sequence[str]) -> str:
+    """Render argv safely for logs without shell interpretation."""
+    return " ".join(shlex.quote(part) for part in command)
+
+
 def _run(command: Sequence[str], *, env: dict[str, str] | None = None) -> None:
-    printable = " ".join(command)
+    printable = _display_command(command)
     print(f"\n==> {printable}", flush=True)
     completed = subprocess.run(
         list(command),
