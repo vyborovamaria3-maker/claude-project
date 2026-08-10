@@ -217,8 +217,13 @@ function isValidMarketData(data: MarketData) {
     return false;
   }
 
-  const now = Date.now();
-  if (data.updatedAt > now + MARKET_MAX_FUTURE_SKEW_MS || now - data.updatedAt > MARKET_MAX_AGE_MS) return false;
+  const serverNow = data.servedAt;
+  if (
+    data.updatedAt > serverNow + MARKET_MAX_FUTURE_SKEW_MS ||
+    serverNow - data.updatedAt > MARKET_MAX_AGE_MS
+  ) {
+    return false;
+  }
   if (data.windowEnd !== data.updatedAt || data.windowEnd - data.windowStart < MARKET_MIN_SPAN_MS) return false;
   if (data.stale) {
     if (data.staleReason !== "delayed_source" && data.staleReason !== "upstream_error") return false;
@@ -311,6 +316,7 @@ export default function PublicLandingPage() {
   const lastFocusedRef = useRef<HTMLElement | null>(null);
   const authAbortRef = useRef<AbortController | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
+  const marketClockOffsetRef = useRef(0);
 
   const paths = useMemo(() => chartPaths(market?.points ?? []), [market]);
   const marketPositive = (market?.change24h ?? 0) >= 0;
@@ -330,10 +336,11 @@ export default function PublicLandingPage() {
   useEffect(() => {
     if (!market) return;
 
-    const updateClock = () => setMarketClock(Date.now());
+    const serverAdjustedNow = () => Date.now() + marketClockOffsetRef.current;
+    const updateClock = () => setMarketClock(serverAdjustedNow());
     updateClock();
     const interval = window.setInterval(updateClock, MARKET_CLOCK_INTERVAL_MS);
-    const remainingFreshMs = MARKET_LIVE_MAX_AGE_MS - (Date.now() - market.updatedAt);
+    const remainingFreshMs = MARKET_LIVE_MAX_AGE_MS - (serverAdjustedNow() - market.updatedAt);
     const staleTimer = remainingFreshMs > 0
       ? window.setTimeout(updateClock, remainingFreshMs + 25)
       : null;
@@ -362,7 +369,8 @@ export default function PublicLandingPage() {
         if (!response.ok) return;
         const data = (await response.json()) as MarketData;
         if (isValidMarketData(data)) {
-          setMarketClock(Date.now());
+          marketClockOffsetRef.current = data.servedAt - Date.now();
+          setMarketClock(data.servedAt);
           setMarket(data);
           setActiveChartIndex(null);
         }
@@ -781,7 +789,7 @@ export default function PublicLandingPage() {
                       </defs>
                       <g className={styles.chartGrid} data-landing-chart-grid>
                         {[55, 110, 165, 220, 275].map((y) => <line key={y} x1="16" x2="744" y1={y} y2={y} />)}
-                        {[150, 300, 450, 600].map((x) => <line key={x} x2={x} x1={x} y1="18" y2="282" />)}
+                        {[150, 300, 450, 600].map((x) => <line key={x} x1={x} x2={x} y1="18" y2="282" />)}
                       </g>
                       <path className={styles.chartArea} d={paths.area} />
                       <path className={styles.chartLine} data-landing-chart-line d={paths.line} />
