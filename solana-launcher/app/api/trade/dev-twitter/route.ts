@@ -7,6 +7,7 @@ import { PublicKey } from "@solana/web3.js";
 import { scrapeTwitter, fetchTokenMeta, buildQuery, hasTwitterAuth, normalizeTwitterHandle, type CollectionStrategy } from "../../../../lib/trade/twitter-scraper";
 import { getDb } from "../../../../lib/trade/db";
 import { getTokenTwitterSocialStats } from "../../../../lib/twitterSocialStats";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -285,6 +286,9 @@ function persistTwitterStats(
 }
 
 export async function GET(req: NextRequest) {
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
   const mint = req.nextUrl.searchParams.get("mint") || "";
   const symbolParam = (req.nextUrl.searchParams.get("symbol") || "").trim().replace(/^\$/, "");
   const strategyParam = req.nextUrl.searchParams.get("strategy") || "auto";
