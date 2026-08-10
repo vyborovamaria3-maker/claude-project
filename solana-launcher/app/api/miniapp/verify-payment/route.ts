@@ -13,6 +13,10 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const VERIFY_INTERVAL_MS = 2_500;
+const MAX_VERIFY_KEYS = 5_000;
+const recentVerification = new Map<string, number>();
+
 function resolveTelegramUser(initData: string) {
   if (initData) {
     return verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN || "");
@@ -21,6 +25,22 @@ function resolveTelegramUser(initData: string) {
     return getDevTelegramUser();
   }
   throw new Error("Telegram initData is required");
+}
+
+function shouldVerifyOnChain(key: string): boolean {
+  const now = Date.now();
+  const previous = recentVerification.get(key) || 0;
+  if (now - previous < VERIFY_INTERVAL_MS) return false;
+  recentVerification.set(key, now);
+
+  if (recentVerification.size > MAX_VERIFY_KEYS) {
+    const cutoff = now - 60_000;
+    for (const [candidate, timestamp] of recentVerification) {
+      if (timestamp < cutoff) recentVerification.delete(candidate);
+      if (recentVerification.size <= MAX_VERIFY_KEYS) break;
+    }
+  }
+  return true;
 }
 
 export async function POST(req: NextRequest) {
@@ -55,6 +75,14 @@ export async function POST(req: NextRequest) {
     }
     if (!order.payment_reference || !order.recipient_wallet) {
       return NextResponse.json({ error: "payment order is incomplete" }, { status: 500 });
+    }
+
+    const verifyKey = `${user.id}:${order.payload}`;
+    if (!shouldVerifyOnChain(verifyKey)) {
+      return NextResponse.json(
+        { status: "pending", retryAfterMs: VERIFY_INTERVAL_MS },
+        { status: 202 }
+      );
     }
 
     const signature = await findVerifiedSolanaPayment({
