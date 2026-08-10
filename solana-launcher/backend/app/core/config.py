@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -87,6 +87,21 @@ class Settings(BaseSettings):
         if any(pattern in v_lower for pattern in weak_patterns):
             raise ValueError("SECRET_KEY contains weak pattern. Do not use default or predictable secrets.")
         return v
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self):
+        if self.environment.strip().lower() != "production":
+            return self
+
+        if self.debug:
+            raise ValueError("DEBUG must be false in production")
+        if self.admin_password == "ChangeMe123!" or len(self.admin_password) < 12:
+            raise ValueError("ADMIN_PASSWORD must be changed and contain at least 12 characters in production")
+        if self.admin_session_secret == "admin-session-secret" or len(self.admin_session_secret) < 32:
+            raise ValueError("ADMIN_SESSION_SECRET must be a strong value of at least 32 characters in production")
+        if len(self.backend_api_key) < 32:
+            raise ValueError("BACKEND_API_KEY must contain at least 32 characters in production")
+        return self
 
 
 @lru_cache(maxsize=1)
