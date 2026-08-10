@@ -5,6 +5,7 @@ import json
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from intelligence.bootstrap import IntelligenceRuntime
 from intelligence.cli import main
@@ -119,7 +120,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(payload["providers"][0]["details"]["token"], "[REDACTED]")
         self.assertNotIn("provider-secret", stdout)
 
-    def test_documents_uses_recent_limit_and_omits_content(self) -> None:
+    def test_documents_uses_recent_limit_and_omits_sensitive_fields(self) -> None:
         factory = RuntimeFactory()
         older = IntelligenceDocument(
             id="old",
@@ -132,6 +133,8 @@ class CLITests(unittest.TestCase):
             source="fake",
             content="second-secret-content",
             collected_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
+            url="https://example.com/?token=url-secret",
+            metrics={"feed_url": "https://example.com/?key=metrics-secret"},
         )
         factory.store.save(older)
         factory.store.save(newer)
@@ -145,6 +148,10 @@ class CLITests(unittest.TestCase):
         self.assertEqual(payload["documents"][0]["id"], "new")
         self.assertNotIn("content-must-not-be-emitted", stdout)
         self.assertNotIn("second-secret-content", stdout)
+        self.assertNotIn("url-secret", stdout)
+        self.assertNotIn("metrics-secret", stdout)
+        self.assertNotIn("url", payload["documents"][0])
+        self.assertNotIn("metrics", payload["documents"][0])
 
     def test_invalid_documents_limit_is_safe_domain_error(self) -> None:
         code, _, stderr = self.run_cli(
@@ -152,6 +159,34 @@ class CLITests(unittest.TestCase):
         )
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(stderr)["error"], "limit must be between 1 and 1000")
+
+    def test_postgres_backend_uses_postgres_runtime_builder(self) -> None:
+        factory = RuntimeFactory()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch("intelligence.cli.build_postgres_runtime", return_value=factory.runtime) as builder:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main(
+                    [
+                        "--backend",
+                        "postgres",
+                        "--postgres-dsn",
+                        "postgresql://db/intelligence",
+                        "documents",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        builder.assert_called_once_with("postgresql://db/intelligence")
+
+    def test_postgres_backend_requires_dsn(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(["--backend", "postgres", "--postgres-dsn", "", "doctor"])
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("requires", json.loads(stderr.getvalue())["error"])
 
     def test_unknown_runtime_failure_is_collapsed(self) -> None:
         code, stdout, stderr = self.run_cli(
