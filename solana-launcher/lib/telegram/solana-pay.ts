@@ -10,6 +10,8 @@ export const USDT_SOLANA_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 
 export type SolanaPaymentCurrency = "SOL" | "USDT";
 
+type ParsedOrDecodedInstruction = ParsedInstruction | PartiallyDecodedInstruction;
+
 function pow10(decimals: number): bigint {
   return 10n ** BigInt(decimals);
 }
@@ -87,13 +89,13 @@ export function getSubscriptionRpcUrl(): string {
 }
 
 function isParsedInstruction(
-  instruction: ParsedInstruction | PartiallyDecodedInstruction
+  instruction: ParsedOrDecodedInstruction
 ): instruction is ParsedInstruction {
   return "parsed" in instruction;
 }
 
 function validateSolTransfer(
-  instructions: Array<ParsedInstruction | PartiallyDecodedInstruction>,
+  instructions: ParsedOrDecodedInstruction[],
   recipient: string,
   expectedLamports: bigint
 ): boolean {
@@ -143,6 +145,16 @@ function validateUsdtTransfer(
   return received === expectedAmount;
 }
 
+function allParsedInstructions(
+  transaction: NonNullable<Awaited<ReturnType<Connection["getParsedTransaction"]>>>
+): ParsedOrDecodedInstruction[] {
+  const topLevel = transaction.transaction.message.instructions;
+  const inner = (transaction.meta?.innerInstructions || []).flatMap(
+    (group) => group.instructions
+  );
+  return [...topLevel, ...inner];
+}
+
 export async function findVerifiedSolanaPayment(input: {
   rpcUrl: string;
   reference: string;
@@ -163,33 +175,48 @@ export async function findVerifiedSolanaPayment(input: {
   }
 
   const connection = new Connection(input.rpcUrl, "finalized");
-  const signatures = await connection.getSignaturesForAddress(reference, { limit: 20 });
+  let before: string | undefined;
 
-  for (const signatureInfo of signatures) {
-    if (signatureInfo.err || signatureInfo.confirmationStatus !== "finalized") continue;
-    if (signatureInfo.blockTime != null && signatureInfo.blockTime < createdAfter) continue;
-
-    const transaction = await connection.getParsedTransaction(signatureInfo.signature, {
-      commitment: "finalized",
-      maxSupportedTransactionVersion: 0,
+  // A reference account is unique per order. Scan several pages so unrelated
+  // spam signatures cannot trivially push a legitimate payment out of view.
+  for (let page = 0; page < 3; page += 1) {
+    const signatures = await connection.getSignaturesForAddress(reference, {
+      limit: 100,
+      ...(before ? { before } : {}),
     });
-    if (!transaction || transaction.meta?.err) continue;
+    if (signatures.length === 0) break;
 
-    const hasReference = transaction.transaction.message.accountKeys.some(
-      (key) => key.pubkey.toBase58() === reference.toBase58()
-    );
-    if (!hasReference) continue;
+    for (const signatureInfo of signatures) {
+      if (signatureInfo.err || signatureInfo.confirmationStatus !== "finalized") continue;
+      if (signatureInfo.blockTime != null && signatureInfo.blockTime < createdAfter) {
+        return null;
+      }
 
-    const valid =
-      input.currency === "SOL"
-        ? validateSolTransfer(
-            transaction.transaction.message.instructions,
-            recipient,
-            expectedAmount
-          )
-        : validateUsdtTransfer(transaction.meta, recipient, expectedAmount);
+      const transaction = await connection.getParsedTransaction(signatureInfo.signature, {
+        commitment: "finalized",
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!transaction || transaction.meta?.err) continue;
 
-    if (valid) return signatureInfo.signature;
+      const hasReference = transaction.transaction.message.accountKeys.some(
+        (key) => key.pubkey.toBase58() === reference.toBase58()
+      );
+      if (!hasReference) continue;
+
+      const valid =
+        input.currency === "SOL"
+          ? validateSolTransfer(
+              allParsedInstructions(transaction),
+              recipient,
+              expectedAmount
+            )
+          : validateUsdtTransfer(transaction.meta, recipient, expectedAmount);
+
+      if (valid) return signatureInfo.signature;
+    }
+
+    before = signatures.at(-1)?.signature;
+    if (!before || signatures.length < 100) break;
   }
 
   return null;
