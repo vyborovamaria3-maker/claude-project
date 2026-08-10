@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from intelligence.core.models import IntelligenceDocument
+from intelligence.storage.integrity import validate_document_integrity
 
 
 @dataclass(slots=True)
@@ -15,6 +16,7 @@ class MemoryDocumentStore:
         self._hash_index = {}
 
     def save(self, document: IntelligenceDocument) -> IntelligenceDocument:
+        validate_document_integrity(document)
         if document.raw_hash:
             existing_id = self._hash_index.get(document.raw_hash)
             if existing_id is not None:
