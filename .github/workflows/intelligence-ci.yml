@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "intelligence/**"
+      - "scripts/verify_intelligence.py"
       - "admin-site/app/intelligence_view.py"
       - "admin-site/app/intelligence_view_factory.py"
       - "admin-site/app/main_admin.py"
@@ -48,35 +49,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install intelligence and admin integration dependencies
+      - name: Install verification dependencies
         run: |
           python -m pip install --disable-pip-version-check \
             -r intelligence/requirements.txt \
             -r admin-site/requirements.txt
 
-      - name: Compile intelligence and admin integration
-        run: |
-          python -m compileall -q intelligence
-          python -m py_compile \
-            admin-site/app/intelligence_view.py \
-            admin-site/app/intelligence_view_factory.py \
-            admin-site/app/main_admin.py \
-            admin-site/app/config.py \
-            admin-site/tests/test_intelligence_view.py \
-            admin-site/tests/test_intelligence_view_factory.py
-
-      - name: Run intelligence unit tests
-        run: python -m unittest discover -s intelligence/tests -p "test_*.py" -v
-
-      - name: Run deterministic scoring backtest
-        run: python -m intelligence backtest
-
-      - name: Run admin intelligence integration tests
-        env:
-          PYTHONPATH: admin-site
-        run: python -m unittest discover -s admin-site/tests -p "test_intelligence_*.py" -v
-
-      - name: Initialize disposable PostgreSQL and read-only admin role
+      - name: Prepare disposable PostgreSQL read-only role
         env:
           POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
         run: |
@@ -95,69 +74,15 @@ jobs:
               connection.execute("GRANT SELECT ON intelligence_documents, intelligence_jobs TO intelligence_readonly")
           PY
 
-      - name: Run live PostgreSQL intelligence integration tests
+      - name: Run repository verification entrypoint
         env:
           POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
           POTAPOFF_TEST_POSTGRES_READONLY_DSN: postgresql://intelligence_readonly:readonly@127.0.0.1:5432/intelligence
-        run: python -m unittest intelligence.tests.test_postgres_integration -v
+        run: >-
+          python scripts/verify_intelligence.py --full
+          --image-tag potapoff-intelligence:${{ github.sha }}
 
-      - name: Prepare Compose smoke configuration
-        run: |
-          cp admin-site/.env.example admin-site/.env
-          cp admin-site/.env.intelligence.example admin-site/.env.intelligence
-          cp admin-site/sources.example.json admin-site/sources.json
-          cp admin-site/logs.example.json admin-site/logs.json
-
-      - name: Validate secret separation templates
-        shell: bash
-        run: |
-          set -euo pipefail
-          if grep -q '^POTAPOFF_INTELLIGENCE_POSTGRES_DSN=' admin-site/.env.example; then
-            echo "Worker write DSN must not exist in admin .env template" >&2
-            exit 1
-          fi
-          grep -q '^POTAPOFF_INTELLIGENCE_POSTGRES_DSN=' admin-site/.env.intelligence.example
-          grep -q '^ADMIN_INTELLIGENCE_POSTGRES_DSN=' admin-site/.env.example
-
-      - name: Validate Docker Compose and rendered secret boundary
-        run: |
-          docker compose -f admin-site/docker-compose.yml config --quiet
-          docker compose -f admin-site/docker-compose.yml config --format json > /tmp/potapoff-compose.json
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          config = json.loads(Path('/tmp/potapoff-compose.json').read_text())
-          services = config['services']
-          admin_env = services['admin'].get('environment', {})
-          worker_env = services['intelligence-worker'].get('environment', {})
-          assert 'POTAPOFF_INTELLIGENCE_POSTGRES_DSN' not in admin_env, admin_env.keys()
-          assert 'ADMIN_INTELLIGENCE_POSTGRES_DSN' not in worker_env, worker_env.keys()
-          assert 'POTAPOFF_INTELLIGENCE_POSTGRES_DSN' in worker_env
-          assert 'ADMIN_INTELLIGENCE_POSTGRES_DSN' in admin_env
-          PY
-
-      - name: Build intelligence worker image
-        run: docker build --pull -t potapoff-intelligence:${{ github.sha }} intelligence
-
-      - name: Smoke intelligence worker image
-        run: |
-          set -euo pipefail
-          test "$(docker image inspect potapoff-intelligence:${{ github.sha }} --format '{{.Config.User}}')" = "intelligence"
-          docker run --rm --read-only --tmpfs /tmp:size=256m \
-            --cap-drop ALL --security-opt no-new-privileges \
-            potapoff-intelligence:${{ github.sha }} python -m intelligence --help >/dev/null
-          docker run --rm --read-only --tmpfs /tmp:size=256m \
-            --cap-drop ALL --security-opt no-new-privileges \
-            potapoff-intelligence:${{ github.sha }} python -m intelligence backtest >/dev/null
-          docker run --rm --read-only --tmpfs /tmp:size=256m \
-            --cap-drop ALL --security-opt no-new-privileges \
-            potapoff-intelligence:${{ github.sha }} yt-dlp --version
-          docker run --rm --read-only --tmpfs /tmp:size=256m \
-            --cap-drop ALL --security-opt no-new-privileges \
-            potapoff-intelligence:${{ github.sha }} deno --version
-
-      - name: Scan intelligence image for HIGH/CRITICAL vulnerabilities
+      - name: Scan verified intelligence image for HIGH/CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: potapoff-intelligence:${{ github.sha }}
@@ -166,12 +91,3 @@ jobs:
           ignore-unfixed: true
           vuln-type: "os,library"
           severity: "HIGH,CRITICAL"
-
-      - name: Reject credential files
-        shell: bash
-        run: |
-          set -euo pipefail
-          if find intelligence -type f \( -name '.env' -o -name '*.pem' -o -name '*.key' -o -name '*cookies*' \) -print -quit | grep -q .; then
-            echo "Credential-like file found under intelligence/"
-            exit 1
-          fi
