@@ -36,6 +36,7 @@ class SQLiteJobQueue:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
             self._connection = sqlite3.connect(str(self.path), timeout=5.0)
             self._connection.row_factory = sqlite3.Row
+            _configure_connection(self._connection, file_backed=self.path != Path(":memory:"))
             self._connection.executescript(_SCHEMA)
             self._connection.commit()
         except (OSError, sqlite3.Error) as exc:
@@ -219,6 +220,16 @@ class SQLiteJobQueue:
             self._connection.rollback()
         except sqlite3.Error:
             pass
+
+
+def _configure_connection(connection: sqlite3.Connection, *, file_backed: bool) -> None:
+    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    if file_backed:
+        mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()
+        if mode is None or str(mode[0]).lower() != "wal":
+            raise sqlite3.OperationalError("failed to enable WAL mode")
 
 
 def _json_dumps(value: Any) -> str:
