@@ -13,6 +13,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     email: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    access_login: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     wallet_address: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
