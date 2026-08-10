@@ -1,0 +1,163 @@
+"""SQLite persistence backend for normalized intelligence documents."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from intelligence.core.models import IntelligenceDocument
+from intelligence.errors.exceptions import StorageError
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS intelligence_documents (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    content TEXT NOT NULL,
+    collected_at TEXT NOT NULL,
+    url TEXT,
+    author TEXT,
+    provider TEXT,
+    published_at TEXT,
+    entities_json TEXT NOT NULL,
+    metrics_json TEXT NOT NULL,
+    raw_hash TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_intelligence_documents_source
+    ON intelligence_documents(source);
+CREATE INDEX IF NOT EXISTS idx_intelligence_documents_collected_at
+    ON intelligence_documents(collected_at);
+"""
+
+
+class SQLiteDocumentStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        if self.path != Path(":memory:"):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._connection = sqlite3.connect(str(self.path))
+            self._connection.row_factory = sqlite3.Row
+            self._connection.executescript(_SCHEMA)
+            self._connection.commit()
+        except sqlite3.Error as exc:
+            raise StorageError("failed to initialize SQLite intelligence store") from exc
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def save(self, document: IntelligenceDocument) -> IntelligenceDocument:
+        if document.raw_hash:
+            existing = self.find_by_hash(document.raw_hash)
+            if existing is not None:
+                return existing
+
+        try:
+            self._connection.execute(
+                """
+                INSERT INTO intelligence_documents (
+                    id, source, content, collected_at, url, author, provider,
+                    published_at, entities_json, metrics_json, raw_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document.id,
+                    document.source,
+                    document.content,
+                    document.collected_at.isoformat(),
+                    document.url,
+                    document.author,
+                    document.provider,
+                    document.published_at.isoformat() if document.published_at else None,
+                    _json_dumps(document.entities),
+                    _json_dumps(document.metrics),
+                    document.raw_hash,
+                ),
+            )
+            self._connection.commit()
+            return document
+        except sqlite3.IntegrityError as exc:
+            if document.raw_hash:
+                existing = self.find_by_hash(document.raw_hash)
+                if existing is not None:
+                    return existing
+            raise StorageError("intelligence document violates SQLite constraints") from exc
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            raise StorageError("failed to save intelligence document") from exc
+
+    def get(self, document_id: str) -> IntelligenceDocument | None:
+        try:
+            row = self._connection.execute(
+                "SELECT * FROM intelligence_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise StorageError("failed to read intelligence document") from exc
+        return _row_to_document(row) if row is not None else None
+
+    def list_all(self) -> list[IntelligenceDocument]:
+        try:
+            rows = self._connection.execute(
+                "SELECT * FROM intelligence_documents ORDER BY collected_at ASC, id ASC"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise StorageError("failed to list intelligence documents") from exc
+        return [_row_to_document(row) for row in rows]
+
+    def find_by_hash(self, raw_hash: str) -> IntelligenceDocument | None:
+        try:
+            row = self._connection.execute(
+                "SELECT * FROM intelligence_documents WHERE raw_hash = ?",
+                (raw_hash,),
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise StorageError("failed to lookup intelligence document hash") from exc
+        return _row_to_document(row) if row is not None else None
+
+    def __enter__(self) -> "SQLiteDocumentStore":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _json_loads(value: str, expected: type) -> Any:
+    parsed = json.loads(value)
+    if not isinstance(parsed, expected):
+        raise StorageError("stored intelligence JSON has an unexpected shape")
+    return parsed
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise StorageError("stored intelligence timestamp is invalid") from exc
+
+
+def _row_to_document(row: sqlite3.Row) -> IntelligenceDocument:
+    collected_at = _parse_datetime(row["collected_at"])
+    if collected_at is None:
+        raise StorageError("stored intelligence document has no collected_at timestamp")
+    return IntelligenceDocument(
+        id=row["id"],
+        source=row["source"],
+        content=row["content"],
+        collected_at=collected_at,
+        url=row["url"],
+        author=row["author"],
+        provider=row["provider"],
+        published_at=_parse_datetime(row["published_at"]),
+        entities=_json_loads(row["entities_json"], list),
+        metrics=_json_loads(row["metrics_json"], dict),
+        raw_hash=row["raw_hash"],
+    )
