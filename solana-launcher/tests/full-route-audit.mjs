@@ -6,6 +6,7 @@ import { chromium, devices } from "playwright";
 const baseURL = process.env.BASE_URL || "http://127.0.0.1:3000";
 const appDir = path.resolve("app");
 const outputDir = path.resolve("test-results/full-route-audit");
+const TEST_ACCESS_TOKEN = "full-route-backtest-token";
 
 async function walk(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -114,6 +115,47 @@ async function auditRoute(page, route, viewportName, failures) {
   console.log(`AUDIT ${viewportName} ${route} status=${response?.status() ?? "none"} overflow=${widest - state.viewport}${redirect}`);
 }
 
+async function installAuthenticatedBacktestSession(context) {
+  await context.addInitScript((token) => {
+    window.localStorage.setItem("potapoff.access_token", token);
+  }, TEST_ACCESS_TOKEN);
+
+  await context.route("**/api/v1/auth/me", async (route) => {
+    const authorization = route.request().headers().authorization || "";
+    await route.fulfill({
+      status: authorization === `Bearer ${TEST_ACCESS_TOKEN}` ? 200 : 401,
+      contentType: "application/json",
+      body: JSON.stringify(
+        authorization === `Bearer ${TEST_ACCESS_TOKEN}`
+          ? {
+              id: "00000000-0000-0000-0000-000000000001",
+              email: null,
+              access_login: "route_audit",
+              is_active: true,
+              is_superuser: false,
+            }
+          : { detail: "Unauthorized" }
+      ),
+    });
+  });
+}
+
+async function assertPrivateRouteGate(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(`${baseURL}/launch-dashboard`, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    await page.waitForURL(/\/login(?:$|[?#])/, { timeout: 10_000 });
+    assert.equal(new URL(page.url()).pathname, "/login");
+    console.log("AUDIT access-gate unauthenticated /launch-dashboard redirect=/login");
+  } finally {
+    await context.close();
+  }
+}
+
 async function run() {
   await fs.mkdir(outputDir, { recursive: true });
   const routes = await discoverRoutes();
@@ -125,6 +167,7 @@ async function run() {
   const browser = await chromium.launch({ headless: true });
   const failures = [];
   try {
+    await assertPrivateRouteGate(browser);
     const profiles = [
       ["desktop", { viewport: { width: 1440, height: 1000 }, locale: "ru-RU" }],
       ["iphone13", { ...devices["iPhone 13"], locale: "ru-RU" }],
@@ -132,6 +175,7 @@ async function run() {
 
     for (const [name, options] of profiles) {
       const context = await browser.newContext(options);
+      await installAuthenticatedBacktestSession(context);
       try {
         for (const route of routes) {
           const page = await context.newPage();
