@@ -36,7 +36,7 @@ async def create_user(session: AsyncSession, user_in: UserCreate, *, is_superuse
 
 async def authenticate_user(session: AsyncSession, email: str, password: str) -> User | None:
     user = await get_user_by_email(session, email)
-    if user is None or not verify_password(password, user.hashed_password):
+    if user is None or not user.hashed_password or not verify_password(password, user.hashed_password):
         return None
     return user
 
