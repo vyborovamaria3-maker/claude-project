@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import urllib.error
-import urllib.parse
 import urllib.request
 
 from intelligence.errors.exceptions import ProviderError
+from intelligence.security.urls import validate_public_http_url
 
 
 class JinaReaderClient:
@@ -31,7 +30,6 @@ class JinaReaderClient:
 
     async def health(self) -> int:
         started = asyncio.get_running_loop().time()
-        # Lightweight, deterministic public target; response content is ignored.
         await self.read("https://example.com")
         elapsed = asyncio.get_running_loop().time() - started
         return max(0, round(elapsed * 1000))
@@ -57,26 +55,4 @@ class JinaReaderClient:
 
     @staticmethod
     def validate_public_url(url: str) -> str:
-        value = url.strip()
-        parsed = urllib.parse.urlsplit(value)
-        if parsed.scheme not in {"http", "https"}:
-            raise ValueError("Web provider only accepts http/https URLs")
-        if not parsed.hostname:
-            raise ValueError("Web URL must include a hostname")
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("Web URL must not contain credentials")
-
-        hostname = parsed.hostname.rstrip(".").lower()
-        if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
-            raise ValueError("Localhost URLs are not allowed")
-
-        try:
-            address = ipaddress.ip_address(hostname)
-        except ValueError:
-            address = None
-        if address is not None and not address.is_global:
-            raise ValueError("Private, loopback and link-local IP URLs are not allowed")
-
-        # Drop fragments because they do not affect the fetched resource and only
-        # create duplicate evidence hashes.
-        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.query, ""))
+        return validate_public_http_url(url)
