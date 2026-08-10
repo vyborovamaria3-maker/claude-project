@@ -20,7 +20,7 @@ export type SubscriptionOrder = {
   currency: SubscriptionCurrency;
   total_amount: number;
   access_days: number;
-  status: "pending" | "paid" | "cancelled";
+  status: "pending" | "paid" | "cancelled" | "expired";
   password: string | null;
   recipient_wallet: string | null;
   payment_reference: string | null;
@@ -133,6 +133,21 @@ export async function createSubscriptionOrder(input: {
 export async function getSubscriptionOrder(payload: string): Promise<SubscriptionOrder | null> {
   try {
     return await requestBackend<SubscriptionOrder>(`/orders/${encodeURIComponent(payload)}`);
+  } catch (error) {
+    if (error instanceof SubscriptionStoreError && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function getLatestSubscriptionAccess(
+  telegramUserId: number
+): Promise<SubscriptionOrder | null> {
+  try {
+    return await requestBackend<SubscriptionOrder>(
+      `/users/${encodeURIComponent(String(telegramUserId))}/access`
+    );
   } catch (error) {
     if (error instanceof SubscriptionStoreError && error.status === 404) {
       return null;
