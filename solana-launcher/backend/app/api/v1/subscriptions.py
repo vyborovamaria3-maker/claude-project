@@ -21,7 +21,7 @@ from app.services.subscriptions import (
     SubscriptionPasswordError,
     complete_subscription_order,
     create_subscription_order,
-    decrypt_order_password,
+    get_latest_subscription_access,
     get_subscription_order,
     get_subscription_settings,
 )
@@ -62,8 +62,16 @@ async def _as_response(
     already_paid: bool = False,
     password: str | None = None,
 ) -> SubscriptionOrderRead:
+    subscription_expires_at = await _subscription_expiry(session, order)
     if password is None and order.status == "paid":
-        password = decrypt_order_password(order.password_ciphertext, settings.secret_key)
+        recovered = await get_latest_subscription_access(
+            session,
+            order.telegram_user_id,
+            secret_key=settings.secret_key,
+        )
+        if recovered is not None:
+            _latest_order, password, subscription_expires_at = recovered
+
     return SubscriptionOrderRead(
         payload=order.payload,
         telegram_user_id=order.telegram_user_id,
@@ -81,7 +89,7 @@ async def _as_response(
         created_at=order.created_at,
         updated_at=order.updated_at,
         paid_at=order.paid_at,
-        subscription_expires_at=await _subscription_expiry(session, order),
+        subscription_expires_at=subscription_expires_at,
         already_paid=already_paid,
     )
 
@@ -112,9 +120,14 @@ async def create_order(
     settings = _require_internal_access(request)
     try:
         order = await create_subscription_order(session, payload)
+        return await _as_response(session, order, settings=settings)
     except SubscriptionConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    return await _as_response(session, order, settings=settings)
+    except SubscriptionPasswordError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get("/orders/{payload}", response_model=SubscriptionOrderRead)
@@ -137,6 +150,38 @@ async def read_order(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
+
+
+@router.get("/users/{telegram_user_id}/access", response_model=SubscriptionOrderRead)
+async def read_latest_access(
+    telegram_user_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> SubscriptionOrderRead:
+    settings = _require_internal_access(request)
+    try:
+        recovered = await get_latest_subscription_access(
+            session,
+            telegram_user_id,
+            secret_key=settings.secret_key,
+        )
+    except SubscriptionPasswordError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    if recovered is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active access not found")
+
+    order, password, _expires_at = recovered
+    return await _as_response(
+        session,
+        order,
+        settings=settings,
+        already_paid=True,
+        password=password,
+    )
 
 
 @router.post("/orders/{payload}/complete", response_model=SubscriptionOrderRead)
