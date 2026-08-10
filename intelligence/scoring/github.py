@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from intelligence.core.models import IntelligenceDocument
 from intelligence.errors.exceptions import ScoringError
@@ -43,6 +44,30 @@ def _timestamp(metrics: dict[str, Any], key: str) -> datetime:
     return parsed
 
 
+def _repository_identity(document: IntelligenceDocument) -> tuple[str, str]:
+    candidates = [
+        entity.strip()
+        for entity in document.entities
+        if isinstance(entity, str) and entity.strip() != "repository" and "/" in entity
+    ]
+    if len(candidates) != 1:
+        raise ScoringError("GitHub repository entity is missing or ambiguous")
+    repository = candidates[0]
+    owner, separator, name = repository.partition("/")
+    if not separator or not owner or not name or "/" in name:
+        raise ScoringError("GitHub repository entity is invalid")
+
+    if not isinstance(document.url, str) or not document.url:
+        raise ScoringError("GitHub repository URL is missing")
+    parsed = urlsplit(document.url)
+    if parsed.scheme != "https" or parsed.hostname != "github.com" or parsed.query or parsed.fragment:
+        raise ScoringError("GitHub repository URL is invalid")
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) != 2 or path_parts != [owner, name]:
+        raise ScoringError("GitHub repository URL does not match repository entity")
+    return repository, name
+
+
 def snapshot_from_github_document(document: IntelligenceDocument) -> RepositorySnapshot:
     """Reconstruct the provider snapshot needed for deterministic derived scoring."""
     if document.source != "github":
@@ -50,25 +75,14 @@ def snapshot_from_github_document(document: IntelligenceDocument) -> RepositoryS
     if not isinstance(document.metrics, dict):
         raise ScoringError("GitHub intelligence metrics are invalid")
 
-    repository = next(
-        (
-            entity
-            for entity in document.entities
-            if isinstance(entity, str) and "/" in entity and entity != "repository"
-        ),
-        None,
-    )
-    if repository is None:
-        raise ScoringError("GitHub repository entity is missing")
+    repository, name = _repository_identity(document)
     archived = document.metrics.get("archived")
     if not isinstance(archived, bool):
         raise ScoringError("GitHub metric archived is invalid")
-    if not isinstance(document.url, str) or not document.url:
-        raise ScoringError("GitHub repository URL is missing")
 
     counters = {key: _counter(document.metrics, key) for key in _REQUIRED_COUNTERS}
     return RepositorySnapshot(
-        name=repository.split("/", 1)[1],
+        name=name,
         full_name=repository,
         url=document.url,
         stars=counters["stars"],
