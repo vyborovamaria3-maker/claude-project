@@ -56,7 +56,10 @@ class SQLiteDocumentStoreTests(unittest.TestCase):
             duplicate = store.save(make_document("second"))
             self.assertEqual(duplicate.id, first.id)
             self.assertEqual(len(store.list_all()), 1)
-            self.assertEqual(store.find_by_hash("a" * 64).id, first.id)
+            found = store.find_by_hash("a" * 64)
+            self.assertIsNotNone(found)
+            assert found is not None
+            self.assertEqual(found.id, first.id)
 
     def test_documents_without_hash_are_not_deduplicated(self) -> None:
         with SQLiteDocumentStore(":memory:") as store:
@@ -81,6 +84,16 @@ class SQLiteDocumentStoreTests(unittest.TestCase):
             with self.assertRaises(StorageError):
                 store.save(document)
             self.assertEqual(store.list_all(), [])
+
+    def test_constraint_failure_rolls_back_and_store_remains_usable(self) -> None:
+        with SQLiteDocumentStore(":memory:") as store:
+            store.save(make_document("same-id", raw_hash="a" * 64))
+            with self.assertRaises(StorageError):
+                store.save(make_document("same-id", raw_hash="b" * 64))
+
+            recovered = store.save(make_document("after-error", raw_hash="c" * 64))
+            self.assertEqual(recovered.id, "after-error")
+            self.assertEqual(len(store.list_all()), 2)
 
 
 if __name__ == "__main__":
