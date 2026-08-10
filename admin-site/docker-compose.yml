@@ -56,9 +56,9 @@ services:
     pids_limit: 128
     init: true
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, shutil; assert shutil.which('yt-dlp'); assert shutil.which('deno'); backend=os.getenv('POTAPOFF_INTELLIGENCE_BACKEND','sqlite'); assert backend in {'sqlite','postgres'}; assert backend != 'sqlite' or os.access('/var/lib/potapoff-intelligence', os.W_OK); assert backend != 'postgres' or bool(os.getenv('POTAPOFF_INTELLIGENCE_POSTGRES_DSN'))"]
+      test: ["CMD", "python", "-m", "intelligence", "runtime-health"]
       interval: 30s
-      timeout: 5s
+      timeout: 8s
       retries: 3
       start_period: 20s
 
