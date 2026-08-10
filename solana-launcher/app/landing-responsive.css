@@ -1,6 +1,7 @@
 /*
  * Landing-only responsive hardening.
  * Scoped to the premium landing main element so app/dashboard layouts are unaffected.
+ * Keep these selectors semantic/id-based: CSS-module class hashes must not leak here.
  */
 
 main[data-theme="gold"],
