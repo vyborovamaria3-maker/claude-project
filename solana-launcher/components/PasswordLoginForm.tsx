@@ -57,18 +57,22 @@ export default function PasswordLoginForm() {
         onChange={(e) => setLogin(e.target.value)}
         placeholder="Введите логин"
         maxLength={32}
+        autoComplete="username"
         aria-label="Логин доступа"
         className="mt-1 w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3 text-white placeholder:text-white/30 focus:border-neon-green focus:outline-none"
       />
 
       <input
-        type="text"
+        type="password"
         value={password}
         onChange={(e) => setPassword(e.target.value.toUpperCase())}
         placeholder="Введите пароль"
         maxLength={32}
+        autoComplete="current-password"
+        spellCheck={false}
+        autoCapitalize="characters"
         aria-label="Пароль доступа"
-        className="mt-1 w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3 text-white placeholder:text-white/30 focus:border-neon-green focus:outline-none"
+        className="mt-1 w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3 font-mono text-white placeholder:text-white/30 focus:border-neon-green focus:outline-none"
       />
 
       {error && (
