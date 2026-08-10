@@ -21,8 +21,18 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "POTAPoff - Solana Launch Platform",
-  description: "Futuristic Solana token launch and trading dashboard",
+  title: "POTAPoff — Solana Launch & Market Intelligence",
+  description:
+    "Запуск токенов, анализ кошельков, bundle intelligence и реальный контекст рынка Solana в одной профессиональной рабочей среде.",
+  applicationName: "POTAPoff",
+  keywords: ["Solana", "token launch", "wallet intelligence", "market intelligence", "bundle analysis"],
+  openGraph: {
+    title: "POTAPoff — Solana Launch & Market Intelligence",
+    description:
+      "Запуск токенов, анализ кошельков и реальный контекст рынка Solana в одной рабочей среде.",
+    type: "website",
+    siteName: "POTAPoff",
+  },
 };
 
 export const viewport: Viewport = {
