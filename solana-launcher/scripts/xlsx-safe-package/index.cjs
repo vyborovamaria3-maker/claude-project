@@ -1,7 +1,7 @@
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const READER = path.join(__dirname, "read_xlsx.py");
+const READER = path.join(__dirname, "read_xlsx_guard.py");
 const MAX_OUTPUT_BYTES = 128 * 1024 * 1024;
 
 function pythonCandidates() {
