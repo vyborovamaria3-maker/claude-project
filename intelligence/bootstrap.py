@@ -13,14 +13,16 @@ from intelligence.providers.youtube.provider import YouTubeIntelligenceProvider
 from intelligence.storage.base import DocumentStore
 from intelligence.storage.memory_store import MemoryDocumentStore
 from intelligence.storage.sqlite_store import SQLiteDocumentStore
+from intelligence.worker.base import JobQueue
 from intelligence.worker.jobs import IntelligenceWorker
 from intelligence.worker.queue import MemoryJobQueue
+from intelligence.worker.sqlite_queue import SQLiteJobQueue
 
 
 @dataclass(slots=True)
 class IntelligenceRuntime:
     registry: ProviderRegistry
-    queue: MemoryJobQueue
+    queue: JobQueue
     store: DocumentStore
     worker: IntelligenceWorker
 
@@ -37,8 +39,11 @@ def build_default_registry() -> ProviderRegistry:
     )
 
 
-def _build_runtime(registry: ProviderRegistry, store: DocumentStore) -> IntelligenceRuntime:
-    queue = MemoryJobQueue()
+def _build_runtime(
+    registry: ProviderRegistry,
+    queue: JobQueue,
+    store: DocumentStore,
+) -> IntelligenceRuntime:
     worker = IntelligenceWorker(queue, registry, store)
     return IntelligenceRuntime(
         registry=registry,
@@ -49,8 +54,12 @@ def _build_runtime(registry: ProviderRegistry, store: DocumentStore) -> Intellig
 
 
 def build_memory_runtime(*, registry: ProviderRegistry | None = None) -> IntelligenceRuntime:
-    """Build an in-memory runtime suitable for local execution and tests."""
-    return _build_runtime(registry or build_default_registry(), MemoryDocumentStore())
+    """Build an in-memory runtime suitable for unit/local tests."""
+    return _build_runtime(
+        registry or build_default_registry(),
+        MemoryJobQueue(),
+        MemoryDocumentStore(),
+    )
 
 
 def build_sqlite_runtime(
@@ -58,5 +67,10 @@ def build_sqlite_runtime(
     *,
     registry: ProviderRegistry | None = None,
 ) -> IntelligenceRuntime:
-    """Build a durable local runtime backed by SQLite normalized storage."""
-    return _build_runtime(registry or build_default_registry(), SQLiteDocumentStore(path))
+    """Build a durable runtime with SQLite queue and normalized storage."""
+    resolved = Path(path)
+    return _build_runtime(
+        registry or build_default_registry(),
+        SQLiteJobQueue(resolved),
+        SQLiteDocumentStore(resolved),
+    )
