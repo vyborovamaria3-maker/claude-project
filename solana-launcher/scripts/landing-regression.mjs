@@ -12,6 +12,7 @@ const BASE_URL = EXTERNAL_BASE_URL || `http://127.0.0.1:${PORT}`;
 const SERVER_TIMEOUT_MS = 90_000;
 const MIN_MARKET_SPAN_MS = 23 * 60 * 60 * 1000;
 const MAX_MARKET_AGE_MS = 6 * 60 * 60 * 1000;
+const MAX_METRIC_SKEW_MS = 30 * 60 * 1000;
 
 const viewports = [
   { name: "phone-320", width: 320, height: 568 },
@@ -170,6 +171,22 @@ async function assertLoginDialog(page, label) {
   );
   assert.equal(inputMetrics.length, 2, `${label}: expected two login inputs`);
   assert.ok(inputMetrics.every((height) => height >= 44), `${label}: login touch target below 44px`);
+
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width <= 980) {
+    const buttonMetrics = await dialog.locator("button").evaluateAll((nodes) =>
+      nodes.map((button) => {
+        const rect = button.getBoundingClientRect();
+        return { width: rect.width, height: rect.height, name: button.getAttribute("aria-label") || button.textContent?.trim() || "button" };
+      }),
+    );
+    assert.ok(buttonMetrics.length >= 2, `${label}: expected modal controls`);
+    for (const control of buttonMetrics) {
+      assert.ok(control.width >= 44, `${label}: modal control ${control.name} below 44px width`);
+      assert.ok(control.height >= 44, `${label}: modal control ${control.name} below 44px height`);
+    }
+  }
+
   await page.waitForFunction(() => document.activeElement?.getAttribute("name") === "username");
 
   await page.keyboard.press("Escape");
@@ -248,10 +265,8 @@ async function assertAuthSameOrigin(browser) {
   await context.close();
 }
 
-async function assertClientFreshnessGuard(browser) {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  const now = Date.now();
-  const updatedAt = now - 11 * 60 * 1000;
+function buildMockMarketPayload(updatedAt, overrides = {}) {
+  const servedAt = Date.now();
   const points = Array.from({ length: 24 }, (_, index) => ({
     time: updatedAt - (23 - index) * 60 * 60 * 1000,
     price: 100 + index * 0.1,
@@ -259,15 +274,18 @@ async function assertClientFreshnessGuard(browser) {
   const prices = points.map((point) => point.price);
   const first = points[0];
   const last = points.at(-1);
-  const payload = {
+
+  return {
     price: last.price,
     change24h: ((last.price - first.price) / first.price) * 100,
     high24h: Math.max(...prices),
     low24h: Math.min(...prices),
     volume24h: 1_000_000,
+    volumeUpdatedAt: updatedAt,
     marketCap: 50_000_000_000,
+    marketCapUpdatedAt: updatedAt,
     updatedAt,
-    servedAt: now,
+    servedAt,
     windowStart: first.time,
     windowEnd: updatedAt,
     sourcePointCount: points.length,
@@ -277,7 +295,13 @@ async function assertClientFreshnessGuard(browser) {
     points,
     source: "CoinGecko",
     quote: "USD",
+    ...overrides,
   };
+}
+
+async function assertClientFreshnessGuard(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const payload = buildMockMarketPayload(Date.now() - 11 * 60 * 1000);
 
   await context.route("**/api/market/solana", async (route) => {
     await route.fulfill({
@@ -301,8 +325,67 @@ async function assertClientFreshnessGuard(browser) {
   await context.close();
 }
 
+async function assertClientRejectsMalformedMarket(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const validPayload = buildMockMarketPayload(Date.now() - 60_000);
+  const malformedPayload = { ...validPayload, high24h: validPayload.high24h + 100 };
+  let resolveMarketRequest;
+  const marketRequestSeen = new Promise((resolve) => { resolveMarketRequest = resolve; });
+
+  await context.route("**/api/market/solana", async (route) => {
+    resolveMarketRequest?.();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify(malformedPayload),
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+  await marketRequestSeen;
+  await page.waitForTimeout(300);
+
+  const statusText = (await page.locator("[data-landing-market-status]").textContent()) || "";
+  assert.match(statusText, /СИНХРОНИЗАЦИЯ/u, "malformed market payload was accepted by the client");
+  assert.equal(await page.locator("[data-landing-chart-line]").count(), 0, "malformed market payload rendered a chart");
+
+  await context.close();
+}
+
 async function assertMobileMenu(page, viewport) {
   if (viewport.width > 980) return;
+
+  const headerButtons = page.locator("header button:visible");
+  const headerButtonMetrics = await headerButtons.evaluateAll((nodes) =>
+    nodes.map((button) => {
+      const rect = button.getBoundingClientRect();
+      return {
+        width: rect.width,
+        height: rect.height,
+        name: button.getAttribute("aria-label") || button.textContent?.trim() || "unnamed header button",
+      };
+    }),
+  );
+  assert.ok(headerButtonMetrics.length >= 2, `${viewport.name}: expected visible mobile header controls`);
+  for (const control of headerButtonMetrics) {
+    assert.ok(control.width >= 44, `${viewport.name}: header control ${control.name} is only ${control.width}px wide`);
+    assert.ok(control.height >= 44, `${viewport.name}: header control ${control.name} is only ${control.height}px high`);
+  }
+
+  const touchLinks = page.locator('header a[aria-label="POTAPoff — главная"], #features a, footer a');
+  const linkMetrics = await touchLinks.evaluateAll((nodes) =>
+    nodes.map((link) => {
+      const rect = link.getBoundingClientRect();
+      return { width: rect.width, height: rect.height, name: link.textContent?.trim() || link.getAttribute("aria-label") || "link" };
+    }),
+  );
+  assert.ok(linkMetrics.length >= 8, `${viewport.name}: expected landing touch links`);
+  for (const link of linkMetrics) {
+    assert.ok(link.width >= 44, `${viewport.name}: touch link ${link.name} below 44px width`);
+    assert.ok(link.height >= 44, `${viewport.name}: touch link ${link.name} below 44px height`);
+  }
 
   const menuButton = page.getByRole("button", { name: /открыть меню/i });
   const themeToggle = page.locator("[data-landing-theme-toggle]");
@@ -387,6 +470,22 @@ async function assertMarketPayload(context) {
 
   const plottedChange = ((last.price - first.price) / first.price) * 100;
   assert.ok(Math.abs(plottedChange - data.change24h) < 1e-6, "24h change does not match plotted endpoints");
+
+  for (const [valueKey, timeKey] of [
+    ["volume24h", "volumeUpdatedAt"],
+    ["marketCap", "marketCapUpdatedAt"],
+  ]) {
+    const value = data[valueKey];
+    const metricTime = data[timeKey];
+    if (value == null) {
+      assert.equal(metricTime, null, `${timeKey} must be null when ${valueKey} is null`);
+      continue;
+    }
+    assert.ok(Number.isFinite(value) && value > 0, `${valueKey} must be positive when present`);
+    assert.ok(Number.isFinite(metricTime) && metricTime > 0, `${timeKey} must be a valid timestamp`);
+    assert.ok(metricTime <= data.updatedAt, `${timeKey} must not be later than price updatedAt`);
+    assert.ok(data.updatedAt - metricTime <= MAX_METRIC_SKEW_MS, `${valueKey} is too old relative to price`);
+  }
 
   if (data.stale) {
     assert.ok(
@@ -573,6 +672,9 @@ try {
 
   await assertClientFreshnessGuard(browser);
   console.log("✓ client market freshness guard");
+
+  await assertClientRejectsMalformedMarket(browser);
+  console.log("✓ client rejects malformed market payloads");
 
   for (const viewport of viewports) {
     await runViewport(browser, viewport);
