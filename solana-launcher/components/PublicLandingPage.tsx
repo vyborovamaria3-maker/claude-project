@@ -22,13 +22,8 @@ function mapLoginError(status: number, detail?: string) {
 }
 
 function getAuthEndpoint() {
-  const queryApi = new URLSearchParams(window.location.search).get("api");
-  const configuredApi = queryApi || document.documentElement.dataset.apiBase || "";
-
-  if (configuredApi) {
-    return `${configuredApi.replace(/\/$/, "")}/api/v1/auth/login-password`;
-  }
-
+  // Credentials must always go to our same-origin auth proxy. Never allow a
+  // query parameter or page data attribute to choose the credential receiver.
   return "/api/v1/auth/login-password";
 }
 
