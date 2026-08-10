@@ -33,8 +33,9 @@ assert(apify.includes("requireProdAuth"), "Apify pumpfun-sync must require paid 
 assert(apify.includes("maxItemsRaw > 500"), "Apify maxItems must be bounded");
 
 const migration = read("app/api/migrations/xlsx/route.ts");
-assert(migration.includes("requireProdAuth"), "migration dataset must require paid auth");
-assert(migration.includes("omitFilePath"), "migration responses must omit stored file paths");
+assert(migration.includes('process.env.NODE_ENV === "production"'), "migration dataset must be disabled in production");
+assert(migration.includes('status: 404'), "production migration dataset must return not found");
+assert(migration.includes("omitFilePath"), "local migration diagnostics must omit stored file paths");
 
 const tokenInfo = read("app/api/trade/token-info/route.ts");
 assert(tokenInfo.includes('redirect: "manual"'), "metadata fetch must not follow redirects");
