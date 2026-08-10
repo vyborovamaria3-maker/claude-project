@@ -1,4 +1,5 @@
 const DEFAULT_BACKEND_URL = "http://localhost:8000";
+const ACCESS_COOKIE = "potapoff_access_token";
 let resolvedBackendBaseUrl: string | null = null;
 
 function getBackendBaseUrl() {
@@ -25,6 +26,22 @@ function getClientIp(request: Request): string | null {
   return candidate;
 }
 
+function accessTokenFromCookie(request: Request): string | null {
+  const cookieHeader = request.headers.get("cookie") || "";
+  for (const part of cookieHeader.split(";")) {
+    const [rawName, ...rawValue] = part.trim().split("=");
+    if (rawName !== ACCESS_COOKIE || rawValue.length === 0) continue;
+    const value = rawValue.join("=").trim();
+    if (!value || /[\r\n]/.test(value)) return null;
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 async function proxyJsonRequest(request: Request, backendPath: string) {
   const method = request.method.toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD";
@@ -36,7 +53,12 @@ async function proxyJsonRequest(request: Request, backendPath: string) {
   if (hasBody) proxiedHeaders["Content-Type"] = contentType;
 
   const authorization = request.headers.get("authorization");
-  if (authorization) proxiedHeaders.Authorization = authorization;
+  if (authorization) {
+    proxiedHeaders.Authorization = authorization;
+  } else {
+    const cookieToken = accessTokenFromCookie(request);
+    if (cookieToken) proxiedHeaders.Authorization = `Bearer ${cookieToken}`;
+  }
 
   const userAgent = request.headers.get("user-agent");
   if (userAgent) proxiedHeaders["User-Agent"] = userAgent.slice(0, 512);
