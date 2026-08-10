@@ -89,9 +89,12 @@ class SQLiteDocumentStore:
         except sqlite3.Error as exc:
             self._connection.rollback()
             raise StorageError("failed to save intelligence document") from exc
-        except (StorageError, TypeError, ValueError):
+        except StorageError:
             self._connection.rollback()
             raise
+        except (TypeError, ValueError) as exc:
+            self._connection.rollback()
+            raise StorageError("failed to serialize intelligence document") from exc
 
     def get(self, document_id: str) -> IntelligenceDocument | None:
         try:
