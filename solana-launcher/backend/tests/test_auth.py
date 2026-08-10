@@ -137,7 +137,10 @@ async def test_telegram_callback_accepts_signed_init_data_for_subscriber(
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["access_token"]
+    data = response.json()
+    assert data["access_token"]
+    assert data["redirect_url"] == test_app.state.settings.frontend_url
+    assert "token=" not in data["redirect_url"]
 
     async with test_app.state.sessionmaker() as session:
         result = await session.execute(
