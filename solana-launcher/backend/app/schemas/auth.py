@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 BASE58_ALPHABET = frozenset("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+ACCESS_LOGIN_RE = re.compile(r"^[A-Za-z0-9_]{4,32}$")
 
 
 def _normalize_wallet_address(value: str) -> str:
@@ -119,24 +121,14 @@ class TelegramCallbackResponse(BaseModel):
     redirect_url: str
 
 
-class RegisterPasswordRequest(BaseModel):
-    telegram_id: int = Field(ge=1)
+class LoginPasswordRequest(BaseModel):
     login: str = Field(min_length=4, max_length=32)
     password: str = Field(min_length=32, max_length=32)
-    telegram_username: str | None = Field(default=None, max_length=255)
-    email: str | None = None
 
     @field_validator("login")
     @classmethod
     def validate_login(cls, value: str) -> str:
         normalized = value.strip()
-        if len(normalized) < 4 or len(normalized) > 32:
-            raise ValueError("login must be 4-32 characters")
-        if not all(char.isalnum() or char == "_" for char in normalized):
-            raise ValueError("login must only contain letters, digits, or underscore")
+        if not ACCESS_LOGIN_RE.fullmatch(normalized):
+            raise ValueError("login must be 4-32 ASCII letters, digits, or underscore")
         return normalized
-
-
-class LoginPasswordRequest(BaseModel):
-    login: str = Field(min_length=4, max_length=32)
-    password: str = Field(min_length=32, max_length=32)
