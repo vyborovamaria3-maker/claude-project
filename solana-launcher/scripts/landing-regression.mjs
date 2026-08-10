@@ -181,6 +181,7 @@ async function assertLoginDialog(page, label) {
 async function assertAuthSameOrigin(browser) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   let interceptedUrl = "";
+  const foreignRequests = [];
 
   await context.route("**/api/v1/auth/login-password", async (route) => {
     interceptedUrl = route.request().url();
@@ -192,8 +193,20 @@ async function assertAuthSameOrigin(browser) {
   });
 
   const page = await context.newPage();
+  page.on("request", (request) => {
+    if (new URL(request.url()).origin === "https://example.invalid") {
+      foreignRequests.push(request.url());
+    }
+  });
+
   const maliciousApi = encodeURIComponent("https://example.invalid");
   await page.goto(`${BASE_URL}/?api=${maliciousApi}`, { waitUntil: "domcontentloaded" });
+
+  const landedUrl = new URL(page.url());
+  assert.equal(landedUrl.origin, new URL(BASE_URL).origin, "malicious api query escaped the landing origin");
+  assert.equal(landedUrl.searchParams.has("api"), false, "proxy must strip the malicious api query parameter");
+  assert.deepEqual(foreignRequests, [], `browser contacted foreign auth origin: ${foreignRequests.join(", ")}`);
+
   await page.getByRole("button", { name: /открыть платформу/i }).first().click();
 
   const dialog = page.getByRole("dialog", { name: /войти в potapoff/i });
@@ -208,6 +221,7 @@ async function assertAuthSameOrigin(browser) {
     new URL(BASE_URL).origin,
     `credentials escaped same origin: ${interceptedUrl}`,
   );
+  assert.deepEqual(foreignRequests, [], `credentials triggered foreign requests: ${foreignRequests.join(", ")}`);
 
   await context.close();
 }
