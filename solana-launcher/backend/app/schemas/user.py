@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class UserBase(BaseModel):
     email: EmailStr | None = None
+    access_login: str | None = None
     full_name: str | None = None
     wallet_address: str | None = None
     telegram_id: str | None = None
@@ -34,6 +35,7 @@ class UserRead(UserBase):
     last_login_at: datetime | None = None
     last_ip: str | None = None
     ip_addresses: list[str] | None = None
+    subscription_expires_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
