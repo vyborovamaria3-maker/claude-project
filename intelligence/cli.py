@@ -20,6 +20,7 @@ from intelligence.bootstrap import (
 )
 from intelligence.errors.exceptions import IntelligenceError
 from intelligence.health.doctor import run_registry_health_check, summarize_health
+from intelligence.scoring.backtest import DEFAULT_DEVELOPER_FIXTURE, run_developer_score_backtest
 from intelligence.security.sanitizer import sanitize_payload, sanitize_text
 from intelligence.storage.postgres_schema import initialize_postgres_schema
 from intelligence.worker.queue import IntelligenceJob
@@ -53,6 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init-db", help="Initialize the selected durable backend schema")
     subparsers.add_parser("runtime-health", help="Probe durable queue and storage connectivity")
     subparsers.add_parser("doctor", help="Check all configured intelligence providers")
+
+    backtest = subparsers.add_parser("backtest", help="Run deterministic scoring golden fixtures")
+    backtest.add_argument(
+        "--fixture",
+        default=str(DEFAULT_DEVELOPER_FIXTURE),
+        help="Developer score fixture path",
+    )
 
     enqueue = subparsers.add_parser("enqueue", help="Queue one intelligence collection job")
     enqueue.add_argument("provider", help="Registered provider name")
@@ -120,6 +128,31 @@ def _initialize_backend(args: argparse.Namespace) -> int:
             pass
     _emit({"initialized": True, "backend": args.backend})
     return 0
+
+
+def _run_backtest(fixture: str | Path) -> int:
+    report = run_developer_score_backtest(fixture)
+    _emit(
+        {
+            "score_version": report.score_version,
+            "fixture_version": report.fixture_version,
+            "passed": report.passed,
+            "failed": report.failed,
+            "all_passed": report.all_passed,
+            "cases": [
+                {
+                    "name": case.name,
+                    "passed": case.passed,
+                    "score": case.score,
+                    "expected_min": case.minimum,
+                    "expected_max": case.maximum,
+                    "missing_reasons": list(case.missing_reasons),
+                }
+                for case in report.cases
+            ],
+        }
+    )
+    return 0 if report.all_passed else 1
 
 
 def _runtime_health(runtime: IntelligenceRuntime) -> int:
@@ -237,6 +270,8 @@ def main(
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
+        if args.command == "backtest":
+            return _run_backtest(args.fixture)
         if args.command == "init-db" and runtime_factory is None:
             return _initialize_backend(args)
 
