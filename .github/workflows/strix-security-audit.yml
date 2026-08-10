@@ -1,0 +1,176 @@
+name: Strix Security Audit - Source Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Source component to audit
+        required: true
+        default: repo
+        type: choice
+        options:
+          - repo
+          - solana-launcher
+          - backend
+          - admin-site
+          - memecoin-intelligence
+      profile:
+        description: Audit profile
+        required: true
+        default: baseline
+        type: choice
+        options:
+          - baseline
+          - authz-business
+          - external-llm-infra
+      scan_mode:
+        description: Strix scan mode
+        required: true
+        default: standard
+        type: choice
+        options:
+          - quick
+          - standard
+      max_budget_usd:
+        description: Maximum LLM budget for this run in USD
+        required: true
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strix-source-audit-${{ github.ref }}-${{ inputs.component }}-${{ inputs.profile }}
+  cancel-in-progress: false
+
+jobs:
+  source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      LLM_API_KEY: ${{ secrets.STRIX_LLM_API_KEY }}
+      CONFIGURED_STRIX_LLM: ${{ vars.STRIX_LLM }}
+      STRIX_REASONING_EFFORT: high
+
+    steps:
+      - name: Checkout exact repository revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate audit prerequisites and scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -z "${LLM_API_KEY:-}" ]]; then
+            echo "::error::Repository secret STRIX_LLM_API_KEY is required."
+            exit 1
+          fi
+
+          docker version
+          git status --short
+          git rev-parse HEAD
+
+          case "${{ inputs.component }}" in
+            repo) TARGET="." ;;
+            solana-launcher) TARGET="./solana-launcher" ;;
+            backend) TARGET="./solana-launcher/backend" ;;
+            admin-site) TARGET="./admin-site" ;;
+            memecoin-intelligence) TARGET="./memecoin-intelligence" ;;
+            *) echo "::error::Unknown component"; exit 1 ;;
+          esac
+
+          case "${{ inputs.profile }}" in
+            baseline) PROFILE="security/strix/instructions/01-baseline-source.md" ;;
+            authz-business) PROFILE="security/strix/instructions/02-authz-business.md" ;;
+            external-llm-infra) PROFILE="security/strix/instructions/03-external-llm-infra.md" ;;
+            *) echo "::error::Unknown audit profile"; exit 1 ;;
+          esac
+
+          test -e "$TARGET"
+          test -f "$PROFILE"
+          test -f security/strix/ROE_SOURCE_ONLY.md
+
+          {
+            echo "TARGET=$TARGET"
+            echo "PROFILE=$PROFILE"
+          } >> "$GITHUB_ENV"
+
+          echo "Target: $TARGET"
+          echo "Profile: $PROFILE"
+          echo "Mode: ${{ inputs.scan_mode }}"
+          echo "Budget cap: ${{ inputs.max_budget_usd }} USD"
+
+      - name: Install Strix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://strix.ai/install | bash
+          export PATH="$HOME/.strix/bin:$PATH"
+          echo "$HOME/.strix/bin" >> "$GITHUB_PATH"
+          strix --version || true
+
+      - name: Run source-only Strix audit
+        id: strix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          export STRIX_LLM="${CONFIGURED_STRIX_LLM:-openai/gpt-5.4}"
+
+          echo "Using Strix model: $STRIX_LLM"
+          echo "Rules: security/strix/ROE_SOURCE_ONLY.md"
+          echo "Profile: $PROFILE"
+
+          COMBINED_INSTRUCTION="$(mktemp)"
+          cat security/strix/ROE_SOURCE_ONLY.md "$PROFILE" > "$COMBINED_INSTRUCTION"
+
+          set +e
+          strix \
+            -n \
+            --target "$TARGET" \
+            --scan-mode "${{ inputs.scan_mode }}" \
+            --instruction-file "$COMBINED_INSTRUCTION" \
+            --max-budget-usd "${{ inputs.max_budget_usd }}" \
+            2>&1 | tee strix-console.log
+          rc=${PIPESTATUS[0]}
+          set -e
+
+          rm -f "$COMBINED_INSTRUCTION"
+
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+
+          if [[ "$rc" -eq 0 ]]; then
+            echo "### Strix result: no vulnerabilities reported" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$rc" -eq 2 ]]; then
+            echo "### Strix result: findings detected" >> "$GITHUB_STEP_SUMMARY"
+            echo "The audit completed. Findings require independent validation before remediation." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Strix result: execution error (exit $rc)" >> "$GITHUB_STEP_SUMMARY"
+            exit "$rc"
+          fi
+
+          {
+            echo ""
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Component: ${{ inputs.component }}"
+            echo "- Profile: ${{ inputs.profile }}"
+            echo "- Scan mode: ${{ inputs.scan_mode }}"
+            echo "- Budget cap: ${{ inputs.max_budget_usd }} USD"
+            echo "- Strix exit code: $rc"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Strix evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: strix-${{ inputs.component }}-${{ inputs.profile }}-${{ github.run_id }}
+          path: |
+            strix-console.log
+            strix_runs/
+          if-no-files-found: warn
+          retention-days: 30
+          include-hidden-files: false
