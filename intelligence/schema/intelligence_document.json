@@ -6,15 +6,15 @@
   "properties": {
     "id": {"type": "string"},
     "source": {"type": "string"},
-    "source_id": {"type": ["string", "null"]},
     "url": {"type": ["string", "null"]},
-    "author": {"type": ["object", "null"]},
+    "author": {"type": ["string", "null"]},
     "content": {"type": "string"},
-    "published_at": {"type": ["string", "null"]},
-    "collected_at": {"type": "string"},
-    "entities": {"type": "array"},
+    "published_at": {"type": ["string", "null"], "format": "date-time"},
+    "collected_at": {"type": "string", "format": "date-time"},
+    "entities": {"type": "array", "items": {"type": "string"}},
     "metrics": {"type": "object"},
-    "raw_hash": {"type": "string"},
-    "provider": {"type": "string"}
-  }
+    "raw_hash": {"type": ["string", "null"]},
+    "provider": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
 }
