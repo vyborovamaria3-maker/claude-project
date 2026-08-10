@@ -21,6 +21,9 @@ class IntelligenceJob:
     id: str = field(default_factory=lambda: str(uuid4()))
     status: JobStatus = JobStatus.CREATED
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    result_document_ids: list[str] = field(default_factory=list)
     error: str | None = None
 
 
@@ -29,7 +32,7 @@ class MemoryJobQueue:
         self._jobs: dict[str, IntelligenceJob] = {}
 
     def submit(self, payload: dict) -> IntelligenceJob:
-        job = IntelligenceJob(payload=payload, status=JobStatus.QUEUED)
+        job = IntelligenceJob(payload=dict(payload), status=JobStatus.QUEUED)
         self._jobs[job.id] = job
         return job
 
@@ -38,5 +41,10 @@ class MemoryJobQueue:
 
     def update_status(self, job_id: str, status: JobStatus, error: str | None = None) -> None:
         job = self._jobs[job_id]
+        now = datetime.now(timezone.utc)
+        if status == JobStatus.RUNNING and job.started_at is None:
+            job.started_at = now
+        if status in {JobStatus.COMPLETED, JobStatus.FAILED}:
+            job.finished_at = now
         job.status = status
         job.error = error
