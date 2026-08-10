@@ -116,8 +116,23 @@ jobs:
           grep -q '^POTAPOFF_INTELLIGENCE_POSTGRES_DSN=' admin-site/.env.intelligence.example
           grep -q '^ADMIN_INTELLIGENCE_POSTGRES_DSN=' admin-site/.env.example
 
-      - name: Validate Docker Compose
-        run: docker compose -f admin-site/docker-compose.yml config --quiet
+      - name: Validate Docker Compose and rendered secret boundary
+        run: |
+          docker compose -f admin-site/docker-compose.yml config --quiet
+          docker compose -f admin-site/docker-compose.yml config --format json > /tmp/potapoff-compose.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path('/tmp/potapoff-compose.json').read_text())
+          services = config['services']
+          admin_env = services['admin'].get('environment', {})
+          worker_env = services['intelligence-worker'].get('environment', {})
+          assert 'POTAPOFF_INTELLIGENCE_POSTGRES_DSN' not in admin_env, admin_env.keys()
+          assert 'ADMIN_INTELLIGENCE_POSTGRES_DSN' not in worker_env, worker_env.keys()
+          assert 'POTAPOFF_INTELLIGENCE_POSTGRES_DSN' in worker_env
+          assert 'ADMIN_INTELLIGENCE_POSTGRES_DSN' in admin_env
+          PY
 
       - name: Build intelligence worker image
         run: docker build --pull -t potapoff-intelligence:${{ github.sha }} intelligence
