@@ -4,6 +4,7 @@ import base64
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select, text
@@ -29,6 +30,7 @@ class SubscriptionPasswordError(RuntimeError):
 
 PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 PASSWORD_LENGTH = 32
+MAX_BASE_UNITS = 9_000_000_000_000_000
 
 
 def generate_subscription_password() -> str:
@@ -109,6 +111,63 @@ async def get_subscription_settings(session: AsyncSession) -> SubscriptionSettin
     return settings
 
 
+def _price_to_base_units(value: Decimal, decimals: int) -> int:
+    scaled = Decimal(value) * (Decimal(10) ** decimals)
+    integral = scaled.to_integral_value()
+    if scaled != integral:
+        raise SubscriptionConflictError(
+            "Configured subscription price has unsupported precision"
+        )
+    amount = int(integral)
+    if amount <= 0 or amount > MAX_BASE_UNITS:
+        raise SubscriptionConflictError(
+            "Configured subscription price is outside the supported range"
+        )
+    return amount
+
+
+async def _validate_new_order_policy(
+    session: AsyncSession,
+    payload: SubscriptionOrderCreate,
+) -> SubscriptionSettings:
+    """Treat PostgreSQL admin settings as the source of truth for new access."""
+    settings = await get_subscription_settings(session)
+
+    if payload.currency == "DEMO":
+        if not settings.free_demo_enabled:
+            raise SubscriptionConflictError("Free demo access is disabled")
+        if payload.total_amount != 0:
+            raise SubscriptionConflictError("Demo order must be free")
+        if payload.access_days != settings.demo_days:
+            raise SubscriptionConflictError(
+                "Demo duration does not match current admin settings"
+            )
+        return settings
+
+    if not settings.paid_subscriptions_enabled:
+        raise SubscriptionConflictError("Paid subscriptions are disabled")
+    if payload.access_days != 30:
+        raise SubscriptionConflictError("Paid subscription must grant exactly 30 days")
+
+    recipient = settings.solana_recipient_wallet.strip()
+    if not recipient:
+        raise SubscriptionConflictError("Recipient Solana wallet is not configured")
+    if payload.recipient_wallet != recipient:
+        raise SubscriptionConflictError(
+            "Payment recipient does not match current admin settings"
+        )
+
+    if payload.currency == "SOL":
+        expected_amount = _price_to_base_units(settings.monthly_price_sol, 9)
+    else:
+        expected_amount = _price_to_base_units(settings.monthly_price_usdt, 6)
+    if payload.total_amount != expected_amount:
+        raise SubscriptionConflictError(
+            "Payment amount does not match current admin settings"
+        )
+    return settings
+
+
 async def _login_owner(session: AsyncSession, login: str) -> User | None:
     result = await session.execute(
         select(User).where(User.access_login == login)
@@ -159,10 +218,13 @@ async def _has_paid_purchase(
 async def _latest_paid_order(
     session: AsyncSession,
     telegram_user_id: int,
+    *,
+    login: str,
 ) -> SubscriptionOrder | None:
     result = await session.execute(
         select(SubscriptionOrder)
         .where(SubscriptionOrder.telegram_user_id == telegram_user_id)
+        .where(SubscriptionOrder.login == login)
         .where(SubscriptionOrder.status == "paid")
         .where(SubscriptionOrder.password_ciphertext.isnot(None))
         .order_by(
@@ -182,12 +244,14 @@ async def _recover_current_password(
 ) -> str | None:
     hashed_password = user.hashed_password
     telegram_id = user.telegram_id
-    if not telegram_id or not hashed_password:
+    access_login = user.access_login
+    if not telegram_id or not access_login or not hashed_password:
         return None
 
     result = await session.execute(
         select(SubscriptionOrder)
         .where(SubscriptionOrder.telegram_user_id == int(telegram_id))
+        .where(SubscriptionOrder.login == access_login)
         .where(SubscriptionOrder.status == "paid")
         .where(SubscriptionOrder.password_ciphertext.isnot(None))
         .order_by(
@@ -268,12 +332,18 @@ async def create_subscription_order(
         )
 
     if payload.currency == "DEMO":
+        await _validate_new_order_policy(session, payload)
         demo_order = await _existing_demo_order(
             session,
             payload.telegram_user_id,
         )
         if demo_order is not None:
             if demo_order.login == payload.login and demo_order.status == "pending":
+                demo_order.access_days = payload.access_days
+                demo_order.username = payload.username
+                demo_order.telegram_profile = payload.telegram_profile
+                await session.commit()
+                await session.refresh(demo_order)
                 return demo_order
             if (
                 demo_order.login == payload.login
@@ -334,6 +404,11 @@ async def create_subscription_order(
             )
         return pending_order
 
+    # Existing direct-payment orders above remain valid even if the admin later
+    # changes pricing. A brand-new order must match the current DB settings.
+    if payload.currency != "DEMO":
+        await _validate_new_order_policy(session, payload)
+
     order = SubscriptionOrder(
         payload=payload.payload,
         telegram_user_id=payload.telegram_user_id,
@@ -389,10 +464,14 @@ async def get_latest_subscription_access(
 ) -> tuple[SubscriptionOrder, str, datetime] | None:
     user = await _telegram_user(session, telegram_user_id)
     expires_at = _active_expiry(user)
-    if user is None or expires_at is None:
+    if user is None or expires_at is None or not user.access_login:
         return None
 
-    order = await _latest_paid_order(session, telegram_user_id)
+    order = await _latest_paid_order(
+        session,
+        telegram_user_id,
+        login=user.access_login,
+    )
     if order is None:
         return None
 
@@ -436,6 +515,10 @@ async def complete_subscription_order(
             raise SubscriptionPasswordError(
                 "Paid subscription has no active user"
             )
+        if user.access_login != order.login:
+            raise SubscriptionPasswordError(
+                "Paid order no longer matches the active site login"
+            )
         password = await _recover_current_password(
             session,
             user,
@@ -458,6 +541,10 @@ async def complete_subscription_order(
             raise SubscriptionConflictError(
                 "Demo activation cannot contain a payment signature"
             )
+        settings = await get_subscription_settings(session)
+        if not settings.free_demo_enabled:
+            raise SubscriptionConflictError("Free demo access is disabled")
+        order.access_days = settings.demo_days
         if await _has_paid_purchase(session, order.telegram_user_id):
             raise SubscriptionConflictError(
                 "Free demo is unavailable after a paid subscription"
