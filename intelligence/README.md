@@ -31,6 +31,8 @@ DocumentStore
    |-- SQLite WAL
    `-- PostgreSQL JSONB
    |
+Versioned derived scoring / backtests
+   |
 Read-only Control Center telemetry
 ```
 
@@ -43,6 +45,8 @@ python -m intelligence --help
 python -m intelligence init-db
 python -m intelligence runtime-health
 python -m intelligence doctor
+python -m intelligence backtest
+python -m intelligence score DOCUMENT_ID --as-of 2026-08-10T00:00:00+00:00
 python -m intelligence enqueue github owner/repository
 python -m intelligence run-once
 python -m intelligence worker --poll-seconds 2
@@ -51,6 +55,37 @@ python -m intelligence documents --limit 50
 ```
 
 `runtime-health` performs harmless point reads against both durable queue and document storage. It does not claim jobs or call external providers.
+
+`backtest` is an offline deterministic scoring regression. It does not open SQLite/PostgreSQL or call a provider.
+
+`score` evaluates one persisted GitHub evidence document at an explicit timezone-aware `--as-of` time. Requiring `--as-of` keeps audits and historical runs reproducible.
+
+## Evidence integrity and derived scoring
+
+Normalized evidence and derived scores are deliberately separate concerns.
+
+`raw_hash` fingerprints only stable evidence identity fields:
+
+- source;
+- URL;
+- author;
+- normalized content.
+
+Derived score values are **not** included in the evidence hash. This prevents score/version/recency changes from turning unchanged evidence into a new document.
+
+If a document carries `raw_hash`, every storage backend validates the fingerprint before persistence and again when evidence is read. A content/source/URL/author change with a stale fingerprint is rejected instead of silently entering a backtest.
+
+The first versioned derived score is:
+
+```text
+github-developer-v1
+```
+
+It returns both a numeric score and stable reason codes. Golden fixtures carry their expected score version and fail fast if the runtime formula version changes without a corresponding fixture review.
+
+Historical scoring rejects evidence whose repository `created_at` or `updated_at` is newer than the requested evaluation time. This prevents look-ahead bias in backtests.
+
+Persisted GitHub evidence is scored only when its repository entity and canonical `https://github.com/owner/repo` URL agree. Scoring does not mutate normalized evidence or `raw_hash`.
 
 ## SQLite deployment
 
@@ -121,12 +156,16 @@ Unit tests are network-free by default. `test_postgres_integration.py` is automa
 
 The Intelligence CI is configured to run against a disposable PostgreSQL service and verify:
 
+- compile/unit tests;
+- deterministic scoring golden backtest;
+- evidence fingerprint integrity on storage boundaries;
 - schema initialization;
 - document round-trip and `raw_hash` deduplication;
 - two concurrent `SKIP LOCKED` queue claims;
 - a separate admin role that can `SELECT` but cannot `INSERT`;
 - Docker Compose validation;
 - non-root/read-only worker image smoke checks;
+- scoring backtest from inside the worker image;
 - `yt-dlp` and Deno availability;
 - HIGH/CRITICAL image vulnerability scan.
 
