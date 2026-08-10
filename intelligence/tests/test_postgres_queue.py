@@ -89,6 +89,7 @@ class PostgresJobQueueTests(unittest.TestCase):
         self.assertIsInstance(params[1], Jsonb)
         self.assertIsInstance(params[4], Jsonb)
         self.assertIn("row_factory", factory.calls[0][1])
+        self.assertEqual(factory.calls[0][1]["connect_timeout"], 5)
 
     def test_claim_uses_skip_locked_and_returns_running_job(self) -> None:
         claimed_row = job_row(status="running", started_at=NOW)
