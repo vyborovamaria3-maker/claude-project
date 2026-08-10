@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "security:test": "node scripts/security-regression.mjs",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",
@@ -74,7 +75,7 @@
     "tailwindcss": "^3.4.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.3",
-    "xlsx": "^0.18.5",
+    "xlsx": "file:./scripts/xlsx-safe-package",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.2.10"
   }
