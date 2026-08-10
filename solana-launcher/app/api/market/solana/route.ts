@@ -74,6 +74,11 @@ function lastFiniteValue(rows: unknown, now: number): number | null {
   return normalized.length ? normalized[normalized.length - 1][1] : null;
 }
 
+/**
+ * Keep only points that actually exist in the upstream market series.
+ * No interpolation or synthetic prices are generated. The first/last and
+ * true 24h high/low observations are explicitly retained in the SVG series.
+ */
 function sampleRealPoints(rows: PriceRow[], maxPoints: number): PriceRow[] {
   if (rows.length <= maxPoints) return rows;
 
