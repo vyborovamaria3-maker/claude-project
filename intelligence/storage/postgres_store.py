@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -149,30 +150,48 @@ class PostgresDocumentStore:
             raise StorageError("failed to connect to PostgreSQL intelligence store") from exc
 
 
+def _required_string(row: dict[str, Any], key: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value:
+        raise StorageError(f"PostgreSQL intelligence row has invalid {key}")
+    return value
+
+
+def _optional_string(row: dict[str, Any], key: str) -> str | None:
+    value = row.get(key)
+    if value is not None and not isinstance(value, str):
+        raise StorageError(f"PostgreSQL intelligence row has invalid {key}")
+    return value
+
+
 def _row_to_document(row: Any) -> IntelligenceDocument:
     if not isinstance(row, dict):
         raise StorageError("PostgreSQL intelligence row has an unexpected shape")
 
     entities = row.get("entities_json")
     metrics = row.get("metrics_json")
+    collected_at = row.get("collected_at")
+    published_at = row.get("published_at")
+
     if not isinstance(entities, list) or not all(isinstance(item, str) for item in entities):
         raise StorageError("PostgreSQL intelligence entities have an unexpected shape")
     if not isinstance(metrics, dict):
         raise StorageError("PostgreSQL intelligence metrics have an unexpected shape")
+    if not isinstance(collected_at, datetime):
+        raise StorageError("PostgreSQL intelligence collected_at is invalid")
+    if published_at is not None and not isinstance(published_at, datetime):
+        raise StorageError("PostgreSQL intelligence published_at is invalid")
 
-    try:
-        return IntelligenceDocument(
-            id=str(row["id"]),
-            source=str(row["source"]),
-            content=str(row["content"]),
-            collected_at=row["collected_at"],
-            url=row.get("url"),
-            author=row.get("author"),
-            provider=row.get("provider"),
-            published_at=row.get("published_at"),
-            entities=list(entities),
-            metrics=dict(metrics),
-            raw_hash=row.get("raw_hash"),
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise StorageError("PostgreSQL intelligence row is invalid") from exc
+    return IntelligenceDocument(
+        id=_required_string(row, "id"),
+        source=_required_string(row, "source"),
+        content=_required_string(row, "content"),
+        collected_at=collected_at,
+        url=_optional_string(row, "url"),
+        author=_optional_string(row, "author"),
+        provider=_optional_string(row, "provider"),
+        published_at=published_at,
+        entities=list(entities),
+        metrics=dict(metrics),
+        raw_hash=_optional_string(row, "raw_hash"),
+    )
