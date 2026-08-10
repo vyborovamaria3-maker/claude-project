@@ -191,7 +191,7 @@ def _row_to_document(row: sqlite3.Row) -> IntelligenceDocument:
     collected_at = _parse_datetime(row["collected_at"])
     if collected_at is None:
         raise StorageError("stored intelligence document has no collected_at timestamp")
-    return IntelligenceDocument(
+    document = IntelligenceDocument(
         id=row["id"],
         source=row["source"],
         content=row["content"],
@@ -204,3 +204,5 @@ def _row_to_document(row: sqlite3.Row) -> IntelligenceDocument:
         metrics=_json_loads(row["metrics_json"], dict),
         raw_hash=row["raw_hash"],
     )
+    validate_document_integrity(document)
+    return document
