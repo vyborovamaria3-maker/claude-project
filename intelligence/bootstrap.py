@@ -13,9 +13,11 @@ from intelligence.providers.web.provider import WebIntelligenceProvider
 from intelligence.providers.youtube.provider import YouTubeIntelligenceProvider
 from intelligence.storage.base import DocumentStore
 from intelligence.storage.memory_store import MemoryDocumentStore
+from intelligence.storage.postgres_store import PostgresDocumentStore
 from intelligence.storage.sqlite_store import SQLiteDocumentStore
 from intelligence.worker.base import JobQueue
 from intelligence.worker.jobs import IntelligenceWorker
+from intelligence.worker.postgres_queue import PostgresJobQueue
 from intelligence.worker.queue import MemoryJobQueue
 from intelligence.worker.sqlite_queue import SQLiteJobQueue
 
@@ -87,4 +89,17 @@ def build_sqlite_runtime(
         registry or build_default_registry(),
         SQLiteJobQueue(resolved),
         SQLiteDocumentStore(resolved),
+    )
+
+
+def build_postgres_runtime(
+    dsn: str,
+    *,
+    registry: ProviderRegistry | None = None,
+) -> IntelligenceRuntime:
+    """Build a production runtime with PostgreSQL queue and document storage."""
+    return _build_runtime(
+        registry or build_default_registry(),
+        PostgresJobQueue(dsn),
+        PostgresDocumentStore(dsn),
     )
