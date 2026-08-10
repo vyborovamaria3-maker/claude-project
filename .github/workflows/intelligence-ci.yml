@@ -10,6 +10,7 @@ on:
       - "admin-site/app/config.py"
       - "admin-site/tests/test_intelligence_*.py"
       - "admin-site/docker-compose.yml"
+      - "admin-site/.env.example"
       - "admin-site/requirements.txt"
       - ".github/workflows/intelligence-ci.yml"
 
@@ -19,7 +20,22 @@ permissions:
 jobs:
   intelligence-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: intelligence
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout
@@ -54,6 +70,31 @@ jobs:
         env:
           PYTHONPATH: admin-site
         run: python -m unittest discover -s admin-site/tests -p "test_intelligence_*.py" -v
+
+      - name: Initialize disposable PostgreSQL and read-only admin role
+        env:
+          POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg
+          from intelligence.storage.postgres_schema import initialize_postgres_schema
+
+          dsn = os.environ["POTAPOFF_TEST_POSTGRES_DSN"]
+          initialize_postgres_schema(dsn)
+          with psycopg.connect(dsn, autocommit=True) as connection:
+              connection.execute("DROP ROLE IF EXISTS intelligence_readonly")
+              connection.execute("CREATE ROLE intelligence_readonly LOGIN PASSWORD 'readonly'")
+              connection.execute("GRANT CONNECT ON DATABASE intelligence TO intelligence_readonly")
+              connection.execute("GRANT USAGE ON SCHEMA public TO intelligence_readonly")
+              connection.execute("GRANT SELECT ON intelligence_documents, intelligence_jobs TO intelligence_readonly")
+          PY
+
+      - name: Run live PostgreSQL intelligence integration tests
+        env:
+          POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
+          POTAPOFF_TEST_POSTGRES_READONLY_DSN: postgresql://intelligence_readonly:readonly@127.0.0.1:5432/intelligence
+        run: python -m unittest intelligence.tests.test_postgres_integration -v
 
       - name: Reject credential files
         shell: bash
