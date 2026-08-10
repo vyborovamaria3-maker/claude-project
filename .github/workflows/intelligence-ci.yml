@@ -1,0 +1,39 @@
+name: Intelligence CI
+
+on:
+  pull_request:
+    paths:
+      - "intelligence/**"
+      - ".github/workflows/intelligence-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  intelligence-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile intelligence package
+        run: python -m compileall -q intelligence
+
+      - name: Run unit tests
+        run: python -m unittest discover -s intelligence/tests -p "test_*.py" -v
+
+      - name: Reject credential files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find intelligence -type f \( -name '.env' -o -name '*.pem' -o -name '*.key' -o -name '*cookies*' \) -print -quit | grep -q .; then
+            echo "Credential-like file found under intelligence/"
+            exit 1
+          fi
