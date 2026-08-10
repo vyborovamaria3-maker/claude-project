@@ -168,6 +168,40 @@ async function assertLoginDialog(page, label) {
   await triggerHandle.dispose();
 }
 
+async function assertAuthSameOrigin(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  let interceptedUrl = "";
+
+  await context.route("**/api/v1/auth/login-password", async (route) => {
+    interceptedUrl = route.request().url();
+    await route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Invalid password" }),
+    });
+  });
+
+  const page = await context.newPage();
+  const maliciousApi = encodeURIComponent("https://example.invalid");
+  await page.goto(`${BASE_URL}/?api=${maliciousApi}`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: /открыть платформу/i }).first().click();
+
+  const dialog = page.getByRole("dialog", { name: /войти в potapoff/i });
+  await dialog.getByRole("textbox", { name: /логин/i }).fill("tester_1");
+  await dialog.getByLabel(/пароль/i).fill("A".repeat(32));
+  await dialog.getByRole("button", { name: /войти в платформу/i }).click();
+  await dialog.getByText(/неверный логин или пароль/i).waitFor({ state: "visible" });
+
+  assert.ok(interceptedUrl, "auth request was not observed");
+  assert.equal(
+    new URL(interceptedUrl).origin,
+    new URL(BASE_URL).origin,
+    `credentials escaped same origin: ${interceptedUrl}`,
+  );
+
+  await context.close();
+}
+
 async function assertMobileMenu(page, viewport) {
   if (viewport.width > 980) return;
 
@@ -260,6 +294,15 @@ async function assertChartInteraction(page, useTouch = false) {
   const chart = page.locator('[aria-label^="Интерактивный график"]');
   await chart.waitFor({ state: "visible" });
 
+  const gridIsValid = await page.evaluate(() => {
+    const svg = document.querySelector('svg[aria-label^="Реальный график цены Solana"]');
+    if (!svg) return false;
+    const lines = Array.from(svg.querySelectorAll("g line"));
+    const vertical = lines.slice(5, 9);
+    return vertical.length === 4 && vertical.every((line) => line.getAttribute("x1") === line.getAttribute("x2"));
+  });
+  assert.equal(gridIsValid, true, "SOL chart vertical grid geometry is broken");
+
   const box = await chart.boundingBox();
   assert.ok(box && box.width > 0 && box.height > 0, "chart has no interactive bounds");
 
@@ -276,6 +319,8 @@ async function assertChartInteraction(page, useTouch = false) {
 
   if (!useTouch) {
     await chart.focus();
+    const focusOutline = await chart.evaluate((element) => getComputedStyle(element).outlineStyle);
+    assert.notEqual(focusOutline, "none", "keyboard chart focus must remain visible");
     await page.keyboard.press("ArrowLeft");
     await tooltip.waitFor({ state: "visible" });
     const keyboardText = (await tooltip.textContent()) || "";
@@ -365,6 +410,9 @@ try {
   await assertMarketPayload(apiContext);
   await apiContext.close();
   console.log("✓ market payload invariants");
+
+  await assertAuthSameOrigin(browser);
+  console.log("✓ auth remains same-origin");
 
   for (const viewport of viewports) {
     await runViewport(browser, viewport);
