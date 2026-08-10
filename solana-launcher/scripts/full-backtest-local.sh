@@ -188,9 +188,35 @@ PY
     pip-audit || true
   '
 
+cat > "$TMP/mock-auth.cjs" <<'NODE'
+const http = require("node:http");
+const allowed = new Set([
+  "Bearer local-responsive-backtest-token",
+  "Bearer full-route-backtest-token",
+]);
+const server = http.createServer((req, res) => {
+  if (req.url?.startsWith("/api/v1/auth/me")) {
+    const ok = allowed.has(req.headers.authorization || "");
+    res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
+    res.end(JSON.stringify(ok ? {
+      id: "00000000-0000-0000-0000-000000000001",
+      email: null,
+      access_login: "local_backtest",
+      is_active: true,
+      is_superuser: false,
+    } : { detail: "Unauthorized" }));
+    return;
+  }
+  res.writeHead(404, { "content-type": "application/json" });
+  res.end(JSON.stringify({ detail: "Not found in isolated auth mock" }));
+});
+server.listen(8000, "127.0.0.1");
+NODE
+
 log "Frontend: install / lint / typecheck / build / mobile + route smoke"
 docker run --rm --ipc=host \
   -v "$ROOT:/src:ro" \
+  -v "$TMP/mock-auth.cjs:/mock-auth.cjs:ro" \
   -e BACKEND_URL=http://127.0.0.1:8000 \
   -e NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000 \
   -e NEXT_PUBLIC_FRONTEND_URL=http://127.0.0.1:3000 \
@@ -215,30 +241,7 @@ docker run --rm --ipc=host \
     npm run build
 
     echo "--- isolated auth mock for Next proxy"
-    node -e '
-'"'"'const http = require("node:http");
-const allowed = new Set([
-  "Bearer local-responsive-backtest-token",
-  "Bearer full-route-backtest-token",
-]);
-const server = http.createServer((req, res) => {
-  if (req.url?.startsWith("/api/v1/auth/me")) {
-    const ok = allowed.has(req.headers.authorization || "");
-    res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
-    res.end(JSON.stringify(ok ? {
-      id: "00000000-0000-0000-0000-000000000001",
-      email: null,
-      access_login: "local_backtest",
-      is_active: true,
-      is_superuser: false,
-    } : { detail: "Unauthorized" }));
-    return;
-  }
-  res.writeHead(404, { "content-type": "application/json" });
-  res.end(JSON.stringify({ detail: "Not found in isolated auth mock" }));
-});
-server.listen(8000, "127.0.0.1");
-'"'"' >/tmp/backtest-auth.log 2>&1 &
+    node /mock-auth.cjs >/tmp/backtest-auth.log 2>&1 &
     auth_pid=$!
     sleep 1
     kill -0 "$auth_pid"
