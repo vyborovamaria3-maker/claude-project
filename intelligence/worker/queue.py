@@ -65,6 +65,8 @@ class MemoryJobQueue:
     def update_status(self, job_id: str, status: JobStatus, error: str | None = None) -> None:
         job = self._require(job_id)
         validate_transition(job.status, status)
+        if job.status == status:
+            return
         now = datetime.now(timezone.utc)
         if status == JobStatus.RUNNING and job.started_at is None:
             job.started_at = now
