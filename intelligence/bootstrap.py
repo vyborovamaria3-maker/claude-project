@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from intelligence.providers.github.provider import GitHubIntelligenceProvider
 from intelligence.providers.registry import ProviderRegistry
@@ -25,6 +26,19 @@ class IntelligenceRuntime:
     queue: JobQueue
     store: DocumentStore
     worker: IntelligenceWorker
+
+    def close(self) -> None:
+        """Close durable resources when the selected backends expose close()."""
+        for resource in (self.queue, self.store):
+            close = getattr(resource, "close", None)
+            if callable(close):
+                close()
+
+    def __enter__(self) -> "IntelligenceRuntime":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
 
 
 def build_default_registry() -> ProviderRegistry:
