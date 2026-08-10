@@ -32,7 +32,7 @@ def document(document_id: str = "doc-1") -> IntelligenceDocument:
     return value
 
 
-VALID_HASH = build_document_hash(document(raw_hash_placeholder := "hash-source"))
+VALID_HASH = document().raw_hash
 
 
 def row(document_id: str = "doc-1", raw_hash: str | None = VALID_HASH) -> dict[str, Any]:
