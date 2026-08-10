@@ -6,6 +6,11 @@ from intelligence.core.models import IntelligenceDocument
 from intelligence.storage.integrity import validate_document_integrity
 
 
+def _checked(document: IntelligenceDocument) -> IntelligenceDocument:
+    validate_document_integrity(document)
+    return document
+
+
 @dataclass(slots=True)
 class MemoryDocumentStore:
     documents: dict[str, IntelligenceDocument]
@@ -20,7 +25,7 @@ class MemoryDocumentStore:
         if document.raw_hash:
             existing_id = self._hash_index.get(document.raw_hash)
             if existing_id is not None:
-                return self.documents[existing_id]
+                return _checked(self.documents[existing_id])
 
         self.documents[document.id] = document
         if document.raw_hash:
@@ -28,20 +33,24 @@ class MemoryDocumentStore:
         return document
 
     def get(self, document_id: str) -> IntelligenceDocument | None:
-        return self.documents.get(document_id)
+        document = self.documents.get(document_id)
+        return _checked(document) if document is not None else None
 
     def list_all(self) -> list[IntelligenceDocument]:
-        return list(self.documents.values())
+        return [_checked(document) for document in self.documents.values()]
 
     def list_recent(self, limit: int) -> list[IntelligenceDocument]:
         if limit < 1:
             raise ValueError("limit must be > 0")
-        return sorted(
+        selected = sorted(
             self.documents.values(),
             key=lambda document: (document.collected_at, document.id),
             reverse=True,
         )[:limit]
+        return [_checked(document) for document in selected]
 
     def find_by_hash(self, raw_hash: str) -> IntelligenceDocument | None:
         document_id = self._hash_index.get(raw_hash)
-        return self.documents.get(document_id) if document_id is not None else None
+        if document_id is None:
+            return None
+        return _checked(self.documents[document_id])
