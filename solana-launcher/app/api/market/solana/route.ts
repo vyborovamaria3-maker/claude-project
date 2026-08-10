@@ -8,7 +8,7 @@ const DAY = 24 * HOUR;
 const MAX_FUTURE_SKEW = 5 * 60 * 1000;
 const LIVE_MAX_AGE = 10 * 60 * 1000;
 const MIN_WINDOW_SPAN = 23 * HOUR;
-const MAX_STALE_FALLBACK_AGE = 6 * HOUR;
+const MAX_MARKET_DATA_AGE = 6 * HOUR;
 const MAX_CHART_POINTS = 120;
 
 type PriceRow = [number, number];
@@ -162,6 +162,9 @@ export async function GET() {
     const values = prices.map((row) => row[1]);
     const plotted = sampleRealPoints(prices, MAX_CHART_POINTS);
     const dataAge = Math.max(0, servedAt - sourceEnd);
+    if (dataAge > MAX_MARKET_DATA_AGE) {
+      throw new Error("Solana market source is too old");
+    }
     const stale = dataAge > LIVE_MAX_AGE;
 
     const payload: MarketPayload = {
@@ -194,7 +197,7 @@ export async function GET() {
       ? Math.max(0, servedAt - lastGoodPayload.updatedAt)
       : Number.POSITIVE_INFINITY;
 
-    if (lastGoodPayload && fallbackAge <= MAX_STALE_FALLBACK_AGE) {
+    if (lastGoodPayload && fallbackAge <= MAX_MARKET_DATA_AGE) {
       const fallback: MarketPayload = {
         ...lastGoodPayload,
         servedAt,
