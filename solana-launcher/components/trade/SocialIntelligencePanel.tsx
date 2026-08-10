@@ -242,8 +242,21 @@ function normalizeOptions(value: Partial<AnalysisOptions>): AnalysisOptions {
   };
 }
 
+function accessHeaders(): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (typeof window !== "undefined") {
+    const token = window.localStorage.getItem("potapoff.access_token");
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", signal });
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal,
+    headers: accessHeaders(),
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
