@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from intelligence.bootstrap import IntelligenceRuntime
 from intelligence.cli import main
+from intelligence.core.hashing import build_document_hash
 from intelligence.providers.github.models import RepositorySnapshot
 from intelligence.providers.github.normalizer import snapshot_to_document
 from intelligence.providers.github.scoring import DEVELOPER_SCORE_VERSION
@@ -87,6 +88,7 @@ class ScoringCLITests(unittest.TestCase):
         document = snapshot_to_document(snapshot)
         document.content += " token=content-secret"
         document.metrics["debug_token"] = "metrics-secret"
+        document.raw_hash = build_document_hash(document)
         factory.store.save(document)
 
         code, stdout, stderr = self.run_cli(
@@ -162,6 +164,7 @@ class ScoringCLITests(unittest.TestCase):
         )
         document = snapshot_to_document(snapshot)
         document.url = "https://github.com/owner/repo?token=bad"
+        document.raw_hash = build_document_hash(document)
         factory.store.save(document)
         code, stdout, stderr = self.run_cli(
             ["score", document.id, "--as-of", "2026-08-10T00:00:00+00:00"],
