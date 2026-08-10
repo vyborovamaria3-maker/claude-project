@@ -54,7 +54,7 @@ type PaidOrder = {
 };
 
 type VerifyPaymentResponse = {
-  status?: "paid" | "pending";
+  status?: "paid" | "pending" | "none";
   error?: string;
   payload?: string;
   login?: string;
@@ -149,6 +149,49 @@ export default function MiniAppPage() {
       }
     })();
   }, [webApp]);
+
+  useEffect(() => {
+    if (!canCheckout || paid) return;
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/miniapp/access", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData }),
+          cache: "no-store",
+        });
+        if (response.status === 404) return;
+
+        const data = (await response.json()) as VerifyPaymentResponse;
+        if (!response.ok) throw new Error(data.error || "Unable to restore active access.");
+        if (
+          data.status !== "paid" ||
+          !data.payload ||
+          !data.login ||
+          !data.password ||
+          data.password.length !== 32
+        ) {
+          throw new Error("Stored access credentials are incomplete.");
+        }
+
+        setLogin(data.login);
+        setOrder({
+          payload: data.payload,
+          login: data.login,
+          status: "paid",
+          password: data.password,
+          subscriptionExpiresAt: data.subscriptionExpiresAt,
+        });
+        setCheckout(null);
+        setError("");
+        setStatusMessage("Active access restored. You can copy your login and password below.");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to restore active access.";
+        setError(message);
+      }
+    })();
+  }, [canCheckout, initData, paid]);
 
   useEffect(() => {
     if (!checkout || paid) return;
