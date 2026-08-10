@@ -71,7 +71,7 @@ class ScoringCLITests(unittest.TestCase):
         snapshot = RepositorySnapshot(
             name="repo",
             full_name="owner/repo",
-            url="https://github.com/owner/repo?token=must-not-leak",
+            url="https://github.com/owner/repo",
             stars=1000,
             forks=100,
             watchers=20,
@@ -86,6 +86,7 @@ class ScoringCLITests(unittest.TestCase):
         )
         document = snapshot_to_document(snapshot)
         document.content += " token=content-secret"
+        document.metrics["debug_token"] = "metrics-secret"
         factory.store.save(document)
 
         code, stdout, stderr = self.run_cli(
@@ -99,8 +100,8 @@ class ScoringCLITests(unittest.TestCase):
         self.assertEqual(payload["score_version"], DEVELOPER_SCORE_VERSION)
         self.assertIsInstance(payload["score"], int)
         self.assertEqual(payload["as_of"], "2026-08-10T00:00:00+00:00")
-        self.assertNotIn("must-not-leak", stdout)
         self.assertNotIn("content-secret", stdout)
+        self.assertNotIn("metrics-secret", stdout)
         self.assertNotIn("metrics", payload)
         self.assertNotIn("url", payload)
 
@@ -140,6 +141,36 @@ class ScoringCLITests(unittest.TestCase):
         )
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(stderr)["error"], "as-of must include a timezone")
+
+    def test_score_rejects_noncanonical_github_url(self) -> None:
+        factory = RuntimeFactory()
+        snapshot = RepositorySnapshot(
+            name="repo",
+            full_name="owner/repo",
+            url="https://github.com/owner/repo",
+            stars=0,
+            forks=0,
+            watchers=0,
+            contributors=1,
+            commits_30d=0,
+            issues_open=0,
+            pull_requests_open=0,
+            releases=0,
+            archived=False,
+            created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        document = snapshot_to_document(snapshot)
+        document.url = "https://github.com/owner/repo?token=bad"
+        factory.store.save(document)
+        code, stdout, stderr = self.run_cli(
+            ["score", document.id, "--as-of", "2026-08-10T00:00:00+00:00"],
+            factory,
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertEqual(json.loads(stderr)["error"], "GitHub repository URL is invalid")
+        self.assertNotIn("token=bad", stderr)
 
 
 if __name__ == "__main__":
