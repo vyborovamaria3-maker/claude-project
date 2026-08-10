@@ -10,6 +10,7 @@ from typing import Any
 
 from intelligence.core.models import IntelligenceDocument
 from intelligence.errors.exceptions import StorageError
+from intelligence.storage.integrity import validate_document_integrity
 
 
 _SCHEMA = """
@@ -51,6 +52,7 @@ class SQLiteDocumentStore:
         self._connection.close()
 
     def save(self, document: IntelligenceDocument) -> IntelligenceDocument:
+        validate_document_integrity(document)
         if document.raw_hash:
             existing = self.find_by_hash(document.raw_hash)
             if existing is not None:
