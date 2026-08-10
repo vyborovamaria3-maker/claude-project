@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.db.session import get_db
 from app.models.user import User
+from app.services.auth import has_active_site_access
 from app.services.users import get_user_by_id
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -36,6 +37,11 @@ async def get_current_user(
     user = await get_user_by_id(session, user_id)
     if user is None or not user.is_active:
         raise credentials_exception
+    if not has_active_site_access(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required",
+        )
     return user
 
 
