@@ -5,6 +5,19 @@ const PAID_ROUTE_PREFIXES = [
   "/api/trade/dev-twitter",
 ];
 
+const BROWSER_CONNECT_ORIGINS = [
+  "https://gmgn.ai",
+  "https://pumpportal.fun",
+  "https://uploads.pinata.cloud",
+  "https://api.mainnet-beta.solana.com",
+  "https://api.devnet.solana.com",
+  "https://api.testnet.solana.com",
+  "https://*.helius-rpc.com",
+  "wss://*.helius-rpc.com",
+  "wss://api.mainnet-beta.solana.com",
+  "wss://api.devnet.solana.com",
+] as const;
+
 function configuredOrigin(value: string | undefined): string | null {
   if (!value) return null;
   try {
@@ -30,13 +43,7 @@ function buildCsp(nonce: string): string {
 
   const connectSources = Array.from(new Set([
     "'self'",
-    "https://api.mainnet-beta.solana.com",
-    "https://api.devnet.solana.com",
-    "https://api.testnet.solana.com",
-    "https://*.helius-rpc.com",
-    "wss://*.helius-rpc.com",
-    "wss://api.mainnet-beta.solana.com",
-    "wss://api.devnet.solana.com",
+    ...BROWSER_CONNECT_ORIGINS,
     ...configuredConnectOrigins,
   ]));
 
