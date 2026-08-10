@@ -96,6 +96,16 @@ function formatMarketTime(timestamp: number | null | undefined) {
   return MARKET_TIME_FORMAT.format(new Date(timestamp));
 }
 
+function formatMarketAge(updatedAt: number | null | undefined, servedAt: number | null | undefined) {
+  if (!updatedAt || !servedAt || !Number.isFinite(updatedAt) || !Number.isFinite(servedAt)) return "";
+  const seconds = Math.max(0, Math.floor((servedAt - updatedAt) / 1000));
+  if (seconds < 60) return `${seconds}с назад`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}м назад`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}ч ${minutes % 60}м назад`;
+}
+
 function chartPaths(points: MarketPoint[], width = CHART_WIDTH, height = CHART_HEIGHT) {
   if (points.length < 2) {
     return {
@@ -584,7 +594,7 @@ export default function PublicLandingPage() {
               </div>
               <span className={styles.marketSource}>
                 {market
-                  ? `CoinGecko · ${market.sourcePointCount} исходных точек · данные на ${formatMarketTime(market.updatedAt)}`
+                  ? `CoinGecko · ${market.sourcePointCount} исходных точек · ${formatMarketAge(market.updatedAt, market.servedAt)} · ${formatMarketTime(market.updatedAt)}`
                   : "CoinGecko · ожидаем данные"}
               </span>
             </div>
