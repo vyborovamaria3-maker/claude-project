@@ -34,7 +34,9 @@ type MarketData = {
   high24h: number;
   low24h: number;
   volume24h: number | null;
+  volumeUpdatedAt: number | null;
   marketCap: number | null;
+  marketCapUpdatedAt: number | null;
   updatedAt: number;
   servedAt: number;
   windowStart: number;
@@ -63,8 +65,14 @@ const AUTH_ENDPOINT = "/api/v1/auth/login-password";
 const CHART_WIDTH = 760;
 const CHART_HEIGHT = 300;
 const AUTH_TIMEOUT_MS = 12_000;
+const HOUR_MS = 60 * 60 * 1000;
 const MARKET_LIVE_MAX_AGE_MS = 10 * 60 * 1000;
+const MARKET_MAX_AGE_MS = 6 * HOUR_MS;
+const MARKET_MIN_SPAN_MS = 23 * HOUR_MS;
+const MARKET_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const MARKET_MAX_METRIC_SKEW_MS = 30 * 60 * 1000;
 const MARKET_CLOCK_INTERVAL_MS = 30_000;
+const MARKET_FLOAT_EPSILON = 1e-6;
 const USD_FORMAT = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -158,24 +166,88 @@ function chartPaths(points: MarketPoint[], width = CHART_WIDTH, height = CHART_H
   return { line, area, mini, labelTop, coords, highCoord, lowCoord };
 }
 
+function nearlyEqual(left: number, right: number) {
+  return Math.abs(left - right) <= MARKET_FLOAT_EPSILON;
+}
+
+function isValidTimedMetric(value: number | null, timestamp: number | null, updatedAt: number) {
+  if (value === null || timestamp === null) return value === null && timestamp === null;
+  return (
+    Number.isFinite(value) &&
+    value > 0 &&
+    Number.isFinite(timestamp) &&
+    timestamp > 0 &&
+    timestamp <= updatedAt &&
+    updatedAt - timestamp <= MARKET_MAX_METRIC_SKEW_MS
+  );
+}
+
 function isValidMarketData(data: MarketData) {
   if (
     data.source !== "CoinGecko" ||
     data.quote !== "USD" ||
+    typeof data.stale !== "boolean" ||
     !Number.isFinite(data.price) ||
     data.price <= 0 ||
+    !Number.isFinite(data.change24h) ||
+    !Number.isFinite(data.high24h) ||
+    !Number.isFinite(data.low24h) ||
+    data.high24h <= 0 ||
+    data.low24h <= 0 ||
+    data.high24h < data.low24h ||
+    !Number.isFinite(data.updatedAt) ||
+    !Number.isFinite(data.servedAt) ||
+    !Number.isFinite(data.windowStart) ||
+    !Number.isFinite(data.windowEnd) ||
+    data.updatedAt <= 0 ||
+    data.servedAt <= 0 ||
+    data.windowStart <= 0 ||
+    data.windowEnd <= 0 ||
+    !Number.isInteger(data.sourcePointCount) ||
+    !Number.isInteger(data.plottedPointCount) ||
+    data.sourcePointCount < 24 ||
+    data.plottedPointCount < 24 ||
+    data.plottedPointCount > 120 ||
+    data.sourcePointCount < data.plottedPointCount ||
     !Array.isArray(data.points) ||
-    data.points.length < 24
+    data.points.length !== data.plottedPointCount ||
+    data.points.length < 24 ||
+    data.points.length > 120
   ) {
     return false;
   }
 
-  return data.points.every((point, index) => {
+  const now = Date.now();
+  if (data.updatedAt > now + MARKET_MAX_FUTURE_SKEW_MS || now - data.updatedAt > MARKET_MAX_AGE_MS) return false;
+  if (data.windowEnd !== data.updatedAt || data.windowEnd - data.windowStart < MARKET_MIN_SPAN_MS) return false;
+  if (data.stale) {
+    if (data.staleReason !== "delayed_source" && data.staleReason !== "upstream_error") return false;
+  } else if (data.staleReason !== null) {
+    return false;
+  }
+
+  for (let index = 0; index < data.points.length; index += 1) {
+    const point = data.points[index];
     if (!Number.isFinite(point.time) || !Number.isFinite(point.price) || point.time <= 0 || point.price <= 0) {
       return false;
     }
-    return index === 0 || point.time > data.points[index - 1].time;
-  });
+    if (index > 0 && point.time <= data.points[index - 1].time) return false;
+  }
+
+  const first = data.points[0];
+  const last = data.points[data.points.length - 1];
+  if (first.time !== data.windowStart || last.time !== data.windowEnd) return false;
+  if (!nearlyEqual(last.price, data.price)) return false;
+
+  const prices = data.points.map((point) => point.price);
+  if (!nearlyEqual(Math.max(...prices), data.high24h) || !nearlyEqual(Math.min(...prices), data.low24h)) return false;
+  const expectedChange = ((last.price - first.price) / first.price) * 100;
+  if (!nearlyEqual(expectedChange, data.change24h)) return false;
+
+  return (
+    isValidTimedMetric(data.volume24h, data.volumeUpdatedAt, data.updatedAt) &&
+    isValidTimedMetric(data.marketCap, data.marketCapUpdatedAt, data.updatedAt)
+  );
 }
 
 function authError(status: number, detail?: string) {
@@ -338,7 +410,11 @@ export default function PublicLandingPage() {
   useEffect(() => {
     const syncHash = () => {
       const shouldOpen = window.location.hash === "#login";
-      if (!shouldOpen) setSubmitting(false);
+      if (!shouldOpen) {
+        setSubmitting(false);
+        setAuthMessage("");
+        setAuthSuccess(false);
+      }
       setLoginOpen(shouldOpen);
     };
     syncHash();
@@ -520,6 +596,7 @@ export default function PublicLandingPage() {
     const controller = new AbortController();
     authAbortRef.current = controller;
     let timedOut = false;
+    let succeeded = false;
     const timeout = window.setTimeout(() => {
       timedOut = true;
       controller.abort();
@@ -553,6 +630,7 @@ export default function PublicLandingPage() {
           saved_at: Date.now(),
         }),
       );
+      succeeded = true;
       setAuthSuccess(true);
       setAuthMessage("Доступ подтверждён. Открываем платформу…");
       redirectTimerRef.current = window.setTimeout(() => window.location.assign("/dashboard"), 500);
@@ -567,7 +645,7 @@ export default function PublicLandingPage() {
       window.clearTimeout(timeout);
       if (authAbortRef.current === controller) {
         authAbortRef.current = null;
-        setSubmitting(false);
+        if (!succeeded) setSubmitting(false);
       }
     }
   };
@@ -703,7 +781,7 @@ export default function PublicLandingPage() {
                       </defs>
                       <g className={styles.chartGrid} data-landing-chart-grid>
                         {[55, 110, 165, 220, 275].map((y) => <line key={y} x1="16" x2="744" y1={y} y2={y} />)}
-                        {[150, 300, 450, 600].map((x) => <line key={x} x1={x} x2={x} y1="18" y2="282" />)}
+                        {[150, 300, 450, 600].map((x) => <line key={x} x2={x} x1={x} y1="18" y2="282" />)}
                       </g>
                       <path className={styles.chartArea} d={paths.area} />
                       <path className={styles.chartLine} data-landing-chart-line d={paths.line} />
@@ -874,7 +952,7 @@ export default function PublicLandingPage() {
               <label>Логин<input ref={loginInputRef} name="username" autoComplete="username" value={login} onChange={(event) => setLogin(event.target.value)} maxLength={32} /></label>
               <label>Пароль<input name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} maxLength={32} /></label>
               <div className={`${styles.loginAlert} ${authSuccess ? styles.loginSuccess : ""}`} aria-live="polite">{authMessage}</div>
-              <button className={styles.button} type="submit" disabled={submitting}>{submitting ? "Проверяем доступ…" : "Войти в платформу"}</button>
+              <button className={styles.button} type="submit" disabled={submitting}>{submitting ? (authSuccess ? "Открываем платформу…" : "Проверяем доступ…") : "Войти в платформу"}</button>
             </form>
           </div>
         </div>
