@@ -1,8 +1,8 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import SidebarTop from "@/components/SidebarTop";
 import MasterWalletBar from "@/components/MasterWalletBar";
 import SidebarNav from "@/components/SidebarNav";
@@ -13,13 +13,77 @@ import ThemePickerToggle from "@/components/ThemePickerToggle";
 import { siteDesign } from "@/lib/siteDesign";
 
 const PUBLIC_ROUTES = new Set(siteDesign.publicRoutes);
+const ACCESS_TOKEN_KEY = "potapoff.access_token";
+const AUTH_META_KEY = "potapoff.auth_meta";
+const ACCESS_RECHECK_MS = 60_000;
+
+type AccessState = "checking" | "allowed" | "unavailable";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const isPublic = useMemo(() => pathname === "/" || PUBLIC_ROUTES.has(pathname), [pathname]);
+  const [accessState, setAccessState] = useState<AccessState>(isPublic ? "allowed" : "checking");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (isPublic) {
+      setAccessState("allowed");
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const denyAccess = () => {
+      window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+      window.localStorage.removeItem(AUTH_META_KEY);
+      if (!cancelled) {
+        setAccessState("checking");
+        router.replace("/login");
+      }
+    };
+
+    const verifyAccess = async (initial: boolean) => {
+      const token = window.localStorage.getItem(ACCESS_TOKEN_KEY);
+      if (!token) {
+        denyAccess();
+        return;
+      }
+
+      if (initial && !cancelled) setAccessState("checking");
+
+      try {
+        const response = await fetch("/api/v1/auth/me", {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+
+        if (response.status === 401 || response.status === 403) {
+          denyAccess();
+          return;
+        }
+        if (!response.ok) {
+          if (!cancelled) setAccessState("unavailable");
+          return;
+        }
+        if (!cancelled) setAccessState("allowed");
+      } catch {
+        if (!cancelled) setAccessState("unavailable");
+      }
+    };
+
+    void verifyAccess(true);
+    timer = window.setInterval(() => void verifyAccess(false), ACCESS_RECHECK_MS);
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [isPublic, pathname, router]);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -59,6 +123,33 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <main className={siteDesign.shell.publicMainClassName}>
         <div className={siteDesign.shell.publicBackgroundClassName} />
         {children}
+      </main>
+    );
+  }
+
+  if (accessState !== "allowed") {
+    return (
+      <main className="grid min-h-screen place-items-center bg-bg px-6 text-content">
+        <div className="max-w-md rounded-2xl border border-bg-border bg-bg-card/90 p-6 text-center shadow-2xl">
+          <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" aria-hidden="true" />
+          <h1 className="mt-4 text-lg font-semibold">
+            {accessState === "checking" ? "Проверяем доступ…" : "Сервис авторизации временно недоступен"}
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-content-muted">
+            {accessState === "checking"
+              ? "Закрытые разделы откроются только после подтверждения активной подписки."
+              : "Закрытые данные не показываются, пока сервер не подтвердит действующий доступ."}
+          </p>
+          {accessState === "unavailable" ? (
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-4 rounded-xl border border-bg-border px-4 py-2 text-sm font-semibold text-content"
+            >
+              Повторить проверку
+            </button>
+          ) : null}
+        </div>
       </main>
     );
   }
