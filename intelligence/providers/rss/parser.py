@@ -22,6 +22,11 @@ class FeedEntry:
 def parse_feed(payload: bytes, *, max_items: int = 50) -> list[FeedEntry]:
     if max_items < 1:
         raise ValueError("max_items must be > 0")
+
+    lowered = payload[:8192].lower()
+    if b"<!doctype" in lowered or b"<!entity" in lowered:
+        raise NormalizationError("RSS/Atom feed contains forbidden XML declarations")
+
     try:
         root = ET.fromstring(payload)
     except ET.ParseError as exc:
