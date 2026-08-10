@@ -76,3 +76,18 @@ async def test_paid_session_cookie_can_authenticate_backend_reads(client):
     response = await client.get("/api/v1/users/access")
     assert response.status_code == 200
     assert response.json() == {"active": True}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/telegram/channels",
+        "/api/v1/telegram/calls",
+        "/api/v1/telegram/top-callers",
+        "/api/v1/social/relations",
+    ],
+)
+async def test_social_intelligence_reads_are_not_anonymous(client, path: str):
+    client.cookies.clear()
+    response = await client.get(path)
+    assert response.status_code == 401
