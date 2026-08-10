@@ -1,0 +1,93 @@
+name: Intelligence CI
+
+on:
+  pull_request:
+    paths:
+      - "intelligence/**"
+      - "scripts/verify_intelligence.py"
+      - "admin-site/app/intelligence_view.py"
+      - "admin-site/app/intelligence_view_factory.py"
+      - "admin-site/app/main_admin.py"
+      - "admin-site/app/config.py"
+      - "admin-site/tests/test_intelligence_*.py"
+      - "admin-site/docker-compose.yml"
+      - "admin-site/.env.example"
+      - "admin-site/.env.intelligence.example"
+      - "admin-site/requirements.txt"
+      - ".gitignore"
+      - ".github/workflows/intelligence-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  intelligence-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: intelligence
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install verification dependencies
+        run: |
+          python -m pip install --disable-pip-version-check \
+            -r intelligence/requirements.txt \
+            -r admin-site/requirements.txt
+
+      - name: Prepare disposable PostgreSQL read-only role
+        env:
+          POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg
+          from intelligence.storage.postgres_schema import initialize_postgres_schema
+
+          dsn = os.environ["POTAPOFF_TEST_POSTGRES_DSN"]
+          initialize_postgres_schema(dsn)
+          with psycopg.connect(dsn, autocommit=True) as connection:
+              connection.execute("DROP ROLE IF EXISTS intelligence_readonly")
+              connection.execute("CREATE ROLE intelligence_readonly LOGIN PASSWORD 'readonly'")
+              connection.execute("GRANT CONNECT ON DATABASE intelligence TO intelligence_readonly")
+              connection.execute("GRANT USAGE ON SCHEMA public TO intelligence_readonly")
+              connection.execute("GRANT SELECT ON intelligence_documents, intelligence_jobs TO intelligence_readonly")
+          PY
+
+      - name: Run repository verification entrypoint
+        env:
+          POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
+          POTAPOFF_TEST_POSTGRES_READONLY_DSN: postgresql://intelligence_readonly:readonly@127.0.0.1:5432/intelligence
+        run: >-
+          python scripts/verify_intelligence.py --full
+          --image-tag potapoff-intelligence:${{ github.sha }}
+
+      - name: Scan verified intelligence image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: potapoff-intelligence:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"

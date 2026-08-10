@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "POTAPoff Intelligence Document",
+  "type": "object",
+  "required": ["id", "source", "content", "collected_at"],
+  "properties": {
+    "id": {"type": "string"},
+    "source": {"type": "string"},
+    "url": {"type": ["string", "null"]},
+    "author": {"type": ["string", "null"]},
+    "content": {"type": "string"},
+    "published_at": {"type": ["string", "null"], "format": "date-time"},
+    "collected_at": {"type": "string", "format": "date-time"},
+    "entities": {"type": "array", "items": {"type": "string"}},
+    "metrics": {"type": "object"},
+    "raw_hash": {"type": ["string", "null"]},
+    "provider": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

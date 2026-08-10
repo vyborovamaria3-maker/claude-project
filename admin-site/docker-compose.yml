@@ -4,6 +4,8 @@ services:
     container_name: potapoff-admin
     restart: unless-stopped
     env_file: .env
+    environment:
+      ADMIN_INTELLIGENCE_DB: /data/intelligence/intelligence.sqlite3
     ports:
       - "127.0.0.1:18080:8080"
     volumes:
@@ -12,6 +14,7 @@ services:
       - ../solana-launcher/data:/data/launcher:ro
       - ../telegram-miniapp/backend-new/prisma:/data/miniapp:ro
       - admin-state:/var/lib/potapoff-admin
+      - intelligence-state:/data/intelligence:ro
       - /var/log/potapoff:/logs/apps:ro
       - admin-logs:/logs/docker:ro
     networks:
@@ -30,6 +33,34 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  intelligence-worker:
+    build:
+      context: ../intelligence
+    container_name: potapoff-intelligence
+    restart: unless-stopped
+    env_file: .env.intelligence
+    environment:
+      POTAPOFF_INTELLIGENCE_DB: /var/lib/potapoff-intelligence/intelligence.sqlite3
+    volumes:
+      - intelligence-state:/var/lib/potapoff-intelligence
+    networks:
+      - potapoff-shared
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "-m", "intelligence", "runtime-health"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
 
   log-collector:
     image: fluent/fluent-bit:3.2
@@ -57,3 +88,4 @@ networks:
 volumes:
   admin-state:
   admin-logs:
+  intelligence-state:

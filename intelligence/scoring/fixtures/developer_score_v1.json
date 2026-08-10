@@ -1,0 +1,124 @@
+{
+  "fixture_version": "developer-score-fixture-v1",
+  "score_version": "github-developer-v1",
+  "cases": [
+    {
+      "name": "active_established_repository",
+      "as_of": "2026-08-10T00:00:00+00:00",
+      "snapshot": {
+        "name": "repo",
+        "full_name": "fixture/active",
+        "url": "https://github.com/fixture/active",
+        "stars": 10000,
+        "forks": 1000,
+        "watchers": 100,
+        "contributors": 25,
+        "commits_30d": 100,
+        "issues_open": 25,
+        "pull_requests_open": 12,
+        "releases": 6,
+        "archived": false,
+        "created_at": "2023-01-01T00:00:00+00:00",
+        "updated_at": "2026-08-09T00:00:00+00:00"
+      },
+      "expected": {
+        "min_score": 85,
+        "max_score": 100,
+        "required_reasons": [
+          "active_commit_history",
+          "has_releases",
+          "multiple_contributors",
+          "established_repository_history"
+        ]
+      }
+    },
+    {
+      "name": "archived_stale_single_contributor",
+      "as_of": "2026-08-10T00:00:00+00:00",
+      "snapshot": {
+        "name": "repo",
+        "full_name": "fixture/dead",
+        "url": "https://github.com/fixture/dead",
+        "stars": 50,
+        "forks": 5,
+        "watchers": 2,
+        "contributors": 1,
+        "commits_30d": 0,
+        "issues_open": 0,
+        "pull_requests_open": 0,
+        "releases": 0,
+        "archived": true,
+        "created_at": "2023-01-01T00:00:00+00:00",
+        "updated_at": "2025-01-01T00:00:00+00:00"
+      },
+      "expected": {
+        "min_score": 0,
+        "max_score": 15,
+        "required_reasons": [
+          "archived_repository",
+          "single_contributor",
+          "stale_repository"
+        ]
+      }
+    },
+    {
+      "name": "young_moderately_active_repository",
+      "as_of": "2026-08-10T00:00:00+00:00",
+      "snapshot": {
+        "name": "repo",
+        "full_name": "fixture/young",
+        "url": "https://github.com/fixture/young",
+        "stars": 200,
+        "forks": 20,
+        "watchers": 10,
+        "contributors": 5,
+        "commits_30d": 20,
+        "issues_open": 4,
+        "pull_requests_open": 2,
+        "releases": 1,
+        "archived": false,
+        "created_at": "2025-01-01T00:00:00+00:00",
+        "updated_at": "2026-07-25T00:00:00+00:00"
+      },
+      "expected": {
+        "min_score": 30,
+        "max_score": 45,
+        "required_reasons": [
+          "has_releases",
+          "multiple_contributors",
+          "established_repository_history"
+        ]
+      }
+    },
+    {
+      "name": "historical_community_but_stale",
+      "as_of": "2026-08-10T00:00:00+00:00",
+      "snapshot": {
+        "name": "repo",
+        "full_name": "fixture/stale",
+        "url": "https://github.com/fixture/stale",
+        "stars": 5000,
+        "forks": 500,
+        "watchers": 100,
+        "contributors": 10,
+        "commits_30d": 0,
+        "issues_open": 30,
+        "pull_requests_open": 5,
+        "releases": 5,
+        "archived": false,
+        "created_at": "2022-01-01T00:00:00+00:00",
+        "updated_at": "2026-04-01T00:00:00+00:00"
+      },
+      "expected": {
+        "min_score": 25,
+        "max_score": 45,
+        "required_reasons": [
+          "has_releases",
+          "multiple_contributors",
+          "established_repository_history",
+          "stale_repository"
+        ]
+      }
+    }
+  ]
+}
