@@ -1,3 +1,5 @@
+import hmac
+
 from sqladmin import Admin, ModelView
 from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
@@ -16,17 +18,19 @@ class AdminAuth(AuthenticationBackend):
 
     async def login(self, request: Request) -> bool:
         form = await request.form()
-        username = form.get("username")
-        password = form.get("password")
-        if username == self._settings.admin_username and password == self._settings.admin_password:
+        username = str(form.get("username") or "")
+        password = str(form.get("password") or "")
+        valid_username = hmac.compare_digest(username, self._settings.admin_username)
+        valid_password = hmac.compare_digest(password, self._settings.admin_password)
+        if valid_username and valid_password:
+            request.session.clear()
             request.session["admin_authenticated"] = True
             request.session["admin_username"] = self._settings.admin_username
             return True
         return False
 
     async def logout(self, request: Request) -> bool:
-        request.session.pop("admin_authenticated", None)
-        request.session.pop("admin_username", None)
+        request.session.clear()
         return True
 
     async def authenticate(self, request: Request) -> bool:
@@ -38,6 +42,7 @@ class UserAdmin(ModelView, model=User):
     name_plural = "Users"
     column_list = [
         "id",
+        "access_login",
         "email",
         "telegram_id",
         "telegram_username",
@@ -56,6 +61,7 @@ class UserAdmin(ModelView, model=User):
     ]
     column_details_list = [
         "id",
+        "access_login",
         "email",
         "full_name",
         "wallet_address",
@@ -79,6 +85,7 @@ class UserAdmin(ModelView, model=User):
         "updated_at",
     ]
     column_searchable_list = [
+        "access_login",
         "email",
         "wallet_address",
         "telegram_id",
@@ -89,6 +96,7 @@ class UserAdmin(ModelView, model=User):
     ]
     column_sortable_list = [
         "id",
+        "access_login",
         "email",
         "created_at",
         "last_login_at",
