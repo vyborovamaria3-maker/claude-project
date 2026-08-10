@@ -4,19 +4,19 @@ import base64
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, verify_password
 from app.models.auth_log import AuthLog
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
 from app.models.user import User
 from app.schemas.subscription import SubscriptionOrderComplete, SubscriptionOrderCreate
+from app.services.auth import apply_telegram_profile
 
 
 class SubscriptionConflictError(ValueError):
@@ -29,6 +29,7 @@ class SubscriptionPasswordError(RuntimeError):
 
 PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 PASSWORD_LENGTH = 32
+PENDING_ORDER_TTL = timedelta(hours=24)
 
 
 def generate_subscription_password() -> str:
@@ -61,36 +62,11 @@ def decrypt_order_password(ciphertext: str | None, secret_key: str) -> str | Non
         raise SubscriptionPasswordError("Unable to decrypt subscription password") from exc
 
 
-def _profile_text(profile: dict[str, Any], key: str, max_length: int = 255) -> str | None:
-    value = profile.get(key)
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    if not normalized:
-        return None
-    return normalized[:max_length]
-
-
-def _profile_bool(profile: dict[str, Any], key: str) -> bool | None:
-    value = profile.get(key)
-    return value if isinstance(value, bool) else None
-
-
-def _apply_telegram_profile(user: User, order: SubscriptionOrder) -> None:
-    profile = dict(order.telegram_profile or {})
-    user.telegram_username = order.username or _profile_text(profile, "username")
-    user.first_name = _profile_text(profile, "first_name")
-    user.last_name = _profile_text(profile, "last_name")
-    user.photo_url = _profile_text(profile, "photo_url", 4096)
-    user.telegram_language_code = _profile_text(profile, "language_code", 32)
-    user.telegram_is_premium = _profile_bool(profile, "is_premium")
-    user.telegram_added_to_attachment_menu = _profile_bool(profile, "added_to_attachment_menu")
-    user.telegram_allows_write_to_pm = _profile_bool(profile, "allows_write_to_pm")
-    user.telegram_profile = profile or None
-
-    display_name = " ".join(part for part in (user.first_name, user.last_name) if part)
-    if display_name:
-        user.full_name = display_name[:255]
+def _pending_is_stale(order: SubscriptionOrder, *, now: datetime | None = None) -> bool:
+    created_at = _as_utc(order.created_at)
+    if created_at is None:
+        return True
+    return created_at + PENDING_ORDER_TTL <= (now or datetime.now(UTC))
 
 
 async def get_subscription_settings(session: AsyncSession) -> SubscriptionSettings:
@@ -113,7 +89,14 @@ async def get_subscription_settings(session: AsyncSession) -> SubscriptionSettin
 
 
 async def _login_owner(session: AsyncSession, login: str) -> User | None:
-    result = await session.execute(select(User).where(User.email == login))
+    result = await session.execute(select(User).where(User.access_login == login))
+    return result.scalar_one_or_none()
+
+
+async def _telegram_user(session: AsyncSession, telegram_user_id: int) -> User | None:
+    result = await session.execute(
+        select(User).where(User.telegram_id == str(telegram_user_id)).limit(1)
+    )
     return result.scalar_one_or_none()
 
 
@@ -125,17 +108,65 @@ async def _existing_demo_order(
         select(SubscriptionOrder)
         .where(SubscriptionOrder.telegram_user_id == telegram_user_id)
         .where(SubscriptionOrder.currency == "DEMO")
+        .order_by(SubscriptionOrder.created_at.desc())
         .limit(1)
     )
     return result.scalar_one_or_none()
 
 
-def _validate_order_shape(payload: SubscriptionOrderCreate) -> None:
-    if payload.telegram_profile is not None:
-        profile_id = payload.telegram_profile.get("id")
-        if not isinstance(profile_id, int) or profile_id != payload.telegram_user_id:
-            raise SubscriptionConflictError("Telegram profile does not match Telegram user id")
+async def _has_paid_purchase(session: AsyncSession, telegram_user_id: int) -> bool:
+    result = await session.execute(
+        select(SubscriptionOrder.payload)
+        .where(SubscriptionOrder.telegram_user_id == telegram_user_id)
+        .where(SubscriptionOrder.currency.in_(("SOL", "USDT")))
+        .where(SubscriptionOrder.status == "paid")
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
 
+
+async def _latest_paid_order(
+    session: AsyncSession,
+    telegram_user_id: int,
+) -> SubscriptionOrder | None:
+    result = await session.execute(
+        select(SubscriptionOrder)
+        .where(SubscriptionOrder.telegram_user_id == telegram_user_id)
+        .where(SubscriptionOrder.status == "paid")
+        .where(SubscriptionOrder.password_ciphertext.isnot(None))
+        .order_by(SubscriptionOrder.paid_at.desc(), SubscriptionOrder.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _recover_current_password(
+    session: AsyncSession,
+    user: User,
+    *,
+    secret_key: str,
+) -> str | None:
+    if not user.telegram_id or not user.hashed_password:
+        return None
+
+    result = await session.execute(
+        select(SubscriptionOrder)
+        .where(SubscriptionOrder.telegram_user_id == int(user.telegram_id))
+        .where(SubscriptionOrder.status == "paid")
+        .where(SubscriptionOrder.password_ciphertext.isnot(None))
+        .order_by(SubscriptionOrder.paid_at.desc(), SubscriptionOrder.created_at.desc())
+    )
+    for prior in result.scalars().all():
+        try:
+            candidate = decrypt_order_password(prior.password_ciphertext, secret_key)
+        except SubscriptionPasswordError:
+            continue
+        if candidate and verify_password(candidate, user.hashed_password):
+            return candidate
+    return None
+
+
+def _validate_order_shape(payload: SubscriptionOrderCreate) -> None:
     if payload.currency == "DEMO":
         if payload.total_amount != 0:
             raise SubscriptionConflictError("Demo order must be free")
@@ -147,6 +178,15 @@ def _validate_order_shape(payload: SubscriptionOrderCreate) -> None:
         raise SubscriptionConflictError("Paid subscription amount must be greater than zero")
     if not payload.recipient_wallet or not payload.payment_reference or not payload.payment_url:
         raise SubscriptionConflictError("Solana payment details are required")
+
+
+async def _expire_stale_pending(order: SubscriptionOrder, session: AsyncSession) -> bool:
+    if order.status != "pending" or not _pending_is_stale(order):
+        return False
+    order.status = "expired"
+    session.add(order)
+    await session.commit()
+    return True
 
 
 async def create_subscription_order(
@@ -169,37 +209,54 @@ async def create_subscription_order(
             raise SubscriptionConflictError("Subscription payload already belongs to another order")
         return existing
 
+    user = await _telegram_user(session, payload.telegram_user_id)
+    if user is not None and user.access_login and user.access_login != payload.login:
+        raise SubscriptionConflictError(
+            f"This Telegram account already uses the site login {user.access_login}"
+        )
+
     if payload.currency == "DEMO":
         demo_order = await _existing_demo_order(session, payload.telegram_user_id)
         if demo_order is not None:
-            if demo_order.status == "pending" and demo_order.login == payload.login:
+            if demo_order.login == payload.login and demo_order.status in {"pending", "paid"}:
                 return demo_order
             raise SubscriptionConflictError("Free demo access has already been used")
+        if await _has_paid_purchase(session, payload.telegram_user_id):
+            raise SubscriptionConflictError("Free demo is unavailable after a paid subscription")
 
     login_owner = await _login_owner(session, payload.login)
     if login_owner is not None and login_owner.telegram_id != str(payload.telegram_user_id):
         raise SubscriptionConflictError("This login is already in use")
 
+    own_pending_result = await session.execute(
+        select(SubscriptionOrder)
+        .where(SubscriptionOrder.telegram_user_id == payload.telegram_user_id)
+        .where(SubscriptionOrder.status == "pending")
+        .order_by(SubscriptionOrder.created_at.desc())
+        .limit(1)
+    )
+    own_pending = own_pending_result.scalar_one_or_none()
+    if own_pending is not None:
+        if not await _expire_stale_pending(own_pending, session):
+            if own_pending.login == payload.login:
+                return own_pending
+            raise SubscriptionConflictError(
+                "Finish the existing checkout before choosing another login"
+            )
+
     pending_result = await session.execute(
         select(SubscriptionOrder)
         .where(SubscriptionOrder.login == payload.login)
         .where(SubscriptionOrder.status == "pending")
+        .order_by(SubscriptionOrder.created_at.desc())
         .limit(1)
     )
     pending_order = pending_result.scalar_one_or_none()
     if pending_order is not None:
-        if pending_order.telegram_user_id != payload.telegram_user_id:
-            raise SubscriptionConflictError("This login is reserved by another pending order")
-        same_checkout = (
-            pending_order.currency == payload.currency
-            and pending_order.total_amount == payload.total_amount
-            and pending_order.access_days == payload.access_days
-            and pending_order.recipient_wallet == payload.recipient_wallet
-        )
-        if same_checkout:
+        if not await _expire_stale_pending(pending_order, session):
+            if pending_order.telegram_user_id != payload.telegram_user_id:
+                raise SubscriptionConflictError("This login is reserved by another pending order")
             return pending_order
-        pending_order.status = "cancelled"
-        await session.commit()
 
     order = SubscriptionOrder(
         payload=payload.payload,
@@ -243,6 +300,30 @@ async def get_subscription_order(session: AsyncSession, payload: str) -> Subscri
     return await session.get(SubscriptionOrder, payload)
 
 
+async def get_latest_subscription_access(
+    session: AsyncSession,
+    telegram_user_id: int,
+    *,
+    secret_key: str,
+) -> tuple[SubscriptionOrder, str, datetime] | None:
+    user = await _telegram_user(session, telegram_user_id)
+    if user is None or user.subscription_expires_at is None:
+        return None
+
+    expires_at = _as_utc(user.subscription_expires_at)
+    if expires_at is None or expires_at <= datetime.now(UTC):
+        return None
+
+    order = await _latest_paid_order(session, telegram_user_id)
+    if order is None:
+        return None
+
+    password = await _recover_current_password(session, user, secret_key=secret_key)
+    if not password:
+        raise SubscriptionPasswordError("Active subscription has no recoverable password")
+    return order, password, expires_at
+
+
 async def complete_subscription_order(
     session: AsyncSession,
     payload: str,
@@ -259,17 +340,20 @@ async def complete_subscription_order(
     if order is None:
         raise LookupError("Subscription order not found")
 
+    user_result = await session.execute(
+        select(User).where(User.telegram_id == str(order.telegram_user_id)).with_for_update()
+    )
+    user = user_result.scalar_one_or_none()
+
     if order.status == "paid":
-        password = decrypt_order_password(order.password_ciphertext, secret_key)
+        if user is None or user.subscription_expires_at is None:
+            raise SubscriptionPasswordError("Paid subscription has no active user")
+        password = await _recover_current_password(session, user, secret_key=secret_key)
         if not password:
             raise SubscriptionPasswordError("Paid subscription has no recoverable password")
-        user_result = await session.execute(
-            select(User).where(User.telegram_id == str(order.telegram_user_id))
-        )
-        user = user_result.scalar_one_or_none()
-        expires_at = _as_utc(user.subscription_expires_at) if user else None
+        expires_at = _as_utc(user.subscription_expires_at)
         if expires_at is None:
-            raise SubscriptionPasswordError("Paid subscription has no active user")
+            raise SubscriptionPasswordError("Paid subscription has no expiry")
         return order, password, expires_at, True
 
     if order.status != "pending":
@@ -278,6 +362,8 @@ async def complete_subscription_order(
     if order.currency == "DEMO":
         if completion.payment_signature:
             raise SubscriptionConflictError("Demo activation cannot contain a payment signature")
+        if await _has_paid_purchase(session, order.telegram_user_id):
+            raise SubscriptionConflictError("Free demo is unavailable after a paid subscription")
     elif not completion.payment_signature:
         raise SubscriptionConflictError("Verified Solana payment signature is required")
 
@@ -297,31 +383,40 @@ async def complete_subscription_order(
     if login_owner is not None and login_owner.telegram_id != str(order.telegram_user_id):
         raise SubscriptionConflictError("This login is already in use")
 
-    user_result = await session.execute(
-        select(User).where(User.telegram_id == str(order.telegram_user_id)).with_for_update()
-    )
-    user = user_result.scalar_one_or_none()
-
     now = datetime.now(UTC)
     if user is None:
         user = User(
             telegram_id=str(order.telegram_user_id),
-            email=order.login,
+            access_login=order.login,
             is_active=True,
         )
         session.add(user)
+        await session.flush()
         current_expiry = None
+        password = None
     else:
         current_expiry = _as_utc(user.subscription_expires_at)
-        user.email = order.login
+        if user.access_login and user.access_login != order.login:
+            raise SubscriptionConflictError(
+                f"This Telegram account already uses the site login {user.access_login}"
+            )
+        user.access_login = order.login
         user.is_active = True
+        password = await _recover_current_password(session, user, secret_key=secret_key)
 
-    _apply_telegram_profile(user, order)
+    if order.telegram_profile:
+        apply_telegram_profile(user, dict(order.telegram_profile), fallback_username=order.username)
+    elif order.username:
+        user.telegram_username = order.username
 
-    password = generate_subscription_password()
+    if not password:
+        password = generate_subscription_password()
+        user.hashed_password = get_password_hash(password)
+    elif not user.hashed_password or not verify_password(password, user.hashed_password):
+        user.hashed_password = get_password_hash(password)
+
     base_expiry = current_expiry if current_expiry and current_expiry > now else now
     expires_at = base_expiry + timedelta(days=order.access_days)
-    user.hashed_password = get_password_hash(password)
     user.subscription_expires_at = expires_at
 
     order.status = "paid"
@@ -329,6 +424,7 @@ async def complete_subscription_order(
     order.payment_signature = completion.payment_signature
     order.paid_at = now
 
+    session.add(user)
     await session.flush()
     session.add(
         AuthLog(
