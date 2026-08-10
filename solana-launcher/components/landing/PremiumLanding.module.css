@@ -158,9 +158,9 @@
   isolation: isolate;
   min-height: calc(100svh - 72px);
   display: grid;
-  grid-template-columns: minmax(0,.86fr) minmax(0,1.14fr);
+  grid-template-columns: minmax(0,.74fr) minmax(0,1.26fr);
   align-items: center;
-  gap: clamp(34px, 4vw, 70px);
+  gap: clamp(28px, 3vw, 52px);
   padding: clamp(64px, 8vw, 104px) 0 58px;
 }
 .hero::before {
@@ -215,9 +215,9 @@
   box-shadow: inset 0 1px rgba(255,255,255,.025), 0 10px 34px -28px var(--accent-glow);
 }
 .liveDot { width: 6px; height: 6px; border-radius: 50%; background: var(--positive); box-shadow: 0 0 14px color-mix(in srgb, var(--positive) 78%, transparent); }
-.heroTitle { margin: 22px 0 0; max-width: 700px; font-size: clamp(3.05rem, 5.15vw, 5.3rem); line-height: .95; letter-spacing: -.063em; font-weight: 900; text-wrap: balance; }
+.heroTitle { margin: 22px 0 0; max-width: 620px; font-size: clamp(2.9rem, 4.8vw, 4.9rem); line-height: .96; letter-spacing: -.061em; font-weight: 900; text-wrap: balance; }
 .heroAccent { display: block; margin-top: 5px; color: transparent; background: var(--headline-gradient); background-clip: text; -webkit-background-clip: text; }
-.heroCopy { max-width: 620px; margin: 24px 0 0; color: #aaa7a0; font-size: clamp(16px, 1.45vw, 18px); line-height: 1.72; }
+.heroCopy { max-width: 570px; margin: 24px 0 0; color: #aaa7a0; font-size: clamp(16px, 1.35vw, 18px); line-height: 1.7; }
 .heroActions { display: flex; flex-wrap: wrap; gap: 11px; margin-top: 30px; }
 .heroMeta { display: flex; flex-wrap: wrap; gap: 10px 20px; margin-top: 26px; color: #827f79; font-size: 12px; }
 .heroMeta span { display: inline-flex; align-items: center; gap: 8px; }
@@ -245,7 +245,7 @@
 .marketCard {
   position: relative;
   overflow: hidden;
-  min-height: 520px;
+  min-height: 590px;
   border: 1px solid var(--line-accent);
   border-radius: 27px;
   padding: clamp(20px, 2.5vw, 30px);
@@ -268,20 +268,33 @@
 .pairLabel { font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
 .pairSub { margin-top: 2px; font-size: 11px; color: var(--muted); }
 .marketStatus { min-height: 27px; padding: 0 9px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--positive); font-size: 10px; font-weight: 800; background: color-mix(in srgb, var(--positive) 5%, transparent); }
+.marketStatusStale { color: #ffc76a; border-color: rgba(255,199,106,.26); background: rgba(255,199,106,.06); }
+.marketStatusStale .liveDot { background: #ffc76a; box-shadow: 0 0 14px rgba(255,199,106,.45); }
 .marketPriceRow { display: flex; align-items: baseline; gap: 13px; margin-top: 19px; }
-.marketPrice { min-height: 1em; font-size: clamp(2.25rem, 4.1vw, 3.8rem); line-height: 1; letter-spacing: -.055em; font-weight: 780; font-variant-numeric: tabular-nums; }
+.marketPrice { min-height: 1em; font-size: clamp(2.5rem, 4.45vw, 4.15rem); line-height: 1; letter-spacing: -.055em; font-weight: 780; font-variant-numeric: tabular-nums; }
 .marketChange { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .positive { color: var(--positive) !important; }
 .negative { color: var(--danger) !important; }
-.chartWrap { position: relative; height: 270px; margin-top: 8px; overflow: hidden; border-radius: 14px; }
+.chartWrap { position: relative; height: 320px; margin-top: 12px; overflow: hidden; border-radius: 14px; }
 .chartWrap::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 38%, transparent), transparent 15% 83%, color-mix(in srgb, var(--bg) 36%, transparent)); pointer-events: none; }
+.chartInteractive { cursor: crosshair; touch-action: pan-y; }
 .chartSvg { width: 100%; height: 100%; overflow: visible; }
 .chartGrid line { stroke: rgba(255,255,255,.055); stroke-width: 1; }
 .chartArea { fill: url(#potap-market-area); }
 .chartLine { fill: none; stroke: url(#potap-market-line); stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 8px var(--accent-glow)); stroke-dasharray: 1800; stroke-dashoffset: 1800; animation: drawChart 1.15s cubic-bezier(.2,.7,.2,1) forwards; }
 .chartLabel { position: absolute; z-index: 2; right: 10px; top: 50%; transform: translateY(-50%); padding: 5px 8px; border-radius: 7px; background: color-mix(in srgb, var(--accent) 86%, #111); color: #090806; font-size: 10px; font-weight: 900; font-variant-numeric: tabular-nums; box-shadow: 0 0 20px var(--accent-glow); pointer-events: none; }
+.chartExtreme { fill: var(--accent-strong); stroke: var(--bg); stroke-width: 2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 5px var(--accent-glow)); opacity: .9; }
+.chartCursor line { stroke: color-mix(in srgb, var(--accent) 46%, rgba(255,255,255,.18)); stroke-width: 1; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
+.chartCursor circle { fill: color-mix(in srgb, var(--accent) 18%, transparent); stroke: var(--accent-strong); stroke-width: 1.5; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 6px var(--accent-glow)); }
+.chartCursor .chartCursorCore { fill: var(--accent-strong); stroke: none; }
+.chartTooltip { position: absolute; z-index: 5; top: 9px; min-width: 104px; transform: translateX(-50%); padding: 8px 10px; border: 1px solid var(--line-accent); border-radius: 10px; background: color-mix(in srgb, var(--panel-strong) 94%, transparent); box-shadow: 0 14px 38px -24px var(--accent-glow); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); pointer-events: none; text-align: center; }
+.chartTooltip strong { display: block; color: var(--text); font-size: 12px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.chartTooltip span { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
 .chartFallback { height: 100%; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
-.chartTimeline { display: flex; justify-content: space-between; margin: -2px 7px 12px; color: var(--muted-2); font-size: 9px; font-variant-numeric: tabular-nums; }
+.chartTimeline { display: flex; justify-content: space-between; margin: -2px 7px 8px; color: var(--muted-2); font-size: 9px; font-variant-numeric: tabular-nums; }
+.chartVerification { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 7px 14px; color: var(--muted-2); font-size: 9px; line-height: 1.45; }
+.chartVerification span { max-width: 72%; }
+.chartVerification strong { color: var(--accent); font-size: 9px; white-space: nowrap; font-weight: 800; }
 .marketStats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
 .marketStat { position: relative; min-width: 0; overflow: hidden; padding: 12px 11px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.025); }
 .marketStat::after { content: ""; position: absolute; width: 36px; height: 1px; right: 9px; top: 8px; background: linear-gradient(90deg, transparent, var(--rail-strong)); opacity: .65; }
@@ -394,6 +407,7 @@
   .floatA { left: -2%; }
   .floatB { right: -2%; }
   .themeLabel { display: none; }
+  .hero { grid-template-columns: minmax(0,.78fr) minmax(0,1.22fr); }
 }
 
 @media (max-width: 980px) {
@@ -406,7 +420,8 @@
   .hero::after { right: -38vw; bottom: 9%; opacity: .45; }
   .heroCopyBlock { max-width: 760px; }
   .heroTitle { max-width: 840px; font-size: clamp(3rem,8.4vw,5.2rem); }
-  .marketStage { width: min(780px,100%); margin-inline: auto; }
+  .marketStage { width: min(820px,100%); margin-inline: auto; }
+  .marketCard { min-height: 0; }
   .proofStrip { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .proofItem:nth-child(2) { border-right: 0; }
   .proofItem:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
@@ -449,13 +464,19 @@
   .pairLabel { font-size: 14px; }
   .pairSub { font-size: 9px; }
   .marketStatus { font-size: 8px; }
-  .marketPrice { font-size: 2.55rem; }
+  .marketPrice { font-size: 2.65rem; }
   .marketChange { font-size: 11px; }
-  .chartWrap { height: 210px; }
+  .chartWrap { height: 235px; margin-top: 10px; }
   .chartLabel { right: 3px; font-size: 9px; }
+  .chartTooltip { top: 7px; min-width: 94px; padding: 7px 8px; }
+  .chartTooltip strong { font-size: 11px; }
+  .chartVerification { align-items: flex-start; flex-direction: column; gap: 3px; margin-inline: 3px; font-size: 8px; }
+  .chartVerification span { max-width: 100%; }
+  .chartVerification strong { font-size: 8px; }
   .marketStats { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .marketStatLabel { font-size: 8px; }
   .marketStatValue { font-size: 13px; }
+  .marketSource { text-align: left; font-size: 8px; }
   .floatCard { display: none; }
   .proofStrip { grid-template-columns: 1fr; border-radius: 17px; }
   .proofItem { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -499,8 +520,8 @@
 @media (max-width: 390px) {
   .shell { width: calc(100% - 20px); }
   .heroTitle { font-size: 2.55rem; }
-  .marketPrice { font-size: 2.15rem; }
-  .chartWrap { height: 185px; }
+  .marketPrice { font-size: 2.2rem; }
+  .chartWrap { height: 205px; }
   .chartTimeline { font-size: 8px; }
   .previewBody { grid-template-columns: 1fr; }
   .previewNav { display: none; }
@@ -510,6 +531,7 @@
 @media (hover: none) {
   .button:hover, .themeToggle:hover, .featureCard:hover { transform: none; filter: none; }
   .button:hover::after { left: -36%; }
+  .chartInteractive { cursor: default; }
 }
 
 @media (prefers-reduced-motion: reduce) {
