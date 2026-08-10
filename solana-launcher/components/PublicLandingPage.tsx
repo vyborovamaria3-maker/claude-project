@@ -43,24 +43,30 @@ type LandingTheme = "gold" | "solana";
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 const THEME_KEY = "potapoff.landing_theme";
+const USD_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 2,
+});
+const COMPACT_USD_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 2,
+});
+const MARKET_TIME_FORMAT = new Intl.DateTimeFormat("ru-RU", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
-function formatUsd(value: number | null | undefined, maximumFractionDigits = 2) {
+function formatUsd(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits,
-  }).format(value);
+  return USD_FORMAT.format(value);
 }
 
 function formatCompactUsd(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    notation: "compact",
-    maximumFractionDigits: 2,
-  }).format(value);
+  return COMPACT_USD_FORMAT.format(value);
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -70,14 +76,11 @@ function formatPercent(value: number | null | undefined) {
 
 function formatMarketTime(timestamp: number | null | undefined) {
   if (!timestamp || !Number.isFinite(timestamp)) return "";
-  return new Intl.DateTimeFormat("ru-RU", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
+  return MARKET_TIME_FORMAT.format(new Date(timestamp));
 }
 
 function chartPaths(points: MarketPoint[], width = 760, height = 300) {
-  if (points.length < 2) return { line: "", area: "", mini: "" };
+  if (points.length < 2) return { line: "", area: "", mini: "", labelTop: 50 };
   const prices = points.map((point) => point.price);
   const rawMin = Math.min(...prices);
   const rawMax = Math.max(...prices);
@@ -101,7 +104,9 @@ function chartPaths(points: MarketPoint[], width = 760, height = 300) {
     .join(" ");
   const area = `${line} L${coords[coords.length - 1][0].toFixed(2)},${height} L${coords[0][0].toFixed(2)},${height} Z`;
   const mini = coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-  return { line, area, mini };
+  const lastY = coords[coords.length - 1][1];
+  const labelTop = Math.min(92, Math.max(8, (lastY / height) * 100));
+  return { line, area, mini, labelTop };
 }
 
 function authError(status: number, detail?: string) {
@@ -175,10 +180,6 @@ export default function PublicLandingPage() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(THEME_KEY, theme);
-  }, [theme]);
-
-  useEffect(() => {
     const controller = new AbortController();
 
     const loadMarket = async () => {
@@ -195,14 +196,18 @@ export default function PublicLandingPage() {
       }
     };
 
-    void loadMarket();
-    const timer = window.setInterval(() => {
+    const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void loadMarket();
-    }, 60_000);
+    };
+
+    void loadMarket();
+    const timer = window.setInterval(refreshWhenVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       controller.abort();
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, []);
 
@@ -235,13 +240,40 @@ export default function PublicLandingPage() {
   }, []);
 
   useEffect(() => {
-    document.body.style.overflow = loginOpen ? "hidden" : "";
+    if (!loginOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
     };
   }, [loginOpen]);
 
-  const toggleTheme = () => setTheme((value) => (value === "gold" ? "solana" : "gold"));
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (loginOpen) {
+        if (window.location.hash === "#login") {
+          window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+        }
+        setLoginOpen(false);
+        setAuthMessage("");
+        setAuthSuccess(false);
+      } else if (menuOpen) {
+        setMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [loginOpen, menuOpen]);
+
+  const toggleTheme = () => {
+    setTheme((value) => {
+      const next = value === "gold" ? "solana" : "gold";
+      window.localStorage.setItem(THEME_KEY, next);
+      return next;
+    });
+  };
 
   const openLogin = () => {
     setMenuOpen(false);
@@ -326,20 +358,33 @@ export default function PublicLandingPage() {
           </nav>
 
           <div className={styles.headerActions}>
-            <button className={styles.themeToggle} type="button" onClick={toggleTheme} aria-label={`Переключить тему. Сейчас ${theme === "gold" ? "Gold" : "Solana"}`}>
+            <button
+              className={styles.themeToggle}
+              type="button"
+              onClick={toggleTheme}
+              aria-pressed={theme === "solana"}
+              aria-label={`Переключить тему. Сейчас ${theme === "gold" ? "Gold" : "Solana"}`}
+              title={`Тема: ${theme === "gold" ? "Gold" : "Solana"}`}
+            >
               <Palette size={15} />
               <span className={styles.themeSwatches} aria-hidden="true"><i /><i /></span>
               <span className={styles.themeLabel}>{theme === "gold" ? "Gold" : "Solana"}</span>
             </button>
             <button className={`${styles.button} ${styles.buttonGhost} ${styles.buttonSmall}`} onClick={openLogin}>Войти</button>
             <button className={`${styles.button} ${styles.buttonSmall} ${styles.desktopCta}`} onClick={openLogin}>Открыть платформу <ArrowRight size={16} /></button>
-            <button className={styles.menuButton} onClick={() => setMenuOpen((value) => !value)} aria-label="Открыть меню" aria-expanded={menuOpen}>
+            <button
+              className={styles.menuButton}
+              onClick={() => setMenuOpen((value) => !value)}
+              aria-label={menuOpen ? "Закрыть меню" : "Открыть меню"}
+              aria-expanded={menuOpen}
+              aria-controls="landing-mobile-menu"
+            >
               {menuOpen ? <X size={19} /> : <Menu size={19} />}
             </button>
           </div>
         </div>
 
-        <div className={`${styles.shell} ${styles.mobileMenu} ${menuOpen ? styles.mobileMenuOpen : ""}`}>
+        <div id="landing-mobile-menu" className={`${styles.shell} ${styles.mobileMenu} ${menuOpen ? styles.mobileMenuOpen : ""}`} aria-hidden={!menuOpen}>
           <a href="#product" onClick={() => setMenuOpen(false)}>Продукт</a>
           <a href="#features" onClick={() => setMenuOpen(false)}>Возможности</a>
           <a href="#market" onClick={() => setMenuOpen(false)}>Рынок SOL</a>
@@ -409,7 +454,7 @@ export default function PublicLandingPage() {
                       <path className={styles.chartArea} d={paths.area} />
                       <path className={styles.chartLine} d={paths.line} />
                     </svg>
-                    <div className={styles.chartLabel}>{formatUsd(market?.price)}</div>
+                    <div className={styles.chartLabel} style={{ top: `${paths.labelTop}%` }}>{formatUsd(market?.price)}</div>
                   </>
                 ) : <div className={styles.chartFallback}>Получаем рыночные данные SOL…</div>}
               </div>
