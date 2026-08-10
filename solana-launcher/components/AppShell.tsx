@@ -48,18 +48,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     const verifyAccess = async (initial: boolean) => {
       const token = window.localStorage.getItem(ACCESS_TOKEN_KEY);
-      if (!token) {
-        denyAccess();
-        return;
-      }
-
       if (initial && !cancelled) setAccessState("checking");
 
       try {
+        const headers: HeadersInit = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
         const response = await fetch("/api/v1/auth/me", {
           method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
+          headers,
           cache: "no-store",
+          credentials: "same-origin",
         });
 
         if (response.status === 401 || response.status === 403) {
