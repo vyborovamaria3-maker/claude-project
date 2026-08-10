@@ -43,10 +43,11 @@ def _ensure_utc(dt: datetime) -> datetime:
 def has_active_site_access(user: User, *, now: datetime | None = None) -> bool:
     if user.is_superuser:
         return True
-    if not user.is_active or user.subscription_expires_at is None:
+    expiry = user.subscription_expires_at
+    if not user.is_active or expiry is None:
         return False
     current = now or _utcnow()
-    return _ensure_utc(user.subscription_expires_at) > current
+    return _ensure_utc(expiry) > current
 
 
 def require_active_site_access(user: User, *, now: datetime | None = None) -> None:
@@ -88,7 +89,9 @@ def apply_telegram_profile(
     user.telegram_allows_write_to_pm = boolean("allows_write_to_pm")
     user.telegram_profile = dict(profile)
 
-    display_name = " ".join(part for part in (user.first_name, user.last_name) if part)
+    display_name = " ".join(
+        part for part in (user.first_name, user.last_name) if part
+    )
     if display_name:
         user.full_name = display_name[:255]
 
@@ -97,7 +100,13 @@ def generate_nonce() -> int:
     return secrets.randbelow(90_000_000) + 10_000_000
 
 
-def build_phantom_message(*, app_name: str, wallet_address: str, nonce: int, expires_at: datetime) -> str:
+def build_phantom_message(
+    *,
+    app_name: str,
+    wallet_address: str,
+    nonce: int,
+    expires_at: datetime,
+) -> str:
     expires_text = _ensure_utc(expires_at).isoformat()
     return (
         f"{app_name} wants you to sign in with your Solana wallet.\n\n"
@@ -134,7 +143,11 @@ def verify_phantom_signature(*, public_key: str, message: str, signature: str) -
 
 
 def build_telegram_secret(bot_token: str) -> bytes:
-    return hmac.new(key=b"WebAppData", msg=bot_token.encode("utf-8"), digestmod=hashlib.sha256).digest()
+    return hmac.new(
+        key=b"WebAppData",
+        msg=bot_token.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
 
 
 def parse_telegram_init_data(init_data: str) -> dict[str, str]:
@@ -171,9 +184,15 @@ def verify_telegram_init_data(
     if auth_date > now + timedelta(minutes=5):
         raise ValueError("init_data timestamp is in the future")
 
-    data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(items.items()))
+    data_check_string = "\n".join(
+        f"{key}={value}" for key, value in sorted(items.items())
+    )
     secret = build_telegram_secret(bot_token)
-    calculated_hash = hmac.new(secret, data_check_string.encode("utf-8"), digestmod=hashlib.sha256).hexdigest()
+    calculated_hash = hmac.new(
+        secret,
+        data_check_string.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
     if not hmac.compare_digest(calculated_hash, received_hash):
         raise ValueError("Invalid Telegram hash")
 
@@ -192,13 +211,23 @@ def verify_telegram_init_data(
     return user_data, items
 
 
-async def get_user_by_wallet(session: AsyncSession, wallet_address: str) -> User | None:
-    result = await session.execute(select(User).where(User.wallet_address == wallet_address))
+async def get_user_by_wallet(
+    session: AsyncSession,
+    wallet_address: str,
+) -> User | None:
+    result = await session.execute(
+        select(User).where(User.wallet_address == wallet_address)
+    )
     return result.scalar_one_or_none()
 
 
-async def get_user_by_telegram_id(session: AsyncSession, telegram_id: str) -> User | None:
-    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+async def get_user_by_telegram_id(
+    session: AsyncSession,
+    telegram_id: str,
+) -> User | None:
+    result = await session.execute(
+        select(User).where(User.telegram_id == telegram_id)
+    )
     return result.scalar_one_or_none()
 
 
@@ -257,18 +286,31 @@ async def create_or_update_email_user(
 
     from app.core.security import get_password_hash
 
-    user = User(email=email, full_name=full_name, hashed_password=get_password_hash(password), is_active=True)
+    user = User(
+        email=email,
+        full_name=full_name,
+        hashed_password=get_password_hash(password),
+        is_active=True,
+    )
     session.add(user)
     await session.commit()
     await session.refresh(user)
     return user
 
 
-async def authenticate_user(session: AsyncSession, email: str, password: str) -> User | None:
+async def authenticate_user(
+    session: AsyncSession,
+    email: str,
+    password: str,
+) -> User | None:
     from app.core.security import verify_password
 
     user = await get_user_by_email(session, email)
-    if user is None or not user.hashed_password or not verify_password(password, user.hashed_password):
+    if (
+        user is None
+        or not user.hashed_password
+        or not verify_password(password, user.hashed_password)
+    ):
         return None
     return user
 
@@ -375,12 +417,20 @@ def merge_user_records(target: User, source: User) -> User:
         source_value = getattr(source, field)
         if target_value is None and source_value is not None:
             setattr(target, field, source_value)
-        elif target_value is not None and source_value is not None and target_value != source_value:
+        elif (
+            target_value is not None
+            and source_value is not None
+            and target_value != source_value
+        ):
             raise ValueError(f"Conflicting {field}")
 
     if source.subscription_expires_at:
         source_expiry = _ensure_utc(source.subscription_expires_at)
-        target_expiry = _ensure_utc(target.subscription_expires_at) if target.subscription_expires_at else None
+        target_expiry = (
+            _ensure_utc(target.subscription_expires_at)
+            if target.subscription_expires_at
+            else None
+        )
         if target_expiry is None or source_expiry > target_expiry:
             target.subscription_expires_at = source.subscription_expires_at
 
@@ -397,7 +447,11 @@ def merge_user_records(target: User, source: User) -> User:
     return target
 
 
-async def issue_token_for_user(session: AsyncSession, user: User, settings: Settings) -> LoginResult:
+async def issue_token_for_user(
+    session: AsyncSession,
+    user: User,
+    settings: Settings,
+) -> LoginResult:
     del session  # kept in the signature for backwards compatibility with callers
     now = _utcnow()
     require_active_site_access(user, now=now)
@@ -406,10 +460,21 @@ async def issue_token_for_user(session: AsyncSession, user: User, settings: Sett
     if user.is_superuser:
         expires = configured
     else:
-        subscription_remaining = _ensure_utc(user.subscription_expires_at) - now
+        expiry = user.subscription_expires_at
+        if expiry is None:
+            raise PermissionError("Active subscription required")
+        subscription_remaining = _ensure_utc(expiry) - now
         expires = min(configured, subscription_remaining)
         if expires.total_seconds() <= 0:
             raise PermissionError("Active subscription required")
 
-    token = create_access_token(subject=str(user.id), settings=settings, expires_delta=expires)
-    return LoginResult(user=user, access_token=token, expires_in=max(1, int(expires.total_seconds())))
+    token = create_access_token(
+        subject=str(user.id),
+        settings=settings,
+        expires_delta=expires,
+    )
+    return LoginResult(
+        user=user,
+        access_token=token,
+        expires_in=max(1, int(expires.total_seconds())),
+    )
