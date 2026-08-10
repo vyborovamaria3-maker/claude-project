@@ -31,3 +31,7 @@ class ProviderRegistry:
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._providers))
+
+    def providers(self) -> tuple[IntelligenceProvider, ...]:
+        """Return providers in stable name order for health/reporting consumers."""
+        return tuple(self._providers[name] for name in self.names())
