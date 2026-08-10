@@ -19,3 +19,7 @@ class NormalizationError(IntelligenceError):
 
 class SecurityError(IntelligenceError):
     """Raised when unsafe data is detected."""
+
+
+class JobValidationError(IntelligenceError):
+    """Raised when an intelligence job payload is invalid."""
