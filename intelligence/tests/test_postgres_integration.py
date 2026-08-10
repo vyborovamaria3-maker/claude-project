@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import psycopg
 
+from intelligence.core.hashing import build_document_hash
 from intelligence.core.models import IntelligenceDocument
 from intelligence.storage.postgres_schema import initialize_postgres_schema
 from intelligence.storage.postgres_store import PostgresDocumentStore
@@ -40,28 +41,28 @@ class PostgresIntegrationTests(unittest.TestCase):
 
     def test_document_round_trip_and_raw_hash_dedup(self) -> None:
         store = PostgresDocumentStore(self.dsn)
-        raw_hash = uuid4().hex + uuid4().hex
         collected_at = datetime.now(timezone.utc)
         first = IntelligenceDocument(
             id=f"doc-{uuid4()}",
             source="integration",
-            content="first evidence",
+            content="same evidence",
             collected_at=collected_at,
             provider="integration-test",
             entities=["integration"],
             metrics={"score": 1},
-            raw_hash=raw_hash,
         )
+        first.raw_hash = build_document_hash(first)
         duplicate = IntelligenceDocument(
             id=f"doc-{uuid4()}",
             source="integration",
-            content="duplicate evidence",
+            content="same evidence",
             collected_at=collected_at,
             provider="integration-test",
             entities=["integration"],
             metrics={"score": 2},
-            raw_hash=raw_hash,
         )
+        duplicate.raw_hash = build_document_hash(duplicate)
+        self.assertEqual(duplicate.raw_hash, first.raw_hash)
 
         saved_first = store.save(first)
         saved_duplicate = store.save(duplicate)
@@ -71,9 +72,10 @@ class PostgresIntegrationTests(unittest.TestCase):
         loaded = store.get(first.id)
         self.assertIsNotNone(loaded)
         assert loaded is not None
-        self.assertEqual(loaded.content, "first evidence")
+        self.assertEqual(loaded.content, "same evidence")
         self.assertEqual(loaded.metrics, {"score": 1})
-        found = store.find_by_hash(raw_hash)
+        assert first.raw_hash is not None
+        found = store.find_by_hash(first.raw_hash)
         self.assertIsNotNone(found)
         assert found is not None
         self.assertEqual(found.id, first.id)
