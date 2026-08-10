@@ -12,6 +12,16 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function walkFiles(directory, result = []) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (["node_modules", ".next", ".git"].includes(entry.name)) continue;
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) walkFiles(absolute, result);
+    else result.push(absolute);
+  }
+  return result;
+}
+
 const landing = read("components/PublicLandingPage.tsx");
 assert(landing.includes('const AUTH_ENDPOINT = "/api/v1/auth/login-password"'), "landing auth must be same-origin");
 assert(!landing.includes("queryApi"), "landing must not accept query-controlled auth destination");
@@ -73,6 +83,19 @@ assert(
   migrationBootstrap.includes("./xlsx-safe-package/index.cjs"),
   "migration importer must route xlsx reads to the bounded local reader",
 );
+
+const directXlsxImport = /(?:from\s+["']xlsx["']|require\(\s*["']xlsx["']\s*\))/;
+const allowedLegacyImport = path.resolve(root, "scripts/import-migration-xlsx.ts");
+for (const absolute of walkFiles(root)) {
+  if (!/\.(?:[cm]?[jt]s|tsx)$/.test(absolute)) continue;
+  if (absolute.includes(`${path.sep}scripts${path.sep}xlsx-safe-package${path.sep}`)) continue;
+  const source = fs.readFileSync(absolute, "utf8");
+  if (!directXlsxImport.test(source)) continue;
+  assert(
+    absolute === allowedLegacyImport,
+    `legacy xlsx dependency became reachable from an unguarded file: ${path.relative(root, absolute)}`,
+  );
+}
 execFileSync(process.execPath, [path.join(root, "scripts/xlsx-safe-package/test.mjs")], { stdio: "inherit" });
 
 const workflowDir = path.resolve(root, "../.github/workflows");
