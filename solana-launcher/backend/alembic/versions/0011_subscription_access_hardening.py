@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0011_subscription_access_hardening"
+revision = "0011_access_hardening"
 down_revision = "0010_telegram_profile_metadata"
 branch_labels = None
 depends_on = None
