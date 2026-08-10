@@ -11,25 +11,15 @@ type AuthResponse = {
 };
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
+const AUTH_ENDPOINT = "/api/v1/auth/login-password";
 
 function mapLoginError(status: number, detail?: string) {
   if (status === 401) return "Неверный логин или пароль.";
   if (status === 403) return "Срок подписки истёк. Продлите доступ через Telegram.";
-  if (status === 422) return "Проверьте формат логина и пароля.";
+  if (status === 422) return "Проверьте формат логина или пароля.";
   if (status === 429) return "Слишком много попыток. Подождите минуту и попробуйте снова.";
   if (status === 503) return "Сервис авторизации недоступен. Проверьте, что backend запущен.";
   return detail || "Не удалось выполнить вход. Попробуйте ещё раз.";
-}
-
-function getAuthEndpoint() {
-  const queryApi = new URLSearchParams(window.location.search).get("api");
-  const configuredApi = queryApi || document.documentElement.dataset.apiBase || "";
-
-  if (configuredApi) {
-    return `${configuredApi.replace(/\/$/, "")}/api/v1/auth/login-password`;
-  }
-
-  return "/api/v1/auth/login-password";
 }
 
 export default function PublicLandingPage() {
@@ -265,7 +255,7 @@ export default function PublicLandingPage() {
 
         void (async () => {
           try {
-            const response = await fetch(getAuthEndpoint(), {
+            const response = await fetch(AUTH_ENDPOINT, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
