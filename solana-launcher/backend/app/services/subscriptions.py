@@ -6,7 +6,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,6 @@ class SubscriptionPasswordError(RuntimeError):
 
 PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 PASSWORD_LENGTH = 32
-PENDING_ORDER_TTL = timedelta(hours=24)
 
 
 def generate_subscription_password() -> str:
@@ -62,11 +61,19 @@ def decrypt_order_password(ciphertext: str | None, secret_key: str) -> str | Non
         raise SubscriptionPasswordError("Unable to decrypt subscription password") from exc
 
 
-def _pending_is_stale(order: SubscriptionOrder, *, now: datetime | None = None) -> bool:
-    created_at = _as_utc(order.created_at)
-    if created_at is None:
-        return True
-    return created_at + PENDING_ORDER_TTL <= (now or datetime.now(UTC))
+async def _lock_subscription_user(session: AsyncSession, telegram_user_id: int) -> None:
+    """Serialize checkout creation per Telegram user on PostgreSQL.
+
+    This avoids two concurrent requests creating different pending payment links for
+    one user without adding a migration-risky unique index to existing production data.
+    SQLite tests remain portable and are single-process.
+    """
+    bind = session.get_bind()
+    if bind.dialect.name == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": int(telegram_user_id)},
+        )
 
 
 async def get_subscription_settings(session: AsyncSession) -> SubscriptionSettings:
@@ -180,20 +187,12 @@ def _validate_order_shape(payload: SubscriptionOrderCreate) -> None:
         raise SubscriptionConflictError("Solana payment details are required")
 
 
-async def _expire_stale_pending(order: SubscriptionOrder, session: AsyncSession) -> bool:
-    if order.status != "pending" or not _pending_is_stale(order):
-        return False
-    order.status = "expired"
-    session.add(order)
-    await session.commit()
-    return True
-
-
 async def create_subscription_order(
     session: AsyncSession,
     payload: SubscriptionOrderCreate,
 ) -> SubscriptionOrder:
     _validate_order_shape(payload)
+    await _lock_subscription_user(session, payload.telegram_user_id)
 
     existing = await session.get(SubscriptionOrder, payload.payload)
     if existing is not None:
@@ -237,12 +236,18 @@ async def create_subscription_order(
     )
     own_pending = own_pending_result.scalar_one_or_none()
     if own_pending is not None:
-        if not await _expire_stale_pending(own_pending, session):
-            if own_pending.login == payload.login:
-                return own_pending
-            raise SubscriptionConflictError(
-                "Finish the existing checkout before choosing another login"
-            )
+        same_login = own_pending.login == payload.login
+        both_paid_methods = (
+            own_pending.currency in {"SOL", "USDT"}
+            and payload.currency in {"SOL", "USDT"}
+        )
+        same_activation_kind = own_pending.currency == payload.currency or both_paid_methods
+        if same_login and same_activation_kind:
+            # A Solana transfer link cannot be revoked. Reuse the existing paid
+            # checkout even if the user clicks another currency button, so a late
+            # payment can never be orphaned by silently cancelling its order.
+            return own_pending
+        raise SubscriptionConflictError("Finish the existing activation before starting another one")
 
     pending_result = await session.execute(
         select(SubscriptionOrder)
@@ -253,10 +258,9 @@ async def create_subscription_order(
     )
     pending_order = pending_result.scalar_one_or_none()
     if pending_order is not None:
-        if not await _expire_stale_pending(pending_order, session):
-            if pending_order.telegram_user_id != payload.telegram_user_id:
-                raise SubscriptionConflictError("This login is reserved by another pending order")
-            return pending_order
+        if pending_order.telegram_user_id != payload.telegram_user_id:
+            raise SubscriptionConflictError("This login is reserved by another pending order")
+        return pending_order
 
     order = SubscriptionOrder(
         payload=payload.payload,
