@@ -6,7 +6,7 @@ export const revalidate = 60;
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const MAX_FUTURE_SKEW = 5 * 60 * 1000;
-const LIVE_MAX_AGE = 15 * 60 * 1000;
+const LIVE_MAX_AGE = 10 * 60 * 1000;
 const MIN_WINDOW_SPAN = 20 * HOUR;
 const MAX_CHART_POINTS = 120;
 
