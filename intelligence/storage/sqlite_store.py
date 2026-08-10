@@ -125,11 +125,17 @@ class SQLiteDocumentStore:
 
 
 def _json_dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise StorageError("intelligence document contains non-serializable JSON") from exc
 
 
 def _json_loads(value: str, expected: type) -> Any:
-    parsed = json.loads(value)
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise StorageError("stored intelligence JSON is invalid") from exc
     if not isinstance(parsed, expected):
         raise StorageError("stored intelligence JSON has an unexpected shape")
     return parsed
@@ -140,7 +146,7 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(value)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise StorageError("stored intelligence timestamp is invalid") from exc
 
 
