@@ -3,7 +3,7 @@ from __future__ import annotations
 from intelligence.errors.exceptions import IntelligenceError, JobValidationError
 from intelligence.providers.registry import ProviderRegistry
 from intelligence.security.sanitizer import sanitize_text
-from intelligence.storage.memory_store import MemoryDocumentStore
+from intelligence.storage.base import DocumentStore
 from intelligence.worker.queue import IntelligenceJob, JobStatus, MemoryJobQueue
 
 
@@ -12,7 +12,7 @@ class IntelligenceWorker:
         self,
         queue: MemoryJobQueue,
         registry: ProviderRegistry,
-        store: MemoryDocumentStore,
+        store: DocumentStore,
     ) -> None:
         self.queue = queue
         self.registry = registry
