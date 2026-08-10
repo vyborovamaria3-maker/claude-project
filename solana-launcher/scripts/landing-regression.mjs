@@ -12,6 +12,7 @@ const BASE_URL = EXTERNAL_BASE_URL || `http://127.0.0.1:${PORT}`;
 const SERVER_TIMEOUT_MS = 90_000;
 const MIN_MARKET_SPAN_MS = 23 * 60 * 60 * 1000;
 const MAX_MARKET_AGE_MS = 6 * 60 * 60 * 1000;
+const MAX_METRIC_SKEW_MS = 30 * 60 * 1000;
 
 const viewports = [
   { name: "phone-320", width: 320, height: 568 },
@@ -304,6 +305,23 @@ async function assertClientFreshnessGuard(browser) {
 async function assertMobileMenu(page, viewport) {
   if (viewport.width > 980) return;
 
+  const headerButtons = page.locator("header button:visible");
+  const headerButtonMetrics = await headerButtons.evaluateAll((nodes) =>
+    nodes.map((button) => {
+      const rect = button.getBoundingClientRect();
+      return {
+        width: rect.width,
+        height: rect.height,
+        name: button.getAttribute("aria-label") || button.textContent?.trim() || "unnamed header button",
+      };
+    }),
+  );
+  assert.ok(headerButtonMetrics.length >= 2, `${viewport.name}: expected visible mobile header controls`);
+  for (const control of headerButtonMetrics) {
+    assert.ok(control.width >= 44, `${viewport.name}: header control ${control.name} is only ${control.width}px wide`);
+    assert.ok(control.height >= 44, `${viewport.name}: header control ${control.name} is only ${control.height}px high`);
+  }
+
   const menuButton = page.getByRole("button", { name: /открыть меню/i });
   const themeToggle = page.locator("[data-landing-theme-toggle]");
   await menuButton.waitFor({ state: "visible" });
@@ -387,6 +405,22 @@ async function assertMarketPayload(context) {
 
   const plottedChange = ((last.price - first.price) / first.price) * 100;
   assert.ok(Math.abs(plottedChange - data.change24h) < 1e-6, "24h change does not match plotted endpoints");
+
+  for (const [valueKey, timeKey] of [
+    ["volume24h", "volumeUpdatedAt"],
+    ["marketCap", "marketCapUpdatedAt"],
+  ]) {
+    const value = data[valueKey];
+    const metricTime = data[timeKey];
+    if (value == null) {
+      assert.equal(metricTime, null, `${timeKey} must be null when ${valueKey} is null`);
+      continue;
+    }
+    assert.ok(Number.isFinite(value) && value > 0, `${valueKey} must be positive when present`);
+    assert.ok(Number.isFinite(metricTime) && metricTime > 0, `${timeKey} must be a valid timestamp`);
+    assert.ok(metricTime <= data.updatedAt, `${timeKey} must not be later than price updatedAt`);
+    assert.ok(data.updatedAt - metricTime <= MAX_METRIC_SKEW_MS, `${valueKey} is too old relative to price`);
+  }
 
   if (data.stale) {
     assert.ok(
