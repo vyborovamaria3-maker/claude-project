@@ -10,6 +10,7 @@ const PORT = Number(process.env.LANDING_TEST_PORT || 3017);
 const EXTERNAL_BASE_URL = process.env.LANDING_TEST_URL?.replace(/\/$/, "") || "";
 const BASE_URL = EXTERNAL_BASE_URL || `http://127.0.0.1:${PORT}`;
 const SERVER_TIMEOUT_MS = 90_000;
+const MIN_MARKET_SPAN_MS = 23 * 60 * 60 * 1000;
 
 const viewports = [
   { name: "phone-320", width: 320, height: 568 },
@@ -146,6 +147,8 @@ async function assertLoginDialog(page, label) {
 
   const trigger = openButtons.first();
   await trigger.focus();
+  const triggerHandle = await trigger.elementHandle();
+  assert.ok(triggerHandle, `${label}: CTA handle unavailable`);
   await trigger.click();
 
   const dialog = page.getByRole("dialog", { name: /войти в potapoff/i });
@@ -155,13 +158,14 @@ async function assertLoginDialog(page, label) {
   const inputMetrics = await inputs.evaluateAll((nodes) =>
     nodes.map((input) => input.getBoundingClientRect().height),
   );
-  assert.ok(inputMetrics.length === 2, `${label}: expected two login inputs`);
+  assert.equal(inputMetrics.length, 2, `${label}: expected two login inputs`);
   assert.ok(inputMetrics.every((height) => height >= 44), `${label}: login touch target below 44px`);
-  await assert.poll(async () => inputs.first().evaluate((input) => document.activeElement === input)).toBe(true);
+  await page.waitForFunction(() => document.activeElement?.getAttribute("name") === "username");
 
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "hidden" });
-  await assert.poll(async () => trigger.evaluate((button) => document.activeElement === button)).toBe(true);
+  await page.waitForFunction((button) => document.activeElement === button, triggerHandle);
+  await triggerHandle.dispose();
 }
 
 async function assertMobileMenu(page, viewport) {
@@ -212,7 +216,7 @@ async function assertMarketPayload(context) {
   const first = data.points[0];
   const last = data.points.at(-1);
   const span = last.time - first.time;
-  assert.ok(span >= 20 * 60 * 60 * 1000, `market window too short: ${span}`);
+  assert.ok(span >= MIN_MARKET_SPAN_MS, `market window too short: ${span}`);
   assert.equal(data.windowStart, first.time, "windowStart must match first plotted/source endpoint");
   assert.equal(data.windowEnd, last.time, "windowEnd must match last plotted/source endpoint");
   assert.equal(data.updatedAt, data.windowEnd, "updatedAt must match source window end");
@@ -269,6 +273,14 @@ async function assertChartInteraction(page, useTouch = false) {
   const text = (await tooltip.textContent()) || "";
   assert.match(text, /\$/u, "chart tooltip should contain USD price");
   assert.match(text, /\d{1,2}:\d{2}/u, "chart tooltip should contain market point time");
+
+  if (!useTouch) {
+    await chart.focus();
+    await page.keyboard.press("ArrowLeft");
+    await tooltip.waitFor({ state: "visible" });
+    const keyboardText = (await tooltip.textContent()) || "";
+    assert.match(keyboardText, /\$/u, "keyboard chart inspection lost price tooltip");
+  }
 }
 
 async function runViewport(browser, viewport) {
@@ -333,7 +345,10 @@ async function assertReducedMotion(browser) {
   const seconds = durations.map((duration) =>
     duration.endsWith("ms") ? Number.parseFloat(duration) / 1000 : Number.parseFloat(duration),
   );
-  assert.ok(seconds.every((duration) => Number.isFinite(duration) && duration <= 0.001), "reduced-motion left a long animation active");
+  assert.ok(
+    seconds.every((duration) => Number.isFinite(duration) && duration <= 0.001),
+    "reduced-motion left a long animation active",
+  );
 
   await context.close();
 }
