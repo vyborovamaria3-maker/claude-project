@@ -2,20 +2,20 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.middleware.sessions import SessionMiddleware
-from redis.asyncio import Redis
 
+from app import models  # noqa: F401
+from app.admin import setup_admin
 from app.api.v1 import analytics
 from app.api.v1.router import api_router
-from app.admin import setup_admin
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import RateLimiter
 from app.db.base import Base
 from app.db.session import create_engine_and_sessionmaker
 from app.metrics import instrument_app
-from app import models  # noqa: F401
 from app.schemas.token import Message
 from app.services.etl import get_or_create_jobs
 from app.services.telegram_runtime import TelegramMonitorManager
@@ -37,7 +37,11 @@ async def lifespan(app: FastAPI):
     if settings.telegram_autostart and settings.telegram_monitor_channels.strip():
         try:
             service = await app.state.telegram_intelligence.get_service()
-            channels = [item.strip() for item in settings.telegram_monitor_channels.split(",") if item.strip()]
+            channels = [
+                item.strip()
+                for item in settings.telegram_monitor_channels.split(",")
+                if item.strip()
+            ]
             if channels:
                 await service.start_monitor(channels)
         except Exception:
@@ -68,7 +72,15 @@ def create_app(
     app.state.rate_limiter = RateLimiter(None)
     app.state.telegram_intelligence = TelegramMonitorManager(settings, sessionmaker)
 
-    app.add_middleware(SessionMiddleware, secret_key=settings.admin_session_secret)
+    is_production = settings.environment.strip().lower() == "production"
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.admin_session_secret,
+        session_cookie="potapoff_admin_session",
+        max_age=8 * 60 * 60,
+        same_site="lax",
+        https_only=is_production,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
