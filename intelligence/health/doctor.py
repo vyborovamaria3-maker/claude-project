@@ -6,12 +6,24 @@ from collections.abc import Iterable
 from intelligence.core.models import ProviderHealth
 from intelligence.providers.base import IntelligenceProvider
 from intelligence.providers.registry import ProviderRegistry
-from intelligence.security.sanitizer import sanitize_text
+from intelligence.security.sanitizer import sanitize_payload, sanitize_text
+
+
+def _sanitize_health(result: ProviderHealth) -> ProviderHealth:
+    details = sanitize_payload(result.details)
+    if not isinstance(details, dict):
+        details = {"error": "invalid_health_details"}
+    return ProviderHealth(
+        provider=result.provider,
+        healthy=bool(result.healthy),
+        latency_ms=result.latency_ms,
+        details=details,
+    )
 
 
 async def _safe_health(provider: IntelligenceProvider) -> ProviderHealth:
     try:
-        return await provider.health()
+        return _sanitize_health(await provider.health())
     except Exception as exc:  # health aggregation must isolate unexpected provider failures
         error = sanitize_text(str(exc)).strip()
         if len(error) > 300:
@@ -38,7 +50,7 @@ async def run_registry_health_check(registry: ProviderRegistry) -> list[Provider
 
 def summarize_health(results: Iterable[ProviderHealth]) -> dict[str, object]:
     """Return a small serializable summary for APIs and Control Center."""
-    items = list(results)
+    items = [_sanitize_health(item) for item in results]
     healthy = sum(1 for item in items if item.healthy)
     return {
         "healthy": healthy,
