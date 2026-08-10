@@ -21,6 +21,7 @@ from intelligence.bootstrap import (
 from intelligence.errors.exceptions import IntelligenceError
 from intelligence.health.doctor import run_registry_health_check, summarize_health
 from intelligence.scoring.backtest import DEFAULT_DEVELOPER_FIXTURE, run_developer_score_backtest
+from intelligence.scoring.github import score_github_document
 from intelligence.security.sanitizer import sanitize_payload, sanitize_text
 from intelligence.storage.postgres_schema import initialize_postgres_schema
 from intelligence.worker.queue import IntelligenceJob
@@ -60,6 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--fixture",
         default=str(DEFAULT_DEVELOPER_FIXTURE),
         help="Developer score fixture path",
+    )
+
+    score = subparsers.add_parser("score", help="Score one persisted GitHub evidence document")
+    score.add_argument("document_id")
+    score.add_argument(
+        "--as-of",
+        required=True,
+        help="Timezone-aware ISO-8601 evaluation time",
     )
 
     enqueue = subparsers.add_parser("enqueue", help="Queue one intelligence collection job")
@@ -103,6 +112,16 @@ def _job_payload(job: IntelligenceJob) -> dict[str, Any]:
         "error": sanitize_text(job.error) if job.error else None,
         "payload": sanitize_payload(job.payload),
     }
+
+
+def _parse_as_of(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("as-of must be a valid ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("as-of must include a timezone")
+    return parsed
 
 
 def _postgres_dsn(args: argparse.Namespace) -> str:
@@ -153,6 +172,25 @@ def _run_backtest(fixture: str | Path) -> int:
         }
     )
     return 0 if report.all_passed else 1
+
+
+def _score_document(runtime: IntelligenceRuntime, document_id: str, as_of: str) -> int:
+    document = runtime.store.get(document_id)
+    if document is None:
+        _emit({"error": "document_not_found"}, stream=sys.stderr)
+        return 1
+    evaluation_time = _parse_as_of(as_of)
+    result = score_github_document(document, as_of=evaluation_time)
+    _emit(
+        {
+            "document_id": document.id,
+            "score_version": result.version,
+            "score": result.score,
+            "reasons": list(result.reasons),
+            "as_of": evaluation_time,
+        }
+    )
+    return 0
 
 
 def _runtime_health(runtime: IntelligenceRuntime) -> int:
@@ -284,6 +322,8 @@ def main(
                 return _runtime_health(runtime)
             if args.command == "doctor":
                 return asyncio.run(_doctor(runtime))
+            if args.command == "score":
+                return _score_document(runtime, args.document_id, args.as_of)
             if args.command == "enqueue":
                 job = runtime.queue.submit({"provider": args.provider, "query": args.query})
                 _emit({"id": job.id, "status": job.status.value, "provider": args.provider})
