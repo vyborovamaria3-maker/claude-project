@@ -9,10 +9,18 @@ export const dynamic = "force-dynamic";
 
 const PUMP_API = "https://swap-api.pump.fun/v1";
 const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-
 const SOLSCAN_API_KEY = process.env.SOLSCAN_API_KEY;
 const SOLSCAN_BASE = "https://api.solscan.io";
 const HELIUS_KEYS = getHeliusApiKeys();
+const MAX_METADATA_BYTES = 512 * 1024;
+const ALLOWED_METADATA_HOSTS = new Set([
+  "ipfs.io",
+  "cf-ipfs.com",
+  "gateway.pinata.cloud",
+  "arweave.net",
+  "nftstorage.link",
+  "shdw-drive.genesysgo.net",
+]);
 
 async function fetchHeliusRpc<T>(body: unknown): Promise<T | null> {
   const keys = HELIUS_KEYS.length > 0 ? HELIUS_KEYS : [""];
@@ -24,26 +32,69 @@ async function fetchHeliusRpc<T>(body: unknown): Promise<T | null> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (response.ok) {
-      return (await response.json()) as T;
-    }
-    if (!isHeliusRetryableStatus(response.status) || index === keys.length - 1) {
-      return null;
-    }
+    if (response.ok) return (await response.json()) as T;
+    if (!isHeliusRetryableStatus(response.status) || index === keys.length - 1) return null;
   }
   return null;
 }
 
-/** Normalize social URL - ensure https:// prefix */
 function normalizeUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  // Handle common patterns
   if (url.startsWith("twitter.com/") || url.startsWith("x.com/")) return `https://${url}`;
   if (url.startsWith("t.me/")) return `https://${url}`;
   if (url.startsWith("discord.gg/") || url.startsWith("discord.com/")) return `https://${url}`;
   if (url.includes(".") && !url.includes(" ")) return `https://${url}`;
   return null;
+}
+
+function isAllowedMetadataHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return (
+    ALLOWED_METADATA_HOSTS.has(host) ||
+    host.endsWith(".mypinata.cloud") ||
+    host.endsWith(".nftstorage.link") ||
+    host.endsWith(".arweave.net")
+  );
+}
+
+function resolveMetadataUrl(value: string): URL {
+  const rewritten = value.startsWith("ipfs://")
+    ? `https://ipfs.io/ipfs/${value.slice(7)}`
+    : value;
+  const parsed = new URL(rewritten);
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    throw new Error("Blocked metadata URL");
+  }
+  if (!isAllowedMetadataHost(parsed.hostname)) {
+    throw new Error("Metadata host is not allowlisted");
+  }
+  return parsed;
+}
+
+async function readJsonWithLimit(response: Response): Promise<{ image?: string; image_uri?: string }> {
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_METADATA_BYTES) {
+    throw new Error("Metadata response is too large");
+  }
+  if (!response.body) return {};
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_METADATA_BYTES) {
+      await reader.cancel();
+      throw new Error("Metadata response is too large");
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
+  return JSON.parse(text) as { image?: string; image_uri?: string };
 }
 
 interface TokenInfo {
@@ -78,8 +129,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid mint" }, { status: 400 });
   }
 
-  // Cache hit (v2 key вЂ” bumped when image enrichment was added)
-  const cached = getCache<TokenInfo>("analysis_cache" /* reuse */, `info-v2:${mint}`);
+  const cached = getCache<TokenInfo>("analysis_cache", `info-v2:${mint}`);
   if (cached) return NextResponse.json(cached);
 
   const info: TokenInfo = {
@@ -90,7 +140,6 @@ export async function GET(req: NextRequest) {
     fetchedAt: Date.now(),
   };
 
-  // в”Ђв”Ђ 1. Pump.fun metadata в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   try {
     const r = await fetch(`${PUMP_API}/coins/${mint}`, {
       headers: { Accept: "application/json" },
@@ -133,14 +182,12 @@ export async function GET(req: NextRequest) {
       info.socials.website = normalizeUrl((data.website as string) ?? null);
       info.socials.discord = normalizeUrl((data.discord as string) ?? null);
     }
-  } catch (e) {
+  } catch {
+    // Pump.fun is an optional enrichment source.
   }
 
-  // в”Ђв”Ђ 2. DexScreener (volume, liquidity, holders, price) в”Ђв”Ђв”Ђв”Ђв”Ђ
   try {
-    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
-      cache: "no-store",
-    });
+    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, { cache: "no-store" });
     if (r.ok) {
       const json = (await r.json()) as {
         pairs?: Array<{
@@ -158,7 +205,6 @@ export async function GET(req: NextRequest) {
           baseToken?: { name?: string; symbol?: string };
         }>;
       };
-      // pick the most liquid pair
       const pair = json.pairs?.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
       if (pair) {
         info.priceUsd = pair.priceUsd ? Number(pair.priceUsd) : null;
@@ -168,22 +214,21 @@ export async function GET(req: NextRequest) {
         if (!info.name) info.name = pair.baseToken?.name ?? null;
         if (!info.symbol) info.symbol = pair.baseToken?.symbol ?? null;
         if (!info.image && pair.info?.imageUrl) info.image = pair.info.imageUrl;
-
-        // Socials from dexscreener (normalize URLs)
         for (const s of pair.info?.socials ?? []) {
           if (s.type === "twitter" && !info.socials.twitter) info.socials.twitter = normalizeUrl(s.url);
           if (s.type === "telegram" && !info.socials.telegram) info.socials.telegram = normalizeUrl(s.url);
           if (s.type === "discord" && !info.socials.discord) info.socials.discord = normalizeUrl(s.url);
         }
-        if (!info.socials.website && pair.info?.websites?.[0]?.url) info.socials.website = normalizeUrl(pair.info.websites[0].url);
+        if (!info.socials.website && pair.info?.websites?.[0]?.url) {
+          info.socials.website = normalizeUrl(pair.info.websites[0].url);
+        }
       }
     }
-  } catch (e) {
+  } catch {
+    // DexScreener is optional enrichment.
   }
 
-  // в”Ђв”Ђ 3. Holder count: try Helius first, fallback to Pump.fun for bonding curve в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   let holdersFromHelius: number | null = null;
-
   if (HELIUS_KEYS.length > 0) {
     try {
       const json = await fetchHeliusRpc<{ result?: { total?: number; token_accounts?: unknown[] } }>({
@@ -194,10 +239,10 @@ export async function GET(req: NextRequest) {
       });
       holdersFromHelius = json?.result?.total ?? json?.result?.token_accounts?.length ?? null;
     } catch {
+      // fall through
     }
   }
 
-  // Fallback 1: GMGN (free, instant, works for all tokens)
   if (!holdersFromHelius) {
     try {
       const gmgnRes = await fetch(`https://gmgn.ai/api/v1/tokens/solana/${mint}`, {
@@ -208,16 +253,14 @@ export async function GET(req: NextRequest) {
         cache: "no-store",
       });
       if (gmgnRes.ok) {
-        const gmgnData = await gmgnRes.json() as { data?: { holder_count?: number } };
-        if (gmgnData.data?.holder_count) {
-          info.holders = gmgnData.data.holder_count;
-        }
+        const gmgnData = (await gmgnRes.json()) as { data?: { holder_count?: number } };
+        if (gmgnData.data?.holder_count) info.holders = gmgnData.data.holder_count;
       }
-    } catch (e) {
+    } catch {
+      // fall through
     }
   }
 
-  // Fallback 2: Pump.fun holder count for bonding curve tokens
   if (!info.holders && !holdersFromHelius && info.isPumpFun) {
     try {
       const pumpRes = await fetch(`https://frontend-api.pump.fun/coins/${mint}/holders?limit=1&offset=0`, {
@@ -225,46 +268,32 @@ export async function GET(req: NextRequest) {
         cache: "no-store",
       });
       if (pumpRes.ok) {
-        const pumpData = await pumpRes.json() as { total_holders?: number };
-        if (pumpData.total_holders) {
-          info.holders = pumpData.total_holders;
-        }
+        const pumpData = (await pumpRes.json()) as { total_holders?: number };
+        if (pumpData.total_holders) info.holders = pumpData.total_holders;
       }
-    } catch (e) {
+    } catch {
+      // fall through
     }
   }
 
-  // Fallback 2: Solscan API (requires API key)
   if (!info.holders && SOLSCAN_API_KEY) {
     try {
-      const solscanRes = await fetch(
-        `${SOLSCAN_BASE}/token/holders?tokenAddress=${mint}&limit=1`,
-        {
-          headers: {
-            Accept: "application/json",
-            Token: SOLSCAN_API_KEY,
-          },
-          cache: "no-store",
-        }
-      );
+      const solscanRes = await fetch(`${SOLSCAN_BASE}/token/holders?tokenAddress=${mint}&limit=1`, {
+        headers: { Accept: "application/json", Token: SOLSCAN_API_KEY },
+        cache: "no-store",
+      });
       if (solscanRes.ok) {
-        const solscanData = await solscanRes.json() as { total?: number };
-        if (solscanData.total) {
-          info.holders = solscanData.total;
-        }
+        const solscanData = (await solscanRes.json()) as { total?: number };
+        if (solscanData.total) info.holders = solscanData.total;
       }
-    } catch (e) {
+    } catch {
+      // fall through
     }
   }
 
-  // If Helius worked, use that
-  if (!info.holders && holdersFromHelius) {
-    info.holders = holdersFromHelius;
-  }
+  if (!info.holders && holdersFromHelius) info.holders = holdersFromHelius;
 
-  // в”Ђв”Ђ 4. Image fallback via Helius DAS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   if (HELIUS_KEYS.length > 0 && !info.image) {
-
     try {
       const json = await fetchHeliusRpc<{
         result?: {
@@ -291,35 +320,30 @@ export async function GET(req: NextRequest) {
       if (!info.name && c?.metadata?.name) info.name = c.metadata.name;
       if (!info.symbol && c?.metadata?.symbol) info.symbol = c.metadata.symbol;
       if (!info.description && c?.metadata?.description) info.description = c.metadata.description;
-    } catch (e) {
+    } catch {
+      // Helius DAS image enrichment is optional.
     }
   }
 
-  // в”Ђв”Ђ 4. Last resort: fetch off-chain metadata JSON if image is a metadata URI в”Ђв”Ђ
-  if (info.image && /\.json($|\?)|\/metadata/i.test(info.image)) {
+  if (info.image && (/\.json($|\?)/i.test(info.image) || /\/metadata/i.test(info.image))) {
     try {
-      const url = info.image.startsWith("ipfs://")
-        ? `https://ipfs.io/ipfs/${info.image.slice(7)}`
-        : info.image;
-      const parsed = new URL(url);
-      if (parsed.protocol !== "https:") {
-        throw new Error("Blocked non-https metadata URL");
-      }
-
-      const r = await fetch(parsed.toString(), {
+      const url = resolveMetadataUrl(info.image);
+      const r = await fetch(url, {
         cache: "no-store",
+        redirect: "manual",
         signal: AbortSignal.timeout(5000),
+        headers: { Accept: "application/json" },
       });
       const contentType = r.headers.get("content-type") || "";
-      if (r.ok && contentType.includes("application/json")) {
-        const meta = (await r.json()) as { image?: string; image_uri?: string };
+      if (r.ok && contentType.toLowerCase().includes("application/json")) {
+        const meta = await readJsonWithLimit(r);
         info.image = meta.image ?? meta.image_uri ?? info.image;
       }
     } catch {
-      // keep original
+      // Keep the original metadata/image URI when enrichment is unsafe or unavailable.
     }
   }
 
-  setCache("analysis_cache", `info-v2:${mint}`, info, 30 * 60_000); // 30min
+  setCache("analysis_cache", `info-v2:${mint}`, info, 30 * 60_000);
   return NextResponse.json(info);
 }

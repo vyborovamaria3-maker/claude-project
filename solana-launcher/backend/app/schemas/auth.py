@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -117,6 +118,15 @@ class TelegramCallbackResponse(BaseModel):
     access_token: str
     expires_in: int
     redirect_url: str
+
+    @field_validator("redirect_url")
+    @classmethod
+    def strip_redirect_credentials(cls, value: str) -> str:
+        """Never serialize bearer credentials into browser-visible URL components."""
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("redirect_url must be an absolute HTTP(S) URL")
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", "", ""))
 
 
 class RegisterPasswordRequest(BaseModel):

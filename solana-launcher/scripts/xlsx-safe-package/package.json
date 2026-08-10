@@ -1,0 +1,8 @@
+{
+  "name": "xlsx",
+  "version": "0.0.0-potapoff-safe",
+  "private": true,
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "license": "UNLICENSED"
+}

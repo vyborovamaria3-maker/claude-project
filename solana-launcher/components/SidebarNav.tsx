@@ -72,6 +72,20 @@ export default function SidebarNav() {
     return matches.sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null;
   }, [allNavItems, pathname]);
 
+  const logout = async () => {
+    try {
+      await fetch("/api/v1/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+    } finally {
+      window.localStorage.removeItem("potapoff.access_token");
+      window.localStorage.removeItem("potapoff.auth_meta");
+      window.location.assign("/auth");
+    }
+  };
+
   return (
     <aside data-tag="layout.sidebar" className={siteDesign.sidebar.shellClassName}>
       <div className={siteDesign.sidebar.tabsWrapClassName} data-tag="layout.tabs">
@@ -122,14 +136,15 @@ export default function SidebarNav() {
           U
         </div>
         <div className="flex-1 truncate text-xs text-content-soft">{currentUser.username}</div>
-        <Link
-          href="/auth"
+        <button
+          type="button"
+          onClick={() => void logout()}
           className="rounded-lg p-1 text-content-muted transition hover:bg-bg-elevated hover:text-danger"
           aria-label="logout"
           title={translate("nav.exitToLanding")}
         >
           <LogOut className="h-4 w-4" />
-        </Link>
+        </button>
       </div>
     </aside>
   );

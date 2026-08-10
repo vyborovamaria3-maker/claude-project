@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_superuser
+from app.api.deps import get_current_subscriber, get_current_superuser
 from app.db.session import get_db
 from app.schemas.social_intelligence import (
     TelegramAttachSessionRequest,
@@ -162,6 +162,7 @@ async def channels(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
 ) -> dict:
     items, total = await list_channels(session, limit=limit, offset=offset)
     return {"items": items, "meta": {"limit": limit, "offset": offset, "total": total}}
@@ -174,6 +175,7 @@ async def calls(
     channel_id: int | None = Query(default=None),
     mint: str | None = Query(default=None),
     session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
 ) -> dict:
     if mint and not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
@@ -201,6 +203,7 @@ async def telegram_token(
     min_channel_score: float = Query(default=0.0, ge=0.0, le=100.0),
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
 ) -> dict:
     if not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
@@ -221,6 +224,7 @@ async def telegram_token(
 async def callers(
     limit: int = Query(default=50, ge=1, le=250),
     session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
 ) -> dict:
     return {"items": await top_callers(session, limit=limit)}
 
@@ -231,6 +235,7 @@ async def social_relations(
     platform: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
 ) -> dict:
     if platform and platform not in {"telegram", "x"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x")
@@ -252,6 +257,7 @@ async def social_token(
     min_channel_score: float = Query(default=0.0, ge=0.0, le=100.0),
     limit: int = Query(default=200, ge=1, le=1000),
     session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
 ) -> dict:
     if not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
