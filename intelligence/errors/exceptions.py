@@ -23,3 +23,7 @@ class SecurityError(IntelligenceError):
 
 class JobValidationError(IntelligenceError):
     """Raised when an intelligence job payload is invalid."""
+
+
+class QueueError(IntelligenceError):
+    """Raised when an intelligence job queue operation fails."""
