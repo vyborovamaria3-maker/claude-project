@@ -1,0 +1,378 @@
+/*
+ * Landing-only responsive hardening.
+ * Scoped to the premium landing main element so app/dashboard layouts are unaffected.
+ * Keep these selectors semantic/id-based: CSS-module class hashes must not leak here.
+ */
+
+main[data-theme="gold"],
+main[data-theme="solana"] {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+main[data-theme="gold"] section[id],
+main[data-theme="solana"] section[id],
+main[data-theme="gold"] #top,
+main[data-theme="solana"] #top {
+  scroll-margin-top: 84px;
+}
+
+main[data-theme="gold"] img,
+main[data-theme="gold"] svg,
+main[data-theme="solana"] img,
+main[data-theme="solana"] svg {
+  max-width: 100%;
+}
+
+main[data-theme="gold"] [data-landing-header-inner],
+main[data-theme="solana"] [data-landing-header-inner],
+main[data-theme="gold"] #top,
+main[data-theme="solana"] #top {
+  min-width: 0;
+}
+
+main[data-theme="gold"] [data-landing-chart]:focus-visible,
+main[data-theme="solana"] [data-landing-chart]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+@supports (padding-left: env(safe-area-inset-left)) {
+  main[data-theme="gold"] [data-landing-header-inner],
+  main[data-theme="solana"] [data-landing-header-inner],
+  main[data-theme="gold"] #top,
+  main[data-theme="solana"] #top {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  main[data-theme="gold"] [data-landing-footer-inner],
+  main[data-theme="solana"] [data-landing-footer-inner] {
+    padding-bottom: max(34px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 980px) {
+  main[data-theme="gold"] [data-landing-menu-toggle],
+  main[data-theme="solana"] [data-landing-menu-toggle] {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
+  }
+
+  main[data-theme="gold"] [data-landing-theme-toggle],
+  main[data-theme="solana"] [data-landing-theme-toggle] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  main[data-theme="gold"] #landing-mobile-menu,
+  main[data-theme="solana"] #landing-mobile-menu {
+    max-height: calc(100dvh - 72px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  }
+
+  main[data-theme="gold"] #landing-mobile-menu a,
+  main[data-theme="solana"] #landing-mobile-menu a {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  main[data-theme="gold"] #product,
+  main[data-theme="solana"] #product {
+    align-items: stretch;
+    gap: clamp(34px, 6vw, 54px);
+  }
+
+  main[data-theme="gold"] [data-landing-hero-copy],
+  main[data-theme="solana"] [data-landing-hero-copy] {
+    width: min(100%, 760px);
+  }
+
+  main[data-theme="gold"] #market,
+  main[data-theme="solana"] #market {
+    width: min(100%, 840px);
+    justify-self: center;
+  }
+
+  main[data-theme="gold"] [data-landing-market-card],
+  main[data-theme="solana"] [data-landing-market-card] {
+    width: 100%;
+    transform: none;
+  }
+
+  main[data-theme="gold"] [data-landing-workspace-card],
+  main[data-theme="solana"] [data-landing-workspace-card] {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  main[data-theme="gold"] header,
+  main[data-theme="solana"] header {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  main[data-theme="gold"] [data-landing-header-inner],
+  main[data-theme="solana"] [data-landing-header-inner] {
+    min-height: 64px;
+  }
+
+  main[data-theme="gold"] [data-landing-menu-toggle],
+  main[data-theme="solana"] [data-landing-menu-toggle],
+  main[data-theme="gold"] [data-landing-theme-toggle],
+  main[data-theme="solana"] [data-landing-theme-toggle] {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
+  }
+
+  main[data-theme="gold"] #landing-mobile-menu,
+  main[data-theme="solana"] #landing-mobile-menu {
+    max-height: calc(100dvh - 64px - env(safe-area-inset-top, 0px));
+  }
+
+  main[data-theme="gold"] #product,
+  main[data-theme="solana"] #product {
+    padding-top: 44px;
+    padding-bottom: 34px;
+    gap: 34px;
+  }
+
+  main[data-theme="gold"] #product::before,
+  main[data-theme="solana"] #product::before {
+    opacity: .18;
+  }
+
+  main[data-theme="gold"] #product::after,
+  main[data-theme="solana"] #product::after {
+    opacity: .2;
+  }
+
+  main[data-theme="gold"] #product h1,
+  main[data-theme="solana"] #product h1 {
+    max-width: 13ch;
+    font-size: clamp(2.5rem, 12.4vw, 4rem);
+    line-height: .97;
+    letter-spacing: -.056em;
+    text-wrap: balance;
+  }
+
+  main[data-theme="gold"] [data-landing-hero-copy] > p,
+  main[data-theme="solana"] [data-landing-hero-copy] > p {
+    max-width: 36rem;
+    font-size: 15px;
+    line-height: 1.58;
+  }
+
+  main[data-theme="gold"] #market,
+  main[data-theme="solana"] #market {
+    width: 100%;
+    min-width: 0;
+  }
+
+  main[data-theme="gold"] #market::before,
+  main[data-theme="solana"] #market::before {
+    width: 108%;
+    height: 108%;
+    left: -4%;
+    top: -4%;
+    opacity: .25;
+  }
+
+  main[data-theme="gold"] #market::after,
+  main[data-theme="solana"] #market::after {
+    opacity: .26;
+    filter: blur(11px);
+  }
+
+  main[data-theme="gold"] [data-landing-market-card],
+  main[data-theme="solana"] [data-landing-market-card] {
+    padding: 17px;
+    border-radius: 20px;
+  }
+
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
+    height: clamp(215px, 59vw, 260px);
+    min-height: 0;
+    touch-action: pan-y;
+  }
+
+  main[data-theme="gold"] #features article,
+  main[data-theme="solana"] #features article {
+    min-width: 0;
+  }
+
+  main[data-theme="gold"] [data-landing-workspace-card],
+  main[data-theme="solana"] [data-landing-workspace-card] {
+    padding: 20px 16px;
+  }
+
+  main[data-theme="gold"] #workspace button,
+  main[data-theme="solana"] #workspace button,
+  main[data-theme="gold"] #workspace a,
+  main[data-theme="solana"] #workspace a {
+    min-height: 44px;
+  }
+
+  main[data-theme="gold"] [data-landing-cta] button,
+  main[data-theme="solana"] [data-landing-cta] button {
+    min-height: 48px;
+  }
+
+  main[data-theme="gold"] [role="dialog"],
+  main[data-theme="solana"] [role="dialog"] {
+    width: min(100%, 430px);
+    max-height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  }
+
+  main[data-theme="gold"] [role="dialog"] input,
+  main[data-theme="solana"] [role="dialog"] input,
+  main[data-theme="gold"] [role="dialog"] button,
+  main[data-theme="solana"] [role="dialog"] button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 460px) {
+  main[data-theme="gold"] #product,
+  main[data-theme="solana"] #product {
+    padding-top: 36px;
+  }
+
+  main[data-theme="gold"] #product h1,
+  main[data-theme="solana"] #product h1 {
+    font-size: clamp(2.35rem, 11.8vw, 3.35rem);
+  }
+
+  main[data-theme="gold"] [data-landing-market-head],
+  main[data-theme="solana"] [data-landing-market-head] {
+    gap: 10px;
+  }
+
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
+    height: clamp(205px, 57vw, 235px);
+  }
+
+  /* The miniature workspace sidebar stops being useful on a phone and steals chart width. */
+  main[data-theme="gold"] [data-landing-preview-body],
+  main[data-theme="solana"] [data-landing-preview-body] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main[data-theme="gold"] [data-landing-preview-nav],
+  main[data-theme="solana"] [data-landing-preview-nav] {
+    display: none;
+  }
+
+  main[data-theme="gold"] #features article,
+  main[data-theme="solana"] #features article {
+    border-radius: 18px;
+  }
+
+  main[data-theme="gold"] [data-landing-footer-inner],
+  main[data-theme="solana"] [data-landing-footer-inner] {
+    gap: 22px;
+  }
+}
+
+@media (max-width: 390px) {
+  main[data-theme="gold"] #product h1,
+  main[data-theme="solana"] #product h1 {
+    max-width: none;
+    font-size: clamp(2.25rem, 11.3vw, 2.7rem);
+    line-height: .98;
+  }
+
+  main[data-theme="gold"] [data-landing-hero-copy] > p,
+  main[data-theme="solana"] [data-landing-hero-copy] > p {
+    font-size: 14px;
+  }
+
+  main[data-theme="gold"] [data-landing-market-card],
+  main[data-theme="solana"] [data-landing-market-card] {
+    padding: 15px;
+  }
+
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
+    height: clamp(195px, 56vw, 218px);
+  }
+
+  main[data-theme="gold"] #features,
+  main[data-theme="solana"] #features,
+  main[data-theme="gold"] #workspace,
+  main[data-theme="solana"] #workspace {
+    padding-top: 60px;
+  }
+
+  main[data-theme="gold"] [data-landing-workspace-card],
+  main[data-theme="solana"] [data-landing-workspace-card] {
+    padding: 18px 14px;
+  }
+}
+
+@media (max-width: 350px) {
+  main[data-theme="gold"] [data-landing-header-inner],
+  main[data-theme="solana"] [data-landing-header-inner] {
+    gap: 5px;
+  }
+
+  main[data-theme="gold"] header a[aria-label="POTAPoff — главная"],
+  main[data-theme="solana"] header a[aria-label="POTAPoff — главная"] {
+    font-size: 17px;
+  }
+
+  main[data-theme="gold"] #product h1,
+  main[data-theme="solana"] #product h1 {
+    font-size: 2.18rem;
+  }
+
+  main[data-theme="gold"] [data-landing-market-head],
+  main[data-theme="solana"] [data-landing-market-head] {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  main[data-theme="gold"] [data-landing-market-status],
+  main[data-theme="solana"] [data-landing-market-status] {
+    margin-left: auto;
+  }
+
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
+    height: 188px;
+  }
+
+  main[data-theme="gold"] [data-landing-mobile-actions],
+  main[data-theme="solana"] [data-landing-mobile-actions] {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 980px) and (max-height: 620px) and (orientation: landscape) {
+  main[data-theme="gold"] #product,
+  main[data-theme="solana"] #product {
+    padding-top: 34px;
+  }
+
+  main[data-theme="gold"] [data-landing-chart],
+  main[data-theme="solana"] [data-landing-chart] {
+    height: 220px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-theme="gold"],
+  main[data-theme="solana"] {
+    scroll-behavior: auto;
+  }
+}
