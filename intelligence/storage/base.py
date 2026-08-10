@@ -18,5 +18,9 @@ class DocumentStore(Protocol):
     def list_all(self) -> list[IntelligenceDocument]:
         ...
 
+    def list_recent(self, limit: int) -> list[IntelligenceDocument]:
+        """Return up to `limit` newest documents without loading the full store."""
+        ...
+
     def find_by_hash(self, raw_hash: str) -> IntelligenceDocument | None:
         ...
