@@ -1,0 +1,351 @@
+/*
+ * Landing-only responsive hardening.
+ * Scoped to the premium landing main element so app/dashboard layouts are unaffected.
+ */
+
+main[data-theme="gold"],
+main[data-theme="solana"] {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+main[data-theme="gold"] section[id],
+main[data-theme="solana"] section[id],
+main[data-theme="gold"] #top,
+main[data-theme="solana"] #top {
+  scroll-margin-top: 84px;
+}
+
+main[data-theme="gold"] img,
+main[data-theme="gold"] svg,
+main[data-theme="solana"] img,
+main[data-theme="solana"] svg {
+  max-width: 100%;
+}
+
+main[data-theme="gold"] header > div:first-child,
+main[data-theme="solana"] header > div:first-child,
+main[data-theme="gold"] #top,
+main[data-theme="solana"] #top {
+  min-width: 0;
+}
+
+@supports (padding-left: env(safe-area-inset-left)) {
+  main[data-theme="gold"] header > div:first-child,
+  main[data-theme="solana"] header > div:first-child,
+  main[data-theme="gold"] #top,
+  main[data-theme="solana"] #top {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  main[data-theme="gold"] footer > div,
+  main[data-theme="solana"] footer > div {
+    padding-bottom: max(34px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 980px) {
+  main[data-theme="gold"] #product,
+  main[data-theme="solana"] #product {
+    align-items: stretch;
+    gap: clamp(34px, 6vw, 54px);
+  }
+
+  main[data-theme="gold"] #product > div:first-child,
+  main[data-theme="solana"] #product > div:first-child {
+    width: min(100%, 760px);
+  }
+
+  main[data-theme="gold"] #market,
+  main[data-theme="solana"] #market {
+    width: min(100%, 840px);
+    justify-self: center;
+  }
+
+  main[data-theme="gold"] #market > div:nth-child(2),
+  main[data-theme="solana"] #market > div:nth-child(2) {
+    width: 100%;
+    transform: none;
+  }
+
+  main[data-theme="gold"] #workspace > div,
+  main[data-theme="solana"] #workspace > div {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  main[data-theme="gold"] header,
+  main[data-theme="solana"] header {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  main[data-theme="gold"] header > div:first-child,
+  main[data-theme="solana"] header > div:first-child {
+    min-height: 64px;
+  }
+
+  main[data-theme="gold"] button[aria-controls="landing-mobile-menu"],
+  main[data-theme="solana"] button[aria-controls="landing-mobile-menu"],
+  main[data-theme="gold"] button[aria-label^="Переключить тему"],
+  main[data-theme="solana"] button[aria-label^="Переключить тему"] {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
+  }
+
+  main[data-theme="gold"] #landing-mobile-menu,
+  main[data-theme="solana"] #landing-mobile-menu {
+    max-height: calc(100dvh - 64px - env(safe-area-inset-top, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  }
+
+  main[data-theme="gold"] #landing-mobile-menu a,
+  main[data-theme="solana"] #landing-mobile-menu a {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  main[data-theme="gold"] #product,
+  main[data-theme="solana"] #product {
+    padding-top: 44px;
+    padding-bottom: 34px;
+    gap: 34px;
+  }
+
+  main[data-theme="gold"] #product::before,
+  main[data-theme="solana"] #product::before {
+    opacity: .18;
+  }
+
+  main[data-theme="gold"] #product::after,
+  main[data-theme="solana"] #product::after {
+    opacity: .2;
+  }
+
+  main[data-theme="gold"] #product h1,
+  main[data-theme="solana"] #product h1 {
+    max-width: 13ch;
+    font-size: clamp(2.5rem, 12.4vw, 4rem);
+    line-height: .97;
+    letter-spacing: -.056em;
+    text-wrap: balance;
+  }
+
+  main[data-theme="gold"] #product > div:first-child > p,
+  main[data-theme="solana"] #product > div:first-child > p {
+    max-width: 36rem;
+    font-size: 15px;
+    line-height: 1.58;
+  }
+
+  main[data-theme="gold"] #market,
+  main[data-theme="solana"] #market {
+    width: 100%;
+    min-width: 0;
+  }
+
+  main[data-theme="gold"] #market::before,
+  main[data-theme="solana"] #market::before {
+    width: 108%;
+    height: 108%;
+    left: -4%;
+    top: -4%;
+    opacity: .25;
+  }
+
+  main[data-theme="gold"] #market::after,
+  main[data-theme="solana"] #market::after {
+    opacity: .26;
+    filter: blur(11px);
+  }
+
+  main[data-theme="gold"] #market > div:nth-child(2),
+  main[data-theme="solana"] #market > div:nth-child(2) {
+    padding: 17px;
+    border-radius: 20px;
+  }
+
+  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
+  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+    height: clamp(215px, 59vw, 260px);
+    min-height: 0;
+    touch-action: pan-y;
+  }
+
+  main[data-theme="gold"] #features article,
+  main[data-theme="solana"] #features article {
+    min-width: 0;
+  }
+
+  main[data-theme="gold"] #workspace > div,
+  main[data-theme="solana"] #workspace > div {
+    padding: 20px 16px;
+  }
+
+  main[data-theme="gold"] #workspace button,
+  main[data-theme="solana"] #workspace button,
+  main[data-theme="gold"] #workspace a,
+  main[data-theme="solana"] #workspace a {
+    min-height: 44px;
+  }
+
+  main[data-theme="gold"] #workspace + section button,
+  main[data-theme="solana"] #workspace + section button {
+    min-height: 48px;
+  }
+
+  main[data-theme="gold"] [role="dialog"],
+  main[data-theme="solana"] [role="dialog"] {
+    width: min(100%, 430px);
+    max-height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  }
+
+  main[data-theme="gold"] [role="dialog"] input,
+  main[data-theme="solana"] [role="dialog"] input,
+  main[data-theme="gold"] [role="dialog"] button,
+  main[data-theme="solana"] [role="dialog"] button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 460px) {
+  main[data-theme="gold"] #product,
+  main[data-theme="solana"] #product {
+    padding-top: 36px;
+  }
+
+  main[data-theme="gold"] #product h1,
+  main[data-theme="solana"] #product h1 {
+    font-size: clamp(2.35rem, 11.8vw, 3.35rem);
+  }
+
+  main[data-theme="gold"] #market > div:nth-child(2) > div:first-child,
+  main[data-theme="solana"] #market > div:nth-child(2) > div:first-child {
+    gap: 10px;
+  }
+
+  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
+  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+    height: clamp(205px, 57vw, 235px);
+  }
+
+  /* The miniature workspace sidebar stops being useful on a phone and steals chart width. */
+  main[data-theme="gold"] #workspace > div > div:nth-child(2) > div:nth-child(2),
+  main[data-theme="solana"] #workspace > div > div:nth-child(2) > div:nth-child(2) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main[data-theme="gold"] #workspace > div > div:nth-child(2) > div:nth-child(2) > div:first-child,
+  main[data-theme="solana"] #workspace > div > div:nth-child(2) > div:nth-child(2) > div:first-child {
+    display: none;
+  }
+
+  main[data-theme="gold"] #features article,
+  main[data-theme="solana"] #features article {
+    border-radius: 18px;
+  }
+
+  main[data-theme="gold"] footer > div,
+  main[data-theme="solana"] footer > div {
+    gap: 22px;
+  }
+}
+
+@media (max-width: 390px) {
+  main[data-theme="gold"] #product h1,
+  main[data-theme="solana"] #product h1 {
+    max-width: none;
+    font-size: clamp(2.25rem, 11.3vw, 2.7rem);
+    line-height: .98;
+  }
+
+  main[data-theme="gold"] #product > div:first-child > p,
+  main[data-theme="solana"] #product > div:first-child > p {
+    font-size: 14px;
+  }
+
+  main[data-theme="gold"] #market > div:nth-child(2),
+  main[data-theme="solana"] #market > div:nth-child(2) {
+    padding: 15px;
+  }
+
+  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
+  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+    height: clamp(195px, 56vw, 218px);
+  }
+
+  main[data-theme="gold"] #features,
+  main[data-theme="solana"] #features,
+  main[data-theme="gold"] #workspace,
+  main[data-theme="solana"] #workspace {
+    padding-top: 60px;
+  }
+
+  main[data-theme="gold"] #workspace > div,
+  main[data-theme="solana"] #workspace > div {
+    padding: 18px 14px;
+  }
+}
+
+@media (max-width: 350px) {
+  main[data-theme="gold"] header > div:first-child,
+  main[data-theme="solana"] header > div:first-child {
+    gap: 5px;
+  }
+
+  main[data-theme="gold"] header a[aria-label="POTAPoff — главная"],
+  main[data-theme="solana"] header a[aria-label="POTAPoff — главная"] {
+    font-size: 17px;
+  }
+
+  main[data-theme="gold"] #product h1,
+  main[data-theme="solana"] #product h1 {
+    font-size: 2.18rem;
+  }
+
+  main[data-theme="gold"] #market > div:nth-child(2) > div:first-child,
+  main[data-theme="solana"] #market > div:nth-child(2) > div:first-child {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  main[data-theme="gold"] #market > div:nth-child(2) > div:first-child > div:last-child,
+  main[data-theme="solana"] #market > div:nth-child(2) > div:first-child > div:last-child {
+    margin-left: auto;
+  }
+
+  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
+  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+    height: 188px;
+  }
+
+  main[data-theme="gold"] #landing-mobile-menu > div,
+  main[data-theme="solana"] #landing-mobile-menu > div {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 980px) and (max-height: 620px) and (orientation: landscape) {
+  main[data-theme="gold"] #product,
+  main[data-theme="solana"] #product {
+    padding-top: 34px;
+  }
+
+  main[data-theme="gold"] #market div[aria-label^="Интерактивный график"],
+  main[data-theme="solana"] #market div[aria-label^="Интерактивный график"] {
+    height: 220px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-theme="gold"],
+  main[data-theme="solana"] {
+    scroll-behavior: auto;
+  }
+}
