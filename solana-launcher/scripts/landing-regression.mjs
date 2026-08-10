@@ -265,6 +265,48 @@ async function assertAuthSameOrigin(browser) {
   await context.close();
 }
 
+async function assertSuccessfulLoginStaysLocked(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  let dashboardRequests = 0;
+
+  await context.route("**/api/v1/auth/login-password", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ access_token: "landing-regression-token", expires_in: 3600 }),
+    });
+  });
+
+  const page = await context.newPage();
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/dashboard") dashboardRequests += 1;
+  });
+  await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+
+  await page.getByRole("button", { name: /открыть платформу/i }).first().click();
+  const dialog = page.getByRole("dialog", { name: /войти в potapoff/i });
+  await dialog.getByRole("textbox", { name: /логин/i }).fill("tester_1");
+  await dialog.getByLabel(/пароль/i).fill("A".repeat(32));
+  const submit = dialog.getByRole("button", { name: /войти в платформу/i });
+  await submit.click();
+  await dialog.getByText(/доступ подтверждён/i).waitFor({ state: "visible" });
+
+  assert.equal(await submit.isDisabled(), true, "successful login re-enabled submit before redirect");
+  assert.match((await submit.textContent()) || "", /Открываем платформу/u, "successful login did not show redirect state");
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("potapoff.access_token")),
+    "landing-regression-token",
+    "successful login did not persist the legacy bearer token",
+  );
+
+  await dialog.getByRole("button", { name: /закрыть/i }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await page.waitForTimeout(650);
+  assert.equal(dashboardRequests, 0, "closing successful login modal did not cancel dashboard redirect");
+
+  await context.close();
+}
+
 function buildMockMarketPayload(updatedAt, overrides = {}) {
   const servedAt = Date.now();
   const points = Array.from({ length: 24 }, (_, index) => ({
@@ -329,11 +371,8 @@ async function assertClientRejectsMalformedMarket(browser) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const validPayload = buildMockMarketPayload(Date.now() - 60_000);
   const malformedPayload = { ...validPayload, high24h: validPayload.high24h + 100 };
-  let resolveMarketRequest;
-  const marketRequestSeen = new Promise((resolve) => { resolveMarketRequest = resolve; });
 
   await context.route("**/api/market/solana", async (route) => {
-    resolveMarketRequest?.();
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -343,8 +382,12 @@ async function assertClientRejectsMalformedMarket(browser) {
   });
 
   const page = await context.newPage();
+  const marketRequest = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === "/api/market/solana",
+    { timeout: 5_000 },
+  );
   await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
-  await marketRequestSeen;
+  await marketRequest;
   await page.waitForTimeout(300);
 
   const statusText = (await page.locator("[data-landing-market-status]").textContent()) || "";
@@ -669,6 +712,9 @@ try {
 
   await assertAuthSameOrigin(browser);
   console.log("✓ auth remains same-origin");
+
+  await assertSuccessfulLoginStaysLocked(browser);
+  console.log("✓ successful login remains locked until redirect or close");
 
   await assertClientFreshnessGuard(browser);
   console.log("✓ client market freshness guard");
