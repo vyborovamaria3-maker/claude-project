@@ -60,10 +60,10 @@ main[data-theme="solana"] [data-landing-chart]:focus-visible {
 
   main[data-theme="gold"] [data-landing-login-backdrop],
   main[data-theme="solana"] [data-landing-login-backdrop] {
-    padding-top: max(10px, env(safe-area-inset-top));
-    padding-right: max(10px, env(safe-area-inset-right));
-    padding-bottom: max(10px, env(safe-area-inset-bottom));
-    padding-left: max(10px, env(safe-area-inset-left));
+    padding-top: max(20px, env(safe-area-inset-top));
+    padding-right: max(20px, env(safe-area-inset-right));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+    padding-left: max(20px, env(safe-area-inset-left));
   }
 }
 
