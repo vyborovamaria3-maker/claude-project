@@ -92,6 +92,9 @@ class SQLiteJobQueue:
                 self._connection.rollback()
                 raise QueueError("stored intelligence job status is invalid") from exc
             validate_transition(current, status)
+            if current == status:
+                self._connection.commit()
+                return
 
             now = datetime.now(timezone.utc).isoformat()
             if status == JobStatus.RUNNING:
