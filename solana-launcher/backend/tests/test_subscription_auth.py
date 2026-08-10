@@ -4,10 +4,11 @@ import json
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
+from sqlalchemy import select
+
 from app.core.security import get_password_hash
 from app.models.auth_log import AuthLog
 from app.models.user import User
-from sqlalchemy import select
 
 ACCESS_PASSWORD = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
@@ -17,13 +18,29 @@ def make_telegram_init_data(bot_token: str, user: dict) -> str:
         "auth_date": str(int(datetime.now(UTC).timestamp())),
         "user": json.dumps(user, separators=(",", ":"), ensure_ascii=False),
     }
-    data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(params.items()))
-    secret = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
-    params["hash"] = hmac.new(secret, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    data_check_string = "\n".join(
+        f"{key}={value}" for key, value in sorted(params.items())
+    )
+    secret = hmac.new(
+        b"WebAppData",
+        bot_token.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    params["hash"] = hmac.new(
+        secret,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
     return urlencode(params)
 
 
-async def create_subscription_user(test_app, *, login: str, telegram_id: str, expires_at: datetime):
+async def create_subscription_user(
+    test_app,
+    *,
+    login: str,
+    telegram_id: str,
+    expires_at: datetime,
+):
     async with test_app.state.sessionmaker() as session:
         user = User(
             access_login=login,
@@ -38,7 +55,10 @@ async def create_subscription_user(test_app, *, login: str, telegram_id: str, ex
         return user.id
 
 
-async def test_subscription_password_login_and_me_work_with_non_email_login(client, test_app):
+async def test_subscription_password_login_and_me_work_with_non_email_login(
+    client,
+    test_app,
+):
     await create_subscription_user(
         test_app,
         login="miniapp_user",
@@ -180,5 +200,7 @@ async def test_telegram_verify_does_not_create_unsubscribed_user(client, test_ap
     assert response.json()["detail"] == "Active subscription required"
 
     async with test_app.state.sessionmaker() as session:
-        result = await session.execute(select(User).where(User.telegram_id == "20001"))
+        result = await session.execute(
+            select(User).where(User.telegram_id == "20001")
+        )
         assert result.scalar_one_or_none() is None
