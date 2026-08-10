@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getApifySummary, ingestPumpFunDataset, refreshApifyRun, runApifyActor, type PumpFunSyncInput } from "@/lib/apify";
+import { requireProdSuperuser } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const authError = await requireProdSuperuser(request);
+    if (authError) return authError;
+
     const summary = getApifySummary();
     return NextResponse.json({
       config: summary.config,
@@ -23,6 +27,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const authError = await requireProdSuperuser(request);
+    if (authError) return authError;
+
     const body = await request.json().catch(() => ({}));
     const action = typeof body?.action === "string" ? body.action : "start";
 
