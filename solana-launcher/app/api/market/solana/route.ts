@@ -35,10 +35,14 @@ function lastValue(rows?: [number, number][]) {
 
 export async function GET() {
   try {
+    const apiKey = process.env.COINGECKO_API_KEY?.trim();
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (apiKey) headers["x-cg-demo-api-key"] = apiKey;
+
     const response = await fetch(
       "https://api.coingecko.com/api/v3/coins/solana/market_chart?vs_currency=usd&days=1&precision=full",
       {
-        headers: { Accept: "application/json" },
+        headers,
         next: { revalidate: 60 },
       },
     );
