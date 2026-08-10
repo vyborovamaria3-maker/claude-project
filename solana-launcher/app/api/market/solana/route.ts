@@ -34,6 +34,9 @@ function lastValue(rows?: [number, number][]) {
 }
 
 export async function GET() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6_000);
+
   try {
     const apiKey = process.env.COINGECKO_API_KEY?.trim();
     const headers: Record<string, string> = { Accept: "application/json" };
@@ -43,6 +46,7 @@ export async function GET() {
       "https://api.coingecko.com/api/v3/coins/solana/market_chart?vs_currency=usd&days=1&precision=full",
       {
         headers,
+        signal: controller.signal,
         next: { revalidate: 60 },
       },
     );
@@ -98,7 +102,12 @@ export async function GET() {
         error: "Solana market data is temporarily unavailable",
         detail: error instanceof Error ? error.message : "Unknown market data error",
       },
-      { status: 503 },
+      {
+        status: 503,
+        headers: { "Cache-Control": "no-store" },
+      },
     );
+  } finally {
+    clearTimeout(timeout);
   }
 }
