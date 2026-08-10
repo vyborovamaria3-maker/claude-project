@@ -35,5 +35,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Restore legacy subscription logins to email before removing access_login.
+    op.execute(
+        sa.text(
+            """
+            UPDATE users
+            SET email = access_login
+            WHERE telegram_id IS NOT NULL
+              AND email IS NULL
+              AND access_login IS NOT NULL
+            """
+        )
+    )
     op.drop_index("ix_users_access_login", table_name="users")
     op.drop_column("users", "access_login")
