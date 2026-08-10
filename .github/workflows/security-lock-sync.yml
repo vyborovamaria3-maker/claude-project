@@ -1,9 +1,8 @@
 name: Security lockfile sync
 
 on:
-  push:
-    branches:
-      - agent/security-audit-remediation-v2
+  pull_request:
+    branches: [main]
     paths:
       - "solana-launcher/package.json"
       - "solana-launcher/scripts/xlsx-safe-package/**"
@@ -13,12 +12,15 @@ permissions:
   contents: write
 
 concurrency:
-  group: security-lock-sync
+  group: security-lock-sync-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   sync:
-    if: github.actor != 'github-actions[bot]'
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/security-audit-remediation-v2' &&
+      github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
