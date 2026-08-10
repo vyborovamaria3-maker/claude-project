@@ -5,6 +5,8 @@ from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
 
 from app.core.config import Settings
+from app.core.rate_limit import make_limit_key
+from app.middleware.client_ip import get_client_ip
 from app.models.auth_log import AuthLog
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
@@ -17,6 +19,16 @@ class AdminAuth(AuthenticationBackend):
         self._settings = settings
 
     async def login(self, request: Request) -> bool:
+        ip_address = get_client_ip(request) or "unknown"
+        limiter = request.app.state.rate_limiter
+        result = await limiter.allow(
+            make_limit_key("admin", "login", ip_address),
+            limit=5,
+            window_seconds=60,
+        )
+        if not result.allowed:
+            return False
+
         form = await request.form()
         username = str(form.get("username") or "")
         password = str(form.get("password") or "")
