@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from intelligence.core.hashing import build_document_hash
 from intelligence.core.models import IntelligenceDocument, ProviderHealth
 from intelligence.health.doctor import run_health_check
 from intelligence.providers.base import IntelligenceProvider
@@ -46,20 +47,22 @@ class FoundationHardeningTests(unittest.IsolatedAsyncioTestCase):
             source="github",
             content="evidence",
             collected_at=datetime.now(timezone.utc),
-            raw_hash="same-hash",
         )
+        first.raw_hash = build_document_hash(first)
         duplicate = IntelligenceDocument(
             id="second",
             source="github",
             content="evidence",
             collected_at=datetime.now(timezone.utc),
-            raw_hash="same-hash",
         )
+        duplicate.raw_hash = build_document_hash(duplicate)
+        self.assertEqual(first.raw_hash, duplicate.raw_hash)
 
         self.assertIs(store.save(first), first)
         self.assertIs(store.save(duplicate), first)
         self.assertEqual(len(store.list_all()), 1)
-        self.assertIs(store.find_by_hash("same-hash"), first)
+        assert first.raw_hash is not None
+        self.assertIs(store.find_by_hash(first.raw_hash), first)
 
 
 if __name__ == "__main__":
