@@ -1,0 +1,174 @@
+name: Strix Source Security Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Source component to audit
+        required: true
+        default: backend
+        type: choice
+        options:
+          - backend
+          - solana-launcher
+          - admin-site
+          - memecoin-intelligence
+          - repository
+      scan_mode:
+        description: Strix scan mode
+        required: true
+        default: standard
+        type: choice
+        options:
+          - quick
+          - standard
+      max_budget_usd:
+        description: Maximum LLM budget for this run
+        required: true
+        default: "10"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strix-source-audit-${{ github.ref }}-${{ inputs.component }}
+  cancel-in-progress: false
+
+jobs:
+  source-audit:
+    name: Strix ${{ inputs.component }} (${{ inputs.scan_mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      STRIX_LLM: ${{ secrets.STRIX_LLM }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+      STRIX_REASONING_EFFORT: high
+
+    steps:
+      - name: Checkout audited revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve source target
+        id: target
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          case "${{ inputs.component }}" in
+            backend) TARGET="./solana-launcher/backend" ;;
+            solana-launcher) TARGET="./solana-launcher" ;;
+            admin-site) TARGET="./admin-site" ;;
+            memecoin-intelligence) TARGET="./memecoin-intelligence" ;;
+            repository) TARGET="./" ;;
+            *) echo "Unknown component" >&2; exit 2 ;;
+          esac
+          test -e "$TARGET"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "Auditing $TARGET at $(git rev-parse HEAD)"
+
+      - name: Validate Strix credentials without printing secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -z "${STRIX_LLM:-}" ]]; then
+            echo "Missing GitHub Actions secret STRIX_LLM" >&2
+            exit 2
+          fi
+          if [[ -z "${LLM_API_KEY:-}" ]]; then
+            echo "Missing GitHub Actions secret LLM_API_KEY" >&2
+            exit 2
+          fi
+          echo "Strix provider configuration is present."
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install pinned Strix v1.4.1 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone --depth 1 --branch v1.4.1 https://github.com/usestrix/strix.git /tmp/strix
+          STRIX_COMMIT="$(git -C /tmp/strix rev-parse HEAD)"
+          case "$STRIX_COMMIT" in
+            ac0014f*) ;;
+            *)
+              echo "Unexpected Strix v1.4.1 commit: $STRIX_COMMIT" >&2
+              exit 3
+              ;;
+          esac
+          python -m pip install --upgrade pip
+          python -m pip install /tmp/strix
+          command -v strix
+          strix --version || true
+          docker version
+
+      - name: Run source-only Strix baseline
+        id: strix
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p security/strix/runtime
+          set +e
+          strix \
+            --non-interactive \
+            --target "${{ steps.target.outputs.target }}" \
+            --scan-mode "${{ inputs.scan_mode }}" \
+            --instruction-file security/strix/instructions/baseline.md \
+            --max-budget-usd "${{ inputs.max_budget_usd }}" \
+            2>&1 | tee security/strix/runtime/strix-console.log
+          CODE=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Strix exit code: $CODE"
+
+      - name: Record working-tree changes made by scanner
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo "# git status"
+            git status --short
+            echo
+            echo "# git diff --stat"
+            git diff --stat || true
+          } > security/strix/runtime/post-scan-git-state.txt
+
+      - name: Upload Strix evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strix-${{ inputs.component }}-${{ github.sha }}
+          path: |
+            strix_runs/**
+            security/strix/runtime/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce audit result
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          CODE="${{ steps.strix.outputs.exit_code }}"
+          if [[ -z "$CODE" ]]; then
+            echo "Strix did not produce an exit code." >&2
+            exit 2
+          fi
+          if [[ "$CODE" == "0" ]]; then
+            echo "Strix completed without confirmed vulnerabilities."
+            exit 0
+          fi
+          if [[ "$CODE" == "1" ]]; then
+            echo "Strix reported one or more vulnerabilities. Review the uploaded artifact." >&2
+            exit 1
+          fi
+          echo "Strix execution failed with exit code $CODE. Review the uploaded logs." >&2
+          exit "$CODE"
