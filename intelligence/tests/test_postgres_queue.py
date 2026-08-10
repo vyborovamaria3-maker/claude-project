@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import patch
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -148,18 +149,21 @@ class PostgresJobQueueTests(unittest.TestCase):
             queue.update_status("job-1", JobStatus.RUNNING)
         self.assertEqual(len(connection.calls), 1)
 
-    def test_set_results_deduplicates_ids_and_uses_jsonb(self) -> None:
+    def test_set_results_deduplicates_ids_before_jsonb_wrapping(self) -> None:
         connection = FakeConnection([FakeResult(one={"id": "job-1"})])
         queue = PostgresJobQueue(
             "postgresql://db/intelligence",
             connect_factory=ConnectFactory([connection]),
         )
 
-        queue.set_results("job-1", ["doc-1", "doc-1", "doc-2"])
+        with patch(
+            "intelligence.worker.postgres_queue.Jsonb",
+            side_effect=lambda value: ("jsonb", value),
+        ):
+            queue.set_results("job-1", ["doc-1", "doc-1", "doc-2"])
 
         _, params = connection.calls[0]
-        self.assertIsInstance(params[0], Jsonb)
-        self.assertEqual(params[0].obj, ["doc-1", "doc-2"])
+        self.assertEqual(params[0], ("jsonb", ["doc-1", "doc-2"]))
 
     def test_malformed_job_row_is_rejected(self) -> None:
         bad = job_row()
