@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
@@ -11,6 +12,12 @@ from app.models.user import User
 from app.services.users import get_user_by_id
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 async def get_current_user(
@@ -37,6 +44,26 @@ async def get_current_user(
     if user is None or not user.is_active:
         raise credentials_exception
     return user
+
+
+async def get_current_subscriber(current_user: User = Depends(get_current_user)) -> User:
+    """Require an authenticated user with a currently active entitlement.
+
+    Superusers are explicitly allowed so administrative and emergency access does not
+    depend on a commercial subscription record. Normal users must have a non-null,
+    future subscription expiry. The check is performed for every protected request,
+    so an already-issued JWT cannot outlive an expired entitlement.
+    """
+    if current_user.is_superuser:
+        return current_user
+
+    expires_at = current_user.subscription_expires_at
+    if expires_at is None or _as_utc(expires_at) <= datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required",
+        )
+    return current_user
 
 
 async def get_current_superuser(current_user: User = Depends(get_current_user)) -> User:
