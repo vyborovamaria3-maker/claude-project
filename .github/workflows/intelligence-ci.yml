@@ -68,6 +68,9 @@ jobs:
       - name: Run intelligence unit tests
         run: python -m unittest discover -s intelligence/tests -p "test_*.py" -v
 
+      - name: Run deterministic scoring backtest
+        run: python -m intelligence backtest
+
       - name: Run admin intelligence integration tests
         env:
           PYTHONPATH: admin-site
@@ -144,6 +147,9 @@ jobs:
           docker run --rm --read-only --tmpfs /tmp:size=256m \
             --cap-drop ALL --security-opt no-new-privileges \
             potapoff-intelligence:${{ github.sha }} python -m intelligence --help >/dev/null
+          docker run --rm --read-only --tmpfs /tmp:size=256m \
+            --cap-drop ALL --security-opt no-new-privileges \
+            potapoff-intelligence:${{ github.sha }} python -m intelligence backtest >/dev/null
           docker run --rm --read-only --tmpfs /tmp:size=256m \
             --cap-drop ALL --security-opt no-new-privileges \
             potapoff-intelligence:${{ github.sha }} yt-dlp --version
