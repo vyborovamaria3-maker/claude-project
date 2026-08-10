@@ -178,6 +178,28 @@ async function assertLoginDialog(page, label) {
   await triggerHandle.dispose();
 }
 
+async function assertTouchLoginBackdrop(page, label) {
+  const trigger = page.getByRole("button", { name: /открыть платформу/i }).first();
+  await trigger.click();
+
+  const dialog = page.getByRole("dialog", { name: /войти в potapoff/i });
+  const backdrop = page.locator("[data-landing-login-backdrop]");
+  await dialog.waitFor({ state: "visible" });
+  await backdrop.waitFor({ state: "visible" });
+
+  const backdropBox = await backdrop.boundingBox();
+  assert.ok(backdropBox && backdropBox.width > 8 && backdropBox.height > 8, `${label}: login backdrop has no touchable area`);
+  await page.touchscreen.tap(backdropBox.x + 4, backdropBox.y + 4);
+  await dialog.waitFor({ state: "hidden" });
+
+  await trigger.click();
+  await dialog.waitFor({ state: "visible" });
+  const submit = dialog.getByRole("button", { name: /войти в платформу/i });
+  assert.equal(await submit.isDisabled(), false, `${label}: submit stayed disabled after backdrop close/reopen`);
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
+}
+
 async function assertAuthSameOrigin(browser) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   let interceptedUrl = "";
@@ -455,6 +477,7 @@ async function runViewport(browser, viewport) {
   await assertLoginDialog(page, viewport.name);
 
   if (viewport.name === "iphone-390") {
+    await assertTouchLoginBackdrop(page, viewport.name);
     await assertThemePersistence(page);
     await assertChartInteraction(page, true);
   }
