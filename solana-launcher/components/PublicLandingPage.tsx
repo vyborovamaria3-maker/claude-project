@@ -336,7 +336,11 @@ export default function PublicLandingPage() {
   }, []);
 
   useEffect(() => {
-    const syncHash = () => setLoginOpen(window.location.hash === "#login");
+    const syncHash = () => {
+      const shouldOpen = window.location.hash === "#login";
+      if (!shouldOpen) setSubmitting(false);
+      setLoginOpen(shouldOpen);
+    };
     syncHash();
     window.addEventListener("hashchange", syncHash);
     return () => window.removeEventListener("hashchange", syncHash);
@@ -410,6 +414,7 @@ export default function PublicLandingPage() {
         if (window.location.hash === "#login") {
           window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
         }
+        setSubmitting(false);
         setLoginOpen(false);
         setAuthMessage("");
         setAuthSuccess(false);
@@ -471,6 +476,9 @@ export default function PublicLandingPage() {
 
   const openLogin = () => {
     setMenuOpen(false);
+    authAbortRef.current?.abort();
+    authAbortRef.current = null;
+    setSubmitting(false);
     if (document.activeElement instanceof HTMLElement) lastFocusedRef.current = document.activeElement;
     if (window.location.hash !== "#login") window.history.pushState(null, "", "#login");
     setLoginOpen(true);
@@ -480,7 +488,10 @@ export default function PublicLandingPage() {
     if (window.location.hash === "#login") {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     }
-    authAbortRef.current?.abort();
+    const controller = authAbortRef.current;
+    authAbortRef.current = null;
+    controller?.abort();
+    setSubmitting(false);
     if (redirectTimerRef.current != null) {
       window.clearTimeout(redirectTimerRef.current);
       redirectTimerRef.current = null;
@@ -554,8 +565,10 @@ export default function PublicLandingPage() {
       }
     } finally {
       window.clearTimeout(timeout);
-      if (authAbortRef.current === controller) authAbortRef.current = null;
-      setSubmitting(false);
+      if (authAbortRef.current === controller) {
+        authAbortRef.current = null;
+        setSubmitting(false);
+      }
     }
   };
 
@@ -846,7 +859,12 @@ export default function PublicLandingPage() {
       </footer>
 
       {loginOpen && (
-        <div className={styles.loginBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeLogin(); }}>
+        <div
+          data-landing-login-backdrop
+          className={styles.loginBackdrop}
+          role="presentation"
+          onPointerDown={(event) => { if (event.target === event.currentTarget) closeLogin(); }}
+        >
           <div ref={dialogRef} className={styles.loginCard} role="dialog" aria-modal="true" aria-labelledby="login-title">
             <div className={styles.loginTop}>
               <div><h2 id="login-title">Войти в POTAPoff</h2><p>Используйте действующие данные доступа к платформе.</p></div>
