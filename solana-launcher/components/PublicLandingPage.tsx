@@ -530,7 +530,7 @@ export default function PublicLandingPage() {
   return (
     <main className={styles.page} data-theme={theme}>
       <header className={styles.header}>
-        <div className={`${styles.shell} ${styles.headerInner}`}>
+        <div className={`${styles.shell} ${styles.headerInner}`} data-landing-header-inner>
           <a className={styles.brand} href="#top" aria-label="POTAPoff — главная">
             <span className={styles.brandMark} aria-hidden="true"><span /><span /><span /></span>
             <span>POTAP<span className={styles.brandAccent}>off</span></span>
@@ -545,6 +545,7 @@ export default function PublicLandingPage() {
 
           <div className={styles.headerActions}>
             <button
+              data-landing-theme-toggle
               className={styles.themeToggle}
               type="button"
               onClick={toggleTheme}
@@ -559,6 +560,7 @@ export default function PublicLandingPage() {
             <button type="button" className={`${styles.button} ${styles.buttonGhost} ${styles.buttonSmall}`} onClick={openLogin}>Войти</button>
             <button type="button" className={`${styles.button} ${styles.buttonSmall} ${styles.desktopCta}`} onClick={openLogin}>Открыть платформу <ArrowRight size={16} /></button>
             <button
+              data-landing-menu-toggle
               ref={menuButtonRef}
               type="button"
               className={styles.menuButton}
@@ -577,7 +579,7 @@ export default function PublicLandingPage() {
           <a href="#features" onClick={() => setMenuOpen(false)}>Возможности</a>
           <a href="#market" onClick={() => setMenuOpen(false)}>Рынок SOL</a>
           <a href="#workspace" onClick={() => setMenuOpen(false)}>Рабочая среда</a>
-          <div className={styles.mobileActions}>
+          <div className={styles.mobileActions} data-landing-mobile-actions>
             <button type="button" className={`${styles.button} ${styles.buttonGhost}`} onClick={openLogin}>Войти</button>
             <button type="button" className={styles.button} onClick={openLogin}>Открыть платформу</button>
           </div>
@@ -586,7 +588,7 @@ export default function PublicLandingPage() {
 
       <div id="top" className={styles.shell}>
         <section id="product" className={styles.hero}>
-          <div className={styles.heroCopyBlock} data-reveal>
+          <div className={styles.heroCopyBlock} data-landing-hero-copy data-reveal>
             <div className={styles.eyebrow}><span className={styles.liveDot} /> Профессиональная платформа для Solana</div>
             <h1 className={styles.heroTitle}>POTAPoff — <span className={styles.heroAccent}>интеллектуальное преимущество</span></h1>
             <p className={styles.heroCopy}>
@@ -606,8 +608,8 @@ export default function PublicLandingPage() {
 
           <div id="market" className={styles.marketStage} data-reveal>
             <div className={styles.marketGlow} aria-hidden="true" />
-            <div className={styles.marketCard}>
-              <div className={styles.marketHead}>
+            <div className={styles.marketCard} data-landing-market-card>
+              <div className={styles.marketHead} data-landing-market-head>
                 <div className={styles.marketPair}>
                   <div className={styles.solanaCoin} aria-hidden="true"><span /></div>
                   <div>
@@ -615,7 +617,7 @@ export default function PublicLandingPage() {
                     <div className={styles.pairSub}>Solana · реальный рынок · 24 часа</div>
                   </div>
                 </div>
-                <div className={`${styles.marketStatus} ${market && !marketFresh ? styles.marketStatusStale : ""}`}>
+                <div data-landing-market-status className={`${styles.marketStatus} ${market && !marketFresh ? styles.marketStatusStale : ""}`}>
                   <span className={styles.liveDot} />
                   {market ? (marketFresh ? "LIVE" : "ЗАДЕРЖКА") : "СИНХРОНИЗАЦИЯ"}
                 </div>
@@ -627,6 +629,7 @@ export default function PublicLandingPage() {
               </div>
 
               <div
+                data-landing-chart
                 className={`${styles.chartWrap} ${paths.line ? styles.chartInteractive : ""}`}
                 onPointerMove={inspectChart}
                 onPointerDown={inspectChart}
@@ -653,12 +656,12 @@ export default function PublicLandingPage() {
                           <stop offset="100%" stopColor="var(--chart-b)" stopOpacity="0" />
                         </linearGradient>
                       </defs>
-                      <g className={styles.chartGrid}>
+                      <g className={styles.chartGrid} data-landing-chart-grid>
                         {[55, 110, 165, 220, 275].map((y) => <line key={y} x1="16" x2="744" y1={y} y2={y} />)}
                         {[150, 300, 450, 600].map((x) => <line key={x} x1={x} x2={x} y1="18" y2="282" />)}
                       </g>
                       <path className={styles.chartArea} d={paths.area} />
-                      <path className={styles.chartLine} d={paths.line} />
+                      <path className={styles.chartLine} data-landing-chart-line d={paths.line} />
 
                       {paths.highCoord && (
                         <circle className={styles.chartExtreme} cx={paths.highCoord.x} cy={paths.highCoord.y} r="3.2" />
@@ -678,6 +681,7 @@ export default function PublicLandingPage() {
 
                     {activeCoord ? (
                       <div
+                        data-landing-chart-tooltip
                         className={styles.chartTooltip}
                         aria-live="polite"
                         style={{
@@ -756,7 +760,7 @@ export default function PublicLandingPage() {
         </section>
 
         <section id="workspace" className={styles.section}>
-          <div className={styles.workspace} data-reveal>
+          <div className={styles.workspace} data-landing-workspace-card data-reveal>
             <div className={styles.workspaceCopy}>
               <div className={styles.kicker}>Профессиональная рабочая среда</div>
               <h3>Рынок, кошельки и запуск — в одном контексте</h3>
@@ -772,8 +776,8 @@ export default function PublicLandingPage() {
 
             <div className={styles.workspacePreview} aria-hidden="true">
               <div className={styles.previewTop}><span className={styles.previewBrand}>POTAPoff</span><span>SOLANA · {marketFresh ? "LIVE" : "MARKET"}</span></div>
-              <div className={styles.previewBody}>
-                <div className={styles.previewNav}><span>Обзор рынка</span><span>Кошельки</span><span>Bundle Intelligence</span><span>Запуск токена</span><span>История</span></div>
+              <div className={styles.previewBody} data-landing-preview-body>
+                <div className={styles.previewNav} data-landing-preview-nav><span>Обзор рынка</span><span>Кошельки</span><span>Bundle Intelligence</span><span>Запуск токена</span><span>История</span></div>
                 <div className={styles.previewMain}>
                   <div className={styles.previewMainTitle}>Solana workspace</div>
                   <div className={styles.previewMetrics}>
@@ -790,7 +794,7 @@ export default function PublicLandingPage() {
           </div>
         </section>
 
-        <section className={styles.cta} data-reveal>
+        <section className={styles.cta} data-landing-cta data-reveal>
           <div><div className={styles.ctaCrown} aria-hidden="true">✦</div><h2>Будущее Solana начинается с лучшего контекста.</h2><p>Откройте POTAPoff и соберите весь рабочий процесс в одном месте.</p></div>
           <div className={styles.ctaActions}>
             <button type="button" className={styles.button} onClick={openLogin}>Открыть POTAPoff <ArrowRight size={17} /></button>
@@ -800,7 +804,7 @@ export default function PublicLandingPage() {
       </div>
 
       <footer className={styles.footer}>
-        <div className={`${styles.shell} ${styles.footerInner}`}>
+        <div className={`${styles.shell} ${styles.footerInner}`} data-landing-footer-inner>
           <div>
             <div className={styles.brand}><span className={styles.brandMark} aria-hidden="true"><span /><span /><span /></span><span>POTAP<span className={styles.brandAccent}>off</span></span></div>
             <div className={styles.footerCopy}>Профессиональная рабочая среда для запуска, анализа и мониторинга в экосистеме Solana.</div>
