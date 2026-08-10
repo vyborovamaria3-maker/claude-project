@@ -107,12 +107,35 @@ class Settings:
         )
 
     def validate(self) -> None:
+        production = self.environment.lower() == "production"
+
         if not self.session_secret or len(self.session_secret) < 32:
             raise RuntimeError("ADMIN_SESSION_SECRET must contain at least 32 characters")
-        if self.environment.lower() == "production" and self.show_sensitive:
+        if production and not self.secure_cookie:
+            raise RuntimeError("ADMIN_SECURE_COOKIE must be enabled in production")
+        if production and self.show_sensitive:
             raise RuntimeError("ADMIN_SHOW_SENSITIVE cannot be enabled in production")
-        if self.environment.lower() == "production" and not self.allowed_origins:
+        if production and not self.allowed_origins:
             raise RuntimeError("ADMIN_ALLOWED_ORIGINS must be configured in production")
+        if production and not self.allowed_networks:
+            raise RuntimeError("ADMIN_ALLOWED_NETWORKS must be configured in production")
+        if production and not _env_bool("ADMIN_REQUIRE_NETWORK_ALLOWLIST"):
+            raise RuntimeError("ADMIN_REQUIRE_NETWORK_ALLOWLIST must be enabled in production")
+        if production and not _env_bool("ADMIN_REQUIRE_MFA"):
+            raise RuntimeError("ADMIN_REQUIRE_MFA must be enabled in production")
+        if production and not os.getenv("ADMIN_TOTP_SECRET", "").strip():
+            raise RuntimeError("ADMIN_TOTP_SECRET must be configured in production")
+        if production and not _env_bool("ADMIN_REQUIRE_REAUTH"):
+            raise RuntimeError("ADMIN_REQUIRE_REAUTH must be enabled in production")
+        if production and not _env_bool("ADMIN_SESSION_BIND_IP"):
+            raise RuntimeError("ADMIN_SESSION_BIND_IP must be enabled in production")
+        if production and not _env_bool("ADMIN_SESSION_BIND_USER_AGENT"):
+            raise RuntimeError("ADMIN_SESSION_BIND_USER_AGENT must be enabled in production")
+        if production and not self.admin_password_hash:
+            raise RuntimeError("ADMIN_PASSWORD_HASH is required in production; plaintext ADMIN_PASSWORD is not accepted")
+        if production and self.admin_password:
+            raise RuntimeError("ADMIN_PASSWORD must be unset in production when ADMIN_PASSWORD_HASH is configured")
+
         for origin in self.allowed_origins:
             parsed = urlparse(origin)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
@@ -122,7 +145,7 @@ class Settings:
         if self.session_ttl_seconds < 300 or self.session_ttl_seconds > 24 * 60 * 60:
             raise RuntimeError("ADMIN_SESSION_TTL_SECONDS must be between 300 and 86400")
         parsed_rpc = urlparse(self.solana_rpc_url)
-        if parsed_rpc.scheme not in ({"https"} if self.environment.lower() == "production" else {"http", "https"}):
+        if parsed_rpc.scheme not in ({"https"} if production else {"http", "https"}):
             raise RuntimeError("SOLANA_RPC_URL must use an allowed HTTP scheme")
         if not parsed_rpc.hostname or parsed_rpc.username or parsed_rpc.password:
             raise RuntimeError("SOLANA_RPC_URL is invalid")
@@ -136,6 +159,10 @@ class Settings:
 
 def _as_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_bool(name: str) -> bool:
+    return _as_bool(os.getenv(name, "false"))
 
 
 def _load_json_items(file_env: str, inline_env: str) -> list[dict[str, Any]]:

@@ -22,18 +22,23 @@ jobs:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
           test -n "$SERVER_HOST"
           test -n "$SERVER_PORT"
           test -n "$SERVER_SSH_KEY"
+          test -n "$SERVER_SSH_KNOWN_HOSTS"
 
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p "$SERVER_PORT" -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+          printf '%s\n' "$SERVER_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+
+          ssh-keygen -F "$SERVER_HOST" -f ~/.ssh/known_hosts >/dev/null \
+            || { echo "SERVER_SSH_KNOWN_HOSTS does not contain SERVER_HOST" >&2; exit 1; }
 
       - name: Build and deploy current main frontend
         env:

@@ -16,7 +16,12 @@ COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
 
 RUN pip install --upgrade pip \
-    && pip install -e .
+    && pip install -e . \
+    && groupadd --system potapoff \
+    && useradd --system --gid potapoff --home-dir /app --shell /usr/sbin/nologin potapoff \
+    && chown -R potapoff:potapoff /app
+
+USER potapoff
 
 EXPOSE 8000
 
