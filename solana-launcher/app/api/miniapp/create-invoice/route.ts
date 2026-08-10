@@ -134,12 +134,20 @@ export async function POST(req: NextRequest) {
       paymentUrl,
     });
 
+    if (order.currency !== "SOL" && order.currency !== "USDT") {
+      throw new Error("An existing non-payment activation is still pending");
+    }
+    if (!order.payment_url || !order.payment_reference) {
+      throw new Error("Existing payment checkout is incomplete");
+    }
+
+    const returnedDecimals = order.currency === "SOL" ? 9 : 6;
     return NextResponse.json({
       payload: order.payload,
       mode: "PAYMENT",
       currency: order.currency,
       totalAmount: order.total_amount,
-      displayAmount: baseUnitsToDecimal(order.total_amount, decimals),
+      displayAmount: baseUnitsToDecimal(order.total_amount, returnedDecimals),
       paymentUrl: order.payment_url,
       paymentReference: order.payment_reference,
       accessDays: order.access_days,
