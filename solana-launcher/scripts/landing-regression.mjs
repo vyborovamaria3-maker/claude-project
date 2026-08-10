@@ -367,6 +367,37 @@ async function assertClientFreshnessGuard(browser) {
   await context.close();
 }
 
+async function assertServerClockWinsOverDeviceSkew(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.addInitScript(() => {
+    const realNow = Date.now.bind(Date);
+    Date.now = () => realNow() + 12 * 60 * 60 * 1000;
+  });
+
+  const payload = buildMockMarketPayload(Date.now() - 60_000);
+  await context.route("**/api/market/solana", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "Cache-Control": "no-store" },
+      body: JSON.stringify(payload),
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+  await waitForChart(page);
+  await page.waitForFunction(() =>
+    document.querySelector("[data-landing-market-status]")?.textContent?.includes("LIVE"),
+  );
+
+  const statusText = (await page.locator("[data-landing-market-status]").textContent()) || "";
+  assert.match(statusText, /LIVE/u, "fresh server-timestamped market payload was rejected by skewed device clock");
+  assert.doesNotMatch(statusText, /ЗАДЕРЖКА/u, "skewed device clock incorrectly downgraded a fresh market payload");
+
+  await context.close();
+}
+
 async function assertClientRejectsMalformedMarket(browser) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const validPayload = buildMockMarketPayload(Date.now() - 60_000);
@@ -718,6 +749,9 @@ try {
 
   await assertClientFreshnessGuard(browser);
   console.log("✓ client market freshness guard");
+
+  await assertServerClockWinsOverDeviceSkew(browser);
+  console.log("✓ server clock wins over skewed device clock");
 
   await assertClientRejectsMalformedMarket(browser);
   console.log("✓ client rejects malformed market payloads");
