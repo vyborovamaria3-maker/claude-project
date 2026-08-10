@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -115,10 +116,11 @@ class YouTubeClient:
     def health(self) -> int:
         if not self.available():
             raise ProviderError("yt-dlp executable is not available")
+        started = time.monotonic()
         completed = self._run([self.executable, "--version"])
         if not completed.stdout.strip():
             raise ProviderError("yt-dlp version check returned no output")
-        return 0
+        return max(0, round((time.monotonic() - started) * 1000))
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         if not self.available():
