@@ -86,11 +86,14 @@ function latestMetricNearCutoff(rows: unknown, cutoff: number, now: number): Tim
 
 /**
  * Keep only points that actually exist in the upstream market series.
- * No interpolation or synthetic prices are generated. The first/last and
- * true 24h high/low observations are explicitly retained in the SVG series.
+ * No interpolation or synthetic prices are generated. Uniform buckets cover
+ * the entire 24h window; true high/low replace the nearest non-protected
+ * bucket points so first/last/high/low are retained without biasing the tail.
  */
 function sampleRealPoints(rows: PriceRow[], maxPoints: number): PriceRow[] {
+  if (maxPoints <= 0 || rows.length === 0) return [];
   if (rows.length <= maxPoints) return rows;
+  if (maxPoints === 1) return [rows[rows.length - 1]];
 
   let highIndex = 0;
   let lowIndex = 0;
@@ -99,21 +102,37 @@ function sampleRealPoints(rows: PriceRow[], maxPoints: number): PriceRow[] {
     if (rows[index][1] < rows[lowIndex][1]) lowIndex = index;
   }
 
-  const selected = new Set<number>([0, rows.length - 1, highIndex, lowIndex]);
-  const step = (rows.length - 1) / Math.max(1, maxPoints - 1);
-
-  for (let index = 0; index < maxPoints && selected.size < maxPoints; index += 1) {
-    selected.add(Math.round(index * step));
+  const selected = new Set<number>();
+  const step = (rows.length - 1) / (maxPoints - 1);
+  for (let bucket = 0; bucket < maxPoints; bucket += 1) {
+    selected.add(Math.round(bucket * step));
   }
 
-  if (selected.size < maxPoints) {
-    for (let index = 0; index < rows.length && selected.size < maxPoints; index += 1) {
-      selected.add(index);
+  const protectedIndices = new Set<number>([0, rows.length - 1, highIndex, lowIndex]);
+  const forceInclude = (targetIndex: number) => {
+    if (selected.has(targetIndex)) return;
+
+    let replacement: number | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const index of selected) {
+      if (protectedIndices.has(index)) continue;
+      const distance = Math.abs(index - targetIndex);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        replacement = index;
+      }
     }
-  }
+
+    if (replacement != null) selected.delete(replacement);
+    selected.add(targetIndex);
+  };
+
+  forceInclude(highIndex);
+  forceInclude(lowIndex);
 
   return Array.from(selected)
     .sort((a, b) => a - b)
+    .slice(0, maxPoints)
     .map((index) => rows[index]);
 }
 
