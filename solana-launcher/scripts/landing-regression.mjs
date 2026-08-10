@@ -11,6 +11,7 @@ const EXTERNAL_BASE_URL = process.env.LANDING_TEST_URL?.replace(/\/$/, "") || ""
 const BASE_URL = EXTERNAL_BASE_URL || `http://127.0.0.1:${PORT}`;
 const SERVER_TIMEOUT_MS = 90_000;
 const MIN_MARKET_SPAN_MS = 23 * 60 * 60 * 1000;
+const MAX_MARKET_AGE_MS = 6 * 60 * 60 * 1000;
 
 const viewports = [
   { name: "phone-320", width: 320, height: 568 },
@@ -126,6 +127,14 @@ async function assertAnchorsResolve(page, label) {
   );
 
   assert.deepEqual(broken, [], `${label}: broken local anchors: ${broken.join(", ")}`);
+}
+
+async function assertViewportMetadata(page, label) {
+  const content = await page.locator('meta[name="viewport"]').getAttribute("content");
+  assert.ok(content, `${label}: viewport meta is missing`);
+  assert.match(content, /width=device-width/iu, `${label}: viewport width=device-width missing`);
+  assert.match(content, /viewport-fit=cover/iu, `${label}: viewport-fit=cover missing`);
+  assert.match(content, /user-scalable=yes|maximum-scale=5/iu, `${label}: zoom must remain available`);
 }
 
 async function assertThemePersistence(page) {
@@ -256,6 +265,10 @@ async function assertMarketPayload(context) {
   assert.equal(data.windowEnd, last.time, "windowEnd must match last plotted/source endpoint");
   assert.equal(data.updatedAt, data.windowEnd, "updatedAt must match source window end");
   assert.equal(data.price, last.price, "headline price must match latest plotted point");
+  assert.ok(
+    Date.now() - data.updatedAt <= MAX_MARKET_AGE_MS,
+    `market payload is older than six hours: ${Date.now() - data.updatedAt}ms`,
+  );
 
   const plottedPrices = data.points.map((point) => point.price);
   const plottedHigh = Math.max(...plottedPrices);
@@ -347,6 +360,7 @@ async function runViewport(browser, viewport) {
   await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
   await page.getByRole("heading", { level: 1 }).waitFor({ state: "visible" });
 
+  await assertViewportMetadata(page, viewport.name);
   await assertNoHorizontalOverflow(page, viewport.name);
   await assertCriticalBoxesInsideViewport(page, viewport.name);
   await assertAnchorsResolve(page, viewport.name);
@@ -366,6 +380,38 @@ async function runViewport(browser, viewport) {
 
   await context.close();
   console.log(`✓ ${viewport.name} ${viewport.width}x${viewport.height}`);
+}
+
+async function assertMobileEmulation(browser) {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    screen: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3,
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+  });
+  const page = await context.newPage();
+  await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
+  await page.getByRole("heading", { level: 1 }).waitFor({ state: "visible" });
+
+  await assertViewportMetadata(page, "mobile-emulation");
+  await assertNoHorizontalOverflow(page, "mobile-emulation");
+  await assertCriticalBoxesInsideViewport(page, "mobile-emulation");
+
+  const metrics = await page.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    clientWidth: document.documentElement.clientWidth,
+    coarsePointer: window.matchMedia("(pointer: coarse)").matches,
+  }));
+  assert.ok(metrics.innerWidth >= 389 && metrics.innerWidth <= 391, `mobile-emulation: innerWidth ${metrics.innerWidth}`);
+  assert.ok(metrics.clientWidth >= 389 && metrics.clientWidth <= 391, `mobile-emulation: clientWidth ${metrics.clientWidth}`);
+  assert.equal(metrics.coarsePointer, true, "mobile-emulation: pointer must be coarse");
+
+  await assertMobileMenu(page, { name: "mobile-emulation", width: 390, height: 844 });
+  await assertChartInteraction(page, true);
+  await context.close();
 }
 
 async function assertReducedMotion(browser) {
@@ -418,6 +464,9 @@ try {
   for (const viewport of viewports) {
     await runViewport(browser, viewport);
   }
+
+  await assertMobileEmulation(browser);
+  console.log("✓ mobile viewport emulation");
 
   await assertReducedMotion(browser);
   console.log("✓ prefers-reduced-motion");
