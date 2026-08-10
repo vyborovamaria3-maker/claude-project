@@ -287,7 +287,7 @@ async function assertSuccessfulLoginStaysLocked(browser) {
   const dialog = page.getByRole("dialog", { name: /войти в potapoff/i });
   await dialog.getByRole("textbox", { name: /логин/i }).fill("tester_1");
   await dialog.getByLabel(/пароль/i).fill("A".repeat(32));
-  const submit = dialog.getByRole("button", { name: /войти в платформу/i });
+  const submit = dialog.locator('button[type="submit"]');
   await submit.click();
   await dialog.getByText(/доступ подтверждён/i).waitFor({ state: "visible" });
 
