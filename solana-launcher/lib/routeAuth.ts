@@ -12,11 +12,14 @@ export async function requireProdAuth(req: NextRequest) {
   }
 
   try {
-    const response = await fetch(`${getBackendBaseUrl()}/api/v1/auth/me`, {
+    const response = await fetch(`${getBackendBaseUrl()}/api/v1/users/access`, {
       headers: { Authorization: authHeader },
       cache: "no-store",
     });
 
+    if (response.status === 403) {
+      return NextResponse.json({ error: "Active subscription required" }, { status: 403 });
+    }
     if (!response.ok) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
