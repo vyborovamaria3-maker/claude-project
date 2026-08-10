@@ -5,13 +5,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from intelligence.bootstrap import build_memory_runtime, build_sqlite_runtime
+from intelligence.bootstrap import (
+    build_memory_runtime,
+    build_postgres_runtime,
+    build_sqlite_runtime,
+)
 from intelligence.core.models import IntelligenceDocument, ProviderHealth
 from intelligence.health.doctor import run_health_check, run_registry_health_check, summarize_health
 from intelligence.providers.base import IntelligenceProvider
 from intelligence.providers.registry import ProviderRegistry
 from intelligence.storage.memory_store import MemoryDocumentStore
+from intelligence.storage.postgres_store import PostgresDocumentStore
 from intelligence.storage.sqlite_store import SQLiteDocumentStore
+from intelligence.worker.postgres_queue import PostgresJobQueue
 from intelligence.worker.queue import MemoryJobQueue
 from intelligence.worker.sqlite_queue import SQLiteJobQueue
 
@@ -87,6 +93,21 @@ class BootstrapTests(unittest.TestCase):
                 self.assertIsInstance(runtime.store, SQLiteDocumentStore)
                 submitted = runtime.queue.submit({"provider": "fake", "query": "x"})
                 self.assertIsNotNone(runtime.queue.get(submitted.id))
+
+    def test_postgres_runtime_uses_postgres_queue_and_store_without_connecting(self) -> None:
+        registry = ProviderRegistry([FakeProvider("fake")])
+        runtime = build_postgres_runtime(
+            "postgresql://user:secret@db/intelligence",
+            registry=registry,
+        )
+        try:
+            self.assertIs(runtime.registry, registry)
+            self.assertIsInstance(runtime.queue, PostgresJobQueue)
+            self.assertIsInstance(runtime.store, PostgresDocumentStore)
+            self.assertIs(runtime.worker.queue, runtime.queue)
+            self.assertIs(runtime.worker.store, runtime.store)
+        finally:
+            runtime.close()
 
 
 class DoctorTests(unittest.IsolatedAsyncioTestCase):
