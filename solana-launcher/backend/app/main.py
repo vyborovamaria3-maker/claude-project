@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -89,6 +90,22 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def production_registration_guard(request: Request, call_next):
+        registration_path = f"{settings.api_v1_prefix}/auth/register"
+        if (
+            is_production
+            and request.method == "POST"
+            and request.url.path == registration_path
+        ):
+            # Production accounts are provisioned only by the subscription flow.
+            # Keeping this endpoint active would let anonymous callers fill users.
+            return JSONResponse(
+                {"detail": "Registration is available through the subscription flow"},
+                status_code=403,
+            )
+        return await call_next(request)
 
     setup_admin(app, engine, settings)
     # Keep the historical /api analytics alias for compatibility, but do not
