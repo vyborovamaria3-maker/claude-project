@@ -191,6 +191,7 @@ PY
 log "Frontend: install / lint / typecheck / build / mobile + route smoke"
 docker run --rm --ipc=host \
   -v "$ROOT:/src:ro" \
+  -e BACKEND_URL=http://127.0.0.1:8000 \
   -e NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000 \
   -e NEXT_PUBLIC_FRONTEND_URL=http://127.0.0.1:3000 \
   -e NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000 \
@@ -213,10 +214,39 @@ docker run --rm --ipc=host \
     echo "--- Next production build"
     npm run build
 
+    echo "--- isolated auth mock for Next proxy"
+    node -e '
+'"'"'const http = require("node:http");
+const allowed = new Set([
+  "Bearer local-responsive-backtest-token",
+  "Bearer full-route-backtest-token",
+]);
+const server = http.createServer((req, res) => {
+  if (req.url?.startsWith("/api/v1/auth/me")) {
+    const ok = allowed.has(req.headers.authorization || "");
+    res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
+    res.end(JSON.stringify(ok ? {
+      id: "00000000-0000-0000-0000-000000000001",
+      email: null,
+      access_login: "local_backtest",
+      is_active: true,
+      is_superuser: false,
+    } : { detail: "Unauthorized" }));
+    return;
+  }
+  res.writeHead(404, { "content-type": "application/json" });
+  res.end(JSON.stringify({ detail: "Not found in isolated auth mock" }));
+});
+server.listen(8000, "127.0.0.1");
+'"'"' >/tmp/backtest-auth.log 2>&1 &
+    auth_pid=$!
+    sleep 1
+    kill -0 "$auth_pid"
+
     echo "--- runtime smoke"
     npm start -- -p 3000 >/tmp/backtest-next.log 2>&1 &
     pid=$!
-    trap "kill $pid 2>/dev/null || true" EXIT
+    trap "kill $pid $auth_pid 2>/dev/null || true" EXIT
     ok=0
     for _ in $(seq 1 60); do
       if node -e "fetch(\"http://127.0.0.1:3000/login\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
@@ -227,6 +257,7 @@ docker run --rm --ipc=host \
     done
     if [ "$ok" -ne 1 ]; then
       cat /tmp/backtest-next.log >&2 || true
+      cat /tmp/backtest-auth.log >&2 || true
       exit 1
     fi
 
