@@ -143,19 +143,25 @@ async def _wait_for_stop(stop: asyncio.Event, delay: float) -> None:
         pass
 
 
-async def _worker_loop(runtime: IntelligenceRuntime, poll_seconds: float) -> int:
+async def _worker_loop(
+    runtime: IntelligenceRuntime,
+    poll_seconds: float,
+    *,
+    stop_event: asyncio.Event | None = None,
+) -> int:
     if poll_seconds < 0.1 or poll_seconds > 3600:
         raise ValueError("poll-seconds must be between 0.1 and 3600")
 
-    stop = asyncio.Event()
+    stop = stop_event or asyncio.Event()
     loop = asyncio.get_running_loop()
     installed_signals: list[signal.Signals] = []
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, stop.set)
-            installed_signals.append(sig)
-        except (NotImplementedError, RuntimeError):
-            pass
+    if stop_event is None:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+                installed_signals.append(sig)
+            except (NotImplementedError, RuntimeError):
+                pass
 
     consecutive_runtime_failures = 0
     try:
