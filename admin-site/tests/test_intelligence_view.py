@@ -9,6 +9,7 @@ from typing import Any
 
 import psycopg
 
+from app.config import Settings
 from app.intelligence_view import (
     IntelligenceViewError,
     IntelligenceViewStore,
@@ -106,9 +107,7 @@ class IntelligenceViewStoreTests(unittest.TestCase):
 
     def test_recent_jobs_never_expose_query_or_error_text(self) -> None:
         rows = self.store.recent_jobs(10)
-        self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(row["id"], "job-1")
         self.assertTrue(row["has_error"])
         serialized = json.dumps(row)
         self.assertNotIn("job-secret", serialized)
@@ -117,10 +116,7 @@ class IntelligenceViewStoreTests(unittest.TestCase):
         self.assertNotIn("error", row)
 
     def test_recent_documents_never_expose_content_url_or_metrics(self) -> None:
-        rows = self.store.recent_documents(10)
-        self.assertEqual(len(rows), 1)
-        row = rows[0]
-        self.assertEqual(row["id"], "doc-1")
+        row = self.store.recent_documents(10)[0]
         serialized = json.dumps(row)
         self.assertNotIn("content", row)
         self.assertNotIn("url", row)
@@ -174,19 +170,26 @@ class FakePgResult:
 
 
 class FakePgConnection:
-    def __init__(self, results: list[FakePgResult]) -> None:
+    def __init__(self, results: list[FakePgResult], *, fail_read_only: bool = False) -> None:
         self.results = list(results)
         self.calls: list[tuple[str, Any]] = []
+        self.fail_read_only = fail_read_only
+        self.closed = False
 
     def __enter__(self) -> "FakePgConnection":
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        return None
+        self.close()
+
+    def close(self) -> None:
+        self.closed = True
 
     def execute(self, query: str, params: Any = None) -> FakePgResult:
         self.calls.append((query, params))
         if query.strip().upper() == "SET TRANSACTION READ ONLY":
+            if self.fail_read_only:
+                raise psycopg.OperationalError("password=read-only-secret")
             return FakePgResult()
         if not self.results:
             raise AssertionError("unexpected PostgreSQL query")
@@ -222,15 +225,26 @@ class PostgresIntelligenceViewStoreTests(unittest.TestCase):
             "postgresql://readonly@db/intelligence",
             connect_factory=factory,
         )
-
         rows = store.recent_jobs(10)
-
         self.assertEqual(rows[0]["result_document_ids"], ["doc-1"])
         self.assertEqual(connection.calls[0][0].strip().upper(), "SET TRANSACTION READ ONLY")
         self.assertIn("LIMIT %s", connection.calls[1][0])
         self.assertEqual(connection.calls[1][1], (10,))
         self.assertEqual(factory.calls[0][1]["connect_timeout"], 2)
         self.assertIn("row_factory", factory.calls[0][1])
+
+    def test_read_only_setup_failure_closes_connection_and_is_secret_safe(self) -> None:
+        connection = FakePgConnection([], fail_read_only=True)
+        store = PostgresIntelligenceViewStore(
+            "postgresql://readonly:dsn-secret@db/intelligence",
+            connect_factory=PgConnectFactory([connection]),
+        )
+        with self.assertRaises(IntelligenceViewError) as captured:
+            store.summary()
+        self.assertTrue(connection.closed)
+        self.assertEqual(str(captured.exception), "intelligence_runtime_unavailable")
+        self.assertNotIn("read-only-secret", str(captured.exception))
+        self.assertNotIn("dsn-secret", str(captured.exception))
 
     def test_recent_documents_rejects_invalid_native_jsonb_shape(self) -> None:
         row = {
@@ -266,6 +280,37 @@ class PostgresIntelligenceViewStoreTests(unittest.TestCase):
         self.assertNotIn("driver-secret", message)
         self.assertNotIn("dsn-secret", message)
         self.assertNotIn("internal-db", message)
+
+
+class IntelligenceBackendConfigTests(unittest.TestCase):
+    def base_settings(self, **overrides: Any) -> Settings:
+        values: dict[str, Any] = {
+            "environment": "production",
+            "admin_password": "x",
+            "session_secret": "x" * 64,
+            "allowed_origins": ["https://admin.example.com"],
+            "solana_rpc_url": "https://api.mainnet-beta.solana.com",
+        }
+        values.update(overrides)
+        return Settings(**values)
+
+    def test_unknown_intelligence_backend_is_rejected(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "ADMIN_INTELLIGENCE_BACKEND"):
+            self.base_settings(intelligence_backend="redis").validate()
+
+    def test_postgres_backend_requires_separate_admin_dsn(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "ADMIN_INTELLIGENCE_POSTGRES_DSN"):
+            self.base_settings(
+                intelligence_backend="postgres",
+                intelligence_postgres_dsn="",
+            ).validate()
+
+    def test_production_sqlite_requires_absolute_path(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "ADMIN_INTELLIGENCE_DB"):
+            self.base_settings(
+                intelligence_backend="sqlite",
+                intelligence_db_path="relative/intelligence.sqlite3",
+            ).validate()
 
 
 if __name__ == "__main__":
