@@ -18,9 +18,11 @@ import {
 } from "lucide-react";
 import {
   FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import styles from "./landing/PremiumLanding.module.css";
@@ -60,6 +62,7 @@ const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 const THEME_KEY = "potapoff.landing_theme";
 const CHART_WIDTH = 760;
 const CHART_HEIGHT = 300;
+const AUTH_TIMEOUT_MS = 12_000;
 const USD_FORMAT = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -126,14 +129,17 @@ function chartPaths(points: MarketPoint[], width = CHART_WIDTH, height = CHART_H
   const min = rawMin - rawRange * 0.12;
   const max = rawMax + rawRange * 0.12;
   const range = max - min;
+  const startTime = points[0].time;
+  const endTime = points[points.length - 1].time;
+  const timeRange = Math.max(1, endTime - startTime);
   const padX = 16;
   const padY = 18;
   const usableWidth = width - padX * 2;
   const usableHeight = height - padY * 2;
 
-  const coords: ChartCoord[] = points.map((point, index) => ({
+  const coords: ChartCoord[] = points.map((point) => ({
     ...point,
-    x: padX + (index / (points.length - 1)) * usableWidth,
+    x: padX + ((point.time - startTime) / timeRange) * usableWidth,
     y: padY + (1 - (point.price - min) / range) * usableHeight,
   }));
 
@@ -148,6 +154,26 @@ function chartPaths(points: MarketPoint[], width = CHART_WIDTH, height = CHART_H
   const lowCoord = coords.reduce((best, point) => (point.price < best.price ? point : best));
 
   return { line, area, mini, labelTop, coords, highCoord, lowCoord };
+}
+
+function isValidMarketData(data: MarketData) {
+  if (
+    data.source !== "CoinGecko" ||
+    data.quote !== "USD" ||
+    !Number.isFinite(data.price) ||
+    data.price <= 0 ||
+    !Array.isArray(data.points) ||
+    data.points.length < 24
+  ) {
+    return false;
+  }
+
+  return data.points.every((point, index) => {
+    if (!Number.isFinite(point.time) || !Number.isFinite(point.price) || point.time <= 0 || point.price <= 0) {
+      return false;
+    }
+    return index === 0 || point.time > data.points[index - 1].time;
+  });
 }
 
 function authError(status: number, detail?: string) {
@@ -212,12 +238,17 @@ export default function PublicLandingPage() {
   const [market, setMarket] = useState<MarketData | null>(null);
   const [theme, setTheme] = useState<LandingTheme>("gold");
   const [activeChartIndex, setActiveChartIndex] = useState<number | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const loginInputRef = useRef<HTMLInputElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
+  const authAbortRef = useRef<AbortController | null>(null);
+  const redirectTimerRef = useRef<number | null>(null);
 
   const paths = useMemo(() => chartPaths(market?.points ?? []), [market]);
   const marketPositive = (market?.change24h ?? 0) >= 0;
   const marketFresh = Boolean(market && !market.stale);
-  const activeCoord =
-    activeChartIndex == null ? null : paths.coords[activeChartIndex] ?? null;
+  const activeCoord = activeChartIndex == null ? null : paths.coords[activeChartIndex] ?? null;
 
   useEffect(() => {
     const saved = window.localStorage.getItem(THEME_KEY);
@@ -235,18 +266,7 @@ export default function PublicLandingPage() {
         });
         if (!response.ok) return;
         const data = (await response.json()) as MarketData;
-        if (
-          Number.isFinite(data.price) &&
-          Array.isArray(data.points) &&
-          data.points.length >= 2 &&
-          data.points.every(
-            (point) =>
-              Number.isFinite(point.time) &&
-              Number.isFinite(point.price) &&
-              point.time > 0 &&
-              point.price > 0,
-          )
-        ) {
+        if (isValidMarketData(data)) {
           setMarket(data);
           setActiveChartIndex(null);
         }
@@ -299,11 +319,63 @@ export default function PublicLandingPage() {
   }, []);
 
   useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth > 980) setMenuOpen(false);
+    };
+    window.addEventListener("resize", onResize, { passive: true });
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
     if (!loginOpen) return;
+
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => loginInputRef.current?.focus());
+
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => element.getClientRects().length > 0);
+
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", trapFocus);
+
     return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", trapFocus);
       document.body.style.overflow = previousOverflow;
+      authAbortRef.current?.abort();
+      authAbortRef.current = null;
+      if (redirectTimerRef.current != null) {
+        window.clearTimeout(redirectTimerRef.current);
+        redirectTimerRef.current = null;
+      }
+
+      const previous = lastFocusedRef.current;
+      const target = previous && previous.isConnected && previous.getClientRects().length > 0
+        ? previous
+        : menuButtonRef.current;
+      if (target) window.requestAnimationFrame(() => target.focus());
     };
   }, [loginOpen]);
 
@@ -319,12 +391,18 @@ export default function PublicLandingPage() {
         setAuthSuccess(false);
       } else if (menuOpen) {
         setMenuOpen(false);
+        window.requestAnimationFrame(() => menuButtonRef.current?.focus());
       }
     };
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [loginOpen, menuOpen]);
+
+  useEffect(() => () => {
+    authAbortRef.current?.abort();
+    if (redirectTimerRef.current != null) window.clearTimeout(redirectTimerRef.current);
+  }, []);
 
   const toggleTheme = () => {
     setTheme((value) => {
@@ -355,8 +433,21 @@ export default function PublicLandingPage() {
     setActiveChartIndex(nearestIndex);
   };
 
+  const inspectChartKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!paths.coords.length || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+    event.preventDefault();
+    setActiveChartIndex((current) => {
+      const fallback = paths.coords.length - 1;
+      const base = current == null ? fallback : current;
+      return event.key === "ArrowLeft"
+        ? Math.max(0, base - 1)
+        : Math.min(paths.coords.length - 1, base + 1);
+    });
+  };
+
   const openLogin = () => {
     setMenuOpen(false);
+    if (document.activeElement instanceof HTMLElement) lastFocusedRef.current = document.activeElement;
     if (window.location.hash !== "#login") window.history.pushState(null, "", "#login");
     setLoginOpen(true);
   };
@@ -364,6 +455,11 @@ export default function PublicLandingPage() {
   const closeLogin = () => {
     if (window.location.hash === "#login") {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
+    authAbortRef.current?.abort();
+    if (redirectTimerRef.current != null) {
+      window.clearTimeout(redirectTimerRef.current);
+      redirectTimerRef.current = null;
     }
     setLoginOpen(false);
     setAuthMessage("");
@@ -377,6 +473,7 @@ export default function PublicLandingPage() {
 
     if (!LOGIN_RE.test(login.trim())) {
       setAuthMessage("Логин: 4–32 символа, латиница, цифры или _.");
+      loginInputRef.current?.focus();
       return;
     }
     if (password.length !== 32) {
@@ -384,12 +481,18 @@ export default function PublicLandingPage() {
       return;
     }
 
+    authAbortRef.current?.abort();
+    const controller = new AbortController();
+    authAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+
     setSubmitting(true);
     try {
       const response = await fetch(getAuthEndpoint(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login: login.trim(), password: password.toUpperCase() }),
+        signal: controller.signal,
       });
       const raw = await response.text();
       let data: AuthResponse = {};
@@ -413,10 +516,19 @@ export default function PublicLandingPage() {
       );
       setAuthSuccess(true);
       setAuthMessage("Доступ подтверждён. Открываем платформу…");
-      window.setTimeout(() => window.location.assign(data.redirect_url || "/dashboard"), 500);
+      redirectTimerRef.current = window.setTimeout(
+        () => window.location.assign(data.redirect_url || "/dashboard"),
+        500,
+      );
     } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : "Ошибка входа.");
+      if (controller.signal.aborted) {
+        setAuthMessage("Сервис авторизации не ответил вовремя. Попробуйте ещё раз.");
+      } else {
+        setAuthMessage(error instanceof Error ? error.message : "Ошибка входа.");
+      }
     } finally {
+      window.clearTimeout(timeout);
+      if (authAbortRef.current === controller) authAbortRef.current = null;
       setSubmitting(false);
     }
   };
@@ -450,9 +562,11 @@ export default function PublicLandingPage() {
               <span className={styles.themeSwatches} aria-hidden="true"><i /><i /></span>
               <span className={styles.themeLabel}>{theme === "gold" ? "Gold" : "Solana"}</span>
             </button>
-            <button className={`${styles.button} ${styles.buttonGhost} ${styles.buttonSmall}`} onClick={openLogin}>Войти</button>
-            <button className={`${styles.button} ${styles.buttonSmall} ${styles.desktopCta}`} onClick={openLogin}>Открыть платформу <ArrowRight size={16} /></button>
+            <button type="button" className={`${styles.button} ${styles.buttonGhost} ${styles.buttonSmall}`} onClick={openLogin}>Войти</button>
+            <button type="button" className={`${styles.button} ${styles.buttonSmall} ${styles.desktopCta}`} onClick={openLogin}>Открыть платформу <ArrowRight size={16} /></button>
             <button
+              ref={menuButtonRef}
+              type="button"
               className={styles.menuButton}
               onClick={() => setMenuOpen((value) => !value)}
               aria-label={menuOpen ? "Закрыть меню" : "Открыть меню"}
@@ -470,8 +584,8 @@ export default function PublicLandingPage() {
           <a href="#market" onClick={() => setMenuOpen(false)}>Рынок SOL</a>
           <a href="#workspace" onClick={() => setMenuOpen(false)}>Рабочая среда</a>
           <div className={styles.mobileActions}>
-            <button className={`${styles.button} ${styles.buttonGhost}`} onClick={openLogin}>Войти</button>
-            <button className={styles.button} onClick={openLogin}>Открыть платформу</button>
+            <button type="button" className={`${styles.button} ${styles.buttonGhost}`} onClick={openLogin}>Войти</button>
+            <button type="button" className={styles.button} onClick={openLogin}>Открыть платформу</button>
           </div>
         </div>
       </header>
@@ -486,7 +600,7 @@ export default function PublicLandingPage() {
               Данные. Скорость. Контроль.
             </p>
             <div className={styles.heroActions}>
-              <button className={styles.button} onClick={openLogin}>Открыть платформу <ArrowRight size={17} /></button>
+              <button type="button" className={styles.button} onClick={openLogin}>Открыть платформу <ArrowRight size={17} /></button>
               <a className={`${styles.button} ${styles.buttonGhost}`} href="#features">Смотреть возможности</a>
             </div>
             <div className={styles.heroMeta}>
@@ -522,9 +636,14 @@ export default function PublicLandingPage() {
                 className={`${styles.chartWrap} ${paths.line ? styles.chartInteractive : ""}`}
                 onPointerMove={inspectChart}
                 onPointerDown={inspectChart}
-                onPointerLeave={() => setActiveChartIndex(null)}
+                onPointerLeave={(event) => {
+                  if (event.pointerType !== "touch") setActiveChartIndex(null);
+                }}
                 onPointerCancel={() => setActiveChartIndex(null)}
-                aria-label="Интерактивный график реальных точек цены Solana за 24 часа"
+                onKeyDown={inspectChartKeyboard}
+                role="group"
+                tabIndex={paths.line ? 0 : -1}
+                aria-label="Интерактивный график реальных точек цены Solana за 24 часа. Используйте стрелки влево и вправо для просмотра точек."
               >
                 {paths.line ? (
                   <>
@@ -566,6 +685,7 @@ export default function PublicLandingPage() {
                     {activeCoord ? (
                       <div
                         className={styles.chartTooltip}
+                        aria-live="polite"
                         style={{
                           left: `${Math.min(90, Math.max(10, (activeCoord.x / CHART_WIDTH) * 100))}%`,
                         }}
@@ -653,7 +773,7 @@ export default function PublicLandingPage() {
                 <span><i><Check size={12} /></i> Быстрый переход к запуску токена</span>
                 <span><i><Check size={12} /></i> Один responsive workflow</span>
               </div>
-              <button className={styles.button} onClick={openLogin}>Открыть workspace <ArrowRight size={16} /></button>
+              <button type="button" className={styles.button} onClick={openLogin}>Открыть workspace <ArrowRight size={16} /></button>
             </div>
 
             <div className={styles.workspacePreview} aria-hidden="true">
@@ -679,7 +799,7 @@ export default function PublicLandingPage() {
         <section className={styles.cta} data-reveal>
           <div><div className={styles.ctaCrown} aria-hidden="true">✦</div><h2>Будущее Solana начинается с лучшего контекста.</h2><p>Откройте POTAPoff и соберите весь рабочий процесс в одном месте.</p></div>
           <div className={styles.ctaActions}>
-            <button className={styles.button} onClick={openLogin}>Открыть POTAPoff <ArrowRight size={17} /></button>
+            <button type="button" className={styles.button} onClick={openLogin}>Открыть POTAPoff <ArrowRight size={17} /></button>
             <button className={`${styles.button} ${styles.buttonGhost}`} type="button" onClick={toggleTheme}>Тема: {theme === "gold" ? "Gold" : "Solana"}</button>
           </div>
         </section>
@@ -697,14 +817,14 @@ export default function PublicLandingPage() {
 
       {loginOpen && (
         <div className={styles.loginBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeLogin(); }}>
-          <div className={styles.loginCard} role="dialog" aria-modal="true" aria-labelledby="login-title">
+          <div ref={dialogRef} className={styles.loginCard} role="dialog" aria-modal="true" aria-labelledby="login-title">
             <div className={styles.loginTop}>
               <div><h2 id="login-title">Войти в POTAPoff</h2><p>Используйте действующие данные доступа к платформе.</p></div>
-              <button className={styles.closeButton} onClick={closeLogin} aria-label="Закрыть"><X size={17} /></button>
+              <button type="button" className={styles.closeButton} onClick={closeLogin} aria-label="Закрыть"><X size={17} /></button>
             </div>
             <form className={styles.loginForm} onSubmit={submitLogin}>
-              <label>Логин<input autoComplete="username" value={login} onChange={(event) => setLogin(event.target.value)} maxLength={32} /></label>
-              <label>Пароль<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} maxLength={32} /></label>
+              <label>Логин<input ref={loginInputRef} name="username" autoComplete="username" value={login} onChange={(event) => setLogin(event.target.value)} maxLength={32} /></label>
+              <label>Пароль<input name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} maxLength={32} /></label>
               <div className={`${styles.loginAlert} ${authSuccess ? styles.loginSuccess : ""}`} aria-live="polite">{authMessage}</div>
               <button className={styles.button} type="submit" disabled={submitting}>{submitting ? "Проверяем доступ…" : "Войти в платформу"}</button>
             </form>
