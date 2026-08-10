@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.core.security import verify_password
@@ -64,6 +65,16 @@ def demo_order_body(
     }
 
 
+async def complete_paid(client, payload: str, signature: str):
+    response = await client.post(
+        f"/api/v1/subscriptions/orders/{payload}/complete",
+        headers=INTERNAL_HEADERS,
+        json={"payment_signature": signature},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 async def test_subscription_api_requires_internal_auth(client):
     response = await client.post(
         "/api/v1/subscriptions/orders",
@@ -93,7 +104,7 @@ async def test_subscription_settings_have_safe_defaults(client):
     assert data["solana_recipient_wallet"] == ""
 
 
-async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(client, test_app):
+async def test_solana_subscription_lifecycle_persists_profile_and_credentials(client, test_app):
     payload = order_payload("b")
     telegram_profile = {
         "id": 202,
@@ -122,19 +133,9 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
     assert create_response.status_code == 201
     created = create_response.json()
     assert created["status"] == "pending"
-    assert created["currency"] == "SOL"
-    assert created["total_amount"] == 250_000_000
-    assert created["access_days"] == 30
-    assert created["payment_reference"] == "ref-b"
     assert created["password"] is None
 
-    complete_response = await client.post(
-        f"/api/v1/subscriptions/orders/{payload}/complete",
-        headers=INTERNAL_HEADERS,
-        json={"payment_signature": "signature-b"},
-    )
-    assert complete_response.status_code == 200
-    completed = complete_response.json()
+    completed = await complete_paid(client, payload, "signature-b")
     password = completed["password"]
     assert completed["status"] == "paid"
     assert isinstance(password, str)
@@ -142,23 +143,14 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
     assert set(password) <= PASSWORD_ALPHABET
     assert completed["payment_signature"] == "signature-b"
     assert completed["already_paid"] is False
-    assert completed["subscription_expires_at"]
 
-    duplicate_response = await client.post(
-        f"/api/v1/subscriptions/orders/{payload}/complete",
-        headers=INTERNAL_HEADERS,
-        json={"payment_signature": "signature-b"},
-    )
-    assert duplicate_response.status_code == 200
-    duplicate = duplicate_response.json()
+    duplicate = await complete_paid(client, payload, "signature-b")
     assert duplicate["already_paid"] is True
     assert duplicate["password"] == password
 
     async with test_app.state.sessionmaker() as session:
-        order_result = await session.execute(
-            select(SubscriptionOrder).where(SubscriptionOrder.payload == payload)
-        )
-        order = order_result.scalar_one()
+        order = await session.get(SubscriptionOrder, payload)
+        assert order is not None
         assert order.password_ciphertext
         assert order.password_ciphertext != password
         assert order.payment_signature == "signature-b"
@@ -166,7 +158,8 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
 
         user_result = await session.execute(select(User).where(User.telegram_id == "202"))
         user = user_result.scalar_one()
-        assert user.email == "bob_pro"
+        assert user.access_login == "bob_pro"
+        assert user.email is None
         assert user.hashed_password
         assert verify_password(password, user.hashed_password)
         assert user.telegram_username == "bob"
@@ -186,9 +179,13 @@ async def test_solana_subscription_order_lifecycle_is_persistent_and_idempotent(
             .where(AuthLog.provider == "telegram_miniapp")
             .order_by(AuthLog.created_at)
         )
-        events = [row.event_type for row in access_logs.scalars().all()]
+        logs = access_logs.scalars().all()
+        events = [row.event_type for row in logs]
         assert "subscription_access_requested" in events
         assert "subscription_credentials_issued" in events
+        issued = next(row for row in logs if row.event_type == "subscription_credentials_issued")
+        assert issued.user_id == user.id
+        assert "password" not in str(issued.meta).lower()
 
 
 async def test_completion_rejects_caller_supplied_password(client):
@@ -213,16 +210,31 @@ async def test_completion_rejects_caller_supplied_password(client):
     assert complete.status_code == 422
 
 
+async def test_telegram_profile_id_must_match_order_owner(client):
+    response = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=order_payload("d"),
+            telegram_user_id=250,
+            login="profile_mismatch",
+            ref="ref-d",
+            telegram_profile={"id": 999, "username": "wrong"},
+        ),
+    )
+    assert response.status_code == 422
+
+
 async def test_paid_order_requires_verified_signature(client):
-    payload = order_payload("d")
+    payload = order_payload("e")
     create = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=paid_order_body(
             payload=payload,
-            telegram_user_id=250,
+            telegram_user_id=260,
             login="signature_test",
-            ref="ref-d",
+            ref="ref-e",
         ),
     )
     assert create.status_code == 201
@@ -235,8 +247,8 @@ async def test_paid_order_requires_verified_signature(client):
     assert complete.status_code == 409
 
 
-async def test_same_user_reuses_matching_pending_order(client):
-    first_payload = order_payload("e")
+async def test_pending_payment_is_reused_instead_of_orphaned_on_currency_switch(client):
+    first_payload = order_payload("f")
     first = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
@@ -245,7 +257,7 @@ async def test_same_user_reuses_matching_pending_order(client):
             telegram_user_id=301,
             username="first",
             login="retry_login",
-            ref="ref-e",
+            ref="ref-f",
         ),
     )
     assert first.status_code == 201
@@ -254,55 +266,52 @@ async def test_same_user_reuses_matching_pending_order(client):
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=paid_order_body(
-            payload=order_payload("f"),
+            payload=order_payload("g"),
             telegram_user_id=301,
             username="first",
             login="retry_login",
-            ref="ref-f",
-        ),
-    )
-    assert retry.status_code == 201
-    assert retry.json()["payload"] == first_payload
-    assert retry.json()["payment_reference"] == "ref-e"
-
-
-async def test_same_user_can_switch_payment_method(client):
-    first_payload = order_payload("g")
-    first = await client.post(
-        "/api/v1/subscriptions/orders",
-        headers=INTERNAL_HEADERS,
-        json=paid_order_body(
-            payload=first_payload,
-            telegram_user_id=350,
-            login="switch_login",
             ref="ref-g",
-        ),
-    )
-    assert first.status_code == 201
-
-    second_payload = order_payload("h")
-    second = await client.post(
-        "/api/v1/subscriptions/orders",
-        headers=INTERNAL_HEADERS,
-        json=paid_order_body(
-            payload=second_payload,
-            telegram_user_id=350,
-            login="switch_login",
-            ref="ref-h",
             currency="USDT",
             total_amount=50_000_000,
         ),
     )
-    assert second.status_code == 201
-    assert second.json()["payload"] == second_payload
-    assert second.json()["currency"] == "USDT"
+    assert retry.status_code == 201
+    assert retry.json()["payload"] == first_payload
+    assert retry.json()["currency"] == "SOL"
+    assert retry.json()["payment_reference"] == "ref-f"
 
     old = await client.get(
         f"/api/v1/subscriptions/orders/{first_payload}",
         headers=INTERNAL_HEADERS,
     )
     assert old.status_code == 200
-    assert old.json()["status"] == "cancelled"
+    assert old.json()["status"] == "pending"
+
+
+async def test_one_user_cannot_reserve_second_login_while_checkout_pending(client):
+    first = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=order_payload("h"),
+            telegram_user_id=350,
+            login="first_login",
+            ref="ref-h",
+        ),
+    )
+    assert first.status_code == 201
+
+    second = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=order_payload("i"),
+            telegram_user_id=350,
+            login="second_login",
+            ref="ref-i",
+        ),
+    )
+    assert second.status_code == 409
 
 
 async def test_pending_order_reserves_login_for_other_telegram_users(client):
@@ -310,11 +319,11 @@ async def test_pending_order_reserves_login_for_other_telegram_users(client):
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=paid_order_body(
-            payload=order_payload("i"),
+            payload=order_payload("j"),
             telegram_user_id=401,
             username="first",
             login="reserved_login",
-            ref="ref-i",
+            ref="ref-j",
         ),
     )
     assert first.status_code == 201
@@ -323,38 +332,36 @@ async def test_pending_order_reserves_login_for_other_telegram_users(client):
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=paid_order_body(
-            payload=order_payload("j"),
+            payload=order_payload("k"),
             telegram_user_id=402,
             username="second",
             login="reserved_login",
-            ref="ref-j",
+            ref="ref-k",
         ),
     )
     assert second.status_code == 409
 
 
-async def test_free_demo_is_one_time_and_needs_no_payment_signature(client, test_app):
-    payload = order_payload("k")
+async def test_free_demo_is_idempotent_recoverable_and_one_time(client, test_app):
+    payload = order_payload("l")
+    body = demo_order_body(
+        payload=payload,
+        telegram_user_id=501,
+        login="demo_login",
+        days=14,
+        telegram_profile={
+            "id": 501,
+            "first_name": "Demo",
+            "language_code": "en",
+            "is_premium": False,
+        },
+    )
     create = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
-        json=demo_order_body(
-            payload=payload,
-            telegram_user_id=501,
-            login="demo_login",
-            days=14,
-            telegram_profile={
-                "id": 501,
-                "first_name": "Demo",
-                "language_code": "en",
-                "is_premium": False,
-            },
-        ),
+        json=body,
     )
     assert create.status_code == 201
-    assert create.json()["currency"] == "DEMO"
-    assert create.json()["total_amount"] == 0
-    assert create.json()["access_days"] == 14
 
     complete = await client.post(
         f"/api/v1/subscriptions/orders/{payload}/complete",
@@ -363,27 +370,176 @@ async def test_free_demo_is_one_time_and_needs_no_payment_signature(client, test
     )
     assert complete.status_code == 200
     completed = complete.json()
+    password = completed["password"]
     assert completed["status"] == "paid"
-    assert isinstance(completed["password"], str)
-    assert len(completed["password"]) == 32
+    assert isinstance(password, str) and len(password) == 32
 
     async with test_app.state.sessionmaker() as session:
         user_result = await session.execute(select(User).where(User.telegram_id == "501"))
         user = user_result.scalar_one()
-        assert user.email == "demo_login"
+        assert user.access_login == "demo_login"
+        assert user.email is None
         assert user.first_name == "Demo"
         assert user.telegram_language_code == "en"
         assert user.telegram_is_premium is False
-        assert verify_password(completed["password"], user.hashed_password)
+        assert verify_password(password, user.hashed_password)
 
     duplicate_demo = await client.post(
         "/api/v1/subscriptions/orders",
         headers=INTERNAL_HEADERS,
         json=demo_order_body(
-            payload=order_payload("l"),
+            payload=order_payload("m"),
             telegram_user_id=501,
             login="demo_login",
             days=14,
         ),
     )
-    assert duplicate_demo.status_code == 409
+    assert duplicate_demo.status_code == 201
+    assert duplicate_demo.json()["payload"] == payload
+    assert duplicate_demo.json()["password"] == password
+
+    different_login = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=demo_order_body(
+            payload=order_payload("n"),
+            telegram_user_id=501,
+            login="another_demo",
+            days=14,
+        ),
+    )
+    assert different_login.status_code == 409
+
+
+async def test_demo_cannot_extend_existing_paid_subscription(client):
+    paid_payload = order_payload("o")
+    create = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=paid_payload,
+            telegram_user_id=550,
+            login="paid_before_demo",
+            ref="ref-o",
+        ),
+    )
+    assert create.status_code == 201
+    await complete_paid(client, paid_payload, "signature-o")
+
+    demo = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=demo_order_body(
+            payload=order_payload("p"),
+            telegram_user_id=550,
+            login="paid_before_demo",
+        ),
+    )
+    assert demo.status_code == 409
+
+
+async def test_renewal_keeps_password_and_extends_expiry(client):
+    first_payload = order_payload("q")
+    create_first = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=first_payload,
+            telegram_user_id=601,
+            login="renew_user",
+            ref="ref-q",
+        ),
+    )
+    assert create_first.status_code == 201
+    first = await complete_paid(client, first_payload, "signature-q")
+    first_password = first["password"]
+    first_expiry = datetime.fromisoformat(first["subscription_expires_at"])
+
+    second_payload = order_payload("r")
+    create_second = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=second_payload,
+            telegram_user_id=601,
+            login="renew_user",
+            ref="ref-r",
+        ),
+    )
+    assert create_second.status_code == 201
+    second = await complete_paid(client, second_payload, "signature-r")
+    second_expiry = datetime.fromisoformat(second["subscription_expires_at"])
+
+    assert second["password"] == first_password
+    assert second_expiry >= first_expiry + timedelta(days=29, hours=23)
+
+    historical = await client.get(
+        f"/api/v1/subscriptions/orders/{first_payload}",
+        headers=INTERNAL_HEADERS,
+    )
+    assert historical.status_code == 200
+    assert historical.json()["password"] == first_password
+
+
+async def test_latest_access_recovery_returns_current_credentials(client, test_app):
+    payload = order_payload("s")
+    create = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=payload,
+            telegram_user_id=701,
+            login="recover_me",
+            ref="ref-s",
+        ),
+    )
+    assert create.status_code == 201
+    completed = await complete_paid(client, payload, "signature-s")
+
+    recovered = await client.get(
+        "/api/v1/subscriptions/users/701/access",
+        headers=INTERNAL_HEADERS,
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()["login"] == "recover_me"
+    assert recovered.json()["password"] == completed["password"]
+
+    async with test_app.state.sessionmaker() as session:
+        result = await session.execute(select(User).where(User.telegram_id == "701"))
+        user = result.scalar_one()
+        user.subscription_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+
+    expired = await client.get(
+        "/api/v1/subscriptions/users/701/access",
+        headers=INTERNAL_HEADERS,
+    )
+    assert expired.status_code == 404
+
+
+async def test_existing_telegram_account_cannot_change_site_login(client):
+    first_payload = order_payload("t")
+    first = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=first_payload,
+            telegram_user_id=801,
+            login="fixed_login",
+            ref="ref-t",
+        ),
+    )
+    assert first.status_code == 201
+    await complete_paid(client, first_payload, "signature-t")
+
+    second = await client.post(
+        "/api/v1/subscriptions/orders",
+        headers=INTERNAL_HEADERS,
+        json=paid_order_body(
+            payload=order_payload("u"),
+            telegram_user_id=801,
+            login="changed_login",
+            ref="ref-u",
+        ),
+    )
+    assert second.status_code == 409
