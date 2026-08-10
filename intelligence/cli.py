@@ -21,6 +21,7 @@ from intelligence.bootstrap import (
 from intelligence.errors.exceptions import IntelligenceError
 from intelligence.health.doctor import run_registry_health_check, summarize_health
 from intelligence.security.sanitizer import sanitize_payload, sanitize_text
+from intelligence.storage.postgres_schema import initialize_postgres_schema
 from intelligence.worker.queue import IntelligenceJob
 
 
@@ -48,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    subparsers.add_parser("init-db", help="Initialize the selected durable backend schema")
     subparsers.add_parser("doctor", help="Check all configured intelligence providers")
 
     enqueue = subparsers.add_parser("enqueue", help="Queue one intelligence collection job")
@@ -93,15 +95,29 @@ def _job_payload(job: IntelligenceJob) -> dict[str, Any]:
     }
 
 
+def _postgres_dsn(args: argparse.Namespace) -> str:
+    dsn = str(args.postgres_dsn).strip()
+    if not dsn:
+        raise ValueError(
+            "PostgreSQL backend requires POTAPOFF_INTELLIGENCE_POSTGRES_DSN or --postgres-dsn"
+        )
+    return dsn
+
+
 def _runtime_from_args(args: argparse.Namespace) -> IntelligenceRuntime:
     if args.backend == "postgres":
-        dsn = str(args.postgres_dsn).strip()
-        if not dsn:
-            raise ValueError(
-                "PostgreSQL backend requires POTAPOFF_INTELLIGENCE_POSTGRES_DSN or --postgres-dsn"
-            )
-        return build_postgres_runtime(dsn)
+        return build_postgres_runtime(_postgres_dsn(args))
     return build_sqlite_runtime(args.db)
+
+
+def _initialize_backend(args: argparse.Namespace) -> int:
+    if args.backend == "postgres":
+        initialize_postgres_schema(_postgres_dsn(args))
+    else:
+        with build_sqlite_runtime(args.db):
+            pass
+    _emit({"initialized": True, "backend": args.backend})
+    return 0
 
 
 async def _doctor(runtime: IntelligenceRuntime) -> int:
@@ -120,6 +136,13 @@ async def _run_once(runtime: IntelligenceRuntime) -> int:
     return 0 if job.status.value == "completed" else 1
 
 
+async def _wait_for_stop(stop: asyncio.Event, delay: float) -> None:
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=delay)
+    except asyncio.TimeoutError:
+        pass
+
+
 async def _worker_loop(runtime: IntelligenceRuntime, poll_seconds: float) -> int:
     if poll_seconds < 0.1 or poll_seconds > 3600:
         raise ValueError("poll-seconds must be between 0.1 and 3600")
@@ -134,14 +157,24 @@ async def _worker_loop(runtime: IntelligenceRuntime, poll_seconds: float) -> int
         except (NotImplementedError, RuntimeError):
             pass
 
+    consecutive_runtime_failures = 0
     try:
         while not stop.is_set():
-            job = await runtime.worker.run_next()
+            try:
+                job = await runtime.worker.run_next()
+                consecutive_runtime_failures = 0
+            except IntelligenceError:
+                consecutive_runtime_failures += 1
+                delay = min(poll_seconds * (2 ** min(consecutive_runtime_failures - 1, 5)), 60.0)
+                _emit(
+                    {"error": "runtime_unavailable", "retry_in_seconds": delay},
+                    stream=sys.stderr,
+                )
+                await _wait_for_stop(stop, delay)
+                continue
+
             if job is None:
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=poll_seconds)
-                except asyncio.TimeoutError:
-                    pass
+                await _wait_for_stop(stop, poll_seconds)
                 continue
             _emit({"id": job.id, "status": job.status.value})
         return 0
@@ -187,8 +220,14 @@ def main(
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
+        if args.command == "init-db" and runtime_factory is None:
+            return _initialize_backend(args)
+
         runtime = runtime_factory(args.db) if runtime_factory is not None else _runtime_from_args(args)
         with runtime:
+            if args.command == "init-db":
+                _emit({"initialized": True, "backend": "injected"})
+                return 0
             if args.command == "doctor":
                 return asyncio.run(_doctor(runtime))
             if args.command == "enqueue":
