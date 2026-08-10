@@ -10,6 +10,7 @@ import {
   getSubscriptionSettings,
   markSubscriptionPaid,
   SubscriptionCurrency,
+  SubscriptionStoreError,
 } from "@/lib/telegram/subscription-store";
 import {
   baseUnitsToDecimal,
@@ -156,6 +157,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("[Mini App] Unable to create subscription checkout:", error);
     const message = error instanceof Error ? error.message : "Unable to create checkout";
+    if (error instanceof SubscriptionStoreError) {
+      const status = error.status >= 400 && error.status < 500 ? error.status : 503;
+      return NextResponse.json({ error: message }, { status });
+    }
     const isAuthError =
       message.startsWith("Telegram initData") || message.includes("inside Telegram Mini App");
     const status = isAuthError ? 401 : message.includes("not configured") ? 503 : 400;
