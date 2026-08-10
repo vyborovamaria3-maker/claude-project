@@ -5,6 +5,9 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
+    HOME=/tmp/potapoff-intelligence \
+    XDG_CACHE_HOME=/tmp/potapoff-intelligence/cache \
+    DENO_DIR=/tmp/potapoff-intelligence/deno \
     DENO_NO_UPDATE_CHECK=1 \
     DENO_NO_PROMPT=1 \
     POTAPOFF_INTELLIGENCE_DB=/var/lib/potapoff-intelligence/intelligence.sqlite3
