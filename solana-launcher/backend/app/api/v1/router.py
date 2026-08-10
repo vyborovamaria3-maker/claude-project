@@ -20,10 +20,12 @@ api_router.include_router(
     tags=["telegram-intelligence"],
     dependencies=[Depends(get_current_user)],
 )
+# social_router mixes subscriber reads with the internal X ingestion endpoint.
+# Read routes enforce get_current_user inside the module; /x/ingest keeps its
+# separate BACKEND_API_KEY authentication and must not require a user JWT.
 api_router.include_router(
     telegram_intelligence.social_router,
     prefix="/social",
     tags=["social-intelligence"],
-    dependencies=[Depends(get_current_user)],
 )
 api_router.include_router(health.router, tags=["health"])
