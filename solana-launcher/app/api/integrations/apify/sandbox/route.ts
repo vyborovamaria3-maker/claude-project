@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getApifySummary, runApifyActor } from "@/lib/apify";
-import { requireProdAuth } from "@/lib/routeAuth";
+import { requireProdSuperuser } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const authError = await requireProdSuperuser(request);
+    if (authError) return authError;
+
     return NextResponse.json({ sandbox: getApifySummary().latestSandboxRun, config: getApifySummary().config });
   } catch (error) {
     return NextResponse.json(
@@ -18,7 +21,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const authError = await requireProdAuth(request);
+    const authError = await requireProdSuperuser(request);
     if (authError) return authError;
 
     const body = await request.json().catch(() => ({}));
