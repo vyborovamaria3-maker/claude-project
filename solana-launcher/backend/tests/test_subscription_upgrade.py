@@ -1,5 +1,9 @@
 from datetime import datetime
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures("configured_subscription_settings")
+
 INTERNAL_HEADERS = {"X-Dev-Internal": "miniapp-subscription"}
 RECIPIENT = "11111111111111111111111111111111"
 
@@ -23,7 +27,7 @@ async def test_active_demo_can_upgrade_to_paid_without_rotating_password(client)
             "login": login,
             "currency": "DEMO",
             "total_amount": 0,
-            "access_days": 7,
+            "access_days": 14,
             "recipient_wallet": None,
             "payment_reference": None,
             "payment_url": None,
@@ -51,7 +55,7 @@ async def test_active_demo_can_upgrade_to_paid_without_rotating_password(client)
             "telegram_profile": {"id": telegram_id, "username": "upgrade_user"},
             "login": login,
             "currency": "SOL",
-            "total_amount": 100_000_000,
+            "total_amount": 250_000_000,
             "access_days": 30,
             "recipient_wallet": RECIPIENT,
             "payment_reference": "upgrade-reference",
@@ -85,7 +89,7 @@ async def test_paid_user_cannot_claim_demo_after_purchase(client):
             "telegram_user_id": telegram_id,
             "login": login,
             "currency": "USDT",
-            "total_amount": 10_000_000,
+            "total_amount": 50_000_000,
             "access_days": 30,
             "recipient_wallet": RECIPIENT,
             "payment_reference": "paid-reference",
@@ -110,7 +114,7 @@ async def test_paid_user_cannot_claim_demo_after_purchase(client):
             "login": login,
             "currency": "DEMO",
             "total_amount": 0,
-            "access_days": 7,
+            "access_days": 14,
             "recipient_wallet": None,
             "payment_reference": None,
             "payment_url": None,
