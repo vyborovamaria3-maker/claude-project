@@ -11,7 +11,9 @@ on:
       - "admin-site/tests/test_intelligence_*.py"
       - "admin-site/docker-compose.yml"
       - "admin-site/.env.example"
+      - "admin-site/.env.intelligence.example"
       - "admin-site/requirements.txt"
+      - ".gitignore"
       - ".github/workflows/intelligence-ci.yml"
 
 permissions:
@@ -99,8 +101,20 @@ jobs:
       - name: Prepare Compose smoke configuration
         run: |
           cp admin-site/.env.example admin-site/.env
+          cp admin-site/.env.intelligence.example admin-site/.env.intelligence
           cp admin-site/sources.example.json admin-site/sources.json
           cp admin-site/logs.example.json admin-site/logs.json
+
+      - name: Validate secret separation templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q '^POTAPOFF_INTELLIGENCE_POSTGRES_DSN=' admin-site/.env.example; then
+            echo "Worker write DSN must not exist in admin .env template" >&2
+            exit 1
+          fi
+          grep -q '^POTAPOFF_INTELLIGENCE_POSTGRES_DSN=' admin-site/.env.intelligence.example
+          grep -q '^ADMIN_INTELLIGENCE_POSTGRES_DSN=' admin-site/.env.example
 
       - name: Validate Docker Compose
         run: docker compose -f admin-site/docker-compose.yml config --quiet
