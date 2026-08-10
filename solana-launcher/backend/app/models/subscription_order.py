@@ -17,13 +17,6 @@ class SubscriptionOrder(Base):
             sqlite_where=text("status = 'pending'"),
         ),
         Index(
-            "uq_subscription_orders_pending_user",
-            "telegram_user_id",
-            unique=True,
-            postgresql_where=text("status = 'pending'"),
-            sqlite_where=text("status = 'pending'"),
-        ),
-        Index(
             "uq_subscription_orders_demo_user",
             "telegram_user_id",
             unique=True,
