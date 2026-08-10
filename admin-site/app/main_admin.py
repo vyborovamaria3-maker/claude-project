@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 
 from .analysis_api_v3 import build_analysis_router
 from .analysis_editor import LiveAnalysisProfileStore
 from .analysis_editor_api import build_analysis_editor_router
+from .intelligence_view import IntelligenceViewStore, build_intelligence_router
 from .main import create_app as create_base_app
 from .security_v2 import install_security
 from .services import TELEGRAM_TABLES
@@ -23,8 +26,12 @@ for _table in (
 def create_app() -> FastAPI:
     app = create_base_app()
     app.state.analysis_profiles = LiveAnalysisProfileStore(app.state.settings.audit_db_path)
+    app.state.intelligence_view = IntelligenceViewStore(
+        os.getenv("ADMIN_INTELLIGENCE_DB", "/data/intelligence/intelligence.sqlite3")
+    )
     app.include_router(build_analysis_router())
     app.include_router(build_analysis_editor_router())
+    app.include_router(build_intelligence_router())
     install_security(app)
     return app
 
