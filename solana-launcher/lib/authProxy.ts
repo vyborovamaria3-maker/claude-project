@@ -18,21 +18,23 @@ function getCandidateBackendBaseUrls() {
 
 function getClientIp(request: Request): string | null {
   // Production nginx overwrites X-Real-IP with its immediate peer address.
-  // Do not trust the first X-Forwarded-For value here: a browser can inject
-  // that header and proxy_add_x_forwarded_for would preserve it.
+  // Do not trust X-Forwarded-For here: a browser can inject it before nginx
+  // appends its own hop.
   const candidate = request.headers.get("x-real-ip")?.trim() || "";
   if (!candidate || candidate.length > 64 || /[\r\n]/.test(candidate)) return null;
   return candidate;
 }
 
 async function proxyJsonRequest(request: Request, backendPath: string) {
-  const requestBody = await request.text();
+  const method = request.method.toUpperCase();
+  const hasBody = method !== "GET" && method !== "HEAD";
+  const requestBody = hasBody ? await request.text() : undefined;
   const contentType = request.headers.get("content-type") || "application/json";
   const baseUrls = getCandidateBackendBaseUrls();
 
-  const proxiedHeaders: Record<string, string> = {
-    "Content-Type": contentType,
-  };
+  const proxiedHeaders: Record<string, string> = {};
+  if (hasBody) proxiedHeaders["Content-Type"] = contentType;
+
   const authorization = request.headers.get("authorization");
   if (authorization) proxiedHeaders.Authorization = authorization;
 
@@ -51,9 +53,9 @@ async function proxyJsonRequest(request: Request, backendPath: string) {
   for (const baseUrl of baseUrls) {
     try {
       const response = await fetch(`${baseUrl}${backendPath}`, {
-        method: request.method,
+        method,
         headers: proxiedHeaders,
-        body: requestBody,
+        ...(hasBody ? { body: requestBody } : {}),
         cache: "no-store",
       });
       resolvedBackendBaseUrl = baseUrl;
@@ -65,6 +67,7 @@ async function proxyJsonRequest(request: Request, backendPath: string) {
         status: response.status,
         headers: {
           "Content-Type": responseContentType,
+          "Cache-Control": "no-store",
         },
       });
     } catch (error) {
