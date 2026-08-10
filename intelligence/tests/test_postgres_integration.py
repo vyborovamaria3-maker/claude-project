@@ -73,7 +73,10 @@ class PostgresIntegrationTests(unittest.TestCase):
         assert loaded is not None
         self.assertEqual(loaded.content, "first evidence")
         self.assertEqual(loaded.metrics, {"score": 1})
-        self.assertEqual(store.find_by_hash(raw_hash).id, first.id)
+        found = store.find_by_hash(raw_hash)
+        self.assertIsNotNone(found)
+        assert found is not None
+        self.assertEqual(found.id, first.id)
 
     def test_two_workers_claim_distinct_jobs_with_skip_locked(self) -> None:
         queue_a = PostgresJobQueue(self.dsn)
@@ -126,6 +129,8 @@ class PostgresIntegrationTests(unittest.TestCase):
                     """,
                     (f"forbidden-{uuid4()}", "integration", "must fail"),
                 )
+            connection.rollback()
+            connection.execute("SELECT COUNT(*) FROM intelligence_jobs").fetchone()
 
 
 if __name__ == "__main__":
