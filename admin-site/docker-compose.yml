@@ -4,6 +4,8 @@ services:
     container_name: potapoff-admin
     restart: unless-stopped
     env_file: .env
+    environment:
+      ADMIN_INTELLIGENCE_DB: /data/intelligence/intelligence.sqlite3
     ports:
       - "127.0.0.1:18080:8080"
     volumes:
@@ -12,6 +14,7 @@ services:
       - ../solana-launcher/data:/data/launcher:ro
       - ../telegram-miniapp/backend-new/prisma:/data/miniapp:ro
       - admin-state:/var/lib/potapoff-admin
+      - intelligence-state:/data/intelligence:ro
       - /var/log/potapoff:/logs/apps:ro
       - admin-logs:/logs/docker:ro
     networks:
