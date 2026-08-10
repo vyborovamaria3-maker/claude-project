@@ -27,6 +27,7 @@ from intelligence.worker.queue import IntelligenceJob
 
 DEFAULT_DB_PATH = "/var/lib/potapoff-intelligence/intelligence.sqlite3"
 RuntimeFactory = Callable[[str | Path], IntelligenceRuntime]
+_HEALTHCHECK_ID = "__potapoff_runtime_healthcheck__"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init-db", help="Initialize the selected durable backend schema")
+    subparsers.add_parser("runtime-health", help="Probe durable queue and storage connectivity")
     subparsers.add_parser("doctor", help="Check all configured intelligence providers")
 
     enqueue = subparsers.add_parser("enqueue", help="Queue one intelligence collection job")
@@ -117,6 +119,15 @@ def _initialize_backend(args: argparse.Namespace) -> int:
         with build_sqlite_runtime(args.db):
             pass
     _emit({"initialized": True, "backend": args.backend})
+    return 0
+
+
+def _runtime_health(runtime: IntelligenceRuntime) -> int:
+    # Harmless point reads exercise both persistence boundaries without claiming jobs,
+    # invoking providers, or returning persisted data.
+    runtime.queue.get(_HEALTHCHECK_ID)
+    runtime.store.get(_HEALTHCHECK_ID)
+    _emit({"healthy": True})
     return 0
 
 
@@ -234,6 +245,8 @@ def main(
             if args.command == "init-db":
                 _emit({"initialized": True, "backend": "injected"})
                 return 0
+            if args.command == "runtime-health":
+                return _runtime_health(runtime)
             if args.command == "doctor":
                 return asyncio.run(_doctor(runtime))
             if args.command == "enqueue":
