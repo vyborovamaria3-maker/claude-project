@@ -188,7 +188,7 @@ def _row_to_document(row: Any) -> IntelligenceDocument:
     if published_at is not None and not isinstance(published_at, datetime):
         raise StorageError("PostgreSQL intelligence published_at is invalid")
 
-    return IntelligenceDocument(
+    document = IntelligenceDocument(
         id=_required_string(row, "id"),
         source=_required_string(row, "source"),
         content=_required_string(row, "content"),
@@ -201,3 +201,5 @@ def _row_to_document(row: Any) -> IntelligenceDocument:
         metrics=dict(metrics),
         raw_hash=_optional_string(row, "raw_hash"),
     )
+    validate_document_integrity(document)
+    return document
