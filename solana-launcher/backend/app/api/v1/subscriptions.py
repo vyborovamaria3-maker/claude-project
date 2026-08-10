@@ -70,7 +70,13 @@ async def _as_response(
             secret_key=settings.secret_key,
         )
         if recovered is not None:
-            _latest_order, password, subscription_expires_at = recovered
+            latest_order, current_password, current_expiry = recovered
+            # A password is meaningful only with the login it currently
+            # authenticates. Never expose a current password beside a stale
+            # historical order login after account migration/repair.
+            if latest_order.login == order.login:
+                password = current_password
+                subscription_expires_at = current_expiry
 
     return SubscriptionOrderRead(
         payload=order.payload,
