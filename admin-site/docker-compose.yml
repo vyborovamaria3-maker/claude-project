@@ -5,7 +5,9 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      ADMIN_INTELLIGENCE_BACKEND: ${ADMIN_INTELLIGENCE_BACKEND:-sqlite}
       ADMIN_INTELLIGENCE_DB: /data/intelligence/intelligence.sqlite3
+      ADMIN_INTELLIGENCE_POSTGRES_DSN: ${ADMIN_INTELLIGENCE_POSTGRES_DSN:-}
     ports:
       - "127.0.0.1:18080:8080"
     volumes:
@@ -40,7 +42,9 @@ services:
     container_name: potapoff-intelligence
     restart: unless-stopped
     environment:
+      POTAPOFF_INTELLIGENCE_BACKEND: ${POTAPOFF_INTELLIGENCE_BACKEND:-sqlite}
       POTAPOFF_INTELLIGENCE_DB: /var/lib/potapoff-intelligence/intelligence.sqlite3
+      POTAPOFF_INTELLIGENCE_POSTGRES_DSN: ${POTAPOFF_INTELLIGENCE_POSTGRES_DSN:-}
     volumes:
       - intelligence-state:/var/lib/potapoff-intelligence
     networks:
@@ -55,7 +59,7 @@ services:
     pids_limit: 128
     init: true
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, shutil; assert shutil.which('yt-dlp'); assert shutil.which('deno'); assert os.access('/var/lib/potapoff-intelligence', os.W_OK)"]
+      test: ["CMD", "python", "-c", "import os, shutil; assert shutil.which('yt-dlp'); assert shutil.which('deno'); backend=os.getenv('POTAPOFF_INTELLIGENCE_BACKEND','sqlite'); assert backend in {'sqlite','postgres'}; assert backend != 'sqlite' or os.access('/var/lib/potapoff-intelligence', os.W_OK); assert backend != 'postgres' or bool(os.getenv('POTAPOFF_INTELLIGENCE_POSTGRES_DSN'))"]
       interval: 30s
       timeout: 5s
       retries: 3
