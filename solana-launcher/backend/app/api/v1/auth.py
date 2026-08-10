@@ -40,9 +40,19 @@ from app.services.users import authenticate_user, create_user
 router = APIRouter()
 
 
-async def _rate_limit(request: Request, *, key: str, limit: int, window_seconds: int) -> None:
+async def _rate_limit(
+    request: Request,
+    *,
+    key: str,
+    limit: int,
+    window_seconds: int,
+) -> None:
     limiter = request.app.state.rate_limiter
-    result: RateLimitResult = await limiter.allow(key, limit=limit, window_seconds=window_seconds)
+    result: RateLimitResult = await limiter.allow(
+        key,
+        limit=limit,
+        window_seconds=window_seconds,
+    )
     if not result.allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -52,7 +62,10 @@ async def _rate_limit(request: Request, *, key: str, limit: int, window_seconds:
 
 
 def _token_response(result: LoginResult) -> Token:
-    return Token(access_token=result.access_token, expires_in=result.expires_in)
+    return Token(
+        access_token=result.access_token,
+        expires_in=result.expires_in,
+    )
 
 
 def _user_agent(request: Request) -> str | None:
@@ -113,12 +126,22 @@ async def _issue_or_forbid(
         ) from exc
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def register_user(user_in: UserCreate, session: AsyncSession = Depends(get_db)) -> UserRead:
+@router.post(
+    "/register",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_user(
+    user_in: UserCreate,
+    session: AsyncSession = Depends(get_db),
+) -> UserRead:
     try:
         user = await create_user(session, user_in)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     return UserRead.model_validate(user)
 
 
@@ -133,11 +156,20 @@ async def login(
     user_agent = _user_agent(request)
     await _rate_limit(
         request,
-        key=make_limit_key("login", "password", ip_address or "unknown"),
+        key=make_limit_key(
+            "login",
+            "password",
+            ip_address or "unknown",
+        ),
         limit=settings.auth_verify_rate_limit,
         window_seconds=settings.auth_rate_limit_window_seconds,
     )
-    user = await authenticate_user(session, form_data.username, form_data.password)
+
+    user = await authenticate_user(
+        session,
+        form_data.username,
+        form_data.password,
+    )
     if user is None:
         await _log_auth_failure(
             session,
@@ -148,7 +180,10 @@ async def login(
             error_message="Incorrect credentials",
             metadata={"identifier": form_data.username[:255]},
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect credentials",
+        )
 
     result = await _issue_or_forbid(
         session,
@@ -179,11 +214,20 @@ async def login_json(
     user_agent = _user_agent(request)
     await _rate_limit(
         request,
-        key=make_limit_key("login", "json", ip_address or "unknown"),
+        key=make_limit_key(
+            "login",
+            "json",
+            ip_address or "unknown",
+        ),
         limit=settings.auth_verify_rate_limit,
         window_seconds=settings.auth_rate_limit_window_seconds,
     )
-    user = await authenticate_user(session, login_in.email, login_in.password)
+
+    user = await authenticate_user(
+        session,
+        login_in.email,
+        login_in.password,
+    )
     if user is None:
         await _log_auth_failure(
             session,
@@ -194,7 +238,10 @@ async def login_json(
             error_message="Incorrect credentials",
             metadata={"identifier": str(login_in.email)[:255]},
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect credentials",
+        )
 
     result = await _issue_or_forbid(
         session,
@@ -230,7 +277,11 @@ async def telegram_verify(
     user_agent = _user_agent(request)
     await _rate_limit(
         request,
-        key=make_limit_key("telegram", "verify", ip_address or "unknown"),
+        key=make_limit_key(
+            "telegram",
+            "verify",
+            ip_address or "unknown",
+        ),
         limit=settings.auth_verify_rate_limit,
         window_seconds=settings.auth_rate_limit_window_seconds,
     )
@@ -250,7 +301,10 @@ async def telegram_verify(
             user_agent=user_agent,
             error_message="Invalid Telegram init_data",
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        ) from None
 
     telegram_id = str(user_data["id"])
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -264,12 +318,18 @@ async def telegram_verify(
             error_message="Telegram account has no active site access",
             metadata={"telegram_id": telegram_id},
         )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Active subscription required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required",
+        )
 
     try:
         apply_telegram_profile(user, user_data)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials") from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        ) from exc
     session.add(user)
 
     result = await _issue_or_forbid(
@@ -304,24 +364,46 @@ async def link_identity(
     if payload.wallet_address and payload.signature and payload.nonce is not None:
         await _rate_limit(
             request,
-            key=make_limit_key("link", "wallet", ip_address or "unknown", current_user.id, payload.wallet_address),
+            key=make_limit_key(
+                "link",
+                "wallet",
+                ip_address or "unknown",
+                current_user.id,
+                payload.wallet_address,
+            ),
             limit=settings.auth_verify_rate_limit,
             window_seconds=settings.auth_rate_limit_window_seconds,
         )
 
         wallet_user = await get_user_by_wallet(session, payload.wallet_address)
-        if wallet_user is None or wallet_user.nonce is None or wallet_user.nonce_expires_at is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if (
+            wallet_user is None
+            or wallet_user.nonce is None
+            or wallet_user.nonce_expires_at is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            )
 
         if wallet_user.id != current_user.id:
             if not current_user.wallet_address:
                 try:
-                    current_user = merge_user_records(current_user, wallet_user)
+                    current_user = merge_user_records(
+                        current_user,
+                        wallet_user,
+                    )
                 except ValueError:
-                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Wallet already linked")
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Wallet already linked",
+                    ) from None
                 await session.delete(wallet_user)
             else:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Wallet already linked")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Wallet already linked",
+                )
 
         wallet_message = build_phantom_message(
             app_name=settings.app_name,
@@ -336,13 +418,22 @@ async def link_identity(
                 signature=payload.signature,
             )
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            ) from None
 
         nonce_expiry = wallet_user.nonce_expires_at
         if nonce_expiry.tzinfo is None:
             nonce_expiry = nonce_expiry.replace(tzinfo=timezone.utc)
-        if wallet_user.nonce != payload.nonce or nonce_expiry < datetime.now(timezone.utc):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if (
+            wallet_user.nonce != payload.nonce
+            or nonce_expiry < datetime.now(timezone.utc)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            )
 
         current_user.wallet_address = payload.wallet_address
         current_user.nonce = None
@@ -371,24 +462,39 @@ async def link_identity(
                 max_age_hours=settings.telegram_auth_max_age_hours,
             )
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            ) from None
 
         telegram_id = str(user_data["id"])
         existing = await get_user_by_telegram_id(session, telegram_id)
         if existing is not None and existing.id != current_user.id:
             if not current_user.telegram_id:
                 try:
-                    current_user = merge_user_records(current_user, existing)
+                    current_user = merge_user_records(
+                        current_user,
+                        existing,
+                    )
                 except ValueError:
-                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Telegram account already linked")
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Telegram account already linked",
+                    ) from None
                 await session.delete(existing)
             else:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Telegram account already linked")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Telegram account already linked",
+                )
 
         try:
             apply_telegram_profile(current_user, user_data)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
         session.add(current_user)
         await session.commit()
         await session.refresh(current_user)
@@ -405,7 +511,10 @@ async def link_identity(
         )
         return UserRead.model_validate(current_user)
 
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide wallet signature or Telegram init_data")
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Provide wallet signature or Telegram init_data",
+    )
 
 
 @router.post("/telegram/callback", response_model=TelegramCallbackResponse)
@@ -433,7 +542,10 @@ async def telegram_callback(
             user_agent=user_agent,
             error_message="Invalid Telegram init_data",
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        ) from None
 
     telegram_id = str(user_data["id"])
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -447,12 +559,18 @@ async def telegram_callback(
             error_message="Telegram account has no active site access",
             metadata={"telegram_id": telegram_id},
         )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Active subscription required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required",
+        )
 
     try:
         apply_telegram_profile(user, user_data)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials") from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        ) from exc
     session.add(user)
 
     result = await _issue_or_forbid(
@@ -492,7 +610,11 @@ async def login_password(
 
     await _rate_limit(
         request,
-        key=make_limit_key("password", "login", ip_address or "unknown"),
+        key=make_limit_key(
+            "password",
+            "login",
+            ip_address or "unknown",
+        ),
         limit=5,
         window_seconds=60,
     )
@@ -503,8 +625,13 @@ async def login_password(
         .where(User.access_login == payload.login)
     )
     user = result.scalar_one_or_none()
+    hashed_password = user.hashed_password if user else None
 
-    if not user or not user.hashed_password or not verify_password(payload.password, user.hashed_password):
+    if (
+        user is None
+        or not hashed_password
+        or not verify_password(payload.password, hashed_password)
+    ):
         await _log_auth_failure(
             session,
             event_type="password_login",
@@ -515,7 +642,10 @@ async def login_password(
             user=user,
             metadata={"login": payload.login},
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid password",
+        )
 
     token_result = await _issue_or_forbid(
         session,
