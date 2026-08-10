@@ -7,6 +7,7 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
+from intelligence.core.hashing import build_document_hash
 from intelligence.core.models import IntelligenceDocument
 from intelligence.errors.exceptions import StorageError
 from intelligence.storage.postgres_store import PostgresDocumentStore
@@ -15,7 +16,26 @@ from intelligence.storage.postgres_store import PostgresDocumentStore
 NOW = datetime(2026, 8, 10, 5, 0, tzinfo=timezone.utc)
 
 
-def row(document_id: str = "doc-1", raw_hash: str | None = "a" * 64) -> dict[str, Any]:
+def document(document_id: str = "doc-1") -> IntelligenceDocument:
+    value = IntelligenceDocument(
+        id=document_id,
+        source="web",
+        content="evidence",
+        collected_at=NOW,
+        url="https://example.com",
+        author="example.com",
+        provider="jina-reader",
+        entities=["webpage", "example.com"],
+        metrics={"characters": 8},
+    )
+    value.raw_hash = build_document_hash(value)
+    return value
+
+
+VALID_HASH = build_document_hash(document(raw_hash_placeholder := "hash-source"))
+
+
+def row(document_id: str = "doc-1", raw_hash: str | None = VALID_HASH) -> dict[str, Any]:
     return {
         "id": document_id,
         "source": "web",
@@ -29,21 +49,6 @@ def row(document_id: str = "doc-1", raw_hash: str | None = "a" * 64) -> dict[str
         "metrics_json": {"characters": 8},
         "raw_hash": raw_hash,
     }
-
-
-def document(document_id: str = "doc-1", raw_hash: str | None = "a" * 64) -> IntelligenceDocument:
-    return IntelligenceDocument(
-        id=document_id,
-        source="web",
-        content="evidence",
-        collected_at=NOW,
-        url="https://example.com",
-        author="example.com",
-        provider="jina-reader",
-        entities=["webpage", "example.com"],
-        metrics={"characters": 8},
-        raw_hash=raw_hash,
-    )
 
 
 class FakeResult:
@@ -127,8 +132,8 @@ class PostgresDocumentStoreTests(unittest.TestCase):
 
     def test_get_list_and_list_recent_map_rows(self) -> None:
         get_connection = FakeConnection([FakeResult(one=row())])
-        list_connection = FakeConnection([FakeResult(many=[row("a"), row("b", "b" * 64)])])
-        recent_connection = FakeConnection([FakeResult(many=[row("b", "b" * 64)])])
+        list_connection = FakeConnection([FakeResult(many=[row("a"), row("b")])])
+        recent_connection = FakeConnection([FakeResult(many=[row("b")])])
         factory = ConnectFactory([get_connection, list_connection, recent_connection])
         store = PostgresDocumentStore("postgresql://db/intelligence", connect_factory=factory)
 
