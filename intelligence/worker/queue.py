@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import uuid4
 
+from intelligence.errors.exceptions import QueueError
+
 
 class JobStatus(StrEnum):
     CREATED = "created"
@@ -32,6 +34,8 @@ class MemoryJobQueue:
         self._jobs: dict[str, IntelligenceJob] = {}
 
     def submit(self, payload: dict) -> IntelligenceJob:
+        if not isinstance(payload, dict):
+            raise QueueError("job payload must be an object")
         job = IntelligenceJob(payload=dict(payload), status=JobStatus.QUEUED)
         self._jobs[job.id] = job
         return job
@@ -40,7 +44,7 @@ class MemoryJobQueue:
         return self._jobs.get(job_id)
 
     def update_status(self, job_id: str, status: JobStatus, error: str | None = None) -> None:
-        job = self._jobs[job_id]
+        job = self._require(job_id)
         now = datetime.now(timezone.utc)
         if status == JobStatus.RUNNING and job.started_at is None:
             job.started_at = now
@@ -50,7 +54,7 @@ class MemoryJobQueue:
         job.error = error
 
     def set_results(self, job_id: str, document_ids: list[str]) -> None:
-        self._jobs[job_id].result_document_ids = list(dict.fromkeys(document_ids))
+        self._require(job_id).result_document_ids = list(dict.fromkeys(document_ids))
 
     def claim_next(self) -> IntelligenceJob | None:
         candidates = [job for job in self._jobs.values() if job.status == JobStatus.QUEUED]
@@ -58,4 +62,10 @@ class MemoryJobQueue:
             return None
         job = min(candidates, key=lambda item: (item.created_at, item.id))
         self.update_status(job.id, JobStatus.RUNNING)
+        return job
+
+    def _require(self, job_id: str) -> IntelligenceJob:
+        job = self._jobs.get(job_id)
+        if job is None:
+            raise QueueError("intelligence job was not found")
         return job
