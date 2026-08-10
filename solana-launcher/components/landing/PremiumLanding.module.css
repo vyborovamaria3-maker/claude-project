@@ -382,7 +382,7 @@
 .loginTop { display: flex; justify-content: space-between; gap: 16px; }
 .loginTop h2 { margin: 0; font-size: 22px; letter-spacing: -.035em; }
 .loginTop p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
-.closeButton { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.03); color: #fff; cursor: pointer; }
+.closeButton { width: 44px; height: 44px; min-width: 44px; min-height: 44px; flex: 0 0 44px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.03); color: #fff; cursor: pointer; }
 .loginForm { display: grid; gap: 13px; margin-top: 20px; }
 .loginForm label { display: grid; gap: 7px; color: #c9c6be; font-size: 12px; font-weight: 700; }
 .loginForm input { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 11px; padding: 0 12px; outline: none; background: #080907; color: #fff; }
@@ -415,6 +415,9 @@
   .menuButton { display: grid; place-items: center; }
   .desktopCta { display: none; }
   .mobileMenuOpen { display: block; }
+  .brand { min-height: 44px; }
+  .featureLink { min-height: 44px; display: inline-flex; align-items: center; }
+  .footerLinks a { min-height: 44px; display: inline-flex; align-items: center; }
   .hero { min-height: auto; grid-template-columns: 1fr; padding-top: 66px; }
   .hero::before { width: 112%; right: -31%; bottom: -1%; opacity: .4; }
   .hero::after { right: -38vw; bottom: 9%; opacity: .45; }
@@ -532,6 +535,29 @@
   .button:hover, .themeToggle:hover, .featureCard:hover { transform: none; filter: none; }
   .button:hover::after { left: -36%; }
   .chartInteractive { cursor: default; }
+}
+
+@supports (padding-left: env(safe-area-inset-left)) {
+  @media (max-width: 980px) {
+    .mobileMenu {
+      padding-left: max(0px, env(safe-area-inset-left));
+      padding-right: max(0px, env(safe-area-inset-right));
+    }
+
+    .loginBackdrop {
+      padding-left: max(18px, env(safe-area-inset-left));
+      padding-right: max(18px, env(safe-area-inset-right));
+      padding-bottom: max(18px, env(safe-area-inset-bottom));
+    }
+  }
+
+  @media (max-width: 680px) {
+    .loginBackdrop {
+      padding-left: max(10px, env(safe-area-inset-left));
+      padding-right: max(10px, env(safe-area-inset-right));
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+    }
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
