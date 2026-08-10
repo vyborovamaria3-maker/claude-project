@@ -72,12 +72,12 @@ class IntelligenceViewStoreTests(unittest.TestCase):
                 "web",
                 "raw content must never be exposed",
                 "2026-08-10T02:00:00+00:00",
-                "https://example.com/project",
+                "https://example.com/project?token=url-secret",
                 "example.com",
                 "jina-reader",
                 None,
                 json.dumps(["webpage", "example.com"]),
-                json.dumps({"characters": 100}),
+                json.dumps({"characters": 100, "feed_url": "https://x.test/?key=metrics-secret"}),
                 "a" * 64,
             ),
         )
@@ -108,24 +108,28 @@ class IntelligenceViewStoreTests(unittest.TestCase):
         self.assertNotIn("payload", row)
         self.assertNotIn("error", row)
 
-    def test_recent_documents_never_expose_content(self) -> None:
+    def test_recent_documents_never_expose_content_url_or_metrics(self) -> None:
         rows = self.store.recent_documents(10)
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row["id"], "doc-1")
-        self.assertEqual(row["metrics"], {"characters": 100})
+        serialized = json.dumps(row)
         self.assertNotIn("content", row)
-        self.assertNotIn("raw content", json.dumps(row))
+        self.assertNotIn("url", row)
+        self.assertNotIn("metrics", row)
+        self.assertNotIn("raw content", serialized)
+        self.assertNotIn("url-secret", serialized)
+        self.assertNotIn("metrics-secret", serialized)
 
     def test_missing_database_is_unavailable(self) -> None:
         missing = IntelligenceViewStore(Path(self.temp_dir.name) / "missing.sqlite3")
         with self.assertRaises(IntelligenceViewError):
             missing.summary()
 
-    def test_corrupt_json_is_rejected(self) -> None:
+    def test_corrupt_entities_json_is_rejected(self) -> None:
         connection = sqlite3.connect(self.path)
         connection.execute(
-            "UPDATE intelligence_documents SET metrics_json = ? WHERE id = ?",
+            "UPDATE intelligence_documents SET entities_json = ? WHERE id = ?",
             ("not-json", "doc-1"),
         )
         connection.commit()
