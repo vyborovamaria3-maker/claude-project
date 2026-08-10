@@ -40,28 +40,40 @@ Terminal jobs cannot transition back to `running`. Repeating the same status is 
 Current implementations:
 
 - `MemoryJobQueue` — unit/local tests;
-- `SQLiteJobQueue` — durable queue with atomic `claim_next()` using `BEGIN IMMEDIATE`.
+- `SQLiteJobQueue` — durable single-host queue using WAL plus atomic `BEGIN IMMEDIATE` claims;
+- `PostgresJobQueue` — multi-worker production queue using row locks and `FOR UPDATE SKIP LOCKED`.
 
-`IntelligenceWorker.run_next()` claims one queued job and processes it. This allows multiple worker processes to compete for jobs without processing the same queued row twice.
+`IntelligenceWorker.run_next()` claims one queued job and processes it. Both durable backends prevent two workers from successfully claiming the same queued row.
 
 ## Storage contract
 
 The worker depends only on `DocumentStore`, not on Memory/SQLite/PostgreSQL details. Normalized evidence IDs are persisted back to the queue before the job is completed.
 
+Runtime factories:
+
+- `build_memory_runtime()` — memory queue + memory documents;
+- `build_sqlite_runtime(path)` — SQLite queue + SQLite documents in one WAL database;
+- `build_postgres_runtime(dsn)` — PostgreSQL queue + PostgreSQL documents.
+
+PostgreSQL schema creation is explicit: run `python -m intelligence --backend postgres ... init-db` before starting the worker. Migrations are not executed implicitly on normal queries.
+
 ## Failure behavior
 
 - validation/provider/storage/queue domain errors are sanitized before job exposure;
-- unknown implementation errors collapse to `internal_worker_error`;
-- failed queue persistence raises a generic `QueueError` rather than leaking provider internals.
+- unknown implementation errors collapse to `internal_worker_error` inside a claimed job;
+- failed queue persistence raises a generic `QueueError` rather than leaking provider internals;
+- the long-running CLI worker retries known runtime persistence failures with bounded exponential backoff;
+- unknown programming errors are not swallowed by the long-running loop and cause a non-zero process exit.
 
 ## Boundaries
 
 The worker must never:
 
 - contain wallet secrets or trading credentials;
-- invoke provider-specific APIs directly;
+- invoke provider-specific APIs directly outside provider adapters;
 - perform AI scoring inside collectors;
 - expose raw unknown exception text to callers;
-- allow completed jobs to be silently reclaimed.
+- allow completed jobs to be silently reclaimed;
+- print PostgreSQL DSNs in operational output.
 
-`build_memory_runtime()` creates fully in-memory queue/storage. `build_sqlite_runtime(path)` creates durable SQLite queue and normalized document storage in the same database file and exposes a central `runtime.close()` lifecycle hook.
+`IntelligenceRuntime` exposes a central `close()`/context-manager lifecycle hook. SQLite resources close their persistent connections; PostgreSQL backends use short-lived per-operation connections and therefore expose compatible no-op `close()` methods.
