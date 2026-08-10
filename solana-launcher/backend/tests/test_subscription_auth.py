@@ -9,7 +9,7 @@ from app.models.auth_log import AuthLog
 from app.models.user import User
 from sqlalchemy import select
 
-ACCESS_PASSWORD = "ABCDEFGHJKLMNPQRSTUVWXYZ2345678"
+ACCESS_PASSWORD = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
 def make_telegram_init_data(bot_token: str, user: dict) -> str:
