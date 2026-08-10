@@ -17,12 +17,10 @@ function getCandidateBackendBaseUrls() {
 }
 
 function getClientIp(request: Request): string | null {
-  const forwarded = request.headers.get("x-forwarded-for");
-  const candidate =
-    forwarded?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip")?.trim() ||
-    request.headers.get("cf-connecting-ip")?.trim() ||
-    "";
+  // Production nginx overwrites X-Real-IP with its immediate peer address.
+  // Do not trust the first X-Forwarded-For value here: a browser can inject
+  // that header and proxy_add_x_forwarded_for would preserve it.
+  const candidate = request.headers.get("x-real-ip")?.trim() || "";
   if (!candidate || candidate.length > 64 || /[\r\n]/.test(candidate)) return null;
   return candidate;
 }
@@ -76,7 +74,10 @@ async function proxyJsonRequest(request: Request, backendPath: string) {
 
   console.error(`[authProxy] Failed to reach backend for ${backendPath}`, lastError);
   return Response.json(
-    { detail: "Authentication service unavailable. Check that the backend is running on port 8000." },
+    {
+      detail:
+        "Authentication service unavailable. Check that the backend is running on port 8000.",
+    },
     { status: 503 }
   );
 }
