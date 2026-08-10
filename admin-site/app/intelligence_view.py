@@ -110,6 +110,7 @@ class PostgresIntelligenceViewStore:
         self._connect_factory = connect_factory
 
     def _connect(self) -> Any:
+        connection: Any = None
         try:
             connection = self._connect_factory(
                 self._dsn,
@@ -120,6 +121,11 @@ class PostgresIntelligenceViewStore:
             connection.execute("SET TRANSACTION READ ONLY")
             return connection
         except psycopg.Error as exc:
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
             raise IntelligenceViewError("intelligence_runtime_unavailable") from exc
 
     def summary(self) -> dict[str, Any]:
