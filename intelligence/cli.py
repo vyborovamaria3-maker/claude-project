@@ -39,8 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     enqueue.add_argument("provider", help="Registered provider name")
     enqueue.add_argument("query", help="Provider query or URL")
 
-    run_once = subparsers.add_parser("run-once", help="Claim and execute one queued job")
-    run_once.set_defaults(command="run-once")
+    subparsers.add_parser("run-once", help="Claim and execute one queued job")
 
     worker = subparsers.add_parser("worker", help="Run the durable worker loop")
     worker.add_argument("--poll-seconds", type=float, default=2.0)
@@ -131,8 +130,7 @@ async def _worker_loop(runtime: IntelligenceRuntime, poll_seconds: float) -> int
 def _documents(runtime: IntelligenceRuntime, limit: int) -> int:
     if limit < 1 or limit > 1000:
         raise ValueError("limit must be between 1 and 1000")
-    documents = runtime.store.list_all()
-    selected = documents[-limit:]
+    selected = runtime.store.list_recent(limit)
     _emit(
         {
             "count": len(selected),
@@ -188,6 +186,9 @@ def main(
     except (IntelligenceError, ValueError) as exc:
         _emit({"error": sanitize_text(str(exc))[:500] or exc.__class__.__name__}, stream=sys.stderr)
         return 2
+    except Exception:
+        _emit({"error": "internal_cli_error"}, stream=sys.stderr)
+        return 3
 
     _emit({"error": "unsupported_command"}, stream=sys.stderr)
     return 2
