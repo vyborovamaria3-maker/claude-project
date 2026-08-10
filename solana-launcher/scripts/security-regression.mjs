@@ -44,6 +44,10 @@ assert(tokenInfo.includes("MAX_METADATA_BYTES"), "metadata response size must be
 const proxy = read("proxy.ts");
 assert(proxy.includes('"/api/trade/dev-twitter"'), "expensive X route must be behind the paid gateway");
 assert(proxy.includes("strict-dynamic"), "production CSP must be nonce-aware");
+assert(proxy.includes('"https://gmgn.ai"'), "CSP must preserve the live browser GMGN fallback");
+
+const telegramApi = read("backend/app/api/v1/telegram_intelligence.py");
+assert(telegramApi.includes("get_current_subscriber"), "Telegram/social intelligence reads must require a subscriber");
 
 const dockerignore = read(".dockerignore");
 assert(dockerignore.includes(".env.*"), "Docker build context must exclude env files");
@@ -58,17 +62,20 @@ const frontendDocker = read("Dockerfile.frontend.prod");
 assert(backendDocker.includes("USER potapoff"), "backend runtime must be non-root");
 assert(frontendDocker.includes("USER potapoff"), "frontend runtime must be non-root");
 
-const packageJson = JSON.parse(read("package.json"));
+const migrationBootstrap = read("scripts/import-migration-xlsx.cjs");
 assert(
-  packageJson.devDependencies?.xlsx === "file:./scripts/xlsx-safe-package",
-  "legacy external SheetJS package must not be restored",
+  migrationBootstrap.includes("if (request === 'xlsx') return safeXlsx"),
+  "migration importer must never load the legacy SheetJS implementation",
+);
+assert(
+  migrationBootstrap.includes("./xlsx-safe-package/index.cjs"),
+  "migration importer must route xlsx reads to the bounded local reader",
 );
 execFileSync(process.execPath, [path.join(root, "scripts/xlsx-safe-package/test.mjs")], { stdio: "inherit" });
 
 const workflowDir = path.resolve(root, "../.github/workflows");
 for (const entry of fs.readdirSync(workflowDir, { withFileTypes: true })) {
   if (!entry.isFile() || !/\.ya?ml$/i.test(entry.name)) continue;
-  if (entry.name === "security-lock-sync.yml") continue; // temporary workflow removed after lock synchronization
   const workflow = fs.readFileSync(path.join(workflowDir, entry.name), "utf8");
   assert(!workflow.includes("pull_request_target:"), `${entry.name}: pull_request_target is not allowed`);
   assert(!workflow.includes("ssh-keyscan"), `${entry.name}: dynamic SSH host trust is not allowed`);
