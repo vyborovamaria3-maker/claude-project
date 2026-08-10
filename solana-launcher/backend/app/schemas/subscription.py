@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -35,11 +35,13 @@ class SubscriptionOrderCreate(BaseModel):
     def validate_login(cls, value: str) -> str:
         normalized = value.strip()
         if not LOGIN_RE.fullmatch(normalized):
-            raise ValueError("login must be 4-32 ASCII letters, digits, or underscore")
+            raise ValueError(
+                "login must be 4-32 ASCII letters, digits, or underscore"
+            )
         return normalized
 
     @model_validator(mode="after")
-    def validate_telegram_identity(self):
+    def validate_telegram_identity(self) -> Self:
         profile = self.telegram_profile
         if profile is None:
             return self
@@ -48,11 +50,19 @@ class SubscriptionOrderCreate(BaseModel):
         if not isinstance(profile_id, int) or isinstance(profile_id, bool):
             raise ValueError("telegram_profile.id must be an integer")
         if profile_id != self.telegram_user_id:
-            raise ValueError("telegram_profile.id must match telegram_user_id")
+            raise ValueError(
+                "telegram_profile.id must match telegram_user_id"
+            )
 
         profile_username = profile.get("username")
-        if self.username and profile_username and self.username != profile_username:
-            raise ValueError("username must match telegram_profile.username")
+        if (
+            self.username
+            and profile_username
+            and self.username != profile_username
+        ):
+            raise ValueError(
+                "username must match telegram_profile.username"
+            )
         return self
 
 
