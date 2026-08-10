@@ -7,10 +7,9 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from intelligence.errors.exceptions import QueueError
-from intelligence.worker.queue import IntelligenceJob, JobStatus
+from intelligence.worker.queue import IntelligenceJob, JobStatus, validate_transition
 
 
 _SCHEMA = """
@@ -76,37 +75,70 @@ class SQLiteJobQueue:
         return _row_to_job(row) if row is not None else None
 
     def update_status(self, job_id: str, status: JobStatus, error: str | None = None) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        if not isinstance(status, JobStatus):
+            raise QueueError("invalid intelligence job status")
         try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT status FROM intelligence_jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                self._connection.rollback()
+                raise QueueError("intelligence job was not found")
+            try:
+                current = JobStatus(row["status"])
+            except ValueError as exc:
+                self._connection.rollback()
+                raise QueueError("stored intelligence job status is invalid") from exc
+            validate_transition(current, status)
+
+            now = datetime.now(timezone.utc).isoformat()
             if status == JobStatus.RUNNING:
                 cursor = self._connection.execute(
                     """
                     UPDATE intelligence_jobs
                     SET status = ?, started_at = COALESCE(started_at, ?), error = ?
-                    WHERE id = ?
+                    WHERE id = ? AND status = ?
                     """,
-                    (status.value, now, error, job_id),
+                    (status.value, now, error, job_id, current.value),
                 )
             elif status in {JobStatus.COMPLETED, JobStatus.FAILED}:
                 cursor = self._connection.execute(
                     """
                     UPDATE intelligence_jobs
                     SET status = ?, finished_at = ?, error = ?
-                    WHERE id = ?
+                    WHERE id = ? AND status = ?
                     """,
-                    (status.value, now, error, job_id),
+                    (status.value, now, error, job_id, current.value),
+                )
+            elif status == JobStatus.RETRY:
+                cursor = self._connection.execute(
+                    """
+                    UPDATE intelligence_jobs
+                    SET status = ?, finished_at = NULL, error = ?
+                    WHERE id = ? AND status = ?
+                    """,
+                    (status.value, error, job_id, current.value),
                 )
             else:
                 cursor = self._connection.execute(
-                    "UPDATE intelligence_jobs SET status = ?, error = ? WHERE id = ?",
-                    (status.value, error, job_id),
+                    """
+                    UPDATE intelligence_jobs
+                    SET status = ?, error = ?
+                    WHERE id = ? AND status = ?
+                    """,
+                    (status.value, error, job_id, current.value),
                 )
             if cursor.rowcount != 1:
                 self._connection.rollback()
-                raise QueueError("intelligence job was not found")
+                raise QueueError("intelligence job status changed concurrently")
             self._connection.commit()
+        except QueueError:
+            self._safe_rollback()
+            raise
         except sqlite3.Error as exc:
-            self._connection.rollback()
+            self._safe_rollback()
             raise QueueError("failed to update intelligence job status") from exc
 
     def set_results(self, job_id: str, document_ids: list[str]) -> None:
@@ -114,15 +146,22 @@ class SQLiteJobQueue:
         try:
             payload = _json_dumps(unique_ids)
             cursor = self._connection.execute(
-                "UPDATE intelligence_jobs SET result_document_ids_json = ? WHERE id = ?",
-                (payload, job_id),
+                """
+                UPDATE intelligence_jobs
+                SET result_document_ids_json = ?
+                WHERE id = ? AND status IN (?, ?)
+                """,
+                (payload, job_id, JobStatus.RUNNING.value, JobStatus.COMPLETED.value),
             )
             if cursor.rowcount != 1:
                 self._connection.rollback()
-                raise QueueError("intelligence job was not found")
+                raise QueueError("results require a running or completed intelligence job")
             self._connection.commit()
+        except QueueError:
+            self._safe_rollback()
+            raise
         except sqlite3.Error as exc:
-            self._connection.rollback()
+            self._safe_rollback()
             raise QueueError("failed to persist intelligence job results") from exc
 
     def claim_next(self) -> IntelligenceJob | None:
@@ -213,6 +252,9 @@ def _row_to_job(row: sqlite3.Row) -> IntelligenceJob:
         status = JobStatus(row["status"])
     except ValueError as exc:
         raise QueueError("stored intelligence job status is invalid") from exc
+    result_ids = _json_loads(row["result_document_ids_json"], list)
+    if not all(isinstance(item, str) for item in result_ids):
+        raise QueueError("stored intelligence job result IDs are invalid")
     return IntelligenceJob(
         id=row["id"],
         payload=_json_loads(row["payload_json"], dict),
@@ -220,6 +262,6 @@ def _row_to_job(row: sqlite3.Row) -> IntelligenceJob:
         created_at=created_at,
         started_at=_parse_datetime(row["started_at"]),
         finished_at=_parse_datetime(row["finished_at"]),
-        result_document_ids=_json_loads(row["result_document_ids_json"], list),
+        result_document_ids=result_ids,
         error=row["error"],
     )
