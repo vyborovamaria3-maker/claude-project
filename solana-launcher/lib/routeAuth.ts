@@ -2,12 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBackendBaseUrl } from "@/lib/authProxy";
 
 const REQUIRE_AUTH = process.env.NODE_ENV === "production";
+const SESSION_COOKIE = "potapoff_access_token";
+
+function authorizationFor(request: NextRequest): string | null {
+  const header = request.headers.get("authorization");
+  if (header?.startsWith("Bearer ")) return header;
+
+  const sessionToken = request.cookies.get(SESSION_COOKIE)?.value;
+  return sessionToken ? `Bearer ${sessionToken}` : null;
+}
 
 export async function requireProdAuth(req: NextRequest) {
   if (!REQUIRE_AUTH) return null;
 
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const authHeader = authorizationFor(req);
+  if (!authHeader) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
