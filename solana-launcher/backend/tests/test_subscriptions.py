@@ -1,12 +1,16 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import select
 
 from app.core.security import verify_password
 from app.models.auth_log import AuthLog
 from app.models.subscription_order import SubscriptionOrder
+from app.models.subscription_settings import SubscriptionSettings
 from app.models.user import User
+
+pytestmark = pytest.mark.usefixtures("configured_subscription_settings")
 
 INTERNAL_HEADERS = {"X-Dev-Internal": "miniapp-subscription"}
 RECIPIENT = "11111111111111111111111111111111"
@@ -48,7 +52,7 @@ def demo_order_body(
     payload: str,
     telegram_user_id: int,
     login: str,
-    days: int = 7,
+    days: int = 14,
     telegram_profile: dict | None = None,
 ):
     return {
@@ -98,7 +102,18 @@ async def test_subscription_api_requires_internal_auth(client):
     assert response.status_code == 403
 
 
-async def test_subscription_settings_have_safe_defaults(client):
+async def test_subscription_settings_have_safe_defaults(client, test_app):
+    async with test_app.state.sessionmaker() as session:
+        settings = await session.get(SubscriptionSettings, 1)
+        assert settings is not None
+        settings.monthly_price_sol = Decimal("0")
+        settings.monthly_price_usdt = Decimal("0")
+        settings.paid_subscriptions_enabled = False
+        settings.free_demo_enabled = False
+        settings.demo_days = 30
+        settings.solana_recipient_wallet = ""
+        await session.commit()
+
     response = await client.get(
         "/api/v1/subscriptions/settings",
         headers=INTERNAL_HEADERS,
@@ -111,6 +126,66 @@ async def test_subscription_settings_have_safe_defaults(client):
     assert data["free_demo_enabled"] is False
     assert data["demo_days"] == 30
     assert data["solana_recipient_wallet"] == ""
+
+
+async def test_backend_rejects_paid_order_that_does_not_match_admin_policy(client):
+    wrong_amount = await create_order(
+        client,
+        paid_order_body(
+            payload=order_payload("1"),
+            telegram_user_id=1101,
+            login="wrong_amount",
+            ref="ref-policy-amount",
+            total_amount=1,
+        ),
+    )
+    assert wrong_amount.status_code == 409
+    assert "amount" in wrong_amount.json()["detail"].lower()
+
+    wrong_recipient = paid_order_body(
+        payload=order_payload("2"),
+        telegram_user_id=1102,
+        login="wrong_recipient",
+        ref="ref-policy-recipient",
+    )
+    wrong_recipient["recipient_wallet"] = "SysvarRent111111111111111111111111111111111"
+    wrong_recipient["payment_url"] = (
+        "solana:SysvarRent111111111111111111111111111111111"
+        "?reference=ref-policy-recipient"
+    )
+    response = await create_order(client, wrong_recipient)
+    assert response.status_code == 409
+    assert "recipient" in response.json()["detail"].lower()
+
+
+async def test_backend_rejects_new_access_when_admin_mode_is_disabled(client, test_app):
+    async with test_app.state.sessionmaker() as session:
+        settings = await session.get(SubscriptionSettings, 1)
+        assert settings is not None
+        settings.paid_subscriptions_enabled = False
+        settings.free_demo_enabled = False
+        await session.commit()
+
+    paid = await create_order(
+        client,
+        paid_order_body(
+            payload=order_payload("3"),
+            telegram_user_id=1201,
+            login="paid_disabled",
+            ref="ref-disabled-paid",
+        ),
+    )
+    assert paid.status_code == 409
+
+    demo = await create_order(
+        client,
+        demo_order_body(
+            payload=order_payload("4"),
+            telegram_user_id=1202,
+            login="demo_disabled",
+        ),
+    )
+    assert demo.status_code == 409
 
 
 async def test_subscription_lifecycle_persists_profile_and_credentials(
@@ -294,6 +369,41 @@ async def test_currency_switch_reuses_pending_payment_instead_of_orphaning_it(cl
     )
     assert old.status_code == 200
     assert old.json()["status"] == "pending"
+
+
+async def test_existing_pending_payment_survives_later_admin_price_change(client, test_app):
+    payload = order_payload("5")
+    first = await create_order(
+        client,
+        paid_order_body(
+            payload=payload,
+            telegram_user_id=1301,
+            login="price_changed",
+            ref="ref-old-price",
+        ),
+    )
+    assert first.status_code == 201
+
+    async with test_app.state.sessionmaker() as session:
+        settings = await session.get(SubscriptionSettings, 1)
+        assert settings is not None
+        settings.monthly_price_sol = Decimal("0.75")
+        settings.paid_subscriptions_enabled = False
+        await session.commit()
+
+    reused = await create_order(
+        client,
+        paid_order_body(
+            payload=order_payload("6"),
+            telegram_user_id=1301,
+            login="price_changed",
+            ref="ref-new-price",
+            total_amount=750_000_000,
+        ),
+    )
+    assert reused.status_code == 201
+    assert reused.json()["payload"] == payload
+    assert reused.json()["total_amount"] == 250_000_000
 
 
 async def test_one_user_cannot_reserve_second_login_while_checkout_pending(client):
