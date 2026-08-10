@@ -283,13 +283,33 @@ async function assertMobileMenu(page, viewport) {
   if (viewport.width > 980) return;
 
   const menuButton = page.getByRole("button", { name: /открыть меню/i });
+  const themeToggle = page.locator("[data-landing-theme-toggle]");
   await menuButton.waitFor({ state: "visible" });
-  await menuButton.click();
+  await themeToggle.waitFor({ state: "visible" });
 
+  const menuButtonBox = await menuButton.boundingBox();
+  const themeToggleBox = await themeToggle.boundingBox();
+  assert.ok(menuButtonBox && menuButtonBox.width >= 44 && menuButtonBox.height >= 44, `${viewport.name}: menu toggle below 44x44`);
+  assert.ok(themeToggleBox && themeToggleBox.width >= 44 && themeToggleBox.height >= 44, `${viewport.name}: theme toggle below 44x44`);
+
+  await menuButton.click();
   const mobileMenu = page.locator("#landing-mobile-menu");
   await mobileMenu.waitFor({ state: "visible" });
   assert.equal(await menuButton.getAttribute("aria-expanded"), "true", `${viewport.name}: menu aria state did not open`);
   assert.equal(await mobileMenu.locator('a[href="#market"]').count(), 1, `${viewport.name}: market link missing`);
+
+  const menuMetrics = await mobileMenu.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      maxHeight: style.maxHeight,
+      overflowY: style.overflowY,
+      linkHeights: Array.from(element.querySelectorAll("a")).map((anchor) => anchor.getBoundingClientRect().height),
+    };
+  });
+  assert.notEqual(menuMetrics.maxHeight, "none", `${viewport.name}: mobile menu has no viewport max-height`);
+  assert.equal(menuMetrics.overflowY, "auto", `${viewport.name}: mobile menu must scroll vertically when needed`);
+  assert.ok(menuMetrics.linkHeights.length > 0, `${viewport.name}: no mobile menu links found`);
+  assert.ok(menuMetrics.linkHeights.every((height) => height >= 44), `${viewport.name}: mobile menu link below 44px`);
 
   await page.keyboard.press("Escape");
   await mobileMenu.waitFor({ state: "hidden" });
@@ -411,11 +431,10 @@ async function assertChartInteraction(page, useTouch = false) {
 }
 
 async function runViewport(browser, viewport) {
-  const isPhone = Math.min(viewport.width, viewport.height) <= 430;
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     reducedMotion: "no-preference",
-    hasTouch: isPhone,
+    hasTouch: viewport.width <= 980,
   });
   const page = await context.newPage();
   const browserErrors = [];
