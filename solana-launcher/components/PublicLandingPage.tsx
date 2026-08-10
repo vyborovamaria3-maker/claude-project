@@ -16,7 +16,13 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import styles from "./landing/PremiumLanding.module.css";
 
 type MarketPoint = { time: number; price: number };
@@ -28,8 +34,16 @@ type MarketData = {
   volume24h: number | null;
   marketCap: number | null;
   updatedAt: number;
+  servedAt: number;
+  windowStart: number;
+  windowEnd: number;
+  sourcePointCount: number;
+  plottedPointCount: number;
+  stale: boolean;
+  staleReason: "delayed_source" | "upstream_error" | null;
   points: MarketPoint[];
   source: "CoinGecko";
+  quote: "USD";
 };
 
 type AuthResponse = {
@@ -40,9 +54,12 @@ type AuthResponse = {
 };
 
 type LandingTheme = "gold" | "solana";
+type ChartCoord = MarketPoint & { x: number; y: number };
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 const THEME_KEY = "potapoff.landing_theme";
+const CHART_WIDTH = 760;
+const CHART_HEIGHT = 300;
 const USD_FORMAT = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -79,8 +96,19 @@ function formatMarketTime(timestamp: number | null | undefined) {
   return MARKET_TIME_FORMAT.format(new Date(timestamp));
 }
 
-function chartPaths(points: MarketPoint[], width = 760, height = 300) {
-  if (points.length < 2) return { line: "", area: "", mini: "", labelTop: 50 };
+function chartPaths(points: MarketPoint[], width = CHART_WIDTH, height = CHART_HEIGHT) {
+  if (points.length < 2) {
+    return {
+      line: "",
+      area: "",
+      mini: "",
+      labelTop: 50,
+      coords: [] as ChartCoord[],
+      highCoord: null as ChartCoord | null,
+      lowCoord: null as ChartCoord | null,
+    };
+  }
+
   const prices = points.map((point) => point.price);
   const rawMin = Math.min(...prices);
   const rawMax = Math.max(...prices);
@@ -93,20 +121,23 @@ function chartPaths(points: MarketPoint[], width = 760, height = 300) {
   const usableWidth = width - padX * 2;
   const usableHeight = height - padY * 2;
 
-  const coords = points.map((point, index) => {
-    const x = padX + (index / (points.length - 1)) * usableWidth;
-    const y = padY + (1 - (point.price - min) / range) * usableHeight;
-    return [x, y] as const;
-  });
+  const coords: ChartCoord[] = points.map((point, index) => ({
+    ...point,
+    x: padX + (index / (points.length - 1)) * usableWidth,
+    y: padY + (1 - (point.price - min) / range) * usableHeight,
+  }));
 
   const line = coords
-    .map(([x, y], index) => `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`)
+    .map(({ x, y }, index) => `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`)
     .join(" ");
-  const area = `${line} L${coords[coords.length - 1][0].toFixed(2)},${height} L${coords[0][0].toFixed(2)},${height} Z`;
-  const mini = coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-  const lastY = coords[coords.length - 1][1];
+  const area = `${line} L${coords[coords.length - 1].x.toFixed(2)},${height} L${coords[0].x.toFixed(2)},${height} Z`;
+  const mini = coords.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const lastY = coords[coords.length - 1].y;
   const labelTop = Math.min(92, Math.max(8, (lastY / height) * 100));
-  return { line, area, mini, labelTop };
+  const highCoord = coords.reduce((best, point) => (point.price > best.price ? point : best));
+  const lowCoord = coords.reduce((best, point) => (point.price < best.price ? point : best));
+
+  return { line, area, mini, labelTop, coords, highCoord, lowCoord };
 }
 
 function authError(status: number, detail?: string) {
@@ -170,9 +201,13 @@ export default function PublicLandingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [market, setMarket] = useState<MarketData | null>(null);
   const [theme, setTheme] = useState<LandingTheme>("gold");
+  const [activeChartIndex, setActiveChartIndex] = useState<number | null>(null);
 
   const paths = useMemo(() => chartPaths(market?.points ?? []), [market]);
   const marketPositive = (market?.change24h ?? 0) >= 0;
+  const marketFresh = Boolean(market && !market.stale);
+  const activeCoord =
+    activeChartIndex == null ? null : paths.coords[activeChartIndex] ?? null;
 
   useEffect(() => {
     const saved = window.localStorage.getItem(THEME_KEY);
@@ -190,9 +225,23 @@ export default function PublicLandingPage() {
         });
         if (!response.ok) return;
         const data = (await response.json()) as MarketData;
-        if (Number.isFinite(data.price) && Array.isArray(data.points)) setMarket(data);
+        if (
+          Number.isFinite(data.price) &&
+          Array.isArray(data.points) &&
+          data.points.length >= 2 &&
+          data.points.every(
+            (point) =>
+              Number.isFinite(point.time) &&
+              Number.isFinite(point.price) &&
+              point.time > 0 &&
+              point.price > 0,
+          )
+        ) {
+          setMarket(data);
+          setActiveChartIndex(null);
+        }
       } catch {
-        // The hero remains usable even when the market source is temporarily unavailable.
+        // The landing stays usable if the external market source is temporarily unavailable.
       }
     };
 
@@ -273,6 +322,27 @@ export default function PublicLandingPage() {
       window.localStorage.setItem(THEME_KEY, next);
       return next;
     });
+  };
+
+  const inspectChart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!paths.coords.length) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width) return;
+
+    const localX = Math.min(rect.width, Math.max(0, event.clientX - rect.left));
+    const targetX = (localX / rect.width) * CHART_WIDTH;
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    paths.coords.forEach((point, index) => {
+      const distance = Math.abs(point.x - targetX);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    setActiveChartIndex(nearestIndex);
   };
 
   const openLogin = () => {
@@ -411,7 +481,7 @@ export default function PublicLandingPage() {
             </div>
             <div className={styles.heroMeta}>
               <span><i /> Реальный SOL/USD</span>
-              <span><i /> Лёгкий SVG-график</span>
+              <span><i /> Реальные market points</span>
               <span><i /> Телефон · планшет · desktop</span>
             </div>
           </div>
@@ -422,9 +492,15 @@ export default function PublicLandingPage() {
               <div className={styles.marketHead}>
                 <div className={styles.marketPair}>
                   <div className={styles.solanaCoin} aria-hidden="true"><span /></div>
-                  <div><div className={styles.pairLabel}>SOL / USD</div><div className={styles.pairSub}>Solana · последние 24 часа</div></div>
+                  <div>
+                    <div className={styles.pairLabel}>SOL / USD</div>
+                    <div className={styles.pairSub}>Solana · реальный рынок · 24 часа</div>
+                  </div>
                 </div>
-                <div className={styles.marketStatus}><span className={styles.liveDot} /> LIVE</div>
+                <div className={`${styles.marketStatus} ${market && !marketFresh ? styles.marketStatusStale : ""}`}>
+                  <span className={styles.liveDot} />
+                  {market ? (marketFresh ? "LIVE" : "ЗАДЕРЖКА") : "СИНХРОНИЗАЦИЯ"}
+                </div>
               </div>
 
               <div className={styles.marketPriceRow}>
@@ -432,10 +508,17 @@ export default function PublicLandingPage() {
                 {market && <div className={`${styles.marketChange} ${marketPositive ? styles.positive : styles.negative}`}>{formatPercent(market.change24h)}</div>}
               </div>
 
-              <div className={styles.chartWrap}>
+              <div
+                className={`${styles.chartWrap} ${paths.line ? styles.chartInteractive : ""}`}
+                onPointerMove={inspectChart}
+                onPointerDown={inspectChart}
+                onPointerLeave={() => setActiveChartIndex(null)}
+                onPointerCancel={() => setActiveChartIndex(null)}
+                aria-label="Интерактивный график реальных точек цены Solana за 24 часа"
+              >
                 {paths.line ? (
                   <>
-                    <svg className={styles.chartSvg} viewBox="0 0 760 300" preserveAspectRatio="none" role="img" aria-label="График цены Solana за последние 24 часа">
+                    <svg className={styles.chartSvg} viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label="Реальный график цены Solana за последние 24 часа">
                       <defs>
                         <linearGradient id="potap-market-line" x1="0" x2="1">
                           <stop offset="0%" stopColor="var(--chart-a)" />
@@ -453,13 +536,45 @@ export default function PublicLandingPage() {
                       </g>
                       <path className={styles.chartArea} d={paths.area} />
                       <path className={styles.chartLine} d={paths.line} />
+
+                      {paths.highCoord && (
+                        <circle className={styles.chartExtreme} cx={paths.highCoord.x} cy={paths.highCoord.y} r="3.2" />
+                      )}
+                      {paths.lowCoord && (
+                        <circle className={styles.chartExtreme} cx={paths.lowCoord.x} cy={paths.lowCoord.y} r="3.2" />
+                      )}
+
+                      {activeCoord && (
+                        <g className={styles.chartCursor} aria-hidden="true">
+                          <line x1={activeCoord.x} x2={activeCoord.x} y1="18" y2="282" />
+                          <circle cx={activeCoord.x} cy={activeCoord.y} r="5" />
+                          <circle className={styles.chartCursorCore} cx={activeCoord.x} cy={activeCoord.y} r="2" />
+                        </g>
+                      )}
                     </svg>
-                    <div className={styles.chartLabel} style={{ top: `${paths.labelTop}%` }}>{formatUsd(market?.price)}</div>
+
+                    {activeCoord ? (
+                      <div
+                        className={styles.chartTooltip}
+                        style={{
+                          left: `${Math.min(90, Math.max(10, (activeCoord.x / CHART_WIDTH) * 100))}%`,
+                        }}
+                      >
+                        <strong>{formatUsd(activeCoord.price)}</strong>
+                        <span>{formatMarketTime(activeCoord.time)}</span>
+                      </div>
+                    ) : (
+                      <div className={styles.chartLabel} style={{ top: `${paths.labelTop}%` }}>{formatUsd(market?.price)}</div>
+                    )}
                   </>
                 ) : <div className={styles.chartFallback}>Получаем рыночные данные SOL…</div>}
               </div>
 
               <div className={styles.chartTimeline} aria-hidden="true"><span>−24ч</span><span>−18ч</span><span>−12ч</span><span>−6ч</span><span>сейчас</span></div>
+              <div className={styles.chartVerification}>
+                <span>Проведите по графику — каждая показанная цена привязана к реальной временной точке.</span>
+                <strong>{market ? `${market.plottedPointCount} точек на графике` : ""}</strong>
+              </div>
 
               <div className={styles.marketStats}>
                 <div className={styles.marketStat}><div className={styles.marketStatLabel}>24ч максимум</div><div className={styles.marketStatValue}>{formatUsd(market?.high24h)}</div></div>
@@ -467,7 +582,11 @@ export default function PublicLandingPage() {
                 <div className={styles.marketStat}><div className={styles.marketStatLabel}>Объём 24ч</div><div className={styles.marketStatValue}>{formatCompactUsd(market?.volume24h)}</div></div>
                 <div className={styles.marketStat}><div className={styles.marketStatLabel}>Market cap</div><div className={styles.marketStatValue}>{formatCompactUsd(market?.marketCap)}</div></div>
               </div>
-              <span className={styles.marketSource}>CoinGecko · обновлено {formatMarketTime(market?.updatedAt) || "—"}</span>
+              <span className={styles.marketSource}>
+                {market
+                  ? `CoinGecko · ${market.sourcePointCount} исходных точек · данные на ${formatMarketTime(market.updatedAt)}`
+                  : "CoinGecko · ожидаем данные"}
+              </span>
             </div>
 
             {market && (
@@ -528,7 +647,7 @@ export default function PublicLandingPage() {
             </div>
 
             <div className={styles.workspacePreview} aria-hidden="true">
-              <div className={styles.previewTop}><span className={styles.previewBrand}>POTAPoff</span><span>SOLANA · LIVE</span></div>
+              <div className={styles.previewTop}><span className={styles.previewBrand}>POTAPoff</span><span>SOLANA · {marketFresh ? "LIVE" : "MARKET"}</span></div>
               <div className={styles.previewBody}>
                 <div className={styles.previewNav}><span>Обзор рынка</span><span>Кошельки</span><span>Bundle Intelligence</span><span>Запуск токена</span><span>История</span></div>
                 <div className={styles.previewMain}>
@@ -539,7 +658,7 @@ export default function PublicLandingPage() {
                     <div className={styles.previewMetric}><small>Изменение</small><strong className={marketPositive ? styles.positive : styles.negative}>{market ? formatPercent(market.change24h) : "—"}</strong></div>
                   </div>
                   <div className={styles.previewChart}>
-                    {paths.mini ? <svg viewBox="0 0 760 300" preserveAspectRatio="none"><polyline points={paths.mini} /></svg> : <Activity size={28} />}
+                    {paths.mini ? <svg viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none"><polyline points={paths.mini} /></svg> : <Activity size={28} />}
                   </div>
                 </div>
               </div>
