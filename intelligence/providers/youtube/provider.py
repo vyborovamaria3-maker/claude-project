@@ -21,6 +21,13 @@ class YouTubeIntelligenceProvider(IntelligenceProvider):
     async def collect(self, query: str) -> list[IntelligenceDocument]:
         target = self.client.validate_youtube_url(query)
         metadata = await asyncio.to_thread(self.client.fetch_metadata, target)
+
+        canonical_url = metadata.get("webpage_url")
+        if not isinstance(canonical_url, str):
+            raise NormalizationError("YouTube metadata is missing webpage_url")
+        metadata = dict(metadata)
+        metadata["webpage_url"] = self.client.validate_youtube_url(canonical_url)
+
         transcript = None
         if self.include_transcript:
             transcript = await asyncio.to_thread(self.client.fetch_transcript, target)
