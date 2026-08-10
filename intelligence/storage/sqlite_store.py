@@ -115,6 +115,22 @@ class SQLiteDocumentStore:
             raise StorageError("failed to list intelligence documents") from exc
         return [_row_to_document(row) for row in rows]
 
+    def list_recent(self, limit: int) -> list[IntelligenceDocument]:
+        if limit < 1:
+            raise ValueError("limit must be > 0")
+        try:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM intelligence_documents
+                ORDER BY collected_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise StorageError("failed to list recent intelligence documents") from exc
+        return [_row_to_document(row) for row in rows]
+
     def find_by_hash(self, raw_hash: str) -> IntelligenceDocument | None:
         try:
             row = self._connection.execute(
