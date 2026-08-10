@@ -29,8 +29,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install admin integration dependencies
-        run: python -m pip install --disable-pip-version-check -r admin-site/requirements.txt
+      - name: Install intelligence and admin integration dependencies
+        run: |
+          python -m pip install --disable-pip-version-check \
+            -r intelligence/requirements.txt \
+            -r admin-site/requirements.txt
 
       - name: Compile intelligence and admin integration
         run: |
