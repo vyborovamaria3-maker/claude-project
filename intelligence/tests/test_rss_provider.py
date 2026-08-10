@@ -76,6 +76,12 @@ class RSSParserTests(unittest.TestCase):
         with self.assertRaises(NormalizationError):
             parse_feed(b"<html></html>")
 
+    def test_rejects_doctype_and_entity_declarations(self) -> None:
+        malicious = b"""<!DOCTYPE rss [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]>
+        <rss><channel><item><title>&xxe;</title></item></channel></rss>"""
+        with self.assertRaises(NormalizationError):
+            parse_feed(malicious)
+
     def test_max_items_is_enforced(self) -> None:
         self.assertEqual(len(parse_feed(RSS_SAMPLE, max_items=1)), 1)
         with self.assertRaises(ValueError):
