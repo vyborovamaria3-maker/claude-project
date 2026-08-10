@@ -58,6 +58,7 @@ type AuthResponse = {
 
 type LandingTheme = "gold" | "solana";
 type ChartCoord = MarketPoint & { x: number; y: number };
+type MarketClockAnchor = { serverTime: number; performanceTime: number };
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 const THEME_KEY = "potapoff.landing_theme";
@@ -316,7 +317,7 @@ export default function PublicLandingPage() {
   const lastFocusedRef = useRef<HTMLElement | null>(null);
   const authAbortRef = useRef<AbortController | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
-  const marketClockOffsetRef = useRef(0);
+  const marketClockAnchorRef = useRef<MarketClockAnchor | null>(null);
 
   const paths = useMemo(() => chartPaths(market?.points ?? []), [market]);
   const marketPositive = (market?.change24h ?? 0) >= 0;
@@ -336,7 +337,11 @@ export default function PublicLandingPage() {
   useEffect(() => {
     if (!market) return;
 
-    const serverAdjustedNow = () => Date.now() + marketClockOffsetRef.current;
+    const serverAdjustedNow = () => {
+      const anchor = marketClockAnchorRef.current;
+      if (!anchor) return market.servedAt;
+      return anchor.serverTime + Math.max(0, performance.now() - anchor.performanceTime);
+    };
     const updateClock = () => setMarketClock(serverAdjustedNow());
     updateClock();
     const interval = window.setInterval(updateClock, MARKET_CLOCK_INTERVAL_MS);
@@ -369,7 +374,8 @@ export default function PublicLandingPage() {
         if (!response.ok) return;
         const data = (await response.json()) as MarketData;
         if (isValidMarketData(data)) {
-          marketClockOffsetRef.current = data.servedAt - Date.now();
+          const performanceTime = performance.now();
+          marketClockAnchorRef.current = { serverTime: data.servedAt, performanceTime };
           setMarketClock(data.servedAt);
           setMarket(data);
           setActiveChartIndex(null);
