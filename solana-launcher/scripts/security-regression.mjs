@@ -18,6 +18,11 @@ assert(!landing.includes('searchParams.get("api")'), "landing must not read api 
 
 const routeAuth = read("lib/routeAuth.ts");
 assert(routeAuth.includes("/api/v1/users/access"), "paid Next routes must use subscriber access probe");
+assert(routeAuth.includes("potapoff_access_token"), "paid Next routes must support the HttpOnly session cookie");
+
+const loginProxy = read("app/api/v1/auth/login-password/route.ts");
+assert(loginProxy.includes("httpOnly: true"), "paid login must issue an HttpOnly server-session cookie");
+assert(loginProxy.includes('sameSite: "strict"'), "paid login cookie must use strict SameSite policy");
 
 const apify = read("app/api/integrations/apify/pumpfun-sync/route.ts");
 assert(apify.includes("requireProdAuth"), "Apify pumpfun-sync must require paid auth");
@@ -48,5 +53,31 @@ const backendDocker = read("backend/Dockerfile");
 const frontendDocker = read("Dockerfile.frontend.prod");
 assert(backendDocker.includes("USER potapoff"), "backend runtime must be non-root");
 assert(frontendDocker.includes("USER potapoff"), "frontend runtime must be non-root");
+
+const packageJson = JSON.parse(read("package.json"));
+assert(
+  packageJson.devDependencies?.xlsx === "file:./scripts/xlsx-safe-package",
+  "legacy external SheetJS package must not be restored",
+);
+
+const workflowDir = path.resolve(root, "../.github/workflows");
+for (const entry of fs.readdirSync(workflowDir, { withFileTypes: true })) {
+  if (!entry.isFile() || !/\.ya?ml$/i.test(entry.name)) continue;
+  if (entry.name === "security-lock-sync.yml") continue; // temporary workflow removed after lock synchronization
+  const workflow = fs.readFileSync(path.join(workflowDir, entry.name), "utf8");
+  assert(!workflow.includes("pull_request_target:"), `${entry.name}: pull_request_target is not allowed`);
+  assert(!workflow.includes("ssh-keyscan"), `${entry.name}: dynamic SSH host trust is not allowed`);
+
+  for (const line of workflow.split(/\r?\n/)) {
+    const match = line.match(/^\s*uses:\s*([^\s#]+)\s*(?:#.*)?$/);
+    if (!match) continue;
+    const reference = match[1];
+    if (reference.startsWith("./")) continue;
+    const at = reference.lastIndexOf("@");
+    assert(at > 0, `${entry.name}: external action must have an immutable ref: ${reference}`);
+    const ref = reference.slice(at + 1);
+    assert(/^[0-9a-f]{40}$/i.test(ref), `${entry.name}: external action must be pinned to a 40-char SHA: ${reference}`);
+  }
+}
 
 console.log("SECURITY_REGRESSION_OK");
