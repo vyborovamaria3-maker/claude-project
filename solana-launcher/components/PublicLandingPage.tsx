@@ -63,6 +63,8 @@ const AUTH_ENDPOINT = "/api/v1/auth/login-password";
 const CHART_WIDTH = 760;
 const CHART_HEIGHT = 300;
 const AUTH_TIMEOUT_MS = 12_000;
+const MARKET_LIVE_MAX_AGE_MS = 10 * 60 * 1000;
+const MARKET_CLOCK_INTERVAL_MS = 30_000;
 const USD_FORMAT = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -99,9 +101,9 @@ function formatMarketTime(timestamp: number | null | undefined) {
   return MARKET_TIME_FORMAT.format(new Date(timestamp));
 }
 
-function formatMarketAge(updatedAt: number | null | undefined, servedAt: number | null | undefined) {
-  if (!updatedAt || !servedAt || !Number.isFinite(updatedAt) || !Number.isFinite(servedAt)) return "";
-  const seconds = Math.max(0, Math.floor((servedAt - updatedAt) / 1000));
+function formatMarketAge(updatedAt: number | null | undefined, currentTime: number | null | undefined) {
+  if (!updatedAt || !currentTime || !Number.isFinite(updatedAt) || !Number.isFinite(currentTime)) return "";
+  const seconds = Math.max(0, Math.floor((currentTime - updatedAt) / 1000));
   if (seconds < 60) return `${seconds}с назад`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}м назад`;
@@ -228,6 +230,7 @@ export default function PublicLandingPage() {
   const [authSuccess, setAuthSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [market, setMarket] = useState<MarketData | null>(null);
+  const [marketClock, setMarketClock] = useState(0);
   const [theme, setTheme] = useState<LandingTheme>("gold");
   const [activeChartIndex, setActiveChartIndex] = useState<number | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -239,13 +242,41 @@ export default function PublicLandingPage() {
 
   const paths = useMemo(() => chartPaths(market?.points ?? []), [market]);
   const marketPositive = (market?.change24h ?? 0) >= 0;
-  const marketFresh = Boolean(market && !market.stale);
+  const marketFresh = Boolean(
+    market &&
+    !market.stale &&
+    marketClock > 0 &&
+    marketClock - market.updatedAt <= MARKET_LIVE_MAX_AGE_MS,
+  );
   const activeCoord = activeChartIndex == null ? null : paths.coords[activeChartIndex] ?? null;
 
   useEffect(() => {
     const saved = window.localStorage.getItem(THEME_KEY);
     if (saved === "gold" || saved === "solana") setTheme(saved);
   }, []);
+
+  useEffect(() => {
+    if (!market) return;
+
+    const updateClock = () => setMarketClock(Date.now());
+    updateClock();
+    const interval = window.setInterval(updateClock, MARKET_CLOCK_INTERVAL_MS);
+    const remainingFreshMs = MARKET_LIVE_MAX_AGE_MS - (Date.now() - market.updatedAt);
+    const staleTimer = remainingFreshMs > 0
+      ? window.setTimeout(updateClock, remainingFreshMs + 25)
+      : null;
+
+    const updateWhenVisible = () => {
+      if (document.visibilityState === "visible") updateClock();
+    };
+    document.addEventListener("visibilitychange", updateWhenVisible);
+
+    return () => {
+      window.clearInterval(interval);
+      if (staleTimer != null) window.clearTimeout(staleTimer);
+      document.removeEventListener("visibilitychange", updateWhenVisible);
+    };
+  }, [market]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -259,6 +290,7 @@ export default function PublicLandingPage() {
         if (!response.ok) return;
         const data = (await response.json()) as MarketData;
         if (isValidMarketData(data)) {
+          setMarketClock(Date.now());
           setMarket(data);
           setActiveChartIndex(null);
         }
@@ -712,7 +744,7 @@ export default function PublicLandingPage() {
               </div>
               <span className={styles.marketSource}>
                 {market
-                  ? `CoinGecko · ${market.sourcePointCount} исходных точек · ${formatMarketAge(market.updatedAt, market.servedAt)} · ${formatMarketTime(market.updatedAt)}`
+                  ? `CoinGecko · ${market.sourcePointCount} исходных точек · ${formatMarketAge(market.updatedAt, marketClock || market.servedAt)} · ${formatMarketTime(market.updatedAt)}`
                   : "CoinGecko · ожидаем данные"}
               </span>
             </div>
