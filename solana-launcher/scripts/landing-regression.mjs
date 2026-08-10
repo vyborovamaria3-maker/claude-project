@@ -295,23 +295,23 @@ async function assertMarketPayload(context) {
 }
 
 async function waitForChart(page) {
-  const line = page.locator('svg[aria-label^="Реальный график цены Solana"] path[class*="chartLine"]');
+  const line = page.locator("[data-landing-chart-line]");
   await line.waitFor({ state: "visible", timeout: 15_000 });
   await page.waitForFunction(() => {
-    const path = document.querySelector('svg[aria-label^="Реальный график цены Solana"] path[class*="chartLine"]');
+    const path = document.querySelector("[data-landing-chart-line]");
     return Boolean(path?.getAttribute("d")?.startsWith("M"));
   });
 }
 
 async function assertChartInteraction(page, useTouch = false) {
   await waitForChart(page);
-  const chart = page.locator('[aria-label^="Интерактивный график"]');
+  const chart = page.locator("[data-landing-chart]");
   await chart.waitFor({ state: "visible" });
 
   const gridIsValid = await page.evaluate(() => {
-    const svg = document.querySelector('svg[aria-label^="Реальный график цены Solana"]');
-    if (!svg) return false;
-    const lines = Array.from(svg.querySelectorAll("g line"));
+    const grid = document.querySelector("[data-landing-chart-grid]");
+    if (!grid) return false;
+    const lines = Array.from(grid.querySelectorAll("line"));
     const vertical = lines.slice(5, 9);
     return vertical.length === 4 && vertical.every((line) => line.getAttribute("x1") === line.getAttribute("x2"));
   });
@@ -325,7 +325,7 @@ async function assertChartInteraction(page, useTouch = false) {
   if (useTouch) await page.touchscreen.tap(x, y);
   else await page.mouse.move(x, y);
 
-  const tooltip = page.locator('[class*="chartTooltip"]');
+  const tooltip = page.locator("[data-landing-chart-tooltip]");
   await tooltip.waitFor({ state: "visible", timeout: 5_000 });
   const text = (await tooltip.textContent()) || "";
   assert.match(text, /\$/u, "chart tooltip should contain USD price");
