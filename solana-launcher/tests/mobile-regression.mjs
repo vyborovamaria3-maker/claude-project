@@ -126,7 +126,7 @@ async function openRoute(page, route, profileName, pageErrors) {
 
 async function assertMobileNavigationKeyboardFlow(page, profileName, pageErrors) {
   pageErrors.length = 0;
-  await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await page.goto(`${baseURL}/launch-dashboard`, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await page.waitForTimeout(300);
 
   const menuButton = page.getByRole("button", { name: "Open navigation" });
@@ -162,6 +162,15 @@ async function assertMobileNavigationKeyboardFlow(page, profileName, pageErrors)
 }
 
 async function installAuthenticatedBacktestSession(context) {
+  await context.addCookies([
+    {
+      name: "potapoff_access_token",
+      value: TEST_ACCESS_TOKEN,
+      url: baseURL,
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
   await context.addInitScript((token) => {
     window.localStorage.setItem("potapoff.access_token", token);
   }, TEST_ACCESS_TOKEN);
@@ -194,10 +203,11 @@ async function assertPrivateRouteRequiresAccess(browser) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   try {
     const page = await context.newPage();
-    await page.goto(`${baseURL}/launch-dashboard`, {
+    const response = await page.goto(`${baseURL}/launch-dashboard`, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,
     });
+    assert.ok(response, "private-route gate: no navigation response");
     await page.waitForURL(/\/login(?:$|[?#])/, { timeout: 10_000 });
     assert.equal(new URL(page.url()).pathname, "/login");
     console.log("pass private-route subscription gate");
