@@ -11,7 +11,8 @@ from app.db.session import get_db
 from app.models.user import User
 from app.services.users import get_user_by_id
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+SESSION_COOKIE = "potapoff_access_token"
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -22,7 +23,7 @@ def _as_utc(value: datetime) -> datetime:
 
 async def get_current_user(
     request: Request,
-    token: str = Depends(oauth2_scheme),
+    token: str | None = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_db),
 ) -> User:
     settings: Settings = request.app.state.settings
@@ -31,8 +32,12 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    resolved_token = token or request.cookies.get(SESSION_COOKIE)
+    if not resolved_token:
+        raise credentials_exception
+
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(resolved_token, settings.secret_key, algorithms=[settings.algorithm])
         subject = payload.get("sub")
         if subject is None:
             raise credentials_exception
