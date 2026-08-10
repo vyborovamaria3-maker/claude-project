@@ -116,6 +116,15 @@ async function auditRoute(page, route, viewportName, failures) {
 }
 
 async function installAuthenticatedBacktestSession(context) {
+  await context.addCookies([
+    {
+      name: "potapoff_access_token",
+      value: TEST_ACCESS_TOKEN,
+      url: baseURL,
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ]);
   await context.addInitScript((token) => {
     window.localStorage.setItem("potapoff.access_token", token);
   }, TEST_ACCESS_TOKEN);
