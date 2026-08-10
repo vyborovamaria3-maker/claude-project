@@ -125,7 +125,7 @@ class YouTubeProviderTests(unittest.IsolatedAsyncioTestCase):
         provider = YouTubeIntelligenceProvider(
             client=FakeYouTubeClient(canonical_url="https://evil.example/video")
         )
-        with self.assertRaises(ValueError):
+        with self.assertRaises(NormalizationError):
             await provider.collect("https://youtu.be/abc123")
 
     async def test_health_does_not_expose_raw_error(self) -> None:
