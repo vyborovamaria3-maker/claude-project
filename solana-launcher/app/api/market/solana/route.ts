@@ -8,6 +8,7 @@ const MAX_FUTURE_SKEW = 5 * 60 * 1000;
 const LIVE_MAX_AGE = 10 * 60 * 1000;
 const MIN_WINDOW_SPAN = 23 * HOUR;
 const MAX_MARKET_DATA_AGE = 6 * HOUR;
+const MAX_METRIC_SKEW = 30 * 60 * 1000;
 const MAX_CHART_POINTS = 120;
 
 type PriceRow = [number, number];
@@ -19,6 +20,7 @@ type CoinGeckoChart = {
 };
 
 type MarketPoint = { time: number; price: number };
+type TimedMetric = { value: number | null; time: number | null };
 
 type MarketPayload = {
   price: number;
@@ -26,7 +28,9 @@ type MarketPayload = {
   high24h: number;
   low24h: number;
   volume24h: number | null;
+  volumeUpdatedAt: number | null;
   marketCap: number | null;
+  marketCapUpdatedAt: number | null;
   updatedAt: number;
   servedAt: number;
   windowStart: number;
@@ -69,12 +73,15 @@ function normalizeRows(rows: unknown, now: number): PriceRow[] {
     .sort((a, b) => a[0] - b[0]);
 }
 
-function lastFiniteValueAtOrBefore(rows: unknown, cutoff: number, now: number): number | null {
+function latestMetricNearCutoff(rows: unknown, cutoff: number, now: number): TimedMetric {
   const normalized = normalizeRows(rows, now);
   for (let index = normalized.length - 1; index >= 0; index -= 1) {
-    if (normalized[index][0] <= cutoff) return normalized[index][1];
+    const [time, value] = normalized[index];
+    if (time > cutoff) continue;
+    if (cutoff - time > MAX_METRIC_SKEW) return { value: null, time: null };
+    return { value, time };
   }
-  return null;
+  return { value: null, time: null };
 }
 
 /**
@@ -163,14 +170,18 @@ export async function GET() {
       throw new Error("Solana market source is too old");
     }
     const stale = dataAge > LIVE_MAX_AGE;
+    const volume = latestMetricNearCutoff(data.total_volumes, sourceEnd, servedAt);
+    const marketCap = latestMetricNearCutoff(data.market_caps, sourceEnd, servedAt);
 
     const payload: MarketPayload = {
       price: last,
       change24h: ((last - first) / first) * 100,
       high24h: Math.max(...values),
       low24h: Math.min(...values),
-      volume24h: lastFiniteValueAtOrBefore(data.total_volumes, sourceEnd, servedAt),
-      marketCap: lastFiniteValueAtOrBefore(data.market_caps, sourceEnd, servedAt),
+      volume24h: volume.value,
+      volumeUpdatedAt: volume.time,
+      marketCap: marketCap.value,
+      marketCapUpdatedAt: marketCap.time,
       updatedAt: sourceEnd,
       servedAt,
       windowStart: prices[0][0],
