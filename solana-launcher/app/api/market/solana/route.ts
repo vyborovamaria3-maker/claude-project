@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const revalidate = 60;
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -113,9 +112,7 @@ function sampleRealPoints(rows: PriceRow[], maxPoints: number): PriceRow[] {
 
 function marketHeaders(stale: boolean) {
   return {
-    "Cache-Control": stale
-      ? "public, s-maxage=30, stale-while-revalidate=300"
-      : "public, s-maxage=60, stale-while-revalidate=300",
+    "Cache-Control": "no-store",
     "X-POTAPoff-Market-Source": "CoinGecko",
     "X-POTAPoff-Market-Stale": stale ? "1" : "0",
   };
