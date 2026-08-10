@@ -57,11 +57,21 @@ def _required_int(payload: dict[str, Any], key: str) -> int:
     return value
 
 
+def _required_string(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} must be a non-empty string")
+    return value.strip()
+
+
 def _snapshot(payload: dict[str, Any]) -> RepositorySnapshot:
+    archived = payload.get("archived")
+    if not isinstance(archived, bool):
+        raise ValueError("archived must be a boolean")
     return RepositorySnapshot(
-        name=str(payload.get("name") or "repo"),
-        full_name=str(payload.get("full_name") or "fixture/repo"),
-        url=str(payload.get("url") or "https://github.com/fixture/repo"),
+        name=_required_string(payload, "name"),
+        full_name=_required_string(payload, "full_name"),
+        url=_required_string(payload, "url"),
         stars=_required_int(payload, "stars"),
         forks=_required_int(payload, "forks"),
         watchers=_required_int(payload, "watchers"),
@@ -70,7 +80,7 @@ def _snapshot(payload: dict[str, Any]) -> RepositorySnapshot:
         issues_open=_required_int(payload, "issues_open"),
         pull_requests_open=_required_int(payload, "pull_requests_open"),
         releases=_required_int(payload, "releases"),
-        archived=bool(payload.get("archived", False)),
+        archived=archived,
         created_at=_parse_datetime(payload.get("created_at"), "created_at"),
         updated_at=_parse_datetime(payload.get("updated_at"), "updated_at"),
     )
@@ -99,14 +109,19 @@ def run_developer_score_backtest(path: str | Path = DEFAULT_DEVELOPER_FIXTURE) -
         raise ValueError("developer score backtest fixture must contain cases")
 
     results: list[BacktestCaseResult] = []
+    seen_names: set[str] = set()
     for raw_case in cases:
         if not isinstance(raw_case, dict):
             raise ValueError("backtest case must be an object")
         name = raw_case.get("name")
         snapshot_payload = raw_case.get("snapshot")
         expected = raw_case.get("expected")
-        if not isinstance(name, str) or not name:
+        if not isinstance(name, str) or not name.strip():
             raise ValueError("backtest case name is required")
+        name = name.strip()
+        if name in seen_names:
+            raise ValueError(f"duplicate backtest case name: {name}")
+        seen_names.add(name)
         if not isinstance(snapshot_payload, dict) or not isinstance(expected, dict):
             raise ValueError(f"backtest case {name!r} is malformed")
 
