@@ -51,9 +51,48 @@ main[data-theme="solana"] [data-landing-chart]:focus-visible {
   main[data-theme="solana"] [data-landing-footer-inner] {
     padding-bottom: max(34px, env(safe-area-inset-bottom));
   }
+
+  main[data-theme="gold"] #landing-mobile-menu,
+  main[data-theme="solana"] #landing-mobile-menu {
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
+
+  main[data-theme="gold"] [data-landing-login-backdrop],
+  main[data-theme="solana"] [data-landing-login-backdrop] {
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    padding-left: max(10px, env(safe-area-inset-left));
+  }
 }
 
 @media (max-width: 980px) {
+  main[data-theme="gold"] header button,
+  main[data-theme="solana"] header button,
+  main[data-theme="gold"] [role="dialog"] input,
+  main[data-theme="solana"] [role="dialog"] input,
+  main[data-theme="gold"] [role="dialog"] button,
+  main[data-theme="solana"] [role="dialog"] button {
+    min-height: 44px;
+  }
+
+  main[data-theme="gold"] [role="dialog"] button,
+  main[data-theme="solana"] [role="dialog"] button {
+    min-width: 44px;
+  }
+
+  main[data-theme="gold"] header a[aria-label="POTAPoff — главная"],
+  main[data-theme="solana"] header a[aria-label="POTAPoff — главная"],
+  main[data-theme="gold"] #features a,
+  main[data-theme="solana"] #features a,
+  main[data-theme="gold"] footer a,
+  main[data-theme="solana"] footer a {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
   main[data-theme="gold"] [data-landing-menu-toggle],
   main[data-theme="solana"] [data-landing-menu-toggle] {
     width: 44px;
