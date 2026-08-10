@@ -31,6 +31,15 @@ class MemoryDocumentStore:
     def list_all(self) -> list[IntelligenceDocument]:
         return list(self.documents.values())
 
+    def list_recent(self, limit: int) -> list[IntelligenceDocument]:
+        if limit < 1:
+            raise ValueError("limit must be > 0")
+        return sorted(
+            self.documents.values(),
+            key=lambda document: (document.collected_at, document.id),
+            reverse=True,
+        )[:limit]
+
     def find_by_hash(self, raw_hash: str) -> IntelligenceDocument | None:
         document_id = self._hash_index.get(raw_hash)
         return self.documents.get(document_id) if document_id is not None else None
