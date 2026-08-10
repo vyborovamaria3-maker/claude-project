@@ -75,21 +75,18 @@ class BootstrapTests(unittest.TestCase):
         self.assertIsInstance(runtime.store, MemoryDocumentStore)
         self.assertIs(runtime.worker.queue, runtime.queue)
         self.assertIs(runtime.worker.store, runtime.store)
+        runtime.close()
 
     def test_sqlite_runtime_uses_durable_queue_and_store(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "runtime.sqlite3"
             registry = ProviderRegistry([FakeProvider("fake")])
-            runtime = build_sqlite_runtime(path, registry=registry)
-            try:
+            with build_sqlite_runtime(path, registry=registry) as runtime:
                 self.assertIs(runtime.registry, registry)
                 self.assertIsInstance(runtime.queue, SQLiteJobQueue)
                 self.assertIsInstance(runtime.store, SQLiteDocumentStore)
                 submitted = runtime.queue.submit({"provider": "fake", "query": "x"})
                 self.assertIsNotNone(runtime.queue.get(submitted.id))
-            finally:
-                runtime.queue.close()
-                runtime.store.close()
 
 
 class DoctorTests(unittest.IsolatedAsyncioTestCase):
