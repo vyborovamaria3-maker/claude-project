@@ -26,19 +26,47 @@ class SubscriptionOrder(Base):
     )
 
     payload: Mapped[str] = mapped_column(String(128), primary_key=True)
-    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    telegram_user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        index=True,
+        nullable=False,
+    )
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     telegram_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    login: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    login: Mapped[str] = mapped_column(
+        String(32),
+        index=True,
+        nullable=False,
+    )
     currency: Mapped[str] = mapped_column(String(8), nullable=False)
     total_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    access_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
-    status: Mapped[str] = mapped_column(String(16), index=True, default="pending", nullable=False)
+    access_days: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=30,
+    )
+    status: Mapped[str] = mapped_column(
+        String(16),
+        index=True,
+        default="pending",
+        nullable=False,
+    )
     password_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
-    recipient_wallet: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    payment_reference: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    recipient_wallet: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    payment_reference: Mapped[str | None] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=True,
+    )
     payment_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payment_signature: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    payment_signature: Mapped[str | None] = mapped_column(
+        String(128),
+        unique=True,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -50,4 +78,7 @@ class SubscriptionOrder(Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
-    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
