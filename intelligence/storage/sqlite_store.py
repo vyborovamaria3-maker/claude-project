@@ -36,14 +36,14 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_documents_collected_at
 class SQLiteDocumentStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
-        if self.path != Path(":memory:"):
-            self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            if self.path != Path(":memory:"):
+                self.path.parent.mkdir(parents=True, exist_ok=True)
             self._connection = sqlite3.connect(str(self.path))
             self._connection.row_factory = sqlite3.Row
             self._connection.executescript(_SCHEMA)
             self._connection.commit()
-        except sqlite3.Error as exc:
+        except (OSError, sqlite3.Error) as exc:
             raise StorageError("failed to initialize SQLite intelligence store") from exc
 
     def close(self) -> None:
@@ -80,13 +80,18 @@ class SQLiteDocumentStore:
             self._connection.commit()
             return document
         except sqlite3.IntegrityError as exc:
+            self._connection.rollback()
             if document.raw_hash:
                 existing = self.find_by_hash(document.raw_hash)
                 if existing is not None:
                     return existing
             raise StorageError("intelligence document violates SQLite constraints") from exc
-        except (sqlite3.Error, TypeError, ValueError) as exc:
+        except sqlite3.Error as exc:
+            self._connection.rollback()
             raise StorageError("failed to save intelligence document") from exc
+        except (StorageError, TypeError, ValueError):
+            self._connection.rollback()
+            raise
 
     def get(self, document_id: str) -> IntelligenceDocument | None:
         try:
