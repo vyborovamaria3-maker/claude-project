@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -14,12 +15,13 @@ def make_document(
     document_id: str = "doc-1",
     *,
     raw_hash: str | None = "a" * 64,
+    collected_at: datetime | None = None,
 ) -> IntelligenceDocument:
     return IntelligenceDocument(
         id=document_id,
         source="web",
         content="Evidence body",
-        collected_at=datetime(2026, 8, 10, 4, 0, tzinfo=timezone.utc),
+        collected_at=collected_at or datetime(2026, 8, 10, 4, 0, tzinfo=timezone.utc),
         url="https://example.com/evidence",
         author="example.com",
         provider="jina-reader",
@@ -67,15 +69,40 @@ class SQLiteDocumentStoreTests(unittest.TestCase):
             store.save(make_document("second", raw_hash=None))
             self.assertEqual(len(store.list_all()), 2)
 
-    def test_file_store_survives_reopen(self) -> None:
+    def test_file_store_survives_reopen_and_uses_wal(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "intelligence.sqlite3"
             with SQLiteDocumentStore(path) as store:
                 store.save(make_document())
+                mode = store._connection.execute("PRAGMA journal_mode").fetchone()[0]
+                timeout = store._connection.execute("PRAGMA busy_timeout").fetchone()[0]
+                self.assertEqual(str(mode).lower(), "wal")
+                self.assertEqual(int(timeout), 5000)
             with SQLiteDocumentStore(path) as reopened:
                 loaded = reopened.get("doc-1")
                 self.assertIsNotNone(loaded)
                 self.assertEqual(len(reopened.list_all()), 1)
+
+    def test_list_recent_is_bounded_and_newest_first(self) -> None:
+        with SQLiteDocumentStore(":memory:") as store:
+            store.save(
+                make_document(
+                    "old",
+                    raw_hash="b" * 64,
+                    collected_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+                )
+            )
+            store.save(
+                make_document(
+                    "new",
+                    raw_hash="c" * 64,
+                    collected_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
+                )
+            )
+            rows = store.list_recent(1)
+            self.assertEqual([row.id for row in rows], ["new"])
+            with self.assertRaises(ValueError):
+                store.list_recent(0)
 
     def test_non_json_metrics_are_rejected(self) -> None:
         document = make_document()
