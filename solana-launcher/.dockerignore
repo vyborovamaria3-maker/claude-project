@@ -8,3 +8,11 @@ logs
 coverage
 tmp
 .codex
+.env
+.env.*
+**/.env
+**/.env.*
+*.pem
+*.key
+storage-state.json
+*.storage-state.json
