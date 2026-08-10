@@ -25,8 +25,12 @@ class YouTubeIntelligenceProvider(IntelligenceProvider):
         canonical_url = metadata.get("webpage_url")
         if not isinstance(canonical_url, str):
             raise NormalizationError("YouTube metadata is missing webpage_url")
+        try:
+            validated_canonical_url = self.client.validate_youtube_url(canonical_url)
+        except ValueError as exc:
+            raise NormalizationError("YouTube metadata returned an invalid webpage_url") from exc
         metadata = dict(metadata)
-        metadata["webpage_url"] = self.client.validate_youtube_url(canonical_url)
+        metadata["webpage_url"] = validated_canonical_url
 
         transcript = None
         if self.include_transcript:
