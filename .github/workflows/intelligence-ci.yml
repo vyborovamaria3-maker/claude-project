@@ -20,7 +20,7 @@ permissions:
 jobs:
   intelligence-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -95,6 +95,42 @@ jobs:
           POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
           POTAPOFF_TEST_POSTGRES_READONLY_DSN: postgresql://intelligence_readonly:readonly@127.0.0.1:5432/intelligence
         run: python -m unittest intelligence.tests.test_postgres_integration -v
+
+      - name: Prepare Compose smoke configuration
+        run: |
+          cp admin-site/.env.example admin-site/.env
+          cp admin-site/sources.example.json admin-site/sources.json
+          cp admin-site/logs.example.json admin-site/logs.json
+
+      - name: Validate Docker Compose
+        run: docker compose -f admin-site/docker-compose.yml config --quiet
+
+      - name: Build intelligence worker image
+        run: docker build --pull -t potapoff-intelligence:${{ github.sha }} intelligence
+
+      - name: Smoke intelligence worker image
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect potapoff-intelligence:${{ github.sha }} --format '{{.Config.User}}')" = "intelligence"
+          docker run --rm --read-only --tmpfs /tmp:size=256m \
+            --cap-drop ALL --security-opt no-new-privileges \
+            potapoff-intelligence:${{ github.sha }} python -m intelligence --help >/dev/null
+          docker run --rm --read-only --tmpfs /tmp:size=256m \
+            --cap-drop ALL --security-opt no-new-privileges \
+            potapoff-intelligence:${{ github.sha }} yt-dlp --version
+          docker run --rm --read-only --tmpfs /tmp:size=256m \
+            --cap-drop ALL --security-opt no-new-privileges \
+            potapoff-intelligence:${{ github.sha }} deno --version
+
+      - name: Scan intelligence image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: potapoff-intelligence:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
 
       - name: Reject credential files
         shell: bash
