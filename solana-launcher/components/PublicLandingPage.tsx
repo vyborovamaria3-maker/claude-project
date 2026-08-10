@@ -655,7 +655,7 @@ export default function PublicLandingPage() {
                       </defs>
                       <g className={styles.chartGrid}>
                         {[55, 110, 165, 220, 275].map((y) => <line key={y} x1="16" x2="744" y1={y} y2={y} />)}
-                        {[150, 300, 450, 600].map((x) => <line key={x} x2={x} y1="18" y2="282" />)}
+                        {[150, 300, 450, 600].map((x) => <line key={x} x1={x} x2={x} y1="18" y2="282" />)}
                       </g>
                       <path className={styles.chartArea} d={paths.area} />
                       <path className={styles.chartLine} d={paths.line} />
