@@ -21,6 +21,7 @@ router = APIRouter()
 
 class IntelligenceMemoryPersistRequest(BaseModel):
     snapshot: dict
+    analysis_snapshot: dict | None = None
     ai_result: dict | None = None
     provider: str | None = Field(default=None, max_length=64)
     model: str | None = Field(default=None, max_length=160)
@@ -42,7 +43,10 @@ def _require_backend_key(request: Request, supplied: str | None) -> None:
             detail="BACKEND_API_KEY is not configured",
         )
     if not supplied or not hmac.compare_digest(supplied, expected):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid backend API key")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid backend API key",
+        )
 
 
 @router.post("/memory")
@@ -50,23 +54,40 @@ async def persist_memory(
     payload: IntelligenceMemoryPersistRequest,
     request: Request,
     session: AsyncSession = Depends(get_db),
-    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+    x_backend_api_key: str | None = Header(
+        default=None,
+        alias="X-Backend-API-Key",
+    ),
 ) -> dict:
     _require_backend_key(request, x_backend_api_key)
     mint = str(payload.snapshot.get("mint") or "")
     if not is_solana_address(mint):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid snapshot mint")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid snapshot mint",
+        )
+    if payload.analysis_snapshot is not None:
+        analysis_mint = str(payload.analysis_snapshot.get("mint") or "")
+        if analysis_mint != mint:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="analysis_snapshot mint mismatch",
+            )
     try:
         return await persist_intelligence_memory(
             session,
             snapshot=payload.snapshot,
+            analysis_snapshot=payload.analysis_snapshot,
             ai_result=payload.ai_result,
             provider=payload.provider,
             model=payload.model,
             prompt_version=payload.prompt_version,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get("/history/{mint}")
@@ -77,7 +98,10 @@ async def memory_history(
     current_user=Depends(get_current_subscriber),
 ) -> dict:
     if not is_solana_address(mint):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Solana mint address",
+        )
     return {"items": await token_memory_history(session, mint, limit=limit)}
 
 
@@ -90,7 +114,10 @@ async def memory_entity(
 ) -> dict:
     result = await entity_memory(session, key, edge_limit=edge_limit)
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Entity not found",
+        )
     return result
 
 
@@ -99,11 +126,17 @@ async def memory_context(
     payload: IntelligenceMemoryContextRequest,
     request: Request,
     session: AsyncSession = Depends(get_db),
-    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+    x_backend_api_key: str | None = Header(
+        default=None,
+        alias="X-Backend-API-Key",
+    ),
 ) -> dict:
     _require_backend_key(request, x_backend_api_key)
     if payload.mint and not is_solana_address(payload.mint):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Solana mint address",
+        )
     return await build_memory_context(
         session,
         entity_keys=payload.entity_keys,
