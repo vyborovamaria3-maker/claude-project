@@ -7,6 +7,7 @@ import { QueryClientProvider } from "@/lib/react-query";
 import { createAppQueryClient } from "@/lib/queryClient";
 import { I18nProvider } from "@/components/providers/I18nProvider";
 import EncodingRepair from "@/components/providers/EncodingRepair";
+import ThemeRuntime from "@/components/providers/ThemeRuntime";
 
 export default function AppProviders({
   children,
@@ -45,6 +46,7 @@ export default function AppProviders({
     <I18nProvider initialLocale={locale}>
       <HeroUIProvider>
         <QueryClientProvider client={queryClient}>
+          <ThemeRuntime />
           <EncodingRepair />
           {children}
         </QueryClientProvider>
