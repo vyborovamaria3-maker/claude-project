@@ -1,10 +1,19 @@
-from app.models.analytics import CollectorJob, Token, TokenMetric, TokenStatus, Wallet, WalletLink, WalletTrade
+from app.models.analytics import (
+    CollectorJob,
+    Token,
+    TokenMetric,
+    TokenStatus,
+    Wallet,
+    WalletLink,
+    WalletTrade,
+)
 from app.models.auth_log import AuthLog
 from app.models.intelligence_memory import (
     IntelligenceDiscovery,
     IntelligenceEdge,
     IntelligenceEntity,
     IntelligenceSnapshot,
+    IntelligenceSnapshotEdge,
     IntelligenceSnapshotEntity,
 )
 from app.models.social_intelligence import (
@@ -45,5 +54,6 @@ __all__ = [
     "IntelligenceEntity",
     "IntelligenceSnapshotEntity",
     "IntelligenceEdge",
+    "IntelligenceSnapshotEdge",
     "IntelligenceDiscovery",
 ]
