@@ -22,19 +22,18 @@ import CandleTitleBar from "./chart/CandleTitleBar";
 import BottomTabs from "./chart/BottomTabs";
 import { type Timeframe } from "@/lib/chart/types";
 import type { Candle } from "@/lib/chart/types";
-import { CHART_COLORS, CHART_DIMENSIONS, CHART_FONTS } from "@/lib/chart/config";
+import { applyChartTheme, CHART_COLORS, CHART_DIMENSIONS, CHART_FONTS } from "@/lib/chart/config";
 import { formatMcap } from "@/lib/chart/formatters";
 
-// Lazy load ActivityPanel for better initial load performance
 const ActivityPanel = dynamic(() => import("./chart/ActivityPanel"), {
   ssr: false,
   loading: () => (
-    <div className="w-72 flex flex-col border-l border-[#1a1a2e] bg-[#0a0a14] min-w-0">
-      <div className="px-3 py-2 border-b border-[#1a1a2e]">
-        <div className="text-xs font-semibold text-white">Активность</div>
+    <div className="w-72 flex flex-col border-l border-bg-border bg-bg-card min-w-0">
+      <div className="px-3 py-2 border-b border-bg-border">
+        <div className="text-xs font-semibold text-content">Активность</div>
       </div>
       <div className="flex-1 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#a855f7]" />
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
       </div>
     </div>
   ),
@@ -122,7 +121,7 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
 
   useTradeStream(mint, 25, handleLiveTrade, { headless: true });
 
-  // Init chart once
+  // Init chart once. Theme changes only update chart options, not data or viewport.
   useEffect(() => {
     const container = chartContainerRef.current;
     if (!container || chartRef.current) return;
@@ -206,8 +205,8 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    applyChartTheme(chart);
 
-    // ResizeObserver with 100ms debounce for performance
     let resizeTimeout: NodeJS.Timeout | null = null;
     const ro = new ResizeObserver(() => {
       if (resizeTimeout) clearTimeout(resizeTimeout);
@@ -222,23 +221,25 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
     });
     ro.observe(container);
 
+    const onThemeApplied = () => applyChartTheme(chartRef.current);
+    window.addEventListener("potapoff:theme-applied", onThemeApplied);
+
     return () => {
       if (resizeTimeout) clearTimeout(resizeTimeout);
       ro.disconnect();
+      window.removeEventListener("potapoff:theme-applied", onThemeApplied);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
     };
-  }, []); // only once
+  }, []);
 
-  // Track tf changes and previous candle count for smart update vs setData
   const prevTfRef = useRef(tf);
   const didFitRef = useRef(false);
   const prevLengthRef = useRef(0);
   const prevLastTimeRef = useRef<number | null>(null);
 
-  // Update candle data when normalizedCandles change
   useEffect(() => {
     const cs = candleSeriesRef.current;
     const vs = volumeSeriesRef.current;
@@ -262,8 +263,6 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
     const prevLen = prevLengthRef.current;
     const prevLastTime = prevLastTimeRef.current;
 
-    // Smart update: use update() for smooth real-time in the current bucket.
-    // If a new candle is appended or a gap appears, fallback to setData().
     const canUseUpdate =
       didFitRef.current &&
       normalizedCandles.length > 0 &&
@@ -285,7 +284,6 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
       return;
     }
 
-    // Full setData for initial load or bulk change
     const candleData: CandlestickData[] = normalizedCandles.map((c) => ({
       time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
     }));
@@ -316,7 +314,7 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
   const displaySymbol = symbol || "TOKEN";
 
   return (
-    <div className="flex flex-col h-full w-full" data-tag="components.pump_fun_chart">
+    <div className="flex flex-col h-full w-full bg-bg-card text-content" data-tag="components.pump_fun_chart">
       <ChartHeader
         mint={mint}
         symbol={displaySymbol}
@@ -342,20 +340,20 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
       />
 
       <div className="flex min-h-0" style={{ height: 300 }}>
-        <div className="flex-1 min-h-0 relative">
+        <div className="flex-1 min-h-0 relative bg-bg-card">
           <div ref={chartContainerRef} className="w-full h-full" style={{ minHeight: 300 }} />
           {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#a855f7]" />
+            <div className="absolute inset-0 flex items-center justify-center bg-bg-overlay/70 pointer-events-none">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
           )}
           {error && !isLoading && normalizedCandles.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-overlay/85">
               <p className="text-red-400 text-sm mb-3">{error}</p>
               <button
                 type="button"
                 onClick={retry}
-                className="px-4 py-1.5 rounded bg-[#a855f7]/20 text-[#a855f7] text-sm hover:bg-[#a855f7]/30 transition"
+                className="px-4 py-1.5 rounded bg-primary-soft text-primary text-sm hover:brightness-110 transition"
               >
                 Retry
               </button>
@@ -368,7 +366,7 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
           )}
         </div>
 
-        <div className="w-72 flex flex-col border-l border-[#1a1a2e] overflow-hidden">
+        <div className="w-72 flex flex-col border-l border-bg-border overflow-hidden bg-bg-card">
           <ActivityPanel mint={mint} />
         </div>
       </div>
