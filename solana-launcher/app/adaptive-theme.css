@@ -1,0 +1,221 @@
+/*
+ * Global adaptive theme layer.
+ * ThemeRuntime derives these variables from --theme-bg at runtime, so every hue
+ * can be used as the site background without losing readable hierarchy.
+ */
+
+:root {
+  --theme-shadow-color: rgba(0, 0, 0, 0.72);
+  --theme-highlight-color: rgba(255, 255, 255, 0.08);
+}
+
+html,
+body,
+.app-content,
+.app-sidebar,
+.site-page,
+.site-panel,
+.site-hero,
+.surface-panel,
+.surface-panel-hero,
+.surface-table,
+.glass,
+.glass-strong,
+input,
+select,
+textarea,
+button {
+  transition:
+    background-color 180ms ease,
+    background-image 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+body {
+  background-color: var(--theme-bg) !important;
+  color: var(--theme-content);
+}
+
+/* Main application chrome inherits the same palette as page content. */
+.app-sidebar,
+.app-content,
+header,
+nav {
+  border-color: var(--theme-bg-border);
+}
+
+.app-sidebar {
+  background-color: color-mix(in srgb, var(--theme-bg) 88%, transparent) !important;
+}
+
+/* Native controls must follow the selected background as well. */
+input:not([type="color"]),
+select,
+textarea {
+  background-color: var(--theme-bg-card);
+  border-color: var(--theme-bg-border);
+  color: var(--theme-content);
+  caret-color: var(--theme-primary);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--theme-content-faint);
+  opacity: 1;
+}
+
+select option {
+  background: var(--theme-bg-card);
+  color: var(--theme-content);
+}
+
+/* Keep browser autofill from reintroducing a fixed white/blue surface. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--theme-content);
+  box-shadow: 0 0 0 1000px var(--theme-bg-card) inset !important;
+  caret-color: var(--theme-content);
+}
+
+.surface-panel,
+.surface-panel-hero,
+.glass,
+.glass-strong,
+.surface-table,
+.site-input,
+.site-tabs,
+.site-tab,
+.site-tab-card,
+.site-action-button,
+.site-icon-button {
+  color: var(--theme-content);
+  border-color: var(--theme-bg-border);
+}
+
+.surface-panel,
+.surface-panel-hero,
+.glass,
+.glass-strong {
+  box-shadow:
+    0 1px 0 var(--theme-highlight-color) inset,
+    0 20px 52px -28px var(--theme-shadow-color),
+    0 0 0 1px color-mix(in srgb, var(--page-accent, var(--theme-primary)) 7%, transparent);
+}
+
+.surface-table {
+  background: linear-gradient(180deg, var(--theme-bg-elevated), var(--theme-bg-card));
+  box-shadow: 0 14px 34px -24px var(--theme-shadow-color);
+}
+
+.surface-table thead,
+table thead {
+  color: var(--theme-content-muted);
+}
+
+.surface-table tbody tr,
+table tbody tr {
+  border-color: var(--theme-bg-border);
+}
+
+/* Modals, popovers, dropdowns and generic role-based overlays. */
+[role="dialog"],
+[role="menu"],
+[role="listbox"],
+[data-slot="popover-content"],
+[data-slot="dropdown-content"],
+[data-slot="modal-content"] {
+  --tw-bg-opacity: 1;
+  background-color: var(--theme-bg-overlay) !important;
+  border-color: var(--theme-bg-border) !important;
+  color: var(--theme-content) !important;
+}
+
+/* Tailwind legacy surfaces that otherwise remain tied to white/black palettes. */
+[data-theme-tone] [class*="bg-black/"],
+[data-theme-tone] [class*="bg-zinc-9"],
+[data-theme-tone] [class*="bg-slate-9"],
+[data-theme-tone] [class*="bg-gray-9"] {
+  background-color: color-mix(in srgb, var(--theme-bg-overlay) 88%, transparent) !important;
+}
+
+[data-theme-tone="light"] [class*="shadow-black"],
+[data-theme-tone="light"] [class*="shadow-["] {
+  --tw-shadow-color: var(--theme-shadow-color);
+}
+
+/* Existing text-white compatibility from globals.css is reinforced for components
+ * using exact text colors rather than the semantic content utilities. */
+[data-theme-tone] .text-white,
+[data-theme-tone] [class~="text-white"] {
+  color: var(--theme-content) !important;
+}
+
+[data-theme-tone] .text-black,
+[data-theme-tone] [class~="text-black"] {
+  color: var(--theme-content-inverted) !important;
+}
+
+/* Semantic colors stay semantic, while their translucent backgrounds inherit
+ * enough of the selected site background to feel native to every palette. */
+.bg-primary-soft {
+  background-color: color-mix(in srgb, var(--theme-primary) 14%, var(--theme-bg-card)) !important;
+}
+
+/* Scrollbars and selection are part of the global visual system too. */
+* {
+  scrollbar-color: var(--theme-bg-border) var(--theme-bg-soft);
+}
+
+::-webkit-scrollbar-track {
+  background: var(--theme-bg-soft);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--theme-bg-border);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--theme-primary) 30%, var(--theme-bg));
+  color: var(--theme-content);
+}
+
+/* Light backgrounds need softer overlays; dark backgrounds retain the richer glass. */
+[data-theme-tone="light"] .glass,
+[data-theme-tone="light"] .glass-strong,
+[data-theme-tone="light"] .surface-panel,
+[data-theme-tone="light"] .surface-panel-hero {
+  backdrop-filter: blur(18px) saturate(110%);
+}
+
+[data-theme-tone="dark"] .glass,
+[data-theme-tone="dark"] .glass-strong,
+[data-theme-tone="dark"] .surface-panel,
+[data-theme-tone="dark"] .surface-panel-hero {
+  backdrop-filter: blur(18px) saturate(120%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  body,
+  .app-content,
+  .app-sidebar,
+  .site-page,
+  .site-panel,
+  .site-hero,
+  .surface-panel,
+  .surface-panel-hero,
+  .surface-table,
+  .glass,
+  .glass-strong,
+  input,
+  select,
+  textarea,
+  button {
+    transition: none !important;
+  }
+}
