@@ -14,6 +14,7 @@ import {
 import { RefreshCw, AlertTriangle, Loader2 } from "lucide-react";
 import { usePumpFunOHLCV } from "@/hooks/usePumpFunOHLCV";
 import { TIMEFRAMES, type Timeframe } from "@/lib/chart/types";
+import { applyChartTheme, CHART_COLORS } from "@/lib/chart/config";
 
 // data-tag: components.token_price_chart
 
@@ -39,7 +40,7 @@ export default function TokenPriceChart({ mint }: Props) {
   const { candles, pair, lastPrice, change24h, status, error, retry } =
     usePumpFunOHLCV(mint, tf);
 
-  // Initialize chart once
+  // Initialize chart. Theme changes are applied live without rebuilding the series.
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -47,17 +48,17 @@ export default function TokenPriceChart({ mint }: Props) {
       width: containerRef.current.clientWidth,
       height: 420,
       layout: {
-        background: { type: ColorType.Solid, color: "#0a0a0f" },
-        textColor: "#9ca3af",
+        background: { type: ColorType.Solid, color: CHART_COLORS.background },
+        textColor: CHART_COLORS.text,
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: "#1f1f2e" },
-        horzLines: { color: "#1f1f2e" },
+        vertLines: { color: CHART_COLORS.grid },
+        horzLines: { color: CHART_COLORS.grid },
       },
-      rightPriceScale: { borderColor: "#1f1f2e" },
+      rightPriceScale: { borderColor: CHART_COLORS.border },
       timeScale: {
-        borderColor: "#1f1f2e",
+        borderColor: CHART_COLORS.border,
         timeVisible: true,
         secondsVisible: false,
         barSpacing: 6,
@@ -66,18 +67,18 @@ export default function TokenPriceChart({ mint }: Props) {
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: "#3f3f5e", width: 1, style: 2 },
-        horzLine: { color: "#3f3f5e", width: 1, style: 2 },
+        vertLine: { color: CHART_COLORS.crosshair, width: 1, style: 2, labelBackgroundColor: CHART_COLORS.crosshairLabel },
+        horzLine: { color: CHART_COLORS.crosshair, width: 1, style: 2, labelBackgroundColor: CHART_COLORS.crosshairLabel },
       },
     });
 
     const cs = chart.addSeries(CandlestickSeries, {
-      upColor: "#26a69a",
-      downColor: "#ef5350",
-      borderUpColor: "#26a69a",
-      borderDownColor: "#ef5350",
-      wickUpColor: "#26a69a",
-      wickDownColor: "#ef5350",
+      upColor: CHART_COLORS.up,
+      downColor: CHART_COLORS.down,
+      borderUpColor: CHART_COLORS.up,
+      borderDownColor: CHART_COLORS.down,
+      wickUpColor: CHART_COLORS.up,
+      wickDownColor: CHART_COLORS.down,
       priceLineVisible: false,
       lastValueVisible: true,
     });
@@ -85,7 +86,7 @@ export default function TokenPriceChart({ mint }: Props) {
     const vs = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "vol",
-      color: "#26a69a",
+      color: CHART_COLORS.up,
     });
     chart.priceScale("vol").applyOptions({
       scaleMargins: { top: 0.82, bottom: 0 },
@@ -94,16 +95,21 @@ export default function TokenPriceChart({ mint }: Props) {
     chartRef.current = chart;
     candleSeries.current = cs;
     volumeSeries.current = vs;
+    applyChartTheme(chart);
 
     const onResize = () => {
       if (containerRef.current && chartRef.current) {
         chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
       }
     };
+    const onThemeApplied = () => applyChartTheme(chartRef.current);
+
     window.addEventListener("resize", onResize);
+    window.addEventListener("potapoff:theme-applied", onThemeApplied);
 
     return () => {
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("potapoff:theme-applied", onThemeApplied);
       chart.remove();
       chartRef.current = null;
       candleSeries.current = null;
@@ -127,8 +133,6 @@ export default function TokenPriceChart({ mint }: Props) {
     const appendOne = candles.length === prevCount.current + 1 && last.time > prevLastTime.current;
 
     if (prevCount.current > 0 && ((sameLen && sameTime) || appendOne)) {
-      // FAST PATH — only the live candle changed or one new bucket appended.
-      // series.update() auto-extends viewport; no setData / fitContent jitter.
       candleSeries.current.update({
         time: last.time as UTCTimestamp,
         open: last.open, high: last.high, low: last.low, close: last.close,
@@ -143,7 +147,6 @@ export default function TokenPriceChart({ mint }: Props) {
       return;
     }
 
-    // SLOW PATH — full rebuild (tf change / initial load / gap)
     candleSeries.current.setData(
       candles.map(c => ({
         time: c.time as UTCTimestamp,
@@ -158,7 +161,6 @@ export default function TokenPriceChart({ mint }: Props) {
       }))
     );
 
-    // Show last ~60 bars without forcing fitContent (which jerks the view).
     const ts = chartRef.current?.timeScale();
     if (ts && candles.length > 0) {
       const visibleCount = Math.min(60, candles.length);
@@ -172,7 +174,7 @@ export default function TokenPriceChart({ mint }: Props) {
     prevLastTime.current = last.time;
   }, [candles]);
 
-  const isLoading = false; // placeholder candles seeded immediately — no blank state
+  const isLoading = false;
   const isError = status === "error" && candles.length === 0;
   const change = change24h.pct;
   const changeColor = change >= 0 ? "text-[#26a69a]" : "text-[#ef5350]";
@@ -185,19 +187,18 @@ export default function TokenPriceChart({ mint }: Props) {
                             { color: "bg-white/30", label: "Connecting" };
 
   return (
-    <div className="w-full bg-[#0a0a0f] border border-bg-border rounded-xl overflow-hidden">
-      {/* Header */}
+    <div data-tag="components.token_price_chart" className="w-full bg-bg-card border border-bg-border rounded-xl overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-bg-border">
         <div className="flex items-center gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-white">
+              <span className="text-sm font-bold text-content">
                 {pair?.symbol ?? "—"}
               </span>
-              <span className="text-xs text-white/40">{pair?.name ?? mint.slice(0, 6) + "…"}</span>
+              <span className="text-xs text-content-muted">{pair?.name ?? mint.slice(0, 6) + "…"}</span>
             </div>
             <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-base font-semibold text-white tabular-nums">
+              <span className="text-base font-semibold text-content tabular-nums">
                 {formatPrice(lastPrice)}
               </span>
               <span className={`text-xs font-semibold tabular-nums ${changeColor}`}>
@@ -210,12 +211,11 @@ export default function TokenPriceChart({ mint }: Props) {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <span className={`w-2 h-2 rounded-full ${statusDot.color} ${status === "live" ? "animate-pulse" : ""}`} />
-            <span className="text-[11px] text-white/50">{statusDot.label}</span>
+            <span className="text-[11px] text-content-muted">{statusDot.label}</span>
           </div>
         </div>
       </div>
 
-      {/* Timeframe bar */}
       <div className="flex items-center gap-1 px-4 py-2 border-b border-bg-border">
         {TIMEFRAMES.map(t => (
           <button
@@ -225,8 +225,8 @@ export default function TokenPriceChart({ mint }: Props) {
             className={[
               "px-2.5 py-1 rounded text-[11px] font-semibold transition",
               tf === t
-                ? "bg-white/10 text-white"
-                : "text-white/40 hover:text-white hover:bg-white/5",
+                ? "bg-bg-elevated text-content"
+                : "text-content-muted hover:text-content hover:bg-bg-elevated",
             ].join(" ")}
           >
             {t}
@@ -234,25 +234,24 @@ export default function TokenPriceChart({ mint }: Props) {
         ))}
       </div>
 
-      {/* Chart area */}
-      <div className="relative">
+      <div className="relative bg-bg-card">
         <div ref={containerRef} className="w-full" style={{ height: 420 }} />
 
         {isLoading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#0a0a0f]">
-            <Loader2 className="w-6 h-6 text-white/40 animate-spin" />
-            <p className="text-sm text-white/40">Загрузка данных…</p>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg-card">
+            <Loader2 className="w-6 h-6 text-content-muted animate-spin" />
+            <p className="text-sm text-content-muted">Загрузка данных…</p>
           </div>
         )}
 
         {isError && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#0a0a0f]">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg-card">
             <AlertTriangle className="w-6 h-6 text-[#ef5350]" />
-            <p className="text-sm text-white/60">{error ?? "Не удалось загрузить данные"}</p>
+            <p className="text-sm text-content-muted">{error ?? "Не удалось загрузить данные"}</p>
             <button
               type="button"
               onClick={retry}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs text-white transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg-elevated hover:brightness-105 text-xs text-content transition"
             >
               <RefreshCw className="w-3.5 h-3.5" /> Повторить
             </button>
