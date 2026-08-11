@@ -56,6 +56,10 @@ import {
   fetchJson,
   readChainStream,
 } from "@/lib/trade/social-intelligence-api";
+import {
+  buildAnalysisSnapshot,
+  type AnalysisSnapshot,
+} from "@/lib/trade/intelligence-agent";
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
 
@@ -73,6 +77,7 @@ export default function SocialIntelligencePanel() {
   const [market, setMarket] = useState<Market | null>(null);
   const [chain, setChain] = useState<ChainAnalysis | null>(null);
   const [ai, setAi] = useState<AiEnvelope | null>(null);
+  const [snapshot, setSnapshot] = useState<AnalysisSnapshot | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(false);
   const [chainLoading, setChainLoading] = useState(false);
@@ -109,44 +114,53 @@ export default function SocialIntelligencePanel() {
       setMarket(null);
       setChain(null);
       setAi(null);
+      setSnapshot(null);
       router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
       const { x: xParams, tg: tgParams } = buildSocialSourceParams(contract, options);
 
-      void readChainStream(contract, controller.signal)
+      const chainPromise = readChainStream(contract, controller.signal)
         .then((value) => {
           if (!controller.signal.aborted) setChain(value);
+          return value;
         })
         .catch((chainError: unknown) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted) return null;
           const message = chainError instanceof Error ? chainError.message : "недоступна";
           setWarnings((value) => upsertWarning(value, `Trade history: ${message}`));
+          return null;
         })
         .finally(() => {
           if (!controller.signal.aborted) setChainLoading(false);
         });
 
-      const [xResult, tgResult, marketResult] = await Promise.allSettled([
+      const [xResult, tgResult, marketResult, channelResult] = await Promise.allSettled([
         fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`, controller.signal),
         fetchJson<SocialTimeline>(
           `${BACKEND}/api/v1/social/token/${encodeURIComponent(contract)}?${tgParams}`,
           controller.signal,
         ),
         fetchJson<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(contract)}`, controller.signal),
+        fetchJson<{ items: Channel[] }>(`${BACKEND}/api/v1/telegram/channels?limit=100`, controller.signal),
       ]);
       if (controller.signal.aborted) return;
 
       const nextX = xResult.status === "fulfilled" ? xResult.value : null;
       const nextTg = tgResult.status === "fulfilled" ? tgResult.value : null;
       const nextMarket = marketResult.status === "fulfilled" ? marketResult.value : null;
+      const nextChannels = channelResult.status === "fulfilled" && Array.isArray(channelResult.value.items)
+        ? channelResult.value.items
+        : channels;
       setX(nextX);
       setTg(nextTg);
       setMarket(nextMarket);
+      if (channelResult.status === "fulfilled") setChannels(nextChannels);
 
       const sourceWarnings = [
         !nextX ? "X: недоступен" : null,
         !nextTg ? "Telegram: недоступен" : null,
         !nextMarket ? "Market: недоступен" : null,
+        channelResult.status !== "fulfilled" ? "TG reputation: недоступна" : null,
       ].filter((value): value is string => value != null);
       setWarnings((value) => sourceWarnings.reduce(upsertWarning, value));
 
@@ -156,10 +170,22 @@ export default function SocialIntelligencePanel() {
         return;
       }
 
-      const telegramItems = (nextTg?.timeline || []).filter(
-        (item) => !item.platform || item.platform.toLowerCase() === "telegram",
-      );
-      if (telegramItems.length) {
+      const nextChain = await chainPromise;
+      if (controller.signal.aborted) return;
+      const deterministic = deriveSocialMetrics(nextX, nextTg, nextMarket, nextChain, null, nextChannels, options);
+      const nextSnapshot = buildAnalysisSnapshot({
+        mint: contract,
+        symbol: nextX?.symbol || options.symbol || null,
+        tokenName: nextMarket?.pair?.name || null,
+        derived: deterministic,
+        x: nextX,
+        tg: nextTg,
+        market: nextMarket,
+        chain: nextChain,
+      });
+      setSnapshot(nextSnapshot);
+
+      if (nextSnapshot.evidence.length) {
         try {
           const qwen = await fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
             method: "POST",
@@ -168,7 +194,8 @@ export default function SocialIntelligencePanel() {
               mint: contract,
               symbol: nextX?.symbol || options.symbol,
               tokenName: nextMarket?.pair?.name,
-              timeline: telegramItems,
+              timeline: (nextTg?.timeline || []).filter((item) => !item.platform || item.platform.toLowerCase() === "telegram"),
+              snapshot: nextSnapshot,
             }),
           });
           if (!controller.signal.aborted) setAi(qwen);
@@ -183,7 +210,7 @@ export default function SocialIntelligencePanel() {
 
       if (!controller.signal.aborted) setLoading(false);
     },
-    [options, router],
+    [channels, options, router],
   );
 
   useEffect(() => {
@@ -204,14 +231,14 @@ export default function SocialIntelligencePanel() {
   };
 
   return (
-    <div className="space-y-5" data-tag="trade.social_intelligence.v6">
+    <div className="space-y-5" data-tag="trade.social_intelligence.v7">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <Network className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold text-content">Social Intelligence · X + Telegram + Qwen</h1>
+            <h1 className="text-lg font-semibold text-content">Social Intelligence · X + Telegram + Graph + Qwen</h1>
           </div>
-          <p className="mt-1 text-xs text-content-muted">Social-метрики, Telegram AI и Price ↔ Social по реальным on-chain timestamps.</p>
+          <p className="mt-1 text-xs text-content-muted">Все deterministic-параметры, entity graph, cross-platform evidence и AI-гипотезы в одном snapshot.</p>
         </div>
         {mint && <div className="font-mono text-[10px] text-content-faint">{mint.slice(0, 8)}…{mint.slice(-7)}</div>}
       </header>
@@ -256,15 +283,16 @@ export default function SocialIntelligencePanel() {
           <Kpi label="Alpha" value={score(derived.alpha)} icon={<Radar />} />
           <Kpi label="AI confidence" value={ai?.result?.overallConfidence != null ? pct(ai.result.overallConfidence * 100) : "—"} icon={<BrainCircuit />} />
         </section>
+        {snapshot && <GraphStats snapshot={snapshot} />}
         <PricePanel price={derived.price} loading={chainLoading} />
         <section className="surface-panel rounded-2xl border border-bg-border p-4">
           <div className="mb-3 flex items-center justify-between">
-            <div><h2 className="text-sm font-semibold text-content">Все параметры</h2><p className="text-[10px] text-content-faint">Поля без достаточной выборки остаются «—» — случайные значения не используются.</p></div>
+            <div><h2 className="text-sm font-semibold text-content">Все параметры</h2><p className="text-[10px] text-content-faint">Snapshot передаёт агенту все отображаемые поля; отсутствующие данные остаются «—».</p></div>
             <button type="button" onClick={() => void run(mint)} disabled={loading || !mint} className={siteDesign.controls.actionButtonClassName}><RefreshCw className="h-4 w-4" />Обновить</button>
           </div>
           <div className="grid gap-4 xl:grid-cols-2">{derived.groups.map((group) => <MetricTable key={group.title} title={group.title} rows={group.rows} />)}</div>
         </section>
-        <AiPanel ai={ai} />
+        <AiPanel ai={ai} snapshot={snapshot} />
         <TimelinePanel x={x} tg={tg} impulseAt={derived.price.impulseTime} impulseChange={derived.price.impulseChange} />
       </>}
     </div>
@@ -283,15 +311,32 @@ function Notice({ tone, text }: { tone: "danger" | "warning"; text: string }) {
 function Kpi({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
   return <div className="surface-panel rounded-xl border border-bg-border p-3"><div className="flex items-center justify-between text-content-faint"><span className="text-[9px] uppercase tracking-wider">{label}</span><span className="[&>svg]:h-3.5 [&>svg]:w-3.5">{icon}</span></div><div className="mt-2 font-mono text-lg font-bold text-content">{value}</div></div>;
 }
+function GraphStats({ snapshot }: { snapshot: AnalysisSnapshot }) {
+  const graph = snapshot.graph.stats;
+  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><Network className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Entity Graph v1</h2><p className="text-[10px] text-content-faint">Deterministic candidate links; AI может подтверждать, опровергать и открывать новые гипотезы.</p></div></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><Kpi label="Features" value={`${snapshot.featureCount - snapshot.missingFeatureCount}/${snapshot.featureCount}`} icon={<Gauge />} /><Kpi label="Nodes" value={String(graph.nodes)} icon={<Network />} /><Kpi label="Edges" value={String(graph.edges)} icon={<Network />} /><Kpi label="X accounts" value={String(graph.xAccounts)} icon={<Twitter />} /><Kpi label="TG channels" value={String(graph.tgChannels)} icon={<Send />} /><Kpi label="Links" value={String(graph.sharedLinks)} icon={<Network />} /><Kpi label="Copy edges" value={String(graph.copyEdges)} icon={<ShieldAlert />} /><Kpi label="Amplify edges" value={String(graph.amplificationEdges)} icon={<Zap />} /></div></section>;
+}
 function MetricTable({ title, rows }: { title: string; rows: Metric[] }) {
   return <div className="overflow-hidden rounded-xl border border-bg-border"><div className="border-b border-bg-border bg-bg-elevated/60 px-3 py-2 text-xs font-semibold text-content">{title}</div><div className="divide-y divide-bg-border">{rows.map((row) => <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_minmax(90px,.8fr)] gap-3 px-3 py-2 text-[11px]"><div><div className="text-content-muted">{row.label}</div>{row.note && <div className="mt-0.5 text-[9px] text-content-faint">{row.note}</div>}</div><div className="break-words text-right font-mono font-semibold text-content">{row.value}</div></div>)}</div></div>;
 }
 function PricePanel({ price, loading }: { price: PriceSocial; loading: boolean }) {
   return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><TrendingUp className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Price ↔ Social lead/lag</h2><p className="text-[10px] text-content-faint">{loading ? "Trade history загружается параллельно — social уже доступен." : `Ближайший price impulse ≥ ${IMPULSE_THRESHOLD_PCT}% за 5 минут.`}</p></div></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><Kpi label="Direction" value={price.leadDirection} icon={<Zap />} /><Kpi label="Lead / lag" value={price.leadLagMinutes == null ? "—" : `${Math.abs(price.leadLagMinutes).toFixed(1)}m`} icon={<Gauge />} /><Kpi label="Confidence" value={score(price.leadLagConfidence)} icon={<Radar />} /><Kpi label="+5m" value={signedPct(price.reaction5)} icon={<TrendingUp />} /><Kpi label="+15m" value={signedPct(price.reaction15)} icon={<TrendingUp />} /><Kpi label="+1h" value={signedPct(price.reaction60)} icon={<TrendingUp />} /><Kpi label="Max up 1h" value={signedPct(price.maxUpside)} icon={<TrendingUp />} /><Kpi label="Max DD 1h" value={signedPct(price.maxDrawdown)} icon={<ShieldAlert />} /></div></section>;
 }
-function AiPanel({ ai }: { ai: AiEnvelope | null }) {
+function AiPanel({ ai, snapshot }: { ai: AiEnvelope | null; snapshot: AnalysisSnapshot | null }) {
   const result = ai?.result;
-  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-primary" /><h2 className="text-sm font-semibold text-content">Qwen AI · Telegram second-stage analysis</h2></div>{!ai ? <div className="text-xs text-content-faint">AI запускается после Telegram сообщений.</div> : !result ? <div className="text-xs text-warning">Qwen недоступен: {ai.error || "нет результата"}</div> : <div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]"><div><p className="text-sm leading-6 text-content-soft">{result.summary || "—"}</p><div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] uppercase tracking-wider text-content-faint">Campaign narrative</div><div className="mt-1 text-xs leading-5 text-content-muted">{result.campaignHypothesis?.narrative || "—"}</div></div></div><div className="space-y-2">{(result.reasoningSummary || []).map((value, index) => <div key={`${index}-${value.slice(0, 24)}`} className="rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs text-content-muted">{value}</div>)}</div></div>}</section>;
+  const advanced = result as (typeof result & {
+    discoveredRelationships?: Array<{ source?: string; target?: string; type?: string; confidence?: number; status?: string; rationale?: string }>;
+    anomalies?: Array<{ type?: string; severity?: string; confidence?: number; explanation?: string }>;
+    contradictions?: Array<{ statement?: string; confidence?: number }>;
+    whatWouldChangeConclusion?: string[];
+    finalIntelligence?: { marketState?: string; socialState?: string; manipulationAssessment?: string; bullCase?: string; bearCase?: string; unknowns?: string[]; confidence?: number };
+  }) | undefined;
+  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Qwen AI · Full Intelligence Analyst</h2><p className="text-[10px] text-content-faint">{snapshot ? `${snapshot.featureCount} features · ${snapshot.graph.stats.nodes} nodes · ${snapshot.graph.stats.edges} deterministic edges` : "Ожидается unified snapshot"}</p></div></div>{!ai ? <div className="text-xs text-content-faint">AI запускается после сборки unified snapshot.</div> : !result ? <div className="text-xs text-warning">Qwen недоступен: {ai.error || "нет результата"}</div> : <div className="space-y-4"><div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]"><div><p className="text-sm leading-6 text-content-soft">{result.summary || "—"}</p><div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] uppercase tracking-wider text-content-faint">Campaign narrative</div><div className="mt-1 text-xs leading-5 text-content-muted">{result.campaignHypothesis?.narrative || "—"}</div></div></div><div className="space-y-2">{(result.reasoningSummary || []).map((value, index) => <div key={`${index}-${value.slice(0, 24)}`} className="rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs text-content-muted">{value}</div>)}</div></div>{advanced?.finalIntelligence && <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"><Insight label="Market state" text={advanced.finalIntelligence.marketState} /><Insight label="Social state" text={advanced.finalIntelligence.socialState} /><Insight label="Manipulation" text={advanced.finalIntelligence.manipulationAssessment} /><Insight label="Bull case" text={advanced.finalIntelligence.bullCase} /><Insight label="Bear case" text={advanced.finalIntelligence.bearCase} /><Insight label="Unknowns" text={(advanced.finalIntelligence.unknowns || []).join(" · ")} /></div>}{Boolean(advanced?.discoveredRelationships?.length) && <AdvancedList title="New graph relationships" rows={(advanced?.discoveredRelationships || []).slice(0, 20).map((item) => `${item.type || "link"}: ${item.source || "?"} → ${item.target || "?"} · ${item.status || "hypothesis"} · ${item.confidence == null ? "—" : pct(item.confidence * 100)} · ${item.rationale || ""}`)} />}{Boolean(advanced?.anomalies?.length) && <AdvancedList title="Anomalies" rows={(advanced?.anomalies || []).slice(0, 20).map((item) => `${item.severity || "info"} · ${item.type || "anomaly"} · ${item.explanation || ""}`)} />}{Boolean(advanced?.contradictions?.length) && <AdvancedList title="Contradictions" rows={(advanced?.contradictions || []).slice(0, 15).map((item) => item.statement || "—")} />}{Boolean(advanced?.whatWouldChangeConclusion?.length) && <AdvancedList title="What would change the conclusion" rows={(advanced?.whatWouldChangeConclusion || []).slice(0, 15)} />}</div>}</section>;
+}
+function Insight({ label, text }: { label: string; text?: string }) {
+  return <div className="rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[9px] uppercase tracking-wider text-content-faint">{label}</div><div className="mt-1 text-xs leading-5 text-content-muted">{text || "—"}</div></div>;
+}
+function AdvancedList({ title, rows }: { title: string; rows: string[] }) {
+  return <div className="rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] font-semibold uppercase tracking-wider text-content-faint">{title}</div><div className="mt-2 space-y-1.5">{rows.map((row, index) => <div key={`${title}-${index}-${row.slice(0, 24)}`} className="text-xs leading-5 text-content-muted">• {row}</div>)}</div></div>;
 }
 function TimelinePanel({ x, tg, impulseAt, impulseChange }: { x: TwitterStats | null; tg: SocialTimeline | null; impulseAt: number | null; impulseChange: number | null }) {
   const items = useMemo(() => {
