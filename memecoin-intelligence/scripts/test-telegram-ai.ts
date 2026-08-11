@@ -25,8 +25,8 @@ const now = new Date().toISOString();
 const evidenceId = messages[0]?.id ?? 'message-1';
 const snapshot = intelligenceSnapshotSchema.parse({
   snapshotId: 'snapshot-test',
-  version: 'social-snapshot-v1',
-  graphVersion: 'entity-graph-v1',
+  version: 'social-snapshot-v2',
+  graphVersion: 'entity-graph-v1.1',
   mint: '3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump',
   symbol: 'TEST',
   tokenName: 'Test Token',
@@ -39,20 +39,25 @@ const snapshot = intelligenceSnapshotSchema.parse({
     { key: 'x.mentions_1h', group: 'X', label: 'Mentions 1h', value: '32', numericValue: 32, source: 'derived', confidence: 0.9, observedAt: now, missing: false },
   ],
   graph: {
-    version: 'entity-graph-v1',
+    version: 'entity-graph-v1.1',
     nodes: [
       { id: 'token:1', type: 'token', label: 'TEST', attributes: { mint: '3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump' } },
       { id: 'tg_channel:1', type: 'tg_channel', label: '@alpha', attributes: {} },
+      { id: 'wallet:1', type: 'wallet', label: 'wallet-one', attributes: { wash: false, volumeSol: 12 } },
+      { id: 'bundle:1', type: 'bundle', label: 'Bundle 1', attributes: { size: 1 } },
     ],
     edges: [
       { id: 'edge:1', source: 'tg_channel:1', target: 'token:1', type: 'calls', confidence: 1, evidenceIds: [evidenceId], attributes: { lagSeconds: 0 } },
+      { id: 'edge:2', source: 'wallet:1', target: 'token:1', type: 'trades', confidence: 1, evidenceIds: [], attributes: { volumeSol: 12 } },
+      { id: 'edge:3', source: 'wallet:1', target: 'bundle:1', type: 'bundle_member', confidence: 1, evidenceIds: [], attributes: {} },
+      { id: 'edge:4', source: 'tg_channel:1', target: 'wallet:1', type: 'mentions_wallet', confidence: 1, evidenceIds: [evidenceId], attributes: {} },
     ],
-    stats: { nodes: 2, edges: 1, xAccounts: 0, tgChannels: 1, sharedLinks: 0, copyEdges: 0, amplificationEdges: 0 },
+    stats: { nodes: 4, edges: 4, xAccounts: 0, tgChannels: 1, wallets: 1, bundles: 1, socialWalletLinks: 1, sharedLinks: 0, copyEdges: 0, amplificationEdges: 0 },
   },
   evidence: [
     { id: evidenceId, platform: 'telegram', source: '@alpha', text: 'TEST early call', timestamp: now, url: null },
   ],
-  rawSummary: { xPosts: 0, telegramMessages: 1, trades: 100, chainTruncated: false, marketAvailable: true },
+  rawSummary: { xPosts: 0, telegramMessages: 1, trades: 100, wallets: 1, bundles: 1, chainTruncated: false, marketAvailable: true },
 });
 
 const fullContext = telegramContextSchema.parse({
@@ -64,11 +69,12 @@ const fullContext = telegramContextSchema.parse({
 });
 const prompt = buildTelegramPrompt(messages, fullContext);
 const parsedPrompt = JSON.parse(prompt.user) as {
-  context?: { analysisMode?: string; intelligenceSnapshot?: { features?: Array<{ key?: string }>; graph?: { edges?: unknown[] } } };
+  context?: { analysisMode?: string; intelligenceSnapshot?: { features?: Array<{ key?: string }>; graph?: { edges?: Array<{ type?: string }> } } };
 };
 assert.equal(parsedPrompt.context?.analysisMode, 'full_intelligence');
 assert.deepEqual(parsedPrompt.context?.intelligenceSnapshot?.features?.map((feature) => feature.key), ['scores.social', 'scores.manipulation', 'x.mentions_1h']);
-assert.equal(parsedPrompt.context?.intelligenceSnapshot?.graph?.edges?.length, 1);
+assert.equal(parsedPrompt.context?.intelligenceSnapshot?.graph?.edges?.length, 4);
+assert.ok(parsedPrompt.context?.intelligenceSnapshot?.graph?.edges?.some((edge) => edge.type === 'mentions_wallet'));
 assert.match(prompt.system, /adversarial critique/i);
 
 console.log(JSON.stringify({
@@ -79,4 +85,5 @@ console.log(JSON.stringify({
   hypothesis: result.campaignHypothesis.label,
   fullIntelligenceFeatures: snapshot.featureCount,
   fullIntelligenceGraphEdges: snapshot.graph.stats.edges,
+  socialWalletLinks: snapshot.graph.stats.socialWalletLinks,
 }, null, 2));
