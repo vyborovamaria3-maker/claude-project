@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import Token, TokenMetric
-from app.models.social_intelligence import SocialEvent, TelegramCall
+from app.models.social_intelligence import SocialEvent, TelegramCall, TelegramChannel
 from app.services.social_intelligence import classify_call_outcome, score_channel_metrics
 
 
@@ -49,9 +49,12 @@ def _metric_number(metrics: dict[str, Any] | None, key: str) -> float:
 
 
 def _event_engagement(event: SocialEvent) -> float:
-    if event.platform == "x":
-        return sum(_metric_number(event.metrics, key) for key in ("likes", "retweets", "replies"))
-    return sum(_metric_number(event.metrics, key) for key in ("reactions", "forwards", "replies"))
+    keys = ("likes", "retweets", "replies") if event.platform == "x" else ("reactions", "forwards", "replies")
+    return sum(_metric_number(event.metrics, key) for key in keys)
+
+
+def _normalise_source(value: str | None) -> str:
+    return (value or "").strip().lower().lstrip("@")
 
 
 def _normalise_text(value: str) -> str:
@@ -209,7 +212,7 @@ def build_historical_features(
     x_events = [event for event in events if event.platform == "x"]
     tg_events = [event for event in events if event.platform == "telegram"]
 
-    x_authors = {str(event.source_handle or "").lower() for event in x_events if event.source_handle}
+    x_authors = {_normalise_source(event.source_handle) for event in x_events if event.source_handle}
     verified = sum(1 for event in x_events if bool((event.metrics or {}).get("verified")))
     suspicious = sum(1 for event in x_events if bool((event.metrics or {}).get("suspicious")))
     x_verified_ratio = verified / len(x_authors) * 100.0 if x_authors else 0.0
@@ -217,7 +220,7 @@ def build_historical_features(
     x_engagement = sum(_event_engagement(event) for event in x_events)
 
     tg_channels = {
-        str(event.source_handle or event.source_name or "").lower()
+        _normalise_source(event.source_handle or event.source_name)
         for event in tg_events
         if event.source_handle or event.source_name
     }
@@ -231,7 +234,7 @@ def build_historical_features(
     channel_scores: list[float] = []
     win_rates: list[float] = []
     rug_rates: list[float] = []
-    for channel_id, calls in prior_calls_by_channel.items():
+    for calls in prior_calls_by_channel.values():
         matured = [call for call in calls if _prior_call_is_mature(call, cutoff)]
         if not matured:
             continue
@@ -242,12 +245,7 @@ def build_historical_features(
         avg_roi = mean(rois) if rois else 0.0
         channel_scores.append(
             score_channel_metrics(
-                calls=len(matured),
-                evaluated=len(matured),
-                wins=wins,
-                rugs=rugs,
-                early=early,
-                avg_roi=avg_roi,
+                calls=len(matured), evaluated=len(matured), wins=wins, rugs=rugs, early=early, avg_roi=avg_roi
             )
         )
         win_rates.append(wins / len(matured) * 100.0)
@@ -256,7 +254,6 @@ def build_historical_features(
     channel_score = mean(channel_scores) if channel_scores else 0.0
     channel_win_rate = mean(win_rates) if win_rates else 0.0
     channel_rug_rate = mean(rug_rates) if rug_rates else 0.0
-
     copy_ratio = _copy_ratio(events)
     positive_sentiment, _, _ = _sentiment(event.text or "" for event in events)
     first_x = min((_utc(event.occurred_at) for event in x_events), default=None)
@@ -287,49 +284,25 @@ def build_historical_features(
     core_social_score = _clamp(x_score * 0.36 + tg_score * 0.34 + organic * 0.15 + cross_score * 0.15)
 
     return HistoricalFeatures(
-        cutoff=cutoff,
-        mint=mint,
-        x_mentions=len(x_events),
-        x_authors=len(x_authors),
-        x_verified_ratio=x_verified_ratio,
-        x_suspicious_ratio=x_suspicious_ratio,
-        x_engagement=x_engagement,
-        tg_mentions=len(tg_events),
-        tg_channels=len(tg_channels),
-        tg_explicit_calls=explicit_calls,
-        channel_score=channel_score,
-        channel_win_rate=channel_win_rate,
-        channel_rug_rate=channel_rug_rate,
-        copy_ratio=copy_ratio,
-        positive_sentiment=positive_sentiment,
-        cross_platform_lag_minutes=cross_lag,
-        early_minutes=early_minutes,
-        x_score=x_score,
-        tg_score=tg_score,
-        organic_score=organic,
-        manipulation_score=manipulation,
-        social_risk=social_risk,
-        cross_score=cross_score,
-        early_score=early_score,
-        core_social_score=core_social_score,
+        cutoff=cutoff, mint=mint, x_mentions=len(x_events), x_authors=len(x_authors),
+        x_verified_ratio=x_verified_ratio, x_suspicious_ratio=x_suspicious_ratio, x_engagement=x_engagement,
+        tg_mentions=len(tg_events), tg_channels=len(tg_channels), tg_explicit_calls=explicit_calls,
+        channel_score=channel_score, channel_win_rate=channel_win_rate, channel_rug_rate=channel_rug_rate,
+        copy_ratio=copy_ratio, positive_sentiment=positive_sentiment, cross_platform_lag_minutes=cross_lag,
+        early_minutes=early_minutes, x_score=x_score, tg_score=tg_score, organic_score=organic,
+        manipulation_score=manipulation, social_risk=social_risk, cross_score=cross_score,
+        early_score=early_score, core_social_score=core_social_score,
     )
 
 
 def build_historical_outcome(
-    *,
-    cutoff: datetime,
-    metrics: list[TokenMetric],
-    horizon_hours: int,
-    baseline_tolerance_minutes: int = 30,
+    *, cutoff: datetime, metrics: list[TokenMetric], horizon_hours: int, baseline_tolerance_minutes: int = 30,
 ) -> HistoricalOutcome | None:
     cutoff = _utc(cutoff)
     window_end = cutoff + timedelta(hours=horizon_hours)
     usable = [
-        metric
-        for metric in metrics
-        if cutoff <= _utc(metric.timestamp) <= window_end
-        and metric.price_usd is not None
-        and metric.price_usd > 0
+        metric for metric in metrics
+        if cutoff <= _utc(metric.timestamp) <= window_end and metric.price_usd is not None and metric.price_usd > 0
     ]
     if not usable:
         return None
@@ -340,23 +313,16 @@ def build_historical_outcome(
     prices = [float(metric.price_usd) for metric in usable if metric.price_usd is not None]
     if not prices:
         return None
-    baseline_price = prices[0]
-    peak_price = max(prices)
-    final_price = prices[-1]
+    baseline_price, peak_price, final_price = prices[0], max(prices), prices[-1]
     max_multiple = peak_price / baseline_price if baseline_price > 0 else None
     final_return = (final_price / baseline_price - 1.0) * 100.0 if baseline_price > 0 else None
     final_to_peak = final_price / peak_price if peak_price > 0 else None
     observed_hours = max((_utc(usable[-1].timestamp) - cutoff).total_seconds() / 3600.0, 0.0)
     outcome = classify_call_outcome(
-        roi_multiple=max_multiple,
-        final_to_peak=final_to_peak,
-        observed_hours=observed_hours,
+        roi_multiple=max_multiple, final_to_peak=final_to_peak, observed_hours=observed_hours,
     )
     return HistoricalOutcome(
-        baseline_price=baseline_price,
-        final_price=final_price,
-        peak_price=peak_price,
-        max_multiple=max_multiple,
+        baseline_price=baseline_price, final_price=final_price, peak_price=peak_price, max_multiple=max_multiple,
         final_return_pct=final_return,
         max_drawdown_from_peak_pct=(final_to_peak - 1.0) * 100.0 if final_to_peak is not None else None,
         outcome=outcome,
@@ -369,34 +335,31 @@ def build_historical_outcome(
 def _threshold_metrics(samples: list[BacktestSample], threshold: int, baseline_hit_rate: float) -> ThresholdMetrics:
     selected = [sample for sample in samples if sample.features.core_social_score >= threshold and sample.features.social_risk <= 60]
     positives = [sample for sample in samples if sample.outcome.hit_2x]
+    selected_keys = {(sample.mint, sample.cutoff) for sample in selected}
     true_positives = sum(1 for sample in selected if sample.outcome.hit_2x)
     false_positives = len(selected) - true_positives
-    false_negatives = sum(1 for sample in positives if sample not in selected)
+    false_negatives = sum(1 for sample in positives if (sample.mint, sample.cutoff) not in selected_keys)
     precision = true_positives / len(selected) if selected else 0.0
     recall = true_positives / len(positives) if positives else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     multiples = [sample.outcome.max_multiple for sample in selected if sample.outcome.max_multiple is not None]
     return ThresholdMetrics(
-        threshold=threshold,
-        selected=len(selected),
-        true_positives=true_positives,
-        false_positives=false_positives,
-        false_negatives=false_negatives,
-        precision=precision,
-        recall=recall,
-        f1=f1,
-        hit_rate=precision,
+        threshold=threshold, selected=len(selected), true_positives=true_positives,
+        false_positives=false_positives, false_negatives=false_negatives,
+        precision=precision, recall=recall, f1=f1, hit_rate=precision,
         coverage=len(selected) / len(samples) if samples else 0.0,
         lift=precision / baseline_hit_rate if baseline_hit_rate > 0 else 0.0,
         median_max_multiple=median(multiples) if multiples else None,
     )
 
 
-def evaluate_samples(samples: list[BacktestSample], *, train_fraction: float = 0.70) -> BacktestReport:
+def evaluate_samples(
+    samples: list[BacktestSample], *, lookback_hours: int = 24, horizon_hours: int = 72, train_fraction: float = 0.70,
+) -> BacktestReport:
     ordered = sorted(samples, key=lambda sample: sample.cutoff)
     if not ordered:
         return BacktestReport(
-            generated_at=datetime.now(timezone.utc), lookback_hours=24, horizon_hours=72,
+            generated_at=datetime.now(timezone.utc), lookback_hours=lookback_hours, horizon_hours=horizon_hours,
             samples=0, train_samples=0, test_samples=0, baseline_hit_rate=0.0,
             selected_threshold=None, train=None, test=None, threshold_sweep=(), calibration=(), skipped={},
         )
@@ -416,31 +379,18 @@ def evaluate_samples(samples: list[BacktestSample], *, train_fraction: float = 0
         bucket = [sample for sample in ordered if low <= sample.features.core_social_score <= high]
         if not bucket:
             continue
-        hits = sum(sample.outcome.hit_2x for sample in bucket)
+        multiples = [sample.outcome.max_multiple for sample in bucket if sample.outcome.max_multiple is not None]
         calibration.append({
-            "score_min": low,
-            "score_max": high,
-            "samples": len(bucket),
-            "hit_2x_rate": hits / len(bucket),
-            "median_max_multiple": median(
-                sample.outcome.max_multiple for sample in bucket if sample.outcome.max_multiple is not None
-            ),
+            "score_min": low, "score_max": high, "samples": len(bucket),
+            "hit_2x_rate": sum(sample.outcome.hit_2x for sample in bucket) / len(bucket),
+            "median_max_multiple": median(multiples) if multiples else None,
         })
 
     return BacktestReport(
-        generated_at=datetime.now(timezone.utc),
-        lookback_hours=24,
-        horizon_hours=72,
-        samples=len(ordered),
-        train_samples=len(train),
-        test_samples=len(test),
-        baseline_hit_rate=baseline,
-        selected_threshold=best.threshold if best else None,
-        train=best,
-        test=test_metrics,
-        threshold_sweep=sweep,
-        calibration=tuple(calibration),
-        skipped={},
+        generated_at=datetime.now(timezone.utc), lookback_hours=lookback_hours, horizon_hours=horizon_hours,
+        samples=len(ordered), train_samples=len(train), test_samples=len(test), baseline_hit_rate=baseline,
+        selected_threshold=best.threshold if best else None, train=best, test=test_metrics,
+        threshold_sweep=sweep, calibration=tuple(calibration), skipped={},
     )
 
 
@@ -469,8 +419,7 @@ async def run_social_backtest(
         seen_mints.add(call.mint_address)
         candidates.append(call)
     if not candidates:
-        report = evaluate_samples([])
-        return BacktestReport(**{**asdict(report), "lookback_hours": lookback_hours, "horizon_hours": horizon_hours})
+        return evaluate_samples([], lookback_hours=lookback_hours, horizon_hours=horizon_hours)
 
     mints = sorted({call.mint_address for call in candidates})
     tokens = list((await session.execute(select(Token).where(Token.mint_address.in_(mints)))).scalars().all())
@@ -493,13 +442,12 @@ async def run_social_backtest(
         if event.mint_address:
             events_by_mint[event.mint_address].append(event)
 
-    metrics = []
+    metrics: list[TokenMetric] = []
     if token_ids:
         metrics = list((await session.execute(
             select(TokenMetric)
             .where(
-                TokenMetric.token_id.in_(token_ids),
-                TokenMetric.timestamp >= min_cutoff,
+                TokenMetric.token_id.in_(token_ids), TokenMetric.timestamp >= min_cutoff,
                 TokenMetric.timestamp <= max_cutoff + timedelta(hours=horizon_hours),
             )
             .order_by(TokenMetric.timestamp.asc())
@@ -514,8 +462,16 @@ async def run_social_backtest(
         .order_by(TelegramCall.called_at.asc())
     )).scalars().all())
     calls_by_channel: dict[int, list[TelegramCall]] = defaultdict(list)
-    for call in history_rows:
-        calls_by_channel[call.channel_id].append(call)
+    for history_call in history_rows:
+        calls_by_channel[history_call.channel_id].append(history_call)
+
+    channels = list((await session.execute(select(TelegramChannel))).scalars().all())
+    channel_id_by_source: dict[str, int] = {}
+    for channel in channels:
+        for source in (channel.username, channel.title, str(channel.telegram_id)):
+            key = _normalise_source(source)
+            if key:
+                channel_id_by_source[key] = channel.id
 
     samples: list[BacktestSample] = []
     skipped: dict[str, int] = defaultdict(int)
@@ -533,46 +489,36 @@ async def run_social_backtest(
         if not sample_events:
             skipped["no_social_events_before_cutoff"] += 1
             continue
+
         tg_channel_ids = {call.channel_id}
+        for event in sample_events:
+            if event.platform != "telegram":
+                continue
+            for source in (event.source_handle, event.source_name):
+                channel_id = channel_id_by_source.get(_normalise_source(source))
+                if channel_id is not None:
+                    tg_channel_ids.add(channel_id)
         prior_by_channel = {channel_id: calls_by_channel.get(channel_id, []) for channel_id in tg_channel_ids}
+
         features = build_historical_features(
-            mint=call.mint_address,
-            cutoff=cutoff,
-            creation_date=token.creation_date,
-            events=sample_events,
-            prior_calls_by_channel=prior_by_channel,
+            mint=call.mint_address, cutoff=cutoff, creation_date=token.creation_date,
+            events=sample_events, prior_calls_by_channel=prior_by_channel,
         )
         outcome = build_historical_outcome(
-            cutoff=cutoff,
-            metrics=metrics_by_token.get(token.id, []),
-            horizon_hours=horizon_hours,
+            cutoff=cutoff, metrics=metrics_by_token.get(token.id, []), horizon_hours=horizon_hours,
         )
         if outcome is None:
             skipped["missing_price_window"] += 1
             continue
-        samples.append(
-            BacktestSample(
-                mint=call.mint_address,
-                cutoff=cutoff,
-                channel_id=call.channel_id,
-                features=features,
-                outcome=outcome,
-            )
-        )
+        samples.append(BacktestSample(
+            mint=call.mint_address, cutoff=cutoff, channel_id=call.channel_id, features=features, outcome=outcome,
+        ))
 
-    report = evaluate_samples(samples)
+    report = evaluate_samples(samples, lookback_hours=lookback_hours, horizon_hours=horizon_hours)
     return BacktestReport(
-        generated_at=report.generated_at,
-        lookback_hours=lookback_hours,
-        horizon_hours=horizon_hours,
-        samples=report.samples,
-        train_samples=report.train_samples,
-        test_samples=report.test_samples,
-        baseline_hit_rate=report.baseline_hit_rate,
-        selected_threshold=report.selected_threshold,
-        train=report.train,
-        test=report.test,
-        threshold_sweep=report.threshold_sweep,
-        calibration=report.calibration,
-        skipped=dict(skipped),
+        generated_at=report.generated_at, lookback_hours=lookback_hours, horizon_hours=horizon_hours,
+        samples=report.samples, train_samples=report.train_samples, test_samples=report.test_samples,
+        baseline_hit_rate=report.baseline_hit_rate, selected_threshold=report.selected_threshold,
+        train=report.train, test=report.test, threshold_sweep=report.threshold_sweep,
+        calibration=report.calibration, skipped=dict(skipped),
     )
