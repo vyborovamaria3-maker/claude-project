@@ -27,392 +27,35 @@ import {
   Zap,
 } from "lucide-react";
 import { siteDesign } from "@/lib/siteDesign";
+import {
+  DEFAULT_SOCIAL_OPTIONS,
+  IMPULSE_THRESHOLD_PCT,
+  MINT_RE,
+  ago,
+  clamp,
+  deriveSocialMetrics,
+  numberOr,
+  pct,
+  score,
+  signedPct,
+  toTimestamp,
+  upsertWarning,
+  type AiEnvelope,
+  type ChainAnalysis,
+  type Channel,
+  type Lookback,
+  type Market,
+  type Metric,
+  type PriceSocial,
+  type SocialOptions,
+  type SocialTimeline,
+  type TimelineItem,
+  type TwitterStats,
+} from "@/lib/trade/social-intelligence";
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
-const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const IMPULSE_WINDOW_MS = 5 * 60_000;
-const IMPULSE_THRESHOLD_PCT = 10;
-const HOUR_MS = 60 * 60_000;
 
-type Lookback = "1" | "6" | "24" | "72" | "168" | "720" | "all";
-type Options = {
-  symbol: string;
-  lookback: Lookback;
-  xLimit: number;
-  xVerifiedOnly: boolean;
-  xExcludeSuspicious: boolean;
-  tgLimit: number;
-  tgMinChannelScore: number;
-  tgExplicitCallsOnly: boolean;
-};
-
-type TimelineItem = {
-  platform: string;
-  event_type?: string;
-  source_handle: string | null;
-  source_name: string | null;
-  source_url: string | null;
-  text: string;
-  occurred_at: string;
-  metrics: Record<string, unknown> | null;
-};
-
-type Tweet = {
-  id: string;
-  text: string;
-  author: string;
-  likes: number;
-  retweets: number;
-  views: number;
-  timestamp: number | null;
-  isSuspicious: boolean;
-};
-
-type Shiller = {
-  handle: string;
-  tweets: number;
-  totalEngagement: number;
-  isBot: boolean;
-  followers: number | null;
-  postsCount: number | null;
-  isVerified: boolean;
-};
-
-type TwitterStats = {
-  symbol: string;
-  totalTweets: number;
-  totalViews: number;
-  totalLikes: number;
-  totalRetweets: number;
-  uniqueMentioners: number;
-  botRiskScore: number;
-  anomalyCount: number;
-  topTweets: Tweet[];
-  shillers: Shiller[];
-  aggregated: {
-    totalEngagement: number;
-    engagementRate: number;
-    verifiedAuthors: number;
-    botRatio: number;
-  };
-};
-
-type SocialTimeline = {
-  mentions: number;
-  platforms: Record<string, number>;
-  origin: TimelineItem | null;
-  timeline: TimelineItem[];
-};
-
-type Channel = {
-  username: string | null;
-  title: string;
-  score: number;
-  win_rate: number;
-  rug_rate: number;
-};
-
-type Market = {
-  pair?: {
-    name?: string;
-    createdAt?: number | null;
-    changeH1?: number | null;
-    change24h?: number | null;
-    volumeH1?: number | null;
-    volumeH24?: number | null;
-    liquidityUsd?: number | null;
-  };
-};
-
-type ChainTrade = { ts: number; p: number };
-type ChainAnalysis = {
-  trades?: ChainTrade[];
-  truncated?: boolean;
-  summary?: {
-    totalRawTrades?: number;
-    totalTrades?: number;
-    uniqueWallets?: number;
-  };
-};
-
-type AiResult = {
-  summary?: string;
-  dominantIntent?: string;
-  sentiment?: { label?: string; score?: number; confidence?: number };
-  coordinationSignals?: Array<{ severity?: string }>;
-  risks?: Array<{ severity?: string }>;
-  claims?: unknown[];
-  entities?: unknown[];
-  relationships?: unknown[];
-  reasoningSummary?: string[];
-  overallConfidence?: number;
-  campaignHypothesis?: {
-    label?: string;
-    confidence?: number;
-    narrative?: string;
-    likelyOriginators?: string[];
-    amplifiers?: string[];
-  };
-};
-
-type AiEnvelope = {
-  agent?: string;
-  available?: boolean;
-  provider?: string;
-  model?: string;
-  latencyMs?: number;
-  cache?: string;
-  error?: string;
-  result?: AiResult;
-};
-
-type Metric = { label: string; value: string; note?: string };
-type TradePoint = { time: number; price: number };
-type PriceSocial = {
-  socialSpikeTime: number | null;
-  reaction5: number | null;
-  reaction15: number | null;
-  reaction60: number | null;
-  maxUpside: number | null;
-  maxDrawdown: number | null;
-  impulseTime: number | null;
-  impulseChange: number | null;
-  leadLagMinutes: number | null;
-  leadDirection: string;
-  leadLagConfidence: number | null;
-  tradeCount: number;
-};
-
-type Derived = {
-  groups: Array<{ title: string; rows: Metric[] }>;
-  xScore: number;
-  tgScore: number;
-  organic: number;
-  manipulation: number;
-  socialRisk: number;
-  early: number;
-  alpha: number;
-  socialScore: number;
-  price: PriceSocial;
-};
-
-const DEFAULT: Options = {
-  symbol: "",
-  lookback: "24",
-  xLimit: 40,
-  xVerifiedOnly: false,
-  xExcludeSuspicious: true,
-  tgLimit: 200,
-  tgMinChannelScore: 0,
-  tgExplicitCallsOnly: false,
-};
-
-const numberOr = (value: unknown, fallback = 0) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-const clamp = (value: number, min = 0, max = 100) => Math.max(min, Math.min(max, value));
-const compact = (value: unknown) =>
-  new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(numberOr(value));
-const pct = (value: unknown) =>
-  Number.isFinite(Number(value)) ? `${numberOr(value).toFixed(1)}%` : "—";
-const signedPct = (value: unknown) =>
-  Number.isFinite(Number(value))
-    ? `${numberOr(value) >= 0 ? "+" : ""}${numberOr(value).toFixed(1)}%`
-    : "—";
-const score = (value: unknown) =>
-  Number.isFinite(Number(value)) ? `${Math.round(numberOr(value))}/100` : "—";
-const money = (value: unknown) =>
-  Number.isFinite(Number(value)) ? `$${compact(value)}` : "—";
-const normalizeRatePct = (value: unknown) => {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  return clamp(Math.abs(parsed) <= 1 ? parsed * 100 : parsed);
-};
-const toTimestamp = (value: unknown) => {
-  if (value == null || value === "") return null;
-  let parsed = typeof value === "number" ? value : Date.parse(String(value));
-  if (!Number.isFinite(parsed)) return null;
-  if (parsed < 1e12) parsed *= 1000;
-  return parsed;
-};
-const ago = (value: unknown, now = Date.now()) => {
-  const timestamp = toTimestamp(value);
-  if (timestamp == null) return "—";
-  const minutes = Math.max(0, Math.round((now - timestamp) / 60_000));
-  return minutes < 60
-    ? `${minutes}m`
-    : minutes < 2880
-      ? `${Math.round(minutes / 60)}h`
-      : `${Math.round(minutes / 1440)}d`;
-};
-const average = (values: number[]) =>
-  values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-const median = (values: number[]) => {
-  const sorted = [...values].sort((a, b) => a - b);
-  if (!sorted.length) return 0;
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2
-    ? sorted[middle]
-    : (sorted[middle - 1] + sorted[middle]) / 2;
-};
-const normalizeText = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/https?:\/\/\S+/g, " ")
-    .replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, " ")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
-    .slice(0, 220);
-const growthPct = (current: number, previous: number) =>
-  previous > 0 ? ((current - previous) / previous) * 100 : null;
-const metric = (label: string, value: string, note?: string): Metric => ({ label, value, note });
-const warningKey = (message: string) => message.split(":", 1)[0];
-const upsertWarning = (warnings: string[], message: string) => {
-  const key = warningKey(message);
-  return [...warnings.filter((item) => warningKey(item) !== key), message];
-};
-
-function sentiment(texts: string[]) {
-  const positive = /\b(bull|bullish|buy|gem|moon|pump|breakout|alpha|early|strong|ape|send|upside|good|great|лонг|покуп|ракета|рост|гем)\b|🚀|🔥|📈|💎/i;
-  const negative = /\b(rug|scam|dump|sell|exit|dead|avoid|warning|bear|rekt|скам|раг|слив|продаж|паден)\b|⚠|📉|☠/i;
-  let pos = 0;
-  let neg = 0;
-  let neutral = 0;
-  for (const text of texts) {
-    const isPositive = positive.test(text);
-    const isNegative = negative.test(text);
-    if (isPositive && !isNegative) pos += 1;
-    else if (isNegative && !isPositive) neg += 1;
-    else neutral += 1;
-  }
-  const total = pos + neg + neutral;
-  if (!total) return { label: "—", p: 0, n: 0, u: 0 };
-  return {
-    label: pos / total > 0.52 ? "BULLISH" : neg / total > 0.38 ? "BEARISH" : "MIXED",
-    p: (pos / total) * 100,
-    n: (neg / total) * 100,
-    u: (neutral / total) * 100,
-  };
-}
-
-function sentimentDelta(rows: Array<{ time: number | null; text: string }>) {
-  const sorted = rows
-    .filter((row): row is { time: number; text: string } => row.time != null)
-    .sort((a, b) => a.time - b.time);
-  if (sorted.length < 4) return null;
-  const middle = Math.floor(sorted.length / 2);
-  return sentiment(sorted.slice(middle).map((row) => row.text)).p -
-    sentiment(sorted.slice(0, middle).map((row) => row.text)).p;
-}
-
-function windowStats<T>(
-  rows: T[],
-  timeOf: (row: T) => number | null,
-  keyOf: (row: T) => unknown,
-  now: number,
-) {
-  const counts = { m5: 0, m15: 0, h1: 0, h6: 0, h24: 0 };
-  const unique6 = new Set<string>();
-  const uniquePrev6 = new Set<string>();
-  const unique24 = new Set<string>();
-  for (const row of rows) {
-    const time = timeOf(row);
-    if (time == null) continue;
-    const age = now - time;
-    if (age < 0) continue;
-    if (age <= 5 * 60_000) counts.m5 += 1;
-    if (age <= 15 * 60_000) counts.m15 += 1;
-    if (age <= HOUR_MS) counts.h1 += 1;
-    if (age <= 6 * HOUR_MS) counts.h6 += 1;
-    if (age <= 24 * HOUR_MS) counts.h24 += 1;
-    const key = keyOf(row);
-    if (!key) continue;
-    const normalized = String(key).toLowerCase();
-    if (age <= 6 * HOUR_MS) unique6.add(normalized);
-    else if (age <= 12 * HOUR_MS) uniquePrev6.add(normalized);
-    if (age <= 24 * HOUR_MS) unique24.add(normalized);
-  }
-  return {
-    ...counts,
-    unique6: unique6.size,
-    uniquePrev6: uniquePrev6.size,
-    unique24: unique24.size,
-  };
-}
-
-function densestWindowTime(times: number[], windowMs = 5 * 60_000) {
-  const sorted = [...times].sort((a, b) => a - b);
-  if (!sorted.length) return null;
-  let bestStart = 0;
-  let bestEnd = 0;
-  let end = 0;
-  for (let start = 0; start < sorted.length; start += 1) {
-    if (end < start) end = start;
-    while (end + 1 < sorted.length && sorted[end + 1] - sorted[start] <= windowMs) end += 1;
-    if (end - start > bestEnd - bestStart) {
-      bestStart = start;
-      bestEnd = end;
-    }
-  }
-  return sorted[Math.floor((bestStart + bestEnd) / 2)];
-}
-
-function lowerBound(trades: TradePoint[], target: number) {
-  let low = 0;
-  let high = trades.length;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    if (trades[middle].time < target) low = middle + 1;
-    else high = middle;
-  }
-  return low;
-}
-
-function priceAtOrBefore(trades: TradePoint[], target: number, toleranceMs: number) {
-  const index = lowerBound(trades, target);
-  const candidate = index < trades.length && trades[index].time === target ? trades[index] : trades[index - 1];
-  return candidate && target - candidate.time <= toleranceMs ? candidate : null;
-}
-
-function priceAtOrAfter(trades: TradePoint[], target: number, toleranceMs: number) {
-  const index = lowerBound(trades, target);
-  const candidate = trades[index];
-  return candidate && candidate.time - target <= toleranceMs ? candidate : null;
-}
-
-function priceNear(trades: TradePoint[], target: number, toleranceMs: number) {
-  const index = lowerBound(trades, target);
-  const before = trades[index - 1];
-  const after = trades[index];
-  const candidate = !before
-    ? after
-    : !after
-      ? before
-      : target - before.time <= after.time - target
-        ? before
-        : after;
-  return candidate && Math.abs(candidate.time - target) <= toleranceMs ? candidate : null;
-}
-
-function priceChange(a: TradePoint | null, b: TradePoint | null) {
-  return a && b && a.price > 0 ? ((b.price - a.price) / a.price) * 100 : null;
-}
-
-function findPriceImpulse(trades: TradePoint[], socialTime: number | null) {
-  let best: { time: number; change: number } | null = null;
-  for (const trade of trades) {
-    if (socialTime != null && Math.abs(trade.time - socialTime) > 6 * HOUR_MS) continue;
-    const base = priceAtOrBefore(trades, trade.time - IMPULSE_WINDOW_MS, IMPULSE_WINDOW_MS);
-    if (!base || base.price <= 0) continue;
-    const change = ((trade.price - base.price) / base.price) * 100;
-    if (Math.abs(change) < IMPULSE_THRESHOLD_PCT) continue;
-    if (!best || socialTime == null || Math.abs(trade.time - socialTime) < Math.abs(best.time - socialTime)) {
-      best = { time: trade.time, change };
-    }
-  }
-  return best;
-}
+type StreamEvent = ({ type: "final" } & ChainAnalysis) | { type: "error"; message?: string } | { type: string };
 
 async function fetchJson<T>(url: string, signal?: AbortSignal, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", signal, ...init });
@@ -438,16 +81,19 @@ async function readChainStream(mint: string, signal: AbortSignal): Promise<Chain
 
   const processLine = (line: string) => {
     if (!line.trim()) return;
-    let event: { type?: string; message?: string } & Partial<ChainAnalysis>;
+    let event: StreamEvent;
     try {
-      event = JSON.parse(line) as typeof event;
+      event = JSON.parse(line) as StreamEvent;
     } catch {
       return;
     }
     if (event.type === "error") throw new Error(event.message || "on-chain analysis failed");
     if (event.type === "final") {
-      const { type: _type, message: _message, ...payload } = event;
-      finalPayload = payload as ChainAnalysis;
+      finalPayload = {
+        trades: event.trades,
+        truncated: event.truncated,
+        summary: event.summary,
+      };
     }
   };
 
@@ -476,7 +122,7 @@ export default function SocialIntelligencePanel() {
 
   const [query, setQuery] = useState(initialMint);
   const [mint, setMint] = useState(initialMint);
-  const [options, setOptions] = useState<Options>(DEFAULT);
+  const [options, setOptions] = useState<SocialOptions>(DEFAULT_SOCIAL_OPTIONS);
   const [x, setX] = useState<TwitterStats | null>(null);
   const [tg, setTg] = useState<SocialTimeline | null>(null);
   const [market, setMarket] = useState<Market | null>(null);
@@ -516,8 +162,8 @@ export default function SocialIntelligencePanel() {
       setX(null);
       setTg(null);
       setMarket(null);
-      setAi(null);
       setChain(null);
+      setAi(null);
       router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
       const xParams = new URLSearchParams({
@@ -544,10 +190,9 @@ export default function SocialIntelligencePanel() {
           if (!controller.signal.aborted) setChain(value);
         })
         .catch((chainError: unknown) => {
-          if (!controller.signal.aborted) {
-            const message = chainError instanceof Error ? chainError.message : "недоступна";
-            setWarnings((value) => upsertWarning(value, `Trade history: ${message}`));
-          }
+          if (controller.signal.aborted) return;
+          const message = chainError instanceof Error ? chainError.message : "недоступна";
+          setWarnings((value) => upsertWarning(value, `Trade history: ${message}`));
         })
         .finally(() => {
           if (!controller.signal.aborted) setChainLoading(false);
@@ -570,15 +215,12 @@ export default function SocialIntelligencePanel() {
       setTg(nextTg);
       setMarket(nextMarket);
 
-      const sourceWarnings: string[] = [];
-      if (!nextX) sourceWarnings.push("X: недоступен");
-      if (!nextTg) sourceWarnings.push("Telegram: недоступен");
-      if (!nextMarket) sourceWarnings.push("Market: недоступен");
-      setWarnings((value) => {
-        let nextWarnings = value;
-        for (const message of sourceWarnings) nextWarnings = upsertWarning(nextWarnings, message);
-        return nextWarnings;
-      });
+      const sourceWarnings = [
+        !nextX ? "X: недоступен" : null,
+        !nextTg ? "Telegram: недоступен" : null,
+        !nextMarket ? "Market: недоступен" : null,
+      ].filter((value): value is string => value != null);
+      setWarnings((value) => sourceWarnings.reduce(upsertWarning, value));
 
       if (!nextX && !nextTg) {
         setError("Нет данных X и Telegram");
@@ -619,7 +261,7 @@ export default function SocialIntelligencePanel() {
   useEffect(() => {
     if (initialMint && MINT_RE.test(initialMint)) void run(initialMint);
     return () => abortRef.current?.abort();
-    // Run only for the initial URL mint; later runs are explicit user actions.
+    // Initial URL mint is intentionally analyzed only once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -634,7 +276,7 @@ export default function SocialIntelligencePanel() {
   };
 
   return (
-    <div className="space-y-5" data-tag="trade.social_intelligence.v5">
+    <div className="space-y-5" data-tag="trade.social_intelligence.v6">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -699,174 +341,6 @@ export default function SocialIntelligencePanel() {
       </>}
     </div>
   );
-}
-
-function deriveSocialMetrics(
-  x: TwitterStats | null,
-  tg: SocialTimeline | null,
-  market: Market | null,
-  chain: ChainAnalysis | null,
-  ai: AiEnvelope | null,
-  channels: Channel[],
-  options: Options,
-): Derived {
-  const now = Date.now();
-  const tweets = x?.topTweets || [];
-  const telegramItems = (tg?.timeline || []).filter((item) => !item.platform || item.platform.toLowerCase() === "telegram");
-  const xTimes = tweets.map((tweet) => toTimestamp(tweet.timestamp));
-  const tgTimes = telegramItems.map((item) => toTimestamp(item.occurred_at));
-  const lookbackHours = Math.max(1, options.lookback === "all" ? 720 : Number(options.lookback));
-  const xMentions = x?.totalTweets || 0;
-  const tgMentions = tg?.platforms?.telegram ?? telegramItems.length;
-  const xVelocity = xMentions / lookbackHours;
-  const tgVelocity = tgMentions / lookbackHours;
-  const xWindow = windowStats(tweets, (tweet) => toTimestamp(tweet.timestamp), (tweet) => tweet.author, now);
-  const tgWindow = windowStats(telegramItems, (item) => toTimestamp(item.occurred_at), (item) => item.source_handle || item.source_name, now);
-  const xAcceleration = xWindow.m15 ? clamp((xWindow.m5 / 5) / (xWindow.m15 / 15) * 50) : 0;
-  const tgAcceleration = tgWindow.m15 ? clamp((tgWindow.m5 / 5) / (tgWindow.m15 / 15) * 50) : 0;
-
-  const xSentiment = sentiment(tweets.map((tweet) => tweet.text));
-  const tgSentiment = sentiment(telegramItems.map((item) => item.text));
-  const xSentimentDelta = sentimentDelta(tweets.map((tweet) => ({ time: toTimestamp(tweet.timestamp), text: tweet.text })));
-  const tgSentimentDelta = sentimentDelta(telegramItems.map((item) => ({ time: toTimestamp(item.occurred_at), text: item.text })));
-  const authorRatio = xMentions ? clamp((x?.uniqueMentioners || 0) / xMentions * 100) : 0;
-  const verifiedRatio = x?.uniqueMentioners ? clamp((x.aggregated.verifiedAuthors || 0) / x.uniqueMentioners * 100) : 0;
-  const botRatio = normalizeRatePct(x?.aggregated.botRatio) ?? 0;
-  const botRisk = clamp(x?.botRiskScore || 0);
-  const shillers = x?.shillers || [];
-  const reach = shillers.reduce((sum, account) => sum + (account.followers || 0), 0);
-  const influencers = shillers.filter((account) => account.isVerified || (account.followers || 0) >= 10_000 || account.totalEngagement >= 5_000);
-  const influencerReach = influencers.reduce((sum, account) => sum + (account.followers || 0), 0);
-  const repeatShillers = shillers.filter((account) => account.tweets >= 2).length;
-  const smartAccounts = shillers.filter((account) => !account.isBot && (account.isVerified || account.totalEngagement >= 2_500 || (account.followers || 0) >= 5_000)).length;
-
-  const normalizedTexts = [...tweets.map((tweet) => tweet.text), ...telegramItems.map((item) => item.text)]
-    .map(normalizeText)
-    .filter((text) => text.length >= 16);
-  const frequencies = new Map<string, number>();
-  for (const text of normalizedTexts) frequencies.set(text, (frequencies.get(text) || 0) + 1);
-  const copied = [...frequencies.values()].filter((count) => count > 1).reduce((sum, count) => sum + count, 0);
-  const copyRatio = normalizedTexts.length ? copied / normalizedTexts.length * 100 : 0;
-  const recentXTweets = tweets.filter((tweet) => {
-    const time = toTimestamp(tweet.timestamp);
-    return time != null && time >= now - HOUR_MS;
-  });
-  const botBurst = recentXTweets.length ? recentXTweets.filter((tweet) => tweet.isSuspicious).length / recentXTweets.length * 100 : 0;
-
-  const tgKeys = new Set(
-    telegramItems.flatMap((item) => [item.source_handle, item.source_name].filter(Boolean).map((value) => String(value).replace(/^@/, "").toLowerCase())),
-  );
-  const relatedChannels = channels.filter((channel) =>
-    tgKeys.has(String(channel.username || "").replace(/^@/, "").toLowerCase()) || tgKeys.has(channel.title.toLowerCase()),
-  );
-  const channelScore = relatedChannels.length ? average(relatedChannels.map((channel) => clamp(numberOr(channel.score)))) : 0;
-  const winRates = relatedChannels.map((channel) => normalizeRatePct(channel.win_rate)).filter((value): value is number => value != null);
-  const rugRates = relatedChannels.map((channel) => normalizeRatePct(channel.rug_rate)).filter((value): value is number => value != null);
-  const winRate = average(winRates);
-  const rugRate = average(rugRates);
-  const explicitCalls = telegramItems.filter((item) => Boolean(item.metrics?.explicit_call || item.metrics?.is_explicit_call) || String(item.event_type || "").toLowerCase().includes("call")).length;
-
-  const aiResult = ai?.result;
-  const aiCoordination = aiResult?.coordinationSignals?.length || 0;
-  const highAiRisks = aiResult?.risks?.filter((risk) => risk.severity === "high" || risk.severity === "critical").length || 0;
-  const coordinationScore = clamp(copyRatio * 0.75 + aiCoordination * 11 + repeatShillers * 3);
-  const followerQuality = clamp((100 - botRisk) * 0.45 + verifiedRatio * 0.25 + clamp(Math.log10(median(shillers.map((account) => account.followers || 0)) + 1) * 18) * 0.3);
-  const paidPromotionRisk = clamp(coordinationScore * 0.45 + botRisk * 0.25 + clamp(repeatShillers * 8) * 0.15 + highAiRisks * 8);
-  const organic = clamp(100 - paidPromotionRisk * 0.72 - copyRatio * 0.18 + authorRatio * 0.22);
-  const xScore = clamp((100 - botRisk) * 0.35 + authorRatio * 0.25 + clamp(Math.log10((x?.aggregated.totalEngagement || 0) + 1) * 20) * 0.25 + followerQuality * 0.15);
-  const tgScore = clamp(channelScore * 0.3 + winRate * 0.2 + (100 - rugRate) * 0.2 + clamp(tgKeys.size * 7) * 0.15 + clamp(explicitCalls * 8) * 0.15);
-
-  const finiteXTimes = xTimes.filter((value): value is number => value != null);
-  const finiteTgTimes = tgTimes.filter((value): value is number => value != null);
-  const firstXTime = finiteXTimes.length ? Math.min(...finiteXTimes) : null;
-  const firstTgTime = finiteTgTimes.length ? Math.min(...finiteTgTimes) : null;
-  const bothPlatforms = firstXTime != null && firstTgTime != null;
-  const crossLagMinutes = bothPlatforms ? Math.abs(firstXTime - firstTgTime) / 60_000 : null;
-  const crossScore = bothPlatforms
-    ? clamp(100 - Math.min(100, (crossLagMinutes || 0) / 3) + Math.min(xVelocity + tgVelocity, 20) * 2)
-    : 0;
-  const hype = clamp(average([xAcceleration, tgAcceleration, clamp((xVelocity + tgVelocity) * 10), clamp((x?.aggregated.engagementRate || 0) * 100)]));
-  const fomo = clamp(hype * 0.55 + Math.max(xSentiment.p, tgSentiment.p) * 0.25 + clamp(explicitCalls * 7) * 0.2);
-  const manipulation = clamp(paidPromotionRisk * 0.7 + coordinationScore * 0.3);
-  const socialRisk = clamp(manipulation * 0.4 + botRisk * 0.24 + rugRate * 0.14 + (100 - organic) * 0.12 + Math.min(100, highAiRisks * 18) * 0.1);
-  const riskLevel = socialRisk >= 70 ? "HIGH" : socialRisk >= 40 ? "MEDIUM" : "LOW";
-
-  const createdAt = toTimestamp(market?.pair?.createdAt);
-  const firstSocial = firstXTime == null ? firstTgTime : firstTgTime == null ? firstXTime : Math.min(firstXTime, firstTgTime);
-  const earlyMinutes = createdAt != null && firstSocial != null ? Math.max(0, (firstSocial - createdAt) / 60_000) : null;
-  const early = earlyMinutes == null ? clamp(70 - Math.min(60, (xMentions + tgMentions) / 10)) : clamp(100 - earlyMinutes / 12);
-  const alpha = clamp(early * 0.35 + organic * 0.25 + (100 - manipulation) * 0.2 + crossScore * 0.2);
-  const socialScore = clamp(xScore * 0.36 + tgScore * 0.34 + organic * 0.15 + crossScore * 0.15);
-
-  const socialEventTimes = [...finiteXTimes, ...finiteTgTimes];
-  const socialSpikeTime = densestWindowTime(socialEventTimes);
-  const trades: TradePoint[] = (chain?.trades || [])
-    .map((trade) => ({ time: toTimestamp(trade.ts), price: Number(trade.p) }))
-    .filter((trade): trade is { time: number; price: number } => trade.time != null && Number.isFinite(trade.price) && trade.price > 0)
-    .sort((a, b) => a.time - b.time);
-  const priceImpulse = findPriceImpulse(trades, socialSpikeTime);
-  const priceAtSpike = socialSpikeTime == null ? null : priceNear(trades, socialSpikeTime, 5 * 60_000);
-  const price5 = socialSpikeTime == null ? null : priceAtOrAfter(trades, socialSpikeTime + 5 * 60_000, 5 * 60_000);
-  const price15 = socialSpikeTime == null ? null : priceAtOrAfter(trades, socialSpikeTime + 15 * 60_000, 5 * 60_000);
-  const price60 = socialSpikeTime == null ? null : priceAtOrAfter(trades, socialSpikeTime + HOUR_MS, 10 * 60_000);
-  const reaction5 = priceChange(priceAtSpike, price5);
-  const reaction15 = priceChange(priceAtSpike, price15);
-  const reaction60 = priceChange(priceAtSpike, price60);
-  const oneHourTrades = socialSpikeTime == null ? [] : trades.filter((trade) => trade.time >= socialSpikeTime && trade.time <= socialSpikeTime + HOUR_MS);
-  const maxPrice = oneHourTrades.length ? Math.max(...oneHourTrades.map((trade) => trade.price)) : null;
-  const minPrice = oneHourTrades.length ? Math.min(...oneHourTrades.map((trade) => trade.price)) : null;
-  const maxUpside = priceAtSpike && maxPrice != null ? (maxPrice - priceAtSpike.price) / priceAtSpike.price * 100 : null;
-  const maxDrawdown = priceAtSpike && minPrice != null ? (minPrice - priceAtSpike.price) / priceAtSpike.price * 100 : null;
-  const leadLagMinutes = socialSpikeTime != null && priceImpulse ? (priceImpulse.time - socialSpikeTime) / 60_000 : null;
-  const leadDirection = leadLagMinutes == null ? "—" : Math.abs(leadLagMinutes) <= 2 ? "SYNC" : leadLagMinutes > 0 ? "SOCIAL → PRICE" : "PRICE → SOCIAL";
-  const leadLagConfidence = leadLagMinutes == null ? null : clamp(35 + Math.min(35, socialEventTimes.length * 1.5) + Math.min(30, trades.length / 20));
-  const price: PriceSocial = {
-    socialSpikeTime,
-    reaction5,
-    reaction15,
-    reaction60,
-    maxUpside,
-    maxDrawdown,
-    impulseTime: priceImpulse?.time ?? null,
-    impulseChange: priceImpulse?.change ?? null,
-    leadLagMinutes,
-    leadDirection,
-    leadLagConfidence,
-    tradeCount: trades.length,
-  };
-
-  const firstXAuthor = [...tweets]
-    .filter((tweet) => toTimestamp(tweet.timestamp) != null)
-    .sort((a, b) => numberOr(toTimestamp(a.timestamp)) - numberOr(toTimestamp(b.timestamp)))[0]?.author || "—";
-  const firstTgSource = tg?.origin?.source_handle || tg?.origin?.source_name || [...telegramItems]
-    .sort((a, b) => numberOr(toTimestamp(a.occurred_at)) - numberOr(toTimestamp(b.occurred_at)))[0]?.source_handle || "—";
-  const sentimentChanges = [xSentimentDelta, tgSentimentDelta].filter((value): value is number => value != null);
-  const combinedSentimentDelta = sentimentChanges.length ? average(sentimentChanges) : null;
-  const narrative = aiResult?.campaignHypothesis?.narrative || "—";
-  const campaign = aiResult?.campaignHypothesis?.label || "—";
-
-  const groups: Derived["groups"] = [
-    { title: "X / Twitter", rows: [
-      metric("X score", score(xScore)), metric("Mentions", compact(xMentions)), metric("Mentions 5m", String(xWindow.m5), "sampled top posts"), metric("Mentions 15m", String(xWindow.m15), "sampled top posts"), metric("Mentions 1h", String(xWindow.h1), "sampled top posts"), metric("Mentions 6h", String(xWindow.h6), "sampled top posts"), metric("Mentions 24h", String(xWindow.h24), "sampled top posts"), metric("Mentions / h", xVelocity.toFixed(2)), metric("Acceleration", score(xAcceleration)), metric("Unique authors", compact(x?.uniqueMentioners)), metric("Unique authors 6h", String(xWindow.unique6), "sampled top posts"), metric("Unique authors 24h", String(xWindow.unique24), "sampled top posts"), metric("Author growth 6h", signedPct(growthPct(xWindow.unique6, xWindow.uniquePrev6)), "vs previous 6h"), metric("Author diffusion", pct(authorRatio)), metric("Views", compact(x?.totalViews)), metric("Likes", compact(x?.totalLikes)), metric("Reposts", compact(x?.totalRetweets)), metric("Engagement", compact(x?.aggregated.totalEngagement)), metric("Engagement rate", pct((x?.aggregated.engagementRate || 0) * 100)), metric("Verified authors", compact(x?.aggregated.verifiedAuthors)), metric("Verified ratio", pct(verifiedRatio)), metric("Influencers", String(influencers.length)), metric("Potential reach", compact(reach)), metric("Influencer reach", compact(influencerReach)), metric("Smart accounts", String(smartAccounts)), metric("Repeat shillers", String(repeatShillers)), metric("Bot risk", score(botRisk)), metric("Bot ratio", pct(botRatio)), metric("Bot burst 1h", pct(botBurst)), metric("Anomalies", String(x?.anomalyCount || 0)), metric("Follower quality", score(followerQuality)), metric("Sentiment", xSentiment.label), metric("Positive", pct(xSentiment.p)), metric("Neutral", pct(xSentiment.u)), metric("Negative", pct(xSentiment.n)), metric("Sentiment change", signedPct(xSentimentDelta)), metric("First mover", firstXAuthor), metric("First mention", firstXTime != null ? ago(firstXTime, now) : "—"), metric("Account age", "—", "X collector does not expose account creation date"),
-    ]},
-    { title: "Telegram", rows: [
-      metric("TG score", score(tgScore)), metric("Mentions", compact(tgMentions)), metric("Mentions 5m", String(tgWindow.m5)), metric("Mentions 15m", String(tgWindow.m15)), metric("Mentions 1h", String(tgWindow.h1)), metric("Mentions 6h", String(tgWindow.h6)), metric("Mentions 24h", String(tgWindow.h24)), metric("Mentions / h", tgVelocity.toFixed(2)), metric("Acceleration", score(tgAcceleration)), metric("Channels", String(tgKeys.size)), metric("Channels 6h", String(tgWindow.unique6)), metric("Channels 24h", String(tgWindow.unique24)), metric("Channel growth 6h", signedPct(growthPct(tgWindow.unique6, tgWindow.uniquePrev6)), "vs previous 6h"), metric("Explicit calls", String(explicitCalls)), metric("Channel score", score(channelScore)), metric("Historical win rate", pct(winRate)), metric("Historical rug rate", pct(rugRate)), metric("Sentiment", aiResult?.sentiment?.label || tgSentiment.label), metric("AI sentiment score", aiResult?.sentiment?.score != null ? numberOr(aiResult.sentiment.score).toFixed(2) : "—"), metric("AI sentiment confidence", aiResult?.sentiment?.confidence != null ? pct(numberOr(aiResult.sentiment.confidence) * 100) : "—"), metric("Window sentiment change", signedPct(tgSentimentDelta)), metric("Dominant intent", aiResult?.dominantIntent || "—"), metric("Top/first source", firstTgSource), metric("First signal", firstTgTime != null ? ago(firstTgTime, now) : "—"), metric("AI campaign", campaign), metric("AI coordination signals", String(aiCoordination)), metric("AI high risks", String(highAiRisks)), metric("AI overall confidence", aiResult?.overallConfidence != null ? pct(numberOr(aiResult.overallConfidence) * 100) : "—"),
-    ]},
-    { title: "Growth / Quality / Manipulation", rows: [
-      metric("Hype score", score(hype)), metric("FOMO score", score(fomo)), metric("Organic score", score(organic)), metric("Paid promotion risk", score(paidPromotionRisk)), metric("Manipulation score", score(manipulation)), metric("Social risk", score(socialRisk)), metric("Social risk level", riskLevel), metric("Coordination score", score(coordinationScore)), metric("Copy-paste ratio", pct(copyRatio)), metric("Follower quality", score(followerQuality)), metric("Narrative strength", score(clamp(hype * 0.45 + crossScore * 0.25 + numberOr(aiResult?.campaignHypothesis?.confidence) * 30))), metric("Narrative", narrative), metric("Campaign hypothesis", campaign), metric("Peak velocity", `${Math.max(xVelocity, tgVelocity).toFixed(2)}/h`), metric("Velocity change", score(average([xAcceleration, tgAcceleration]))), metric("Sentiment change", signedPct(combinedSentimentDelta), "positive-share change inside window"),
-    ]},
-    { title: "Cross-platform / Timing", rows: [
-      metric("Cross-platform score", score(crossScore)), metric("Both platforms active", bothPlatforms ? "YES" : "NO"), metric("TG → X lag", bothPlatforms && firstTgTime <= firstXTime ? `${Math.round((firstXTime - firstTgTime) / 60_000)}m` : "—"), metric("X → TG lag", bothPlatforms && firstXTime < firstTgTime ? `${Math.round((firstTgTime - firstXTime) / 60_000)}m` : "—"), metric("First X", firstXTime != null ? ago(firstXTime, now) : "—"), metric("First TG", firstTgTime != null ? ago(firstTgTime, now) : "—"), metric("Social spike", socialSpikeTime == null ? "—" : ago(socialSpikeTime, now), "densest 5m window"), metric("Early signal score", score(early)), metric("Alpha score", score(alpha)), metric("Social score", score(socialScore)), metric("Price ↔ Social direction", leadDirection), metric("Lead / lag", leadLagMinutes == null ? "—" : `${Math.abs(leadLagMinutes).toFixed(1)}m`), metric("Lead/lag confidence", score(leadLagConfidence)), metric("Price after social 5m", signedPct(reaction5)), metric("Price after social 15m", signedPct(reaction15)), metric("Price after social 1h", signedPct(reaction60)), metric("Max upside 1h", signedPct(maxUpside)), metric("Max drawdown 1h", signedPct(maxDrawdown)), metric("Nearest 5m price impulse", priceImpulse ? signedPct(priceImpulse.change) : "—"), metric("Price 1h snapshot", signedPct(market?.pair?.changeH1)), metric("Price 24h snapshot", signedPct(market?.pair?.change24h)), metric("Volume 1h", money(market?.pair?.volumeH1)), metric("Volume 24h", money(market?.pair?.volumeH24)), metric("Liquidity", money(market?.pair?.liquidityUsd)),
-    ]},
-    { title: "Price event evidence", rows: [
-      metric("Trades sampled", compact(trades.length)), metric("Trade history start", trades.length ? ago(trades[0].time, now) : "—"), metric("Trade history end", trades.length ? ago(trades[trades.length - 1].time, now) : "—"), metric("Price at social spike", priceAtSpike ? priceAtSpike.price.toPrecision(6) : "—", "SOL price"), metric("Price +5m", price5 ? price5.price.toPrecision(6) : "—", "first trade at/after target within 5m"), metric("Price +15m", price15 ? price15.price.toPrecision(6) : "—", "first trade at/after target within 5m"), metric("Price +1h", price60 ? price60.price.toPrecision(6) : "—", "first trade at/after target within 10m"), metric("Impulse timestamp", priceImpulse ? ago(priceImpulse.time, now) : "—"), metric("Impulse threshold", `${IMPULSE_THRESHOLD_PCT}% / ${IMPULSE_WINDOW_MS / 60_000}m`), metric("On-chain raw trades", compact(chain?.summary?.totalRawTrades ?? chain?.summary?.totalTrades)), metric("Unique wallets", compact(chain?.summary?.uniqueWallets)), metric("History truncated", chain?.truncated == null ? "—" : chain.truncated ? "YES" : "NO"),
-    ]},
-    { title: "AI Agent / Evidence", rows: [
-      metric("Agent", ai?.available ? `${ai.provider || "qwen"} · ${ai.model || "Qwen"}` : "unavailable"), metric("AI latency", ai?.latencyMs != null ? `${Math.round(ai.latencyMs)} ms` : "—"), metric("AI cache", ai?.cache || "—"), metric("Summary", aiResult?.summary || "—"), metric("Claims", String(aiResult?.claims?.length || 0)), metric("Entities", String(aiResult?.entities?.length || 0)), metric("Relationships", String(aiResult?.relationships?.length || 0)), metric("Risks", String(aiResult?.risks?.length || 0)), metric("Originators", aiResult?.campaignHypothesis?.likelyOriginators?.join(", ") || "—"), metric("Amplifiers", aiResult?.campaignHypothesis?.amplifiers?.slice(0, 6).join(", ") || "—"),
-    ]},
-  ];
-
-  return { groups, xScore, tgScore, organic, manipulation, socialRisk, early, alpha, socialScore, price };
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
