@@ -1,5 +1,12 @@
 from app.models.analytics import CollectorJob, Token, TokenMetric, TokenStatus, Wallet, WalletLink, WalletTrade
 from app.models.auth_log import AuthLog
+from app.models.intelligence_memory import (
+    IntelligenceDiscovery,
+    IntelligenceEdge,
+    IntelligenceEntity,
+    IntelligenceSnapshot,
+    IntelligenceSnapshotEntity,
+)
 from app.models.social_intelligence import (
     SocialEvent,
     SocialRelation,
@@ -34,4 +41,9 @@ __all__ = [
     "TelegramChannelScore",
     "SocialEvent",
     "SocialRelation",
+    "IntelligenceSnapshot",
+    "IntelligenceEntity",
+    "IntelligenceSnapshotEntity",
+    "IntelligenceEdge",
+    "IntelligenceDiscovery",
 ]
