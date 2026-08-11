@@ -60,9 +60,9 @@ function parseJsonObject(raw: string): unknown {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-
-function validateResult(result: TelegramAiResult, messages: TelegramMessageInput[]): TelegramAiResult {
-  const allowed = new Set(messages.map((message) => message.id));
+function validateResult(result: TelegramAiResult, messages: TelegramMessageInput[], context: TelegramAnalysisContext): TelegramAiResult {
+  const allowedEvidence = new Set(messages.map((message) => message.id));
+  for (const evidence of context.intelligenceSnapshot?.evidence ?? []) allowedEvidence.add(evidence.id);
   const evidenceGroups: string[][] = [
     ...result.mentionedTokens.map((entry) => entry.evidenceMessageIds),
     ...result.entities.map((entry) => entry.evidenceMessageIds),
@@ -71,15 +71,29 @@ function validateResult(result: TelegramAiResult, messages: TelegramMessageInput
     ...result.coordinationSignals.map((entry) => entry.evidenceMessageIds),
     result.campaignHypothesis.evidenceMessageIds,
     ...result.risks.map((entry) => entry.evidenceMessageIds),
+    ...result.featureAssessments.map((entry) => entry.evidenceMessageIds),
+    ...result.discoveredRelationships.map((entry) => entry.evidenceMessageIds),
+    ...result.anomalies.map((entry) => entry.evidenceMessageIds),
+    ...result.contradictions.map((entry) => entry.evidenceMessageIds),
   ];
-  const unknown = [...new Set(evidenceGroups.flat().filter((id) => !allowed.has(id)))];
-  if (unknown.length) throw new Error(`Qwen cited unknown message IDs: ${unknown.slice(0, 10).join(', ')}`);
+  const unknownEvidence = [...new Set(evidenceGroups.flat().filter((id) => !allowedEvidence.has(id)))];
+  if (unknownEvidence.length) throw new Error(`Qwen cited unknown evidence IDs: ${unknownEvidence.slice(0, 10).join(', ')}`);
+
+  const snapshotFeatureKeys = new Set((context.intelligenceSnapshot?.features ?? []).map((feature) => feature.key));
+  if (snapshotFeatureKeys.size) {
+    const unknownFeatureKeys = [...new Set([
+      ...result.featureAssessments.map((entry) => entry.featureKey),
+      ...result.anomalies.flatMap((entry) => entry.relatedFeatureKeys),
+    ].filter((key) => !snapshotFeatureKeys.has(key)))];
+    if (unknownFeatureKeys.length) throw new Error(`Qwen cited unknown feature keys: ${unknownFeatureKeys.slice(0, 10).join(', ')}`);
+  }
+
   if (/<\/?think>/i.test(JSON.stringify(result))) throw new Error('Qwen returned hidden-reasoning tags instead of a concise reasoning summary');
   return result;
 }
 
-function parseResult(raw: string, messages: TelegramMessageInput[]): TelegramAiResult {
-  return validateResult(telegramAiResultSchema.parse(parseJsonObject(raw)), messages);
+function parseResult(raw: string, messages: TelegramMessageInput[], context: TelegramAnalysisContext): TelegramAiResult {
+  return validateResult(telegramAiResultSchema.parse(parseJsonObject(raw)), messages, context);
 }
 
 function endpointUrl() {
@@ -115,11 +129,7 @@ async function requestCompletion(messages: OpenAiMessage[], options: { jsonMode:
   }
   const raw = contentText(payload.choices?.[0]);
   if (!raw.trim()) throw new Error('Qwen returned an empty completion');
-  return {
-    raw,
-    inputTokens: payload.usage?.prompt_tokens ?? null,
-    outputTokens: payload.usage?.completion_tokens ?? null,
-  };
+  return { raw, inputTokens: payload.usage?.prompt_tokens ?? null, outputTokens: payload.usage?.completion_tokens ?? null };
 }
 
 async function callOpenAiCompatible(messages: TelegramMessageInput[], context: TelegramAnalysisContext): Promise<Omit<TelegramAiCompletion, 'cache'>> {
@@ -134,7 +144,7 @@ async function callOpenAiCompatible(messages: TelegramMessageInput[], context: T
   let inputTokens = first.inputTokens;
   let outputTokens = first.outputTokens;
   try {
-    result = parseResult(first.raw, messages);
+    result = parseResult(first.raw, messages, context);
   } catch (error) {
     const validation = error instanceof Error ? error.message.slice(0, 2_000) : 'Invalid JSON schema';
     const repaired = await requestCompletion([
@@ -142,25 +152,18 @@ async function callOpenAiCompatible(messages: TelegramMessageInput[], context: T
       { role: 'assistant', content: first.raw.slice(0, 12_000) },
       { role: 'user', content: `The previous answer failed JSON schema validation: ${validation}. Return a corrected JSON object only. Do not add markdown or explanations.` },
     ], { jsonMode: true, temperature: 0 });
-    result = parseResult(repaired.raw, messages);
+    result = parseResult(repaired.raw, messages, context);
     inputTokens = inputTokens === null || repaired.inputTokens === null ? null : inputTokens + repaired.inputTokens;
     outputTokens = outputTokens === null || repaired.outputTokens === null ? null : outputTokens + repaired.outputTokens;
   }
-  return {
-    result,
-    provider: 'openai-compatible',
-    model: env.TELEGRAM_AI_MODEL,
-    latencyMs: performance.now() - started,
-    inputTokens,
-    outputTokens,
-  };
+  return { result, provider: 'openai-compatible', model: env.TELEGRAM_AI_MODEL, latencyMs: performance.now() - started, inputTokens, outputTokens };
 }
 
 async function execute(messages: TelegramMessageInput[], context: TelegramAnalysisContext): Promise<Omit<TelegramAiCompletion, 'cache'>> {
   if (env.TELEGRAM_AI_MODE === 'mock') {
     const started = performance.now();
     return {
-      result: validateResult(telegramAiResultSchema.parse(mockTelegramAnalysis(messages, context)), messages),
+      result: validateResult(telegramAiResultSchema.parse(mockTelegramAnalysis(messages, context)), messages, context),
       provider: 'mock',
       model: 'deterministic-telegram-mock',
       latencyMs: performance.now() - started,
@@ -179,7 +182,7 @@ export async function runTelegramAi(messages: TelegramMessageInput[], context: T
     const cached = await cacheGet<Omit<TelegramAiCompletion, 'cache'>>(cacheKey);
     if (cached) {
       try {
-        const result = validateResult(telegramAiResultSchema.parse(cached.result), messages);
+        const result = validateResult(telegramAiResultSchema.parse(cached.result), messages, context);
         return { ...cached, result, cache: 'hit' };
       } catch {
         // Treat stale/corrupt cache entries as misses instead of returning invalid AI data.
