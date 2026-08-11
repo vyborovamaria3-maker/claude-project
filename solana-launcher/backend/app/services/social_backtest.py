@@ -15,7 +15,6 @@ from app.models.analytics import Token, TokenMetric
 from app.models.social_intelligence import SocialEvent, TelegramCall, TelegramChannel
 from app.services.social_intelligence import classify_call_outcome, score_channel_metrics
 
-
 POSITIVE_RE = re.compile(
     r"\b(bull|bullish|buy|gem|moon|pump|breakout|alpha|early|strong|ape|send|upside|good|great|лонг|покуп|ракета|рост|гем)\b|🚀|🔥|📈|💎",
     re.IGNORECASE,
@@ -29,9 +28,7 @@ SOLANA_RE = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
 
 
 def _utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -95,9 +92,8 @@ def _copy_ratio(events: list[SocialEvent]) -> float:
 
 def _safe_evaluation_window_hours(call: TelegramCall, default: int = 72) -> int:
     meta = call.meta if isinstance(call.meta, dict) else {}
-    raw = meta.get("evaluation_window_hours", default)
     try:
-        value = int(raw)
+        value = int(meta.get("evaluation_window_hours", default))
     except (TypeError, ValueError):
         value = default
     return max(6, min(value, 24 * 30))
@@ -106,8 +102,7 @@ def _safe_evaluation_window_hours(call: TelegramCall, default: int = 72) -> int:
 def _prior_call_is_mature(call: TelegramCall, cutoff: datetime) -> bool:
     if call.outcome == "pending" or not call.is_explicit_call:
         return False
-    end = _utc(call.called_at) + timedelta(hours=_safe_evaluation_window_hours(call))
-    return end <= cutoff
+    return _utc(call.called_at) + timedelta(hours=_safe_evaluation_window_hours(call)) <= cutoff
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +117,7 @@ class HistoricalFeatures:
     tg_mentions: int
     tg_channels: int
     tg_explicit_calls: int
+    historical_channels: int
     channel_score: float
     channel_win_rate: float
     channel_rug_rate: float
@@ -186,6 +182,11 @@ class BacktestReport:
     samples: int
     train_samples: int
     test_samples: int
+    date_start: datetime | None
+    date_end: datetime | None
+    x_coverage: float
+    cross_platform_coverage: float
+    historical_channel_coverage: float
     baseline_hit_rate: float
     selected_threshold: int | None
     train: ThresholdMetrics | None
@@ -197,6 +198,8 @@ class BacktestReport:
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["generated_at"] = self.generated_at.isoformat()
+        payload["date_start"] = self.date_start.isoformat() if self.date_start else None
+        payload["date_end"] = self.date_end.isoformat() if self.date_end else None
         return payload
 
 
@@ -213,9 +216,13 @@ def build_historical_features(
     tg_events = [event for event in events if event.platform == "telegram"]
 
     x_authors = {_normalise_source(event.source_handle) for event in x_events if event.source_handle}
-    verified = sum(1 for event in x_events if bool((event.metrics or {}).get("verified")))
+    verified_authors = {
+        _normalise_source(event.source_handle)
+        for event in x_events
+        if event.source_handle and bool((event.metrics or {}).get("verified"))
+    }
     suspicious = sum(1 for event in x_events if bool((event.metrics or {}).get("suspicious")))
-    x_verified_ratio = verified / len(x_authors) * 100.0 if x_authors else 0.0
+    x_verified_ratio = _clamp(len(verified_authors) / len(x_authors) * 100.0) if x_authors else 0.0
     x_suspicious_ratio = suspicious / len(x_events) * 100.0 if x_events else 0.0
     x_engagement = sum(_event_engagement(event) for event in x_events)
 
@@ -251,6 +258,7 @@ def build_historical_features(
         win_rates.append(wins / len(matured) * 100.0)
         rug_rates.append(rugs / len(matured) * 100.0)
 
+    historical_channels = len(channel_scores)
     channel_score = mean(channel_scores) if channel_scores else 0.0
     channel_win_rate = mean(win_rates) if win_rates else 0.0
     channel_rug_rate = mean(rug_rates) if rug_rates else 0.0
@@ -265,33 +273,46 @@ def build_historical_features(
         early_minutes = max(0.0, (first_social - _utc(creation_date)).total_seconds() / 60.0)
 
     author_ratio = len(x_authors) / len(x_events) * 100.0 if x_events else 0.0
-    clean_x = 100.0 - x_suspicious_ratio
     engagement_quality = _clamp(math.log10(x_engagement + 1.0) / 5.0 * 100.0)
-    x_score = _clamp(clean_x * 0.45 + author_ratio * 0.30 + engagement_quality * 0.25)
-    tg_score = _clamp(
-        channel_score * 0.35
-        + channel_win_rate * 0.20
-        + (100.0 - channel_rug_rate) * 0.20
-        + _clamp(len(tg_channels) * 7.0) * 0.10
-        + _clamp(explicit_calls * 8.0) * 0.15
-    )
+    x_score = 0.0
+    if x_events:
+        clean_x = 100.0 - x_suspicious_ratio
+        x_score = _clamp(clean_x * 0.45 + author_ratio * 0.30 + engagement_quality * 0.25)
+
+    channel_quality = 0.0
+    if historical_channels:
+        channel_quality = _clamp(channel_score * 0.55 + channel_win_rate * 0.25 + (100.0 - channel_rug_rate) * 0.20)
+    tg_score = 0.0
+    if tg_events:
+        tg_score = _clamp(
+            channel_quality * 0.65
+            + _clamp(len(tg_channels) * 7.0) * 0.15
+            + _clamp(explicit_calls * 8.0) * 0.20
+        )
+
     coordination = _clamp(copy_ratio * 0.8)
     manipulation = _clamp(coordination * 0.55 + x_suspicious_ratio * 0.45)
-    organic = _clamp(100.0 - manipulation * 0.72 - copy_ratio * 0.18 + author_ratio * 0.22)
-    social_risk = _clamp(manipulation * 0.55 + channel_rug_rate * 0.20 + (100.0 - organic) * 0.25)
+    source_diversity = _clamp(author_ratio * 0.6 + min(len(tg_channels) * 10.0, 100.0) * 0.4)
+    organic = _clamp(50.0 - manipulation * 0.55 - copy_ratio * 0.15 + source_diversity * 0.35)
+    channel_risk_component = channel_rug_rate if historical_channels else 50.0
+    social_risk = _clamp(
+        manipulation * 0.50 + channel_risk_component * 0.20 + (100.0 - organic) * 0.30
+    )
     cross_score = 0.0 if cross_lag is None else _clamp(100.0 - min(100.0, cross_lag / 3.0))
-    early_score = _clamp(70.0 if early_minutes is None else 100.0 - early_minutes / 12.0)
+    early_score = _clamp(50.0 if early_minutes is None else 100.0 - early_minutes / 12.0)
     core_social_score = _clamp(x_score * 0.36 + tg_score * 0.34 + organic * 0.15 + cross_score * 0.15)
 
     return HistoricalFeatures(
         cutoff=cutoff, mint=mint, x_mentions=len(x_events), x_authors=len(x_authors),
         x_verified_ratio=x_verified_ratio, x_suspicious_ratio=x_suspicious_ratio, x_engagement=x_engagement,
         tg_mentions=len(tg_events), tg_channels=len(tg_channels), tg_explicit_calls=explicit_calls,
-        channel_score=channel_score, channel_win_rate=channel_win_rate, channel_rug_rate=channel_rug_rate,
-        copy_ratio=copy_ratio, positive_sentiment=positive_sentiment, cross_platform_lag_minutes=cross_lag,
-        early_minutes=early_minutes, x_score=x_score, tg_score=tg_score, organic_score=organic,
-        manipulation_score=manipulation, social_risk=social_risk, cross_score=cross_score,
-        early_score=early_score, core_social_score=core_social_score,
+        historical_channels=historical_channels, channel_score=channel_score,
+        channel_win_rate=channel_win_rate, channel_rug_rate=channel_rug_rate,
+        copy_ratio=copy_ratio, positive_sentiment=positive_sentiment,
+        cross_platform_lag_minutes=cross_lag, early_minutes=early_minutes,
+        x_score=x_score, tg_score=tg_score, organic_score=organic,
+        manipulation_score=manipulation, social_risk=social_risk,
+        cross_score=cross_score, early_score=early_score, core_social_score=core_social_score,
     )
 
 
@@ -322,8 +343,8 @@ def build_historical_outcome(
         roi_multiple=max_multiple, final_to_peak=final_to_peak, observed_hours=observed_hours,
     )
     return HistoricalOutcome(
-        baseline_price=baseline_price, final_price=final_price, peak_price=peak_price, max_multiple=max_multiple,
-        final_return_pct=final_return,
+        baseline_price=baseline_price, final_price=final_price, peak_price=peak_price,
+        max_multiple=max_multiple, final_return_pct=final_return,
         max_drawdown_from_peak_pct=(final_to_peak - 1.0) * 100.0 if final_to_peak is not None else None,
         outcome=outcome,
         hit_20pct=bool(max_multiple is not None and max_multiple >= 1.20),
@@ -357,21 +378,25 @@ def evaluate_samples(
     samples: list[BacktestSample], *, lookback_hours: int = 24, horizon_hours: int = 72, train_fraction: float = 0.70,
 ) -> BacktestReport:
     ordered = sorted(samples, key=lambda sample: sample.cutoff)
+    generated = datetime.now(timezone.utc)
     if not ordered:
         return BacktestReport(
-            generated_at=datetime.now(timezone.utc), lookback_hours=lookback_hours, horizon_hours=horizon_hours,
-            samples=0, train_samples=0, test_samples=0, baseline_hit_rate=0.0,
-            selected_threshold=None, train=None, test=None, threshold_sweep=(), calibration=(), skipped={},
+            generated_at=generated, lookback_hours=lookback_hours, horizon_hours=horizon_hours,
+            samples=0, train_samples=0, test_samples=0, date_start=None, date_end=None,
+            x_coverage=0.0, cross_platform_coverage=0.0, historical_channel_coverage=0.0,
+            baseline_hit_rate=0.0, selected_threshold=None, train=None, test=None,
+            threshold_sweep=(), calibration=(), skipped={},
         )
+
     split = max(1, min(len(ordered) - 1, int(len(ordered) * train_fraction))) if len(ordered) > 1 else 1
     train = ordered[:split]
-    test = ordered[split:] if split < len(ordered) else ordered
+    test = ordered[split:] if split < len(ordered) else []
     baseline = sum(sample.outcome.hit_2x for sample in ordered) / len(ordered)
     train_baseline = sum(sample.outcome.hit_2x for sample in train) / len(train) if train else 0.0
     test_baseline = sum(sample.outcome.hit_2x for sample in test) / len(test) if test else 0.0
     sweep = tuple(_threshold_metrics(train, threshold, train_baseline) for threshold in range(40, 91, 5))
-    eligible = [row for row in sweep if row.selected >= max(3, int(len(train) * 0.05))]
-    best = max(eligible or list(sweep), key=lambda row: (row.f1, row.precision, row.lift, row.selected)) if sweep else None
+    eligible = [row for row in sweep if row.selected >= max(3, math.ceil(len(train) * 0.05))]
+    best = max(eligible, key=lambda row: (row.f1, row.precision, row.lift, row.selected)) if eligible else None
     test_metrics = _threshold_metrics(test, best.threshold, test_baseline) if best and test else None
 
     calibration: list[dict[str, Any]] = []
@@ -387,10 +412,17 @@ def evaluate_samples(
         })
 
     return BacktestReport(
-        generated_at=datetime.now(timezone.utc), lookback_hours=lookback_hours, horizon_hours=horizon_hours,
-        samples=len(ordered), train_samples=len(train), test_samples=len(test), baseline_hit_rate=baseline,
-        selected_threshold=best.threshold if best else None, train=best, test=test_metrics,
-        threshold_sweep=sweep, calibration=tuple(calibration), skipped={},
+        generated_at=generated, lookback_hours=lookback_hours, horizon_hours=horizon_hours,
+        samples=len(ordered), train_samples=len(train), test_samples=len(test),
+        date_start=ordered[0].cutoff, date_end=ordered[-1].cutoff,
+        x_coverage=sum(sample.features.x_mentions > 0 for sample in ordered) / len(ordered),
+        cross_platform_coverage=sum(
+            sample.features.x_mentions > 0 and sample.features.tg_mentions > 0 for sample in ordered
+        ) / len(ordered),
+        historical_channel_coverage=sum(sample.features.historical_channels > 0 for sample in ordered) / len(ordered),
+        baseline_hit_rate=baseline, selected_threshold=best.threshold if best else None,
+        train=best, test=test_metrics, threshold_sweep=sweep,
+        calibration=tuple(calibration), skipped={},
     )
 
 
@@ -410,23 +442,15 @@ async def run_social_backtest(
         .order_by(TelegramCall.called_at.asc())
         .limit(max(1, min(int(limit), 20_000)))
     )).scalars().all())
-
-    candidates: list[TelegramCall] = []
-    seen_mints: set[str] = set()
-    for call in rows:
-        if first_call_per_mint and call.mint_address in seen_mints:
-            continue
-        seen_mints.add(call.mint_address)
-        candidates.append(call)
-    if not candidates:
+    if not rows:
         return evaluate_samples([], lookback_hours=lookback_hours, horizon_hours=horizon_hours)
 
-    mints = sorted({call.mint_address for call in candidates})
+    mints = sorted({call.mint_address for call in rows})
     tokens = list((await session.execute(select(Token).where(Token.mint_address.in_(mints)))).scalars().all())
     token_by_mint = {token.mint_address: token for token in tokens}
     token_ids = [token.id for token in tokens]
-    min_cutoff = min(_utc(call.called_at) for call in candidates)
-    max_cutoff = max(_utc(call.called_at) for call in candidates)
+    min_cutoff = min(_utc(call.called_at) for call in rows)
+    max_cutoff = max(_utc(call.called_at) for call in rows)
 
     events = list((await session.execute(
         select(SocialEvent)
@@ -475,7 +499,10 @@ async def run_social_backtest(
 
     samples: list[BacktestSample] = []
     skipped: dict[str, int] = defaultdict(int)
-    for call in candidates:
+    accepted_mints: set[str] = set()
+    for call in rows:
+        if first_call_per_mint and call.mint_address in accepted_mints:
+            continue
         cutoff = _utc(call.called_at)
         token = token_by_mint.get(call.mint_address)
         if token is None:
@@ -511,13 +538,19 @@ async def run_social_backtest(
             skipped["missing_price_window"] += 1
             continue
         samples.append(BacktestSample(
-            mint=call.mint_address, cutoff=cutoff, channel_id=call.channel_id, features=features, outcome=outcome,
+            mint=call.mint_address, cutoff=cutoff, channel_id=call.channel_id,
+            features=features, outcome=outcome,
         ))
+        if first_call_per_mint:
+            accepted_mints.add(call.mint_address)
 
     report = evaluate_samples(samples, lookback_hours=lookback_hours, horizon_hours=horizon_hours)
     return BacktestReport(
         generated_at=report.generated_at, lookback_hours=lookback_hours, horizon_hours=horizon_hours,
         samples=report.samples, train_samples=report.train_samples, test_samples=report.test_samples,
+        date_start=report.date_start, date_end=report.date_end,
+        x_coverage=report.x_coverage, cross_platform_coverage=report.cross_platform_coverage,
+        historical_channel_coverage=report.historical_channel_coverage,
         baseline_hit_rate=report.baseline_hit_rate, selected_threshold=report.selected_threshold,
         train=report.train, test=report.test, threshold_sweep=report.threshold_sweep,
         calibration=report.calibration, skipped=dict(skipped),
