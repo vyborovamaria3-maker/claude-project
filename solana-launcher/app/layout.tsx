@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { JetBrains_Mono, Manrope } from "next/font/google";
 import "./globals.css";
 import "./adaptive-theme.css";
+import "./chart-theme.css";
 import "./responsive.css";
 import "./landing-responsive.css";
 import AppShell from "@/components/AppShell";
