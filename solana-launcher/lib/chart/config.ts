@@ -2,6 +2,8 @@
 // Unified chart configuration to ensure consistency across components.
 // Chart surfaces inherit the global site theme instead of owning a fixed dark palette.
 
+import type { IChartApi } from "lightweight-charts";
+
 function themeVar(name: string, fallback: string): string {
   if (typeof window === "undefined") return fallback;
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -20,6 +22,26 @@ export const CHART_COLORS = {
   get border() { return themeVar("--theme-bg-border", "#1a1a2e"); },
   get accent() { return themeVar("--theme-primary", "#a855f7"); },
 } as const;
+
+export function applyChartTheme(chart: IChartApi | null) {
+  if (!chart) return;
+  chart.applyOptions({
+    layout: {
+      background: { type: "solid" as const, color: CHART_COLORS.background },
+      textColor: CHART_COLORS.text,
+    },
+    grid: {
+      vertLines: { color: CHART_COLORS.grid },
+      horzLines: { color: CHART_COLORS.grid },
+    },
+    crosshair: {
+      vertLine: { color: CHART_COLORS.crosshair, labelBackgroundColor: CHART_COLORS.crosshairLabel },
+      horzLine: { color: CHART_COLORS.crosshair, labelBackgroundColor: CHART_COLORS.crosshairLabel },
+    },
+    rightPriceScale: { borderColor: CHART_COLORS.border },
+    timeScale: { borderColor: CHART_COLORS.border },
+  });
+}
 
 export const CHART_DIMENSIONS = {
   minBarSpacing: 0.3,
