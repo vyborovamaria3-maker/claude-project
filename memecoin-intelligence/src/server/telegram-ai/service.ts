@@ -27,7 +27,15 @@ function assertEnabled() {
 }
 
 export async function telegramAiStatus() {
-  return { telegramOnly: true, enabled: env.TELEGRAM_AI_ENABLED, limits: { maxMessages: env.TELEGRAM_AI_MAX_MESSAGES, maxChars: env.TELEGRAM_AI_MAX_CHARS, maxOutputTokens: env.TELEGRAM_AI_MAX_TOKENS }, inference: await qwenHealth() };
+  return {
+    telegramOnly: false,
+    fullIntelligence: true,
+    analysisModes: ['telegram_only', 'full_intelligence'],
+    promptVersion: 'intelligence-qwen-v3',
+    enabled: env.TELEGRAM_AI_ENABLED,
+    limits: { maxMessages: env.TELEGRAM_AI_MAX_MESSAGES, maxChars: env.TELEGRAM_AI_MAX_CHARS, maxOutputTokens: env.TELEGRAM_AI_MAX_TOKENS },
+    inference: await qwenHealth(),
+  };
 }
 
 export async function analyzeTelegram(input: unknown) {
@@ -60,7 +68,6 @@ export async function enqueueTelegramAi(input: unknown) {
   try {
     await telegramAiQueue.add('analyze-telegram-batch', { runId }, { jobId: `telegram-ai:${runId}` });
   } catch (error) {
-    // Keep persisted run state consistent with the queue when enqueueing fails.
     try { await failTelegramAiRun(runId, error); } catch { /* preserve the original queue error */ }
     throw error;
   }
