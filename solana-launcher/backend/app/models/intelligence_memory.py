@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -32,8 +42,11 @@ class IntelligenceSnapshot(Base):
     prompt_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
     overall_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    analysis_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ai_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
 
 
 class IntelligenceEntity(Base):
@@ -48,22 +61,36 @@ class IntelligenceEntity(Base):
     entity_key: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
     entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
     label: Mapped[str] = mapped_column(String(1000), nullable=False)
+    # Number of distinct token mints where this entity was observed.
     occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     attributes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class IntelligenceSnapshotEntity(Base):
     __tablename__ = "intelligence_snapshot_entities"
     __table_args__ = (
-        UniqueConstraint("snapshot_id", "entity_key", name="uq_intelligence_snapshot_entity"),
-        Index("ix_intelligence_snapshot_entities_entity", "entity_key", "snapshot_id"),
+        UniqueConstraint(
+            "snapshot_id",
+            "entity_key",
+            name="uq_intelligence_snapshot_entity",
+        ),
+        Index(
+            "ix_intelligence_snapshot_entities_entity",
+            "entity_key",
+            "snapshot_id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     snapshot_id: Mapped[str] = mapped_column(
-        ForeignKey("intelligence_snapshots.snapshot_id", ondelete="CASCADE"), nullable=False
+        ForeignKey("intelligence_snapshots.snapshot_id", ondelete="CASCADE"),
+        nullable=False,
     )
     entity_key: Mapped[str] = mapped_column(String(160), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -74,7 +101,12 @@ class IntelligenceSnapshotEntity(Base):
 class IntelligenceEdge(Base):
     __tablename__ = "intelligence_edges"
     __table_args__ = (
-        UniqueConstraint("source_key", "target_key", "edge_type", name="uq_intelligence_edges_triplet"),
+        UniqueConstraint(
+            "source_key",
+            "target_key",
+            "edge_type",
+            name="uq_intelligence_edges_triplet",
+        ),
         Index("ix_intelligence_edges_source", "source_key", "last_seen_at"),
         Index("ix_intelligence_edges_target", "target_key", "last_seen_at"),
         Index("ix_intelligence_edges_type", "edge_type", "last_seen_at"),
@@ -84,12 +116,52 @@ class IntelligenceEdge(Base):
     source_key: Mapped[str] = mapped_column(String(160), nullable=False)
     target_key: Mapped[str] = mapped_column(String(160), nullable=False)
     edge_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Number of distinct token mints where this relationship was observed.
     occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     confidence_sum: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     max_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     last_snapshot_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    evidence: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    attributes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class IntelligenceSnapshotEdge(Base):
+    __tablename__ = "intelligence_snapshot_edges"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id",
+            "source_key",
+            "target_key",
+            "edge_type",
+            name="uq_intelligence_snapshot_edge",
+        ),
+        Index(
+            "ix_intelligence_snapshot_edges_source",
+            "source_key",
+            "snapshot_id",
+        ),
+        Index(
+            "ix_intelligence_snapshot_edges_target",
+            "target_key",
+            "snapshot_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("intelligence_snapshots.snapshot_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    target_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    edge_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     evidence: Mapped[list | None] = mapped_column(JSON, nullable=True)
     attributes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -105,7 +177,8 @@ class IntelligenceDiscovery(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     snapshot_id: Mapped[str] = mapped_column(
-        ForeignKey("intelligence_snapshots.snapshot_id", ondelete="CASCADE"), nullable=False
+        ForeignKey("intelligence_snapshots.snapshot_id", ondelete="CASCADE"),
+        nullable=False,
     )
     source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     target_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -116,4 +189,6 @@ class IntelligenceDiscovery(Base):
     evidence_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     related_feature_keys: Mapped[list | None] = mapped_column(JSON, nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
