@@ -31,7 +31,6 @@ import {
   DEFAULT_SOCIAL_OPTIONS,
   IMPULSE_THRESHOLD_PCT,
   MINT_RE,
-  ago,
   clamp,
   deriveSocialMetrics,
   numberOr,
@@ -52,67 +51,13 @@ import {
   type TimelineItem,
   type TwitterStats,
 } from "@/lib/trade/social-intelligence";
+import {
+  buildSocialSourceParams,
+  fetchJson,
+  readChainStream,
+} from "@/lib/trade/social-intelligence-api";
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
-
-type StreamEvent = ({ type: "final" } & ChainAnalysis) | { type: "error"; message?: string } | { type: string };
-
-async function fetchJson<T>(url: string, signal?: AbortSignal, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", signal, ...init });
-  const data: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const errorData = data as { detail?: string; error?: string };
-    throw new Error(errorData.detail || errorData.error || `HTTP ${response.status}`);
-  }
-  return data as T;
-}
-
-async function readChainStream(mint: string, signal: AbortSignal): Promise<ChainAnalysis | null> {
-  const response = await fetch(`/api/trade/analyze-stream?mint=${encodeURIComponent(mint)}`, {
-    cache: "no-store",
-    signal,
-  });
-  if (!response.ok || !response.body) throw new Error(`analyze-stream HTTP ${response.status}`);
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalPayload: ChainAnalysis | null = null;
-
-  const processLine = (line: string) => {
-    if (!line.trim()) return;
-    let event: StreamEvent;
-    try {
-      event = JSON.parse(line) as StreamEvent;
-    } catch {
-      return;
-    }
-    if (event.type === "error") throw new Error(event.message || "on-chain analysis failed");
-    if (event.type === "final") {
-      finalPayload = {
-        trades: event.trades,
-        truncated: event.truncated,
-        summary: event.summary,
-      };
-    }
-  };
-
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) processLine(line);
-    }
-    buffer += decoder.decode();
-    if (buffer.trim()) processLine(buffer);
-    return finalPayload;
-  } finally {
-    reader.releaseLock();
-  }
-}
 
 export default function SocialIntelligencePanel() {
   const router = useRouter();
@@ -166,24 +111,7 @@ export default function SocialIntelligencePanel() {
       setAi(null);
       router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
-      const xParams = new URLSearchParams({
-        mint: contract,
-        strategy: "auto",
-        scope: "mentions",
-        limit: String(options.xLimit),
-        excludeSuspicious: String(options.xExcludeSuspicious),
-        verifiedOnly: String(options.xVerifiedOnly),
-      });
-      if (options.symbol) xParams.set("symbol", options.symbol.replace(/^\$/, ""));
-      if (options.lookback !== "all") xParams.set("hours", options.lookback);
-
-      const tgParams = new URLSearchParams({
-        platform: "telegram",
-        limit: String(options.tgLimit),
-        min_channel_score: String(options.tgMinChannelScore),
-        explicit_calls_only: String(options.tgExplicitCallsOnly),
-      });
-      if (options.lookback !== "all") tgParams.set("hours", options.lookback);
+      const { x: xParams, tg: tgParams } = buildSocialSourceParams(contract, options);
 
       void readChainStream(contract, controller.signal)
         .then((value) => {
