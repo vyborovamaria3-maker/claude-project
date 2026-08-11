@@ -5,7 +5,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const AI_BASE = (process.env.MEMECOIN_INTELLIGENCE_URL || "http://memecoin-intelligence:3001").replace(/\/$/, "");
+// memecoin-intelligence is deployed as a separate compose stack and publishes API :3001.
+// The frontend container reaches the host through host.docker.internal (see docker-compose.yml).
+const AI_BASE = (process.env.MEMECOIN_INTELLIGENCE_URL || "http://host.docker.internal:3001").replace(/\/$/, "");
 const API_KEY = process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
 
 type TimelineItem = {
