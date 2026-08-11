@@ -12,7 +12,7 @@ import {
   type IChartApi,
   type ISeriesApi,
 } from "lightweight-charts";
-import { CHART_COLORS, CHART_DIMENSIONS, CHART_FONTS } from "@/lib/chart/config";
+import { applyChartTheme, CHART_COLORS, CHART_DIMENSIONS, CHART_FONTS } from "@/lib/chart/config";
 import { formatPrice } from "@/lib/chart/formatters";
 
 interface UseChartInstanceOptions {
@@ -30,7 +30,6 @@ interface ChartInstance {
 export function useChartInstance({ containerRef, onCrosshairMove }: UseChartInstanceOptions) {
   const instanceRef = useRef<ChartInstance | null>(null);
 
-  // Initialize chart
   const initChart = useCallback(() => {
     const container = containerRef.current;
     if (!container || instanceRef.current) return;
@@ -65,7 +64,6 @@ export function useChartInstance({ containerRef, onCrosshairMove }: UseChartInst
       handleScroll: { vertTouchDrag: false },
     });
 
-    // Candle series
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: CHART_COLORS.up,
       downColor: CHART_COLORS.down,
@@ -82,7 +80,6 @@ export function useChartInstance({ containerRef, onCrosshairMove }: UseChartInst
       },
     });
 
-    // Volume series
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "vol",
@@ -93,7 +90,6 @@ export function useChartInstance({ containerRef, onCrosshairMove }: UseChartInst
       scaleMargins: CHART_DIMENSIONS.volumeScaleMargins,
     });
 
-    // Crosshair handler
     if (onCrosshairMove) {
       chart.subscribeCrosshairMove((param) => {
         if (!param.time || !param.point) return;
@@ -110,14 +106,14 @@ export function useChartInstance({ containerRef, onCrosshairMove }: UseChartInst
       volumeSeries,
       cleanup: () => {
         chart.remove();
-      }
+      },
     };
 
     instanceRef.current = instance;
+    applyChartTheme(chart);
     return instance;
   }, [containerRef, onCrosshairMove]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       instanceRef.current?.cleanup();
@@ -125,7 +121,6 @@ export function useChartInstance({ containerRef, onCrosshairMove }: UseChartInst
     };
   }, []);
 
-  // Resize handler
   useEffect(() => {
     const handleResize = () => {
       const container = containerRef.current;
@@ -143,9 +138,17 @@ export function useChartInstance({ containerRef, onCrosshairMove }: UseChartInst
     return () => window.removeEventListener("resize", handleResize);
   }, [containerRef]);
 
+  // Canvas content lives outside CSS cascade, so re-apply palette after ThemeRuntime
+  // finalizes adaptive variables. Data, viewport and series state remain untouched.
+  useEffect(() => {
+    const handleThemeApplied = () => applyChartTheme(instanceRef.current?.chart ?? null);
+    window.addEventListener("potapoff:theme-applied", handleThemeApplied);
+    return () => window.removeEventListener("potapoff:theme-applied", handleThemeApplied);
+  }, []);
+
   return {
     instanceRef,
     initChart,
-    getInstance: () => instanceRef.current
+    getInstance: () => instanceRef.current,
   };
 }
