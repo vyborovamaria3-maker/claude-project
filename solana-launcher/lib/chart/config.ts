@@ -2,7 +2,7 @@
 // Unified chart configuration to ensure consistency across components.
 // Chart surfaces inherit the global site theme instead of owning a fixed dark palette.
 
-import type { IChartApi } from "lightweight-charts";
+import { ColorType, type IChartApi } from "lightweight-charts";
 
 function themeVar(name: string, fallback: string): string {
   if (typeof window === "undefined") return fallback;
@@ -27,7 +27,7 @@ export function applyChartTheme(chart: IChartApi | null) {
   if (!chart) return;
   chart.applyOptions({
     layout: {
-      background: { type: "solid" as const, color: CHART_COLORS.background },
+      background: { type: ColorType.Solid, color: CHART_COLORS.background },
       textColor: CHART_COLORS.text,
     },
     grid: {
