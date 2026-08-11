@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   ChainAnalysis,
   DerivedSocial,
@@ -92,7 +91,14 @@ export type AnalysisSnapshot = {
 };
 
 function stableHash(value: string) {
-  return createHash("sha1").update(value).digest("hex").slice(0, 20);
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 0x01000193);
+    h2 = Math.imul(h2 ^ code, 0x85ebca6b);
+  }
+  return `${(h1 >>> 0).toString(16).padStart(8, "0")}${(h2 >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 function entityId(type: IntelligenceNodeType, value: string) {
@@ -104,12 +110,7 @@ function evidenceId(platform: string, source: string, timestamp: string, text: s
 }
 
 function slug(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[^a-z0-9а-яё]+/gi, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 80);
+  return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9а-яё]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 80);
 }
 
 function numericFromDisplay(value: string) {
@@ -122,13 +123,7 @@ function numericFromDisplay(value: string) {
 }
 
 function normalizeText(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/https?:\/\/\S+/g, " ")
-    .replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, " ")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
-    .slice(0, 280);
+  return value.toLowerCase().replace(/https?:\/\/\S+/g, " ").replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim().slice(0, 280);
 }
 
 function itemTime(item: TimelineItem) {
@@ -167,40 +162,22 @@ function buildEvidence(x: TwitterStats | null, tg: SocialTimeline | null): Intel
     const source = `@${String(tweet.author || "unknown").replace(/^@/, "")}`;
     const ts = tweetTime(tweet);
     const iso = ts == null ? "" : new Date(ts).toISOString();
-    rows.push({
-      id: evidenceId("x", source, iso, tweet.text || ""),
-      platform: "x",
-      source,
-      text: tweet.text || "",
-      timestamp: iso || null,
-    });
+    rows.push({ id: evidenceId("x", source, iso, tweet.text || ""), platform: "x", source, text: tweet.text || "", timestamp: iso || null });
   }
   for (const item of tg?.timeline || []) {
     if (item.platform && item.platform.toLowerCase() !== "telegram") continue;
     const source = String(item.source_handle || item.source_name || "telegram:unknown");
-    rows.push({
-      id: evidenceId("telegram", source, item.occurred_at || "", item.text || ""),
-      platform: "telegram",
-      source,
-      text: item.text || "",
-      timestamp: item.occurred_at || null,
-      url: item.source_url || null,
-    });
+    rows.push({ id: evidenceId("telegram", source, item.occurred_at || "", item.text || ""), platform: "telegram", source, text: item.text || "", timestamp: item.occurred_at || null, url: item.source_url || null });
   }
   return rows.slice(0, 300);
 }
 
-export function buildEntityGraph(
-  mint: string,
-  x: TwitterStats | null,
-  tg: SocialTimeline | null,
-): IntelligenceGraph {
+export function buildEntityGraph(mint: string, x: TwitterStats | null, tg: SocialTimeline | null): IntelligenceGraph {
   const nodes = new Map<string, IntelligenceNode>();
   const edges = new Map<string, IntelligenceEdge>();
   const tokenId = entityId("token", mint);
   addNode(nodes, { id: tokenId, type: "token", label: mint, attributes: { mint } });
-
-  const events: Array<{ nodeId: string; time: number; text: string; evidence: string; platform: "x" | "telegram" }> = [];
+  const events: Array<{ nodeId: string; time: number; evidence: string; platform: "x" | "telegram" }> = [];
   const textGroups = new Map<string, Array<{ nodeId: string; time: number; evidence: string }>>();
   let sharedLinks = 0;
 
@@ -212,7 +189,7 @@ export function buildEntityGraph(
     const ts = time == null ? "" : new Date(time).toISOString();
     const ev = evidenceId("x", handle, ts, tweet.text || "");
     addEdge(edges, { source: accountId, target: tokenId, type: "mentions", confidence: 1, evidenceIds: [ev], attributes: { platform: "x" } });
-    if (time != null) events.push({ nodeId: accountId, time, text: tweet.text || "", evidence: ev, platform: "x" });
+    if (time != null) events.push({ nodeId: accountId, time, evidence: ev, platform: "x" });
     const normalized = normalizeText(tweet.text || "");
     if (normalized.length >= 20) textGroups.set(normalized, [...(textGroups.get(normalized) || []), { nodeId: accountId, time: time || 0, evidence: ev }]);
     for (const url of extractUrls(tweet.text || "")) {
@@ -231,7 +208,7 @@ export function buildEntityGraph(
     const time = itemTime(item);
     const ev = evidenceId("telegram", channel, item.occurred_at || "", item.text || "");
     addEdge(edges, { source: channelId, target: tokenId, type: explicitCall(item) ? "calls" : "mentions", confidence: 1, evidenceIds: [ev], attributes: { platform: "telegram" } });
-    if (time != null) events.push({ nodeId: channelId, time, text: item.text || "", evidence: ev, platform: "telegram" });
+    if (time != null) events.push({ nodeId: channelId, time, evidence: ev, platform: "telegram" });
     const normalized = normalizeText(item.text || "");
     if (normalized.length >= 20) textGroups.set(normalized, [...(textGroups.get(normalized) || []), { nodeId: channelId, time: time || 0, evidence: ev }]);
     const urls = new Set([...(extractUrls(item.text || "")), ...(item.source_url ? [item.source_url] : [])]);
@@ -250,14 +227,7 @@ export function buildEntityGraph(
     const origin = sorted[0];
     for (const target of sorted.slice(1, 8)) {
       if (origin.nodeId === target.nodeId) continue;
-      addEdge(edges, {
-        source: origin.nodeId,
-        target: target.nodeId,
-        type: "copies",
-        confidence: 0.94,
-        evidenceIds: [origin.evidence, target.evidence],
-        attributes: { lagSeconds: Math.max(0, Math.round((target.time - origin.time) / 1000)) },
-      });
+      addEdge(edges, { source: origin.nodeId, target: target.nodeId, type: "copies", confidence: 0.94, evidenceIds: [origin.evidence, target.evidence], attributes: { lagSeconds: Math.max(0, Math.round((target.time - origin.time) / 1000)) } });
       copyEdges++;
     }
   }
@@ -271,100 +241,29 @@ export function buildEntityGraph(
       const lagMs = target.time - source.time;
       if (lagMs > 5 * 60_000) break;
       if (source.nodeId === target.nodeId || source.platform === target.platform) continue;
-      addEdge(edges, {
-        source: source.nodeId,
-        target: target.nodeId,
-        type: "amplifies",
-        confidence: Math.max(0.35, 0.8 - lagMs / (10 * 60_000)),
-        evidenceIds: [source.evidence, target.evidence],
-        attributes: { lagSeconds: Math.round(lagMs / 1000), crossPlatform: true },
-      });
+      addEdge(edges, { source: source.nodeId, target: target.nodeId, type: "amplifies", confidence: Math.max(0.35, 0.8 - lagMs / (10 * 60_000)), evidenceIds: [source.evidence, target.evidence], attributes: { lagSeconds: Math.round(lagMs / 1000), crossPlatform: true } });
       amplificationEdges++;
     }
   }
 
   const nodeRows = [...nodes.values()];
   const edgeRows = [...edges.values()];
-  return {
-    version: INTELLIGENCE_GRAPH_VERSION,
-    nodes: nodeRows,
-    edges: edgeRows,
-    stats: {
-      nodes: nodeRows.length,
-      edges: edgeRows.length,
-      xAccounts: nodeRows.filter((node) => node.type === "x_account").length,
-      tgChannels: nodeRows.filter((node) => node.type === "tg_channel").length,
-      sharedLinks,
-      copyEdges,
-      amplificationEdges,
-    },
-  };
+  return { version: INTELLIGENCE_GRAPH_VERSION, nodes: nodeRows, edges: edgeRows, stats: { nodes: nodeRows.length, edges: edgeRows.length, xAccounts: nodeRows.filter((node) => node.type === "x_account").length, tgChannels: nodeRows.filter((node) => node.type === "tg_channel").length, sharedLinks, copyEdges, amplificationEdges } };
 }
 
-export function buildAnalysisSnapshot(args: {
-  mint: string;
-  symbol?: string | null;
-  tokenName?: string | null;
-  derived: DerivedSocial;
-  x: TwitterStats | null;
-  tg: SocialTimeline | null;
-  market: Market | null;
-  chain: ChainAnalysis | null;
-}): AnalysisSnapshot {
+export function buildAnalysisSnapshot(args: { mint: string; symbol?: string | null; tokenName?: string | null; derived: DerivedSocial; x: TwitterStats | null; tg: SocialTimeline | null; market: Market | null; chain: ChainAnalysis | null }): AnalysisSnapshot {
   const createdAt = new Date().toISOString();
   const features: IntelligenceFeature[] = [];
   for (const group of args.derived.groups) {
     for (const row of group.rows) {
       const missing = row.value === "—" || row.value.trim() === "";
-      features.push({
-        key: `${slug(group.title)}.${slug(row.label)}`,
-        group: group.title,
-        label: row.label,
-        value: missing ? null : row.value,
-        numericValue: missing ? null : numericFromDisplay(row.value),
-        source: "derived",
-        confidence: missing ? 0 : 0.9,
-        observedAt: createdAt,
-        missing,
-        ...(row.note ? { note: row.note } : {}),
-      });
+      features.push({ key: `${slug(group.title)}.${slug(row.label)}`, group: group.title, label: row.label, value: missing ? null : row.value, numericValue: missing ? null : numericFromDisplay(row.value), source: "derived", confidence: missing ? 0 : 0.9, observedAt: createdAt, missing, ...(row.note ? { note: row.note } : {}) });
     }
   }
-  const headline: Array<[string, string, number]> = [
-    ["scores.social", "Social score", args.derived.socialScore],
-    ["scores.x", "X score", args.derived.xScore],
-    ["scores.telegram", "Telegram score", args.derived.tgScore],
-    ["scores.organic", "Organic score", args.derived.organic],
-    ["scores.manipulation", "Manipulation score", args.derived.manipulation],
-    ["scores.social_risk", "Social risk", args.derived.socialRisk],
-    ["scores.early", "Early score", args.derived.early],
-    ["scores.alpha", "Alpha score", args.derived.alpha],
-  ];
-  for (const [key, label, value] of headline) {
-    features.push({ key, group: "Headline scores", label, value, numericValue: value, source: "derived", confidence: 0.9, observedAt: createdAt, missing: false });
-  }
+  const headline: Array<[string, string, number]> = [["scores.social", "Social score", args.derived.socialScore], ["scores.x", "X score", args.derived.xScore], ["scores.telegram", "Telegram score", args.derived.tgScore], ["scores.organic", "Organic score", args.derived.organic], ["scores.manipulation", "Manipulation score", args.derived.manipulation], ["scores.social_risk", "Social risk", args.derived.socialRisk], ["scores.early", "Early score", args.derived.early], ["scores.alpha", "Alpha score", args.derived.alpha]];
+  for (const [key, label, value] of headline) features.push({ key, group: "Headline scores", label, value, numericValue: value, source: "derived", confidence: 0.9, observedAt: createdAt, missing: false });
   const graph = buildEntityGraph(args.mint, args.x, args.tg);
   const evidence = buildEvidence(args.x, args.tg);
-  const snapshotSeed = JSON.stringify({ mint: args.mint, createdAt, features: features.map((f) => [f.key, f.value]), graph: graph.edges.map((e) => e.id) });
-  return {
-    snapshotId: `snapshot-${stableHash(snapshotSeed)}`,
-    version: INTELLIGENCE_SNAPSHOT_VERSION,
-    graphVersion: INTELLIGENCE_GRAPH_VERSION,
-    mint: args.mint,
-    symbol: args.symbol || null,
-    tokenName: args.tokenName || null,
-    createdAt,
-    featureCount: features.length,
-    missingFeatureCount: features.filter((feature) => feature.missing).length,
-    features,
-    graph,
-    evidence,
-    rawSummary: {
-      xPosts: args.x?.topTweets?.length || 0,
-      telegramMessages: (args.tg?.timeline || []).filter((item) => !item.platform || item.platform.toLowerCase() === "telegram").length,
-      trades: args.chain?.trades?.length || 0,
-      chainTruncated: Boolean(args.chain?.truncated),
-      marketAvailable: Boolean(args.market?.pair),
-    },
-  };
+  const snapshotSeed = JSON.stringify({ mint: args.mint, createdAt, features: features.map((feature) => [feature.key, feature.value]), graph: graph.edges.map((edge) => edge.id) });
+  return { snapshotId: `snapshot-${stableHash(snapshotSeed)}`, version: INTELLIGENCE_SNAPSHOT_VERSION, graphVersion: INTELLIGENCE_GRAPH_VERSION, mint: args.mint, symbol: args.symbol || null, tokenName: args.tokenName || null, createdAt, featureCount: features.length, missingFeatureCount: features.filter((feature) => feature.missing).length, features, graph, evidence, rawSummary: { xPosts: args.x?.topTweets?.length || 0, telegramMessages: (args.tg?.timeline || []).filter((item) => !item.platform || item.platform.toLowerCase() === "telegram").length, trades: args.chain?.trades?.length || 0, chainTruncated: Boolean(args.chain?.truncated), marketAvailable: Boolean(args.market?.pair) } };
 }
