@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
+import type { AnalysisSnapshot } from "@/lib/trade/intelligence-agent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// memecoin-intelligence is deployed as a separate compose stack and publishes API :3001.
-// The frontend container reaches the host through host.docker.internal (see docker-compose.yml).
 const AI_BASE = (process.env.MEMECOIN_INTELLIGENCE_URL || "http://host.docker.internal:3001").replace(/\/$/, "");
 const API_KEY = process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
 
@@ -23,6 +22,7 @@ type RequestBody = {
   symbol?: string;
   tokenName?: string;
   timeline?: TimelineItem[];
+  snapshot?: AnalysisSnapshot;
 };
 
 function n(value: unknown) {
@@ -37,21 +37,8 @@ function stableId(item: TimelineItem, index: number) {
     .slice(0, 24)}`;
 }
 
-export async function POST(req: NextRequest) {
-  let body: RequestBody;
-  try {
-    body = (await req.json()) as RequestBody;
-  } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
-  }
-
-  const mint = String(body.mint || "").trim();
-  const timeline = Array.isArray(body.timeline) ? body.timeline : [];
-  if (!mint || timeline.length === 0) {
-    return NextResponse.json({ error: "mint_and_telegram_timeline_required" }, { status: 400 });
-  }
-
-  const messages = timeline.slice(0, 120).map((item, index) => {
+function timelineMessages(timeline: TimelineItem[]) {
+  return timeline.slice(0, 120).map((item, index) => {
     const metrics = item.metrics || {};
     const channel = String(item.source_handle || item.source_name || "unknown");
     const sentAt = item.occurred_at && Number.isFinite(Date.parse(item.occurred_at))
@@ -73,20 +60,76 @@ export async function POST(req: NextRequest) {
       links: [],
     };
   }).filter((message) => message.text.trim().length > 0);
+}
 
-  if (!messages.length) {
-    return NextResponse.json({ error: "no_telegram_text_for_ai" }, { status: 400 });
+function snapshotMessages(snapshot: AnalysisSnapshot) {
+  return snapshot.evidence.slice(0, 180).map((entry) => {
+    const isX = entry.platform === "x";
+    const sentAt = entry.timestamp && Number.isFinite(Date.parse(entry.timestamp))
+      ? new Date(entry.timestamp).toISOString()
+      : snapshot.createdAt;
+    return {
+      id: entry.id.slice(0, 128),
+      channelId: `${entry.platform}:${entry.source}`.slice(0, 128),
+      channelUsername: entry.source.replace(/^@/, "").slice(0, 128),
+      channelTitle: isX ? `X · ${entry.source}`.slice(0, 256) : entry.source.slice(0, 256),
+      senderId: null,
+      text: entry.text.slice(0, 40_000),
+      sentAt,
+      editedAt: null,
+      views: 0,
+      forwards: 0,
+      reactions: 0,
+      replyToMessageId: null,
+      links: entry.url ? [entry.url].filter((url) => /^https?:\/\//i.test(url)).slice(0, 1) : [],
+    };
+  }).filter((message) => message.text.trim().length > 0);
+}
+
+function validateSnapshot(body: RequestBody, mint: string) {
+  const snapshot = body.snapshot;
+  if (!snapshot) return null;
+  if (snapshot.mint !== mint) throw new Error("snapshot_mint_mismatch");
+  if (!Array.isArray(snapshot.features) || !snapshot.graph || !Array.isArray(snapshot.evidence)) throw new Error("invalid_snapshot");
+  if (snapshot.features.length > 300 || snapshot.graph.nodes.length > 500 || snapshot.graph.edges.length > 1500 || snapshot.evidence.length > 300) throw new Error("snapshot_too_large");
+  return snapshot;
+}
+
+export async function POST(req: NextRequest) {
+  let body: RequestBody;
+  try {
+    body = (await req.json()) as RequestBody;
+  } catch {
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const windowTimes = messages.map((m) => Date.parse(m.sentAt)).filter(Number.isFinite).sort((a, b) => a - b);
+  const mint = String(body.mint || "").trim();
+  const timeline = Array.isArray(body.timeline) ? body.timeline : [];
+  if (!mint) return NextResponse.json({ error: "mint_required" }, { status: 400 });
+
+  let snapshot: AnalysisSnapshot | null;
+  try {
+    snapshot = validateSnapshot(body, mint);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "invalid_snapshot" }, { status: 400 });
+  }
+
+  const messages = snapshot ? snapshotMessages(snapshot) : timelineMessages(timeline);
+  if (!messages.length) {
+    return NextResponse.json({ error: snapshot ? "no_snapshot_evidence_for_ai" : "no_telegram_text_for_ai" }, { status: 400 });
+  }
+
+  const windowTimes = messages.map((message) => Date.parse(message.sentAt)).filter(Number.isFinite).sort((a, b) => a - b);
   const payload = {
     messages,
     context: {
       tokenAddress: mint,
-      symbol: body.symbol ? String(body.symbol).replace(/^\$/, "").slice(0, 32) : null,
-      tokenName: body.tokenName ? String(body.tokenName).slice(0, 128) : null,
+      symbol: body.symbol ? String(body.symbol).replace(/^\$/, "").slice(0, 32) : snapshot?.symbol || null,
+      tokenName: body.tokenName ? String(body.tokenName).slice(0, 128) : snapshot?.tokenName || null,
       windowStart: windowTimes.length ? new Date(windowTimes[0]).toISOString() : null,
       windowEnd: windowTimes.length ? new Date(windowTimes[windowTimes.length - 1]).toISOString() : null,
+      analysisMode: snapshot ? "full_intelligence" : "telegram_only",
+      ...(snapshot ? { intelligenceSnapshot: snapshot } : {}),
     },
     persist: false,
   };
@@ -102,20 +145,13 @@ export async function POST(req: NextRequest) {
       cache: "no-store",
       signal: AbortSignal.timeout(55_000),
     });
-    const result = await response.json().catch(() => ({}));
+    const result = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) {
-      return NextResponse.json({
-        error: result?.message || result?.error || result?.detail || `Qwen HTTP ${response.status}`,
-        agent: "qwen",
-        available: false,
-      }, { status: response.status === 401 || response.status === 403 ? response.status : 502 });
+      const message = String(result.message || result.error || result.detail || `Qwen HTTP ${response.status}`);
+      return NextResponse.json({ error: message, agent: "qwen", available: false }, { status: response.status === 401 || response.status === 403 ? response.status : 502 });
     }
-    return NextResponse.json({ agent: "qwen", available: true, ...result }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ agent: "qwen", available: true, analysisMode: snapshot ? "full_intelligence" : "telegram_only", snapshotId: snapshot?.snapshotId || null, ...result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({
-      error: error instanceof Error ? error.message : "qwen_unreachable",
-      agent: "qwen",
-      available: false,
-    }, { status: 503 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "qwen_unreachable", agent: "qwen", available: false }, { status: 503 });
   }
 }
