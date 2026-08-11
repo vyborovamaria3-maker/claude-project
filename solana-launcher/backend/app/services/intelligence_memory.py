@@ -71,8 +71,12 @@ def _parse_nodes(nodes: list) -> list[tuple[str, str, str, dict | None]]:
     return parsed
 
 
-def _parse_edges(edges: list) -> list[tuple[str, str, str, float, list | None, dict | None]]:
-    parsed: list[tuple[str, str, str, float, list | None, dict | None]] = []
+def _parse_edges(
+    edges: list,
+) -> list[tuple[str, str, str, float, list | None, dict | None]]:
+    parsed: list[
+        tuple[str, str, str, float, list | None, dict | None]
+    ] = []
     seen: set[tuple[str, str, str]] = set()
     for raw_edge in edges[:2500]:
         edge = _dict(raw_edge)
@@ -105,6 +109,7 @@ async def persist_intelligence_memory(
     provider: str | None = None,
     model: str | None = None,
     prompt_version: str | None = None,
+    _retry_on_conflict: bool = True,
 ) -> dict:
     snapshot_id = str(snapshot.get("snapshotId") or "").strip()
     mint = str(snapshot.get("mint") or "").strip()
@@ -384,7 +389,23 @@ async def persist_intelligence_memory(
         )
         discovery_count += 1
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        if not _retry_on_conflict:
+            raise
+        return await persist_intelligence_memory(
+            session,
+            snapshot=snapshot,
+            analysis_snapshot=analysis_snapshot,
+            ai_result=ai_result,
+            provider=provider,
+            model=model,
+            prompt_version=prompt_version,
+            _retry_on_conflict=False,
+        )
+
     return {
         "status": "stored",
         "snapshot_id": snapshot_id,
