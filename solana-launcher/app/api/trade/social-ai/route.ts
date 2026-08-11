@@ -10,7 +10,7 @@ const AI_BASE = (process.env.MEMECOIN_INTELLIGENCE_URL || "http://host.docker.in
 const API_KEY = process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
 const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(/\/$/, "");
 const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
-const PROMPT_VERSION = "intelligence-qwen-v3";
+const PROMPT_VERSION = "intelligence-qwen-v4-memory";
 
 type TimelineItem = {
   source_handle?: string | null;
