@@ -118,25 +118,25 @@ def test_outcome_requires_price_near_cutoff_without_saved_call_price() -> None:
 
 
 def test_saved_call_price_prevents_hourly_snapshot_baseline_bias() -> None:
-    outcome = build_historical_outcome(
+    result = build_historical_outcome(
         cutoff=NOW, metrics=[metric(1, 1.4), metric(6, 2.2), metric(24, 1.8)],
         horizon_hours=72, baseline_price=1.0,
     )
-    assert outcome is not None
-    assert outcome.baseline_price == 1.0
-    assert outcome.max_multiple == 2.2
-    assert outcome.hit_2x is True
+    assert result is not None
+    assert result.baseline_price == 1.0
+    assert result.max_multiple == 2.2
+    assert result.hit_2x is True
 
 
 def test_prices_before_cutoff_are_ignored() -> None:
-    outcome = build_historical_outcome(
+    result = build_historical_outcome(
         cutoff=NOW,
         metrics=[metric(-1, 100.0), metric(0.05, 1.0), metric(6, 2.1)],
         horizon_hours=72,
     )
-    assert outcome is not None
-    assert outcome.baseline_price == 1.0
-    assert outcome.max_multiple == 2.1
+    assert result is not None
+    assert result.baseline_price == 1.0
+    assert result.max_multiple == 2.1
 
 
 def feature(value: float, risk: float = 20) -> HistoricalFeatures:
@@ -194,7 +194,7 @@ def test_small_training_set_does_not_overfit_threshold() -> None:
     assert report.test is None
 
 
-def test_high_social_risk_blocks_selection_even_with_high_score() -> None:
+def test_high_social_risk_blocks_winner_even_with_high_score() -> None:
     samples = [
         BacktestSample(MINT, NOW, 1, feature(90, risk=90), outcome(True, 3.0)),
         BacktestSample(MINT[:-1] + "A", NOW + timedelta(days=1), 1, feature(80, risk=20), outcome(True, 2.5)),
@@ -205,4 +205,5 @@ def test_high_social_risk_blocks_selection_even_with_high_score() -> None:
     ]
     report = evaluate_samples(samples, train_fraction=0.84)
     assert report.train is not None
-    assert report.train.selected <= 1
+    assert report.train.true_positives == 1
+    assert report.train.false_negatives == 1
