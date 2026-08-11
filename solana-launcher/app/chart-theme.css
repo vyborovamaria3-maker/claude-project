@@ -1,0 +1,43 @@
+/* Legacy chart UI still contains a few fixed GMGN-style dark utility colors.
+ * Scope overrides to chart surfaces so semantic green/red market colors stay intact. */
+
+[data-tag="components.pump_fun_chart"] {
+  background: var(--theme-bg-card);
+  color: var(--theme-content);
+  border-color: var(--theme-bg-border);
+}
+
+[data-tag="components.pump_fun_chart"] [class*="bg-[#0a0a14]"],
+[data-tag="components.pump_fun_chart"] [class*="bg-[#0a0a0f]"],
+[data-tag="components.pump_fun_chart"] [class*="bg-[#0d0d18]"] {
+  background-color: var(--theme-bg-card) !important;
+}
+
+[data-tag="components.pump_fun_chart"] [class*="border-[#1a1a2e]"],
+[data-tag="components.pump_fun_chart"] [class*="border-[#1f1f2e]"] {
+  border-color: var(--theme-bg-border) !important;
+}
+
+[data-tag="components.pump_fun_chart"] [class*="text-white/30"],
+[data-tag="components.pump_fun_chart"] [class*="text-white/40"],
+[data-tag="components.pump_fun_chart"] [class*="text-white/50"] {
+  color: var(--theme-content-muted) !important;
+}
+
+[data-tag="components.pump_fun_chart"] [class*="bg-black/40"],
+[data-tag="components.pump_fun_chart"] [class*="bg-black/60"] {
+  background-color: color-mix(in srgb, var(--theme-bg-overlay) 78%, transparent) !important;
+}
+
+/* Older standalone price chart does not expose a root data-tag in JSX, so target
+ * the exact fixed canvas-shell color without touching semantic status colors. */
+[class*="bg-[#0a0a0f]"] {
+  background-color: var(--theme-bg-card) !important;
+}
+
+/* Chart library canvases are transparent via CHART_COLORS; this owns their visible surface. */
+.tv-lightweight-charts,
+.tv-lightweight-charts table,
+.tv-lightweight-charts td {
+  background: transparent !important;
+}
