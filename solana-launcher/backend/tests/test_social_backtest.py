@@ -63,9 +63,61 @@ def test_channel_reputation_uses_only_matured_prior_calls() -> None:
         prior_calls_by_channel={1: [immature_future_leak, matured]},
     )
 
+    assert without_matured.historical_channels == 0
     assert without_matured.channel_score == 0
+    assert with_matured.historical_channels == 1
     assert with_matured.channel_score > 0
     assert with_matured.channel_win_rate == 100
+    assert with_matured.tg_score > without_matured.tg_score
+
+
+def test_missing_x_does_not_receive_clean_x_bonus() -> None:
+    features = build_historical_features(
+        mint=MINT,
+        cutoff=NOW,
+        creation_date=NOW - timedelta(hours=1),
+        events=[event("telegram", 10, source="alpha", text="early gem", metrics={"explicit_call": True})],
+        prior_calls_by_channel={},
+    )
+    assert features.x_mentions == 0
+    assert features.x_score == 0
+
+
+def test_verified_ratio_counts_unique_authors_not_posts() -> None:
+    features = build_historical_features(
+        mint=MINT,
+        cutoff=NOW,
+        creation_date=None,
+        events=[
+            event("x", 20, source="verified", text="first post", metrics={"verified": True}),
+            event("x", 15, source="verified", text="second post", metrics={"verified": True}),
+            event("x", 10, source="plain", text="third post", metrics={"verified": False}),
+        ],
+        prior_calls_by_channel={},
+    )
+    assert features.x_authors == 2
+    assert features.x_verified_ratio == 50
+    assert 0 <= features.x_verified_ratio <= 100
+
+
+def test_missing_channel_history_is_not_treated_as_zero_rug_perfect_safety() -> None:
+    no_history = build_historical_features(
+        mint=MINT,
+        cutoff=NOW,
+        creation_date=None,
+        events=[event("telegram", 10, source="alpha", text="call", metrics={"explicit_call": True})],
+        prior_calls_by_channel={},
+    )
+    good_history = build_historical_features(
+        mint=MINT,
+        cutoff=NOW,
+        creation_date=None,
+        events=[event("telegram", 10, source="alpha", text="call", metrics={"explicit_call": True})],
+        prior_calls_by_channel={1: [call(120, "win"), call(200, "win")]},
+    )
+    assert no_history.historical_channels == 0
+    assert good_history.historical_channels == 1
+    assert good_history.tg_score > no_history.tg_score
 
 
 def test_suspicious_x_and_copy_paste_raise_risk() -> None:
@@ -122,6 +174,7 @@ def feature(score: float, risk: float = 20) -> HistoricalFeatures:
         tg_mentions=1,
         tg_channels=1,
         tg_explicit_calls=1,
+        historical_channels=1,
         channel_score=50,
         channel_win_rate=50,
         channel_rug_rate=0,
@@ -161,14 +214,13 @@ def test_walk_forward_threshold_is_selected_on_train_then_applied_to_test() -> N
         (45, False), (50, False), (55, False), (65, True), (70, True),
         (75, True), (80, True), (85, True), (82, True), (48, False),
     ]
-    for index, (score, hit) in enumerate(rows):
-        cutoff = NOW + timedelta(days=index)
+    for index, (social_score, hit) in enumerate(rows):
         samples.append(
             BacktestSample(
                 mint=f"{MINT[:-2]}{index:02d}",
-                cutoff=cutoff,
+                cutoff=NOW + timedelta(days=index),
                 channel_id=1,
-                features=feature(score),
+                features=feature(social_score),
                 outcome=outcome(hit, 2.2 if hit else 1.2),
             )
         )
@@ -180,6 +232,18 @@ def test_walk_forward_threshold_is_selected_on_train_then_applied_to_test() -> N
     assert report.train_samples == 7
     assert report.test_samples == 3
     assert report.test.threshold == report.selected_threshold
+    assert report.date_start == NOW
+    assert report.date_end == NOW + timedelta(days=9)
+
+
+def test_small_training_set_does_not_overfit_a_threshold() -> None:
+    samples = [
+        BacktestSample(MINT, NOW, 1, feature(90), outcome(True, 3.0)),
+        BacktestSample(MINT[:-1] + "A", NOW + timedelta(days=1), 1, feature(50), outcome(False, 1.1)),
+    ]
+    report = evaluate_samples(samples, train_fraction=0.5)
+    assert report.selected_threshold is None
+    assert report.test is None
 
 
 def test_high_social_risk_blocks_selection_even_with_high_score() -> None:
@@ -187,6 +251,10 @@ def test_high_social_risk_blocks_selection_even_with_high_score() -> None:
         BacktestSample(MINT, NOW, 1, feature(90, risk=90), outcome(True, 3.0)),
         BacktestSample(MINT[:-1] + "A", NOW + timedelta(days=1), 1, feature(80, risk=20), outcome(True, 2.5)),
         BacktestSample(MINT[:-1] + "B", NOW + timedelta(days=2), 1, feature(50, risk=20), outcome(False, 1.1)),
+        BacktestSample(MINT[:-1] + "C", NOW + timedelta(days=3), 1, feature(45, risk=20), outcome(False, 1.1)),
+        BacktestSample(MINT[:-1] + "D", NOW + timedelta(days=4), 1, feature(42, risk=20), outcome(False, 1.1)),
+        BacktestSample(MINT[:-1] + "E", NOW + timedelta(days=5), 1, feature(40, risk=20), outcome(False, 1.1)),
     ]
-    report = evaluate_samples(samples, train_fraction=0.67)
-    assert all(row.selected <= 1 for row in report.threshold_sweep)
+    report = evaluate_samples(samples, train_fraction=0.84)
+    assert report.train is not None
+    assert report.train.selected <= 1
