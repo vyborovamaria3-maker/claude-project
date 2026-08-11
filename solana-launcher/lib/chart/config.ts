@@ -1,16 +1,24 @@
 // data-tag: lib.chart.config
-// Unified chart configuration to ensure consistency across components
+// Unified chart configuration to ensure consistency across components.
+// Chart surfaces inherit the global site theme instead of owning a fixed dark palette.
+
+function themeVar(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
 
 export const CHART_COLORS = {
-  background: "#0a0a0f",
-  grid: "#1f1f2e",
-  text: "#9ca3af",
-  up: "#26a69a",      // Green for up (GMGN/TV style)
-  down: "#ef5350",    // Red for down (GMGN/TV style)
-  crosshair: "#5c5c7a",
-  crosshairLabel: "#2a2a3e",
-  border: "#1a1a2e",
-  accent: "#a855f7",  // Purple for UI accents
+  // Transparent canvas lets the chart inherit its container/site background immediately.
+  get background() { return "transparent"; },
+  get grid() { return themeVar("--theme-bg-border", "#1f1f2e"); },
+  get text() { return themeVar("--theme-content-muted", "#9ca3af"); },
+  up: "#26a69a",      // semantic market color: intentionally theme-independent
+  down: "#ef5350",    // semantic market color: intentionally theme-independent
+  get crosshair() { return themeVar("--theme-content-faint", "#5c5c7a"); },
+  get crosshairLabel() { return themeVar("--theme-bg-overlay", "#2a2a3e"); },
+  get border() { return themeVar("--theme-bg-border", "#1a1a2e"); },
+  get accent() { return themeVar("--theme-primary", "#a855f7"); },
 } as const;
 
 export const CHART_DIMENSIONS = {
