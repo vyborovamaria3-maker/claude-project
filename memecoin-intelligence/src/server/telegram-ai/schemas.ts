@@ -38,7 +38,7 @@ const intelligenceFeatureSchema = z.object({
 
 const intelligenceNodeSchema = z.object({
   id: z.string().min(1).max(160),
-  type: z.enum(['token', 'x_account', 'tg_channel', 'url']),
+  type: z.enum(['token', 'x_account', 'tg_channel', 'url', 'wallet', 'bundle']),
   label: z.string().min(1).max(1_000),
   attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
 }).strict();
@@ -47,7 +47,7 @@ const intelligenceEdgeSchema = z.object({
   id: z.string().min(1).max(160),
   source: z.string().min(1).max(160),
   target: z.string().min(1).max(160),
-  type: z.enum(['mentions', 'calls', 'shared_link', 'copies', 'amplifies']),
+  type: z.enum(['mentions', 'calls', 'shared_link', 'copies', 'amplifies', 'trades', 'bundle_member', 'mentions_wallet']),
   confidence,
   evidenceIds,
   attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
@@ -82,6 +82,9 @@ export const intelligenceSnapshotSchema = z.object({
       edges: z.number().int().min(0),
       xAccounts: z.number().int().min(0),
       tgChannels: z.number().int().min(0),
+      wallets: z.number().int().min(0),
+      bundles: z.number().int().min(0),
+      socialWalletLinks: z.number().int().min(0),
       sharedLinks: z.number().int().min(0),
       copyEdges: z.number().int().min(0),
       amplificationEdges: z.number().int().min(0),
@@ -92,6 +95,8 @@ export const intelligenceSnapshotSchema = z.object({
     xPosts: z.number().int().min(0),
     telegramMessages: z.number().int().min(0),
     trades: z.number().int().min(0),
+    wallets: z.number().int().min(0),
+    bundles: z.number().int().min(0),
     chainTruncated: z.boolean(),
     marketAvailable: z.boolean(),
   }).strict(),
