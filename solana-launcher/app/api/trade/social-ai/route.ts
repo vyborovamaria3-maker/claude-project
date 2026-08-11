@@ -4,13 +4,14 @@ import type { AnalysisSnapshot, IntelligenceFeature } from "@/lib/trade/intellig
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const AI_BASE = (process.env.MEMECOIN_INTELLIGENCE_URL || "http://host.docker.internal:3001").replace(/\/$/, "");
 const API_KEY = process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
 const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(/\/$/, "");
 const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
 const PROMPT_VERSION = "intelligence-qwen-v4-memory";
+const MAX_RESEARCH_ENTITIES = 8;
 
 type TimelineItem = {
   source_handle?: string | null;
@@ -35,6 +36,13 @@ type MemoryContext = {
   prior_snapshots?: Array<{ snapshot_id?: string; overall_confidence?: number | null; created_at?: string }>;
   stats?: Record<string, number>;
 };
+
+type QwenResult = {
+  discoveredRelationships?: Array<{ source?: string; target?: string; confidence?: number }>;
+  campaignHypothesis?: { likelyOriginators?: string[]; amplifiers?: string[] };
+};
+
+type QwenEnvelope = Record<string, unknown> & { result?: QwenResult };
 
 function n(value: unknown) {
   const parsed = Number(value);
@@ -93,14 +101,17 @@ function validateSnapshot(body: RequestBody, mint: string) {
   return snapshot;
 }
 
-async function loadMemoryContext(snapshot: AnalysisSnapshot): Promise<MemoryContext | null> {
+async function loadMemoryContext(
+  snapshot: AnalysisSnapshot,
+  entityKeys = snapshot.graph.nodes.map((node) => node.id).slice(0, 80),
+  maxEdges = 100,
+): Promise<MemoryContext | null> {
   if (!BACKEND_KEY) return null;
-  const entityKeys = snapshot.graph.nodes.map((node) => node.id).slice(0, 80);
   try {
     const response = await fetch(`${BACKEND_BASE}/api/v1/social/intelligence/context`, {
       method: "POST",
       headers: { "content-type": "application/json", "X-Backend-API-Key": BACKEND_KEY },
-      body: JSON.stringify({ entity_keys: entityKeys, mint: snapshot.mint, max_entities: 40, max_edges: 100 }),
+      body: JSON.stringify({ entity_keys: entityKeys, mint: snapshot.mint, max_entities: 40, max_edges: maxEdges }),
       cache: "no-store",
       signal: AbortSignal.timeout(3_500),
     });
@@ -120,7 +131,11 @@ function memoryFeature(key: string, label: string, value: string | number, obser
   };
 }
 
-function enrichSnapshotWithMemory(snapshot: AnalysisSnapshot, memory: MemoryContext | null): AnalysisSnapshot {
+function enrichSnapshotWithMemory(
+  snapshot: AnalysisSnapshot,
+  memory: MemoryContext | null,
+  researchRound = 0,
+): AnalysisSnapshot {
   if (!memory) return snapshot;
   const additions: IntelligenceFeature[] = [];
   const observedAt = snapshot.createdAt;
@@ -133,22 +148,80 @@ function enrichSnapshotWithMemory(snapshot: AnalysisSnapshot, memory: MemoryCont
     const hash = createHash("sha1").update(entity.key).digest("hex").slice(0, 12);
     additions.push(memoryFeature(`memory.entity.${hash}.occurrences`, `${entity.label || entity.key} · prior appearances`, Number(entity.occurrence_count || 0), observedAt, 0.85));
   }
-  for (const edge of (memory.edges || []).slice(0, 55)) {
+  for (const edge of (memory.edges || []).slice(0, researchRound ? 120 : 55)) {
     const hash = createHash("sha1").update(`${edge.source}|${edge.type}|${edge.target}`).digest("hex").slice(0, 12);
     const summary = `${edge.source || "?"} --${edge.type || "related"}--> ${edge.target || "?"}; seen ${edge.occurrence_count || 0}x; avg confidence ${Number(edge.avg_confidence || 0).toFixed(2)}`;
     additions.push(memoryFeature(`memory.edge.${hash}`, "Historical graph edge", summary.slice(0, 500), observedAt, Math.max(0.35, Math.min(0.95, Number(edge.avg_confidence || 0.6)))));
   }
-  for (const discovery of (memory.discoveries || []).slice(0, 35)) {
+  for (const discovery of (memory.discoveries || []).slice(0, researchRound ? 80 : 35)) {
     const hash = createHash("sha1").update(`${discovery.type}|${discovery.source}|${discovery.target}|${discovery.created_at}`).digest("hex").slice(0, 12);
     const summary = `${discovery.status || "hypothesis"}: ${discovery.type || "discovery"} ${discovery.source || ""} -> ${discovery.target || ""}; ${discovery.rationale || ""}`;
     additions.push(memoryFeature(`memory.discovery.${hash}`, "Historical AI discovery", summary.slice(0, 500), observedAt, Math.max(0.25, Math.min(0.9, Number(discovery.confidence || 0.5)))));
   }
-  const available = Math.max(0, 300 - snapshot.features.length);
-  const selected = additions.slice(0, available);
-  return { ...snapshot, featureCount: snapshot.featureCount + selected.length, features: [...snapshot.features, ...selected] };
+  if (researchRound) additions.unshift(memoryFeature(`memory.research.round_${researchRound}`, "Agent research round", researchRound, observedAt, 1));
+  const existing = new Set(snapshot.features.map((feature) => feature.key));
+  const selected = additions.filter((feature) => !existing.has(feature.key)).slice(0, Math.max(0, 300 - snapshot.features.length));
+  return { ...snapshot, featureCount: snapshot.features.length + selected.length, features: [...snapshot.features, ...selected] };
 }
 
-async function persistMemory(snapshot: AnalysisSnapshot, aiEnvelope: Record<string, unknown>) {
+function researchCandidates(snapshot: AnalysisSnapshot, envelope: QwenEnvelope): string[] {
+  const result = envelope.result;
+  if (!result) return [];
+  const byId = new Set(snapshot.graph.nodes.map((node) => node.id));
+  const byLabel = new Map(snapshot.graph.nodes.map((node) => [node.label.toLowerCase(), node.id]));
+  const resolved: string[] = [];
+  const resolve = (value: string | undefined) => {
+    if (!value) return;
+    if (byId.has(value)) resolved.push(value);
+    else {
+      const id = byLabel.get(value.toLowerCase());
+      if (id) resolved.push(id);
+    }
+  };
+  for (const relationship of result.discoveredRelationships || []) {
+    if (Number(relationship.confidence || 0) < 0.55) continue;
+    resolve(relationship.source);
+    resolve(relationship.target);
+  }
+  for (const value of result.campaignHypothesis?.likelyOriginators || []) resolve(value);
+  for (const value of result.campaignHypothesis?.amplifiers || []) resolve(value);
+  return [...new Set(resolved)].slice(0, MAX_RESEARCH_ENTITIES);
+}
+
+function aiPayload(snapshot: AnalysisSnapshot | null, timeline: TimelineItem[], mint: string, body: RequestBody) {
+  const messages = snapshot ? snapshotMessages(snapshot) : timelineMessages(timeline);
+  if (!messages.length) return null;
+  const windowTimes = messages.map((message) => Date.parse(message.sentAt)).filter(Number.isFinite).sort((a, b) => a - b);
+  return {
+    messages,
+    context: {
+      tokenAddress: mint,
+      symbol: body.symbol ? String(body.symbol).replace(/^\$/, "").slice(0, 32) : snapshot?.symbol || null,
+      tokenName: body.tokenName ? String(body.tokenName).slice(0, 128) : snapshot?.tokenName || null,
+      windowStart: windowTimes.length ? new Date(windowTimes[0]).toISOString() : null,
+      windowEnd: windowTimes.length ? new Date(windowTimes[windowTimes.length - 1]).toISOString() : null,
+      analysisMode: snapshot ? "full_intelligence" : "telegram_only",
+      ...(snapshot ? { intelligenceSnapshot: snapshot } : {}),
+    },
+    persist: false,
+  };
+}
+
+async function runQwen(payload: NonNullable<ReturnType<typeof aiPayload>>): Promise<QwenEnvelope> {
+  const response = await fetch(`${AI_BASE}/api/telegram-ai/analyze`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY, authorization: `Bearer ${API_KEY}` } : {}) },
+    body: JSON.stringify(payload), cache: "no-store", signal: AbortSignal.timeout(55_000),
+  });
+  const result = await response.json().catch(() => ({})) as QwenEnvelope;
+  if (!response.ok) {
+    const message = String(result.message || result.error || result.detail || `Qwen HTTP ${response.status}`);
+    throw Object.assign(new Error(message), { status: response.status });
+  }
+  return result;
+}
+
+async function persistMemory(snapshot: AnalysisSnapshot, aiEnvelope: QwenEnvelope) {
   if (!BACKEND_KEY) return { status: "disabled" };
   try {
     const response = await fetch(`${BACKEND_BASE}/api/v1/social/intelligence/memory`, {
@@ -161,8 +234,7 @@ async function persistMemory(snapshot: AnalysisSnapshot, aiEnvelope: Record<stri
         model: typeof aiEnvelope.model === "string" ? aiEnvelope.model : null,
         prompt_version: PROMPT_VERSION,
       }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(4_000),
+      cache: "no-store", signal: AbortSignal.timeout(4_000),
     });
     if (!response.ok) return { status: "error", http: response.status };
     return await response.json() as Record<string, unknown>;
@@ -184,46 +256,47 @@ export async function POST(req: NextRequest) {
   try { snapshot = validateSnapshot(body, mint); }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "invalid_snapshot" }, { status: 400 }); }
 
-  const memoryContext = snapshot ? await loadMemoryContext(snapshot) : null;
-  const analysisSnapshot = snapshot ? enrichSnapshotWithMemory(snapshot, memoryContext) : null;
-  const messages = analysisSnapshot ? snapshotMessages(analysisSnapshot) : timelineMessages(timeline);
-  if (!messages.length) return NextResponse.json({ error: analysisSnapshot ? "no_snapshot_evidence_for_ai" : "no_telegram_text_for_ai" }, { status: 400 });
-
-  const windowTimes = messages.map((message) => Date.parse(message.sentAt)).filter(Number.isFinite).sort((a, b) => a - b);
-  const payload = {
-    messages,
-    context: {
-      tokenAddress: mint,
-      symbol: body.symbol ? String(body.symbol).replace(/^\$/, "").slice(0, 32) : analysisSnapshot?.symbol || null,
-      tokenName: body.tokenName ? String(body.tokenName).slice(0, 128) : analysisSnapshot?.tokenName || null,
-      windowStart: windowTimes.length ? new Date(windowTimes[0]).toISOString() : null,
-      windowEnd: windowTimes.length ? new Date(windowTimes[windowTimes.length - 1]).toISOString() : null,
-      analysisMode: analysisSnapshot ? "full_intelligence" : "telegram_only",
-      ...(analysisSnapshot ? { intelligenceSnapshot: analysisSnapshot } : {}),
-    },
-    persist: false,
-  };
-
   try {
-    const response = await fetch(`${AI_BASE}/api/telegram-ai/analyze`, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY, authorization: `Bearer ${API_KEY}` } : {}) },
-      body: JSON.stringify(payload), cache: "no-store", signal: AbortSignal.timeout(55_000),
-    });
-    const result = await response.json().catch(() => ({})) as Record<string, unknown>;
-    if (!response.ok) {
-      const message = String(result.message || result.error || result.detail || `Qwen HTTP ${response.status}`);
-      return NextResponse.json({ error: message, agent: "qwen", available: false }, { status: response.status === 401 || response.status === 403 ? response.status : 502 });
+    const memoryContext = snapshot ? await loadMemoryContext(snapshot) : null;
+    let analysisSnapshot = snapshot ? enrichSnapshotWithMemory(snapshot, memoryContext) : null;
+    const firstPayload = aiPayload(analysisSnapshot, timeline, mint, body);
+    if (!firstPayload) return NextResponse.json({ error: analysisSnapshot ? "no_snapshot_evidence_for_ai" : "no_telegram_text_for_ai" }, { status: 400 });
+
+    let result = await runQwen(firstPayload);
+    const candidates = analysisSnapshot ? researchCandidates(analysisSnapshot, result) : [];
+    let researchMemory: MemoryContext | null = null;
+    let researchRound = 0;
+
+    if (analysisSnapshot && candidates.length && BACKEND_KEY) {
+      researchMemory = await loadMemoryContext(analysisSnapshot, candidates, 300);
+      if (researchMemory && ((researchMemory.edges?.length || 0) > 0 || (researchMemory.discoveries?.length || 0) > 0)) {
+        const expanded = enrichSnapshotWithMemory(analysisSnapshot, researchMemory, 1);
+        if (expanded.features.length > analysisSnapshot.features.length) {
+          analysisSnapshot = expanded;
+          const secondPayload = aiPayload(analysisSnapshot, timeline, mint, body);
+          if (secondPayload) {
+            result = await runQwen(secondPayload);
+            researchRound = 1;
+          }
+        }
+      }
     }
+
     const memoryWrite = snapshot ? await persistMemory(snapshot, result) : { status: "skipped" };
     return NextResponse.json({
       agent: "qwen", available: true,
       analysisMode: analysisSnapshot ? "full_intelligence" : "telegram_only",
       snapshotId: snapshot?.snapshotId || null,
-      memory: { loaded: Boolean(memoryContext), stats: memoryContext?.stats || null, write: memoryWrite },
+      memory: {
+        loaded: Boolean(memoryContext), stats: memoryContext?.stats || null, write: memoryWrite,
+        researchRound, researchCandidates: candidates, researchStats: researchMemory?.stats || null,
+      },
       ...result,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "qwen_unreachable", agent: "qwen", available: false }, { status: 503 });
+    const status = typeof (error as { status?: unknown }).status === "number" ? Number((error as { status: number }).status) : 503;
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "qwen_unreachable", agent: "qwen", available: false,
+    }, { status: status === 401 || status === 403 ? status : 503 });
   }
 }
