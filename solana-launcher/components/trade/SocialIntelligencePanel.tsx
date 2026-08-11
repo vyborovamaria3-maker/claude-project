@@ -1,938 +1,115 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  AlertTriangle,
-  BadgeCheck,
-  Bot,
-  Clock3,
-  ExternalLink,
-  Gauge,
-  Loader2,
-  MessageCircle,
-  Network,
-  Radar,
-  RefreshCw,
-  Search,
-  Send,
-  ShieldAlert,
-  SlidersHorizontal,
-  Sparkles,
-  Twitter,
-  Users,
-  Zap,
-} from "lucide-react";
-import clsx from "clsx";
+import { AlertTriangle, Bot, BrainCircuit, Gauge, Loader2, Network, Radar, RefreshCw, Search, Send, ShieldAlert, Sparkles, Twitter, Users, Zap } from "lucide-react";
 import { siteDesign } from "@/lib/siteDesign";
 
-const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
-const SOLANA_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const CLIENT_CACHE_TTL = 2 * 60 * 1000;
-const PARAMS_STORAGE_KEY = "potapoff.social-analysis.params.v1";
+const BACKEND=(process.env.NEXT_PUBLIC_BACKEND_URL||"/fastapi").replace(/\/$/,"");
+const MINT_RE=/^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+type Lookback="1"|"6"|"24"|"72"|"168"|"720"|"all";
 
-type XStrategy = "auto" | "nitter" | "playwright";
-type XScope = "mentions" | "official";
-type Lookback = "1" | "6" | "24" | "72" | "168" | "720" | "all";
+type Tweet={id:string;text:string;author:string;likes:number;retweets:number;views:number;timestamp:number|null;isSuspicious:boolean};
+type Shiller={handle:string;tweets:number;totalEngagement:number;isBot:boolean;followers:number|null;postsCount:number|null;isVerified:boolean};
+type TwitterStats={symbol:string;mint:string;twitterHandle:string|null;totalTweets:number;totalViews:number;totalLikes:number;totalRetweets:number;uniqueMentioners:number;botRisk:"low"|"medium"|"high";botRiskScore:number;anomalyCount:number;topTweets:Tweet[];shillers:Shiller[];lastUpdated:number;collectionStrategy:string;performance:{responseTimeMs:number;cached:boolean};aggregated:{totalEngagement:number;engagementRate:number;verifiedAuthors:number;botSuspectedCount:number;botRatio:number};discovery:{mentions:number;accounts:number;memecoinAccounts:number;firstAccountCreatedAt:number|null;lastDiscoveredAt:number|null}};
+type TimelineItem={platform:string;event_type?:string;source_handle:string|null;source_name:string|null;source_url:string|null;text:string;occurred_at:string;metrics:Record<string,unknown>|null};
+type SocialTimeline={mint_address:string;mentions:number;platforms:Record<string,number>;origin:TimelineItem|null;timeline:TimelineItem[]};
+type Channel={id:number;username:string|null;title:string;participants:number;score:number;calls_count:number;win_rate:number;rug_rate:number;avg_roi:number};
+type Market={pair?:{symbol?:string;name?:string;priceUsd?:number;marketCap?:number;liquidityUsd?:number;volumeH24?:number;volumeH6?:number;volumeH1?:number;volumeM5?:number;change24h?:number;changeH1?:number;createdAt?:number|null}};
+type AiResult={summary:string;sentiment:{label:string;score:number;confidence:number};dominantIntent:string;coordinationSignals:Array<{type:string;severity:string;confidence:number;explanation:string;evidenceMessageIds:string[]}>;campaignHypothesis:{label:string;confidence:number;likelyOriginators:string[];amplifiers:string[];narrative:string;evidenceMessageIds:string[]};risks:Array<{type:string;severity:string;confidence:number;explanation:string;evidenceMessageIds:string[]}>;reasoningSummary:string[];overallConfidence:number;claims:Array<unknown>;entities:Array<unknown>;relationships:Array<unknown>};
+type AiEnvelope={agent:string;available:boolean;status?:string;provider?:string;model?:string;latencyMs?:number;cache?:string;result?:AiResult;error?:string};
+type Metric={label:string;value:string;raw?:number|null;note?:string};
 
-interface AnalysisOptions {
-  symbol: string;
-  twitterHandle: string;
-  lookback: Lookback;
-  xStrategy: XStrategy;
-  xScope: XScope;
-  xLimit: number;
-  xMinEngagement: number;
-  xVerifiedOnly: boolean;
-  xExcludeSuspicious: boolean;
-  tgSources: string;
-  tgLimit: number;
-  tgMinEngagement: number;
-  tgMinChannelScore: number;
-  tgExplicitCallsOnly: boolean;
+type Options={symbol:string;lookback:Lookback;xLimit:number;xVerifiedOnly:boolean;xExcludeSuspicious:boolean;tgLimit:number;tgMinChannelScore:number;tgExplicitCallsOnly:boolean};
+const DEFAULT:Options={symbol:"",lookback:"24",xLimit:40,xVerifiedOnly:false,xExcludeSuspicious:true,tgLimit:200,tgMinChannelScore:0,tgExplicitCallsOnly:false};
+
+const num=(v:unknown,f=0)=>Number.isFinite(Number(v))?Number(v):f;
+const clamp=(v:number,a=0,b=100)=>Math.max(a,Math.min(b,v));
+const compact=(v:number|null|undefined)=>new Intl.NumberFormat("en-US",{notation:"compact",maximumFractionDigits:1}).format(num(v));
+const pct=(v:number|null|undefined)=>Number.isFinite(Number(v))?`${num(v).toFixed(1)}%`:"—";
+const score=(v:number|null|undefined)=>Number.isFinite(Number(v))?`${Math.round(num(v))}/100`:"—";
+const ago=(v:string|number|null|undefined)=>{if(!v)return"—";let t=typeof v==="number"?v:Date.parse(v);if(!Number.isFinite(t))return"—";if(t<1e12)t*=1000;const m=Math.max(0,Math.round((Date.now()-t)/60000));if(m<60)return`${m}m`;const h=Math.round(m/60);return h<48?`${h}h`:`${Math.round(h/24)}d`};
+const ts=(v:string|number|null|undefined)=>{if(!v)return null;let t=typeof v==="number"?v:Date.parse(v);if(!Number.isFinite(t))return null;return t<1e12?t*1000:t};
+const avg=(a:number[])=>a.length?a.reduce((s,v)=>s+v,0)/a.length:0;
+const median=(a:number[])=>{const x=[...a].sort((p,q)=>p-q);if(!x.length)return 0;const m=Math.floor(x.length/2);return x.length%2?x[m]:(x[m-1]+x[m])/2};
+const lookbackHours=(v:Lookback)=>v==="all"?720:Number(v);
+const normalizeText=(v:string)=>v.toLowerCase().replace(/https?:\/\/\S+/g," ").replace(/0x[a-f0-9]+/g," ").replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g," ").replace(/[^\p{L}\p{N}]+/gu," ").trim().slice(0,220);
+
+function sentiment(texts:string[]){const pos=/\b(bull|bullish|buy|gem|moon|pump|breakout|alpha|early|strong|ape|send|upside|good|great|лонг|покуп|ракета|рост|гем)\b|🚀|🔥|📈|💎/i;const neg=/\b(rug|scam|dump|sell|exit|dead|avoid|warning|bear|rekt|скам|раг|слив|продаж|паден)\b|⚠|📉|☠/i;let p=0,n=0,u=0;texts.forEach(t=>{const a=pos.test(t),b=neg.test(t);a&&!b?p++:b&&!a?n++:u++});const z=p+n+u;if(!z)return{label:"—",p:0,n:0,u:0};return{label:p/z>.52?"BULLISH":n/z>.38?"BEARISH":"MIXED",p:p/z*100,n:n/z*100,u:u/z*100}}
+function countSince(times:(number|null)[],mins:number){const cut=Date.now()-mins*60000;return times.filter(v=>v!==null&&v>=cut).length}
+function firstTime(items:TimelineItem[]){return Math.min(...items.map(i=>ts(i.occurred_at)).filter((v):v is number=>v!==null),Infinity)}
+function safeLag(a:number,b:number){if(!Number.isFinite(a)||!Number.isFinite(b))return"—";const m=Math.round((b-a)/60000);return m===0?"same minute":m>0?`${m}m later`:`${Math.abs(m)}m earlier`}
+async function json<T>(url:string,signal?:AbortSignal,init?:RequestInit){const r=await fetch(url,{cache:"no-store",signal,...init});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d?.detail||d?.error||`HTTP ${r.status}`);return d as T}
+
+export default function SocialIntelligencePanel(){
+ const router=useRouter(),params=useSearchParams();const initial=params.get("mint")?.trim()||"";
+ const [query,setQuery]=useState(initial),[mint,setMint]=useState(initial),[options,setOptions]=useState<Options>(DEFAULT);
+ const [x,setX]=useState<TwitterStats|null>(null),[tg,setTg]=useState<SocialTimeline|null>(null),[channels,setChannels]=useState<Channel[]>([]),[market,setMarket]=useState<Market|null>(null),[ai,setAi]=useState<AiEnvelope|null>(null);
+ const [loading,setLoading]=useState(false),[error,setError]=useState<string|null>(null),[warnings,setWarnings]=useState<string[]>([]);const abort=useRef<AbortController|null>(null);
+
+ useEffect(()=>{void json<{items:Channel[]}>(`${BACKEND}/api/v1/telegram/channels?limit=100`).then(v=>setChannels(v.items||[])).catch(()=>{})},[]);
+ const run=useCallback(async(next:string)=>{const ca=next.trim();if(!MINT_RE.test(ca)){setError("Введи корректный Solana mint / CA.");return}abort.current?.abort();const c=new AbortController();abort.current=c;setMint(ca);setQuery(ca);setLoading(true);setError(null);setWarnings([]);setAi(null);router.replace(`/trade/analysis/social?mint=${encodeURIComponent(ca)}`,{scroll:false});
+  const xp=new URLSearchParams({mint:ca,strategy:"auto",scope:"mentions",limit:String(options.xLimit),excludeSuspicious:String(options.xExcludeSuspicious),verifiedOnly:String(options.xVerifiedOnly)});if(options.symbol)xp.set("symbol",options.symbol.replace(/^\$/,""));if(options.lookback!=="all")xp.set("hours",options.lookback);
+  const tp=new URLSearchParams({platform:"telegram",limit:String(options.tgLimit),min_channel_score:String(options.tgMinChannelScore),explicit_calls_only:String(options.tgExplicitCallsOnly)});if(options.lookback!=="all")tp.set("hours",options.lookback);
+  const [xr,tr,mr]=await Promise.allSettled([json<TwitterStats>(`/api/trade/dev-twitter?${xp}`,c.signal),json<SocialTimeline>(`${BACKEND}/api/v1/social/token/${encodeURIComponent(ca)}?${tp}`,c.signal),json<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(ca)}`,c.signal)]);if(c.signal.aborted)return;
+  const nx=xr.status==="fulfilled"?xr.value:null,nt=tr.status==="fulfilled"?tr.value:null,nm=mr.status==="fulfilled"?mr.value:null;setX(nx);setTg(nt);setMarket(nm);const w:string[]=[];if(!nx)w.push("X недоступен");if(!nt)w.push("Telegram недоступен");if(!nm)w.push("Market недоступен");setWarnings(w);if(!nx&&!nt){setError("Нет данных X и Telegram");setLoading(false);return}
+  const tgItems=(nt?.timeline||[]).filter(i=>!i.platform||i.platform.toLowerCase()==="telegram");if(tgItems.length){try{const qa=await json<AiEnvelope>("/api/trade/social-ai",c.signal,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({mint:ca,symbol:nx?.symbol||options.symbol,tokenName:nm?.pair?.name,timeline:tgItems})});if(!c.signal.aborted)setAi(qa)}catch(e){if(!c.signal.aborted){setWarnings(v=>[...v,`Qwen: ${e instanceof Error?e.message:"AI недоступен"}`]);setAi({agent:"qwen",available:false,error:e instanceof Error?e.message:"AI недоступен"})}}}
+  if(!c.signal.aborted)setLoading(false)
+ },[options,router]);
+ useEffect(()=>{if(initial&&MINT_RE.test(initial))void run(initial);return()=>abort.current?.abort()},[]);// eslint-disable-line react-hooks/exhaustive-deps
+
+ const derived=useMemo(()=>derive(x,tg,channels,market,ai,options),[x,tg,channels,market,ai,options]);
+ const submit=(e:FormEvent)=>{e.preventDefault();void run(query)};
+ return <div className="space-y-5" data-tag="trade.social_intelligence.v2">
+  <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><div className="flex items-center gap-2"><Network className="h-5 w-5 text-primary"/><h1 className="text-lg font-semibold text-content">Social Intelligence · X + Telegram + Qwen</h1></div><p className="mt-1 text-xs text-content-muted">Детерминированные social-метрики + второй этап Telegram AI с evidence-based выводами.</p></div>{mint&&<div className="font-mono text-[10px] text-content-faint">{mint.slice(0,8)}…{mint.slice(-7)}</div>}</header>
+  <form onSubmit={submit} className="surface-panel rounded-2xl border border-bg-border p-4"><div className="grid gap-3 lg:grid-cols-[1.5fr_.55fr_.55fr_.45fr]">
+   <Field label="Solana mint / CA"><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-faint"/><input value={query} onChange={e=>setQuery(e.target.value)} className={`${siteDesign.controls.inputClassName} pl-9 font-mono`} placeholder="Вставь contract"/></div></Field>
+   <Field label="Ticker"><input value={options.symbol} onChange={e=>setOptions(v=>({...v,symbol:e.target.value}))} className={siteDesign.controls.inputClassName} placeholder="BONK"/></Field>
+   <Field label="Период"><select value={options.lookback} onChange={e=>setOptions(v=>({...v,lookback:e.target.value as Lookback}))} className={siteDesign.controls.inputClassName}>{[["1","1 час"],["6","6 часов"],["24","24 часа"],["72","3 дня"],["168","7 дней"],["720","30 дней"],["all","Всё"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></Field>
+   <div className="flex items-end"><button disabled={loading} className={`${siteDesign.controls.primaryActionClassName} w-full`}>{loading?<Loader2 className="h-4 w-4 animate-spin"/>:<Radar className="h-4 w-4"/>} Анализ</button></div>
+  </div><details className="mt-3"><summary className="cursor-pointer text-[11px] font-semibold text-content-muted">Фильтры источников</summary><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Field label="X posts"><input type="number" min={10} max={100} value={options.xLimit} onChange={e=>setOptions(v=>({...v,xLimit:Math.max(10,Math.min(100,num(e.target.value))) }))} className={siteDesign.controls.inputClassName}/></Field><Field label="TG signals"><input type="number" min={20} max={500} value={options.tgLimit} onChange={e=>setOptions(v=>({...v,tgLimit:Math.max(20,Math.min(500,num(e.target.value))) }))} className={siteDesign.controls.inputClassName}/></Field><Field label="Min TG score"><input type="number" min={0} max={100} value={options.tgMinChannelScore} onChange={e=>setOptions(v=>({...v,tgMinChannelScore:clamp(num(e.target.value))}))} className={siteDesign.controls.inputClassName}/></Field><Check label="Verified X only" value={options.xVerifiedOnly} set={value=>setOptions(v=>({...v,xVerifiedOnly:value}))}/><Check label="Explicit TG calls" value={options.tgExplicitCallsOnly} set={value=>setOptions(v=>({...v,tgExplicitCallsOnly:value}))}/></div></details>
+  </form>
+  {error&&<Notice tone="danger" text={error}/>} {warnings.length>0&&<Notice tone="warning" text={warnings.join(" · ")}/>} 
+  {(x||tg)&&<><section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><Kpi label="Social score" value={score(derived.socialScore)} icon={<Gauge/>}/><Kpi label="X score" value={score(derived.xScore)} icon={<Twitter/>}/><Kpi label="TG score" value={score(derived.tgScore)} icon={<Send/>}/><Kpi label="Organic" value={score(derived.organicScore)} icon={<Sparkles/>}/><Kpi label="Manipulation" value={score(derived.manipulationScore)} icon={<ShieldAlert/>}/><Kpi label="Early signal" value={score(derived.earlySignalScore)} icon={<Zap/>}/><Kpi label="Alpha" value={score(derived.alphaScore)} icon={<Radar/>}/><Kpi label="AI confidence" value={ai?.result?pct(ai.result.overallConfidence*100):"—"} icon={<BrainCircuit/>}/></section>
+   <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-content">Все параметры</h2><p className="text-[10px] text-content-faint">Поля без исторического источника остаются «—», а не подменяются случайными данными.</p></div><button onClick={()=>void run(mint)} disabled={loading} className={siteDesign.controls.actionButtonClassName}><RefreshCw className="h-4 w-4"/>Обновить</button></div><div className="grid gap-4 xl:grid-cols-2">{derived.groups.map(g=><MetricTable key={g.title} title={g.title} rows={g.rows}/>)}</div></section>
+   <AiPanel ai={ai}/><TimelinePanel x={x} tg={tg}/>
+  </>}
+ </div>
 }
 
-const DEFAULT_OPTIONS: AnalysisOptions = {
-  symbol: "",
-  twitterHandle: "",
-  lookback: "24",
-  xStrategy: "auto",
-  xScope: "mentions",
-  xLimit: 20,
-  xMinEngagement: 0,
-  xVerifiedOnly: false,
-  xExcludeSuspicious: true,
-  tgSources: "",
-  tgLimit: 100,
-  tgMinEngagement: 0,
-  tgMinChannelScore: 0,
-  tgExplicitCallsOnly: false,
-};
-
-interface TweetRow {
-  id: string;
-  text: string;
-  author: string;
-  likes: number;
-  retweets: number;
-  views: number;
-  timestamp: number | null;
-  isSuspicious: boolean;
+function derive(x:TwitterStats|null,tg:SocialTimeline|null,channels:Channel[],market:Market|null,ai:AiEnvelope|null,options:Options){
+ const tweets=x?.topTweets||[],tgi=(tg?.timeline||[]).filter(i=>!i.platform||i.platform.toLowerCase()==="telegram"),xt=tweets.map(t=>ts(t.timestamp)),tt=tgi.map(i=>ts(i.occurred_at));
+ const x5=countSince(xt,5),x15=countSince(xt,15),x60=countSince(xt,60),tg5=countSince(tt,5),tg15=countSince(tt,15),tg60=countSince(tt,60),hours=Math.max(1,lookbackHours(options.lookback));
+ const xs=sentiment(tweets.map(t=>t.text)),tsent=sentiment(tgi.map(t=>t.text));const xMentions=x?.totalTweets||0,tgMentions=tg?.platforms?.telegram||tgi.length;
+ const xVelocity=xMentions/hours,tgVelocity=tgMentions/hours;const xAcceleration=x15?clamp((x5/5)/(x15/15)*50):0,tgAcceleration=tg15?clamp((tg5/5)/(tg15/15)*50):0;
+ const authorRatio=xMentions?clamp((x?.uniqueMentioners||0)/xMentions*100):0,verifiedRatio=xMentions?clamp((x?.aggregated.verifiedAuthors||0)/Math.max(1,x?.uniqueMentioners||0)*100):0;
+ const botRatio=(x?.aggregated.botRatio||0)*100,botRisk=x?.botRiskScore||0;const sh=x?.shillers||[],reach=sh.reduce((s,a)=>s+(a.followers||0),0),influencers=sh.filter(a=>a.isVerified||(a.followers||0)>=10000||(a.totalEngagement||0)>=5000),influencerReach=influencers.reduce((s,a)=>s+(a.followers||0),0),repeat=sh.filter(a=>a.tweets>=2).length,smart=sh.filter(a=>!a.isBot&&(a.isVerified||(a.totalEngagement||0)>=2500||(a.followers||0)>=5000)).length;
+ const allTexts=[...tweets.map(t=>t.text),...tgi.map(i=>i.text)].map(normalizeText).filter(t=>t.length>=16),freq=new Map<string,number>();allTexts.forEach(t=>freq.set(t,(freq.get(t)||0)+1));const copied=[...freq.values()].filter(v=>v>1).reduce((s,v)=>s+v,0),copyRatio=allTexts.length?copied/allTexts.length*100:0;
+ const latestSusp=tweets.filter(t=>ts(t.timestamp)!==null&&(ts(t.timestamp) as number)>=Date.now()-3600000),botBurst=latestSusp.length?latestSusp.filter(t=>t.isSuspicious).length/latestSusp.length*100:0;
+ const tgKeys=new Set(tgi.flatMap(i=>[i.source_handle,i.source_name].filter(Boolean).map(v=>String(v).replace(/^@/,"").toLowerCase())));const relChannels=channels.filter(c=>tgKeys.has(String(c.username||"").replace(/^@/,"").toLowerCase())||tgKeys.has(String(c.title||"").toLowerCase()));const channelScore=relChannels.length?avg(relChannels.map(c=>c.score)):0,winRate=relChannels.length?avg(relChannels.map(c=>c.win_rate))*100:0,rugRate=relChannels.length?avg(relChannels.map(c=>c.rug_rate))*100:0;
+ const tgChannels=tgKeys.size,explicitCalls=tgi.filter(i=>Boolean(i.metrics?.explicit_call||i.metrics?.is_explicit_call||String(i.event_type||"").includes("call"))).length;
+ const aiResult=ai?.result,coordAi=aiResult?.coordinationSignals?.length||0,highRisks=aiResult?.risks?.filter(r=>r.severity==="high"||r.severity==="critical").length||0,coordScore=clamp(copyRatio*.75+coordAi*11+repeat*3);
+ const followerQuality=clamp((100-botRisk)*.45+verifiedRatio*.25+clamp(Math.log10(median(sh.map(a=>a.followers||0))+1)*18)*.3);const paidRisk=clamp(coordScore*.45+botRisk*.25+clamp(repeat*8)*.15+highRisks*8);const organicScore=clamp(100-paidRisk*.72-copyRatio*.18+authorRatio*.22);
+ const xScore=clamp((100-botRisk)*.35+authorRatio*.25+clamp(Math.log10((x?.aggregated.totalEngagement||0)+1)*20)*.25+followerQuality*.15);const tgScore=clamp(channelScore*.30+winRate*.20+(100-rugRate)*.20+clamp(tgChannels*7)*.15+clamp(explicitCalls*8)*.15);
+ const firstX=Math.min(...xt.filter((v):v is number=>v!==null),Infinity),firstT=firstTime(tgi),crossBoth=Number.isFinite(firstX)&&Number.isFinite(firstT),lag=crossBoth?Math.abs(firstX-firstT)/60000:Infinity,crossScore=crossBoth?clamp(100-Math.min(100,lag/3)+Math.min(xVelocity+tgVelocity,20)*2):0;
+ const hype=clamp(avg([xAcceleration,tgAcceleration,clamp((xVelocity+tgVelocity)*10),clamp((x?.aggregated.engagementRate||0)*100)])),fomo=clamp(hype*.55+Math.max(xs.p,tsent.p)*.25+clamp(explicitCalls*7)*.20),manipulationScore=clamp(paidRisk*.7+coordScore*.3);
+ const created=ts(market?.pair?.createdAt),firstSocial=Math.min(firstX,firstT),earlyMinutes=created&&Number.isFinite(firstSocial)?Math.max(0,(firstSocial-created)/60000):null,earlySignalScore=earlyMinutes===null?clamp(70-Math.min(60,(xMentions+tgMentions)/10)):clamp(100-earlyMinutes/12);const alphaScore=clamp(earlySignalScore*.35+organicScore*.25+(100-manipulationScore)*.20+crossScore*.20);const socialScore=clamp(xScore*.36+tgScore*.34+organicScore*.15+crossScore*.15);
+ const firstXAuthor=tweets.filter(t=>ts(t.timestamp)!==null).sort((a,b)=>num(ts(a.timestamp))-num(ts(b.timestamp)))[0]?.author||"—",firstTg=tg?.origin?.source_handle||tg?.origin?.source_name||tgi.slice().sort((a,b)=>num(ts(a.occurred_at))-num(ts(b.occurred_at)))[0]?.source_handle||"—";
+ const narrative=aiResult?.campaignHypothesis?.narrative||"—",campaign=aiResult?.campaignHypothesis?.label||"—";
+ const groups:{title:string;rows:Metric[]}[]=[
+  {title:"X / Twitter",rows:[m("X score",score(xScore),xScore),m("Mentions",compact(xMentions)),m("Mentions 5m",String(x5),undefined,"sampled posts"),m("Mentions 15m",String(x15)),m("Mentions 1h",String(x60)),m("Mentions / h",xVelocity.toFixed(2)),m("Acceleration",score(xAcceleration),xAcceleration),m("Unique authors",compact(x?.uniqueMentioners)),m("Author diffusion",pct(authorRatio),authorRatio),m("Views",compact(x?.totalViews)),m("Likes",compact(x?.totalLikes)),m("Reposts",compact(x?.totalRetweets)),m("Engagement",compact(x?.aggregated.totalEngagement)),m("Engagement rate",pct((x?.aggregated.engagementRate||0)*100)),m("Verified authors",compact(x?.aggregated.verifiedAuthors)),m("Verified ratio",pct(verifiedRatio)),m("Influencers",String(influencers.length)),m("Potential reach",compact(reach)),m("Influencer reach",compact(influencerReach)),m("Smart accounts",String(smart)),m("Repeat shillers",String(repeat)),m("Bot risk",score(botRisk),botRisk),m("Bot ratio",pct(botRatio),botRatio),m("Bot burst 1h",pct(botBurst),botBurst),m("Anomalies",String(x?.anomalyCount||0)),m("Follower quality",score(followerQuality),followerQuality),m("Sentiment",xs.label),m("Positive",pct(xs.p)),m("Neutral",pct(xs.u)),m("Negative",pct(xs.n)),m("First mover",firstXAuthor),m("First mention",Number.isFinite(firstX)?ago(firstX):"—"),m("Earliest discovered account",x?.discovery.firstAccountCreatedAt?ago(x.discovery.firstAccountCreatedAt):"—")]},
+  {title:"Telegram",rows:[m("TG score",score(tgScore),tgScore),m("Mentions",compact(tgMentions)),m("Mentions 5m",String(tg5)),m("Mentions 15m",String(tg15)),m("Mentions 1h",String(tg60)),m("Mentions / h",tgVelocity.toFixed(2)),m("Acceleration",score(tgAcceleration),tgAcceleration),m("Channels",String(tgChannels)),m("Explicit calls",String(explicitCalls)),m("Channel score",score(channelScore),channelScore),m("Historical win rate",pct(winRate)),m("Historical rug rate",pct(rugRate),rugRate),m("Sentiment",aiResult?.sentiment.label||tsent.label),m("AI sentiment score",aiResult?aiResult.sentiment.score.toFixed(2):"—"),m("AI sentiment confidence",aiResult?pct(aiResult.sentiment.confidence*100):"—"),m("Dominant intent",aiResult?.dominantIntent||"—"),m("Top/first source",firstTg),m("First signal",Number.isFinite(firstT)?ago(firstT):"—"),m("AI campaign",campaign),m("AI coordination signals",String(coordAi)),m("AI high risks",String(highRisks)),m("AI overall confidence",aiResult?pct(aiResult.overallConfidence*100):"—")]},
+  {title:"Growth / Quality / Manipulation",rows:[m("Hype score",score(hype),hype),m("FOMO score",score(fomo),fomo),m("Organic score",score(organicScore),organicScore),m("Paid promotion risk",score(paidRisk),paidRisk),m("Manipulation score",score(manipulationScore),manipulationScore),m("Coordination score",score(coordScore),coordScore),m("Copy-paste ratio",pct(copyRatio),copyRatio),m("Coordinated AI signals",String(coordAi)),m("Follower quality",score(followerQuality),followerQuality),m("Narrative strength",score(clamp(hype*.45+crossScore*.25+(aiResult?.campaignHypothesis.confidence||0)*30))),m("Narrative",narrative),m("Campaign hypothesis",campaign),m("Peak velocity",Math.max(xVelocity,tgVelocity).toFixed(2)+"/h"),m("Velocity change",score(avg([xAcceleration,tgAcceleration]))),m("Sentiment change","—",undefined,"needs historical sentiment snapshots") ]},
+  {title:"Cross-platform / Timing",rows:[m("Cross-platform score",score(crossScore),crossScore),m("Both platforms active",crossBoth?"YES":"NO"),m("TG → X lag",crossBoth&&firstT<=firstX?safeLag(firstT,firstX):"—"),m("X → TG lag",crossBoth&&firstX<firstT?safeLag(firstX,firstT):"—"),m("First X",Number.isFinite(firstX)?ago(firstX):"—"),m("First TG",Number.isFinite(firstT)?ago(firstT):"—"),m("Early signal score",score(earlySignalScore),earlySignalScore),m("Alpha score",score(alphaScore),alphaScore),m("Social score",score(socialScore),socialScore),m("Price → Social", "—",undefined,"requires historical price-event series"),m("Social → Price", "—",undefined,"requires historical price-event series"),m("Price 1h",market?.pair?.changeH1==null?"—":pct(market.pair.changeH1)),m("Price 24h",market?.pair?.change24h==null?"—":pct(market.pair.change24h)),m("Volume 1h",compact(market?.pair?.volumeH1)),m("Volume 24h",compact(market?.pair?.volumeH24)),m("Liquidity",market?.pair?.liquidityUsd==null?"—":`$${compact(market.pair.liquidityUsd)}`)]},
+  {title:"AI Agent / Evidence",rows:[m("Agent",ai?.available?`${ai.provider||"qwen"} · ${ai.model||"Qwen"}`:"unavailable"),m("AI latency",ai?.latencyMs?`${Math.round(ai.latencyMs)} ms`:"—"),m("AI cache",ai?.cache||"—"),m("Summary",aiResult?.summary||"—"),m("Claims",String(aiResult?.claims?.length||0)),m("Entities",String(aiResult?.entities?.length||0)),m("Relationships",String(aiResult?.relationships?.length||0)),m("Risks",String(aiResult?.risks?.length||0)),m("Originators",aiResult?.campaignHypothesis.likelyOriginators.join(", ")||"—"),m("Amplifiers",aiResult?.campaignHypothesis.amplifiers.slice(0,6).join(", ")||"—") ]}
+ ];return{groups,xScore,tgScore,organicScore,manipulationScore,earlySignalScore,alphaScore,socialScore}
 }
+const m=(label:string,value:string,raw?:number|null,note?:string):Metric=>({label,value,raw,note});
 
-interface ShillerRow {
-  handle: string;
-  tweets: number;
-  totalEngagement: number;
-  isBot: boolean;
-  followers: number | null;
-  postsCount: number | null;
-  isVerified: boolean;
-}
-
-interface TwitterStats {
-  symbol: string;
-  mint: string;
-  twitterHandle: string | null;
-  totalTweets: number;
-  totalViews: number;
-  totalLikes: number;
-  totalRetweets: number;
-  uniqueMentioners: number;
-  botRisk: "low" | "medium" | "high";
-  botRiskScore: number;
-  anomalyCount: number;
-  topTweets: TweetRow[];
-  shillers: ShillerRow[];
-  lastUpdated: number;
-  collectionStrategy: string;
-  performance: { responseTimeMs: number; cached: boolean };
-  aggregated: {
-    totalEngagement: number;
-    engagementRate: number;
-    verifiedAuthors: number;
-    botSuspectedCount: number;
-    botRatio: number;
-  };
-  discovery: {
-    mentions: number;
-    accounts: number;
-    memecoinAccounts: number;
-    firstAccountCreatedAt: number | null;
-    lastDiscoveredAt: number | null;
-  };
-}
-
-interface TimelineItem {
-  rank?: number;
-  platform: "telegram" | "x" | string;
-  event_type?: string;
-  source_handle: string | null;
-  source_name: string | null;
-  source_url: string | null;
-  text: string;
-  occurred_at: string;
-  metrics: Record<string, unknown> | null;
-}
-
-interface SocialTimeline {
-  mint_address: string;
-  mentions: number;
-  platforms: Record<string, number>;
-  origin: TimelineItem | null;
-  timeline: TimelineItem[];
-}
-
-interface ChannelRow {
-  id: number;
-  username: string | null;
-  title: string;
-  entity_type: string;
-  participants: number;
-  score: number;
-  calls_count: number;
-  win_rate: number;
-  rug_rate: number;
-  avg_roi: number;
-}
-
-interface CallerRow {
-  username: string;
-  calls: number;
-  wins: number;
-  win_rate: number;
-  rug_rate: number;
-  avg_roi: number;
-  score: number;
-}
-
-interface SocialBundle {
-  twitter: TwitterStats | null;
-  timeline: SocialTimeline | null;
-  fetchedAt: number;
-  warnings: string[];
-}
-
-const socialCache = new Map<string, SocialBundle>();
-
-function compact(value: number | null | undefined): string {
-  const safe = Number.isFinite(value) ? Number(value) : 0;
-  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(safe);
-}
-
-function percent(value: number): string {
-  return `${(value * 100).toFixed(value > 0.1 ? 0 : 1)}%`;
-}
-
-function shortMint(value: string): string {
-  if (value.length < 14) return value;
-  return `${value.slice(0, 7)}…${value.slice(-6)}`;
-}
-
-function relativeTime(value: string | number | null | undefined): string {
-  if (!value) return "—";
-  const ts = typeof value === "number" ? value : new Date(value).getTime();
-  if (!Number.isFinite(ts)) return "—";
-  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.round(hours / 24)}d`;
-}
-
-function lookbackLabel(value: Lookback): string {
-  const labels: Record<Lookback, string> = {
-    "1": "1 час",
-    "6": "6 часов",
-    "24": "24 часа",
-    "72": "3 дня",
-    "168": "7 дней",
-    "720": "30 дней",
-    all: "Всё время",
-  };
-  return labels[value];
-}
-
-function normalizeOptions(value: Partial<AnalysisOptions>): AnalysisOptions {
-  const lookbackValues: Lookback[] = ["1", "6", "24", "72", "168", "720", "all"];
-  const strategyValues: XStrategy[] = ["auto", "nitter", "playwright"];
-  const scopeValues: XScope[] = ["mentions", "official"];
-  const lookback = lookbackValues.includes(value.lookback as Lookback) ? value.lookback as Lookback : DEFAULT_OPTIONS.lookback;
-  const xStrategy = strategyValues.includes(value.xStrategy as XStrategy) ? value.xStrategy as XStrategy : DEFAULT_OPTIONS.xStrategy;
-  const xScope = scopeValues.includes(value.xScope as XScope) ? value.xScope as XScope : DEFAULT_OPTIONS.xScope;
-
-  return {
-    ...DEFAULT_OPTIONS,
-    symbol: String(value.symbol ?? DEFAULT_OPTIONS.symbol),
-    twitterHandle: String(value.twitterHandle ?? DEFAULT_OPTIONS.twitterHandle),
-    tgSources: String(value.tgSources ?? DEFAULT_OPTIONS.tgSources),
-    lookback,
-    xStrategy,
-    xScope,
-    xLimit: Math.max(5, Math.min(100, Number(value.xLimit ?? DEFAULT_OPTIONS.xLimit) || DEFAULT_OPTIONS.xLimit)),
-    xMinEngagement: Math.max(0, Number(value.xMinEngagement ?? DEFAULT_OPTIONS.xMinEngagement) || 0),
-    xVerifiedOnly: typeof value.xVerifiedOnly === "boolean" ? value.xVerifiedOnly : DEFAULT_OPTIONS.xVerifiedOnly,
-    xExcludeSuspicious: typeof value.xExcludeSuspicious === "boolean" ? value.xExcludeSuspicious : DEFAULT_OPTIONS.xExcludeSuspicious,
-    tgLimit: Math.max(1, Math.min(1000, Number(value.tgLimit ?? DEFAULT_OPTIONS.tgLimit) || DEFAULT_OPTIONS.tgLimit)),
-    tgMinEngagement: Math.max(0, Number(value.tgMinEngagement ?? DEFAULT_OPTIONS.tgMinEngagement) || 0),
-    tgMinChannelScore: Math.max(0, Math.min(100, Number(value.tgMinChannelScore ?? DEFAULT_OPTIONS.tgMinChannelScore) || 0)),
-    tgExplicitCallsOnly: typeof value.tgExplicitCallsOnly === "boolean" ? value.tgExplicitCallsOnly : DEFAULT_OPTIONS.tgExplicitCallsOnly,
-  };
-}
-
-async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", signal });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
-  }
-  return payload as T;
-}
-
-export default function SocialIntelligencePanel() {
-  const router = useRouter();
-  const params = useSearchParams();
-  const initialMint = params.get("mint")?.trim() || "";
-  const [query, setQuery] = useState(initialMint);
-  const [mint, setMint] = useState(initialMint);
-  const [options, setOptions] = useState<AnalysisOptions>(DEFAULT_OPTIONS);
-  const [optionsReady, setOptionsReady] = useState(false);
-  const [twitter, setTwitter] = useState<TwitterStats | null>(null);
-  const [timeline, setTimeline] = useState<SocialTimeline | null>(null);
-  const [channels, setChannels] = useState<ChannelRow[]>([]);
-  const [callers, setCallers] = useState<CallerRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [deepLoading, setDeepLoading] = useState(false);
-  const [overviewLoading, setOverviewLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [sourceFilter, setSourceFilter] = useState<"all" | "x" | "telegram">("all");
-  const abortRef = useRef<AbortController | null>(null);
-  const didInitialLoad = useRef(false);
-
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(PARAMS_STORAGE_KEY);
-      if (saved) setOptions(normalizeOptions(JSON.parse(saved) as Partial<AnalysisOptions>));
-    } catch {
-      window.localStorage.removeItem(PARAMS_STORAGE_KEY);
-    } finally {
-      setOptionsReady(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!optionsReady) return;
-    window.localStorage.setItem(PARAMS_STORAGE_KEY, JSON.stringify(options));
-  }, [options, optionsReady]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadOverview = async () => {
-      setOverviewLoading(true);
-      const [channelResult, callerResult] = await Promise.allSettled([
-        getJson<{ items: ChannelRow[] }>(`${BACKEND}/api/v1/telegram/channels?limit=8`),
-        getJson<{ items: CallerRow[] }>(`${BACKEND}/api/v1/telegram/top-callers?limit=8`),
-      ]);
-      if (cancelled) return;
-      if (channelResult.status === "fulfilled") setChannels(channelResult.value.items || []);
-      if (callerResult.status === "fulfilled") setCallers(callerResult.value.items || []);
-      setOverviewLoading(false);
-    };
-    void loadOverview();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const runAnalysis = useCallback(async (nextMint: string, deep = false) => {
-    const clean = nextMint.trim();
-    setQuery(clean);
-    if (!SOLANA_MINT_RE.test(clean)) {
-      setError("Введи корректный Solana mint / CA (Base58, 32–44 символа).");
-      return;
-    }
-
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setMint(clean);
-    setError(null);
-    setWarnings([]);
-    if (deep) setDeepLoading(true);
-    else setLoading(true);
-    router.replace(`/trade/analysis/social?mint=${encodeURIComponent(clean)}`, { scroll: false });
-
-    try {
-      const cacheKey = `${clean}:${deep ? "deep" : "normal"}:${JSON.stringify(options)}`;
-      const cached = socialCache.get(cacheKey);
-      if (!deep && cached && Date.now() - cached.fetchedAt < CLIENT_CACHE_TTL) {
-        setTwitter(cached.twitter);
-        setTimeline(cached.timeline);
-        setWarnings(cached.warnings);
-        return;
-      }
-
-      const xParams = new URLSearchParams({
-        mint: clean,
-        strategy: deep ? "playwright" : options.xStrategy,
-        scope: options.xScope,
-        limit: String(options.xLimit),
-        minEngagement: String(options.xMinEngagement),
-        verifiedOnly: String(options.xVerifiedOnly),
-        excludeSuspicious: String(options.xExcludeSuspicious),
-      });
-      if (options.symbol.trim()) xParams.set("symbol", options.symbol.trim().replace(/^\$/, ""));
-      if (options.twitterHandle.trim()) xParams.set("twitter", options.twitterHandle.trim());
-      if (options.lookback !== "all") xParams.set("hours", options.lookback);
-
-      const tgParams = new URLSearchParams({
-        platform: "telegram",
-        limit: String(options.tgLimit),
-        min_engagement: String(options.tgMinEngagement),
-        min_channel_score: String(options.tgMinChannelScore),
-        explicit_calls_only: String(options.tgExplicitCallsOnly),
-      });
-      if (options.lookback !== "all") tgParams.set("hours", options.lookback);
-      if (options.tgSources.trim()) tgParams.set("sources", options.tgSources.trim());
-
-      const [xResult, timelineResult] = await Promise.allSettled([
-        getJson<TwitterStats>(`/api/trade/dev-twitter?${xParams.toString()}`, controller.signal),
-        getJson<SocialTimeline>(`${BACKEND}/api/v1/social/token/${encodeURIComponent(clean)}?${tgParams.toString()}`, controller.signal),
-      ]);
-
-      if (controller.signal.aborted) return;
-
-      const nextWarnings: string[] = [];
-      const nextTwitter = xResult.status === "fulfilled" ? xResult.value : null;
-      const nextTimeline = timelineResult.status === "fulfilled" ? timelineResult.value : null;
-
-      if (xResult.status === "rejected") nextWarnings.push(`X: ${xResult.reason instanceof Error ? xResult.reason.message : "нет данных"}`);
-      if (timelineResult.status === "rejected") nextWarnings.push(`TG: ${timelineResult.reason instanceof Error ? timelineResult.reason.message : "нет данных"}`);
-      if (!nextTwitter && !nextTimeline) {
-        throw new Error(nextWarnings.join(" · ") || "Не удалось получить Social Intelligence данные");
-      }
-
-      setTwitter(nextTwitter);
-      setTimeline(nextTimeline);
-      setWarnings(nextWarnings);
-      socialCache.set(cacheKey, {
-        twitter: nextTwitter,
-        timeline: nextTimeline,
-        fetchedAt: Date.now(),
-        warnings: nextWarnings,
-      });
-    } catch (e) {
-      if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "Ошибка Social Intelligence");
-    } finally {
-      if (!controller.signal.aborted) {
-        setLoading(false);
-        setDeepLoading(false);
-      }
-    }
-  }, [options, router]);
-
-  useEffect(() => {
-    if (!optionsReady || didInitialLoad.current || !initialMint || !SOLANA_MINT_RE.test(initialMint)) return;
-    didInitialLoad.current = true;
-    void runAnalysis(initialMint);
-  }, [initialMint, optionsReady, runAnalysis]);
-
-  useEffect(() => () => abortRef.current?.abort(), []);
-
-  const mergedTimeline = useMemo(() => {
-    const items: TimelineItem[] = [...(timeline?.timeline || [])];
-    for (const tweet of twitter?.topTweets || []) {
-      items.push({
-        platform: "x",
-        source_handle: tweet.author,
-        source_name: null,
-        source_url: `https://x.com/${tweet.author}`,
-        text: tweet.text,
-        occurred_at: tweet.timestamp == null ? "" : new Date(tweet.timestamp).toISOString(),
-        metrics: {
-          likes: tweet.likes,
-          retweets: tweet.retweets,
-          views: tweet.views,
-          suspicious: tweet.isSuspicious,
-        },
-      });
-    }
-
-    const seen = new Set<string>();
-    return items
-      .filter((item) => {
-        const key = `${item.platform}|${item.source_handle || item.source_name || ""}|${item.text.slice(0, 120)}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return sourceFilter === "all" || item.platform === sourceFilter;
-      })
-      .sort((a, b) => {
-        const bTime = Date.parse(b.occurred_at);
-        const aTime = Date.parse(a.occurred_at);
-        return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-      })
-      .slice(0, 80);
-  }, [timeline, twitter, sourceFilter]);
-
-  const telegramMentions = timeline?.platforms?.telegram || 0;
-  const xMentions = twitter?.totalTweets || 0;
-  const totalSignals = xMentions + telegramMentions;
-  const busy = loading || deepLoading;
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    void runAnalysis(query);
-  };
-
-  return (
-    <div className="space-y-5" data-tag="trade.social_intelligence">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[color-mix(in_srgb,var(--theme-secondary)_34%,transparent)] bg-[color-mix(in_srgb,var(--theme-secondary)_12%,transparent)]">
-            <Network className="h-5 w-5 text-[color:var(--theme-secondary)]" />
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg font-semibold text-content">Trade · Social Intelligence</h1>
-              <span className="rounded-full border border-bg-border bg-bg-elevated/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-content-muted">X + Telegram</span>
-            </div>
-            <p className="mt-1 max-w-3xl text-xs leading-5 text-content-muted">
-              Перед анализом можно ограничить период, качество X-сигналов и Telegram-источники. Параметры сохраняются в браузере.
-            </p>
-          </div>
-        </div>
-        {twitter && (
-          <div className="flex flex-wrap items-center gap-2 text-[10px] text-content-faint">
-            <span className="rounded-full border border-bg-border bg-bg-card px-2.5 py-1">{twitter.collectionStrategy} · {twitter.performance.cached ? "cache" : `${twitter.performance.responseTimeMs} ms`}</span>
-            <span className="rounded-full border border-bg-border bg-bg-card px-2.5 py-1">период {lookbackLabel(options.lookback)}</span>
-          </div>
-        )}
-      </div>
-
-      <form onSubmit={submit} className="surface-panel rounded-2xl border border-bg-border p-4 sm:p-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="h-4 w-4 text-primary" />
-            <div>
-              <h2 className="text-sm font-semibold text-content">Параметры анализа</h2>
-              <p className="mt-0.5 text-[10px] text-content-faint">Token · X / Twitter · Telegram</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setOptions(DEFAULT_OPTIONS)}
-            disabled={busy}
-            className="rounded-lg border border-bg-border bg-bg-card px-2.5 py-1.5 text-[10px] font-semibold text-content-muted transition hover:text-content"
-          >
-            Сбросить параметры
-          </button>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[1.5fr_0.55fr_0.65fr]">
-          <ParameterField label="Solana mint / CA" hint="обязательно">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-faint" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Вставь mint / CA"
-                autoComplete="off"
-                spellCheck={false}
-                className={`${siteDesign.controls.inputClassName} pl-9 font-mono`}
-                aria-label="Solana mint address"
-              />
-            </div>
-          </ParameterField>
-          <ParameterField label="Ticker" hint="необязательно">
-            <input
-              value={options.symbol}
-              onChange={(event) => setOptions((prev) => ({ ...prev, symbol: event.target.value }))}
-              placeholder="BONK"
-              className={siteDesign.controls.inputClassName}
-            />
-          </ParameterField>
-          <ParameterField label="Период" hint="X + TG">
-            <select
-              value={options.lookback}
-              onChange={(event) => setOptions((prev) => ({ ...prev, lookback: event.target.value as Lookback }))}
-              className={siteDesign.controls.inputClassName}
-            >
-              <option value="1">1 час</option>
-              <option value="6">6 часов</option>
-              <option value="24">24 часа</option>
-              <option value="72">3 дня</option>
-              <option value="168">7 дней</option>
-              <option value="720">30 дней</option>
-              <option value="all">Всё время</option>
-            </select>
-          </ParameterField>
-        </div>
-
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
-          <section className="rounded-2xl border border-bg-border bg-bg-card/55 p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <Twitter className="h-4 w-4" />
-              <div>
-                <h3 className="text-xs font-semibold text-content">X / Twitter</h3>
-                <p className="text-[10px] text-content-faint">Бесплатный сбор через Nitter / активную browser-session.</p>
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <ParameterField label="X handle" hint="@ или URL">
-                <input
-                  value={options.twitterHandle}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, twitterHandle: event.target.value }))}
-                  placeholder="@project"
-                  className={siteDesign.controls.inputClassName}
-                />
-              </ParameterField>
-              <ParameterField label="Strategy">
-                <select
-                  value={options.xStrategy}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, xStrategy: event.target.value as XStrategy }))}
-                  className={siteDesign.controls.inputClassName}
-                >
-                  <option value="auto">Auto</option>
-                  <option value="nitter">Nitter</option>
-                  <option value="playwright">Playwright session</option>
-                </select>
-              </ParameterField>
-              <ParameterField label="Scope">
-                <select
-                  value={options.xScope}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, xScope: event.target.value as XScope }))}
-                  className={siteDesign.controls.inputClassName}
-                >
-                  <option value="mentions">Все mentions</option>
-                  <option value="official">Только official account</option>
-                </select>
-              </ParameterField>
-              <ParameterField label="Макс. постов">
-                <select
-                  value={options.xLimit}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, xLimit: Number(event.target.value) }))}
-                  className={siteDesign.controls.inputClassName}
-                >
-                  {[10, 20, 40, 80].map((value) => <option key={value} value={value}>{value}</option>)}
-                </select>
-              </ParameterField>
-              <ParameterField label="Min engagement" hint="likes + reposts + replies">
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={options.xMinEngagement}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, xMinEngagement: Math.max(0, Number(event.target.value) || 0) }))}
-                  className={siteDesign.controls.inputClassName}
-                />
-              </ParameterField>
-              <div className="space-y-2 pt-0 sm:pt-5">
-                <ToggleRow
-                  label="Только verified"
-                  checked={options.xVerifiedOnly}
-                  onChange={(checked) => setOptions((prev) => ({ ...prev, xVerifiedOnly: checked }))}
-                />
-                <ToggleRow
-                  label="Убирать bots / suspicious"
-                  checked={options.xExcludeSuspicious}
-                  onChange={(checked) => setOptions((prev) => ({ ...prev, xExcludeSuspicious: checked }))}
-                />
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-bg-border bg-bg-card/55 p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <Send className="h-4 w-4 text-[color:var(--theme-secondary)]" />
-              <div>
-                <h3 className="text-xs font-semibold text-content">Telegram</h3>
-                <p className="text-[10px] text-content-faint">Фильтрация сохранённой MTProto-истории каналов и чатов.</p>
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <ParameterField label="Каналы" hint="через запятую">
-                <input
-                  value={options.tgSources}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, tgSources: event.target.value }))}
-                  placeholder="channel1, channel2"
-                  className={siteDesign.controls.inputClassName}
-                />
-              </ParameterField>
-              <ParameterField label="Макс. сигналов">
-                <select
-                  value={options.tgLimit}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, tgLimit: Number(event.target.value) }))}
-                  className={siteDesign.controls.inputClassName}
-                >
-                  {[20, 50, 100, 200, 500].map((value) => <option key={value} value={value}>{value}</option>)}
-                </select>
-              </ParameterField>
-              <ParameterField label="Min channel score">
-                <select
-                  value={options.tgMinChannelScore}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, tgMinChannelScore: Number(event.target.value) }))}
-                  className={siteDesign.controls.inputClassName}
-                >
-                  <option value={0}>Любой</option>
-                  <option value={25}>25+</option>
-                  <option value={50}>50+</option>
-                  <option value={75}>75+</option>
-                </select>
-              </ParameterField>
-              <ParameterField label="Min engagement" hint="reactions + forwards + replies">
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={options.tgMinEngagement}
-                  onChange={(event) => setOptions((prev) => ({ ...prev, tgMinEngagement: Math.max(0, Number(event.target.value) || 0) }))}
-                  className={siteDesign.controls.inputClassName}
-                />
-              </ParameterField>
-              <div className="sm:col-span-2 space-y-2 pt-0 sm:pt-5">
-                <ToggleRow
-                  label="Только explicit calls / gem / alpha / buy-сигналы"
-                  checked={options.tgExplicitCallsOnly}
-                  onChange={(checked) => setOptions((prev) => ({ ...prev, tgExplicitCallsOnly: checked }))}
-                />
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-bg-border pt-4">
-          <button type="submit" disabled={busy || !optionsReady} className={siteDesign.controls.primaryActionClassName}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
-            Анализировать X + Telegram
-          </button>
-          {mint && (
-            <button type="button" onClick={() => void runAnalysis(mint)} disabled={busy} className={siteDesign.controls.actionButtonClassName}>
-              <RefreshCw className={clsx("h-4 w-4", loading && "animate-spin")} />
-              Обновить
-            </button>
-          )}
-          {mint && (
-            <button type="button" onClick={() => void runAnalysis(mint, true)} disabled={busy} className={siteDesign.controls.actionButtonClassName} title="Принудительно использовать активную X browser-session">
-              {deepLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              Deep X
-            </button>
-          )}
-          <div className="ml-auto text-[10px] text-content-faint">Период: {lookbackLabel(options.lookback)} · TG score ≥ {options.tgMinChannelScore} · X engagement ≥ {options.xMinEngagement}</div>
-        </div>
-      </form>
-
-      {error && (
-        <div className="flex items-start gap-3 rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-content-soft">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-          <div>
-            <div className="font-semibold text-danger">Social Intelligence недоступен</div>
-            <div className="mt-1 text-xs text-content-muted">{error}</div>
-          </div>
-        </div>
-      )}
-
-      {warnings.length > 0 && !error && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-warning/25 bg-warning/5 px-4 py-3 text-xs text-content-muted">
-          <AlertTriangle className="h-4 w-4 text-warning" />
-          Показаны частичные данные: {warnings.join(" · ")}
-        </div>
-      )}
-
-      {busy && !twitter && !timeline ? (
-        <SocialSkeleton />
-      ) : mint && (twitter || timeline) ? (
-        <>
-          <section className="surface-panel overflow-hidden rounded-2xl border border-bg-border">
-            <div className="flex flex-col gap-4 border-b border-bg-border p-5 lg:flex-row lg:items-center lg:justify-between">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <h2 className="text-2xl font-bold tracking-tight text-content">{twitter?.symbol ? `$${twitter.symbol}` : options.symbol ? `$${options.symbol}` : "Token"}</h2>
-                  <span className="font-mono text-xs text-content-faint">{shortMint(mint)}</span>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-content-muted">
-                  {twitter?.twitterHandle ? (
-                    <a href={`https://x.com/${twitter.twitterHandle}`} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 rounded-lg border border-bg-border bg-bg-elevated px-2.5 py-1.5 transition hover:border-primary-border hover:text-content">
-                      <Twitter className="h-3.5 w-3.5" />@{twitter.twitterHandle}<ExternalLink className="h-3 w-3" />
-                    </a>
-                  ) : (
-                    <span className="rounded-lg border border-bg-border bg-bg-elevated px-2.5 py-1.5">официальный X не определён</span>
-                  )}
-                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-bg-border bg-bg-elevated px-2.5 py-1.5"><Send className="h-3.5 w-3.5" /> Telegram signals: {telegramMentions}</span>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[480px]">
-                <MiniMetric label="Signals" value={compact(totalSignals)} icon={<Zap className="h-3.5 w-3.5" />} />
-                <MiniMetric label="Authors" value={compact(twitter?.uniqueMentioners || 0)} icon={<Users className="h-3.5 w-3.5" />} />
-                <MiniMetric label="Engagement" value={compact(twitter?.aggregated.totalEngagement || 0)} icon={<MessageCircle className="h-3.5 w-3.5" />} />
-                <MiniMetric label="Bot risk" value={twitter ? `${twitter.botRiskScore}/100` : "—"} icon={<ShieldAlert className="h-3.5 w-3.5" />} tone={twitter?.botRisk === "high" ? "danger" : twitter?.botRisk === "medium" ? "warning" : "default"} />
-              </div>
-            </div>
-
-            <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
-              <MetricCard label="X mentions" value={compact(xMentions)} detail={`${compact(twitter?.totalViews || 0)} views · ${compact(twitter?.totalLikes || 0)} likes`} icon={<Twitter className="h-4 w-4" />} />
-              <MetricCard label="Telegram" value={compact(telegramMentions)} detail={timeline?.origin ? `first filtered signal ${relativeTime(timeline.origin.occurred_at)} ago` : "no TG signals after filters"} icon={<Send className="h-4 w-4" />} />
-              <MetricCard label="Bot / anomalies" value={compact(twitter?.anomalyCount || 0)} detail={twitter ? `${percent(twitter.aggregated.botRatio)} suspicious posts` : "—"} icon={<Bot className="h-4 w-4" />} />
-              <MetricCard label="Engagement rate" value={twitter ? percent(twitter.aggregated.engagementRate) : "—"} detail={twitter ? `${twitter.aggregated.verifiedAuthors} verified authors` : "—"} icon={<Gauge className="h-4 w-4" />} />
-            </div>
-          </section>
-
-          {twitter && twitter.shillers.length > 0 && (
-            <section className="surface-panel rounded-2xl border border-bg-border p-5">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-content">Активные X-аккаунты после фильтров</h2>
-                  <p className="mt-1 text-xs text-content-faint">Кто чаще и сильнее продвигает токен в выбранном окне.</p>
-                </div>
-                <span className="text-[10px] uppercase tracking-wider text-content-faint">top {Math.min(12, twitter.shillers.length)}</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {twitter.shillers.slice(0, 12).map((account) => (
-                  <a key={account.handle} href={`https://x.com/${account.handle}`} target="_blank" rel="noreferrer noopener" className={clsx("group flex items-center gap-2 rounded-xl border px-3 py-2 transition", account.isBot ? "border-danger/25 bg-danger/5 hover:border-danger/45" : "border-bg-border bg-bg-elevated/60 hover:border-primary-border")}>
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full border border-bg-border bg-bg-card text-[10px] font-bold text-content-muted">{account.handle.slice(0, 2).toUpperCase()}</div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1 text-xs font-semibold text-content">@{account.handle}{account.isVerified && <BadgeCheck className="h-3 w-3 text-primary" />}{account.isBot && <Bot className="h-3 w-3 text-danger" />}</div>
-                      <div className="mt-0.5 text-[10px] text-content-faint">{account.tweets} posts · {compact(account.totalEngagement)} eng · {account.followers == null ? "followers n/a" : `${compact(account.followers)} followers`}</div>
-                    </div>
-                  </a>
-                ))}
-              </div>
-            </section>
-          )}
-
-          <section className="surface-panel overflow-hidden rounded-2xl border border-bg-border">
-            <div className="flex flex-col gap-3 border-b border-bg-border p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-content">Unified signal feed</h2>
-                <p className="mt-1 text-xs text-content-faint">Отфильтрованные X + Telegram сигналы в одной ленте.</p>
-              </div>
-              <div className="flex flex-wrap gap-1 rounded-xl border border-bg-border bg-bg-card p-1">
-                {(["all", "x", "telegram"] as const).map((source) => (
-                  <button key={source} type="button" onClick={() => setSourceFilter(source)} className={clsx("rounded-lg px-3 py-1.5 text-[11px] font-semibold transition", sourceFilter === source ? "bg-primary-soft text-primary" : "text-content-muted hover:bg-bg-elevated hover:text-content")}>
-                    {source === "all" ? "Все" : source === "x" ? "X / Twitter" : "Telegram"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {mergedTimeline.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 px-6 py-16 text-center">
-                <Radar className="h-6 w-6 text-content-faint" />
-                <div className="text-sm font-medium text-content-soft">Сигналы не прошли выбранные фильтры</div>
-                <div className="max-w-md text-xs text-content-faint">Увеличь период, снизь min engagement / channel score или отключи verified-only.</div>
-              </div>
-            ) : (
-              <div className="divide-y divide-bg-border">
-                {mergedTimeline.map((item, index) => <SignalRow key={`${item.platform}-${item.source_handle || item.source_name}-${index}`} item={item} />)}
-              </div>
-            )}
-          </section>
-        </>
-      ) : (
-        <EmptyState overviewLoading={overviewLoading} channels={channels} callers={callers} />
-      )}
-
-      {(channels.length > 0 || callers.length > 0) && (
-        <div className="grid gap-4 xl:grid-cols-2">
-          <section className="surface-panel overflow-hidden rounded-2xl border border-bg-border">
-            <div className="flex items-center justify-between border-b border-bg-border px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-content"><Send className="h-4 w-4" /> Telegram channels</div>
-              <span className="text-[10px] text-content-faint">global reputation</span>
-            </div>
-            <div className="divide-y divide-bg-border">
-              {channels.slice(0, 8).map((channel) => (
-                <div key={channel.id} className="grid grid-cols-[1fr_auto] gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-semibold text-content">{channel.title || channel.username || `channel ${channel.id}`}</div>
-                    <div className="mt-1 text-[10px] text-content-faint">{compact(channel.participants)} members · {channel.calls_count} calls · rug {(channel.rug_rate * 100).toFixed(0)}%</div>
-                  </div>
-                  <div className="text-right"><div className="font-mono text-sm font-bold text-primary">{channel.score.toFixed(0)}</div><div className="text-[9px] uppercase tracking-wider text-content-faint">score</div></div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="surface-panel overflow-hidden rounded-2xl border border-bg-border">
-            <div className="flex items-center justify-between border-b border-bg-border px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-content"><Users className="h-4 w-4" /> Top callers</div>
-              <span className="text-[10px] text-content-faint">Telegram authors</span>
-            </div>
-            <div className="divide-y divide-bg-border">
-              {callers.slice(0, 8).map((caller) => (
-                <div key={caller.username} className="grid grid-cols-[1fr_auto] gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-semibold text-content">@{caller.username}</div>
-                    <div className="mt-1 text-[10px] text-content-faint">{caller.calls} calls · win {(caller.win_rate * 100).toFixed(0)}% · avg {caller.avg_roi.toFixed(1)}x</div>
-                  </div>
-                  <div className="text-right"><div className="font-mono text-sm font-bold text-primary">{caller.score.toFixed(0)}</div><div className="text-[9px] uppercase tracking-wider text-content-faint">score</div></div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ParameterField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <label className="block min-w-0">
-      <span className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wider text-content-faint">
-        <span>{label}</span>{hint ? <span className="normal-case tracking-normal text-content-faint/70">{hint}</span> : null}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-[11px] text-content-soft">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-[color:var(--theme-primary)]" />
-      <span>{label}</span>
-    </label>
-  );
-}
-
-function SignalRow({ item }: { item: TimelineItem }) {
-  const telegram = item.platform === "telegram";
-  const metrics = item.metrics || {};
-  const source = item.source_handle || item.source_name || (telegram ? "Telegram" : "X");
-  return (
-    <article className="px-4 py-4 transition hover:bg-bg-elevated/35">
-      <div className="flex items-start gap-3">
-        <div className={clsx("mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border", telegram ? "border-[color-mix(in_srgb,var(--theme-secondary)_28%,transparent)] bg-[color-mix(in_srgb,var(--theme-secondary)_10%,transparent)] text-[color:var(--theme-secondary)]" : "border-bg-border bg-bg-elevated text-content-soft")}>
-          {telegram ? <Send className="h-4 w-4" /> : <Twitter className="h-4 w-4" />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-xs font-semibold text-content">{source.startsWith("@") ? source : `@${source}`}</span>
-            <span className="rounded-full border border-bg-border bg-bg-card px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-content-faint">{telegram ? "TG" : "X"}</span>
-            {telegram && metrics.explicit_call === true && <span className="rounded-full border border-primary-border bg-primary-soft px-1.5 py-0.5 text-[9px] font-semibold text-primary">CALL</span>}
-            <span className="inline-flex items-center gap-1 text-[10px] text-content-faint"><Clock3 className="h-3 w-3" />{relativeTime(item.occurred_at)}</span>
-            {item.source_url && <a href={item.source_url} target="_blank" rel="noreferrer noopener" className="ml-auto inline-flex items-center gap-1 text-[10px] text-content-faint hover:text-content">открыть <ExternalLink className="h-3 w-3" /></a>}
-          </div>
-          <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-content-soft">{item.text}</p>
-          <div className="mt-2 flex flex-wrap gap-3 font-mono text-[10px] text-content-faint">
-            {typeof metrics.views === "number" && metrics.views > 0 && <span>{compact(metrics.views)} views</span>}
-            {typeof metrics.likes === "number" && <span>{compact(metrics.likes)} likes</span>}
-            {typeof metrics.retweets === "number" && <span>{compact(metrics.retweets)} reposts</span>}
-            {typeof metrics.reactions === "number" && <span>{compact(metrics.reactions)} reactions</span>}
-            {typeof metrics.forwards === "number" && <span>{compact(metrics.forwards)} forwards</span>}
-            {metrics.suspicious === true && <span className="text-danger">suspicious</span>}
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function MiniMetric({ label, value, icon, tone = "default" }: { label: string; value: string; icon: React.ReactNode; tone?: "default" | "warning" | "danger" }) {
-  return (
-    <div className={clsx("rounded-xl border px-3 py-2", tone === "danger" ? "border-danger/25 bg-danger/5" : tone === "warning" ? "border-warning/25 bg-warning/5" : "border-bg-border bg-bg-card")}>
-      <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-content-faint">{icon}{label}</div>
-      <div className={clsx("mt-1 font-mono text-sm font-bold", tone === "danger" ? "text-danger" : tone === "warning" ? "text-warning" : "text-content")}>{value}</div>
-    </div>
-  );
-}
-
-function MetricCard({ label, value, detail, icon }: { label: string; value: string; detail: string; icon: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-bg-border bg-bg-card/60 p-4">
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-content-faint">{icon}{label}</div>
-      <div className="mt-2 font-mono text-xl font-bold text-content">{value}</div>
-      <div className="mt-1 text-[10px] text-content-faint">{detail}</div>
-    </div>
-  );
-}
-
-function SocialSkeleton() {
-  return (
-    <div className="space-y-4" aria-busy="true">
-      <div className="surface-panel rounded-2xl border border-bg-border p-5">
-        <div className="h-6 w-44 animate-pulse rounded-lg bg-bg-elevated" />
-        <div className="mt-3 h-4 w-72 max-w-full animate-pulse rounded-lg bg-bg-elevated" />
-        <div className="mt-6 grid grid-cols-2 gap-3 xl:grid-cols-4">{[0, 1, 2, 3].map((item) => <div key={item} className="h-24 animate-pulse rounded-xl border border-bg-border bg-bg-elevated/50" />)}</div>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState({ overviewLoading, channels, callers }: { overviewLoading: boolean; channels: ChannelRow[]; callers: CallerRow[] }) {
-  return (
-    <section className="surface-panel rounded-2xl border border-bg-border px-6 py-14 text-center">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-primary-border bg-primary-soft text-primary">{overviewLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Network className="h-5 w-5" />}</div>
-      <h2 className="mt-4 text-base font-semibold text-content">Настрой параметры и запусти единый анализ</h2>
-      <p className="mx-auto mt-2 max-w-xl text-xs leading-5 text-content-muted">Mint обязателен. Ticker/X handle ускоряют поиск, а Telegram-фильтры отсекают слабые каналы и обычные упоминания до построения ленты.</p>
-      <div className="mx-auto mt-5 flex max-w-xl flex-wrap justify-center gap-2 text-[10px] text-content-faint">
-        <span className="rounded-full border border-bg-border bg-bg-card px-2.5 py-1">X mentions + quality filters</span>
-        <span className="rounded-full border border-bg-border bg-bg-card px-2.5 py-1">TG calls + channel score</span>
-        <span className="rounded-full border border-bg-border bg-bg-card px-2.5 py-1">Shared lookback window</span>
-        {(channels.length > 0 || callers.length > 0) && <span className="rounded-full border border-primary-border bg-primary-soft px-2.5 py-1 text-primary">Telegram DB connected</span>}
-      </div>
-    </section>
-  );
-}
+function Field({label,children}:{label:string;children:ReactNode}){return <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-content-faint">{label}</span>{children}</label>}
+function Check({label,value,set}:{label:string;value:boolean;set:(v:boolean)=>void}){return <label className="flex min-h-10 items-center gap-2 rounded-xl border border-bg-border bg-bg-card px-3 text-xs text-content-muted"><input type="checkbox" checked={value} onChange={e=>set(e.target.checked)}/>{label}</label>}
+function Notice({tone,text}:{tone:"danger"|"warning";text:string}){return <div className={`flex gap-2 rounded-xl border p-3 text-xs ${tone==="danger"?"border-danger/30 bg-danger/10 text-danger":"border-warning/30 bg-warning/10 text-content-muted"}`}><AlertTriangle className="h-4 w-4 shrink-0"/>{text}</div>}
+function Kpi({label,value,icon}:{label:string;value:string;icon:ReactNode}){return <div className="surface-panel rounded-xl border border-bg-border p-3"><div className="flex items-center justify-between text-content-faint"><span className="text-[9px] uppercase tracking-wider">{label}</span><span className="[&>svg]:h-3.5 [&>svg]:w-3.5">{icon}</span></div><div className="mt-2 font-mono text-lg font-bold text-content">{value}</div></div>}
+function MetricTable({title,rows}:{title:string;rows:Metric[]}){return <div className="overflow-hidden rounded-xl border border-bg-border"><div className="border-b border-bg-border bg-bg-elevated/60 px-3 py-2 text-xs font-semibold text-content">{title}</div><div className="divide-y divide-bg-border">{rows.map(r=><div key={r.label} className="grid grid-cols-[minmax(0,1fr)_minmax(90px,.8fr)] gap-3 px-3 py-2 text-[11px]"><div><div className="text-content-muted">{r.label}</div>{r.note&&<div className="mt-0.5 text-[9px] text-content-faint">{r.note}</div>}</div><div className="break-words text-right font-mono font-semibold text-content">{r.value}</div></div>)}</div></div>}
+function AiPanel({ai}:{ai:AiEnvelope|null}){const r=ai?.result;return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-primary"/><h2 className="text-sm font-semibold text-content">Qwen AI · Telegram second-stage analysis</h2></div>{!ai?<div className="text-xs text-content-faint">AI запускается после получения Telegram сообщений.</div>:!r?<div className="text-xs text-warning">Qwen недоступен: {ai.error||"нет результата"}</div>:<div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]"><div><p className="text-sm leading-6 text-content-soft">{r.summary}</p><div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] uppercase tracking-wider text-content-faint">Campaign narrative</div><div className="mt-1 text-xs leading-5 text-content-muted">{r.campaignHypothesis.narrative||"—"}</div></div></div><div className="space-y-2">{r.reasoningSummary.map((v,i)=><div key={i} className="rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs text-content-muted">{v}</div>)}</div></div>}</section>}
+function TimelinePanel({x,tg}:{x:TwitterStats|null;tg:SocialTimeline|null}){const items=useMemo(()=>{const a:TimelineItem[]=[...(tg?.timeline||[])];for(const t of x?.topTweets||[])a.push({platform:"x",source_handle:t.author,source_name:null,source_url:null,text:t.text,occurred_at:t.timestamp?new Date(t.timestamp).toISOString():"",metrics:{likes:t.likes,retweets:t.retweets,views:t.views}});return a.sort((p,q)=>num(ts(p.occurred_at))-num(ts(q.occurred_at))).slice(0,80)},[x,tg]);return <section className="surface-panel rounded-2xl border border-bg-border p-4"><h2 className="text-sm font-semibold text-content">Signal timeline · TG → X → Hype</h2><div className="mt-3 space-y-2">{items.length?items.map((i,n)=><div key={`${n}-${i.source_handle}`} className="grid grid-cols-[70px_110px_1fr] gap-2 rounded-xl border border-bg-border bg-bg-card/50 p-2 text-[10px]"><div className="font-mono text-content-faint">{i.occurred_at?new Date(i.occurred_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}):"—"}</div><div className="font-semibold text-content">{i.platform.toUpperCase()} · {i.source_handle||i.source_name||"source"}</div><div className="line-clamp-2 text-content-muted">{i.text}</div></div>):<div className="text-xs text-content-faint">Нет timestamped сигналов.</div>}</div></section>}
