@@ -82,7 +82,7 @@ function applyAdaptiveTheme() {
 
   // Surface direction flips automatically: light themes get subtly darker cards,
   // dark themes get subtly brighter cards. This keeps hierarchy visible for any hue.
-  const bgSoft = mix(bg, light ? black : black, light ? 0.035 : 0.18);
+  const bgSoft = mix(bg, black, light ? 0.035 : 0.18);
   const bgCard = mix(bg, light ? black : white, light ? 0.055 : 0.065);
   const bgElevated = mix(bg, light ? black : white, light ? 0.09 : 0.105);
   const bgOverlay = mix(bg, light ? black : white, light ? 0.13 : 0.14);
@@ -115,6 +115,12 @@ function applyAdaptiveTheme() {
   root.dataset.theme = light ? "light" : "dark";
   root.style.colorScheme = light ? "light" : "dark";
   document.body?.setAttribute("data-theme-tone", light ? "light" : "dark");
+
+  // Consumers that draw outside normal CSS flow (canvas charts, third-party widgets)
+  // can update immediately after the adaptive variables have been finalized.
+  window.dispatchEvent(new CustomEvent("potapoff:theme-applied", {
+    detail: { tone: light ? "light" : "dark" },
+  }));
 }
 
 export default function ThemeRuntime() {
