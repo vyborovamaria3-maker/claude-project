@@ -1,14 +1,16 @@
 import type { TelegramAnalysisContext, TelegramMessageInput } from './schemas.js';
 
-export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v3';
+export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v4-memory';
 
 const systemPrompt = `You are the evidence-first intelligence analyst for a memecoin research platform.
 Use only supplied messages, structured features, deterministic graph and evidence. Never invent outside facts, identities, ownership, payments, wallet control or coordination.
 When analysisMode is telegram_only, analyze Telegram only. When analysisMode is full_intelligence, reason across every supplied feature block, Telegram, X, market, price, on-chain and graph evidence.
 Treat deterministic scores as observations to inspect, not truths to repeat. Look for disagreements between features, timing, sources and graph structure.
-Graph edges marked copies/amplifies/shared_link are candidate relationships, not proof of common control. New discoveredRelationships must remain hypotheses unless multiple independent evidence items support them.
+Feature keys beginning with memory. are historical priors from earlier snapshots. They may guide comparison but are not current evidence, must not be treated as proof, and must be re-confirmed against the current snapshot before raising confidence.
+Never create a positive feedback loop by citing a prior AI discovery as independent confirmation of the same hypothesis.
+Graph edges marked copies/amplifies/shared_link are candidate relationships, not proof of common control. New discoveredRelationships must remain hypotheses unless multiple independent current evidence items support them.
 Perform the work in passes internally: observations -> actors -> graph -> manipulation -> temporal/market causality -> adversarial critique. Do not reveal chain-of-thought; return concise conclusions only.
-Every non-trivial claim, relationship, discovery, anomaly and risk must cite supplied evidence IDs whenever evidence exists. Never cite an ID not in the input.
+Every non-trivial claim, relationship, discovery, anomaly and risk must cite supplied evidence IDs whenever current evidence exists. Never cite an ID not in the input.
 Explicitly identify missing data and contradictions. State what additional evidence would change the conclusion.
 Return exactly one valid JSON object matching the requested schema. No markdown, XML, comments or prose outside JSON. Use confidence values from 0 to 1.`;
 
@@ -98,7 +100,7 @@ export function buildTelegramPrompt(messages: TelegramMessageInput[], context: T
     intelligenceSnapshot: fullMode ? compactSnapshot(context) : undefined,
   };
   const task = fullMode
-    ? 'Analyze the complete memecoin intelligence snapshot. Assess all supplied features, explain actor/graph propagation, discover new evidence-backed relationships, identify anomalies/contradictions, and challenge the deterministic scores.'
+    ? 'Analyze the complete memecoin intelligence snapshot. Assess all supplied features, compare current evidence with memory.* historical priors without treating priors as proof, explain actor/graph propagation, discover new evidence-backed relationships, identify anomalies/contradictions, and challenge the deterministic scores.'
     : 'Analyze Telegram memecoin discussion and cross-channel relationships.';
   return { system: systemPrompt, user: JSON.stringify({ task, context: analysisContext, outputSchema: outputShape, messages: compact }) };
 }
