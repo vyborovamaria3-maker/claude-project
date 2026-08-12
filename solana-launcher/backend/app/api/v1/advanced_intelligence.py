@@ -16,9 +16,9 @@ from app.models.advanced_intelligence import (
     IntelligenceOutcome,
 )
 from app.models.intelligence_memory import IntelligenceSnapshot
-from app.services.advanced_intelligence import (
-    build_advanced_intelligence_report,
-    persist_advanced_intelligence,
+from app.services.advanced_intelligence import build_advanced_intelligence_report
+from app.services.advanced_intelligence_persistence import (
+    persist_advanced_intelligence_state,
 )
 from app.services.telegram_parser import is_solana_address
 
@@ -29,6 +29,7 @@ class AdvancedReportRequest(BaseModel):
     snapshot: dict
     ai_result: dict | None = None
     persist: bool = True
+    role: str = Field(default="analyst", pattern="^(analyst|critic)$")
 
 
 class OutcomeRequest(BaseModel):
@@ -55,7 +56,10 @@ def _require_backend_key(request: Request, supplied: str | None) -> None:
         )
 
 
-def _snapshot_feature(snapshot: IntelligenceSnapshot, suffixes: tuple[str, ...]) -> float | None:
+def _snapshot_feature(
+    snapshot: IntelligenceSnapshot,
+    suffixes: tuple[str, ...],
+) -> float | None:
     payload = snapshot.payload or {}
     for row in payload.get("features") or []:
         key = str(row.get("key") or "")
@@ -150,11 +154,12 @@ async def advanced_report(
         ai_result=payload.ai_result,
     )
     if payload.persist:
-        await persist_advanced_intelligence(
+        await persist_advanced_intelligence_state(
             session,
             snapshot=payload.snapshot,
             report=report,
             ai_result=payload.ai_result,
+            role=payload.role,
         )
     return report
 
