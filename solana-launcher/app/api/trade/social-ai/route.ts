@@ -4,7 +4,6 @@ import type { AnalysisSnapshot, IntelligenceFeature } from "@/lib/trade/intellig
 import {
   enrichSnapshotWithMemory,
   loadMemoryContext,
-  persistIntelligenceMemory,
   researchCandidates,
   researchMeta,
   runBoundedResearch,
@@ -23,6 +22,7 @@ const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(
 const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
 const REQUEST_BUDGET_MS = 112_000;
 const MAX_DYNAMIC_RESEARCH_ROUNDS = 3;
+const INTELLIGENCE_PROMPT_VERSION = "intelligence-qwen-v7-critic";
 
 type TimelineItem = {
   source_handle?: string | null;
@@ -286,6 +286,76 @@ async function buildAdvancedReport(
   }
 }
 
+async function persistMainMemory(
+  snapshot: AnalysisSnapshot,
+  analysisSnapshot: AnalysisSnapshot,
+  result: QwenEnvelope,
+) {
+  if (!BACKEND_KEY) return { status: "disabled" };
+  try {
+    const response = await fetch(
+      `${BACKEND_BASE}/api/v1/social/intelligence/memory`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Backend-API-Key": BACKEND_KEY,
+        },
+        body: JSON.stringify({
+          snapshot,
+          analysis_snapshot: analysisSnapshot,
+          ai_result: result.result || null,
+          provider: typeof result.provider === "string" ? result.provider : null,
+          model: typeof result.model === "string" ? result.model : null,
+          prompt_version: INTELLIGENCE_PROMPT_VERSION,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(4_000),
+      },
+    );
+    if (!response.ok) return { status: "unavailable" };
+    return (await response.json()) as Record<string, unknown>;
+  } catch {
+    return { status: "unavailable" };
+  }
+}
+
+async function persistCriticAudit(
+  snapshotId: string,
+  criticSnapshot: AnalysisSnapshot,
+  critic: QwenEnvelope,
+) {
+  if (!BACKEND_KEY) return { status: "disabled" };
+  try {
+    const response = await fetch(
+      `${BACKEND_BASE}/api/v1/social/intelligence/memory/audit`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Backend-API-Key": BACKEND_KEY,
+        },
+        body: JSON.stringify({
+          snapshot_id: snapshotId,
+          key: "critic_v1",
+          payload: {
+            prompt_version: INTELLIGENCE_PROMPT_VERSION,
+            input: criticSnapshot,
+            result: critic.result || null,
+            provider: typeof critic.provider === "string" ? critic.provider : null,
+            model: typeof critic.model === "string" ? critic.model : null,
+          },
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(4_000),
+      },
+    );
+    return { status: response.ok ? "stored" : "unavailable" };
+  } catch {
+    return { status: "unavailable" };
+  }
+}
+
 function compactPriorConclusion(result: QwenEnvelope) {
   const value = {
     summary: result.result?.summary || null,
@@ -475,8 +545,14 @@ export async function POST(req: NextRequest) {
       researchRound = round;
     }
 
+    const memoryWrite =
+      snapshot && analysisSnapshot && remainingBudget(startedAt) > 4_500
+        ? await persistMainMemory(snapshot, analysisSnapshot, result)
+        : { status: "skipped_budget" };
+
     let advancedIntelligence: AdvancedReport | null = null;
     let critic: QwenEnvelope | null = null;
+    let criticAudit: Record<string, unknown> = { status: "not_run" };
     if (analysisSnapshot && remainingBudget(startedAt) > 12_000) {
       advancedIntelligence = await buildAdvancedReport(analysisSnapshot, result, {
         persist: true,
@@ -511,19 +587,24 @@ export async function POST(req: NextRequest) {
                 timeoutMs: 4_000,
               });
             }
+            if (snapshot && remainingBudget(startedAt) > 4_000) {
+              criticAudit = await persistCriticAudit(
+                snapshot.snapshotId,
+                criticSnapshot,
+                critic,
+              );
+            }
           } catch {
             critic = null;
+            criticAudit = { status: "failed" };
           }
         }
       }
     }
 
-    const memoryWrite =
-      snapshot && analysisSnapshot && remainingBudget(startedAt) > 2_500
-        ? await persistIntelligenceMemory(snapshot, analysisSnapshot, result)
-        : { status: "skipped_budget" };
-
-    const lastResearch = researchRuns.at(-1) || null;
+    const lastResearch = researchRuns.length
+      ? researchRuns[researchRuns.length - 1]
+      : null;
     return NextResponse.json(
       {
         agent: "qwen",
@@ -539,6 +620,7 @@ export async function POST(req: NextRequest) {
           loaded: Boolean(initialMemory),
           stats: initialMemory?.stats || null,
           write: memoryWrite,
+          criticAudit,
           researchRound,
           recommendedResearchRounds: recommendedRounds,
           researchedEntities: [...researched],
