@@ -112,6 +112,25 @@ export const telegramContextSchema = z.object({
   intelligenceSnapshot: intelligenceSnapshotSchema.optional(),
 }).strict().default({});
 
+const discoveredRelationshipSchema = z.object({
+  source: z.string().min(1).max(512),
+  target: z.string().min(1).max(512),
+  type: z.enum(['likely_originator', 'likely_amplifier', 'likely_coordinated', 'shared_campaign', 'narrative_source', 'possible_link', 'other']),
+  confidence,
+  status: z.enum(['hypothesis', 'supported', 'contradicted']),
+  rationale: z.string().min(1).max(1_500),
+  evidenceMessageIds: evidenceIds,
+  supportingFeatureKeys: z.array(z.string().min(1).max(160)).max(20).default([]),
+}).strict().superRefine((value, ctx) => {
+  if (value.evidenceMessageIds.length === 0 && value.supportingFeatureKeys.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'A discovered relationship requires message evidence or supporting feature keys',
+      path: ['supportingFeatureKeys'],
+    });
+  }
+});
+
 export const telegramAiResultSchema = z.object({
   summary: z.string().min(1).max(4_000),
   sentiment: z.object({
@@ -179,16 +198,7 @@ export const telegramAiResultSchema = z.object({
     explanation: z.string().min(1).max(1_000),
     evidenceMessageIds: evidenceIds,
   }).strict()).max(120).optional().default([]),
-  discoveredRelationships: z.array(z.object({
-    source: z.string().min(1).max(512),
-    target: z.string().min(1).max(512),
-    type: z.enum(['likely_originator', 'likely_amplifier', 'likely_coordinated', 'shared_campaign', 'narrative_source', 'possible_link', 'other']),
-    confidence,
-    status: z.enum(['hypothesis', 'supported', 'contradicted']),
-    rationale: z.string().min(1).max(1_500),
-    evidenceMessageIds: requiredEvidenceIds,
-    supportingFeatureKeys: z.array(z.string().min(1).max(160)).max(20).optional().default([]),
-  }).strict()).max(150).optional().default([]),
+  discoveredRelationships: z.array(discoveredRelationshipSchema).max(150).optional().default([]),
   anomalies: z.array(z.object({
     type: z.string().min(1).max(120),
     severity,
