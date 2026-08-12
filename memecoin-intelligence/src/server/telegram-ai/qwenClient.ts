@@ -83,6 +83,7 @@ function validateResult(result: TelegramAiResult, messages: TelegramMessageInput
   if (snapshotFeatureKeys.size) {
     const unknownFeatureKeys = [...new Set([
       ...result.featureAssessments.map((entry) => entry.featureKey),
+      ...result.discoveredRelationships.flatMap((entry) => entry.supportingFeatureKeys),
       ...result.anomalies.flatMap((entry) => entry.relatedFeatureKeys),
     ].filter((key) => !snapshotFeatureKeys.has(key)))];
     if (unknownFeatureKeys.length) throw new Error(`Qwen cited unknown feature keys: ${unknownFeatureKeys.slice(0, 10).join(', ')}`);
