@@ -51,13 +51,11 @@ function compactFeatures(context: TelegramAnalysisContext) {
     selected.push(feature);
     remainingChars -= cost;
   }
-  return selected.slice(0, 300).map((feature) => ({
-    key: feature.key,
-    value: feature.value,
-    numericValue: feature.numericValue ?? null,
-    confidence: feature.confidence,
-    missing: feature.missing,
-  }));
+  return selected.slice(0, 300);
+}
+
+export function promptVisibleFeatureKeys(context: TelegramAnalysisContext) {
+  return new Set(compactFeatures(context).map((feature) => feature.key));
 }
 
 function compactSnapshot(context: TelegramAnalysisContext) {
@@ -74,7 +72,13 @@ function compactSnapshot(context: TelegramAnalysisContext) {
     createdAt: snapshot.createdAt,
     featureCount: snapshot.featureCount,
     missingFeatureCount: snapshot.missingFeatureCount,
-    features: compactedFeatures,
+    features: compactedFeatures.map((feature) => ({
+      key: feature.key,
+      value: feature.value,
+      numericValue: feature.numericValue ?? null,
+      confidence: feature.confidence,
+      missing: feature.missing,
+    })),
     omittedContextFeatureCount: Math.max(0, snapshot.features.length - compactedFeatures.length),
     graph: {
       stats: snapshot.graph.stats,
