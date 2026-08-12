@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_subscriber
 from app.db.session import get_db
+from app.models.intelligence_memory import IntelligenceSnapshot
 from app.services.intelligence_memory import (
     build_memory_context,
     entity_memory,
@@ -27,6 +28,12 @@ class IntelligenceMemoryPersistRequest(BaseModel):
     provider: str | None = Field(default=None, max_length=64)
     model: str | None = Field(default=None, max_length=160)
     prompt_version: str | None = Field(default=None, max_length=80)
+
+
+class IntelligenceMemoryAuditRequest(BaseModel):
+    snapshot_id: str = Field(min_length=1, max_length=160)
+    key: str = Field(min_length=1, max_length=80)
+    payload: dict
 
 
 class IntelligenceMemoryContextRequest(BaseModel):
@@ -94,6 +101,33 @@ async def persist_memory(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+
+@router.post("/memory/audit")
+async def persist_memory_audit(
+    payload: IntelligenceMemoryAuditRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+    x_backend_api_key: str | None = Header(
+        default=None,
+        alias="X-Backend-API-Key",
+    ),
+) -> dict:
+    _require_backend_key(request, x_backend_api_key)
+    snapshot = await session.get(IntelligenceSnapshot, payload.snapshot_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    analysis_payload = dict(snapshot.analysis_payload or {})
+    audit = dict(analysis_payload.get("_audit") or {})
+    audit[payload.key] = payload.payload
+    analysis_payload["_audit"] = audit
+    snapshot.analysis_payload = analysis_payload
+    await session.commit()
+    return {
+        "status": "stored",
+        "snapshot_id": payload.snapshot_id,
+        "key": payload.key,
+    }
 
 
 @router.get("/history/{mint}")
@@ -169,7 +203,11 @@ async def research_context(
             detail="Invalid Solana mint address",
         )
     allowed_prefixes = ("wallet:", "x_account:", "tg_channel:", "token:")
-    invalid = [key for key in payload.entity_keys if not key.startswith(allowed_prefixes)]
+    invalid = [
+        key
+        for key in payload.entity_keys
+        if not key.startswith(allowed_prefixes)
+    ]
     if invalid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
