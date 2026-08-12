@@ -280,10 +280,9 @@ export function enrichSnapshotWithMemory(
 }
 
 function compact(value: unknown, max = 500) {
-  return String(typeof value === "string" ? value : JSON.stringify(value) || "").slice(
-    0,
-    max,
-  );
+  return String(
+    typeof value === "string" ? value : JSON.stringify(value) || "",
+  ).slice(0, max);
 }
 
 function researchFeature(
@@ -455,7 +454,10 @@ function historicalNeighbors(
         ? source
         : "";
     if (!other || current.has(other) || !isAllowedEntityKey(other)) continue;
-    if (Number(edge.occurrence_count || 0) < 2 && Number(edge.max_confidence || 0) < 0.7) {
+    if (
+      Number(edge.occurrence_count || 0) < 2 &&
+      Number(edge.max_confidence || 0) < 0.7
+    ) {
       continue;
     }
     neighbors.push(other);
@@ -476,15 +478,22 @@ export async function runBoundedResearch(
       neighborCandidates: [] as string[],
     };
   }
-  const memory = await loadMemoryContext(snapshot, candidates, 300);
-  const neighborCandidates = historicalNeighbors(snapshot, candidates, memory);
-  const requested = [...new Set([...candidates, ...neighborCandidates])].slice(
-    0,
-    MAX_RESEARCH_ENTITIES,
-  );
+  const primary = candidates.slice(0, MAX_RESEARCH_ENTITIES - MAX_NEIGHBOR_ENTITIES);
+  const memory = await loadMemoryContext(snapshot, primary, 300);
+  const neighborCandidates = historicalNeighbors(snapshot, primary, memory);
+  const requested = [
+    ...new Set([
+      ...primary,
+      ...neighborCandidates,
+      ...candidates.slice(primary.length),
+    ]),
+  ].slice(0, MAX_RESEARCH_ENTITIES);
   const tools = await loadResearchContext(snapshot, requested);
-  let enriched = enrichSnapshotWithMemory(snapshot, memory, 1);
-  enriched = appendFeatures(enriched, researchFeatures(enriched, tools));
+
+  // Tool observations are more specific than repeated memory edges, so reserve feature
+  // budget for them before adding the expanded historical memory layer.
+  let enriched = appendFeatures(snapshot, researchFeatures(snapshot, tools));
+  enriched = enrichSnapshotWithMemory(enriched, memory, 1);
   return { snapshot: enriched, memory, tools, requested, neighborCandidates };
 }
 
@@ -516,7 +525,9 @@ export function researchMeta(
   return {
     enabled: researchEnabled(),
     calls: research?.tools?.tool_calls || 0,
-    names: [...new Set(results.map((item) => String(item.tool || "")).filter(Boolean))],
+    names: [
+      ...new Set(results.map((item) => String(item.tool || "")).filter(Boolean)),
+    ],
     requested: research?.requested || [],
     historicalNeighbors: research?.neighborCandidates || [],
     memoryStats: research?.memory?.stats || null,
