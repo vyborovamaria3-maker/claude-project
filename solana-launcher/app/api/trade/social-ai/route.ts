@@ -323,9 +323,13 @@ async function persistMainMemory(
 async function persistCriticAudit(
   snapshotId: string,
   criticSnapshot: AnalysisSnapshot,
+  priorConclusion: string,
   critic: QwenEnvelope,
 ) {
   if (!BACKEND_KEY) return { status: "disabled" };
+  const advancedFeatures = criticSnapshot.features.filter((feature) =>
+    feature.key.startsWith("advanced."),
+  );
   try {
     const response = await fetch(
       `${BACKEND_BASE}/api/v1/social/intelligence/memory/audit`,
@@ -340,7 +344,8 @@ async function persistCriticAudit(
           key: "critic_v1",
           payload: {
             prompt_version: INTELLIGENCE_PROMPT_VERSION,
-            input: criticSnapshot,
+            advanced_features: advancedFeatures,
+            prior_conclusion: priorConclusion,
             result: critic.result || null,
             provider: typeof critic.provider === "string" ? critic.provider : null,
             model: typeof critic.model === "string" ? critic.model : null,
@@ -569,9 +574,10 @@ export async function POST(req: NextRequest) {
         advancedIntelligence?.layers?.dedicated_critic?.required &&
         remainingBudget(startedAt) > 14_000
       ) {
+        const priorConclusion = compactPriorConclusion(result);
         const criticPayload = aiPayload(criticSnapshot, timeline, mint, body, {
           role: "critic",
-          priorConclusion: compactPriorConclusion(result),
+          priorConclusion,
         });
         if (criticPayload) {
           try {
@@ -591,6 +597,7 @@ export async function POST(req: NextRequest) {
               criticAudit = await persistCriticAudit(
                 snapshot.snapshotId,
                 criticSnapshot,
+                priorConclusion,
                 critic,
               );
             }
