@@ -12,6 +12,7 @@ from app.models.intelligence_memory import IntelligenceSnapshot
 
 DEFAULT_HORIZONS = (6, 24, 72)
 MAX_SNAPSHOTS_PER_RUN = 250
+SCAN_MULTIPLIER = 4
 
 
 def _snapshot_feature(snapshot: IntelligenceSnapshot, keys: tuple[str, ...]) -> float | None:
@@ -219,8 +220,6 @@ async def evaluate_snapshot_horizon(
     if now < end:
         return {"status": "not_matured", "snapshot_id": snapshot.snapshot_id}
 
-    # Use a small forward tolerance for the first price sample and require a metric
-    # near the right edge, otherwise the sample is right-censored.
     rows = await _metrics_for_window(
         session,
         mint=snapshot.mint_address,
@@ -229,6 +228,7 @@ async def evaluate_snapshot_horizon(
     )
     if not rows:
         return {"status": "no_price_history", "snapshot_id": snapshot.snapshot_id}
+
     baseline_row = next(
         (
             row
@@ -240,6 +240,7 @@ async def evaluate_snapshot_horizon(
     )
     if baseline_row is None or not baseline_row.price_usd or baseline_row.price_usd <= 0:
         return {"status": "no_baseline_price", "snapshot_id": snapshot.snapshot_id}
+
     covered = [row for row in rows if row.timestamp <= end + timedelta(minutes=15)]
     final_candidates = [
         row
@@ -252,6 +253,7 @@ async def evaluate_snapshot_horizon(
             "snapshot_id": snapshot.snapshot_id,
             "latest_metric_at": covered[-1].timestamp.isoformat() if covered else None,
         }
+
     priced = [row for row in covered if row.price_usd is not None and row.price_usd > 0]
     if not priced:
         return {"status": "no_valid_prices", "snapshot_id": snapshot.snapshot_id}
@@ -287,26 +289,33 @@ async def evaluate_matured_outcomes(
     now = now or datetime.now(timezone.utc)
     horizons = tuple(sorted({int(value) for value in horizons if int(value) > 0}))
     if not horizons:
-        return {"snapshots": 0, "evaluated": 0, "censored": 0, "skipped": 0}
-    oldest_required = now - timedelta(hours=min(horizons))
-    snapshots = list(
+        return {
+            "snapshots": 0,
+            "candidates_scanned": 0,
+            "evaluated": 0,
+            "censored": 0,
+            "skipped": 0,
+        }
+
+    matured_cutoff = now - timedelta(hours=min(horizons))
+    candidates = list(
         (
             await session.execute(
                 select(IntelligenceSnapshot)
-                .where(IntelligenceSnapshot.created_at <= oldest_required)
-                .order_by(IntelligenceSnapshot.created_at.asc())
-                .limit(limit)
+                .where(IntelligenceSnapshot.created_at <= matured_cutoff)
+                .order_by(IntelligenceSnapshot.created_at.desc())
+                .limit(limit * SCAN_MULTIPLIER)
             )
         ).scalars().all()
     )
-    existing_rows = []
-    snapshot_ids = [row.snapshot_id for row in snapshots]
-    if snapshot_ids:
+    candidate_ids = [row.snapshot_id for row in candidates]
+    existing_rows: list[IntelligenceOutcome] = []
+    if candidate_ids:
         existing_rows = list(
             (
                 await session.execute(
                     select(IntelligenceOutcome).where(
-                        IntelligenceOutcome.snapshot_id.in_(snapshot_ids),
+                        IntelligenceOutcome.snapshot_id.in_(candidate_ids),
                         IntelligenceOutcome.horizon_hours.in_(horizons),
                     )
                 )
@@ -314,10 +323,21 @@ async def evaluate_matured_outcomes(
         )
     existing = {(row.snapshot_id, row.horizon_hours) for row in existing_rows}
 
+    selected: list[IntelligenceSnapshot] = []
+    for snapshot in candidates:
+        if any(
+            now >= snapshot.created_at + timedelta(hours=horizon)
+            and (snapshot.snapshot_id, horizon) not in existing
+            for horizon in horizons
+        ):
+            selected.append(snapshot)
+        if len(selected) >= limit:
+            break
+
     evaluated = 0
     censored = 0
     skipped = 0
-    for snapshot in snapshots:
+    for snapshot in selected:
         for horizon in horizons:
             if (snapshot.snapshot_id, horizon) in existing:
                 continue
@@ -329,15 +349,18 @@ async def evaluate_matured_outcomes(
                 horizon_hours=horizon,
                 now=now,
             )
-            if result.get("status") == "evaluated":
+            status = result.get("status")
+            if status == "evaluated":
                 evaluated += 1
-            elif result.get("status") == "right_censored":
+            elif status == "right_censored":
                 censored += 1
             else:
                 skipped += 1
+
     await session.commit()
     return {
-        "snapshots": len(snapshots),
+        "snapshots": len(selected),
+        "candidates_scanned": len(candidates),
         "evaluated": evaluated,
         "censored": censored,
         "skipped": skipped,
