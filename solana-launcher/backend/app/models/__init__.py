@@ -1,3 +1,10 @@
+from app.models.advanced_intelligence import (
+    CampaignFingerprint,
+    IntelligenceCalibrationStat,
+    IntelligenceHypothesisState,
+    IntelligenceNarrativeMemory,
+    IntelligenceOutcome,
+)
 from app.models.analytics import (
     CollectorJob,
     Token,
@@ -56,4 +63,9 @@ __all__ = [
     "IntelligenceEdge",
     "IntelligenceSnapshotEdge",
     "IntelligenceDiscovery",
+    "CampaignFingerprint",
+    "IntelligenceHypothesisState",
+    "IntelligenceOutcome",
+    "IntelligenceCalibrationStat",
+    "IntelligenceNarrativeMemory",
 ]
