@@ -48,6 +48,16 @@ export type Shiller = {
   isVerified: boolean;
 };
 
+export type TwitterRiskUniverse = {
+  totalTweets?: number;
+  uniqueAuthors?: number;
+  suspiciousTweets?: number;
+  botAccounts?: number;
+  botRiskScore?: number;
+  botRatio?: number;
+  anomalyCount?: number;
+};
+
 export type TwitterStats = {
   symbol: string;
   totalTweets: number;
@@ -61,6 +71,17 @@ export type TwitterStats = {
   shillers: Shiller[];
   collectionTruncated?: boolean;
   sampleLimit?: number;
+  collectionStrategy?: string;
+  riskUniverse?: TwitterRiskUniverse;
+  meta?: {
+    scraped?: number;
+    matchedBeforeLimit?: number;
+    returned?: number;
+    truncated?: boolean;
+    queryMode?: "top" | "latest" | "unknown";
+    suspiciousExcluded?: boolean;
+    verifiedOnly?: boolean;
+  };
   aggregated: {
     totalEngagement: number;
     engagementRate: number;
@@ -76,7 +97,13 @@ export type SocialTimeline = {
   timeline: TimelineItem[];
   meta?: {
     matchedBeforeLimit?: number;
+    returned?: number;
     truncated?: boolean;
+    matchedPlatforms?: Record<string, number>;
+    uniqueSourcesBeforeLimit?: number;
+    explicitTelegramCallsBeforeLimit?: number;
+    firstMatchedAt?: string | null;
+    lastMatchedAt?: string | null;
   };
 };
 
@@ -94,11 +121,19 @@ export type Market = {
   pair?: {
     name?: string;
     createdAt?: number | null;
+    createdAtSemantics?: string | null;
     changeH1?: number | null;
     change24h?: number | null;
     volumeH1?: number | null;
     volumeH24?: number | null;
     liquidityUsd?: number | null;
+  };
+  meta?: {
+    source?: string;
+    stale?: boolean;
+    fetchedAt?: number;
+    servedAt?: number;
+    cache?: string;
   };
 };
 
@@ -109,13 +144,24 @@ export type ChainWallet = {
   volumeSol?: number;
   pnlSol?: number;
   pnlPercent?: number;
-  solBalance?: number;
-  isFresh?: boolean;
-  isSmart?: boolean;
+  pnlComplete?: boolean;
+  pnlMethod?: string;
+  solBalance?: number | null;
+  balanceVerified?: boolean;
+  isFresh?: boolean | null;
+  freshnessVerified?: boolean;
+  firstSeenGlobal?: number | null;
+  firstSeenOnToken?: number | null;
+  isSmart?: boolean | null;
+  smartClassificationAvailable?: boolean;
   isWashTrader?: boolean;
+  washConfidence?: number;
+  washReasons?: string[];
   bundleId?: string | number | null;
-  relatedCount?: number;
-  firstSeen?: number | null;
+  bundleMethod?: string | null;
+  coBuyProximityCount?: number;
+  coBuyProximityWindowSec?: number;
+  historyTruncated?: boolean;
 };
 
 export type ChainBundle = {
@@ -123,6 +169,8 @@ export type ChainBundle = {
   size?: number;
   totalVolumeSol?: number;
   wallets?: string[];
+  method?: string;
+  heuristic?: boolean;
 };
 
 export type ChainAnalysis = {
@@ -136,13 +184,12 @@ export type ChainAnalysis = {
     uniqueWallets?: number;
     periodStart?: number | null;
     periodEnd?: number | null;
+    historyTruncated?: boolean;
+    maxTradesRequested?: number;
   };
 };
 
-export type AiSignal = {
-  severity?: string;
-  confidence?: number;
-};
+export type AiSignal = { severity?: string; confidence?: number };
 
 export type AiResult = {
   summary?: string;
@@ -370,9 +417,8 @@ function sentimentDelta(rows: Array<{ time: number | null; text: string }>) {
     .sort((a, b) => a.time - b.time);
   if (sorted.length < 4) return null;
   const middle = Math.floor(sorted.length / 2);
-  const earlier = sentiment(sorted.slice(0, middle).map((row) => row.text));
-  const later = sentiment(sorted.slice(middle).map((row) => row.text));
-  return later.p - earlier.p;
+  return sentiment(sorted.slice(middle).map((row) => row.text)).p
+    - sentiment(sorted.slice(0, middle).map((row) => row.text)).p;
 }
 
 function windowStats<T>(
@@ -413,8 +459,8 @@ function windowStats<T>(
 function accelerationScore(window: { m5: number; m15: number }) {
   if (!window.m15) return 0;
   const recentRate = window.m5 / 5;
-  const fifteenMinuteRate = window.m15 / 15;
-  return clamp((recentRate / Math.max(fifteenMinuteRate, 1e-9)) * 50);
+  const fullRate = window.m15 / 15;
+  return clamp((recentRate / Math.max(fullRate, 1e-9)) * 50);
 }
 
 function densestWindow(times: number[], windowMs = 5 * 60_000) {
@@ -436,10 +482,48 @@ function densestWindow(times: number[], windowMs = 5 * 60_000) {
       bestEnd = end;
     }
   }
-  const count = bestEnd - bestStart + 1;
   return {
     time: sorted[Math.floor((bestStart + bestEnd) / 2)],
-    count,
+    count: bestEnd - bestStart + 1,
+  };
+}
+
+function crossPlatformAlignment(xTimes: number[], tgTimes: number[]) {
+  if (!xTimes.length || !tgTimes.length) {
+    return { score: 0, medianLagMinutes: null as number | null, matchedShare: 0 };
+  }
+  const x = [...xTimes].sort((a, b) => a - b);
+  const tg = [...tgTimes].sort((a, b) => a - b);
+  const lags: number[] = [];
+  const cutoff = 30 * 60_000;
+  for (const time of x) {
+    let best = Infinity;
+    for (const other of tg) {
+      const distance = Math.abs(time - other);
+      if (distance < best) best = distance;
+      if (other > time && distance > best) break;
+    }
+    if (best <= cutoff) lags.push(best);
+  }
+  for (const time of tg) {
+    let best = Infinity;
+    for (const other of x) {
+      const distance = Math.abs(time - other);
+      if (distance < best) best = distance;
+      if (other > time && distance > best) break;
+    }
+    if (best <= cutoff) lags.push(best);
+  }
+  const denominator = x.length + tg.length;
+  const matchedShare = denominator ? lags.length / denominator : 0;
+  const medianLagMinutes = lags.length ? median(lags) / 60_000 : null;
+  const lagScore = medianLagMinutes == null
+    ? 0
+    : clamp(100 - (medianLagMinutes / 30) * 100);
+  return {
+    score: clamp(lagScore * 0.6 + matchedShare * 100 * 0.4),
+    medianLagMinutes,
+    matchedShare,
   };
 }
 
@@ -474,7 +558,9 @@ function priceChange(a: TradePoint | null, b: TradePoint | null) {
 function findPriceImpulse(trades: TradePoint[], socialTime: number | null) {
   let best: { time: number; change: number } | null = null;
   for (const trade of trades) {
-    if (socialTime != null && Math.abs(trade.time - socialTime) > 6 * HOUR_MS) continue;
+    if (socialTime != null && Math.abs(trade.time - socialTime) > 6 * HOUR_MS) {
+      continue;
+    }
     const base = priceAtOrBefore(
       trades,
       trade.time - IMPULSE_WINDOW_MS,
@@ -492,6 +578,21 @@ function findPriceImpulse(trades: TradePoint[], socialTime: number | null) {
     }
   }
   return best;
+}
+
+function peakToSubsequentDrawdown(
+  baseline: TradePoint | null,
+  rows: TradePoint[],
+) {
+  if (!baseline || baseline.price <= 0) return null;
+  let peak = baseline.price;
+  let worst = 0;
+  for (const row of rows) {
+    if (row.price > peak) peak = row.price;
+    if (peak <= 0) continue;
+    worst = Math.min(worst, ((row.price - peak) / peak) * 100);
+  }
+  return worst;
 }
 
 function normalizeSource(value: string | null | undefined) {
@@ -516,9 +617,9 @@ function severityValue(signal: AiSignal) {
 function aiSignalScore(signals: AiSignal[] | undefined) {
   if (!signals?.length) return 0;
   const values = signals.map(severityValue);
-  const averageSeverity = average(values);
-  const countPressure = Math.min(25, Math.max(0, signals.length - 1) * 4);
-  return clamp(averageSeverity + countPressure);
+  return clamp(
+    average(values) + Math.min(25, Math.max(0, signals.length - 1) * 4),
+  );
 }
 
 function weightedChannelRate(
@@ -530,15 +631,22 @@ function weightedChannelRate(
       value: normalizeRatePct(channel[field]),
       weight: Math.max(0, numberOr(channel.evaluated_calls, 0)),
     }))
-    .filter((row): row is { value: number; weight: number } => row.value != null && row.weight > 0);
-  if (eligible.length) {
-    const weight = eligible.reduce((sum, row) => sum + row.weight, 0);
-    return eligible.reduce((sum, row) => sum + row.value * row.weight, 0) / weight;
-  }
-  const fallback = channels
-    .map((channel) => normalizeRatePct(channel[field]))
-    .filter((value): value is number => value != null);
-  return fallback.length ? average(fallback) : null;
+    .filter(
+      (row): row is { value: number; weight: number } => (
+        row.value != null && row.weight > 0
+      ),
+    );
+  if (!eligible.length) return null;
+  const weight = eligible.reduce((sum, row) => sum + row.weight, 0);
+  return eligible.reduce(
+    (sum, row) => sum + row.value * row.weight,
+    0,
+  ) / weight;
+}
+
+function pairRelativeEarlyScore(minutesAfterPairCreation: number) {
+  if (minutesAfterPairCreation <= 0) return 100;
+  return clamp(100 - (minutesAfterPairCreation / 120) * 100);
 }
 
 export function deriveSocialMetrics(
@@ -565,17 +673,20 @@ export function deriveSocialMetrics(
   const finiteTg = telegramItems
     .map((item) => toTimestamp(item.occurred_at))
     .filter((value): value is number => value != null);
-
   const firstX = finiteX.length ? Math.min(...finiteX) : null;
-  const firstTg = finiteTg.length ? Math.min(...finiteTg) : null;
-  const both = firstX != null && firstTg != null;
+  const firstTg = toTimestamp(tg?.meta?.firstMatchedAt)
+    ?? (finiteTg.length ? Math.min(...finiteTg) : null);
+  const both = finiteX.length > 0 && finiteTg.length > 0;
 
   const requestedHours = Math.max(
     1,
     options.lookback === "all" ? 720 : Number(options.lookback),
   );
   const xMentions = x?.totalTweets || 0;
-  const tgMentions = tg?.platforms?.telegram ?? telegramItems.length;
+  const tgMentions = tg?.meta?.matchedPlatforms?.telegram
+    ?? tg?.meta?.matchedBeforeLimit
+    ?? tg?.platforms?.telegram
+    ?? telegramItems.length;
   const xVelocity = xAvailable ? xMentions / requestedHours : 0;
   const tgVelocity = tgAvailable ? tgMentions / requestedHours : 0;
 
@@ -612,8 +723,14 @@ export function deriveSocialMetrics(
   const verifiedRatio = x?.uniqueMentioners
     ? clamp(((x.aggregated.verifiedAuthors || 0) / x.uniqueMentioners) * 100)
     : 0;
-  const botRatio = normalizeRatePct(x?.aggregated.botRatio) ?? 0;
-  const botRisk = xAvailable ? clamp(x?.botRiskScore || 0) : 0;
+  const riskUniverse = x?.riskUniverse;
+  const botRisk = xAvailable
+    ? clamp(riskUniverse?.botRiskScore ?? x?.botRiskScore ?? 0)
+    : 0;
+  const botRatio = normalizeRatePct(
+    riskUniverse?.botRatio ?? x?.aggregated.botRatio,
+  ) ?? 0;
+  const anomalyCount = riskUniverse?.anomalyCount ?? x?.anomalyCount ?? 0;
   const shillers = x?.shillers || [];
   const knownFollowers = shillers
     .map((account) => account.followers)
@@ -667,58 +784,65 @@ export function deriveSocialMetrics(
   const copyRatio = normalizedTexts.length
     ? (copied / normalizedTexts.length) * 100
     : 0;
-
   const recentXTweets = tweets.filter((tweet) => {
     const time = toTimestamp(tweet.timestamp);
     return time != null && time >= now - HOUR_MS;
   });
   const botBurst = recentXTweets.length
-    ? (recentXTweets.filter((tweet) => tweet.isSuspicious).length / recentXTweets.length) * 100
+    ? (recentXTweets.filter((tweet) => tweet.isSuspicious).length
+      / recentXTweets.length) * 100
     : 0;
 
-  const tgKeys = new Set(
+  const retainedTgKeys = new Set(
     telegramItems.flatMap((item) => [item.source_handle, item.source_name]
       .filter(Boolean)
       .map((value) => normalizeSource(String(value)))),
   );
+  const tgSourceCount = tg?.meta?.uniqueSourcesBeforeLimit ?? retainedTgKeys.size;
   const relatedChannels = channels.filter((channel) => {
     const username = normalizeSource(channel.username);
     const title = normalizeSource(channel.title);
-    return (username && tgKeys.has(username)) || (title && tgKeys.has(title));
+    return (username && retainedTgKeys.has(username))
+      || (title && retainedTgKeys.has(title));
   });
-  const channelScore = relatedChannels.length
-    ? average(relatedChannels.map((channel) => clamp(numberOr(channel.score))))
-    : null;
   const evaluatedCalls = relatedChannels.reduce(
     (sum, channel) => sum + Math.max(0, numberOr(channel.evaluated_calls, 0)),
     0,
   );
-  const winRate = relatedChannels.length ? weightedChannelRate(relatedChannels, "win_rate") : null;
-  const rugRate = relatedChannels.length ? weightedChannelRate(relatedChannels, "rug_rate") : null;
-  const hasMatureReputation = evaluatedCalls > 0 || relatedChannels.some(
-    (channel) => numberOr(channel.calls_count, 0) > 0,
+  const reputationWeight = relatedChannels.reduce(
+    (sum, channel) => sum + Math.max(1, numberOr(channel.evaluated_calls, 0)),
+    0,
   );
-  const explicitCalls = telegramItems.filter(
-    (item) => Boolean(item.metrics?.explicit_call || item.metrics?.is_explicit_call)
-      || String(item.event_type || "").toLowerCase().includes("call"),
-  ).length;
+  const channelScore = relatedChannels.length && reputationWeight > 0
+    ? relatedChannels.reduce(
+        (sum, channel) => sum
+          + clamp(numberOr(channel.score))
+          * Math.max(1, numberOr(channel.evaluated_calls, 0)),
+        0,
+      ) / reputationWeight
+    : null;
+  const winRate = weightedChannelRate(relatedChannels, "win_rate");
+  const rugRate = weightedChannelRate(relatedChannels, "rug_rate");
+  const hasMatureReputation = evaluatedCalls > 0;
+  const explicitCalls = tg?.meta?.explicitTelegramCallsBeforeLimit
+    ?? telegramItems.filter(
+      (item) => Boolean(item.metrics?.explicit_call || item.metrics?.is_explicit_call)
+        || String(item.event_type || "").toLowerCase().includes("call"),
+    ).length;
 
-  const aiCoordination = aiSignalScore(aiResult?.coordinationSignals);
-  const aiRisk = aiSignalScore(aiResult?.risks);
   const repeatRisk = clamp(repeatShillers * 8);
   const coordinationScore = weightedScore([
-    { value: normalizedTexts.length >= 2 ? copyRatio : null, weight: 0.45 },
-    { value: aiResult ? aiCoordination : null, weight: 0.35 },
-    { value: xAvailable ? repeatRisk : null, weight: 0.20 },
-  ], 0.15).score;
+    { value: normalizedTexts.length >= 2 ? copyRatio : null, weight: 0.52 },
+    { value: xAvailable ? repeatRisk : null, weight: 0.28 },
+    { value: xAvailable ? botBurst : null, weight: 0.20 },
+  ], 0.12).score;
   const paid = weightedScore([
-    { value: coordinationScore, weight: 0.45 },
-    { value: xAvailable ? botRisk : null, weight: 0.25 },
-    { value: xAvailable ? repeatRisk : null, weight: 0.15 },
-    { value: aiResult ? aiRisk : null, weight: 0.15 },
+    { value: coordinationScore, weight: 0.50 },
+    { value: xAvailable ? botRisk : null, weight: 0.30 },
+    { value: xAvailable ? repeatRisk : null, weight: 0.20 },
   ], 0.1).score;
   const tgDiffusion = tgMentions > 0
-    ? clamp((tgKeys.size / tgMentions) * 100)
+    ? clamp((tgSourceCount / tgMentions) * 100)
     : 0;
   const organic = weightedScore([
     { value: 100 - paid, weight: 0.55 },
@@ -738,62 +862,59 @@ export function deriveSocialMetrics(
         { value: xMentions > 0 ? followerQuality : 0, weight: 0.20 },
       ]).score
     : 0;
-
+  const callDensity = tgMentions > 0
+    ? clamp((explicitCalls / tgMentions) * 100)
+    : 0;
   const tgScore = tgAvailable
     ? weightedScore([
         { value: channelScore, weight: 0.30 },
         { value: hasMatureReputation ? winRate : null, weight: 0.20 },
-        { value: hasMatureReputation && rugRate != null ? 100 - rugRate : null, weight: 0.20 },
-        { value: clamp(tgKeys.size * 7), weight: 0.15 },
-        { value: clamp(explicitCalls * 8), weight: 0.15 },
+        {
+          value: hasMatureReputation && rugRate != null ? 100 - rugRate : null,
+          weight: 0.20,
+        },
+        { value: clamp(tgSourceCount * 7), weight: 0.15 },
+        { value: callDensity, weight: 0.15 },
       ], 0.35).score
     : 0;
 
-  const crossLag = both ? Math.abs(firstX - firstTg) / 60_000 : null;
-  const crossLagScore = crossLag == null
-    ? null
-    : clamp(100 - (crossLag / 180) * 100);
-  const activityScore = clamp((xVelocity + tgVelocity) * 8);
-  const cross = both
-    ? weightedScore([
-        { value: crossLagScore, weight: 0.80 },
-        { value: activityScore, weight: 0.20 },
-      ]).score
-    : 0;
-
+  const alignment = crossPlatformAlignment(finiteX, finiteTg);
+  const cross = both ? alignment.score : 0;
   const engagementRateScore = xAvailable && (x?.totalViews || 0) > 0
     ? clamp((x?.aggregated.engagementRate || 0) * 100)
     : null;
   const hype = weightedScore([
     { value: xAvailable ? xAcceleration : null, weight: 0.25 },
     { value: tgAvailable ? tgAcceleration : null, weight: 0.25 },
-    { value: xAvailable || tgAvailable ? clamp((xVelocity + tgVelocity) * 10) : null, weight: 0.30 },
+    {
+      value: xAvailable || tgAvailable
+        ? clamp((xVelocity + tgVelocity) * 10)
+        : null,
+      weight: 0.30,
+    },
     { value: engagementRateScore, weight: 0.20 },
   ], 0.08).score;
-
-  const availablePositiveSentiments = [
+  const positiveSentiments = [
     xAvailable ? xSentiment.p : null,
     tgAvailable ? tgSentiment.p : null,
   ].filter((value): value is number => value != null);
-  const positiveSentiment = availablePositiveSentiments.length
-    ? Math.max(...availablePositiveSentiments)
+  const positiveSentiment = positiveSentiments.length
+    ? Math.max(...positiveSentiments)
     : null;
   const fomo = weightedScore([
     { value: hype, weight: 0.55 },
     { value: positiveSentiment, weight: 0.25 },
-    { value: tgAvailable ? clamp(explicitCalls * 7) : null, weight: 0.20 },
+    { value: tgAvailable ? callDensity : null, weight: 0.20 },
   ]).score;
-
   const manipulation = weightedScore([
     { value: paid, weight: 0.65 },
     { value: coordinationScore, weight: 0.35 },
   ]).score;
   const socialRisk = weightedScore([
-    { value: manipulation, weight: 0.40 },
-    { value: xAvailable ? botRisk : null, weight: 0.20 },
+    { value: manipulation, weight: 0.45 },
+    { value: xAvailable ? botRisk : null, weight: 0.25 },
     { value: hasMatureReputation ? rugRate : null, weight: 0.15 },
     { value: 100 - organic, weight: 0.15 },
-    { value: aiResult ? aiRisk : null, weight: 0.10 },
   ], 0.05).score;
   const riskLevel = socialRisk >= 70 ? "HIGH" : socialRisk >= 40 ? "MEDIUM" : "LOW";
 
@@ -807,17 +928,13 @@ export function deriveSocialMetrics(
     ? (firstSocial - created) / 60_000
     : null;
   const earlyKnown = earlyMinutes != null;
-  const early = earlyKnown
-    ? clamp(100 - Math.max(0, earlyMinutes) / 12)
-    : 0;
-
+  const early = earlyKnown ? pairRelativeEarlyScore(earlyMinutes) : 0;
   const alpha = weightedScore([
     { value: earlyKnown ? early : null, weight: 0.35 },
     { value: organic, weight: 0.25 },
     { value: 100 - manipulation, weight: 0.20 },
     { value: both ? cross : null, weight: 0.20 },
   ], 0.12).score;
-
   const socialCore = weightedScore([
     { value: xAvailable ? xScore : null, weight: 0.36 },
     { value: tgAvailable ? tgScore : null, weight: 0.34 },
@@ -825,7 +942,9 @@ export function deriveSocialMetrics(
     { value: both ? cross : null, weight: 0.15 },
   ], 0.12).score;
   const activePlatformCoverage = (Number(xAvailable) + Number(tgAvailable)) / 2;
-  const socialScore = clamp(socialCore * (0.85 + activePlatformCoverage * 0.15));
+  const socialScore = clamp(
+    socialCore.score * (0.85 + activePlatformCoverage * 0.15),
+  );
 
   const eventTimes = [...finiteX, ...finiteTg];
   const dense = densestWindow(eventTimes);
@@ -837,7 +956,7 @@ export function deriveSocialMetrics(
         && Number.isFinite(trade.price)
         && trade.price > 0,
     )
-    .sort((a, b) => a.time - b.time);
+    .sort((left, right) => left.time - right.time);
   const impulse = findPriceImpulse(trades, spike);
   const p0 = spike == null ? null : priceAtOrBefore(trades, spike, 5 * 60_000);
   const p5 = spike == null
@@ -858,15 +977,10 @@ export function deriveSocialMetrics(
   const maxPrice = oneHour.length
     ? Math.max(...oneHour.map((trade) => trade.price))
     : null;
-  const minPrice = oneHour.length
-    ? Math.min(...oneHour.map((trade) => trade.price))
-    : null;
   const maxUp = p0 && maxPrice != null
     ? Math.max(0, ((maxPrice - p0.price) / p0.price) * 100)
     : null;
-  const maxDd = p0 && minPrice != null
-    ? Math.min(0, ((minPrice - p0.price) / p0.price) * 100)
-    : null;
+  const maxDd = peakToSubsequentDrawdown(p0, oneHour);
   const leadLag = spike != null && impulse
     ? (impulse.time - spike) / 60_000
     : null;
@@ -877,6 +991,8 @@ export function deriveSocialMetrics(
       : leadLag > 0
         ? "SOCIAL → PRICE"
         : "PRICE → SOCIAL";
+  const socialSamplingPenalty = Number(Boolean(x?.meta?.truncated)) * 8
+    + Number(Boolean(tg?.meta?.truncated)) * 8;
   const confidence = leadLag == null
     ? null
     : clamp(
@@ -884,7 +1000,8 @@ export function deriveSocialMetrics(
         + Math.min(40, dense.count * 8)
         + Math.min(25, trades.length / 20)
         + Math.min(15, eventTimes.length)
-        - (chain?.truncated ? 15 : 0),
+        - (chain?.truncated ? 15 : 0)
+        - socialSamplingPenalty,
       );
   const price: PriceSocial = {
     socialSpikeTime: spike,
@@ -904,172 +1021,192 @@ export function deriveSocialMetrics(
   const firstXAuthor = [...tweets]
     .filter((tweet) => toTimestamp(tweet.timestamp) != null)
     .sort(
-      (a, b) => numberOr(toTimestamp(a.timestamp)) - numberOr(toTimestamp(b.timestamp)),
+      (left, right) => numberOr(toTimestamp(left.timestamp))
+        - numberOr(toTimestamp(right.timestamp)),
     )[0]?.author || "—";
   const firstTgSource = tg?.origin?.source_handle
     || tg?.origin?.source_name
     || [...telegramItems]
       .filter((item) => toTimestamp(item.occurred_at) != null)
       .sort(
-        (a, b) => numberOr(toTimestamp(a.occurred_at)) - numberOr(toTimestamp(b.occurred_at)),
+        (left, right) => numberOr(toTimestamp(left.occurred_at))
+          - numberOr(toTimestamp(right.occurred_at)),
       )[0]?.source_handle
     || "—";
   const sentimentChanges = [xSentimentDelta, tgSentimentDelta]
     .filter((value): value is number => value != null);
   const combinedDelta = sentimentChanges.length ? average(sentimentChanges) : null;
+  const aiCoordination = aiSignalScore(aiResult?.coordinationSignals);
+  const aiRisk = aiSignalScore(aiResult?.risks);
   const narrative = aiResult?.campaignHypothesis?.narrative || "—";
   const campaign = aiResult?.campaignHypothesis?.label || "—";
   const narrativeStrength = weightedScore([
-    { value: aiResult?.campaignHypothesis?.confidence != null ? numberOr(aiResult.campaignHypothesis.confidence) * 100 : null, weight: 0.55 },
+    {
+      value: aiResult?.campaignHypothesis?.confidence != null
+        ? numberOr(aiResult.campaignHypothesis.confidence) * 100
+        : null,
+      weight: 0.55,
+    },
     { value: hype, weight: 0.25 },
     { value: both ? cross : null, weight: 0.20 },
   ], 0.15).score;
-  const xSampleNote = x?.collectionTruncated
-    ? "filtered sample; collector/API limit reached"
-    : "filtered collector sample";
-  const tgSampleNote = tg?.meta?.truncated
-    ? "filtered timeline truncated by limit"
-    : "filtered timeline";
+
+  const xSampleNote = [
+    x?.meta?.queryMode === "top" ? "X top-search sample" : "collector sample",
+    x?.meta?.truncated || x?.collectionTruncated ? "truncated" : null,
+    x?.meta?.suspiciousExcluded ? "suspicious posts excluded from display sample" : null,
+  ].filter(Boolean).join("; ");
+  const tgExactNote = tg?.meta?.truncated
+    ? "exact filtered count before retained timeline limit"
+    : "filtered backend count";
+  const tgRetainedNote = tg?.meta?.truncated
+    ? "retained latest timeline sample"
+    : "returned timeline";
+  const marketStaleNote = market?.meta?.stale ? "stale market fallback" : undefined;
 
   const groups: DerivedSocial["groups"] = [
     {
       title: "X / Twitter",
       rows: [
-        metric("X score", xAvailable ? score(xScore) : "—"),
+        metric("X score", xAvailable ? score(xScore) : "—", "deterministic; raw bot risk + filtered sample quality"),
         metric("Mentions", xAvailable ? compact(xMentions) : "—", xSampleNote),
-        metric("Mentions 5m", xAvailable ? String(xWindow.m5) : "—", "sampled top posts"),
-        metric("Mentions 15m", xAvailable ? String(xWindow.m15) : "—", "sampled top posts"),
-        metric("Mentions 1h", xAvailable ? String(xWindow.h1) : "—", "sampled top posts"),
-        metric("Mentions 6h", xAvailable ? String(xWindow.h6) : "—", "sampled top posts"),
-        metric("Mentions 24h", xAvailable ? String(xWindow.h24) : "—", "sampled top posts"),
-        metric("Mentions / h", xAvailable ? xVelocity.toFixed(2) : "—", "sample count / requested lookback"),
-        metric("Acceleration", xAvailable ? score(xAcceleration) : "—", "50≈stable; >50 accelerating vs 15m average"),
-        metric("Unique authors", xAvailable ? compact(x?.uniqueMentioners) : "—"),
-        metric("Unique authors 6h", xAvailable ? String(xWindow.unique6) : "—", "sampled top posts"),
-        metric("Unique authors 24h", xAvailable ? String(xWindow.unique24) : "—", "sampled top posts"),
-        metric("Author growth 6h", xAvailable ? signedPct(growthPct(xWindow.unique6, xWindow.uniquePrev6)) : "—", "vs previous 6h; sampled"),
-        metric("Author diffusion", xAvailable ? pct(authorRatio) : "—"),
-        metric("Views", xAvailable ? compact(x?.totalViews) : "—"),
-        metric("Likes", xAvailable ? compact(x?.totalLikes) : "—"),
-        metric("Reposts", xAvailable ? compact(x?.totalRetweets) : "—"),
-        metric("Engagement", xAvailable ? compact(x?.aggregated.totalEngagement) : "—"),
-        metric("Engagement rate", xAvailable ? pct((x?.aggregated.engagementRate || 0) * 100) : "—", "engagement / views"),
-        metric("Verified authors", xAvailable ? compact(x?.aggregated.verifiedAuthors) : "—"),
-        metric("Verified ratio", xAvailable ? pct(verifiedRatio) : "—"),
-        metric("Influencers", xAvailable ? String(influencers.length) : "—", "verified / ≥10k followers / high engagement proxy"),
+        metric("Mentions 5m", xAvailable ? String(xWindow.m5) : "—", "retained top-post sample"),
+        metric("Mentions 15m", xAvailable ? String(xWindow.m15) : "—", "retained top-post sample"),
+        metric("Mentions 1h", xAvailable ? String(xWindow.h1) : "—", "retained top-post sample"),
+        metric("Mentions 6h", xAvailable ? String(xWindow.h6) : "—", "retained top-post sample"),
+        metric("Mentions 24h", xAvailable ? String(xWindow.h24) : "—", "retained top-post sample"),
+        metric("Mentions / h", xAvailable ? xVelocity.toFixed(2) : "—", "filtered sample / requested lookback; not population velocity"),
+        metric("Acceleration", xAvailable ? score(xAcceleration) : "—", "50≈stable; retained 5m rate vs retained 15m average"),
+        metric("Unique authors", xAvailable ? compact(x?.uniqueMentioners) : "—", "filtered sample"),
+        metric("Unique authors 6h", xAvailable ? String(xWindow.unique6) : "—", "retained top-post sample"),
+        metric("Unique authors 24h", xAvailable ? String(xWindow.unique24) : "—", "retained top-post sample"),
+        metric("Author growth 6h", xAvailable ? signedPct(growthPct(xWindow.unique6, xWindow.uniquePrev6)) : "—", "retained sample vs previous 6h"),
+        metric("Author diffusion", xAvailable ? pct(authorRatio) : "—", "unique authors / filtered sample mentions"),
+        metric("Views", xAvailable ? compact(x?.totalViews) : "—", "filtered sample"),
+        metric("Likes", xAvailable ? compact(x?.totalLikes) : "—", "filtered sample"),
+        metric("Reposts", xAvailable ? compact(x?.totalRetweets) : "—", "filtered sample"),
+        metric("Engagement", xAvailable ? compact(x?.aggregated.totalEngagement) : "—", "filtered sample"),
+        metric("Engagement rate", xAvailable ? pct((x?.aggregated.engagementRate || 0) * 100) : "—", "engagement / views on filtered sample"),
+        metric("Verified authors", xAvailable ? compact(x?.aggregated.verifiedAuthors) : "—", "filtered sample"),
+        metric("Verified ratio", xAvailable ? pct(verifiedRatio) : "—", "filtered sample"),
+        metric("Influencers", xAvailable ? String(influencers.length) : "—", "verified / ≥10k followers / high-engagement proxy"),
         metric("Potential reach", xAvailable ? compact(reach) : "—", "sum of known follower counts; not unique reach"),
         metric("Influencer reach", xAvailable ? compact(influencerReach) : "—", "sum of known follower counts; not unique reach"),
         metric("Quality accounts (proxy)", xAvailable ? String(qualityAccounts) : "—", "not historical smart-money classification"),
-        metric("Repeat shillers", xAvailable ? String(repeatShillers) : "—"),
-        metric("Bot risk", xAvailable ? score(botRisk) : "—"),
-        metric("Bot ratio", xAvailable ? pct(botRatio) : "—"),
-        metric("Bot burst 1h", xAvailable ? pct(botBurst) : "—", "sampled top posts"),
-        metric("Anomalies", xAvailable ? String(x?.anomalyCount || 0) : "—"),
-        metric("Follower quality", xAvailable ? score(followerQuality) : "—", "coverage-aware proxy"),
-        metric("Sentiment", xAvailable ? xSentiment.label : "—", "deterministic lexicon"),
-        metric("Positive", xAvailable ? pct(xSentiment.p) : "—"),
-        metric("Neutral", xAvailable ? pct(xSentiment.u) : "—"),
-        metric("Negative", xAvailable ? pct(xSentiment.n) : "—"),
-        metric("Sentiment change", xAvailable ? signedPct(xSentimentDelta) : "—"),
-        metric("First mover", xAvailable ? firstXAuthor : "—", "earliest retained X post"),
-        metric("First mention", firstX != null ? ago(firstX, now) : "—", "earliest retained X post"),
+        metric("Repeat shillers", xAvailable ? String(repeatShillers) : "—", "filtered sample"),
+        metric("Bot risk", xAvailable ? score(botRisk) : "—", "pre-exclusion risk universe when backend provides it"),
+        metric("Bot ratio", xAvailable ? pct(botRatio) : "—", "pre-exclusion risk universe when backend provides it"),
+        metric("Bot burst 1h", xAvailable ? pct(botBurst) : "—", "retained top-post sample only"),
+        metric("Anomalies", xAvailable ? String(anomalyCount) : "—", "pre-exclusion risk universe when backend provides it"),
+        metric("Follower quality", xAvailable ? score(followerQuality) : "—", "coverage-aware heuristic proxy"),
+        metric("Sentiment", xAvailable ? xSentiment.label : "—", "deterministic lexicon on retained top posts"),
+        metric("Positive", xAvailable ? pct(xSentiment.p) : "—", "retained top-post sample"),
+        metric("Neutral", xAvailable ? pct(xSentiment.u) : "—", "retained top-post sample"),
+        metric("Negative", xAvailable ? pct(xSentiment.n) : "—", "retained top-post sample"),
+        metric("Sentiment change", xAvailable ? signedPct(xSentimentDelta) : "—", "retained sample halves"),
+        metric("First mover", xAvailable ? firstXAuthor : "—", "earliest retained X top-post; not guaranteed population origin"),
+        metric("First mention", firstX != null ? ago(firstX, now) : "—", "earliest retained X top-post"),
         metric("Account age", "—", "X collector does not expose account creation date"),
       ],
     },
     {
       title: "Telegram",
       rows: [
-        metric("TG score", tgAvailable ? score(tgScore) : "—", "coverage-penalized when reputation history is missing"),
-        metric("Mentions", tgAvailable ? compact(tgMentions) : "—", tgSampleNote),
-        metric("Mentions 5m", tgAvailable ? String(tgWindow.m5) : "—"),
-        metric("Mentions 15m", tgAvailable ? String(tgWindow.m15) : "—"),
-        metric("Mentions 1h", tgAvailable ? String(tgWindow.h1) : "—"),
-        metric("Mentions 6h", tgAvailable ? String(tgWindow.h6) : "—"),
-        metric("Mentions 24h", tgAvailable ? String(tgWindow.h24) : "—"),
-        metric("Mentions / h", tgAvailable ? tgVelocity.toFixed(2) : "—", "sample count / requested lookback"),
-        metric("Acceleration", tgAvailable ? score(tgAcceleration) : "—", "50≈stable; >50 accelerating vs 15m average"),
-        metric("Channels", tgAvailable ? String(tgKeys.size) : "—", tgSampleNote),
-        metric("Channels 6h", tgAvailable ? String(tgWindow.unique6) : "—"),
-        metric("Channels 24h", tgAvailable ? String(tgWindow.unique24) : "—"),
-        metric("Channel growth 6h", tgAvailable ? signedPct(growthPct(tgWindow.unique6, tgWindow.uniquePrev6)) : "—", "vs previous 6h"),
-        metric("Explicit calls", tgAvailable ? String(explicitCalls) : "—"),
-        metric("Channel score", channelScore != null ? score(channelScore) : "—"),
+        metric("TG score", tgAvailable ? score(tgScore) : "—", "coverage-penalized deterministic score"),
+        metric("Mentions", tgAvailable ? compact(tgMentions) : "—", tgExactNote),
+        metric("Retained messages", tgAvailable ? String(telegramItems.length) : "—", tgRetainedNote),
+        metric("Mentions 5m", tgAvailable ? String(tgWindow.m5) : "—", tgRetainedNote),
+        metric("Mentions 15m", tgAvailable ? String(tgWindow.m15) : "—", tgRetainedNote),
+        metric("Mentions 1h", tgAvailable ? String(tgWindow.h1) : "—", tgRetainedNote),
+        metric("Mentions 6h", tgAvailable ? String(tgWindow.h6) : "—", tgRetainedNote),
+        metric("Mentions 24h", tgAvailable ? String(tgWindow.h24) : "—", tgRetainedNote),
+        metric("Mentions / h", tgAvailable ? tgVelocity.toFixed(2) : "—", "exact filtered count / requested lookback when metadata is available"),
+        metric("Acceleration", tgAvailable ? score(tgAcceleration) : "—", "retained timeline only; 50≈stable"),
+        metric("Channels", tgAvailable ? String(tgSourceCount) : "—", "exact unique filtered sources before limit when metadata is available"),
+        metric("Channels retained", tgAvailable ? String(retainedTgKeys.size) : "—", tgRetainedNote),
+        metric("Channels 6h", tgAvailable ? String(tgWindow.unique6) : "—", tgRetainedNote),
+        metric("Channels 24h", tgAvailable ? String(tgWindow.unique24) : "—", tgRetainedNote),
+        metric("Channel growth 6h", tgAvailable ? signedPct(growthPct(tgWindow.unique6, tgWindow.uniquePrev6)) : "—", "retained timeline vs previous 6h"),
+        metric("Explicit calls", tgAvailable ? String(explicitCalls) : "—", "exact before limit when metadata is available"),
+        metric("Explicit call share", tgAvailable ? pct(callDensity) : "—", "explicit calls / exact filtered mentions"),
+        metric("Channel score", channelScore != null ? score(channelScore) : "—", "weighted by evaluated history where available"),
         metric("Evaluated historical calls", relatedChannels.length ? compact(evaluatedCalls) : "—"),
-        metric("Historical win rate", winRate != null ? pct(winRate) : "—", evaluatedCalls ? "weighted by evaluated calls" : "reputation coverage unavailable"),
-        metric("Historical rug rate", rugRate != null ? pct(rugRate) : "—", evaluatedCalls ? "weighted by evaluated calls" : "reputation coverage unavailable"),
-        metric("Sentiment", aiResult?.sentiment?.label || (tgAvailable ? tgSentiment.label : "—")),
+        metric("Historical win rate", winRate != null ? pct(winRate) : "—", "weighted only by matured evaluated calls"),
+        metric("Historical rug rate", rugRate != null ? pct(rugRate) : "—", "weighted only by matured evaluated calls"),
+        metric("Sentiment", tgAvailable ? tgSentiment.label : "—", "deterministic lexicon on retained timeline"),
+        metric("AI sentiment", aiResult?.sentiment?.label || "—", "separate AI output; does not rewrite deterministic scores"),
         metric("AI sentiment score", aiResult?.sentiment?.score != null ? numberOr(aiResult.sentiment.score).toFixed(2) : "—"),
         metric("AI sentiment confidence", aiResult?.sentiment?.confidence != null ? pct(numberOr(aiResult.sentiment.confidence) * 100) : "—", "raw model confidence"),
-        metric("Window sentiment change", tgAvailable ? signedPct(tgSentimentDelta) : "—"),
-        metric("Dominant intent", aiResult?.dominantIntent || "—"),
-        metric("Top/first source", tgAvailable ? firstTgSource : "—", "earliest retained TG event"),
-        metric("First signal", firstTg != null ? ago(firstTg, now) : "—", "earliest retained TG event"),
-        metric("AI campaign", campaign),
-        metric("AI coordination score", aiResult ? score(aiCoordination) : "—", "severity × confidence, count pressure capped"),
-        metric("AI risk score", aiResult ? score(aiRisk) : "—", "severity × confidence, count pressure capped"),
-        metric("AI overall confidence", aiResult?.overallConfidence != null ? pct(numberOr(aiResult.overallConfidence) * 100) : "—", "raw model confidence; not calibrated probability"),
+        metric("Window sentiment change", tgAvailable ? signedPct(tgSentimentDelta) : "—", "retained timeline"),
+        metric("Dominant intent", aiResult?.dominantIntent || "—", "AI-only output"),
+        metric("Top/first source", tgAvailable ? firstTgSource : "—", "earliest retained source label"),
+        metric("First signal", firstTg != null ? ago(firstTg, now) : "—", tg?.meta?.firstMatchedAt ? "exact first filtered backend event" : "earliest retained event"),
+        metric("AI campaign", campaign, "AI-only hypothesis"),
+        metric("AI coordination risk", aiResult ? score(aiCoordination) : "—", "AI-only; not part of deterministic manipulation score"),
+        metric("AI risk score", aiResult ? score(aiRisk) : "—", "AI-only; not part of deterministic social risk"),
+        metric("AI overall confidence", aiResult?.overallConfidence != null ? pct(numberOr(aiResult.overallConfidence) * 100) : "—", "model confidence; not outcome probability"),
       ],
     },
     {
       title: "Growth / Quality / Manipulation",
       rows: [
-        metric("Hype score", score(hype)),
-        metric("FOMO score", score(fomo)),
-        metric("Organic score", score(organic), "missing-aware evidence blend"),
-        metric("Paid promotion risk", score(paid)),
-        metric("Manipulation score", score(manipulation)),
-        metric("Social risk", score(socialRisk)),
+        metric("Hype score", score(hype), "heuristic from sampled acceleration, sample/exact density and X engagement"),
+        metric("FOMO score", score(fomo), "heuristic; not outcome probability"),
+        metric("Organic score", score(organic), "deterministic heuristic; independent from Qwen"),
+        metric("Paid promotion risk", score(paid), "deterministic proxy; no payment proof"),
+        metric("Manipulation score", score(manipulation), "deterministic heuristic; independent from Qwen"),
+        metric("Social risk", score(socialRisk), "deterministic heuristic; independent from Qwen"),
         metric("Social risk level", riskLevel),
-        metric("Coordination score", score(coordinationScore)),
-        metric("Copy-paste ratio", pct(copyRatio), "exact normalized text duplicates; semantic clusters are separate"),
-        metric("Follower quality", xAvailable ? score(followerQuality) : "—"),
-        metric("Narrative strength", aiResult ? score(narrativeStrength) : "—", "AI campaign confidence + current social support"),
-        metric("Narrative", narrative),
-        metric("Campaign hypothesis", campaign),
-        metric("Peak sample velocity", `${Math.max(xVelocity, tgVelocity).toFixed(2)}/h`),
-        metric("Velocity change", score(weightedScore([
-          { value: xAvailable ? xAcceleration : null, weight: 0.5 },
-          { value: tgAvailable ? tgAcceleration : null, weight: 0.5 },
-        ]).score)),
-        metric("Sentiment change", signedPct(combinedDelta), "positive-share change inside sampled window"),
+        metric("Coordination score", score(coordinationScore), "copy/repeat/burst heuristic; not operator identity proof"),
+        metric("Copy-paste ratio", pct(copyRatio), "exact-normalized duplicates in retained evidence only"),
+        metric("Follower quality", score(followerQuality), "coverage-aware proxy"),
+        metric("Narrative strength", aiResult ? score(narrativeStrength) : "—", "AI hypothesis support proxy; separate from deterministic score"),
+        metric("Narrative", narrative, "AI-only"),
+        metric("Campaign hypothesis", campaign, "AI-only"),
+        metric("Peak density", `${Math.max(xVelocity, tgVelocity).toFixed(2)}/h`, "X is sample density; TG is exact filtered density when metadata exists"),
+        metric("Velocity change", score(average([xAcceleration, tgAcceleration])), "sample-window heuristic"),
+        metric("Sentiment change", signedPct(combinedDelta), "positive-share change inside retained samples"),
       ],
     },
     {
       title: "Cross-platform / Timing",
       rows: [
-        metric("Cross-platform score", both ? score(cross) : "—", "80% timing proximity + 20% activity"),
+        metric("Cross-platform score", score(cross), "retained-event temporal alignment within 30m; not based only on first mention"),
+        metric("Cross matched share", pct(alignment.matchedShare * 100), "share of retained X/TG events with a counterpart within 30m"),
+        metric("Cross median lag", alignment.medianLagMinutes == null ? "—" : `${alignment.medianLagMinutes.toFixed(1)}m`, "median nearest cross-platform lag in retained evidence"),
         metric("Both platforms active", both ? "YES" : "NO"),
-        metric("TG → X lag", firstX != null && firstTg != null && firstTg <= firstX ? `${Math.round((firstX - firstTg) / 60_000)}m` : "—", "based on retained samples"),
-        metric("X → TG lag", firstX != null && firstTg != null && firstX < firstTg ? `${Math.round((firstTg - firstX) / 60_000)}m` : "—", "based on retained samples"),
-        metric("First X", firstX != null ? ago(firstX, now) : "—", "earliest retained post"),
-        metric("First TG", firstTg != null ? ago(firstTg, now) : "—", "earliest retained event"),
-        metric("Social spike", spike == null ? "—" : ago(spike, now), `densest 5m window; requires ≥3 events (found ${dense.count})`),
-        metric("Early signal score", earlyKnown ? score(early) : "—", "requires token creation timestamp + social timestamp"),
-        metric("Alpha score", score(alpha), "missing components excluded with coverage penalty"),
-        metric("Social score", score(socialScore), "missing sources are not treated as zero-quality evidence"),
+        metric("TG → X first lag", firstX != null && firstTg != null && firstTg <= firstX ? `${Math.round((firstX - firstTg) / 60_000)}m` : "—", "first TG may be exact; first X is retained top-post sample"),
+        metric("X → TG first lag", firstX != null && firstTg != null && firstX < firstTg ? `${Math.round((firstTg - firstX) / 60_000)}m` : "—", "first X is retained top-post sample"),
+        metric("First X", firstX != null ? ago(firstX, now) : "—", "earliest retained X top-post"),
+        metric("First TG", firstTg != null ? ago(firstTg, now) : "—", tg?.meta?.firstMatchedAt ? "exact filtered backend origin" : "retained origin"),
+        metric("Social spike", spike == null ? "—" : ago(spike, now), "densest retained 5m window; requires ≥3 events"),
+        metric("Early signal score", earlyKnown ? score(early) : "—", "pair-relative timing proxy: 100 at/before selected pair creation, decays to 0 by +120m"),
+        metric("Early timing delta", earlyMinutes == null ? "—" : `${earlyMinutes >= 0 ? "+" : ""}${earlyMinutes.toFixed(1)}m`, `relative to ${market?.pair?.createdAtSemantics || "selected pair creation timestamp"}`),
+        metric("Alpha score", score(alpha), "heuristic composite; not probability of profit"),
+        metric("Social score", score(socialScore), "deterministic composite; independent from Qwen"),
         metric("Price ↔ Social direction", direction),
-        metric("Lead / lag", leadLag == null ? "—" : `${Math.abs(leadLag).toFixed(1)}m`),
-        metric("Lead/lag confidence", score(confidence), "density + trade coverage; truncated history penalized"),
+        metric("Lead / lag", leadLag == null ? "—" : `${Math.abs(leadLag).toFixed(1)}m`, "nearest ≥10%/5m price impulse around retained social spike"),
+        metric("Lead/lag confidence", score(confidence), "evidence coverage heuristic; not statistical p-value"),
         metric("Price after social 5m", signedPct(r5)),
         metric("Price after social 15m", signedPct(r15)),
         metric("Price after social 1h", signedPct(r60)),
-        metric("Max upside 1h", signedPct(maxUp)),
-        metric("Max drawdown 1h", signedPct(maxDd)),
+        metric("Max upside 1h", signedPct(maxUp), "from causal price at-or-before social spike"),
+        metric("Max drawdown 1h", signedPct(maxDd), "peak-to-subsequent-trough after social spike"),
         metric("Nearest 5m price impulse", impulse ? signedPct(impulse.change) : "—"),
-        metric("Price 1h snapshot", signedPct(market?.pair?.changeH1)),
-        metric("Price 24h snapshot", signedPct(market?.pair?.change24h)),
-        metric("Volume 1h", money(market?.pair?.volumeH1)),
-        metric("Volume 24h", money(market?.pair?.volumeH24)),
-        metric("Liquidity", money(market?.pair?.liquidityUsd)),
+        metric("Price 1h snapshot", signedPct(market?.pair?.changeH1), marketStaleNote),
+        metric("Price 24h snapshot", signedPct(market?.pair?.change24h), marketStaleNote),
+        metric("Volume 1h", money(market?.pair?.volumeH1), marketStaleNote),
+        metric("Volume 24h", money(market?.pair?.volumeH24), marketStaleNote),
+        metric("Liquidity", money(market?.pair?.liquidityUsd), marketStaleNote),
       ],
     },
     {
       title: "Price event evidence",
       rows: [
-        metric("Trades sampled", chain ? compact(trades.length) : "—"),
+        metric("Trades sampled", chain ? compact(trades.length) : "—", chain?.truncated ? "history truncated" : "returned trade history"),
         metric("Trade history start", trades.length ? ago(trades[0].time, now) : "—"),
         metric("Trade history end", trades.length ? ago(trades[trades.length - 1].time, now) : "—"),
-        metric("Price at social spike", p0 ? p0.price.toPrecision(6) : "—", "last trade at/before spike within 5m; SOL price"),
+        metric("Price at social spike", p0 ? p0.price.toPrecision(6) : "—", "last trade at-or-before spike within 5m; SOL/token"),
         metric("Price +5m", p5 ? p5.price.toPrecision(6) : "—", "first trade at/after target within 5m"),
         metric("Price +15m", p15 ? p15.price.toPrecision(6) : "—", "first trade at/after target within 5m"),
         metric("Price +1h", p60 ? p60.price.toPrecision(6) : "—", "first trade at/after target within 10m"),
@@ -1077,8 +1214,8 @@ export function deriveSocialMetrics(
         metric("Impulse threshold", `${IMPULSE_THRESHOLD_PCT}% / ${IMPULSE_WINDOW_MS / 60_000}m`),
         metric("On-chain raw trades", compact(chain?.summary?.totalRawTrades ?? chain?.summary?.totalTrades)),
         metric("Unique wallets", compact(chain?.summary?.uniqueWallets)),
-        metric("Wallets enriched", chain ? compact(chain.wallets?.length) : "—"),
-        metric("Bundles detected", chain ? compact(chain.bundles?.length) : "—"),
+        metric("Wallets enriched", chain ? String(chain.wallets?.length || 0) : "—"),
+        metric("Synchronous buy clusters", chain ? String(chain.bundles?.length || 0) : "—", "heuristic 5s/±5% amount clusters; not atomic bundle proof"),
         metric("History truncated", chain?.truncated == null ? "—" : chain.truncated ? "YES" : "NO"),
       ],
     },
@@ -1095,6 +1232,8 @@ export function deriveSocialMetrics(
         metric("Risks", aiResult ? String(aiResult.risks?.length || 0) : "—"),
         metric("Originators", aiResult?.campaignHypothesis?.likelyOriginators?.join(", ") || "—"),
         metric("Amplifiers", aiResult?.campaignHypothesis?.amplifiers?.slice(0, 6).join(", ") || "—"),
+        metric("AI coordination risk", aiResult ? score(aiCoordination) : "—", "AI-only evidence class"),
+        metric("AI risk score", aiResult ? score(aiRisk) : "—", "AI-only evidence class"),
       ],
     },
   ];
