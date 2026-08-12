@@ -41,10 +41,11 @@ const outputShape = {
 function compactFeatures(context: TelegramAnalysisContext) {
   const features = context.intelligenceSnapshot?.features ?? [];
   const core = features.filter((feature) => !feature.key.startsWith('memory.') && !feature.key.startsWith('research.'));
-  const contextual = features.filter((feature) => feature.key.startsWith('memory.') || feature.key.startsWith('research.'));
+  const research = features.filter((feature) => feature.key.startsWith('research.'));
+  const memory = features.filter((feature) => feature.key.startsWith('memory.'));
   const selected = [...core];
   let remainingChars = 12_000;
-  for (const feature of contextual) {
+  for (const feature of [...research, ...memory]) {
     const cost = feature.key.length + String(feature.value ?? '').length + 48;
     if (cost > remainingChars) continue;
     selected.push(feature);
