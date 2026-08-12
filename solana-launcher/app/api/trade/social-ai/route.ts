@@ -39,6 +39,9 @@ type RequestBody = {
 };
 
 type QwenResult = {
+  summary?: string;
+  overallConfidence?: number;
+  finalIntelligence?: Record<string, unknown>;
   discoveredRelationships?: Array<{
     source?: string;
     target?: string;
@@ -47,6 +50,9 @@ type QwenResult = {
   campaignHypothesis?: {
     likelyOriginators?: string[];
     amplifiers?: string[];
+    label?: string;
+    confidence?: number;
+    narrative?: string;
   };
 };
 
@@ -54,6 +60,12 @@ type QwenEnvelope = Record<string, unknown> & {
   result?: QwenResult;
   provider?: unknown;
   model?: unknown;
+};
+
+type AdvancedReport = Record<string, unknown> & {
+  layers?: {
+    dedicated_critic?: { required?: boolean };
+  };
 };
 
 function n(value: unknown) {
@@ -166,6 +178,7 @@ function aiPayload(
   timeline: TimelineItem[],
   mint: string,
   body: RequestBody,
+  options: { role?: "analyst" | "critic"; priorConclusion?: string } = {},
 ) {
   const messages = snapshot ? snapshotMessages(snapshot) : timelineMessages(timeline);
   if (!messages.length) return null;
@@ -186,6 +199,8 @@ function aiPayload(
       windowStart: times.length ? new Date(times[0]).toISOString() : null,
       windowEnd: times.length ? new Date(times[times.length - 1]).toISOString() : null,
       analysisMode: snapshot ? "full_intelligence" : "telegram_only",
+      analysisRole: options.role || "analyst",
+      priorConclusion: options.priorConclusion?.slice(0, 6_000) || null,
       ...(snapshot ? { intelligenceSnapshot: snapshot } : {}),
     },
     persist: false,
@@ -220,7 +235,8 @@ async function runQwen(
 async function buildAdvancedReport(
   snapshot: AnalysisSnapshot,
   result: QwenEnvelope,
-): Promise<Record<string, unknown> | null> {
+  persist = true,
+): Promise<AdvancedReport | null> {
   if (!BACKEND_KEY) return null;
   try {
     const response = await fetch(
@@ -234,17 +250,28 @@ async function buildAdvancedReport(
         body: JSON.stringify({
           snapshot,
           ai_result: result.result || null,
-          persist: true,
+          persist,
         }),
         cache: "no-store",
         signal: AbortSignal.timeout(8_000),
       },
     );
     if (!response.ok) return null;
-    return (await response.json()) as Record<string, unknown>;
+    return (await response.json()) as AdvancedReport;
   } catch {
     return null;
   }
+}
+
+function compactPriorConclusion(result: QwenEnvelope) {
+  const value = {
+    summary: result.result?.summary || null,
+    campaignHypothesis: result.result?.campaignHypothesis || null,
+    finalIntelligence: result.result?.finalIntelligence || null,
+    overallConfidence: result.result?.overallConfidence ?? null,
+    discoveredRelationships: (result.result?.discoveredRelationships || []).slice(0, 25),
+  };
+  return JSON.stringify(value).slice(0, 6_000);
 }
 
 export async function POST(req: NextRequest) {
@@ -308,12 +335,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const [memoryWrite, advancedIntelligence] = snapshot && analysisSnapshot
-      ? await Promise.all([
-          persistIntelligenceMemory(snapshot, analysisSnapshot, result),
-          buildAdvancedReport(analysisSnapshot, result),
-        ])
-      : [{ status: "skipped" }, null] as const;
+    let advancedIntelligence: AdvancedReport | null = null;
+    let critic: QwenEnvelope | null = null;
+    if (analysisSnapshot) {
+      advancedIntelligence = await buildAdvancedReport(analysisSnapshot, result, true);
+      if (advancedIntelligence?.layers?.dedicated_critic?.required) {
+        const criticPayload = aiPayload(analysisSnapshot, timeline, mint, body, {
+          role: "critic",
+          priorConclusion: compactPriorConclusion(result),
+        });
+        if (criticPayload) {
+          try {
+            critic = await runQwen(criticPayload);
+            await buildAdvancedReport(analysisSnapshot, critic, true);
+          } catch {
+            critic = null;
+          }
+        }
+      }
+    }
+
+    const memoryWrite = snapshot && analysisSnapshot
+      ? await persistIntelligenceMemory(snapshot, analysisSnapshot, result)
+      : { status: "skipped" };
 
     return NextResponse.json(
       {
@@ -330,6 +374,14 @@ export async function POST(req: NextRequest) {
           tools: researchMeta(boundedResearch),
         },
         advancedIntelligence,
+        critic: critic
+          ? {
+              available: true,
+              result: critic.result || null,
+              provider: critic.provider || null,
+              model: critic.model || null,
+            }
+          : { available: false },
         ...result,
       },
       { headers: { "Cache-Control": "no-store" } },
