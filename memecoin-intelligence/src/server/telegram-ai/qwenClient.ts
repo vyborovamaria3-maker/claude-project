@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { env } from '@/server/config/env.js';
 import { cacheGet, cacheSet } from '@/server/cache/redis.js';
-import { buildTelegramPrompt, TELEGRAM_PROMPT_VERSION } from './prompts.js';
+import { buildTelegramPrompt, promptVisibleFeatureKeys, TELEGRAM_PROMPT_VERSION } from './prompts.js';
 import { mockTelegramAnalysis } from './mock.js';
 import { telegramAiResultSchema, type TelegramAiResult, type TelegramAnalysisContext, type TelegramMessageInput } from './schemas.js';
 
@@ -79,14 +79,14 @@ function validateResult(result: TelegramAiResult, messages: TelegramMessageInput
   const unknownEvidence = [...new Set(evidenceGroups.flat().filter((id) => !allowedEvidence.has(id)))];
   if (unknownEvidence.length) throw new Error(`Qwen cited unknown evidence IDs: ${unknownEvidence.slice(0, 10).join(', ')}`);
 
-  const snapshotFeatureKeys = new Set((context.intelligenceSnapshot?.features ?? []).map((feature) => feature.key));
-  if (snapshotFeatureKeys.size) {
+  const visibleFeatureKeys = promptVisibleFeatureKeys(context);
+  if (visibleFeatureKeys.size) {
     const unknownFeatureKeys = [...new Set([
       ...result.featureAssessments.map((entry) => entry.featureKey),
       ...result.discoveredRelationships.flatMap((entry) => entry.supportingFeatureKeys),
       ...result.anomalies.flatMap((entry) => entry.relatedFeatureKeys),
-    ].filter((key) => !snapshotFeatureKeys.has(key)))];
-    if (unknownFeatureKeys.length) throw new Error(`Qwen cited unknown feature keys: ${unknownFeatureKeys.slice(0, 10).join(', ')}`);
+    ].filter((key) => !visibleFeatureKeys.has(key)))];
+    if (unknownFeatureKeys.length) throw new Error(`Qwen cited feature keys not present in its prompt: ${unknownFeatureKeys.slice(0, 10).join(', ')}`);
   }
 
   if (/<\/?think>/i.test(JSON.stringify(result))) throw new Error('Qwen returned hidden-reasoning tags instead of a concise reasoning summary');
