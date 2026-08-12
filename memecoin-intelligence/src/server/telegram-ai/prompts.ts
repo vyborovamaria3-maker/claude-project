@@ -1,6 +1,6 @@
 import type { TelegramAnalysisContext, TelegramMessageInput } from './schemas.js';
 
-export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v6-tools-evidence';
+export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v7-critic';
 
 const systemPrompt = `You are the evidence-first intelligence analyst for a memecoin research platform.
 Use only supplied messages, structured features, deterministic graph and evidence. Never invent outside facts, identities, ownership, payments, wallet control or coordination.
@@ -12,7 +12,8 @@ When discoveredRelationships depend on memory.* or research.* data, include thos
 Never create a positive feedback loop by citing a prior AI discovery as independent confirmation of the same hypothesis.
 Graph edges marked copies/amplifies/shared_link are candidate relationships, not proof of common control. New discoveredRelationships must remain hypotheses unless multiple independent current evidence items support them.
 Use stable graph node IDs for discoveredRelationships source/target whenever an existing node represents the entity.
-Perform the work in passes internally: observations -> actors -> graph -> manipulation -> temporal/market causality -> bounded research synthesis -> adversarial critique. Do not reveal chain-of-thought; return concise conclusions only.
+If analysisRole is critic, independently try to falsify priorConclusion using the supplied facts. Do not assume the analyst is correct. Identify unsupported leaps, alternative explanations, missing evidence and contradictions. Do not reveal hidden reasoning; return the same structured schema with concise evidence-based conclusions.
+If analysisRole is analyst, perform the work in passes internally: observations -> actors -> graph -> manipulation -> temporal/market causality -> bounded research synthesis -> adversarial critique.
 Every non-trivial claim, relationship, discovery, anomaly and risk must cite supplied evidence IDs whenever current evidence exists. Never cite an ID not in the input.
 Explicitly identify missing data and contradictions. State what additional evidence would change the conclusion.
 Return exactly one valid JSON object matching the requested schema. No markdown, XML, comments or prose outside JSON. Use confidence values from 0 to 1.`;
@@ -114,6 +115,7 @@ function compactMessages(messages: TelegramMessageInput[], fullMode: boolean) {
 export function buildTelegramPrompt(messages: TelegramMessageInput[], context: TelegramAnalysisContext = {}) {
   const fullMode = context.analysisMode === 'full_intelligence' && Boolean(context.intelligenceSnapshot);
   const compact = compactMessages(messages, fullMode);
+  const analysisRole = context.analysisRole ?? 'analyst';
   const analysisContext = {
     tokenAddress: context.tokenAddress ?? null,
     symbol: context.symbol ?? null,
@@ -121,10 +123,14 @@ export function buildTelegramPrompt(messages: TelegramMessageInput[], context: T
     windowStart: context.windowStart ?? null,
     windowEnd: context.windowEnd ?? null,
     analysisMode: fullMode ? 'full_intelligence' : 'telegram_only',
+    analysisRole,
+    priorConclusion: analysisRole === 'critic' ? context.priorConclusion ?? null : null,
     intelligenceSnapshot: fullMode ? compactSnapshot(context) : undefined,
   };
-  const task = fullMode
-    ? 'Analyze the complete memecoin intelligence snapshot. Assess every supplied core feature, compare current evidence with memory.* historical priors without treating priors as proof, use research.* read-only tool observations with their stated limitations and supportingFeatureKeys, explain actor/graph propagation, discover new evidence-backed relationships, identify anomalies/contradictions, and challenge the deterministic scores.'
-    : 'Analyze Telegram memecoin discussion and cross-channel relationships.';
+  const task = analysisRole === 'critic'
+    ? 'Independently audit and try to falsify the prior conclusion. Use only supplied evidence/features, identify unsupported leaps and alternative explanations, downgrade claims that are not independently supported, and state what survives the critique.'
+    : fullMode
+      ? 'Analyze the complete memecoin intelligence snapshot. Assess every supplied core feature, compare current evidence with memory.* historical priors without treating priors as proof, use research.* read-only tool observations with their stated limitations and supportingFeatureKeys, explain actor/graph propagation, discover new evidence-backed relationships, identify anomalies/contradictions, and challenge the deterministic scores.'
+      : 'Analyze Telegram memecoin discussion and cross-channel relationships.';
   return { system: systemPrompt, user: JSON.stringify({ task, context: analysisContext, outputSchema: outputShape, messages: compact }) };
 }
