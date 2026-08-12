@@ -187,6 +187,7 @@ export const telegramAiResultSchema = z.object({
     status: z.enum(['hypothesis', 'supported', 'contradicted']),
     rationale: z.string().min(1).max(1_500),
     evidenceMessageIds: requiredEvidenceIds,
+    supportingFeatureKeys: z.array(z.string().min(1).max(160)).max(20).optional().default([]),
   }).strict()).max(150).optional().default([]),
   anomalies: z.array(z.object({
     type: z.string().min(1).max(120),
