@@ -1,13 +1,14 @@
 import type { TelegramAnalysisContext, TelegramMessageInput } from './schemas.js';
 
-export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v5-tools';
+export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v6-tools-evidence';
 
 const systemPrompt = `You are the evidence-first intelligence analyst for a memecoin research platform.
 Use only supplied messages, structured features, deterministic graph and evidence. Never invent outside facts, identities, ownership, payments, wallet control or coordination.
 When analysisMode is telegram_only, analyze Telegram only. When analysisMode is full_intelligence, reason across every supplied feature block, Telegram, X, market, price, on-chain and graph evidence.
 Treat deterministic scores as observations to inspect, not truths to repeat. Look for disagreements between features, timing, sources and graph structure.
 Feature keys beginning with memory. are historical priors from earlier snapshots. They may guide comparison but are not current evidence, must not be treated as proof, and must be re-confirmed against the current snapshot before raising confidence.
-Feature keys beginning with research. are bounded read-only tool results. Distinguish direct stored observations from inference: wallet similarity/shared-token links are never proof of ownership, control or funding; funding is supported only when the feature explicitly says verified funding evidence exists.
+Feature keys beginning with research. are bounded read-only tool results. Wallet similarity/shared-token links are never proof of identity, control, funding or causality. Collector-stored explicit funding evidence is a lead; transaction/signature evidence can raise confidence but is not independently chain-verified by this agent.
+When discoveredRelationships depend on memory.* or research.* data, include those exact keys in supportingFeatureKeys and keep the relationship a hypothesis unless independent current evidence supports it.
 Never create a positive feedback loop by citing a prior AI discovery as independent confirmation of the same hypothesis.
 Graph edges marked copies/amplifies/shared_link are candidate relationships, not proof of common control. New discoveredRelationships must remain hypotheses unless multiple independent current evidence items support them.
 Use stable graph node IDs for discoveredRelationships source/target whenever an existing node represents the entity.
@@ -28,7 +29,7 @@ const outputShape = {
   campaignHypothesis: { label: 'organic|mixed|coordinated|insufficient_data', confidence: 'number', likelyOriginators: ['entity'], amplifiers: ['entity'], narrative: 'string', evidenceMessageIds: ['id'] },
   risks: [{ type: 'misinformation|scam|impersonation|coordinated_promotion|liquidity_risk|security_claim|market_manipulation|unknown', severity: 'info|low|medium|high|critical', confidence: 'number', explanation: 'string', evidenceMessageIds: ['id'] }],
   featureAssessments: [{ featureKey: 'feature key', assessment: 'supportive|neutral|concerning|insufficient_data', importance: '0..1', confidence: '0..1', explanation: 'string', evidenceMessageIds: ['id'] }],
-  discoveredRelationships: [{ source: 'entity/node', target: 'entity/node', type: 'likely_originator|likely_amplifier|likely_coordinated|shared_campaign|narrative_source|possible_link|other', confidence: '0..1', status: 'hypothesis|supported|contradicted', rationale: 'string', evidenceMessageIds: ['id'] }],
+  discoveredRelationships: [{ source: 'entity/node', target: 'entity/node', type: 'likely_originator|likely_amplifier|likely_coordinated|shared_campaign|narrative_source|possible_link|other', confidence: '0..1', status: 'hypothesis|supported|contradicted', rationale: 'string', evidenceMessageIds: ['id'], supportingFeatureKeys: ['memory.* or research.* key when used'] }],
   anomalies: [{ type: 'string', severity: 'info|low|medium|high|critical', confidence: '0..1', explanation: 'string', relatedFeatureKeys: ['key'], evidenceMessageIds: ['id'] }],
   contradictions: [{ statement: 'string', confidence: '0..1', evidenceMessageIds: ['id'] }],
   whatWouldChangeConclusion: ['specific missing or contradictory evidence'],
@@ -37,10 +38,31 @@ const outputShape = {
   overallConfidence: 'number 0..1',
 };
 
+function compactFeatures(context: TelegramAnalysisContext) {
+  const features = context.intelligenceSnapshot?.features ?? [];
+  const core = features.filter((feature) => !feature.key.startsWith('memory.') && !feature.key.startsWith('research.'));
+  const contextual = features.filter((feature) => feature.key.startsWith('memory.') || feature.key.startsWith('research.'));
+  const selected = [...core];
+  let remainingChars = 12_000;
+  for (const feature of contextual) {
+    const cost = feature.key.length + String(feature.value ?? '').length + 48;
+    if (cost > remainingChars) continue;
+    selected.push(feature);
+    remainingChars -= cost;
+  }
+  return selected.slice(0, 300).map((feature) => ({
+    key: feature.key,
+    value: feature.value,
+    numericValue: feature.numericValue ?? null,
+    confidence: feature.confidence,
+    missing: feature.missing,
+  }));
+}
+
 function compactSnapshot(context: TelegramAnalysisContext) {
   const snapshot = context.intelligenceSnapshot;
   if (!snapshot) return undefined;
-  const featureKeys = new Set(snapshot.features.map((feature) => feature.key));
+  const compactedFeatures = compactFeatures(context);
   return {
     snapshotId: snapshot.snapshotId,
     version: snapshot.version,
@@ -51,13 +73,8 @@ function compactSnapshot(context: TelegramAnalysisContext) {
     createdAt: snapshot.createdAt,
     featureCount: snapshot.featureCount,
     missingFeatureCount: snapshot.missingFeatureCount,
-    features: snapshot.features.slice(0, 300).map((feature) => ({
-      key: feature.key,
-      value: feature.value,
-      numericValue: feature.numericValue ?? null,
-      confidence: feature.confidence,
-      missing: feature.missing,
-    })),
+    features: compactedFeatures,
+    omittedContextFeatureCount: Math.max(0, snapshot.features.length - compactedFeatures.length),
     graph: {
       stats: snapshot.graph.stats,
       nodes: snapshot.graph.nodes.slice(0, 120).map((node) => ({ id: node.id, type: node.type, label: node.label })),
@@ -65,7 +82,7 @@ function compactSnapshot(context: TelegramAnalysisContext) {
     },
     evidence: snapshot.evidence.slice(0, 80).map((entry) => ({ id: entry.id, platform: entry.platform, source: entry.source, timestamp: entry.timestamp ?? null, url: entry.url ?? null, text: entry.text.slice(0, 180) })),
     rawSummary: snapshot.rawSummary,
-    validFeatureKeys: [...featureKeys],
+    validFeatureKeys: compactedFeatures.map((feature) => feature.key),
   };
 }
 
@@ -102,7 +119,7 @@ export function buildTelegramPrompt(messages: TelegramMessageInput[], context: T
     intelligenceSnapshot: fullMode ? compactSnapshot(context) : undefined,
   };
   const task = fullMode
-    ? 'Analyze the complete memecoin intelligence snapshot. Assess all supplied features, compare current evidence with memory.* historical priors without treating priors as proof, use research.* read-only tool observations with their stated limitations, explain actor/graph propagation, discover new evidence-backed relationships, identify anomalies/contradictions, and challenge the deterministic scores.'
+    ? 'Analyze the complete memecoin intelligence snapshot. Assess every supplied core feature, compare current evidence with memory.* historical priors without treating priors as proof, use research.* read-only tool observations with their stated limitations and supportingFeatureKeys, explain actor/graph propagation, discover new evidence-backed relationships, identify anomalies/contradictions, and challenge the deterministic scores.'
     : 'Analyze Telegram memecoin discussion and cross-channel relationships.';
   return { system: systemPrompt, user: JSON.stringify({ task, context: analysisContext, outputSchema: outputShape, messages: compact }) };
 }
