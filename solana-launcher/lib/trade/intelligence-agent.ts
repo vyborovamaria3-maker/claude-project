@@ -8,8 +8,8 @@ import type {
   TwitterStats,
 } from "@/lib/trade/social-intelligence";
 
-export const INTELLIGENCE_SNAPSHOT_VERSION = "social-snapshot-v3";
-export const INTELLIGENCE_GRAPH_VERSION = "entity-graph-v1.2";
+export const INTELLIGENCE_SNAPSHOT_VERSION = "social-snapshot-v4";
+export const INTELLIGENCE_GRAPH_VERSION = "entity-graph-v1.3";
 
 export type IntelligenceFeature = {
   key: string;
@@ -101,12 +101,15 @@ export type AnalysisSnapshot = {
   evidence: IntelligenceEvidence[];
   rawSummary: {
     xPosts: number;
+    xRiskUniversePosts: number;
     telegramMessages: number;
+    telegramMatchedBeforeLimit: number;
     trades: number;
     wallets: number;
     bundles: number;
     chainTruncated: boolean;
     marketAvailable: boolean;
+    marketStale: boolean;
   };
 };
 
@@ -222,7 +225,7 @@ function addNode(map: Map<string, IntelligenceNode>, node: IntelligenceNode) {
     const prior = attributes[key];
     if (typeof value === "boolean" && typeof prior === "boolean") {
       attributes[key] = prior || value;
-    } else if (prior == null) {
+    } else if (prior == null && value != null) {
       attributes[key] = value;
     }
   }
@@ -237,7 +240,8 @@ function addEdge(
   const id = `edge:${stableHash(
     `${edge.source}|${edge.type}|${edge.target}|${evidence.join(",")}`,
   )}`;
-  if (!map.has(id)) {
+  const current = map.get(id);
+  if (!current || edge.confidence > current.confidence) {
     map.set(id, { id, ...edge, evidenceIds: evidence });
   }
 }
@@ -297,6 +301,36 @@ function sharedValue(left: Set<string>, right: Set<string>) {
   return null;
 }
 
+function walletAttributes(wallet: NonNullable<ChainAnalysis["wallets"]>[number]) {
+  const fresh = wallet.freshnessVerified ? (wallet.isFresh ?? null) : null;
+  const smart = wallet.smartClassificationAvailable
+    ? (wallet.isSmart ?? null)
+    : null;
+  return {
+    buys: wallet.buys || 0,
+    sells: wallet.sells || 0,
+    volumeSol: wallet.volumeSol || 0,
+    pnlPercent: wallet.pnlPercent ?? null,
+    pnlComplete: wallet.pnlComplete ?? false,
+    pnlMethod: wallet.pnlMethod ?? null,
+    solBalance: wallet.balanceVerified ? (wallet.solBalance ?? null) : null,
+    balanceVerified: wallet.balanceVerified ?? false,
+    fresh,
+    freshnessVerified: wallet.freshnessVerified ?? false,
+    firstSeenGlobal: wallet.firstSeenGlobal ?? null,
+    firstSeenOnToken: wallet.firstSeenOnToken ?? null,
+    smart,
+    smartClassificationAvailable: wallet.smartClassificationAvailable ?? false,
+    wash: wallet.isWashTrader ?? null,
+    washConfidence: wallet.washConfidence ?? null,
+    coBuyProximityCount: wallet.coBuyProximityCount ?? 0,
+    coBuyProximityWindowSec: wallet.coBuyProximityWindowSec ?? null,
+    bundleId: wallet.bundleId == null ? null : String(wallet.bundleId),
+    bundleMethod: wallet.bundleMethod ?? null,
+    historyTruncated: wallet.historyTruncated ?? false,
+  };
+}
+
 export function buildEntityGraph(
   mint: string,
   x: TwitterStats | null,
@@ -327,18 +361,7 @@ export function buildEntityGraph(
       id: walletId,
       type: "wallet",
       label: wallet.address,
-      attributes: {
-        buys: wallet.buys || 0,
-        sells: wallet.sells || 0,
-        volumeSol: wallet.volumeSol || 0,
-        pnlPercent: wallet.pnlPercent ?? null,
-        solBalance: wallet.solBalance ?? null,
-        fresh: Boolean(wallet.isFresh),
-        smart: Boolean(wallet.isSmart),
-        wash: Boolean(wallet.isWashTrader),
-        relatedCount: wallet.relatedCount || 0,
-        bundleId: wallet.bundleId == null ? null : String(wallet.bundleId),
-      },
+      attributes: walletAttributes(wallet),
     });
     addEdge(edges, {
       source: walletId,
@@ -350,19 +373,25 @@ export function buildEntityGraph(
         buys: wallet.buys || 0,
         sells: wallet.sells || 0,
         volumeSol: wallet.volumeSol || 0,
+        historyTruncated: wallet.historyTruncated ?? chain?.truncated ?? false,
       },
     });
   }
 
   for (const bundle of chain?.bundles || []) {
     const bundleId = entityId("bundle", String(bundle.id));
+    const heuristic = bundle.heuristic !== false;
+    const confidence = heuristic ? 0.62 : 0.95;
     addNode(nodes, {
       id: bundleId,
       type: "bundle",
-      label: `Bundle ${bundle.id}`,
+      label: heuristic ? `Synchronous buy cluster ${bundle.id}` : `Bundle ${bundle.id}`,
       attributes: {
         size: bundle.size || bundle.wallets?.length || 0,
         totalVolumeSol: bundle.totalVolumeSol || 0,
+        heuristic,
+        method: bundle.method || null,
+        ownershipClaim: false,
       },
     });
     for (const address of bundle.wallets || []) {
@@ -372,9 +401,14 @@ export function buildEntityGraph(
         source: walletId,
         target: bundleId,
         type: "bundle_member",
-        confidence: 1,
+        confidence,
         evidenceIds: [],
-        attributes: {},
+        attributes: {
+          heuristic,
+          method: bundle.method || null,
+          verifiedAtomicBundle: !heuristic,
+          ownershipClaim: false,
+        },
       });
     }
   }
@@ -394,35 +428,23 @@ export function buildEntityGraph(
         type: "mentions_wallet",
         confidence: 1,
         evidenceIds: [evidence],
-        attributes: {},
+        attributes: { evidenceBasis: "direct_text_address_mention" },
       });
     }
   };
 
-  for (const tweet of x?.topTweets || []) {
-    const handle = `@${String(tweet.author || "unknown").replace(/^@/, "")}`;
-    const accountId = entityId("x_account", handle);
-    addNode(nodes, {
-      id: accountId,
-      type: "x_account",
-      label: handle,
-      attributes: { suspicious: Boolean(tweet.isSuspicious) },
-    });
-    const time = tweetTime(tweet);
-    const ts = time == null ? "" : new Date(time).toISOString();
-    const text = tweet.text || "";
-    const ev = evidenceId("x", handle, ts, text);
-    addEdge(edges, {
-      source: accountId,
-      target: tokenId,
-      type: "mentions",
-      confidence: 1,
-      evidenceIds: [ev],
-      attributes: { platform: "x" },
-    });
-    linkActorToWallets(accountId, text, ev);
+  const addSocialEvent = (
+    platform: "x" | "telegram",
+    nodeId: string,
+    time: number | null,
+    evidence: string,
+    text: string,
+    extraUrls: string[] = [],
+  ) => {
     const normalizedText = normalizeText(text);
-    const urls = new Set(extractUrls(text).map((value) => value.toLowerCase()));
+    const urls = new Set(
+      [...extractUrls(text), ...extraUrls].map((value) => value.toLowerCase()),
+    );
     const addresses = new Set(
       extractAddresses(text)
         .filter((value) => value !== mint)
@@ -430,10 +452,10 @@ export function buildEntityGraph(
     );
     if (time != null) {
       events.push({
-        nodeId: accountId,
+        nodeId,
         time,
-        evidence: ev,
-        platform: "x",
+        evidence,
+        platform,
         normalizedText,
         urls,
         addresses,
@@ -442,7 +464,7 @@ export function buildEntityGraph(
     if (normalizedText.length >= 20) {
       textGroups.set(normalizedText, [
         ...(textGroups.get(normalizedText) || []),
-        { nodeId: accountId, time: time || 0, evidence: ev },
+        { nodeId, time: time || 0, evidence },
       ]);
     }
     for (const url of urls) {
@@ -454,14 +476,42 @@ export function buildEntityGraph(
         attributes: { url },
       });
       addEdge(edges, {
-        source: accountId,
+        source: nodeId,
         target: urlId,
         type: "shared_link",
         confidence: 1,
-        evidenceIds: [ev],
-        attributes: {},
+        evidenceIds: [evidence],
+        attributes: { evidenceBasis: "direct_url" },
       });
     }
+  };
+
+  for (const tweet of x?.topTweets || []) {
+    const handle = `@${String(tweet.author || "unknown").replace(/^@/, "")}`;
+    const accountId = entityId("x_account", handle);
+    addNode(nodes, {
+      id: accountId,
+      type: "x_account",
+      label: handle,
+      attributes: {
+        suspiciousInRetainedSample: Boolean(tweet.isSuspicious),
+        sourceSample: x?.meta?.queryMode || "unknown",
+      },
+    });
+    const time = tweetTime(tweet);
+    const timestamp = time == null ? "" : new Date(time).toISOString();
+    const text = tweet.text || "";
+    const evidence = evidenceId("x", handle, timestamp, text);
+    addEdge(edges, {
+      source: accountId,
+      target: tokenId,
+      type: "mentions",
+      confidence: 1,
+      evidenceIds: [evidence],
+      attributes: { platform: "x", retainedSample: true },
+    });
+    linkActorToWallets(accountId, text, evidence);
+    addSocialEvent("x", accountId, time, evidence, text);
   }
 
   for (const item of tg?.timeline || []) {
@@ -474,71 +524,38 @@ export function buildEntityGraph(
       id: channelId,
       type: "tg_channel",
       label: channel,
-      attributes: {},
+      attributes: { retainedSample: true },
     });
     const time = itemTime(item);
     const text = item.text || "";
-    const ev = evidenceId("telegram", channel, item.occurred_at || "", text);
+    const evidence = evidenceId(
+      "telegram",
+      channel,
+      item.occurred_at || "",
+      text,
+    );
     addEdge(edges, {
       source: channelId,
       target: tokenId,
       type: explicitCall(item) ? "calls" : "mentions",
       confidence: 1,
-      evidenceIds: [ev],
-      attributes: { platform: "telegram" },
+      evidenceIds: [evidence],
+      attributes: { platform: "telegram", retainedSample: true },
     });
-    linkActorToWallets(channelId, text, ev);
-    const normalizedText = normalizeText(text);
-    const urls = new Set(
-      [
-        ...extractUrls(text),
-        ...(item.source_url ? [item.source_url] : []),
-      ].map((value) => value.toLowerCase()),
+    linkActorToWallets(channelId, text, evidence);
+    addSocialEvent(
+      "telegram",
+      channelId,
+      time,
+      evidence,
+      text,
+      item.source_url ? [item.source_url] : [],
     );
-    const addresses = new Set(
-      extractAddresses(text)
-        .filter((value) => value !== mint)
-        .map((value) => value.toLowerCase()),
-    );
-    if (time != null) {
-      events.push({
-        nodeId: channelId,
-        time,
-        evidence: ev,
-        platform: "telegram",
-        normalizedText,
-        urls,
-        addresses,
-      });
-    }
-    if (normalizedText.length >= 20) {
-      textGroups.set(normalizedText, [
-        ...(textGroups.get(normalizedText) || []),
-        { nodeId: channelId, time: time || 0, evidence: ev },
-      ]);
-    }
-    for (const url of urls) {
-      const urlId = entityId("url", url);
-      addNode(nodes, {
-        id: urlId,
-        type: "url",
-        label: url,
-        attributes: { url },
-      });
-      addEdge(edges, {
-        source: channelId,
-        target: urlId,
-        type: "shared_link",
-        confidence: 1,
-        evidenceIds: [ev],
-        attributes: {},
-      });
-    }
   }
 
   for (const group of textGroups.values()) {
     if (group.length < 2) continue;
-    const sorted = [...group].sort((a, b) => a.time - b.time);
+    const sorted = [...group].sort((left, right) => left.time - right.time);
     const origin = sorted[0];
     for (const target of sorted.slice(1, 8)) {
       if (origin.nodeId === target.nodeId) continue;
@@ -546,7 +563,7 @@ export function buildEntityGraph(
         source: origin.nodeId,
         target: target.nodeId,
         type: "copies",
-        confidence: 0.94,
+        confidence: 0.92,
         evidenceIds: [origin.evidence, target.evidence],
         attributes: {
           lagSeconds: Math.max(
@@ -554,12 +571,13 @@ export function buildEntityGraph(
             Math.round((target.time - origin.time) / 1000),
           ),
           evidenceBasis: "exact_normalized_text",
+          retainedEvidenceOnly: true,
         },
       });
     }
   }
 
-  events.sort((a, b) => a.time - b.time);
+  events.sort((left, right) => left.time - right.time);
   for (let index = 0; index < events.length; index += 1) {
     const source = events[index];
     for (
@@ -587,7 +605,10 @@ export function buildEntityGraph(
         source: source.nodeId,
         target: target.nodeId,
         type: "amplifies",
-        confidence: Math.min(0.95, evidenceStrength * 0.75 + temporalStrength * 0.25),
+        confidence: Math.min(
+          0.92,
+          evidenceStrength * 0.75 + temporalStrength * 0.25,
+        ),
         evidenceIds: [source.evidence, target.evidence],
         attributes: {
           lagSeconds: Math.round(lagMs / 1000),
@@ -595,6 +616,7 @@ export function buildEntityGraph(
           textSimilarity: Number(similarity.toFixed(4)),
           sharedUrl: sharedUrl || null,
           sharedAddress: sharedAddress || null,
+          retainedEvidenceOnly: true,
           evidenceBasis: sharedAddress
             ? "shared_address+timing"
             : sharedUrl
@@ -618,10 +640,14 @@ export function buildEntityGraph(
       tgChannels: nodeRows.filter((node) => node.type === "tg_channel").length,
       wallets: nodeRows.filter((node) => node.type === "wallet").length,
       bundles: nodeRows.filter((node) => node.type === "bundle").length,
-      socialWalletLinks: edgeRows.filter((edge) => edge.type === "mentions_wallet").length,
+      socialWalletLinks: edgeRows.filter(
+        (edge) => edge.type === "mentions_wallet",
+      ).length,
       sharedLinks: edgeRows.filter((edge) => edge.type === "shared_link").length,
       copyEdges: edgeRows.filter((edge) => edge.type === "copies").length,
-      amplificationEdges: edgeRows.filter((edge) => edge.type === "amplifies").length,
+      amplificationEdges: edgeRows.filter(
+        (edge) => edge.type === "amplifies",
+      ).length,
     },
   };
 }
@@ -638,26 +664,26 @@ function featureConfidence(
   },
 ) {
   const text = `${group} ${label} ${note || ""}`.toLowerCase();
-  if (text.includes("raw model confidence")) return 0.5;
-  if (text.includes("sampled") || text.includes("retained")) return 0.58;
-  if (text.includes("proxy")) return 0.58;
-  if (text.includes("lexicon")) return 0.55;
-  if (text.includes("heuristic")) return 0.6;
-  if (text.includes("price") || group.toLowerCase().includes("price")) {
-    return args.chain?.truncated ? 0.62 : 0.78;
+  if (text.includes("model confidence") || text.includes("ai-only")) return 0.5;
+  if (text.includes("retained") || text.includes("sample")) return 0.56;
+  if (text.includes("proxy") || text.includes("heuristic")) return 0.56;
+  if (text.includes("lexicon")) return 0.52;
+  if (text.includes("exact filtered") || text.includes("pre-exclusion")) return 0.84;
+  if (text.includes("peak-to-subsequent-trough")) {
+    return args.chain?.truncated ? 0.6 : 0.82;
   }
-  if (group.startsWith("X") && args.x) return 0.78;
-  if (group.startsWith("Telegram") && args.tg) return 0.82;
-  if (group.includes("Cross-platform")) return 0.68;
-  if (group.includes("Growth")) return 0.65;
-  if (group.includes("AI Agent")) return 0.6;
-  return 0.72;
+  if (text.includes("price") || group.toLowerCase().includes("price")) {
+    return args.chain?.truncated ? 0.6 : 0.76;
+  }
+  if (group.startsWith("X") && args.x) return 0.72;
+  if (group.startsWith("Telegram") && args.tg) return 0.78;
+  if (group.includes("Cross-platform")) return 0.62;
+  if (group.includes("Growth")) return 0.6;
+  if (group.includes("AI Agent")) return 0.5;
+  return 0.68;
 }
 
-function derivedMetricMissing(
-  derived: DerivedSocial,
-  label: string,
-) {
+function derivedMetricMissing(derived: DerivedSocial, label: string) {
   return derived.groups.some((group) =>
     group.rows.some((row) => row.label === label && row.value === "—"),
   );
@@ -697,82 +723,28 @@ export function buildAnalysisSnapshot(args: {
 
   const socialAvailable = Boolean(args.x || args.tg);
   const earlyMissing = derivedMetricMissing(args.derived, "Early signal score");
-  const headline: Array<{
-    key: string;
-    label: string;
-    value: number;
-    missing: boolean;
-    confidence: number;
-  }> = [
-    {
-      key: "scores.social",
-      label: "Social score",
-      value: args.derived.socialScore,
-      missing: !socialAvailable,
-      confidence: 0.68,
-    },
-    {
-      key: "scores.x",
-      label: "X score",
-      value: args.derived.xScore,
-      missing: !args.x,
-      confidence: 0.72,
-    },
-    {
-      key: "scores.telegram",
-      label: "Telegram score",
-      value: args.derived.tgScore,
-      missing: !args.tg,
-      confidence: 0.74,
-    },
-    {
-      key: "scores.organic",
-      label: "Organic score",
-      value: args.derived.organic,
-      missing: !socialAvailable,
-      confidence: 0.62,
-    },
-    {
-      key: "scores.manipulation",
-      label: "Manipulation score",
-      value: args.derived.manipulation,
-      missing: !socialAvailable,
-      confidence: 0.62,
-    },
-    {
-      key: "scores.social_risk",
-      label: "Social risk",
-      value: args.derived.socialRisk,
-      missing: !socialAvailable,
-      confidence: 0.62,
-    },
-    {
-      key: "scores.early",
-      label: "Early score",
-      value: args.derived.early,
-      missing: earlyMissing,
-      confidence: 0.7,
-    },
-    {
-      key: "scores.alpha",
-      label: "Alpha score",
-      value: args.derived.alpha,
-      missing: !socialAvailable,
-      confidence: 0.58,
-    },
-  ];
-  for (const item of headline) {
+  const headline = [
+    ["scores.social", "Social score", args.derived.socialScore, !socialAvailable, 0.66],
+    ["scores.x", "X score", args.derived.xScore, !args.x, 0.68],
+    ["scores.telegram", "Telegram score", args.derived.tgScore, !args.tg, 0.7],
+    ["scores.organic", "Organic score", args.derived.organic, !socialAvailable, 0.58],
+    ["scores.manipulation", "Manipulation score", args.derived.manipulation, !socialAvailable, 0.58],
+    ["scores.social_risk", "Social risk", args.derived.socialRisk, !socialAvailable, 0.58],
+    ["scores.early", "Early score", args.derived.early, earlyMissing, 0.56],
+    ["scores.alpha", "Alpha score", args.derived.alpha, !socialAvailable, 0.54],
+  ] as const;
+  for (const [key, label, value, missing, confidence] of headline) {
     features.push({
-      key: item.key,
+      key,
       group: "Headline scores",
-      label: item.label,
-      value: item.missing ? null : item.value,
-      numericValue: item.missing ? null : item.value,
+      label,
+      value: missing ? null : value,
+      numericValue: missing ? null : value,
       source: "derived",
-      confidence: item.missing ? 0 : item.confidence,
+      confidence: missing ? 0 : confidence,
       observedAt: createdAt,
-      missing: item.missing,
-      note: "Heuristic composite score; confidence is feature reliability, not outcome probability.",
+      missing,
+      note: "Deterministic heuristic composite; reliability is not an outcome probability.",
     });
   }
 
@@ -799,14 +771,19 @@ export function buildAnalysisSnapshot(args: {
     evidence,
     rawSummary: {
       xPosts: args.x?.topTweets?.length || 0,
+      xRiskUniversePosts: args.x?.riskUniverse?.totalTweets || 0,
       telegramMessages: (args.tg?.timeline || []).filter(
         (item) => !item.platform || item.platform.toLowerCase() === "telegram",
       ).length,
+      telegramMatchedBeforeLimit: args.tg?.meta?.matchedBeforeLimit
+        ?? args.tg?.mentions
+        ?? 0,
       trades: args.chain?.trades?.length || 0,
       wallets: args.chain?.wallets?.length || 0,
       bundles: args.chain?.bundles?.length || 0,
       chainTruncated: Boolean(args.chain?.truncated),
       marketAvailable: Boolean(args.market?.pair),
+      marketStale: Boolean(args.market?.meta?.stale),
     },
   };
 }
