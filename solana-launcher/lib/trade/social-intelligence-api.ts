@@ -1,11 +1,11 @@
 import type {
+  AiEnvelope,
   ChainAnalysis,
   Channel,
   Market,
   SocialOptions,
   SocialTimeline,
   TwitterStats,
-  AiEnvelope,
 } from "./social-intelligence";
 
 export async function fetchJson<T>(
@@ -58,6 +58,8 @@ export async function readChainStream(
     if (event.type === "final") {
       finalPayload = {
         trades: event.trades,
+        wallets: event.wallets,
+        bundles: event.bundles,
         truncated: event.truncated,
         summary: event.summary,
       };
