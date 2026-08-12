@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { BrainCircuit, Gauge, Network, Search, ShieldAlert, TrendingUp } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { siteDesign } from "@/lib/siteDesign";
@@ -128,10 +128,7 @@ export default function AdvancedInvestigationPanel() {
               placeholder="Solana mint / CA"
             />
           </div>
-          <button
-            disabled={loading}
-            className={siteDesign.controls.primaryActionClassName}
-          >
+          <button disabled={loading} className={siteDesign.controls.primaryActionClassName}>
             {loading ? "Загрузка…" : "Открыть"}
           </button>
         </div>
@@ -156,9 +153,7 @@ export default function AdvancedInvestigationPanel() {
             <Panel title="Latest campaign fingerprint">
               {latestFingerprint ? (
                 <div className="space-y-3">
-                  <div className="font-mono text-[10px] text-content-faint">
-                    {latestFingerprint.hash}
-                  </div>
+                  <div className="font-mono text-[10px] text-content-faint">{latestFingerprint.hash}</div>
                   <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
                     {Object.entries(latestFingerprint.vector).map(([key, value]) => (
                       <div key={key} className="rounded-lg border border-bg-border bg-bg-card p-2">
@@ -171,9 +166,7 @@ export default function AdvancedInvestigationPanel() {
                     Actors: {(latestFingerprint.actors || []).join(" · ") || "—"}
                   </div>
                 </div>
-              ) : (
-                <Empty text="Fingerprint ещё не накоплен." />
-              )}
+              ) : <Empty text="Fingerprint ещё не накоплен." />}
             </Panel>
 
             <Panel title="Hypothesis lifecycle">
@@ -182,9 +175,7 @@ export default function AdvancedInvestigationPanel() {
                   <div key={item.key} className="rounded-xl border border-bg-border bg-bg-card p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs font-semibold text-content">{item.type}</div>
-                      <span className="rounded-full border border-bg-border px-2 py-1 text-[9px] uppercase text-content-muted">
-                        {item.status}
-                      </span>
+                      <span className="rounded-full border border-bg-border px-2 py-1 text-[9px] uppercase text-content-muted">{item.status}</span>
                     </div>
                     <div className="mt-1 font-mono text-[10px] text-content-faint">
                       {item.source || "?"} → {item.target || "?"}
@@ -237,7 +228,7 @@ export default function AdvancedInvestigationPanel() {
   );
 }
 
-function Stat({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
+function Stat({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
   return (
     <div className="surface-panel rounded-xl border border-bg-border p-3">
       <div className="flex items-center justify-between text-content-faint">
@@ -249,7 +240,7 @@ function Stat({ label, value, icon }: { label: string; value: string; icon: Reac
   );
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="surface-panel rounded-2xl border border-bg-border p-4">
       <h2 className="mb-3 text-sm font-semibold text-content">{title}</h2>
