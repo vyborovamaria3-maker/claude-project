@@ -19,6 +19,8 @@ const AI_BASE = (
 ).replace(/\/$/, "");
 const API_KEY =
   process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
+const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(/\/$/, "");
+const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
 
 type TimelineItem = {
   source_handle?: string | null;
@@ -215,6 +217,36 @@ async function runQwen(
   return result;
 }
 
+async function buildAdvancedReport(
+  snapshot: AnalysisSnapshot,
+  result: QwenEnvelope,
+): Promise<Record<string, unknown> | null> {
+  if (!BACKEND_KEY) return null;
+  try {
+    const response = await fetch(
+      `${BACKEND_BASE}/api/v1/social/intelligence/advanced/report`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Backend-API-Key": BACKEND_KEY,
+        },
+        body: JSON.stringify({
+          snapshot,
+          ai_result: result.result || null,
+          persist: true,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!response.ok) return null;
+    return (await response.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   let body: RequestBody;
   try {
@@ -276,9 +308,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const memoryWrite = snapshot && analysisSnapshot
-      ? await persistIntelligenceMemory(snapshot, analysisSnapshot, result)
-      : { status: "skipped" };
+    const [memoryWrite, advancedIntelligence] = snapshot && analysisSnapshot
+      ? await Promise.all([
+          persistIntelligenceMemory(snapshot, analysisSnapshot, result),
+          buildAdvancedReport(analysisSnapshot, result),
+        ])
+      : [{ status: "skipped" }, null] as const;
+
     return NextResponse.json(
       {
         agent: "qwen",
@@ -293,6 +329,7 @@ export async function POST(req: NextRequest) {
           researchCandidates: candidates,
           tools: researchMeta(boundedResearch),
         },
+        advancedIntelligence,
         ...result,
       },
       { headers: { "Cache-Control": "no-store" } },
