@@ -21,6 +21,7 @@ const API_KEY =
   process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
 const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(/\/$/, "");
 const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
+const REQUEST_BUDGET_MS = 112_000;
 
 type TimelineItem = {
   source_handle?: string | null;
@@ -209,6 +210,7 @@ function aiPayload(
 
 async function runQwen(
   payload: NonNullable<ReturnType<typeof aiPayload>>,
+  timeoutMs: number,
 ): Promise<QwenEnvelope> {
   const response = await fetch(`${AI_BASE}/api/telegram-ai/analyze`, {
     method: "POST",
@@ -220,7 +222,7 @@ async function runQwen(
     },
     body: JSON.stringify(payload),
     cache: "no-store",
-    signal: AbortSignal.timeout(55_000),
+    signal: AbortSignal.timeout(Math.max(5_000, timeoutMs)),
   });
   const result = (await response.json().catch(() => ({}))) as QwenEnvelope;
   if (!response.ok) {
@@ -274,7 +276,12 @@ function compactPriorConclusion(result: QwenEnvelope) {
   return JSON.stringify(value).slice(0, 6_000);
 }
 
+function remainingBudget(startedAt: number) {
+  return Math.max(0, REQUEST_BUDGET_MS - (Date.now() - startedAt));
+}
+
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   let body: RequestBody;
   try {
     body = (await req.json()) as RequestBody;
@@ -315,21 +322,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let result = await runQwen(firstPayload);
+    let result = await runQwen(
+      firstPayload,
+      Math.min(45_000, Math.max(12_000, remainingBudget(startedAt) - 15_000)),
+    );
     const candidates = analysisSnapshot
       ? researchCandidates(analysisSnapshot, result)
       : [];
     let boundedResearch: Awaited<ReturnType<typeof runBoundedResearch>> | null = null;
     let researchRound = 0;
 
-    if (analysisSnapshot && candidates.length) {
+    if (analysisSnapshot && candidates.length && remainingBudget(startedAt) > 25_000) {
       const before = analysisSnapshot.features.length;
       boundedResearch = await runBoundedResearch(analysisSnapshot, candidates);
       analysisSnapshot = boundedResearch.snapshot;
-      if (analysisSnapshot.features.length > before) {
+      if (
+        analysisSnapshot.features.length > before &&
+        remainingBudget(startedAt) > 18_000
+      ) {
         const secondPayload = aiPayload(analysisSnapshot, timeline, mint, body);
         if (secondPayload) {
-          result = await runQwen(secondPayload);
+          result = await runQwen(
+            secondPayload,
+            Math.min(35_000, Math.max(10_000, remainingBudget(startedAt) - 12_000)),
+          );
           researchRound = 1;
         }
       }
@@ -337,17 +353,25 @@ export async function POST(req: NextRequest) {
 
     let advancedIntelligence: AdvancedReport | null = null;
     let critic: QwenEnvelope | null = null;
-    if (analysisSnapshot) {
+    if (analysisSnapshot && remainingBudget(startedAt) > 9_000) {
       advancedIntelligence = await buildAdvancedReport(analysisSnapshot, result, true);
-      if (advancedIntelligence?.layers?.dedicated_critic?.required) {
+      if (
+        advancedIntelligence?.layers?.dedicated_critic?.required &&
+        remainingBudget(startedAt) > 14_000
+      ) {
         const criticPayload = aiPayload(analysisSnapshot, timeline, mint, body, {
           role: "critic",
           priorConclusion: compactPriorConclusion(result),
         });
         if (criticPayload) {
           try {
-            critic = await runQwen(criticPayload);
-            await buildAdvancedReport(analysisSnapshot, critic, true);
+            critic = await runQwen(
+              criticPayload,
+              Math.min(22_000, Math.max(8_000, remainingBudget(startedAt) - 4_000)),
+            );
+            if (remainingBudget(startedAt) > 4_500) {
+              await buildAdvancedReport(analysisSnapshot, critic, true);
+            }
           } catch {
             critic = null;
           }
@@ -355,9 +379,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const memoryWrite = snapshot && analysisSnapshot
+    const memoryWrite = snapshot && analysisSnapshot && remainingBudget(startedAt) > 2_500
       ? await persistIntelligenceMemory(snapshot, analysisSnapshot, result)
-      : { status: "skipped" };
+      : { status: "skipped_budget" };
 
     return NextResponse.json(
       {
@@ -365,6 +389,11 @@ export async function POST(req: NextRequest) {
         available: true,
         analysisMode: analysisSnapshot ? "full_intelligence" : "telegram_only",
         snapshotId: snapshot?.snapshotId || null,
+        requestBudget: {
+          maxMs: REQUEST_BUDGET_MS,
+          elapsedMs: Date.now() - startedAt,
+          remainingMs: remainingBudget(startedAt),
+        },
         memory: {
           loaded: Boolean(initialMemory),
           stats: initialMemory?.stats || null,
