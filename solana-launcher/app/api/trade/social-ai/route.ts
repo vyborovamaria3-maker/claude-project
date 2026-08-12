@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import type { AnalysisSnapshot } from "@/lib/trade/intelligence-agent";
+import type { AnalysisSnapshot, IntelligenceFeature } from "@/lib/trade/intelligence-agent";
 import {
   enrichSnapshotWithMemory,
   loadMemoryContext,
@@ -22,6 +22,7 @@ const API_KEY =
 const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(/\/$/, "");
 const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
 const REQUEST_BUDGET_MS = 112_000;
+const MAX_DYNAMIC_RESEARCH_ROUNDS = 3;
 
 type TimelineItem = {
   source_handle?: string | null;
@@ -66,8 +67,21 @@ type QwenEnvelope = Record<string, unknown> & {
 type AdvancedReport = Record<string, unknown> & {
   layers?: {
     dedicated_critic?: { required?: boolean };
+    dynamic_research_budget?: {
+      recommended_research_rounds?: number;
+      recommended_entity_budget?: number;
+    };
+    research_planner?: {
+      candidates?: Array<{
+        entity?: string;
+        expected_information_gain?: number;
+      }>;
+    };
+    [key: string]: unknown;
   };
 };
+
+type ResearchRun = Awaited<ReturnType<typeof runBoundedResearch>>;
 
 function n(value: unknown) {
   const parsed = Number(value);
@@ -237,7 +251,12 @@ async function runQwen(
 async function buildAdvancedReport(
   snapshot: AnalysisSnapshot,
   result: QwenEnvelope,
-  persist = true,
+  options: {
+    persist?: boolean;
+    enrich?: boolean;
+    role?: "analyst" | "critic";
+    timeoutMs?: number;
+  } = {},
 ): Promise<AdvancedReport | null> {
   if (!BACKEND_KEY) return null;
   try {
@@ -252,10 +271,12 @@ async function buildAdvancedReport(
         body: JSON.stringify({
           snapshot,
           ai_result: result.result || null,
-          persist,
+          persist: options.persist ?? true,
+          enrich: options.enrich ?? true,
+          role: options.role || "analyst",
         }),
         cache: "no-store",
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(options.timeoutMs || 8_000),
       },
     );
     if (!response.ok) return null;
@@ -278,6 +299,56 @@ function compactPriorConclusion(result: QwenEnvelope) {
 
 function remainingBudget(startedAt: number) {
   return Math.max(0, REQUEST_BUDGET_MS - (Date.now() - startedAt));
+}
+
+function advancedFeature(
+  snapshot: AnalysisSnapshot,
+  layer: string,
+  value: unknown,
+): IntelligenceFeature {
+  const serialized = JSON.stringify(value ?? null).slice(0, 600);
+  return {
+    key: `advanced.${layer}`,
+    group: "Advanced Intelligence",
+    label: layer.replaceAll("_", " "),
+    value: serialized,
+    numericValue: null,
+    source: "derived",
+    confidence: 0.85,
+    observedAt: snapshot.createdAt,
+    missing: false,
+    note: "Deterministic/historical advanced-intelligence layer; verify evidence before causal claims.",
+  };
+}
+
+function snapshotWithAdvancedReport(
+  snapshot: AnalysisSnapshot,
+  report: AdvancedReport | null,
+) {
+  if (!report?.layers) return snapshot;
+  const existing = new Set(snapshot.features.map((item) => item.key));
+  const additions = Object.entries(report.layers)
+    .filter(([key]) => !existing.has(`advanced.${key}`))
+    .map(([key, value]) => advancedFeature(snapshot, key, value))
+    .slice(0, Math.max(0, 300 - snapshot.features.length));
+  if (!additions.length) return snapshot;
+  return {
+    ...snapshot,
+    featureCount: snapshot.features.length + additions.length,
+    features: [...snapshot.features, ...additions],
+  };
+}
+
+function plannerCandidates(report: AdvancedReport | null) {
+  const rows = report?.layers?.research_planner?.candidates || [];
+  return rows
+    .filter((row) => row.entity)
+    .sort(
+      (left, right) =>
+        Number(right.expected_information_gain || 0) -
+        Number(left.expected_information_gain || 0),
+    )
+    .map((row) => String(row.entity));
 }
 
 export async function POST(req: NextRequest) {
@@ -326,40 +397,103 @@ export async function POST(req: NextRequest) {
       firstPayload,
       Math.min(45_000, Math.max(12_000, remainingBudget(startedAt) - 15_000)),
     );
-    const candidates = analysisSnapshot
-      ? researchCandidates(analysisSnapshot, result)
-      : [];
-    let boundedResearch: Awaited<ReturnType<typeof runBoundedResearch>> | null = null;
     let researchRound = 0;
+    const researchRuns: ResearchRun[] = [];
+    const researched = new Set<string>();
 
-    if (analysisSnapshot && candidates.length && remainingBudget(startedAt) > 25_000) {
-      const before = analysisSnapshot.features.length;
-      boundedResearch = await runBoundedResearch(analysisSnapshot, candidates);
-      analysisSnapshot = boundedResearch.snapshot;
-      if (
-        analysisSnapshot.features.length > before &&
-        remainingBudget(startedAt) > 18_000
-      ) {
-        const secondPayload = aiPayload(analysisSnapshot, timeline, mint, body);
-        if (secondPayload) {
-          result = await runQwen(
-            secondPayload,
-            Math.min(35_000, Math.max(10_000, remainingBudget(startedAt) - 12_000)),
-          );
-          researchRound = 1;
+    if (analysisSnapshot && remainingBudget(startedAt) > 26_000) {
+      const candidates = researchCandidates(analysisSnapshot, result);
+      if (candidates.length) {
+        const before = analysisSnapshot.features.length;
+        const run = await runBoundedResearch(analysisSnapshot, candidates);
+        researchRuns.push(run);
+        for (const entity of run.requested || []) researched.add(entity);
+        analysisSnapshot = run.snapshot;
+        if (
+          analysisSnapshot.features.length > before &&
+          remainingBudget(startedAt) > 18_000
+        ) {
+          const payload = aiPayload(analysisSnapshot, timeline, mint, body);
+          if (payload) {
+            result = await runQwen(
+              payload,
+              Math.min(32_000, Math.max(10_000, remainingBudget(startedAt) - 12_000)),
+            );
+            researchRound = 1;
+          }
         }
       }
     }
 
+    let planningReport: AdvancedReport | null = null;
+    if (analysisSnapshot && remainingBudget(startedAt) > 10_000) {
+      planningReport = await buildAdvancedReport(analysisSnapshot, result, {
+        persist: false,
+        enrich: false,
+        role: "analyst",
+        timeoutMs: 6_000,
+      });
+    }
+
+    const recommendedRounds = Math.max(
+      1,
+      Math.min(
+        MAX_DYNAMIC_RESEARCH_ROUNDS,
+        Number(
+          planningReport?.layers?.dynamic_research_budget?.recommended_research_rounds || 1,
+        ),
+      ),
+    );
+
+    for (
+      let round = researchRound + 1;
+      analysisSnapshot && round <= recommendedRounds && round <= MAX_DYNAMIC_RESEARCH_ROUNDS;
+      round++
+    ) {
+      if (remainingBudget(startedAt) < 25_000) break;
+      const qwenCandidates = researchCandidates(analysisSnapshot, result);
+      const deterministicCandidates = plannerCandidates(planningReport);
+      const candidates = [...new Set([...qwenCandidates, ...deterministicCandidates])]
+        .filter((entity) => !researched.has(entity))
+        .slice(0, 8);
+      if (!candidates.length) break;
+
+      const before = analysisSnapshot.features.length;
+      const run = await runBoundedResearch(analysisSnapshot, candidates);
+      researchRuns.push(run);
+      for (const entity of run.requested || []) researched.add(entity);
+      analysisSnapshot = run.snapshot;
+      if (analysisSnapshot.features.length <= before) break;
+      if (remainingBudget(startedAt) < 16_000) break;
+
+      const payload = aiPayload(analysisSnapshot, timeline, mint, body);
+      if (!payload) break;
+      result = await runQwen(
+        payload,
+        Math.min(24_000, Math.max(8_000, remainingBudget(startedAt) - 10_000)),
+      );
+      researchRound = round;
+    }
+
     let advancedIntelligence: AdvancedReport | null = null;
     let critic: QwenEnvelope | null = null;
-    if (analysisSnapshot && remainingBudget(startedAt) > 9_000) {
-      advancedIntelligence = await buildAdvancedReport(analysisSnapshot, result, true);
+    if (analysisSnapshot && remainingBudget(startedAt) > 12_000) {
+      advancedIntelligence = await buildAdvancedReport(analysisSnapshot, result, {
+        persist: true,
+        enrich: true,
+        role: "analyst",
+        timeoutMs: Math.min(18_000, Math.max(8_000, remainingBudget(startedAt) - 7_000)),
+      });
+
+      const criticSnapshot = snapshotWithAdvancedReport(
+        analysisSnapshot,
+        advancedIntelligence,
+      );
       if (
         advancedIntelligence?.layers?.dedicated_critic?.required &&
         remainingBudget(startedAt) > 14_000
       ) {
-        const criticPayload = aiPayload(analysisSnapshot, timeline, mint, body, {
+        const criticPayload = aiPayload(criticSnapshot, timeline, mint, body, {
           role: "critic",
           priorConclusion: compactPriorConclusion(result),
         });
@@ -367,10 +501,15 @@ export async function POST(req: NextRequest) {
           try {
             critic = await runQwen(
               criticPayload,
-              Math.min(22_000, Math.max(8_000, remainingBudget(startedAt) - 4_000)),
+              Math.min(20_000, Math.max(8_000, remainingBudget(startedAt) - 4_000)),
             );
             if (remainingBudget(startedAt) > 4_500) {
-              await buildAdvancedReport(analysisSnapshot, critic, true);
+              await buildAdvancedReport(criticSnapshot, critic, {
+                persist: true,
+                enrich: false,
+                role: "critic",
+                timeoutMs: 4_000,
+              });
             }
           } catch {
             critic = null;
@@ -379,10 +518,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const memoryWrite = snapshot && analysisSnapshot && remainingBudget(startedAt) > 2_500
-      ? await persistIntelligenceMemory(snapshot, analysisSnapshot, result)
-      : { status: "skipped_budget" };
+    const memoryWrite =
+      snapshot && analysisSnapshot && remainingBudget(startedAt) > 2_500
+        ? await persistIntelligenceMemory(snapshot, analysisSnapshot, result)
+        : { status: "skipped_budget" };
 
+    const lastResearch = researchRuns.at(-1) || null;
     return NextResponse.json(
       {
         agent: "qwen",
@@ -399,8 +540,9 @@ export async function POST(req: NextRequest) {
           stats: initialMemory?.stats || null,
           write: memoryWrite,
           researchRound,
-          researchCandidates: candidates,
-          tools: researchMeta(boundedResearch),
+          recommendedResearchRounds: recommendedRounds,
+          researchedEntities: [...researched],
+          tools: researchMeta(lastResearch),
         },
         advancedIntelligence,
         critic: critic
