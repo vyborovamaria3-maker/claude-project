@@ -10,23 +10,27 @@ from app.models.advanced_intelligence import (
     IntelligenceHypothesisState,
 )
 from app.models.intelligence_memory import IntelligenceEntity
-from app.services.advanced_intelligence import (
-    build_advanced_intelligence_report,
-    persist_advanced_intelligence,
+from app.services.advanced_intelligence import build_advanced_intelligence_report
+from app.services.advanced_intelligence_persistence import (
+    persist_advanced_intelligence_state,
 )
 
 MINT = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
+MINT_2 = "So11111111111111111111111111111111111111112"
 
 
-def snapshot() -> dict:
+def snapshot(
+    snapshot_id: str = "advanced-test-1",
+    mint: str = MINT,
+) -> dict:
     return {
-        "snapshotId": "advanced-test-1",
+        "snapshotId": snapshot_id,
         "version": "social-snapshot-v2",
         "graphVersion": "entity-graph-v1.1",
-        "mint": MINT,
+        "mint": mint,
         "symbol": "TEST",
         "tokenName": "Test Token",
-        "featureCount": 7,
+        "featureCount": 8,
         "missingFeatureCount": 0,
         "features": [
             {"key": "x.score", "numericValue": 88, "value": 88},
@@ -36,6 +40,7 @@ def snapshot() -> dict:
             {"key": "x.engagement", "numericValue": 600000, "value": 600000},
             {"key": "tg.mentions", "numericValue": 60, "value": 60},
             {"key": "tg.channels", "numericValue": 3, "value": 3},
+            {"key": "combined.alpha", "numericValue": 80, "value": 80},
         ],
         "graph": {
             "version": "entity-graph-v1.1",
@@ -134,7 +139,7 @@ async def test_advanced_intelligence_has_exact_20_layers_and_no_fake_funding() -
 
 
 @pytest.mark.asyncio
-async def test_persistence_is_idempotent_for_fingerprint_and_updates_hypothesis() -> None:
+async def test_hypothesis_reputation_uses_distinct_mints_not_refresh_count() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -149,22 +154,38 @@ async def test_persistence_is_idempotent_for_fingerprint_and_updates_hypothesis(
             )
         )
         await session.commit()
+        first = snapshot()
         report = await build_advanced_intelligence_report(
             session,
-            snapshot=snapshot(),
+            snapshot=first,
             ai_result=AI_RESULT,
         )
-        await persist_advanced_intelligence(
+        await persist_advanced_intelligence_state(
             session,
-            snapshot=snapshot(),
+            snapshot=first,
             report=report,
+            ai_result=AI_RESULT,
+            role="analyst",
+        )
+        await persist_advanced_intelligence_state(
+            session,
+            snapshot={**first, "snapshotId": "refresh-same-mint"},
+            report=report,
+            ai_result=AI_RESULT,
+            role="analyst",
+        )
+        second = snapshot("other-token-snapshot", MINT_2)
+        second_report = await build_advanced_intelligence_report(
+            session,
+            snapshot=second,
             ai_result=AI_RESULT,
         )
-        await persist_advanced_intelligence(
+        await persist_advanced_intelligence_state(
             session,
-            snapshot=snapshot(),
-            report=report,
+            snapshot=second,
+            report=second_report,
             ai_result=AI_RESULT,
+            role="analyst",
         )
         fingerprints = list(
             (await session.execute(select(CampaignFingerprint))).scalars().all()
@@ -172,8 +193,56 @@ async def test_persistence_is_idempotent_for_fingerprint_and_updates_hypothesis(
         hypotheses = list(
             (await session.execute(select(IntelligenceHypothesisState))).scalars().all()
         )
-        assert len(fingerprints) == 1
+        assert len(fingerprints) == 3
         assert len(hypotheses) == 1
         assert hypotheses[0].support_count == 2
+        assert len(hypotheses[0].observations or {}) == 2
         assert report["layers"]["source_reliability"][0]["distinct_token_occurrences"] == 4
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_critic_can_override_same_mint_without_extra_vote() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessions() as session:
+        snap = snapshot()
+        report = await build_advanced_intelligence_report(
+            session,
+            snapshot=snap,
+            ai_result=AI_RESULT,
+        )
+        await persist_advanced_intelligence_state(
+            session,
+            snapshot=snap,
+            report=report,
+            ai_result=AI_RESULT,
+            role="analyst",
+        )
+        critic_result = {
+            **AI_RESULT,
+            "discoveredRelationships": [
+                {
+                    **AI_RESULT["discoveredRelationships"][0],
+                    "status": "contradicted",
+                    "confidence": 0.9,
+                }
+            ],
+        }
+        await persist_advanced_intelligence_state(
+            session,
+            snapshot=snap,
+            report=report,
+            ai_result=critic_result,
+            role="critic",
+        )
+        row = (
+            await session.execute(select(IntelligenceHypothesisState))
+        ).scalar_one()
+        assert row.support_count == 0
+        assert row.contradiction_count == 1
+        assert len(row.observations or {}) == 1
+        assert row.status == "contradicted"
     await engine.dispose()
