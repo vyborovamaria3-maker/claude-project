@@ -8,7 +8,11 @@ celery_app = Celery(
     "potapoff",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.tasks.notifications", "app.tasks.etl"],
+    include=[
+        "app.tasks.notifications",
+        "app.tasks.etl",
+        "app.tasks.intelligence",
+    ],
 )
 
 celery_app.conf.update(
@@ -32,6 +36,10 @@ celery_app.conf.update(
         },
         "bootstrap-collector-jobs": {
             "task": "app.tasks.etl.bootstrap_jobs",
+            "schedule": 900.0,
+        },
+        "evaluate-intelligence-outcomes-every-15-minutes": {
+            "task": "app.tasks.intelligence.evaluate_matured_outcomes",
             "schedule": 900.0,
         },
     },
