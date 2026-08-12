@@ -1,85 +1,96 @@
 import { NextRequest, NextResponse } from "next/server";
 
 // data-tag: api.token_ohlcv
-// Proxy to DexScreener (avoids CORS) — returns simplified OHLCV-friendly payload.
-// DexScreener gives latest pair data; for true OHLCV we synthesise candles
-// on the client side from priceUsd / priceChange snapshots.
+// Latest pair snapshot for analysis. This is not historical OHLCV.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30; // allow time for trade pagination
+export const maxDuration = 30;
 
-// Server-side cache to reduce DexScreener load
-const cache = new Map<string, { data: any; timestamp: number }>();
-const CACHE_TTL = 3_000; // 3s — fast refresh for live mcap
-
-// Separate longer-lived cache for Total Fees (expensive to compute, slow-changing)
-const feesCache = new Map<string, { feeSol: number; timestamp: number }>();
-const FEES_CACHE_TTL = 60_000; // 60s — fees don’t change second-by-second
+const cache = new Map<string, { data: unknown; timestamp: number }>();
+const CACHE_TTL = 3_000;
+const feesCache = new Map<
+  string,
+  { feeSol: number; uniqueTraders: number; timestamp: number }
+>();
+const FEES_CACHE_TTL = 60_000;
 
 interface TradesResult {
   totalSol: number;
   uniqueTraders: number;
 }
 
-/**
- * Fetch Total Volume from real on-chain v2/trades data.
- * Returns totalSol and uniqueTraders count.
- * Total Fees = totalSol × 1% (pump.fun fee rate).
- */
 async function fetchTradesData(mint: string): Promise<TradesResult | null> {
-  const fc = feesCache.get(mint);
-  if (fc && Date.now() - fc.timestamp < FEES_CACHE_TTL) return { totalSol: fc.feeSol / 0.01, uniqueTraders: (fc as any).uniqueTraders ?? 0 };
+  const cached = feesCache.get(mint);
+  if (cached && Date.now() - cached.timestamp < FEES_CACHE_TTL) {
+    return {
+      totalSol: cached.feeSol / 0.01,
+      uniqueTraders: cached.uniqueTraders,
+    };
+  }
 
   try {
-    const PAGE = 100;
-    const MAX_PAGES = 3; // Reduced from 10 to 3 for faster response (300 trades vs 1000)
-    const BASE = `https://swap-api.pump.fun/v2/coins/${mint}/trades`;
+    const pageSize = 100;
+    const maxPages = 3;
+    const base = `https://swap-api.pump.fun/v2/coins/${mint}/trades`;
+    type Trade = {
+      amountSol: string;
+      walletAddress?: string;
+      trader?: string;
+    };
+    type Resp = {
+      trades?: Trade[];
+      pagination?: { hasMore?: boolean; nextCursor?: string };
+    };
 
-    type Trade = { amountSol: string; walletAddress?: string; trader?: string };
-    type Resp = { trades?: Trade[]; pagination?: { hasMore?: boolean; nextCursor?: string } };
-
-    const r1 = await fetch(`${BASE}?limit=${PAGE}`, {
-      headers: { Accept: "application/json" }, cache: "no-store",
+    const first = await fetch(`${base}?limit=${pageSize}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
     });
-    if (!r1.ok) return null;
-    const d1 = (await r1.json()) as Resp;
-    const pages: Trade[][] = [d1.trades ?? []];
+    if (!first.ok) return null;
+    const firstData = (await first.json()) as Resp;
+    const pages: Trade[][] = [firstData.trades ?? []];
+    let nextCursor = firstData.pagination?.hasMore
+      ? firstData.pagination.nextCursor
+      : undefined;
 
-    if (d1.pagination?.hasMore && d1.pagination.nextCursor) {
-      let nextCursor: string | undefined = d1.pagination.nextCursor;
-      for (let i = 1; i < MAX_PAGES && nextCursor; i++) {
-        const rN = await fetch(`${BASE}?limit=${PAGE}&cursor=${encodeURIComponent(nextCursor)}`, {
-          headers: { Accept: "application/json" }, cache: "no-store",
-        });
-        if (!rN.ok) break;
-        const dN = (await rN.json()) as Resp;
-        pages.push(dN.trades ?? []);
-        if (!dN.pagination?.hasMore || !dN.pagination.nextCursor) break;
-        nextCursor = dN.pagination.nextCursor;
-      }
+    for (let index = 1; index < maxPages && nextCursor; index += 1) {
+      const response = await fetch(
+        `${base}?limit=${pageSize}&cursor=${encodeURIComponent(nextCursor)}`,
+        { headers: { Accept: "application/json" }, cache: "no-store" },
+      );
+      if (!response.ok) break;
+      const data = (await response.json()) as Resp;
+      pages.push(data.trades ?? []);
+      nextCursor = data.pagination?.hasMore
+        ? data.pagination.nextCursor
+        : undefined;
     }
 
     let totalSol = 0;
     const wallets = new Set<string>();
     for (const page of pages) {
-      for (const t of page) {
-        totalSol += Number(t.amountSol) || 0;
-        const w = t.walletAddress || t.trader;
-        if (w) wallets.add(w);
+      for (const trade of page) {
+        totalSol += Number(trade.amountSol) || 0;
+        const wallet = trade.walletAddress || trade.trader;
+        if (wallet) wallets.add(wallet);
       }
     }
-
     if (totalSol <= 0) return null;
-    const feeSol = totalSol * 0.01; // 1% pump.fun fee
-    const uniqueTraders = wallets.size;
-    feesCache.set(mint, { feeSol, timestamp: Date.now(), uniqueTraders } as any);
-    return { totalSol, uniqueTraders };
-  } catch { return null; }
+
+    feesCache.set(mint, {
+      feeSol: totalSol * 0.01,
+      uniqueTraders: wallets.size,
+      timestamp: Date.now(),
+    });
+    return { totalSol, uniqueTraders: wallets.size };
+  } catch {
+    return null;
+  }
 }
 
 interface BondingCurveInfo {
-  progress: number; // 0-100
+  progress: number;
   migrated: boolean;
   virtualSolReserves: number;
   twitter: string | null;
@@ -89,25 +100,32 @@ interface BondingCurveInfo {
 
 async function fetchPumpInfo(mint: string): Promise<BondingCurveInfo | null> {
   try {
-    const r = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
-      headers: { Accept: "application/json" }, cache: "no-store",
+    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
     });
-    if (!r.ok) return null;
-    const d = await r.json();
-    const vSol = Number(d.virtual_sol_reserves) || 0;
-    const vToken = Number(d.virtual_token_reserves) || 0;
-    const migrated = !!d.complete || !!d.raydium_pool;
-    // Bonding curve fills at ~85 SOL virtual reserves (pump.fun spec)
-    const progress = migrated ? 100 : Math.min(100, Math.round((vSol / 85_000_000_000) * 100));
+    if (!response.ok) return null;
+    const data = await response.json();
+    const virtualSol = Number(data.virtual_sol_reserves) || 0;
+    const migrated = Boolean(data.complete || data.raydium_pool);
+    const progress = migrated
+      ? 100
+      : Math.min(100, Math.round((virtualSol / 85_000_000_000) * 100));
     return {
       progress,
       migrated,
-      virtualSolReserves: vSol / 1e9,
-      twitter: d.twitter ? `https://twitter.com/${d.twitter.replace(/^@/, "").replace(/^https?:\/\/(www\.)?(twitter|x)\.com\//i, "")}` : null,
-      telegram: d.telegram ?? null,
-      website: d.website ?? null,
+      virtualSolReserves: virtualSol / 1e9,
+      twitter: data.twitter
+        ? `https://twitter.com/${String(data.twitter)
+            .replace(/^@/, "")
+            .replace(/^https?:\/\/(www\.)?(twitter|x)\.com\//i, "")}`
+        : null,
+      telegram: data.telegram ?? null,
+      website: data.website ?? null,
     };
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 type DexPair = {
@@ -131,93 +149,144 @@ type DexPair = {
   };
 };
 
+function response(data: unknown) {
+  return NextResponse.json(data, {
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
 export async function GET(req: NextRequest) {
-  const mint = req.nextUrl.searchParams.get("mint");
+  const mint = req.nextUrl.searchParams.get("mint")?.trim();
   if (!mint) {
     return NextResponse.json({ error: "mint required" }, { status: 400 });
   }
 
-  // Check cache first
   const cached = cache.get(mint);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return NextResponse.json(cached.data, {
-      headers: { "Cache-Control": "public, max-age=15" }
+    const value = cached.data as Record<string, unknown>;
+    return response({
+      ...value,
+      meta: {
+        ...((value.meta as Record<string, unknown> | undefined) || {}),
+        cache: "memory",
+        stale: false,
+        servedAt: Date.now(),
+      },
     });
   }
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000); // 8s timeout
-    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-      signal: controller.signal,
-    });
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    const upstream = await fetch(
+      `https://api.dexscreener.com/latest/dex/tokens/${mint}`,
+      {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+      },
+    );
     clearTimeout(timeout);
-    if (!r.ok) {
-      return NextResponse.json({ error: `DexScreener ${r.status}` }, { status: 502 });
+    if (!upstream.ok) {
+      return NextResponse.json(
+        { error: `DexScreener ${upstream.status}` },
+        { status: 502 },
+      );
     }
-    const data = (await r.json()) as { pairs?: DexPair[] };
-
-    // pick the most liquid Solana pair where our mint is the base token
+    const data = (await upstream.json()) as { pairs?: DexPair[] };
     const mintLower = mint.toLowerCase();
     const solPairs = (data.pairs ?? []).filter(
-      p => p.chainId === "solana" && p.baseToken.address.toLowerCase() === mintLower
+      (pair) => pair.chainId === "solana"
+        && pair.baseToken.address.toLowerCase() === mintLower,
     );
 
-    // If not on DexScreener yet — try Pump.fun swap-api v1 directly
     if (solPairs.length === 0) {
       try {
-        const pr = await fetch(`https://swap-api.pump.fun/v1/coins/${mint}`, {
-          headers: { Accept: "application/json" }, cache: "no-store",
+        const pump = await fetch(`https://swap-api.pump.fun/v1/coins/${mint}`, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
         });
-        if (pr.ok) {
-          type PumpCoin = { symbol: string; name: string; usdMarketCap?: number; priceUsd?: string };
-          const coin = (await pr.json()) as PumpCoin;
-          const mcap = coin.usdMarketCap ?? null;
-          const priceUsd = coin.priceUsd ? parseFloat(coin.priceUsd) : null;
+        if (pump.ok) {
+          type PumpCoin = {
+            symbol: string;
+            name: string;
+            usdMarketCap?: number;
+            priceUsd?: string;
+          };
+          const coin = (await pump.json()) as PumpCoin;
+          const marketCap = coin.usdMarketCap ?? null;
+          const priceUsd = coin.priceUsd ? Number.parseFloat(coin.priceUsd) : null;
           const responseData = {
             pair: {
-              dexId: "pumpfun", pairAddress: mint,
-              symbol: coin.symbol ?? "", name: coin.name ?? "",
-              priceUsd, priceNative: null,
-              fdv: mcap, marketCap: mcap,
-              volumeH24: 0, change24h: 0, liquidityUsd: 0, createdAt: null,
-              totalVolumeSol: null, totalVolumeUsd: null, solPrice: null,
+              dexId: "pumpfun",
+              pairAddress: mint,
+              symbol: coin.symbol ?? "",
+              name: coin.name ?? "",
+              priceUsd: Number.isFinite(priceUsd) ? priceUsd : null,
+              priceNative: null,
+              fdv: marketCap,
+              marketCap,
+              volumeH24: null,
+              volumeH6: null,
+              volumeH1: null,
+              volumeM5: null,
+              change24h: null,
+              changeH1: null,
+              liquidityUsd: null,
+              createdAt: null,
+              createdAtSemantics: "unknown",
+              totalVolumeSol: null,
+              totalVolumeUsd: null,
+              solPrice: null,
+            },
+            meta: {
+              source: "pumpfun-v1-fallback",
+              stale: false,
+              fetchedAt: Date.now(),
+              servedAt: Date.now(),
             },
           };
           cache.set(mint, { data: responseData, timestamp: Date.now() });
-          return NextResponse.json(responseData, { headers: { "Cache-Control": "no-store" } });
+          return response(responseData);
         }
-      } catch { /* ignore */ }
-      return NextResponse.json({ error: "no_pairs", pairs: [] });
+      } catch {
+        // Fall through to no-pairs response.
+      }
+      return response({ error: "no_pairs", pairs: [] });
     }
 
-    const best = solPairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
+    const best = [...solPairs].sort(
+      (left, right) => (right.liquidity?.usd ?? 0) - (left.liquidity?.usd ?? 0),
+    )[0];
+    const parsedPriceUsd = best.priceUsd ? Number.parseFloat(best.priceUsd) : null;
+    const parsedPriceNative = best.priceNative
+      ? Number.parseFloat(best.priceNative)
+      : null;
+    const nativeSolPrice = parsedPriceUsd != null
+      && parsedPriceNative != null
+      && Number.isFinite(parsedPriceUsd)
+      && Number.isFinite(parsedPriceNative)
+      && parsedPriceNative > 0
+      ? parsedPriceUsd / parsedPriceNative
+      : null;
 
-    const nativeSolPrice = (best.priceUsd && best.priceNative)
-      ? parseFloat(best.priceUsd) / parseFloat(best.priceNative)
-      : 0;
-    const solPrice = nativeSolPrice || 150;
-
-    // Fetch trades data and pump.fun info in parallel
     const [tradesData, pumpInfo] = await Promise.all([
       fetchTradesData(mint),
       fetchPumpInfo(mint),
     ]);
-
     const totalVolumeSol = tradesData?.totalSol ?? null;
-    const totalFeesSol = totalVolumeSol ? totalVolumeSol * 0.01 : null; // 1% pump.fun fee
-    const totalVolumeUsd = totalVolumeSol ? totalVolumeSol * solPrice : null;
-    const uniqueTraders = tradesData?.uniqueTraders ?? null;
+    const totalFeesSol = totalVolumeSol != null ? totalVolumeSol * 0.01 : null;
+    const totalVolumeUsd = totalVolumeSol != null && nativeSolPrice != null
+      ? totalVolumeSol * nativeSolPrice
+      : null;
 
-    // Socials: prefer DexScreener info, fallback to pump.fun
-    const dexTwitter = best.info?.socials?.find(s => s.type === "twitter")?.url ?? null;
-    const dexTelegram = best.info?.socials?.find(s => s.type === "telegram")?.url ?? null;
+    const dexTwitter = best.info?.socials?.find(
+      (social) => social.type === "twitter",
+    )?.url ?? null;
+    const dexTelegram = best.info?.socials?.find(
+      (social) => social.type === "telegram",
+    )?.url ?? null;
     const dexWebsite = best.info?.websites?.[0]?.url ?? null;
-    const twitter = dexTwitter || pumpInfo?.twitter || null;
-    const telegram = dexTelegram || pumpInfo?.telegram || null;
-    const website = dexWebsite || pumpInfo?.website || null;
 
     const responseData = {
       pair: {
@@ -225,44 +294,60 @@ export async function GET(req: NextRequest) {
         pairAddress: best.pairAddress,
         symbol: best.baseToken.symbol,
         name: best.baseToken.name,
-        priceUsd: best.priceUsd ? parseFloat(best.priceUsd) : null,
-        priceNative: best.priceNative ? parseFloat(best.priceNative) : null,
+        priceUsd: Number.isFinite(parsedPriceUsd) ? parsedPriceUsd : null,
+        priceNative: Number.isFinite(parsedPriceNative) ? parsedPriceNative : null,
         fdv: best.fdv ?? null,
         marketCap: best.marketCap ?? null,
-        volumeH24: best.volume?.h24 ?? 0,
-        volumeH6: best.volume?.h6 ?? 0,
-        volumeH1: best.volume?.h1 ?? 0,
-        volumeM5: best.volume?.m5 ?? 0,
-        change24h: best.priceChange?.h24 ?? 0,
-        changeH1: best.priceChange?.h1 ?? 0,
-        buysH1: best.txns?.h1?.buys ?? 0,
-        sellsH1: best.txns?.h1?.sells ?? 0,
-        buysH24: best.txns?.h24?.buys ?? 0,
-        sellsH24: best.txns?.h24?.sells ?? 0,
-        liquidityUsd: best.liquidity?.usd ?? 0,
-        liquidity: best.liquidity?.usd ?? 0,
+        volumeH24: best.volume?.h24 ?? null,
+        volumeH6: best.volume?.h6 ?? null,
+        volumeH1: best.volume?.h1 ?? null,
+        volumeM5: best.volume?.m5 ?? null,
+        change24h: best.priceChange?.h24 ?? null,
+        changeH1: best.priceChange?.h1 ?? null,
+        buysH1: best.txns?.h1?.buys ?? null,
+        sellsH1: best.txns?.h1?.sells ?? null,
+        buysH24: best.txns?.h24?.buys ?? null,
+        sellsH24: best.txns?.h24?.sells ?? null,
+        liquidityUsd: best.liquidity?.usd ?? null,
+        liquidity: best.liquidity?.usd ?? null,
         createdAt: best.pairCreatedAt ?? null,
+        createdAtSemantics: "selected_dex_pair_created_at",
         totalVolumeSol,
         totalFeesSol,
-        totalVolumeUsd: totalVolumeUsd ?? null,
-        solPrice: solPrice || null,
-        uniqueTraders,
+        totalVolumeUsd,
+        totalVolumeCompleteness: "pumpfun-v2-first-300-trades-max",
+        solPrice: nativeSolPrice,
+        uniqueTraders: tradesData?.uniqueTraders ?? null,
         bcProgress: pumpInfo?.progress ?? null,
         bcMigrated: pumpInfo?.migrated ?? null,
-        twitter,
-        telegram,
-        website,
+        twitter: dexTwitter || pumpInfo?.twitter || null,
+        telegram: dexTelegram || pumpInfo?.telegram || null,
+        website: dexWebsite || pumpInfo?.website || null,
+      },
+      meta: {
+        source: "dexscreener-most-liquid-solana-base-pair",
+        stale: false,
+        fetchedAt: Date.now(),
+        servedAt: Date.now(),
       },
     };
-    
+
     cache.set(mint, { data: responseData, timestamp: Date.now() });
-    return NextResponse.json(responseData, { headers: { "Cache-Control": "no-store" } });
-  } catch (e: any) {
+    return response(responseData);
+  } catch (error: unknown) {
     if (cached) {
-      return NextResponse.json(cached.data, {
-        headers: { "Cache-Control": "no-store", "X-Stale": "true" }
+      const value = cached.data as Record<string, unknown>;
+      return response({
+        ...value,
+        meta: {
+          ...((value.meta as Record<string, unknown> | undefined) || {}),
+          stale: true,
+          cache: "stale-fallback",
+          servedAt: Date.now(),
+        },
       });
     }
-    return NextResponse.json({ error: e?.message ?? "fetch_failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "fetch_failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
