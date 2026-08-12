@@ -9,7 +9,10 @@ from app.core.config import Settings
 
 MAX_SIGNATURE_PAGES = 3
 SIGNATURE_PAGE_SIZE = 100
-MAX_TRANSACTIONS_TO_INSPECT = 60
+MAX_TRANSACTIONS_TO_INSPECT = 40
+MAX_TRANSACTION_CONCURRENCY = 6
+MAX_WALLET_CONCURRENCY = 2
+SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
 
 
 async def _rpc(
@@ -79,42 +82,44 @@ def _incoming_system_transfers(
     tx = transaction.get("transaction") or {}
     message = tx.get("message") or {}
     instructions = message.get("instructions") or []
-    signature = None
     signatures = tx.get("signatures") or []
-    if signatures:
-        signature = signatures[0]
+    signature = signatures[0] if signatures else None
     transfers: list[dict[str, Any]] = []
+
     for instruction in instructions:
         if not isinstance(instruction, dict):
             continue
+        program = str(instruction.get("program") or "").lower()
+        program_id = str(instruction.get("programId") or "")
+        if program != "system" and program_id != SYSTEM_PROGRAM_ID:
+            continue
         parsed = instruction.get("parsed")
-        if not isinstance(parsed, dict) or parsed.get("type") != "transfer":
+        if not isinstance(parsed, dict):
+            continue
+        if parsed.get("type") not in {"transfer", "transferWithSeed"}:
             continue
         info = parsed.get("info") or {}
         if str(info.get("destination") or "") != address:
             continue
-        lamports = info.get("lamports")
-        if lamports is None:
-            # System transferWithSeed and some parsed forms may expose SOL units.
-            lamports = info.get("amount")
         try:
-            lamports_value = int(lamports) if lamports is not None else None
-        except (TypeError, ValueError):
-            lamports_value = None
+            lamports_value = int(info["lamports"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if lamports_value <= 0:
+            continue
+        source = str(info.get("source") or "") or None
+        if not source:
+            continue
         transfers.append(
             {
-                "source": str(info.get("source") or "") or None,
+                "source": source,
                 "destination": address,
                 "lamports": lamports_value,
-                "sol": (
-                    lamports_value / 1_000_000_000
-                    if lamports_value is not None
-                    else None
-                ),
+                "sol": lamports_value / 1_000_000_000,
                 "signature": signature,
                 "block_time": block_time,
-                "program": instruction.get("program"),
-                "program_id": instruction.get("programId"),
+                "program": "system",
+                "program_id": SYSTEM_PROGRAM_ID,
             }
         )
     return transfers
@@ -134,41 +139,38 @@ async def verify_wallet_funding(
         }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            signatures, history_exhausted = await _signatures(
-                client,
-                rpc_url,
-                address,
-            )
+            signatures, history_exhausted = await _signatures(client, rpc_url, address)
             valid = [
                 row
                 for row in signatures
                 if row.get("signature") and row.get("err") is None
             ]
-            # Oldest retrieved transactions are most relevant to initial funding.
             inspect = list(reversed(valid))[:MAX_TRANSACTIONS_TO_INSPECT]
+            semaphore = asyncio.Semaphore(MAX_TRANSACTION_CONCURRENCY)
 
             async def fetch_transaction(
                 index: int,
                 signature: str,
             ) -> tuple[int, dict[str, Any] | None]:
-                try:
-                    value = await _rpc(
-                        client,
-                        rpc_url,
-                        "getTransaction",
-                        [
-                            signature,
-                            {
-                                "encoding": "jsonParsed",
-                                "commitment": "confirmed",
-                                "maxSupportedTransactionVersion": 0,
-                            },
-                        ],
-                        10_000 + index,
-                    )
-                    return index, value if isinstance(value, dict) else None
-                except (httpx.HTTPError, RuntimeError):
-                    return index, None
+                async with semaphore:
+                    try:
+                        value = await _rpc(
+                            client,
+                            rpc_url,
+                            "getTransaction",
+                            [
+                                signature,
+                                {
+                                    "encoding": "jsonParsed",
+                                    "commitment": "confirmed",
+                                    "maxSupportedTransactionVersion": 0,
+                                },
+                            ],
+                            10_000 + index,
+                        )
+                        return index, value if isinstance(value, dict) else None
+                    except (httpx.HTTPError, RuntimeError):
+                        return index, None
 
             fetched = await asyncio.gather(
                 *[
@@ -176,7 +178,8 @@ async def verify_wallet_funding(
                     for index, row in enumerate(inspect)
                 ]
             )
-        transfers = []
+
+        transfers: list[dict[str, Any]] = []
         for _, transaction in sorted(fetched):
             transfers.extend(_incoming_system_transfers(transaction, address))
         transfers.sort(
@@ -197,8 +200,8 @@ async def verify_wallet_funding(
             "history_exhausted": history_exhausted,
             "search_complete": history_exhausted,
             "note": (
-                "A source is treated as funding evidence only when a parsed "
-                "on-chain System Program transfer to this wallet is observed."
+                "Funding evidence requires a parsed positive-lamport System Program "
+                "transfer to the wallet. SPL token transfers are excluded."
             ),
         }
     except (httpx.HTTPError, RuntimeError) as exc:
@@ -219,7 +222,7 @@ async def verify_snapshot_wallet_funding(
 ) -> dict[str, Any]:
     graph = snapshot.get("graph") or {}
     nodes = graph.get("nodes") or []
-    wallets = []
+    wallets: list[str] = []
     for node in nodes:
         if not isinstance(node, dict) or node.get("type") != "wallet":
             continue
@@ -236,11 +239,16 @@ async def verify_snapshot_wallet_funding(
             "verified_edges": [],
             "same_funder_groups": [],
         }
-    results = await asyncio.gather(
-        *[verify_wallet_funding(settings, address) for address in wallets]
-    )
+
+    wallet_semaphore = asyncio.Semaphore(MAX_WALLET_CONCURRENCY)
+
+    async def inspect_wallet(address: str) -> dict[str, Any]:
+        async with wallet_semaphore:
+            return await verify_wallet_funding(settings, address)
+
+    results = await asyncio.gather(*[inspect_wallet(address) for address in wallets])
     funders: dict[str, list[str]] = {}
-    verified_edges = []
+    verified_edges: list[dict[str, Any]] = []
     for result in results:
         transfer = result.get("first_incoming_transfer")
         if not result.get("verified") or not isinstance(transfer, dict):
