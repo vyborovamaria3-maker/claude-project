@@ -140,7 +140,7 @@ async def expand_wallet(
                 "shared_tokens": link.shared_tokens_count,
                 "similarity": link.similarity_score,
                 "first_interaction_at": _iso(link.first_interaction_date),
-                "funding_evidence": _explicit_funding(link.details),
+                "explicit_funding_evidence": _explicit_funding(link.details),
             }
         )
     return {
@@ -151,9 +151,13 @@ async def expand_wallet(
             "address": wallet.wallet_address,
             "first_seen_at": _iso(wallet.first_seen_date),
             "tags": wallet.tags or [],
-            "tokens_traded": len({token.mint_address for _, token in trade_rows}),
+            "tokens_in_returned_trades": len(
+                {token.mint_address for _, token in trade_rows}
+            ),
             "trades_returned": len(trade_rows),
-            "realized_profit_usd": sum(realized) if realized else None,
+            "realized_profit_usd_in_returned_trades": (
+                sum(realized) if realized else None
+            ),
         },
         "trades": [
             {
@@ -202,7 +206,7 @@ async def funding_graph(
         "entity_key": entity_key,
         "found": True,
         "funding_evidence_available": bool(explicit),
-        "verified_funding_edges": explicit,
+        "explicit_funding_evidence": explicit,
         "similarity_links_not_funding_proof": similarity,
     }
 
@@ -237,8 +241,8 @@ async def expand_x_account(
         "account": {
             "handle": handle,
             "events_returned": len(rows),
-            "distinct_mints": len(mints),
-            "first_seen_at": _iso(min(row.occurred_at for row in rows)),
+            "distinct_mints_in_returned_events": len(mints),
+            "first_seen_in_returned_events": _iso(min(row.occurred_at for row in rows)),
             "last_seen_at": _iso(max(row.occurred_at for row in rows)),
             "note": "Engagement/profile metrics are current observations and may be mutable.",
         },
@@ -265,12 +269,15 @@ async def expand_tg_channel(
     handle = _handle(_entity_value(entity_key))
     channel = (
         await session.execute(
-            select(TelegramChannel).where(
+            select(TelegramChannel)
+            .where(
                 or_(
                     func.lower(func.replace(TelegramChannel.username, "@", "")) == handle,
                     func.lower(TelegramChannel.title) == handle,
                 )
             )
+            .order_by(TelegramChannel.last_seen_at.desc(), TelegramChannel.id.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     if channel is None:
@@ -298,7 +305,8 @@ async def expand_tg_channel(
             "first_seen_at": _iso(channel.first_seen_at),
             "last_seen_at": _iso(channel.last_seen_at),
             "score": score.score if score else None,
-            "calls_count": score.calls_count if score else len(calls),
+            "calls_count": score.calls_count if score else None,
+            "calls_returned": len(calls),
             "evaluated_calls": score.evaluated_calls if score else None,
             "win_rate": score.win_rate if score else None,
             "rug_rate": score.rug_rate if score else None,
