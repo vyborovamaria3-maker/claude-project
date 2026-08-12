@@ -28,22 +28,12 @@ def _handle(value: str) -> str:
     return value.strip().lower().lstrip("@")
 
 
-def _wallet_address(entity_key: str) -> str:
-    value = entity_key.split(":", 1)[1] if ":" in entity_key else entity_key
-    return value.strip()
-
-
-def _social_handle(entity_key: str) -> str:
-    value = entity_key.split(":", 1)[1] if ":" in entity_key else entity_key
-    return _handle(value)
+def _entity_value(entity_key: str) -> str:
+    return (entity_key.split(":", 1)[1] if ":" in entity_key else entity_key).strip()
 
 
 def _explicit_funding(details: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return only explicit funding evidence already stored by a collector.
-
-    WalletLink itself is similarity/shared-token evidence, not proof of funding. We only
-    surface a funding edge when collector details contain an explicit funding/transfer key.
-    """
+    """Return only collector-stored funding evidence, never infer it from similarity."""
     if not isinstance(details, dict):
         return None
     keys = {
@@ -56,11 +46,59 @@ def _explicit_funding(details: dict[str, Any] | None) -> dict[str, Any] | None:
         "transfer_lamports",
         "transfer_sol",
     }
-    evidence = {key: details[key] for key in keys if key in details and details[key] not in (None, "")}
+    evidence = {
+        key: details[key]
+        for key in keys
+        if key in details and details[key] not in (None, "")
+    }
     nested = details.get("funding")
     if isinstance(nested, dict) and nested:
         evidence["funding"] = nested
     return evidence or None
+
+
+async def _wallet_and_links(
+    session: AsyncSession,
+    address: str,
+    *,
+    link_limit: int,
+) -> tuple[Wallet | None, list[WalletLink], dict[int, str]]:
+    wallet = (
+        await session.execute(select(Wallet).where(Wallet.wallet_address == address))
+    ).scalar_one_or_none()
+    if wallet is None:
+        return None, [], {}
+    links = list(
+        (
+            await session.execute(
+                select(WalletLink)
+                .where(
+                    or_(
+                        WalletLink.wallet_a_id == wallet.id,
+                        WalletLink.wallet_b_id == wallet.id,
+                    )
+                )
+                .order_by(
+                    WalletLink.similarity_score.desc(),
+                    WalletLink.shared_tokens_count.desc(),
+                )
+                .limit(max(1, min(link_limit, 100)))
+            )
+        ).scalars().all()
+    )
+    peer_ids = {
+        link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
+        for link in links
+    }
+    peers: dict[int, str] = {}
+    if peer_ids:
+        rows = list(
+            (
+                await session.execute(select(Wallet).where(Wallet.id.in_(peer_ids)))
+            ).scalars().all()
+        )
+        peers = {row.id: row.wallet_address for row in rows}
+    return wallet, links, peers
 
 
 async def expand_wallet(
@@ -70,10 +108,12 @@ async def expand_wallet(
     trade_limit: int = 80,
     link_limit: int = 40,
 ) -> dict[str, Any]:
-    address = _wallet_address(entity_key)
-    wallet = (
-        await session.execute(select(Wallet).where(Wallet.wallet_address == address))
-    ).scalar_one_or_none()
+    address = _entity_value(entity_key)
+    wallet, links, peers = await _wallet_and_links(
+        session,
+        address,
+        link_limit=link_limit,
+    )
     if wallet is None:
         return {"tool": "expand_wallet", "entity_key": entity_key, "found": False}
 
@@ -86,34 +126,23 @@ async def expand_wallet(
             .limit(max(1, min(trade_limit, 200)))
         )
     ).all()
-    link_rows = (
-        await session.execute(
-            select(WalletLink, Wallet, Wallet)
-            .where(or_(WalletLink.wallet_a_id == wallet.id, WalletLink.wallet_b_id == wallet.id))
-            .order_by(WalletLink.similarity_score.desc(), WalletLink.shared_tokens_count.desc())
-            .limit(max(1, min(link_limit, 100)))
-        )
-    ).all()
-
-    # SQLAlchemy cannot reliably disambiguate the two Wallet entities in the tuple above
-    # across all dialects, so resolve peer IDs in one batch instead of issuing N queries.
-    links = [row[0] for row in link_rows]
-    peer_ids = {
-        link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
-        for link in links
-    }
-    peers = {}
-    if peer_ids:
-        peer_rows = (
-            await session.execute(select(Wallet).where(Wallet.id.in_(peer_ids)))
-        ).scalars().all()
-        peers = {row.id: row.wallet_address for row in peer_rows}
-
     realized = [
         float(trade.realized_profit_usd)
         for trade, _ in trade_rows
         if trade.realized_profit_usd is not None
     ]
+    wallet_links = []
+    for link in links:
+        peer_id = link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
+        wallet_links.append(
+            {
+                "peer": peers.get(peer_id),
+                "shared_tokens": link.shared_tokens_count,
+                "similarity": link.similarity_score,
+                "first_interaction_at": _iso(link.first_interaction_date),
+                "funding_evidence": _explicit_funding(link.details),
+            }
+        )
     return {
         "tool": "expand_wallet",
         "entity_key": entity_key,
@@ -137,18 +166,7 @@ async def expand_wallet(
             }
             for trade, token in trade_rows
         ],
-        "wallet_links": [
-            {
-                "peer": peers.get(
-                    link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
-                ),
-                "shared_tokens": link.shared_tokens_count,
-                "similarity": link.similarity_score,
-                "first_interaction_at": _iso(link.first_interaction_date),
-                "funding_evidence": _explicit_funding(link.details),
-            }
-            for link in links
-        ],
+        "wallet_links": wallet_links,
     }
 
 
@@ -158,38 +176,13 @@ async def funding_graph(
     *,
     limit: int = 60,
 ) -> dict[str, Any]:
-    address = _wallet_address(entity_key)
-    wallet = (
-        await session.execute(select(Wallet).where(Wallet.wallet_address == address))
-    ).scalar_one_or_none()
+    address = _entity_value(entity_key)
+    wallet, links, peers = await _wallet_and_links(session, address, link_limit=limit)
     if wallet is None:
         return {"tool": "funding_graph", "entity_key": entity_key, "found": False}
 
-    links = list(
-        (
-            await session.execute(
-                select(WalletLink)
-                .where(or_(WalletLink.wallet_a_id == wallet.id, WalletLink.wallet_b_id == wallet.id))
-                .order_by(WalletLink.similarity_score.desc())
-                .limit(max(1, min(limit, 100)))
-            )
-        ).scalars().all()
-    )
-    peer_ids = {
-        link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
-        for link in links
-    }
-    peer_rows = []
-    if peer_ids:
-        peer_rows = list(
-            (
-                await session.execute(select(Wallet).where(Wallet.id.in_(peer_ids)))
-            ).scalars().all()
-        )
-    peers = {row.id: row.wallet_address for row in peer_rows}
-
-    explicit = []
-    similarity = []
+    explicit: list[dict[str, Any]] = []
+    similarity: list[dict[str, Any]] = []
     for link in links:
         peer_id = link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
         item = {
@@ -204,7 +197,6 @@ async def funding_graph(
             explicit.append({**item, "evidence": evidence})
         else:
             similarity.append(item)
-
     return {
         "tool": "funding_graph",
         "entity_key": entity_key,
@@ -221,7 +213,7 @@ async def expand_x_account(
     *,
     event_limit: int = 100,
 ) -> dict[str, Any]:
-    handle = _social_handle(entity_key)
+    handle = _handle(_entity_value(entity_key))
     rows = list(
         (
             await session.execute(
@@ -237,7 +229,6 @@ async def expand_x_account(
     )
     if not rows:
         return {"tool": "expand_x_account", "entity_key": entity_key, "found": False}
-
     mints = {row.mint_address for row in rows if row.mint_address}
     return {
         "tool": "expand_x_account",
@@ -249,7 +240,7 @@ async def expand_x_account(
             "distinct_mints": len(mints),
             "first_seen_at": _iso(min(row.occurred_at for row in rows)),
             "last_seen_at": _iso(max(row.occurred_at for row in rows)),
-            "note": "Engagement/profile fields may be mutable current observations.",
+            "note": "Engagement/profile metrics are current observations and may be mutable.",
         },
         "recent_mentions": [
             {
@@ -271,7 +262,7 @@ async def expand_tg_channel(
     *,
     call_limit: int = 100,
 ) -> dict[str, Any]:
-    handle = _social_handle(entity_key)
+    handle = _handle(_entity_value(entity_key))
     channel = (
         await session.execute(
             select(TelegramChannel).where(
@@ -284,7 +275,6 @@ async def expand_tg_channel(
     ).scalar_one_or_none()
     if channel is None:
         return {"tool": "expand_tg_channel", "entity_key": entity_key, "found": False}
-
     score = await session.get(TelegramChannelScore, channel.id)
     calls = list(
         (
@@ -335,19 +325,20 @@ async def related_launches(
     exclude_mint: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    stmt = (
-        select(IntelligenceSnapshot, IntelligenceSnapshotEntity)
-        .join(
-            IntelligenceSnapshotEntity,
-            IntelligenceSnapshotEntity.snapshot_id == IntelligenceSnapshot.snapshot_id,
+    rows = (
+        await session.execute(
+            select(IntelligenceSnapshot, IntelligenceSnapshotEntity)
+            .join(
+                IntelligenceSnapshotEntity,
+                IntelligenceSnapshotEntity.snapshot_id == IntelligenceSnapshot.snapshot_id,
+            )
+            .where(IntelligenceSnapshotEntity.entity_key == entity_key)
+            .order_by(IntelligenceSnapshot.created_at.desc())
+            .limit(max(1, min(limit * 4, 200)))
         )
-        .where(IntelligenceSnapshotEntity.entity_key == entity_key)
-        .order_by(IntelligenceSnapshot.created_at.desc())
-        .limit(max(1, min(limit * 4, 200)))
-    )
-    rows = (await session.execute(stmt)).all()
+    ).all()
     seen: set[str] = set()
-    launches = []
+    launches: list[dict[str, Any]] = []
     for snap, observed in rows:
         if exclude_mint and snap.mint_address == exclude_mint:
             continue
@@ -380,9 +371,9 @@ async def execute_research_tools(
     *,
     entity_keys: list[str],
     current_mint: str | None,
-    max_results: int = 8,
+    max_entities: int = 8,
 ) -> dict[str, Any]:
-    keys = list(dict.fromkeys(key[:160] for key in entity_keys if key))[:max_results]
+    keys = list(dict.fromkeys(key[:160] for key in entity_keys if key))[:max_entities]
     results: list[dict[str, Any]] = []
     for key in keys:
         if key.startswith("wallet:"):
