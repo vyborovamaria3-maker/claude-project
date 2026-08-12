@@ -1,16 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import type { AnalysisSnapshot, IntelligenceFeature } from "@/lib/trade/intelligence-agent";
+import type {
+  AnalysisSnapshot,
+  IntelligenceFeature,
+} from "@/lib/trade/intelligence-agent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const AI_BASE = (process.env.MEMECOIN_INTELLIGENCE_URL || "http://host.docker.internal:3001").replace(/\/$/, "");
-const API_KEY = process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
-const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(/\/$/, "");
+const AI_BASE = (
+  process.env.MEMECOIN_INTELLIGENCE_URL || "http://host.docker.internal:3001"
+).replace(/\/$/, "");
+const API_KEY =
+  process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
+const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(
+  /\/$/,
+  "",
+);
 const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
-const PROMPT_VERSION = "intelligence-qwen-v4-memory";
+const PROMPT_VERSION = "intelligence-qwen-v5-tools";
 const MAX_RESEARCH_ENTITIES = 8;
 
 type TimelineItem = {
@@ -64,6 +73,18 @@ type MemoryContext = {
   stats?: Record<string, number>;
 };
 
+type ResearchResult = Record<string, unknown> & {
+  tool?: string;
+  entity_key?: string;
+  found?: boolean;
+};
+
+type ResearchContext = {
+  entities_requested?: string[];
+  tool_calls?: number;
+  results?: ResearchResult[];
+};
+
 type QwenResult = {
   discoveredRelationships?: Array<{
     source?: string;
@@ -76,7 +97,11 @@ type QwenResult = {
   };
 };
 
-type QwenEnvelope = Record<string, unknown> & { result?: QwenResult };
+type QwenEnvelope = Record<string, unknown> & {
+  result?: QwenResult;
+  provider?: unknown;
+  model?: unknown;
+};
 
 function n(value: unknown) {
   const parsed = Number(value);
@@ -85,7 +110,9 @@ function n(value: unknown) {
 
 function stableId(item: TimelineItem, index: number) {
   return `social-${createHash("sha1")
-    .update(`${item.source_handle || item.source_name || "unknown"}|${item.occurred_at || ""}|${item.text || ""}|${index}`)
+    .update(
+      `${item.source_handle || item.source_name || "unknown"}|${item.occurred_at || ""}|${item.text || ""}|${index}`,
+    )
     .digest("hex")
     .slice(0, 24)}`;
 }
@@ -96,9 +123,10 @@ function timelineMessages(timeline: TimelineItem[]) {
     .map((item, index) => {
       const metrics = item.metrics || {};
       const channel = String(item.source_handle || item.source_name || "unknown");
-      const sentAt = item.occurred_at && Number.isFinite(Date.parse(item.occurred_at))
-        ? new Date(item.occurred_at).toISOString()
-        : new Date().toISOString();
+      const sentAt =
+        item.occurred_at && Number.isFinite(Date.parse(item.occurred_at))
+          ? new Date(item.occurred_at).toISOString()
+          : new Date().toISOString();
       return {
         id: stableId(item, index),
         channelId: channel.slice(0, 128),
@@ -131,9 +159,10 @@ function snapshotMessages(snapshot: AnalysisSnapshot) {
     .slice(0, 180)
     .map((entry) => {
       const isX = entry.platform === "x";
-      const sentAt = entry.timestamp && Number.isFinite(Date.parse(entry.timestamp))
-        ? new Date(entry.timestamp).toISOString()
-        : snapshot.createdAt;
+      const sentAt =
+        entry.timestamp && Number.isFinite(Date.parse(entry.timestamp))
+          ? new Date(entry.timestamp).toISOString()
+          : snapshot.createdAt;
       return {
         id: entry.id.slice(0, 128),
         channelId: `${entry.platform}:${entry.source}`.slice(0, 128),
@@ -162,17 +191,17 @@ function validateSnapshot(body: RequestBody, mint: string) {
   if (!snapshot) return null;
   if (snapshot.mint !== mint) throw new Error("snapshot_mint_mismatch");
   if (
-    !Array.isArray(snapshot.features)
-    || !snapshot.graph
-    || !Array.isArray(snapshot.evidence)
+    !Array.isArray(snapshot.features) ||
+    !snapshot.graph ||
+    !Array.isArray(snapshot.evidence)
   ) {
     throw new Error("invalid_snapshot");
   }
   if (
-    snapshot.features.length > 300
-    || snapshot.graph.nodes.length > 500
-    || snapshot.graph.edges.length > 1500
-    || snapshot.evidence.length > 300
+    snapshot.features.length > 300 ||
+    snapshot.graph.nodes.length > 500 ||
+    snapshot.graph.edges.length > 1500 ||
+    snapshot.evidence.length > 300
   ) {
     throw new Error("snapshot_too_large");
   }
@@ -186,26 +215,81 @@ async function loadMemoryContext(
 ): Promise<MemoryContext | null> {
   if (!BACKEND_KEY) return null;
   try {
-    const response = await fetch(`${BACKEND_BASE}/api/v1/social/intelligence/context`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "X-Backend-API-Key": BACKEND_KEY,
+    const response = await fetch(
+      `${BACKEND_BASE}/api/v1/social/intelligence/context`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Backend-API-Key": BACKEND_KEY,
+        },
+        body: JSON.stringify({
+          entity_keys: entityKeys,
+          mint: snapshot.mint,
+          max_entities: 40,
+          max_edges: maxEdges,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(3_500),
       },
-      body: JSON.stringify({
-        entity_keys: entityKeys,
-        mint: snapshot.mint,
-        max_entities: 40,
-        max_edges: maxEdges,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(3_500),
-    });
+    );
     if (!response.ok) return null;
-    return await response.json() as MemoryContext;
+    return (await response.json()) as MemoryContext;
   } catch {
     return null;
   }
+}
+
+async function loadResearchContext(
+  snapshot: AnalysisSnapshot,
+  entityKeys: string[],
+): Promise<ResearchContext | null> {
+  if (!BACKEND_KEY || !entityKeys.length) return null;
+  try {
+    const response = await fetch(
+      `${BACKEND_BASE}/api/v1/social/intelligence/research`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Backend-API-Key": BACKEND_KEY,
+        },
+        body: JSON.stringify({
+          entity_keys: entityKeys.slice(0, MAX_RESEARCH_ENTITIES),
+          current_mint: snapshot.mint,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!response.ok) return null;
+    return (await response.json()) as ResearchContext;
+  } catch {
+    return null;
+  }
+}
+
+function derivedFeature(
+  key: string,
+  group: string,
+  label: string,
+  value: string | number,
+  observedAt: string,
+  confidence: number,
+  note: string,
+): IntelligenceFeature {
+  return {
+    key,
+    group,
+    label,
+    value,
+    numericValue: typeof value === "number" ? value : null,
+    source: "derived",
+    confidence,
+    observedAt,
+    missing: false,
+    note,
+  };
 }
 
 function memoryFeature(
@@ -214,19 +298,34 @@ function memoryFeature(
   value: string | number,
   observedAt: string,
   confidence = 0.75,
-): IntelligenceFeature {
-  return {
+) {
+  return derivedFeature(
     key,
-    group: "Historical Memory",
+    "Historical Memory",
     label,
     value,
-    numericValue: typeof value === "number" ? value : null,
-    source: "derived",
-    confidence,
     observedAt,
-    missing: false,
-    note: "Historical memory: prior observation/hypothesis, not current proof.",
-  };
+    confidence,
+    "Historical memory: prior observation/hypothesis, not current proof.",
+  );
+}
+
+function researchFeature(
+  key: string,
+  label: string,
+  value: string | number,
+  observedAt: string,
+  confidence = 0.8,
+) {
+  return derivedFeature(
+    key,
+    "Agent Research",
+    label,
+    value,
+    observedAt,
+    confidence,
+    "Read-only research result. Similarity is not identity, control, funding or causality proof.",
+  );
 }
 
 function enrichSnapshotWithMemory(
@@ -288,7 +387,10 @@ function enrichSnapshotWithMemory(
     );
   }
 
-  for (const discovery of (memory.discoveries || []).slice(0, researchRound ? 80 : 35)) {
+  for (const discovery of (memory.discoveries || []).slice(
+    0,
+    researchRound ? 80 : 35,
+  )) {
     const hash = createHash("sha1")
       .update(
         `${discovery.type}|${discovery.source}|${discovery.target}|${discovery.created_at}`,
@@ -323,6 +425,125 @@ function enrichSnapshotWithMemory(
     );
   }
 
+  return appendFeatures(snapshot, additions);
+}
+
+function compactValue(value: unknown, max = 500) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return String(text || "").slice(0, max);
+}
+
+function researchFeatures(
+  snapshot: AnalysisSnapshot,
+  research: ResearchContext | null,
+): IntelligenceFeature[] {
+  if (!research?.results?.length) return [];
+  const observedAt = snapshot.createdAt;
+  const additions: IntelligenceFeature[] = [];
+  for (const item of research.results.slice(0, 30)) {
+    if (!item.found) continue;
+    const tool = String(item.tool || "research");
+    const entity = String(item.entity_key || "unknown");
+    const hash = createHash("sha1")
+      .update(`${tool}|${entity}`)
+      .digest("hex")
+      .slice(0, 12);
+
+    if (tool === "expand_wallet") {
+      additions.push(
+        researchFeature(
+          `research.wallet.${hash}`,
+          `${entity} · wallet history`,
+          compactValue({
+            wallet: item.wallet,
+            trades: Array.isArray(item.trades) ? item.trades.slice(0, 15) : [],
+            wallet_links: Array.isArray(item.wallet_links)
+              ? item.wallet_links.slice(0, 12)
+              : [],
+          }),
+          observedAt,
+          0.88,
+        ),
+      );
+    } else if (tool === "funding_graph") {
+      additions.push(
+        researchFeature(
+          `research.funding.${hash}`,
+          `${entity} · funding / similarity graph`,
+          compactValue({
+            funding_evidence_available: item.funding_evidence_available,
+            verified_funding_edges: Array.isArray(item.verified_funding_edges)
+              ? item.verified_funding_edges.slice(0, 10)
+              : [],
+            similarity_links_not_funding_proof: Array.isArray(
+              item.similarity_links_not_funding_proof,
+            )
+              ? item.similarity_links_not_funding_proof.slice(0, 10)
+              : [],
+          }),
+          observedAt,
+          item.funding_evidence_available ? 0.9 : 0.65,
+        ),
+      );
+    } else if (tool === "expand_x_account") {
+      additions.push(
+        researchFeature(
+          `research.x.${hash}`,
+          `${entity} · X history`,
+          compactValue({
+            account: item.account,
+            recent_mentions: Array.isArray(item.recent_mentions)
+              ? item.recent_mentions.slice(0, 20).map((entry) => {
+                  const row = entry as Record<string, unknown>;
+                  return {
+                    mint: row.mint,
+                    symbol: row.symbol,
+                    occurred_at: row.occurred_at,
+                    event_type: row.event_type,
+                  };
+                })
+              : [],
+          }),
+          observedAt,
+          0.82,
+        ),
+      );
+    } else if (tool === "expand_tg_channel") {
+      additions.push(
+        researchFeature(
+          `research.tg.${hash}`,
+          `${entity} · Telegram history`,
+          compactValue({
+            channel: item.channel,
+            recent_calls: Array.isArray(item.recent_calls)
+              ? item.recent_calls.slice(0, 20)
+              : [],
+          }),
+          observedAt,
+          0.9,
+        ),
+      );
+    } else if (tool === "related_launches") {
+      additions.push(
+        researchFeature(
+          `research.launches.${hash}`,
+          `${entity} · related launches`,
+          compactValue({
+            launches: Array.isArray(item.launches) ? item.launches.slice(0, 25) : [],
+          }),
+          observedAt,
+          0.86,
+        ),
+      );
+    }
+  }
+  return additions;
+}
+
+function appendFeatures(
+  snapshot: AnalysisSnapshot,
+  additions: IntelligenceFeature[],
+): AnalysisSnapshot {
   const existing = new Set(snapshot.features.map((feature) => feature.key));
   const selected = additions
     .filter((feature) => !existing.has(feature.key))
@@ -332,6 +553,13 @@ function enrichSnapshotWithMemory(
     featureCount: snapshot.features.length + selected.length,
     features: [...snapshot.features, ...selected],
   };
+}
+
+function enrichSnapshotWithResearch(
+  snapshot: AnalysisSnapshot,
+  research: ResearchContext | null,
+) {
+  return appendFeatures(snapshot, researchFeatures(snapshot, research));
 }
 
 function researchCandidates(snapshot: AnalysisSnapshot, envelope: QwenEnvelope): string[] {
@@ -357,8 +585,12 @@ function researchCandidates(snapshot: AnalysisSnapshot, envelope: QwenEnvelope):
     resolve(relationship.source);
     resolve(relationship.target);
   }
-  for (const value of result.campaignHypothesis?.likelyOriginators || []) resolve(value);
-  for (const value of result.campaignHypothesis?.amplifiers || []) resolve(value);
+  for (const value of result.campaignHypothesis?.likelyOriginators || []) {
+    resolve(value);
+  }
+  for (const value of result.campaignHypothesis?.amplifiers || []) {
+    resolve(value);
+  }
   return [...new Set(resolved)].slice(0, MAX_RESEARCH_ENTITIES);
 }
 
@@ -412,7 +644,7 @@ async function runQwen(
     cache: "no-store",
     signal: AbortSignal.timeout(55_000),
   });
-  const result = await response.json().catch(() => ({})) as QwenEnvelope;
+  const result = (await response.json().catch(() => ({}))) as QwenEnvelope;
   if (!response.ok) {
     const message = String(
       result.message || result.error || result.detail || `Qwen HTTP ${response.status}`,
@@ -429,25 +661,29 @@ async function persistMemory(
 ) {
   if (!BACKEND_KEY) return { status: "disabled" };
   try {
-    const response = await fetch(`${BACKEND_BASE}/api/v1/social/intelligence/memory`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "X-Backend-API-Key": BACKEND_KEY,
+    const response = await fetch(
+      `${BACKEND_BASE}/api/v1/social/intelligence/memory`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Backend-API-Key": BACKEND_KEY,
+        },
+        body: JSON.stringify({
+          snapshot,
+          analysis_snapshot: analysisSnapshot,
+          ai_result: aiEnvelope.result || null,
+          provider:
+            typeof aiEnvelope.provider === "string" ? aiEnvelope.provider : null,
+          model: typeof aiEnvelope.model === "string" ? aiEnvelope.model : null,
+          prompt_version: PROMPT_VERSION,
+        }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(4_000),
       },
-      body: JSON.stringify({
-        snapshot,
-        analysis_snapshot: analysisSnapshot,
-        ai_result: aiEnvelope.result || null,
-        provider: typeof aiEnvelope.provider === "string" ? aiEnvelope.provider : null,
-        model: typeof aiEnvelope.model === "string" ? aiEnvelope.model : null,
-        prompt_version: PROMPT_VERSION,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(4_000),
-    });
+    );
     if (!response.ok) return { status: "error", http: response.status };
-    return await response.json() as Record<string, unknown>;
+    return (await response.json()) as Record<string, unknown>;
   } catch {
     return { status: "unavailable" };
   }
@@ -463,7 +699,9 @@ export async function POST(req: NextRequest) {
 
   const mint = String(body.mint || "").trim();
   const timeline = Array.isArray(body.timeline) ? body.timeline : [];
-  if (!mint) return NextResponse.json({ error: "mint_required" }, { status: 400 });
+  if (!mint) {
+    return NextResponse.json({ error: "mint_required" }, { status: 400 });
+  }
 
   let snapshot: AnalysisSnapshot | null;
   try {
@@ -497,29 +735,29 @@ export async function POST(req: NextRequest) {
       ? researchCandidates(analysisSnapshot, result)
       : [];
     let researchMemory: MemoryContext | null = null;
+    let researchTools: ResearchContext | null = null;
     let researchRound = 0;
 
     if (analysisSnapshot && candidates.length && BACKEND_KEY) {
-      researchMemory = await loadMemoryContext(analysisSnapshot, candidates, 300);
-      if (
-        researchMemory
-        && (
-          (researchMemory.edges?.length || 0) > 0
-          || (researchMemory.discoveries?.length || 0) > 0
-        )
-      ) {
-        const expanded = enrichSnapshotWithMemory(
-          analysisSnapshot,
-          researchMemory,
-          1,
-        );
-        if (expanded.features.length > analysisSnapshot.features.length) {
-          analysisSnapshot = expanded;
-          const secondPayload = aiPayload(analysisSnapshot, timeline, mint, body);
-          if (secondPayload) {
-            result = await runQwen(secondPayload);
-            researchRound = 1;
-          }
+      [researchMemory, researchTools] = await Promise.all([
+        loadMemoryContext(analysisSnapshot, candidates, 300),
+        loadResearchContext(analysisSnapshot, candidates),
+      ]);
+      const before = analysisSnapshot.features.length;
+      analysisSnapshot = enrichSnapshotWithMemory(
+        analysisSnapshot,
+        researchMemory,
+        1,
+      );
+      analysisSnapshot = enrichSnapshotWithResearch(
+        analysisSnapshot,
+        researchTools,
+      );
+      if (analysisSnapshot.features.length > before) {
+        const secondPayload = aiPayload(analysisSnapshot, timeline, mint, body);
+        if (secondPayload) {
+          result = await runQwen(secondPayload);
+          researchRound = 1;
         }
       }
     }
@@ -527,6 +765,13 @@ export async function POST(req: NextRequest) {
     const memoryWrite = snapshot && analysisSnapshot
       ? await persistMemory(snapshot, analysisSnapshot, result)
       : { status: "skipped" };
+    const toolNames = [
+      ...new Set(
+        (researchTools?.results || [])
+          .map((item) => String(item.tool || ""))
+          .filter(Boolean),
+      ),
+    ];
     return NextResponse.json(
       {
         agent: "qwen",
@@ -540,6 +785,11 @@ export async function POST(req: NextRequest) {
           researchRound,
           researchCandidates: candidates,
           researchStats: researchMemory?.stats || null,
+          tools: {
+            enabled: Boolean(BACKEND_KEY),
+            calls: researchTools?.tool_calls || 0,
+            names: toolNames,
+          },
         },
         ...result,
       },
