@@ -14,6 +14,7 @@ from app.services.intelligence_memory import (
     persist_intelligence_memory,
     token_memory_history,
 )
+from app.services.intelligence_research import execute_research_tools
 from app.services.telegram_parser import is_solana_address
 
 router = APIRouter()
@@ -33,6 +34,11 @@ class IntelligenceMemoryContextRequest(BaseModel):
     mint: str | None = Field(default=None, max_length=64)
     max_entities: int = Field(default=40, ge=1, le=100)
     max_edges: int = Field(default=120, ge=1, le=300)
+
+
+class IntelligenceResearchRequest(BaseModel):
+    entity_keys: list[str] = Field(default_factory=list, min_length=1, max_length=8)
+    current_mint: str | None = Field(default=None, max_length=64)
 
 
 def _require_backend_key(request: Request, supplied: str | None) -> None:
@@ -143,4 +149,35 @@ async def memory_context(
         mint=payload.mint,
         max_entities=payload.max_entities,
         max_edges=payload.max_edges,
+    )
+
+
+@router.post("/research")
+async def research_context(
+    payload: IntelligenceResearchRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+    x_backend_api_key: str | None = Header(
+        default=None,
+        alias="X-Backend-API-Key",
+    ),
+) -> dict:
+    _require_backend_key(request, x_backend_api_key)
+    if payload.current_mint and not is_solana_address(payload.current_mint):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Solana mint address",
+        )
+    allowed_prefixes = ("wallet:", "x_account:", "tg_channel:", "token:")
+    invalid = [key for key in payload.entity_keys if not key.startswith(allowed_prefixes)]
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported research entity key: {invalid[0][:80]}",
+        )
+    return await execute_research_tools(
+        session,
+        entity_keys=payload.entity_keys,
+        current_mint=payload.current_mint,
+        max_entities=8,
     )
