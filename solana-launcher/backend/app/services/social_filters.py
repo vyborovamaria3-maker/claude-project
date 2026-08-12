@@ -126,13 +126,33 @@ def filter_timeline_payload(
         or datetime.min.replace(tzinfo=timezone.utc)
     )
     matched_before_limit = len(items)
+    matched_platforms = Counter(
+        str(item.get("platform") or "unknown").lower() for item in items
+    )
+    matched_sources = {
+        normalize_social_source(
+            str(item.get("source_handle") or item.get("source_name") or "")
+        )
+        for item in items
+        if item.get("source_handle") or item.get("source_name")
+    }
+    explicit_telegram_calls = sum(
+        is_explicit_telegram_call(item) for item in items
+    )
+    first_matched_at = items[0].get("occurred_at") if items else None
+    last_matched_at = items[-1].get("occurred_at") if items else None
+
     max_items = max(1, min(int(limit), 1000))
     truncated = matched_before_limit > max_items
-    if truncated:
-        items = items[-max_items:]
+    retained = items[-max_items:] if truncated else items
 
-    platforms = Counter(str(item.get("platform") or "unknown") for item in items)
-    ranked = [{**item, "rank": index + 1} for index, item in enumerate(items)]
+    platforms = Counter(
+        str(item.get("platform") or "unknown").lower() for item in retained
+    )
+    ranked = [
+        {**item, "rank": index + 1}
+        for index, item in enumerate(retained)
+    ]
     return {
         "mint_address": payload.get("mint_address"),
         "mentions": len(ranked),
@@ -143,6 +163,11 @@ def filter_timeline_payload(
             "matchedBeforeLimit": matched_before_limit,
             "returned": len(ranked),
             "truncated": truncated,
+            "matchedPlatforms": dict(matched_platforms),
+            "uniqueSourcesBeforeLimit": len(matched_sources),
+            "explicitTelegramCallsBeforeLimit": explicit_telegram_calls,
+            "firstMatchedAt": first_matched_at,
+            "lastMatchedAt": last_matched_at,
         },
         "filters": {
             "platform": platform,
