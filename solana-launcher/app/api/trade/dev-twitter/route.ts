@@ -1,18 +1,35 @@
 // data-tag: api.trade.dev_twitter
 // GET /api/trade/dev-twitter?symbol=...&mint=...
-// Aggregates Twitter/X mentions via Playwright/Nitter with optional analysis filters.
+// X collector contract separates risk-universe statistics from display filters.
 
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
-import { scrapeTwitter, fetchTokenMeta, buildQuery, hasTwitterAuth, normalizeTwitterHandle, type CollectionStrategy } from "../../../../lib/trade/twitter-scraper";
+import {
+  buildQuery,
+  fetchTokenMeta,
+  hasTwitterAuth,
+  normalizeTwitterHandle,
+  scrapeTwitter,
+  type CollectionStrategy,
+} from "../../../../lib/trade/twitter-scraper";
 import { getDb } from "../../../../lib/trade/db";
 import { getTokenTwitterSocialStats } from "../../../../lib/twitterSocialStats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const CACHE: Map<string, { data: TwitterStats; ts: number }> = new Map();
+const CACHE = new Map<string, { data: TwitterStats; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000;
+
+export interface TwitterRiskUniverse {
+  totalTweets: number;
+  uniqueAuthors: number;
+  suspiciousTweets: number;
+  botAccounts: number;
+  botRiskScore: number;
+  botRatio: number;
+  anomalyCount: number;
+}
 
 export interface TwitterStats {
   symbol: string;
@@ -26,6 +43,18 @@ export interface TwitterStats {
   botRisk: "low" | "medium" | "high";
   botRiskScore: number;
   anomalyCount: number;
+  riskUniverse: TwitterRiskUniverse;
+  collectionTruncated: boolean;
+  sampleLimit: number;
+  meta: {
+    scraped: number;
+    matchedBeforeLimit: number;
+    returned: number;
+    truncated: boolean;
+    queryMode: "top";
+    suspiciousExcluded: boolean;
+    verifiedOnly: boolean;
+  };
   topTweets: TweetData[];
   shillers: ShillerEntry[];
   lastUpdated: number;
@@ -95,7 +124,12 @@ export interface ShillerEntry {
   isVerified: boolean;
 }
 
-function parseInteger(value: string | null, fallback: number, min: number, max: number): number {
+function parseInteger(
+  value: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+) {
   if (value == null || value.trim() === "") return fallback;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -103,16 +137,18 @@ function parseInteger(value: string | null, fallback: number, min: number, max: 
 }
 
 function parseOptionalHours(value: string | null): number | null {
-  if (value == null || value.trim() === "" || value === "all" || value === "0") return null;
+  if (value == null || value.trim() === "" || value === "all" || value === "0") {
+    return null;
+  }
   return parseInteger(value, 24, 1, 8760);
 }
 
-function parseBoolean(value: string | null, fallback = false): boolean {
+function parseBoolean(value: string | null, fallback = false) {
   if (value == null) return fallback;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
-function isSolanaMint(value: string): boolean {
+function isSolanaMint(value: string) {
   try {
     return new PublicKey(value).toBase58() === value;
   } catch {
@@ -120,17 +156,33 @@ function isSolanaMint(value: string): boolean {
   }
 }
 
-function tweetEngagement(tweet: { likes: number; retweets: number; replies: number }): number {
-  return Math.max(tweet.likes || 0, 0) + Math.max(tweet.retweets || 0, 0) + Math.max(tweet.replies || 0, 0);
+function tweetEngagement(tweet: { likes: number; retweets: number; replies: number }) {
+  return Math.max(tweet.likes || 0, 0)
+    + Math.max(tweet.retweets || 0, 0)
+    + Math.max(tweet.replies || 0, 0);
 }
 
 type TwitterScrapeResult = Awaited<ReturnType<typeof scrapeTwitter>>;
+type AnalyzedTweet = TwitterScrapeResult["tweets"][number] & {
+  isSuspicious?: boolean;
+  suspicionScore?: number;
+  suspicionReasons?: string[];
+};
+type AnalyzedAccount = TwitterScrapeResult["accounts"] extends Map<string, infer T>
+  ? T & {
+      botScore?: number;
+      isBot?: boolean;
+      isSubscriptionPromoter?: boolean;
+      botReasons?: string[];
+    }
+  : never;
 
 function persistTwitterStats(
   stats: TwitterStats,
   query: string,
   tweets: TwitterScrapeResult["tweets"],
   accounts: TwitterScrapeResult["accounts"],
+  excludedHandles: Set<string>,
 ) {
   const db = getDb();
   const now = stats.lastUpdated;
@@ -140,7 +192,7 @@ function persistTwitterStats(
          (mint, symbol, token_twitter_handle, query, total_tweets, total_views, total_likes,
           total_retweets, unique_accounts, verified_accounts, bot_accounts, excluded_bot_accounts,
           avg_views, avg_likes, avg_retweets, bot_manipulation_score, bot_manipulation_risk, analyzed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       stats.mint,
       stats.symbol,
@@ -152,8 +204,8 @@ function persistTwitterStats(
       stats.totalRetweets,
       stats.uniqueMentioners,
       stats.aggregated.verifiedAuthors,
-      stats.aggregated.botSuspectedCount,
-      0,
+      stats.riskUniverse.botAccounts,
+      excludedHandles.size,
       stats.avgViews,
       stats.avgLikes,
       stats.avgRetweets,
@@ -182,11 +234,10 @@ function persistTwitterStats(
          suspicion_score = excluded.suspicion_score,
          suspicion_reasons = excluded.suspicion_reasons,
          posted_at = excluded.posted_at,
-         fetched_at = excluded.fetched_at`
+         fetched_at = excluded.fetched_at`,
     );
-
     for (const tweet of tweets) {
-      const analyzed = tweet as typeof tweet & { isSuspicious?: boolean; suspicionScore?: number; suspicionReasons?: string[] };
+      const analyzed = tweet as AnalyzedTweet;
       tweetStmt.run(
         tweet.id,
         stats.mint,
@@ -221,10 +272,12 @@ function persistTwitterStats(
          last_seen_at = excluded.last_seen_at,
          bot_score = MAX(excluded.bot_score, twitter_accounts.bot_score),
          is_bot = MAX(excluded.is_bot, twitter_accounts.is_bot),
-         is_subscription_promoter = MAX(excluded.is_subscription_promoter, twitter_accounts.is_subscription_promoter),
-         bot_reasons = excluded.bot_reasons`
+         is_subscription_promoter = MAX(
+           excluded.is_subscription_promoter,
+           twitter_accounts.is_subscription_promoter
+         ),
+         bot_reasons = excluded.bot_reasons`,
     );
-
     const shillerStmt = db.prepare(
       `INSERT INTO twitter_token_shillers
          (mint, handle, tweets_count, total_views, total_likes, total_retweets, avg_views,
@@ -242,11 +295,11 @@ function persistTwitterStats(
          is_bot = excluded.is_bot,
          is_excluded = excluded.is_excluded,
          first_tweeted_at = excluded.first_tweeted_at,
-         last_tweeted_at = excluded.last_tweeted_at`
+         last_tweeted_at = excluded.last_tweeted_at`,
     );
 
     for (const account of accounts.values()) {
-      const analyzed = account as typeof account & { botScore?: number; isBot?: boolean; isSubscriptionPromoter?: boolean; botReasons?: string[] };
+      const analyzed = account as AnalyzedAccount;
       accountStmt.run(
         account.handle,
         account.displayName,
@@ -261,7 +314,6 @@ function persistTwitterStats(
         analyzed.isSubscriptionPromoter ? 1 : 0,
         JSON.stringify(analyzed.botReasons ?? []),
       );
-
       shillerStmt.run(
         stats.mint,
         account.handle,
@@ -274,38 +326,59 @@ function persistTwitterStats(
         account.tweetsCount > 0 ? account.totalRetweets / account.tweetsCount : 0,
         account.isVerified ? 1 : 0,
         analyzed.isBot ? 1 : 0,
-        0,
+        excludedHandles.has(account.handle) ? 1 : 0,
         account.firstTweetedAt,
         account.lastTweetedAt,
       );
     }
   });
-
   tx();
 }
 
 export async function GET(req: NextRequest) {
   const mint = req.nextUrl.searchParams.get("mint") || "";
-  const symbolParam = (req.nextUrl.searchParams.get("symbol") || "").trim().replace(/^\$/, "");
+  const symbolParam = (req.nextUrl.searchParams.get("symbol") || "")
+    .trim()
+    .replace(/^\$/, "");
   const strategyParam = req.nextUrl.searchParams.get("strategy") || "auto";
-  const providedHandle = normalizeTwitterHandle(req.nextUrl.searchParams.get("twitter"));
+  const providedHandle = normalizeTwitterHandle(
+    req.nextUrl.searchParams.get("twitter"),
+  );
   const scopeParam = req.nextUrl.searchParams.get("scope") || "mentions";
   const limit = parseInteger(req.nextUrl.searchParams.get("limit"), 20, 5, 100);
   const lookbackHours = parseOptionalHours(req.nextUrl.searchParams.get("hours"));
-  const minEngagement = parseInteger(req.nextUrl.searchParams.get("minEngagement"), 0, 0, 1_000_000_000);
+  const minEngagement = parseInteger(
+    req.nextUrl.searchParams.get("minEngagement"),
+    0,
+    0,
+    1_000_000_000,
+  );
   const verifiedOnly = parseBoolean(req.nextUrl.searchParams.get("verifiedOnly"));
-  const excludeSuspicious = parseBoolean(req.nextUrl.searchParams.get("excludeSuspicious"));
+  const excludeSuspicious = parseBoolean(
+    req.nextUrl.searchParams.get("excludeSuspicious"),
+  );
 
   if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });
-  if (!isSolanaMint(mint)) return NextResponse.json({ error: "invalid Solana mint" }, { status: 400 });
+  if (!isSolanaMint(mint)) {
+    return NextResponse.json({ error: "invalid Solana mint" }, { status: 400 });
+  }
   if (!["nitter", "playwright", "auto"].includes(strategyParam)) {
-    return NextResponse.json({ error: "strategy must be one of: nitter, playwright, auto" }, { status: 400 });
+    return NextResponse.json(
+      { error: "strategy must be one of: nitter, playwright, auto" },
+      { status: 400 },
+    );
   }
   if (!["mentions", "official"].includes(scopeParam)) {
-    return NextResponse.json({ error: "scope must be one of: mentions, official" }, { status: 400 });
+    return NextResponse.json(
+      { error: "scope must be one of: mentions, official" },
+      { status: 400 },
+    );
   }
   if (symbolParam && !/^[A-Za-z0-9_]{1,32}$/.test(symbolParam)) {
-    return NextResponse.json({ error: "symbol contains unsupported characters" }, { status: 400 });
+    return NextResponse.json(
+      { error: "symbol contains unsupported characters" },
+      { status: 400 },
+    );
   }
   if (providedHandle && !/^[A-Za-z0-9_]{1,30}$/.test(providedHandle)) {
     return NextResponse.json({ error: "invalid X handle" }, { status: 400 });
@@ -313,12 +386,22 @@ export async function GET(req: NextRequest) {
 
   const requestedStrategy = strategyParam as CollectionStrategy;
   if (verifiedOnly && requestedStrategy === "nitter") {
-    return NextResponse.json({ error: "verifiedOnly requires Playwright/X browser session; Nitter does not expose verification reliably" }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: "verifiedOnly requires Playwright/X browser session; Nitter does not expose verification reliably",
+      },
+      { status: 400 },
+    );
   }
   if (verifiedOnly && !hasTwitterAuth()) {
-    return NextResponse.json({ error: "verifiedOnly requires an authenticated X browser session" }, { status: 409 });
+    return NextResponse.json(
+      { error: "verifiedOnly requires an authenticated X browser session" },
+      { status: 409 },
+    );
   }
-  const strategy: CollectionStrategy = verifiedOnly && requestedStrategy === "auto" ? "playwright" : requestedStrategy;
+  const strategy: CollectionStrategy = verifiedOnly && requestedStrategy === "auto"
+    ? "playwright"
+    : requestedStrategy;
   const scope = scopeParam as "mentions" | "official";
   const cacheKey = [
     mint,
@@ -347,61 +430,119 @@ export async function GET(req: NextRequest) {
   const meta = providedHandle && symbolParam ? null : await fetchTokenMeta(mint);
   const symbol = symbolParam || meta?.symbol || mint.slice(0, 6);
   const twitterHandle = providedHandle || normalizeTwitterHandle(meta?.twitter);
-  const query = buildQuery({ mint, symbol, tokenTwitterHandle: twitterHandle, scope });
-
+  const query = buildQuery({
+    mint,
+    symbol,
+    tokenTwitterHandle: twitterHandle,
+    scope,
+  });
   if (!query) {
-    return NextResponse.json({ error: scope === "official" ? "official twitter handle not found" : "could not build search query" }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: scope === "official"
+          ? "official twitter handle not found"
+          : "could not build search query",
+      },
+      { status: 400 },
+    );
   }
 
-  let result;
+  let result: TwitterScrapeResult;
+  const needsOverscan = verifiedOnly
+    || excludeSuspicious
+    || minEngagement > 0
+    || lookbackHours != null;
+  const scrapeLimit = Math.min(
+    100,
+    needsOverscan ? Math.max(limit * 2, 20) : limit,
+  );
   try {
-    const needsOverscan = verifiedOnly || excludeSuspicious || minEngagement > 0 || lookbackHours != null;
-    const scrapeLimit = Math.min(100, needsOverscan ? Math.max(limit * 2, 20) : limit);
-    result = await scrapeTwitter(query, { limit: scrapeLimit, headless: true, strategy });
-  } catch (e) {
-    console.error("Twitter scrape error:", e);
+    result = await scrapeTwitter(query, {
+      limit: scrapeLimit,
+      headless: true,
+      strategy,
+    });
+  } catch (error) {
+    console.error("Twitter scrape error:", error);
     return NextResponse.json({ error: "failed to scrape twitter" }, { status: 500 });
   }
 
-  const cutoff = lookbackHours == null ? null : Date.now() - lookbackHours * 60 * 60 * 1000;
-  const filteredTweets = result.tweets
-    .filter((tweet) => {
-      const analyzed = tweet as typeof tweet & { isSuspicious?: boolean };
-      const account = result.accounts.get(tweet.authorHandle) as (ReturnType<typeof result.accounts.get> & { isBot?: boolean }) | undefined;
-      if (cutoff != null && (tweet.postedAt == null || tweet.postedAt < cutoff)) return false;
-      if (tweetEngagement(tweet) < minEngagement) return false;
-      if (verifiedOnly && !tweet.isVerified) return false;
-      if (excludeSuspicious && (analyzed.isSuspicious || Boolean(account?.isBot))) return false;
-      return true;
-    })
-    .slice(0, limit);
-
-  const topTweets: TweetData[] = filteredTweets.slice(0, Math.min(limit, 20)).map((tweet) => {
-    const analyzed = tweet as typeof tweet & { isSuspicious?: boolean };
-    return {
-      id: tweet.id,
-      text: tweet.text,
-      author: tweet.authorHandle,
-      likes: tweet.likes,
-      retweets: tweet.retweets,
-      views: tweet.views,
-      timestamp: tweet.postedAt,
-      isSuspicious: Boolean(analyzed.isSuspicious),
-    };
+  const cutoff = lookbackHours == null
+    ? null
+    : Date.now() - lookbackHours * HOUR_MS;
+  const riskTweets = result.tweets.filter((tweet) => {
+    if (cutoff != null && (tweet.postedAt == null || tweet.postedAt < cutoff)) {
+      return false;
+    }
+    if (tweetEngagement(tweet) < minEngagement) return false;
+    if (verifiedOnly && !tweet.isVerified) return false;
+    return true;
   });
+  const riskHandles = new Set(riskTweets.map((tweet) => tweet.authorHandle));
+  const suspiciousRiskTweets = riskTweets.filter(
+    (tweet) => Boolean((tweet as AnalyzedTweet).isSuspicious),
+  );
+  const botRiskHandles = new Set(
+    [...riskHandles].filter((handle) => {
+      const account = result.accounts.get(handle) as AnalyzedAccount | undefined;
+      return Boolean(account?.isBot);
+    }),
+  );
+  const botRiskScore = riskTweets.length || riskHandles.size
+    ? Math.round(
+        (suspiciousRiskTweets.length / Math.max(riskTweets.length, 1)) * 50
+        + (botRiskHandles.size / Math.max(riskHandles.size, 1)) * 50,
+      )
+    : 0;
+  const botRisk: "low" | "medium" | "high" = botRiskScore >= 65
+    ? "high"
+    : botRiskScore >= 35
+      ? "medium"
+      : "low";
+  const riskUniverse: TwitterRiskUniverse = {
+    totalTweets: riskTweets.length,
+    uniqueAuthors: riskHandles.size,
+    suspiciousTweets: suspiciousRiskTweets.length,
+    botAccounts: botRiskHandles.size,
+    botRiskScore,
+    botRatio: riskHandles.size ? botRiskHandles.size / riskHandles.size : 0,
+    anomalyCount: suspiciousRiskTweets.length,
+  };
 
-  const authorAggregates = new Map<string, {
-    tweets: number;
-    engagement: number;
-    views: number;
-    likes: number;
-    retweets: number;
-    firstTweetedAt: number | null;
-    lastTweetedAt: number | null;
-  }>();
+  const displayEligible = riskTweets.filter((tweet) => {
+    if (!excludeSuspicious) return true;
+    const analyzed = tweet as AnalyzedTweet;
+    const account = result.accounts.get(tweet.authorHandle) as AnalyzedAccount | undefined;
+    return !analyzed.isSuspicious && !account?.isBot;
+  });
+  const filteredTweets = displayEligible.slice(0, limit);
+  const excludedHandles = new Set(
+    [...riskHandles].filter((handle) => !filteredTweets.some(
+      (tweet) => tweet.authorHandle === handle,
+    )),
+  );
+
+  const authorAggregates = new Map<
+    string,
+    {
+      tweets: number;
+      engagement: number;
+      views: number;
+      likes: number;
+      retweets: number;
+      firstTweetedAt: number | null;
+      lastTweetedAt: number | null;
+    }
+  >();
   for (const tweet of filteredTweets) {
     const current = authorAggregates.get(tweet.authorHandle) || {
-      tweets: 0, engagement: 0, views: 0, likes: 0, retweets: 0, firstTweetedAt: null, lastTweetedAt: null,
+      tweets: 0,
+      engagement: 0,
+      views: 0,
+      likes: 0,
+      retweets: 0,
+      firstTweetedAt: null,
+      lastTweetedAt: null,
     };
     current.tweets += 1;
     current.engagement += tweetEngagement(tweet);
@@ -409,8 +550,14 @@ export async function GET(req: NextRequest) {
     current.likes += tweet.likes || 0;
     current.retweets += tweet.retweets || 0;
     if (tweet.postedAt != null) {
-      current.firstTweetedAt = Math.min(current.firstTweetedAt ?? Infinity, tweet.postedAt);
-      current.lastTweetedAt = Math.max(current.lastTweetedAt ?? 0, tweet.postedAt);
+      current.firstTweetedAt = Math.min(
+        current.firstTweetedAt ?? Infinity,
+        tweet.postedAt,
+      );
+      current.lastTweetedAt = Math.max(
+        current.lastTweetedAt ?? 0,
+        tweet.postedAt,
+      );
     }
     authorAggregates.set(tweet.authorHandle, current);
   }
@@ -430,9 +577,19 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  const topTweets: TweetData[] = filteredTweets.map((tweet) => ({
+    id: tweet.id,
+    text: tweet.text,
+    author: tweet.authorHandle,
+    likes: tweet.likes,
+    retweets: tweet.retweets,
+    views: tweet.views,
+    timestamp: tweet.postedAt,
+    isSuspicious: Boolean((tweet as AnalyzedTweet).isSuspicious),
+  }));
   const shillers: ShillerEntry[] = Array.from(authorAggregates.entries())
     .map(([handle, aggregate]) => {
-      const account = filteredAccounts.get(handle) as (ReturnType<typeof filteredAccounts.get> & { isBot?: boolean }) | undefined;
+      const account = filteredAccounts.get(handle) as AnalyzedAccount | undefined;
       return {
         handle,
         tweets: aggregate.tweets,
@@ -443,37 +600,46 @@ export async function GET(req: NextRequest) {
         isVerified: Boolean(account?.isVerified),
       };
     })
-    .sort((a, b) => b.totalEngagement - a.totalEngagement)
+    .sort((left, right) => right.totalEngagement - left.totalEngagement)
     .slice(0, 30);
 
   const tokenAccount = twitterHandle ? result.accounts.get(twitterHandle) : null;
-  const tokenAccountData: TokenAccount | null = tokenAccount ? {
-    handle: tokenAccount.handle,
-    displayName: tokenAccount.displayName,
-    followers: tokenAccount.followers,
-    postsCount: tokenAccount.postsCount,
-    isVerified: tokenAccount.isVerified,
-  } : null;
+  const tokenAccountData: TokenAccount | null = tokenAccount
+    ? {
+        handle: tokenAccount.handle,
+        displayName: tokenAccount.displayName,
+        followers: tokenAccount.followers,
+        postsCount: tokenAccount.postsCount,
+        isVerified: tokenAccount.isVerified,
+      }
+    : null;
 
   const totalViews = filteredTweets.reduce((sum, tweet) => sum + tweet.views, 0);
   const totalLikes = filteredTweets.reduce((sum, tweet) => sum + tweet.likes, 0);
   const totalRetweets = filteredTweets.reduce((sum, tweet) => sum + tweet.retweets, 0);
-  const totalEngagement = filteredTweets.reduce((sum, tweet) => sum + tweetEngagement(tweet), 0);
-  const suspiciousTweets = filteredTweets.filter((tweet) => Boolean((tweet as typeof tweet & { isSuspicious?: boolean }).isSuspicious));
-  const botAccounts = Array.from(authorAggregates.keys()).filter((handle) => Boolean((filteredAccounts.get(handle) as { isBot?: boolean } | undefined)?.isBot));
-  const botRiskScore = filteredTweets.length || authorAggregates.size
-    ? Math.round(
-        (suspiciousTweets.length / Math.max(filteredTweets.length, 1)) * 50
-        + (botAccounts.length / Math.max(authorAggregates.size, 1)) * 50,
-      )
-    : 0;
-  const botRisk: "low" | "medium" | "high" = botRiskScore >= 65 ? "high" : botRiskScore >= 35 ? "medium" : "low";
-  const verifiedAuthors = Array.from(authorAggregates.keys()).filter((handle) => Boolean(filteredAccounts.get(handle)?.isVerified)).length;
+  const totalEngagement = filteredTweets.reduce(
+    (sum, tweet) => sum + tweetEngagement(tweet),
+    0,
+  );
+  const verifiedAuthors = [...authorAggregates.keys()].filter(
+    (handle) => Boolean(filteredAccounts.get(handle)?.isVerified),
+  ).length;
+  const displayBotAuthors = [...authorAggregates.keys()].filter((handle) => {
+    const account = filteredAccounts.get(handle) as AnalyzedAccount | undefined;
+    return Boolean(account?.isBot);
+  }).length;
   const engagementRate = totalViews > 0 ? totalEngagement / totalViews : 0;
-  const byViews = [...topTweets].sort((a, b) => b.views - a.views).slice(0, 5);
-  const byLikes = [...topTweets].sort((a, b) => b.likes - a.likes).slice(0, 5);
-  const byRetweets = [...topTweets].sort((a, b) => b.retweets - a.retweets).slice(0, 5);
-  const byEngagement = [...topTweets].sort((a, b) => (b.likes + b.retweets) - (a.likes + a.retweets)).slice(0, 5);
+  const avgViews = filteredTweets.length
+    ? Math.round(totalViews / filteredTweets.length)
+    : 0;
+  const avgLikes = filteredTweets.length
+    ? Math.round(totalLikes / filteredTweets.length)
+    : 0;
+  const avgRetweets = filteredTweets.length
+    ? Math.round(totalRetweets / filteredTweets.length)
+    : 0;
+  const collectionTruncated = result.tweets.length >= scrapeLimit
+    || displayEligible.length > limit;
 
   const stats: TwitterStats = {
     symbol,
@@ -486,13 +652,25 @@ export async function GET(req: NextRequest) {
     uniqueMentioners: authorAggregates.size,
     botRisk,
     botRiskScore,
-    anomalyCount: suspiciousTweets.length,
+    anomalyCount: riskUniverse.anomalyCount,
+    riskUniverse,
+    collectionTruncated,
+    sampleLimit: limit,
+    meta: {
+      scraped: result.tweets.length,
+      matchedBeforeLimit: displayEligible.length,
+      returned: filteredTweets.length,
+      truncated: collectionTruncated,
+      queryMode: "top",
+      suspiciousExcluded: excludeSuspicious,
+      verifiedOnly,
+    },
     topTweets,
     shillers,
     lastUpdated: Date.now(),
-    avgViews: filteredTweets.length > 0 ? Math.round(totalViews / filteredTweets.length) : 0,
-    avgLikes: filteredTweets.length > 0 ? Math.round(totalLikes / filteredTweets.length) : 0,
-    avgRetweets: filteredTweets.length > 0 ? Math.round(totalRetweets / filteredTweets.length) : 0,
+    avgViews,
+    avgLikes,
+    avgRetweets,
     tokenAccount: tokenAccountData,
     collectionStrategy: result.strategy,
     performance: result.performance,
@@ -503,22 +681,38 @@ export async function GET(req: NextRequest) {
       totalRetweets,
       totalEngagement,
       engagementRate,
-      avgViews: filteredTweets.length > 0 ? Math.round(totalViews / filteredTweets.length) : 0,
-      avgLikes: filteredTweets.length > 0 ? Math.round(totalLikes / filteredTweets.length) : 0,
-      avgRetweets: filteredTweets.length > 0 ? Math.round(totalRetweets / filteredTweets.length) : 0,
+      avgViews,
+      avgLikes,
+      avgRetweets,
       uniqueAuthors: authorAggregates.size,
       verifiedAuthors,
-      botSuspectedCount: suspiciousTweets.length,
-      botRatio: filteredTweets.length > 0 ? suspiciousTweets.length / filteredTweets.length : 0,
+      botSuspectedCount: displayBotAuthors,
+      botRatio: authorAggregates.size
+        ? displayBotAuthors / authorAggregates.size
+        : 0,
     },
-    topByViews: byViews,
-    topByLikes: byLikes,
-    topByRetweets: byRetweets,
-    topByEngagement: byEngagement,
+    topByViews: [...topTweets].sort((a, b) => b.views - a.views).slice(0, 5),
+    topByLikes: [...topTweets].sort((a, b) => b.likes - a.likes).slice(0, 5),
+    topByRetweets: [...topTweets]
+      .sort((a, b) => b.retweets - a.retweets)
+      .slice(0, 5),
+    topByEngagement: [...topTweets]
+      .sort(
+        (a, b) => (b.likes + b.retweets) - (a.likes + a.retweets),
+      )
+      .slice(0, 5),
     discovery: getTokenTwitterSocialStats(mint),
   };
 
-  persistTwitterStats(stats, query, filteredTweets, filteredAccounts);
+  // Persist the risk-universe tweets/accounts for later audit, not only the cleaned UI sample.
+  const riskAccountMap: TwitterScrapeResult["accounts"] = new Map();
+  for (const handle of riskHandles) {
+    const account = result.accounts.get(handle);
+    if (account) riskAccountMap.set(handle, account);
+  }
+  persistTwitterStats(stats, query, riskTweets, riskAccountMap, excludedHandles);
   CACHE.set(cacheKey, { data: stats, ts: Date.now() });
   return NextResponse.json(stats);
 }
+
+const HOUR_MS = 60 * 60 * 1000;
