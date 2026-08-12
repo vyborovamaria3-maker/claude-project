@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import type {
-  AnalysisSnapshot,
-  IntelligenceFeature,
-} from "@/lib/trade/intelligence-agent";
+import type { AnalysisSnapshot } from "@/lib/trade/intelligence-agent";
+import {
+  enrichSnapshotWithMemory,
+  loadMemoryContext,
+  persistIntelligenceMemory,
+  researchCandidates,
+  researchMeta,
+  runBoundedResearch,
+} from "@/lib/trade/intelligence-research-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,13 +19,6 @@ const AI_BASE = (
 ).replace(/\/$/, "");
 const API_KEY =
   process.env.MEMECOIN_INTELLIGENCE_API_KEY || process.env.INTERNAL_API_KEY || "";
-const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(
-  /\/$/,
-  "",
-);
-const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
-const PROMPT_VERSION = "intelligence-qwen-v5-tools";
-const MAX_RESEARCH_ENTITIES = 8;
 
 type TimelineItem = {
   source_handle?: string | null;
@@ -36,53 +34,6 @@ type RequestBody = {
   tokenName?: string;
   timeline?: TimelineItem[];
   snapshot?: AnalysisSnapshot;
-};
-
-type MemoryContext = {
-  entities?: Array<{
-    key?: string;
-    type?: string;
-    label?: string;
-    occurrence_count?: number;
-    first_seen_at?: string;
-    last_seen_at?: string;
-  }>;
-  edges?: Array<{
-    source?: string;
-    target?: string;
-    type?: string;
-    occurrence_count?: number;
-    avg_confidence?: number;
-    max_confidence?: number;
-    last_seen_at?: string;
-  }>;
-  discoveries?: Array<{
-    type?: string;
-    source?: string | null;
-    target?: string | null;
-    status?: string;
-    confidence?: number;
-    rationale?: string;
-    created_at?: string;
-  }>;
-  prior_snapshots?: Array<{
-    snapshot_id?: string;
-    overall_confidence?: number | null;
-    created_at?: string;
-  }>;
-  stats?: Record<string, number>;
-};
-
-type ResearchResult = Record<string, unknown> & {
-  tool?: string;
-  entity_key?: string;
-  found?: boolean;
-};
-
-type ResearchContext = {
-  entities_requested?: string[];
-  tool_calls?: number;
-  results?: ResearchResult[];
 };
 
 type QwenResult = {
@@ -208,392 +159,6 @@ function validateSnapshot(body: RequestBody, mint: string) {
   return snapshot;
 }
 
-async function loadMemoryContext(
-  snapshot: AnalysisSnapshot,
-  entityKeys = snapshot.graph.nodes.map((node) => node.id).slice(0, 80),
-  maxEdges = 100,
-): Promise<MemoryContext | null> {
-  if (!BACKEND_KEY) return null;
-  try {
-    const response = await fetch(
-      `${BACKEND_BASE}/api/v1/social/intelligence/context`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "X-Backend-API-Key": BACKEND_KEY,
-        },
-        body: JSON.stringify({
-          entity_keys: entityKeys,
-          mint: snapshot.mint,
-          max_entities: 40,
-          max_edges: maxEdges,
-        }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(3_500),
-      },
-    );
-    if (!response.ok) return null;
-    return (await response.json()) as MemoryContext;
-  } catch {
-    return null;
-  }
-}
-
-async function loadResearchContext(
-  snapshot: AnalysisSnapshot,
-  entityKeys: string[],
-): Promise<ResearchContext | null> {
-  if (!BACKEND_KEY || !entityKeys.length) return null;
-  try {
-    const response = await fetch(
-      `${BACKEND_BASE}/api/v1/social/intelligence/research`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "X-Backend-API-Key": BACKEND_KEY,
-        },
-        body: JSON.stringify({
-          entity_keys: entityKeys.slice(0, MAX_RESEARCH_ENTITIES),
-          current_mint: snapshot.mint,
-        }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-    if (!response.ok) return null;
-    return (await response.json()) as ResearchContext;
-  } catch {
-    return null;
-  }
-}
-
-function derivedFeature(
-  key: string,
-  group: string,
-  label: string,
-  value: string | number,
-  observedAt: string,
-  confidence: number,
-  note: string,
-): IntelligenceFeature {
-  return {
-    key,
-    group,
-    label,
-    value,
-    numericValue: typeof value === "number" ? value : null,
-    source: "derived",
-    confidence,
-    observedAt,
-    missing: false,
-    note,
-  };
-}
-
-function memoryFeature(
-  key: string,
-  label: string,
-  value: string | number,
-  observedAt: string,
-  confidence = 0.75,
-) {
-  return derivedFeature(
-    key,
-    "Historical Memory",
-    label,
-    value,
-    observedAt,
-    confidence,
-    "Historical memory: prior observation/hypothesis, not current proof.",
-  );
-}
-
-function researchFeature(
-  key: string,
-  label: string,
-  value: string | number,
-  observedAt: string,
-  confidence = 0.8,
-) {
-  return derivedFeature(
-    key,
-    "Agent Research",
-    label,
-    value,
-    observedAt,
-    confidence,
-    "Read-only research result. Similarity is not identity, control, funding or causality proof.",
-  );
-}
-
-function enrichSnapshotWithMemory(
-  snapshot: AnalysisSnapshot,
-  memory: MemoryContext | null,
-  researchRound = 0,
-): AnalysisSnapshot {
-  if (!memory) return snapshot;
-  const additions: IntelligenceFeature[] = [];
-  const observedAt = snapshot.createdAt;
-  const stats = memory.stats || {};
-
-  for (const [key, value] of Object.entries(stats)) {
-    if (Number.isFinite(value)) {
-      additions.push(
-        memoryFeature(
-          `memory.stats.${key}`,
-          `Memory ${key}`,
-          value,
-          observedAt,
-          0.9,
-        ),
-      );
-    }
-  }
-
-  for (const entity of (memory.entities || []).slice(0, 35)) {
-    if (!entity.key) continue;
-    const hash = createHash("sha1").update(entity.key).digest("hex").slice(0, 12);
-    additions.push(
-      memoryFeature(
-        `memory.entity.${hash}.occurrences`,
-        `${entity.label || entity.key} · prior token appearances`,
-        Number(entity.occurrence_count || 0),
-        observedAt,
-        0.85,
-      ),
-    );
-  }
-
-  for (const edge of (memory.edges || []).slice(0, researchRound ? 120 : 55)) {
-    const hash = createHash("sha1")
-      .update(`${edge.source}|${edge.type}|${edge.target}`)
-      .digest("hex")
-      .slice(0, 12);
-    const summary = [
-      `${edge.source || "?"} --${edge.type || "related"}--> ${edge.target || "?"}`,
-      `seen on ${edge.occurrence_count || 0} token(s)`,
-      `avg confidence ${Number(edge.avg_confidence || 0).toFixed(2)}`,
-    ].join("; ");
-    additions.push(
-      memoryFeature(
-        `memory.edge.${hash}`,
-        "Historical graph edge",
-        summary.slice(0, 500),
-        observedAt,
-        Math.max(0.35, Math.min(0.95, Number(edge.avg_confidence || 0.6))),
-      ),
-    );
-  }
-
-  for (const discovery of (memory.discoveries || []).slice(
-    0,
-    researchRound ? 80 : 35,
-  )) {
-    const hash = createHash("sha1")
-      .update(
-        `${discovery.type}|${discovery.source}|${discovery.target}|${discovery.created_at}`,
-      )
-      .digest("hex")
-      .slice(0, 12);
-    const summary = [
-      `${discovery.status || "hypothesis"}: ${discovery.type || "discovery"}`,
-      `${discovery.source || ""} -> ${discovery.target || ""}`,
-      discovery.rationale || "",
-    ].join("; ");
-    additions.push(
-      memoryFeature(
-        `memory.discovery.${hash}`,
-        "Historical AI discovery",
-        summary.slice(0, 500),
-        observedAt,
-        Math.max(0.25, Math.min(0.9, Number(discovery.confidence || 0.5))),
-      ),
-    );
-  }
-
-  if (researchRound) {
-    additions.unshift(
-      memoryFeature(
-        `memory.research.round_${researchRound}`,
-        "Agent research round",
-        researchRound,
-        observedAt,
-        1,
-      ),
-    );
-  }
-
-  return appendFeatures(snapshot, additions);
-}
-
-function compactValue(value: unknown, max = 500) {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  return String(text || "").slice(0, max);
-}
-
-function researchFeatures(
-  snapshot: AnalysisSnapshot,
-  research: ResearchContext | null,
-): IntelligenceFeature[] {
-  if (!research?.results?.length) return [];
-  const observedAt = snapshot.createdAt;
-  const additions: IntelligenceFeature[] = [];
-  for (const item of research.results.slice(0, 30)) {
-    if (!item.found) continue;
-    const tool = String(item.tool || "research");
-    const entity = String(item.entity_key || "unknown");
-    const hash = createHash("sha1")
-      .update(`${tool}|${entity}`)
-      .digest("hex")
-      .slice(0, 12);
-
-    if (tool === "expand_wallet") {
-      additions.push(
-        researchFeature(
-          `research.wallet.${hash}`,
-          `${entity} · wallet history`,
-          compactValue({
-            wallet: item.wallet,
-            trades: Array.isArray(item.trades) ? item.trades.slice(0, 15) : [],
-            wallet_links: Array.isArray(item.wallet_links)
-              ? item.wallet_links.slice(0, 12)
-              : [],
-          }),
-          observedAt,
-          0.88,
-        ),
-      );
-    } else if (tool === "funding_graph") {
-      additions.push(
-        researchFeature(
-          `research.funding.${hash}`,
-          `${entity} · funding / similarity graph`,
-          compactValue({
-            funding_evidence_available: item.funding_evidence_available,
-            verified_funding_edges: Array.isArray(item.verified_funding_edges)
-              ? item.verified_funding_edges.slice(0, 10)
-              : [],
-            similarity_links_not_funding_proof: Array.isArray(
-              item.similarity_links_not_funding_proof,
-            )
-              ? item.similarity_links_not_funding_proof.slice(0, 10)
-              : [],
-          }),
-          observedAt,
-          item.funding_evidence_available ? 0.9 : 0.65,
-        ),
-      );
-    } else if (tool === "expand_x_account") {
-      additions.push(
-        researchFeature(
-          `research.x.${hash}`,
-          `${entity} · X history`,
-          compactValue({
-            account: item.account,
-            recent_mentions: Array.isArray(item.recent_mentions)
-              ? item.recent_mentions.slice(0, 20).map((entry) => {
-                  const row = entry as Record<string, unknown>;
-                  return {
-                    mint: row.mint,
-                    symbol: row.symbol,
-                    occurred_at: row.occurred_at,
-                    event_type: row.event_type,
-                  };
-                })
-              : [],
-          }),
-          observedAt,
-          0.82,
-        ),
-      );
-    } else if (tool === "expand_tg_channel") {
-      additions.push(
-        researchFeature(
-          `research.tg.${hash}`,
-          `${entity} · Telegram history`,
-          compactValue({
-            channel: item.channel,
-            recent_calls: Array.isArray(item.recent_calls)
-              ? item.recent_calls.slice(0, 20)
-              : [],
-          }),
-          observedAt,
-          0.9,
-        ),
-      );
-    } else if (tool === "related_launches") {
-      additions.push(
-        researchFeature(
-          `research.launches.${hash}`,
-          `${entity} · related launches`,
-          compactValue({
-            launches: Array.isArray(item.launches) ? item.launches.slice(0, 25) : [],
-          }),
-          observedAt,
-          0.86,
-        ),
-      );
-    }
-  }
-  return additions;
-}
-
-function appendFeatures(
-  snapshot: AnalysisSnapshot,
-  additions: IntelligenceFeature[],
-): AnalysisSnapshot {
-  const existing = new Set(snapshot.features.map((feature) => feature.key));
-  const selected = additions
-    .filter((feature) => !existing.has(feature.key))
-    .slice(0, Math.max(0, 300 - snapshot.features.length));
-  return {
-    ...snapshot,
-    featureCount: snapshot.features.length + selected.length,
-    features: [...snapshot.features, ...selected],
-  };
-}
-
-function enrichSnapshotWithResearch(
-  snapshot: AnalysisSnapshot,
-  research: ResearchContext | null,
-) {
-  return appendFeatures(snapshot, researchFeatures(snapshot, research));
-}
-
-function researchCandidates(snapshot: AnalysisSnapshot, envelope: QwenEnvelope): string[] {
-  const result = envelope.result;
-  if (!result) return [];
-  const byId = new Set(snapshot.graph.nodes.map((node) => node.id));
-  const byLabel = new Map(
-    snapshot.graph.nodes.map((node) => [node.label.toLowerCase(), node.id]),
-  );
-  const resolved: string[] = [];
-  const resolve = (value: string | undefined) => {
-    if (!value) return;
-    if (byId.has(value)) {
-      resolved.push(value);
-      return;
-    }
-    const id = byLabel.get(value.toLowerCase());
-    if (id) resolved.push(id);
-  };
-
-  for (const relationship of result.discoveredRelationships || []) {
-    if (Number(relationship.confidence || 0) < 0.55) continue;
-    resolve(relationship.source);
-    resolve(relationship.target);
-  }
-  for (const value of result.campaignHypothesis?.likelyOriginators || []) {
-    resolve(value);
-  }
-  for (const value of result.campaignHypothesis?.amplifiers || []) {
-    resolve(value);
-  }
-  return [...new Set(resolved)].slice(0, MAX_RESEARCH_ENTITIES);
-}
-
 function aiPayload(
   snapshot: AnalysisSnapshot | null,
   timeline: TimelineItem[],
@@ -602,7 +167,7 @@ function aiPayload(
 ) {
   const messages = snapshot ? snapshotMessages(snapshot) : timelineMessages(timeline);
   if (!messages.length) return null;
-  const windowTimes = messages
+  const times = messages
     .map((message) => Date.parse(message.sentAt))
     .filter(Number.isFinite)
     .sort((a, b) => a - b);
@@ -616,12 +181,8 @@ function aiPayload(
       tokenName: body.tokenName
         ? String(body.tokenName).slice(0, 128)
         : snapshot?.tokenName || null,
-      windowStart: windowTimes.length
-        ? new Date(windowTimes[0]).toISOString()
-        : null,
-      windowEnd: windowTimes.length
-        ? new Date(windowTimes[windowTimes.length - 1]).toISOString()
-        : null,
+      windowStart: times.length ? new Date(times[0]).toISOString() : null,
+      windowEnd: times.length ? new Date(times[times.length - 1]).toISOString() : null,
       analysisMode: snapshot ? "full_intelligence" : "telegram_only",
       ...(snapshot ? { intelligenceSnapshot: snapshot } : {}),
     },
@@ -654,41 +215,6 @@ async function runQwen(
   return result;
 }
 
-async function persistMemory(
-  snapshot: AnalysisSnapshot,
-  analysisSnapshot: AnalysisSnapshot,
-  aiEnvelope: QwenEnvelope,
-) {
-  if (!BACKEND_KEY) return { status: "disabled" };
-  try {
-    const response = await fetch(
-      `${BACKEND_BASE}/api/v1/social/intelligence/memory`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "X-Backend-API-Key": BACKEND_KEY,
-        },
-        body: JSON.stringify({
-          snapshot,
-          analysis_snapshot: analysisSnapshot,
-          ai_result: aiEnvelope.result || null,
-          provider:
-            typeof aiEnvelope.provider === "string" ? aiEnvelope.provider : null,
-          model: typeof aiEnvelope.model === "string" ? aiEnvelope.model : null,
-          prompt_version: PROMPT_VERSION,
-        }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(4_000),
-      },
-    );
-    if (!response.ok) return { status: "error", http: response.status };
-    return (await response.json()) as Record<string, unknown>;
-  } catch {
-    return { status: "unavailable" };
-  }
-}
-
 export async function POST(req: NextRequest) {
   let body: RequestBody;
   try {
@@ -714,9 +240,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const memoryContext = snapshot ? await loadMemoryContext(snapshot) : null;
+    const initialMemory = snapshot ? await loadMemoryContext(snapshot) : null;
     let analysisSnapshot = snapshot
-      ? enrichSnapshotWithMemory(snapshot, memoryContext)
+      ? enrichSnapshotWithMemory(snapshot, initialMemory)
       : null;
     const firstPayload = aiPayload(analysisSnapshot, timeline, mint, body);
     if (!firstPayload) {
@@ -734,25 +260,13 @@ export async function POST(req: NextRequest) {
     const candidates = analysisSnapshot
       ? researchCandidates(analysisSnapshot, result)
       : [];
-    let researchMemory: MemoryContext | null = null;
-    let researchTools: ResearchContext | null = null;
+    let boundedResearch: Awaited<ReturnType<typeof runBoundedResearch>> | null = null;
     let researchRound = 0;
 
-    if (analysisSnapshot && candidates.length && BACKEND_KEY) {
-      [researchMemory, researchTools] = await Promise.all([
-        loadMemoryContext(analysisSnapshot, candidates, 300),
-        loadResearchContext(analysisSnapshot, candidates),
-      ]);
+    if (analysisSnapshot && candidates.length) {
       const before = analysisSnapshot.features.length;
-      analysisSnapshot = enrichSnapshotWithMemory(
-        analysisSnapshot,
-        researchMemory,
-        1,
-      );
-      analysisSnapshot = enrichSnapshotWithResearch(
-        analysisSnapshot,
-        researchTools,
-      );
+      boundedResearch = await runBoundedResearch(analysisSnapshot, candidates);
+      analysisSnapshot = boundedResearch.snapshot;
       if (analysisSnapshot.features.length > before) {
         const secondPayload = aiPayload(analysisSnapshot, timeline, mint, body);
         if (secondPayload) {
@@ -763,15 +277,8 @@ export async function POST(req: NextRequest) {
     }
 
     const memoryWrite = snapshot && analysisSnapshot
-      ? await persistMemory(snapshot, analysisSnapshot, result)
+      ? await persistIntelligenceMemory(snapshot, analysisSnapshot, result)
       : { status: "skipped" };
-    const toolNames = [
-      ...new Set(
-        (researchTools?.results || [])
-          .map((item) => String(item.tool || ""))
-          .filter(Boolean),
-      ),
-    ];
     return NextResponse.json(
       {
         agent: "qwen",
@@ -779,17 +286,12 @@ export async function POST(req: NextRequest) {
         analysisMode: analysisSnapshot ? "full_intelligence" : "telegram_only",
         snapshotId: snapshot?.snapshotId || null,
         memory: {
-          loaded: Boolean(memoryContext),
-          stats: memoryContext?.stats || null,
+          loaded: Boolean(initialMemory),
+          stats: initialMemory?.stats || null,
           write: memoryWrite,
           researchRound,
           researchCandidates: candidates,
-          researchStats: researchMemory?.stats || null,
-          tools: {
-            enabled: Boolean(BACKEND_KEY),
-            calls: researchTools?.tool_calls || 0,
-            names: toolNames,
-          },
+          tools: researchMeta(boundedResearch),
         },
         ...result,
       },
