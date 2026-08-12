@@ -6,7 +6,11 @@ from typing import Any
 
 
 def _aware(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -24,9 +28,14 @@ def normalize_social_source(value: str) -> str:
     normalized = value.strip().lower().lstrip("@")
     for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
         if normalized.startswith(prefix):
-            normalized = normalized[len(prefix):]
+            normalized = normalized[len(prefix) :]
             break
-    return normalized.strip("/").split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    return (
+        normalized.strip("/")
+        .split("/", 1)[0]
+        .split("?", 1)[0]
+        .split("#", 1)[0]
+    )
 
 
 def social_event_engagement(item: dict[str, Any]) -> int:
@@ -44,6 +53,15 @@ def social_event_engagement(item: dict[str, Any]) -> int:
     return total
 
 
+def is_explicit_telegram_call(item: dict[str, Any]) -> bool:
+    if str(item.get("platform") or "").lower() != "telegram":
+        return False
+    metrics = item.get("metrics") or {}
+    if bool(metrics.get("explicit_call") or metrics.get("is_explicit_call")):
+        return True
+    return "call" in str(item.get("event_type") or "").lower()
+
+
 def filter_timeline_payload(
     payload: dict[str, Any],
     *,
@@ -57,11 +75,20 @@ def filter_timeline_payload(
     limit: int = 200,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    normalized_sources = {normalize_social_source(value) for value in (sources or set()) if value.strip()}
-    scores = {normalize_social_source(key): float(value) for key, value in (channel_scores or {}).items()}
+    normalized_sources = {
+        normalize_social_source(value)
+        for value in (sources or set())
+        if value.strip()
+    }
+    scores = {
+        normalize_social_source(key): float(value)
+        for key, value in (channel_scores or {}).items()
+    }
     cutoff = None
     if hours is not None:
-        cutoff = _aware(now or datetime.now(timezone.utc)) - timedelta(hours=max(hours, 1))
+        cutoff = _aware(now or datetime.now(timezone.utc)) - timedelta(
+            hours=max(hours, 1)
+        )
 
     items: list[dict[str, Any]] = []
     for raw in payload.get("timeline") or []:
@@ -74,23 +101,34 @@ def filter_timeline_payload(
         if cutoff is not None and (occurred_at is None or occurred_at < cutoff):
             continue
 
-        source = normalize_social_source(str(item.get("source_handle") or item.get("source_name") or ""))
+        source = normalize_social_source(
+            str(item.get("source_handle") or item.get("source_name") or "")
+        )
         if normalized_sources and source not in normalized_sources:
             continue
 
-        metrics = item.get("metrics") or {}
-        if explicit_calls_only and item_platform == "telegram" and not bool(metrics.get("explicit_call")):
-            continue
+        if explicit_calls_only and item_platform == "telegram":
+            if not is_explicit_telegram_call(item):
+                continue
         if min_engagement > 0 and social_event_engagement(item) < min_engagement:
             continue
-        if min_channel_score > 0 and item_platform == "telegram" and scores.get(source, 0.0) < min_channel_score:
+        if (
+            min_channel_score > 0
+            and item_platform == "telegram"
+            and scores.get(source, 0.0) < min_channel_score
+        ):
             continue
 
         items.append(item)
 
-    items.sort(key=lambda row: _parse_datetime(row.get("occurred_at")) or datetime.min.replace(tzinfo=timezone.utc))
+    items.sort(
+        key=lambda row: _parse_datetime(row.get("occurred_at"))
+        or datetime.min.replace(tzinfo=timezone.utc)
+    )
+    matched_before_limit = len(items)
     max_items = max(1, min(int(limit), 1000))
-    if len(items) > max_items:
+    truncated = matched_before_limit > max_items
+    if truncated:
         items = items[-max_items:]
 
     platforms = Counter(str(item.get("platform") or "unknown") for item in items)
@@ -101,6 +139,11 @@ def filter_timeline_payload(
         "platforms": dict(platforms),
         "origin": ranked[0] if ranked else None,
         "timeline": ranked,
+        "meta": {
+            "matchedBeforeLimit": matched_before_limit,
+            "returned": len(ranked),
+            "truncated": truncated,
+        },
         "filters": {
             "platform": platform,
             "hours": hours,
