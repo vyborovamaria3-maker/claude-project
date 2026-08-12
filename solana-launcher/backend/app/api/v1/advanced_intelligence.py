@@ -11,6 +11,7 @@ from app.api.deps import get_current_subscriber
 from app.db.session import get_db
 from app.models.advanced_intelligence import (
     CampaignFingerprint,
+    IntelligenceCalibrationStat,
     IntelligenceHypothesisState,
     IntelligenceOutcome,
 )
@@ -54,12 +55,90 @@ def _require_backend_key(request: Request, supplied: str | None) -> None:
         )
 
 
+def _snapshot_feature(snapshot: IntelligenceSnapshot, suffixes: tuple[str, ...]) -> float | None:
+    payload = snapshot.payload or {}
+    for row in payload.get("features") or []:
+        key = str(row.get("key") or "")
+        if key not in suffixes:
+            continue
+        value = row.get("numericValue", row.get("value"))
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed == parsed:
+            return parsed
+    return None
+
+
+def _calibration_bucket(probability: float) -> str:
+    bounded = max(0.0, min(0.999999, probability))
+    start = int(bounded * 10) / 10
+    return f"{start:.1f}-{start + 0.1:.1f}"
+
+
+async def _apply_calibration_delta(
+    session: AsyncSession,
+    *,
+    snapshot: IntelligenceSnapshot,
+    horizon_hours: int,
+    old_confirmed: bool | None,
+    new_confirmed: bool,
+) -> bool:
+    alpha = _snapshot_feature(
+        snapshot,
+        ("combined.alpha", "social.alpha", "scores.alpha"),
+    )
+    if alpha is None:
+        return False
+    probability = max(0.0, min(1.0, alpha / 100.0))
+    signal_type = f"alpha_2x_{horizon_hours}h"
+    model_version = f"{snapshot.snapshot_version}:alpha-v1"
+    bucket = _calibration_bucket(probability)
+    row = (
+        await session.execute(
+            select(IntelligenceCalibrationStat).where(
+                IntelligenceCalibrationStat.model_version == model_version,
+                IntelligenceCalibrationStat.signal_type == signal_type,
+                IntelligenceCalibrationStat.bucket == bucket,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = IntelligenceCalibrationStat(
+            model_version=model_version,
+            signal_type=signal_type,
+            bucket=bucket,
+        )
+        session.add(row)
+
+    if old_confirmed is None:
+        row.sample_count += 1
+        row.predicted_confidence_sum += probability
+    elif old_confirmed == new_confirmed:
+        return False
+    else:
+        if old_confirmed:
+            row.confirmed_count = max(0, row.confirmed_count - 1)
+        else:
+            row.contradicted_count = max(0, row.contradicted_count - 1)
+
+    if new_confirmed:
+        row.confirmed_count += 1
+    else:
+        row.contradicted_count += 1
+    return True
+
+
 @router.post("/report")
 async def advanced_report(
     payload: AdvancedReportRequest,
     request: Request,
     session: AsyncSession = Depends(get_db),
-    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+    x_backend_api_key: str | None = Header(
+        default=None,
+        alias="X-Backend-API-Key",
+    ),
 ) -> dict:
     _require_backend_key(request, x_backend_api_key)
     mint = str(payload.snapshot.get("mint") or "")
@@ -85,12 +164,16 @@ async def persist_outcome(
     payload: OutcomeRequest,
     request: Request,
     session: AsyncSession = Depends(get_db),
-    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+    x_backend_api_key: str | None = Header(
+        default=None,
+        alias="X-Backend-API-Key",
+    ),
 ) -> dict:
     _require_backend_key(request, x_backend_api_key)
     snapshot = await session.get(IntelligenceSnapshot, payload.snapshot_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
+
     existing = (
         await session.execute(
             select(IntelligenceOutcome).where(
@@ -99,6 +182,10 @@ async def persist_outcome(
             )
         )
     ).scalar_one_or_none()
+    old_confirmed = None
+    if existing is not None and existing.max_multiple is not None:
+        old_confirmed = existing.max_multiple >= 2
+
     baseline = payload.baseline_price_usd
     max_multiple = (
         payload.max_price_usd / baseline
@@ -110,16 +197,22 @@ async def persist_outcome(
         if baseline and payload.min_price_usd is not None
         else None
     )
+    collapsed = drawdown is not None and drawdown <= -80
     if max_multiple is None:
         label = "unknown"
+    elif max_multiple >= 5 and collapsed:
+        label = "5x_then_collapse"
+    elif max_multiple >= 2 and collapsed:
+        label = "2x_then_collapse"
     elif max_multiple >= 5:
         label = "5x_plus"
     elif max_multiple >= 2:
         label = "2x_plus"
-    elif drawdown is not None and drawdown <= -80:
+    elif collapsed:
         label = "collapse"
     else:
         label = "sub_2x"
+
     values = {
         "mint_address": snapshot.mint_address,
         "baseline_price_usd": baseline,
@@ -141,6 +234,16 @@ async def persist_outcome(
     else:
         for key, value in values.items():
             setattr(existing, key, value)
+
+    calibration_updated = False
+    if max_multiple is not None:
+        calibration_updated = await _apply_calibration_delta(
+            session,
+            snapshot=snapshot,
+            horizon_hours=payload.horizon_hours,
+            old_confirmed=old_confirmed,
+            new_confirmed=max_multiple >= 2,
+        )
     await session.commit()
     return {
         "snapshot_id": payload.snapshot_id,
@@ -148,6 +251,7 @@ async def persist_outcome(
         "outcome_label": label,
         "max_multiple": max_multiple,
         "max_drawdown_pct": drawdown,
+        "calibration_updated": calibration_updated,
     }
 
 
