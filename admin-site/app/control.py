@@ -101,9 +101,11 @@ class ControlStore:
 
 def runtime_metrics(started_at: float) -> dict[str, Any]:
     load = os.getloadavg() if hasattr(os, "getloadavg") else (0.0, 0.0, 0.0)
-    disk = os.statvfs("/")
-    total = disk.f_blocks * disk.f_frsize
-    free = disk.f_bavail * disk.f_frsize
+    total = free = 0
+    with contextlib.suppress(AttributeError, FileNotFoundError, OSError):
+        disk = os.statvfs("/")
+        total = disk.f_blocks * disk.f_frsize
+        free = disk.f_bavail * disk.f_frsize
     return {
         "hostname": platform.node(),
         "python": platform.python_version(),
@@ -118,10 +120,15 @@ def runtime_metrics(started_at: float) -> dict[str, Any]:
 def inventory(root: Path) -> dict[str, Any]:
     services: list[dict[str, Any]] = []
     manifests = {"package.json", "pyproject.toml", "requirements.txt", "docker-compose.yml", "docker-compose.prod.yml"}
-    for path in root.rglob("*"):
-        if not path.is_file() or path.name not in manifests:
-            continue
-        rel = path.parent.relative_to(root)
-        services.append({"path": str(rel), "manifest": path.name, "size": path.stat().st_size})
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [name for name in dirnames if name not in {".git", ".next", "node_modules", "__pycache__"}]
+        for filename in filenames:
+            if filename not in manifests:
+                continue
+            path = Path(dirpath) / filename
+            with contextlib.suppress(FileNotFoundError, OSError, ValueError):
+                if path.is_file():
+                    rel = path.parent.relative_to(root)
+                    services.append({"path": str(rel), "manifest": path.name, "size": path.stat().st_size})
     services.sort(key=lambda item: (item["path"], item["manifest"]))
     return {"root": str(root), "service_manifests": services, "count": len(services)}

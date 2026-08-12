@@ -1,13 +1,14 @@
 import { loadEnvConfig } from '@next/env';
 import dotenv from 'dotenv';
 import { Telegraf } from 'telegraf';
-import { SocksProxyAgent } from 'socks-proxy-agent';
 import { setupAgentHandlers } from './handlers/agents';
 import { setupTaskHandlers } from './handlers/tasks';
 import { setupStatusHandlers } from './handlers/status';
 import { setupSubscriptionHandlers } from './handlers/subscription';
 import { loggingMiddleware } from './middleware/logging';
 import { sessionMiddleware } from './middleware/session';
+
+const { SocksProxyAgent } = require('socks-proxy-agent') as { SocksProxyAgent: any };
 
 loadEnvConfig(process.cwd());
 dotenv.config({ path: '.env', override: false });
@@ -90,10 +91,12 @@ async function startBot() {
 
     // Telegram sends updates to the Next.js webhook route. Keep this service
     // alive so Compose can monitor configuration/auth failures and restart it.
+    const keepAlive = setInterval(() => {}, 60_000);
     await new Promise<void>((resolve) => {
       process.once('SIGINT', resolve);
       process.once('SIGTERM', resolve);
     });
+    clearInterval(keepAlive);
   } else {
     console.log('Starting Telegram bot in polling mode...');
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });

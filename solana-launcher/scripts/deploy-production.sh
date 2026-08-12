@@ -18,6 +18,12 @@ test -r "$BACKUP_SCRIPT"
 test -r "$HEALTH_SCRIPT"
 test -r "$PROMETHEUS_CONFIG"
 
+# Both the product proxy and the separately managed admin service attach to
+# this network. Create it before Compose render/start so first deploy and
+# rollback have the same stable prerequisite.
+docker network inspect potapoff-shared >/dev/null 2>&1 \
+  || docker network create potapoff-shared >/dev/null
+
 COMPOSE=(
   docker compose
   --env-file .env.server

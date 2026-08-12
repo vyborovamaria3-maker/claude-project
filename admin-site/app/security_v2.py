@@ -135,6 +135,7 @@ class AdminSessionStore:
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with contextlib.closing(self.connect()) as db:
+            self._with_locked_retry(db, lambda: db.execute("PRAGMA journal_mode=WAL"))
             db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS admin_security_sessions(
@@ -156,69 +157,106 @@ class AdminSessionStore:
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=5)
         db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout=5000")
         return db
 
     def _cleanup(self, db: sqlite3.Connection, now: int) -> None:
-        db.execute("DELETE FROM admin_security_sessions WHERE expires_at<=?", (now,))
+        with contextlib.suppress(sqlite3.OperationalError):
+            db.execute("DELETE FROM admin_security_sessions WHERE expires_at<=?", (now,))
+
+    def _with_locked_retry(self, db: sqlite3.Connection, fn):
+        for attempt in range(5):
+            try:
+                return fn()
+            except sqlite3.OperationalError as exc:
+                if "database is locked" not in str(exc).lower() or attempt == 4:
+                    raise
+                # A failed write can leave the connection inside a transaction;
+                # retry from a clean transaction boundary.
+                with contextlib.suppress(sqlite3.Error):
+                    db.rollback()
+                time.sleep(0.05 * (attempt + 1))
+
+    def _ensure_session_row(
+        self,
+        db: sqlite3.Connection,
+        payload: dict[str, Any],
+        request: Request,
+        policy: SecurityPolicy,
+        now: int,
+        nonce: str,
+    ) -> dict[str, Any]:
+        self._cleanup(db, now)
+        row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
+        if row is None:
+            db.execute(
+                """INSERT INTO admin_security_sessions(nonce,username,issued_at,expires_at,last_seen_at,mfa_verified_at,reauth_until,ip_hash,user_agent_hash)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (nonce, str(payload["sub"]), int(payload["iat"]), int(payload["exp"]), now, None, None,
+                 _ip_binding(request) if policy.bind_ip else None,
+                 _ua_binding(request) if policy.bind_user_agent else None),
+            )
+            db.commit()
+            row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
+        return dict(row)
 
     def get_or_create(self, payload: dict[str, Any], request: Request, policy: SecurityPolicy) -> dict[str, Any]:
         now = int(time.time())
         nonce = str(payload["nonce"])
         with contextlib.closing(self.connect()) as db:
-            self._cleanup(db, now)
-            row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
-            if row is None:
-                db.execute(
-                    """INSERT INTO admin_security_sessions(nonce,username,issued_at,expires_at,last_seen_at,mfa_verified_at,reauth_until,ip_hash,user_agent_hash)
-                       VALUES(?,?,?,?,?,?,?,?,?)""",
-                    (nonce, str(payload["sub"]), int(payload["iat"]), int(payload["exp"]), now, None, None,
-                     _ip_binding(request) if policy.bind_ip else None,
-                     _ua_binding(request) if policy.bind_user_agent else None),
-                )
-                db.commit()
-                row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
-            return dict(row)
+            def op():
+                return self._ensure_session_row(db, payload, request, policy, now, nonce)
+
+            return self._with_locked_retry(db, op)
 
     def validate_and_touch(self, payload: dict[str, Any], request: Request, policy: SecurityPolicy) -> dict[str, Any]:
         now = int(time.time())
         nonce = str(payload["nonce"])
         with contextlib.closing(self.connect()) as db:
-            self._cleanup(db, now)
-            row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
-            if row is None:
-                return self.get_or_create(payload, request, policy)
-            item = dict(row)
-            if now - int(item["last_seen_at"]) > policy.idle_timeout_seconds:
-                raise HTTPException(status_code=401, detail="Admin session expired due to inactivity")
-            if policy.bind_ip and item.get("ip_hash") and not hmac.compare_digest(item["ip_hash"], _ip_binding(request)):
-                raise HTTPException(status_code=401, detail="Admin session client binding changed")
-            if policy.bind_user_agent and item.get("user_agent_hash") and not hmac.compare_digest(item["user_agent_hash"], _ua_binding(request)):
-                raise HTTPException(status_code=401, detail="Admin session client binding changed")
-            db.execute("UPDATE admin_security_sessions SET last_seen_at=? WHERE nonce=?", (now, nonce))
-            db.commit()
-            item["last_seen_at"] = now
-            return item
+            def op():
+                row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
+                if row is None:
+                    return self._ensure_session_row(db, payload, request, policy, now, nonce)
+                item = dict(row)
+                if now - int(item["last_seen_at"]) > policy.idle_timeout_seconds:
+                    raise HTTPException(status_code=401, detail="Admin session expired due to inactivity")
+                if policy.bind_ip and item.get("ip_hash") and not hmac.compare_digest(item["ip_hash"], _ip_binding(request)):
+                    raise HTTPException(status_code=401, detail="Admin session client binding changed")
+                if policy.bind_user_agent and item.get("user_agent_hash") and not hmac.compare_digest(item["user_agent_hash"], _ua_binding(request)):
+                    raise HTTPException(status_code=401, detail="Admin session client binding changed")
+                db.execute("UPDATE admin_security_sessions SET last_seen_at=? WHERE nonce=?", (now, nonce))
+                db.commit()
+                item["last_seen_at"] = now
+                return item
+
+            return self._with_locked_retry(db, op)
 
     def mark_mfa(self, nonce: str) -> None:
         now = int(time.time())
         with contextlib.closing(self.connect()) as db:
-            cur = db.execute("UPDATE admin_security_sessions SET mfa_verified_at=?,last_seen_at=? WHERE nonce=?", (now, now, nonce))
-            db.commit()
-            if cur.rowcount != 1:
-                raise KeyError("Unknown admin session")
+            def op():
+                cur = db.execute("UPDATE admin_security_sessions SET mfa_verified_at=?,last_seen_at=? WHERE nonce=?", (now, now, nonce))
+                db.commit()
+                if cur.rowcount != 1:
+                    raise KeyError("Unknown admin session")
+            self._with_locked_retry(db, op)
 
     def mark_reauth(self, nonce: str, until: int) -> None:
         now = int(time.time())
         with contextlib.closing(self.connect()) as db:
-            cur = db.execute("UPDATE admin_security_sessions SET reauth_until=?,last_seen_at=? WHERE nonce=?", (int(until), now, nonce))
-            db.commit()
-            if cur.rowcount != 1:
-                raise KeyError("Unknown admin session")
+            def op():
+                cur = db.execute("UPDATE admin_security_sessions SET reauth_until=?,last_seen_at=? WHERE nonce=?", (int(until), now, nonce))
+                db.commit()
+                if cur.rowcount != 1:
+                    raise KeyError("Unknown admin session")
+            self._with_locked_retry(db, op)
 
     def delete(self, nonce: str) -> None:
         with contextlib.closing(self.connect()) as db:
-            db.execute("DELETE FROM admin_security_sessions WHERE nonce=?", (nonce,))
-            db.commit()
+            def op():
+                db.execute("DELETE FROM admin_security_sessions WHERE nonce=?", (nonce,))
+                db.commit()
+            self._with_locked_retry(db, op)
 
 
 def _dangerous_mutation(request: Request) -> bool:

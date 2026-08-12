@@ -169,6 +169,7 @@ services:
       - .env.server
     environment:
       NODE_ENV: production
+      FRONTEND_URL: https://potapoff.fun
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
@@ -181,6 +182,9 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
+    networks:
+      - default
+      - potapoff-shared
     restart: unless-stopped
     ports:
       - "80:80"
@@ -211,3 +215,7 @@ volumes:
   postgres-data:
   redis-data:
   rabbitmq-data:
+
+networks:
+  potapoff-shared:
+    external: true
