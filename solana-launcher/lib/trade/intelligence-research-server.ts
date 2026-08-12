@@ -6,7 +6,7 @@ import type {
   IntelligenceFeature,
 } from "@/lib/trade/intelligence-agent";
 
-export const INTELLIGENCE_PROMPT_VERSION = "intelligence-qwen-v5-tools";
+export const INTELLIGENCE_PROMPT_VERSION = "intelligence-qwen-v6-tools-evidence";
 export const MAX_RESEARCH_ENTITIES = 8;
 const MAX_NEIGHBOR_ENTITIES = 4;
 const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(
