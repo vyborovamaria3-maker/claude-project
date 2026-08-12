@@ -14,7 +14,6 @@ DEFAULT_HORIZONS = (6, 24, 72)
 MAX_SNAPSHOTS_PER_RUN = 250
 SCAN_MULTIPLIER = 4
 BASELINE_LOOKBACK = timedelta(minutes=90)
-BASELINE_FORWARD_TOLERANCE = timedelta(minutes=15)
 FINAL_COVERAGE_TOLERANCE = timedelta(hours=1)
 
 
@@ -49,7 +48,7 @@ async def _apply_calibration_delta(
 ) -> bool:
     alpha = _snapshot_feature(
         snapshot,
-        ("combined.alpha", "social.alpha", "scores.alpha"),
+        ("scores.alpha", "combined.alpha", "social.alpha"),
     )
     if alpha is None:
         return False
@@ -110,6 +109,24 @@ def _outcome_label(max_multiple: float | None, drawdown: float | None) -> str:
     return "sub_2x"
 
 
+def _max_peak_to_trough_drawdown(rows: list[TokenMetric]) -> float | None:
+    peak: float | None = None
+    worst = 0.0
+    seen = False
+    for row in rows:
+        if row.price_usd is None or row.price_usd <= 0:
+            continue
+        price = float(row.price_usd)
+        seen = True
+        if peak is None or price > peak:
+            peak = price
+            continue
+        if peak > 0:
+            drawdown = (price - peak) / peak * 100
+            worst = min(worst, drawdown)
+    return worst if seen else None
+
+
 async def persist_outcome_values(
     session: AsyncSession,
     *,
@@ -119,6 +136,7 @@ async def persist_outcome_values(
     max_price_usd: float | None,
     min_price_usd: float | None,
     final_price_usd: float | None,
+    max_drawdown_pct: float | None = None,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     existing = (
@@ -134,13 +152,28 @@ async def persist_outcome_values(
         old_confirmed = existing.max_multiple >= 2
 
     baseline = baseline_price_usd
-    max_multiple = max_price_usd / baseline if baseline and max_price_usd is not None else None
-    drawdown = (
-        (min_price_usd - baseline) / baseline * 100
-        if baseline and min_price_usd is not None
+    max_multiple = (
+        max_price_usd / baseline
+        if baseline and baseline > 0 and max_price_usd is not None
         else None
     )
+    baseline_floor_change = (
+        (min_price_usd - baseline) / baseline * 100
+        if baseline and baseline > 0 and min_price_usd is not None
+        else None
+    )
+    drawdown = max_drawdown_pct
+    drawdown_method = "peak_to_subsequent_trough"
+    if drawdown is None:
+        drawdown = baseline_floor_change
+        drawdown_method = "baseline_floor_proxy"
+
     label = _outcome_label(max_multiple, drawdown)
+    merged_payload = {
+        **(payload or {}),
+        "drawdown_method": drawdown_method,
+        "baseline_to_min_pct": baseline_floor_change,
+    }
     values = {
         "mint_address": snapshot.mint_address,
         "baseline_price_usd": baseline,
@@ -150,7 +183,7 @@ async def persist_outcome_values(
         "max_multiple": max_multiple,
         "max_drawdown_pct": drawdown,
         "outcome_label": label,
-        "payload": payload,
+        "payload": merged_payload,
         "evaluated_at": datetime.now(timezone.utc),
     }
     if existing is None:
@@ -179,6 +212,7 @@ async def persist_outcome_values(
         "outcome_label": label,
         "max_multiple": max_multiple,
         "max_drawdown_pct": drawdown,
+        "drawdown_method": drawdown_method,
         "calibration_updated": calibration_updated,
     }
 
@@ -211,7 +245,7 @@ async def _metrics_for_window(
     )
 
 
-def _select_baseline(
+def _select_causal_baseline(
     rows: list[TokenMetric],
     cutoff: datetime,
 ) -> TokenMetric | None:
@@ -222,16 +256,7 @@ def _select_baseline(
         and row.price_usd > 0
         and cutoff - BASELINE_LOOKBACK <= row.timestamp <= cutoff
     ]
-    if before:
-        return before[-1]
-    after = [
-        row
-        for row in rows
-        if row.price_usd is not None
-        and row.price_usd > 0
-        and cutoff < row.timestamp <= cutoff + BASELINE_FORWARD_TOLERANCE
-    ]
-    return after[0] if after else None
+    return before[-1] if before else None
 
 
 async def evaluate_snapshot_horizon(
@@ -256,7 +281,7 @@ async def evaluate_snapshot_horizon(
     if not rows:
         return {"status": "no_price_history", "snapshot_id": snapshot.snapshot_id}
 
-    baseline_row = _select_baseline(rows, cutoff)
+    baseline_row = _select_causal_baseline(rows, cutoff)
     if baseline_row is None:
         return {"status": "no_causal_baseline", "snapshot_id": snapshot.snapshot_id}
 
@@ -267,21 +292,22 @@ async def evaluate_snapshot_horizon(
         and row.price_usd > 0
         and cutoff <= row.timestamp <= end
     ]
+    if not outcome_rows:
+        return {"status": "no_valid_prices", "snapshot_id": snapshot.snapshot_id}
+
     final_candidates = [
         row
         for row in outcome_rows
         if row.timestamp >= end - FINAL_COVERAGE_TOLERANCE
     ]
     if not final_candidates:
-        latest = outcome_rows[-1].timestamp.isoformat() if outcome_rows else None
         return {
             "status": "right_censored",
             "snapshot_id": snapshot.snapshot_id,
-            "latest_metric_at": latest,
+            "latest_metric_at": outcome_rows[-1].timestamp.isoformat(),
         }
-    if not outcome_rows:
-        return {"status": "no_valid_prices", "snapshot_id": snapshot.snapshot_id}
 
+    peak_to_trough = _max_peak_to_trough_drawdown(outcome_rows)
     result = await persist_outcome_values(
         session,
         snapshot=snapshot,
@@ -290,6 +316,7 @@ async def evaluate_snapshot_horizon(
         max_price_usd=max(float(row.price_usd) for row in outcome_rows),
         min_price_usd=min(float(row.price_usd) for row in outcome_rows),
         final_price_usd=float(final_candidates[-1].price_usd),
+        max_drawdown_pct=peak_to_trough,
         payload={
             "source": "token_metrics",
             "snapshot_created_at": cutoff.isoformat(),
@@ -298,8 +325,10 @@ async def evaluate_snapshot_horizon(
             "final_metric_at": final_candidates[-1].timestamp.isoformat(),
             "samples": len(outcome_rows),
             "causal_baseline": True,
+            "baseline_rule": "latest_metric_at_or_before_snapshot_within_90m",
             "strict_horizon_end": True,
             "right_censoring_checked": True,
+            "peak_to_trough_drawdown": True,
         },
     )
     return {"status": "evaluated", **result}
@@ -329,7 +358,7 @@ async def evaluate_matured_outcomes(
             await session.execute(
                 select(IntelligenceSnapshot)
                 .where(IntelligenceSnapshot.created_at <= matured_cutoff)
-                .order_by(IntelligenceSnapshot.created_at.desc())
+                .order_by(IntelligenceSnapshot.created_at.asc())
                 .limit(limit * SCAN_MULTIPLIER)
             )
         ).scalars().all()
