@@ -1,0 +1,278 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import httpx
+
+from app.core.config import Settings
+
+MAX_SIGNATURE_PAGES = 3
+SIGNATURE_PAGE_SIZE = 100
+MAX_TRANSACTIONS_TO_INSPECT = 60
+
+
+async def _rpc(
+    client: httpx.AsyncClient,
+    url: str,
+    method: str,
+    params: list[Any],
+    request_id: int,
+) -> Any:
+    response = await client.post(
+        url,
+        json={
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+        },
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("error"):
+        raise RuntimeError(str(payload["error"]))
+    return payload.get("result")
+
+
+async def _signatures(
+    client: httpx.AsyncClient,
+    url: str,
+    address: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    rows: list[dict[str, Any]] = []
+    before: str | None = None
+    exhausted = False
+    for page in range(MAX_SIGNATURE_PAGES):
+        options: dict[str, Any] = {
+            "limit": SIGNATURE_PAGE_SIZE,
+            "commitment": "confirmed",
+        }
+        if before:
+            options["before"] = before
+        result = await _rpc(
+            client,
+            url,
+            "getSignaturesForAddress",
+            [address, options],
+            page + 1,
+        )
+        batch = result if isinstance(result, list) else []
+        rows.extend(row for row in batch if isinstance(row, dict))
+        if len(batch) < SIGNATURE_PAGE_SIZE:
+            exhausted = True
+            break
+        before = str(batch[-1].get("signature") or "") or None
+        if not before:
+            exhausted = True
+            break
+    return rows, exhausted
+
+
+def _incoming_system_transfers(
+    transaction: dict[str, Any] | None,
+    address: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(transaction, dict):
+        return []
+    block_time = transaction.get("blockTime")
+    tx = transaction.get("transaction") or {}
+    message = tx.get("message") or {}
+    instructions = message.get("instructions") or []
+    signature = None
+    signatures = tx.get("signatures") or []
+    if signatures:
+        signature = signatures[0]
+    transfers: list[dict[str, Any]] = []
+    for instruction in instructions:
+        if not isinstance(instruction, dict):
+            continue
+        parsed = instruction.get("parsed")
+        if not isinstance(parsed, dict) or parsed.get("type") != "transfer":
+            continue
+        info = parsed.get("info") or {}
+        if str(info.get("destination") or "") != address:
+            continue
+        lamports = info.get("lamports")
+        if lamports is None:
+            # System transferWithSeed and some parsed forms may expose SOL units.
+            lamports = info.get("amount")
+        try:
+            lamports_value = int(lamports) if lamports is not None else None
+        except (TypeError, ValueError):
+            lamports_value = None
+        transfers.append(
+            {
+                "source": str(info.get("source") or "") or None,
+                "destination": address,
+                "lamports": lamports_value,
+                "sol": (
+                    lamports_value / 1_000_000_000
+                    if lamports_value is not None
+                    else None
+                ),
+                "signature": signature,
+                "block_time": block_time,
+                "program": instruction.get("program"),
+                "program_id": instruction.get("programId"),
+            }
+        )
+    return transfers
+
+
+async def verify_wallet_funding(
+    settings: Settings,
+    address: str,
+) -> dict[str, Any]:
+    rpc_url = (settings.helius_rpc_url or settings.solana_rpc_url or "").strip()
+    if not rpc_url:
+        return {
+            "status": "rpc_unavailable",
+            "wallet": address,
+            "verified": False,
+            "transfers": [],
+        }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
+            signatures, history_exhausted = await _signatures(
+                client,
+                rpc_url,
+                address,
+            )
+            valid = [
+                row
+                for row in signatures
+                if row.get("signature") and row.get("err") is None
+            ]
+            # Oldest retrieved transactions are most relevant to initial funding.
+            inspect = list(reversed(valid))[:MAX_TRANSACTIONS_TO_INSPECT]
+
+            async def fetch_transaction(
+                index: int,
+                signature: str,
+            ) -> tuple[int, dict[str, Any] | None]:
+                try:
+                    value = await _rpc(
+                        client,
+                        rpc_url,
+                        "getTransaction",
+                        [
+                            signature,
+                            {
+                                "encoding": "jsonParsed",
+                                "commitment": "confirmed",
+                                "maxSupportedTransactionVersion": 0,
+                            },
+                        ],
+                        10_000 + index,
+                    )
+                    return index, value if isinstance(value, dict) else None
+                except (httpx.HTTPError, RuntimeError):
+                    return index, None
+
+            fetched = await asyncio.gather(
+                *[
+                    fetch_transaction(index, str(row["signature"]))
+                    for index, row in enumerate(inspect)
+                ]
+            )
+        transfers = []
+        for _, transaction in sorted(fetched):
+            transfers.extend(_incoming_system_transfers(transaction, address))
+        transfers.sort(
+            key=lambda row: (
+                row.get("block_time") is None,
+                row.get("block_time") or 0,
+            )
+        )
+        first = transfers[0] if transfers else None
+        return {
+            "status": "verified" if first else "no_incoming_system_transfer_found",
+            "wallet": address,
+            "verified": bool(first),
+            "first_incoming_transfer": first,
+            "transfers": transfers[:20],
+            "signatures_scanned": len(valid),
+            "transactions_inspected": len(inspect),
+            "history_exhausted": history_exhausted,
+            "search_complete": history_exhausted,
+            "note": (
+                "A source is treated as funding evidence only when a parsed "
+                "on-chain System Program transfer to this wallet is observed."
+            ),
+        }
+    except (httpx.HTTPError, RuntimeError) as exc:
+        return {
+            "status": "rpc_error",
+            "wallet": address,
+            "verified": False,
+            "transfers": [],
+            "error": str(exc)[:500],
+        }
+
+
+async def verify_snapshot_wallet_funding(
+    settings: Settings,
+    snapshot: dict[str, Any],
+    *,
+    max_wallets: int = 8,
+) -> dict[str, Any]:
+    graph = snapshot.get("graph") or {}
+    nodes = graph.get("nodes") or []
+    wallets = []
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "wallet":
+            continue
+        label = str(node.get("label") or "").strip()
+        node_id = str(node.get("id") or "")
+        address = label if 32 <= len(label) <= 44 else node_id.removeprefix("wallet:")
+        if 32 <= len(address) <= 44:
+            wallets.append(address)
+    wallets = list(dict.fromkeys(wallets))[:max_wallets]
+    if not wallets:
+        return {
+            "status": "no_wallets",
+            "wallets": [],
+            "verified_edges": [],
+            "same_funder_groups": [],
+        }
+    results = await asyncio.gather(
+        *[verify_wallet_funding(settings, address) for address in wallets]
+    )
+    funders: dict[str, list[str]] = {}
+    verified_edges = []
+    for result in results:
+        transfer = result.get("first_incoming_transfer")
+        if not result.get("verified") or not isinstance(transfer, dict):
+            continue
+        source = str(transfer.get("source") or "")
+        wallet = str(result.get("wallet") or "")
+        if not source or not wallet:
+            continue
+        funders.setdefault(source, []).append(wallet)
+        verified_edges.append(
+            {
+                "source": source,
+                "target": wallet,
+                "type": "FUNDED_BY",
+                "signature": transfer.get("signature"),
+                "lamports": transfer.get("lamports"),
+                "block_time": transfer.get("block_time"),
+                "confidence": 1.0,
+            }
+        )
+    same_funder = [
+        {
+            "funder": funder,
+            "wallets": sorted(set(members)),
+            "confidence": 1.0,
+        }
+        for funder, members in funders.items()
+        if len(set(members)) >= 2
+    ]
+    return {
+        "status": "verified" if verified_edges else "no_verified_funding_edges",
+        "wallets": results,
+        "verified_edges": verified_edges,
+        "same_funder_groups": same_funder,
+    }
