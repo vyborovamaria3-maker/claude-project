@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.models.advanced_intelligence import IntelligenceOutcome
-from app.models.intelligence_memory import IntelligenceSnapshot, IntelligenceSnapshotEntity
+from app.models.intelligence_memory import (
+    IntelligenceSnapshot,
+    IntelligenceSnapshotEntity,
+)
 from app.services.solana_funding_verifier import verify_snapshot_wallet_funding
 
 
@@ -30,7 +33,10 @@ def _char_ngrams(text: str, size: int = 3) -> Counter[str]:
     normalized = f"  {_normalize(text)}  "
     if len(normalized) < size:
         return Counter()
-    return Counter(normalized[index : index + size] for index in range(len(normalized) - size + 1))
+    return Counter(
+        normalized[index : index + size]
+        for index in range(len(normalized) - size + 1)
+    )
 
 
 def _cosine(left: Counter[str], right: Counter[str]) -> float:
@@ -55,7 +61,11 @@ def _semantic_similarity(left: str, right: str) -> float:
 
 
 def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
-    evidence = [row for row in snapshot.get("evidence") or [] if isinstance(row, dict)]
+    evidence = [
+        row
+        for row in snapshot.get("evidence") or []
+        if isinstance(row, dict)
+    ]
     prepared = []
     for row in evidence[:160]:
         text = str(row.get("text") or "")
@@ -92,18 +102,26 @@ def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
         if len(members) < 2 or len(sources) < 2:
             continue
         assigned.update(members)
-        avg_similarity = sum(similarities) / len(similarities) if similarities else 1.0
+        avg_similarity = (
+            sum(similarities) / len(similarities) if similarities else 1.0
+        )
+        evidence_ids = [
+            prepared[item]["id"]
+            for item in members
+            if prepared[item]["id"]
+        ][:30]
         clusters.append(
             {
                 "cluster_id": f"semantic-template-{index}",
                 "sample": prepared[index]["normalized"][:240],
                 "messages": len(members),
                 "sources": sorted(sources),
-                "evidence_ids": [prepared[item]["id"] for item in members if prepared[item]["id"]][
-                    :30
-                ],
+                "evidence_ids": evidence_ids,
                 "average_similarity": round(avg_similarity, 4),
-                "confidence": round(min(0.98, 0.5 + avg_similarity * 0.45), 4),
+                "confidence": round(
+                    min(0.98, 0.5 + avg_similarity * 0.45),
+                    4,
+                ),
             }
         )
     clusters.sort(
@@ -115,7 +133,10 @@ def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
         "semantic_embeddings_enabled": False,
         "clusters": clusters[:50],
         "threshold": 0.72,
-        "note": "Deterministic semantic-like similarity; no external embedding model is required.",
+        "note": (
+            "Deterministic semantic-like similarity; no external embedding "
+            "model is required."
+        ),
     }
 
 
@@ -128,7 +149,8 @@ async def performance_aware_source_reliability(
     actor_ids = [
         str(row.get("id"))
         for row in graph.get("nodes") or []
-        if isinstance(row, dict) and row.get("type") in {"x_account", "tg_channel", "wallet"}
+        if isinstance(row, dict)
+        and row.get("type") in {"x_account", "tg_channel", "wallet"}
     ][:120]
     if not actor_ids:
         return base_rows
@@ -143,7 +165,8 @@ async def performance_aware_source_reliability(
                 )
                 .join(
                     IntelligenceSnapshot,
-                    IntelligenceSnapshot.snapshot_id == IntelligenceSnapshotEntity.snapshot_id,
+                    IntelligenceSnapshot.snapshot_id
+                    == IntelligenceSnapshotEntity.snapshot_id,
                 )
                 .where(IntelligenceSnapshotEntity.entity_key.in_(actor_ids))
             )
@@ -168,7 +191,13 @@ async def performance_aware_source_reliability(
     for row in appearances:
         bucket = per_entity.setdefault(
             row.entity_key,
-            {"mints": set(), "matured_mints": set(), "wins": 0, "collapses": 0, "multiples": []},
+            {
+                "mints": set(),
+                "matured_mints": set(),
+                "wins": 0,
+                "collapses": 0,
+                "multiples": [],
+            },
         )
         bucket["mints"].add(row.mint_address)
         outcome = outcome_by_snapshot.get(row.snapshot_id)
@@ -179,7 +208,8 @@ async def performance_aware_source_reliability(
         bucket["matured_mints"].add(row.mint_address)
         bucket["wins"] += int(outcome.max_multiple >= 2)
         bucket["collapses"] += int(
-            outcome.max_drawdown_pct is not None and outcome.max_drawdown_pct <= -80
+            outcome.max_drawdown_pct is not None
+            and outcome.max_drawdown_pct <= -80
         )
         bucket["multiples"].append(float(outcome.max_multiple))
 
@@ -192,18 +222,30 @@ async def performance_aware_source_reliability(
         multiples = list(stats.get("multiples") or [])
         base.update(
             {
-                "distinct_token_occurrences": len(stats.get("mints") or set())
-                or int(base.get("distinct_token_occurrences") or 0),
+                "distinct_token_occurrences": (
+                    len(stats.get("mints") or set())
+                    or int(base.get("distinct_token_occurrences") or 0)
+                ),
                 "matured_72h_samples": matured,
-                "historical_2x_rate_72h": round(stats.get("wins", 0) / matured, 4) if matured else None,
+                "historical_2x_rate_72h": (
+                    round(stats.get("wins", 0) / matured, 4)
+                    if matured
+                    else None
+                ),
                 "historical_collapse_rate_72h": (
-                    round(stats.get("collapses", 0) / matured, 4) if matured else None
+                    round(stats.get("collapses", 0) / matured, 4)
+                    if matured
+                    else None
                 ),
                 "median_max_multiple_72h": (
-                    sorted(multiples)[len(multiples) // 2] if multiples else None
+                    sorted(multiples)[len(multiples) // 2]
+                    if multiples
+                    else None
                 ),
                 "performance_status": (
-                    "calibrated_history" if matured >= 10 else "limited_outcome_history"
+                    "calibrated_history"
+                    if matured >= 10
+                    else "limited_outcome_history"
                 ),
             }
         )
@@ -226,7 +268,11 @@ async def enrich_advanced_report(
     report: dict[str, Any],
 ) -> dict[str, Any]:
     layers = report.get("layers") or {}
-    funding = await verify_snapshot_wallet_funding(settings, snapshot, max_wallets=8)
+    funding = await verify_snapshot_wallet_funding(
+        settings,
+        snapshot,
+        max_wallets=8,
+    )
     existing_funding = dict(layers.get("funding_verification") or {})
     existing_funding.update(
         {
