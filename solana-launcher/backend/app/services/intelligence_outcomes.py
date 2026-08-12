@@ -13,6 +13,9 @@ from app.models.intelligence_memory import IntelligenceSnapshot
 DEFAULT_HORIZONS = (6, 24, 72)
 MAX_SNAPSHOTS_PER_RUN = 250
 SCAN_MULTIPLIER = 4
+BASELINE_LOOKBACK = timedelta(minutes=90)
+BASELINE_FORWARD_TOLERANCE = timedelta(minutes=15)
+FINAL_COVERAGE_TOLERANCE = timedelta(hours=1)
 
 
 def _snapshot_feature(snapshot: IntelligenceSnapshot, keys: tuple[str, ...]) -> float | None:
@@ -208,6 +211,29 @@ async def _metrics_for_window(
     )
 
 
+def _select_baseline(
+    rows: list[TokenMetric],
+    cutoff: datetime,
+) -> TokenMetric | None:
+    before = [
+        row
+        for row in rows
+        if row.price_usd is not None
+        and row.price_usd > 0
+        and cutoff - BASELINE_LOOKBACK <= row.timestamp <= cutoff
+    ]
+    if before:
+        return before[-1]
+    after = [
+        row
+        for row in rows
+        if row.price_usd is not None
+        and row.price_usd > 0
+        and cutoff < row.timestamp <= cutoff + BASELINE_FORWARD_TOLERANCE
+    ]
+    return after[0] if after else None
+
+
 async def evaluate_snapshot_horizon(
     session: AsyncSession,
     *,
@@ -216,46 +242,44 @@ async def evaluate_snapshot_horizon(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
-    end = snapshot.created_at + timedelta(hours=horizon_hours)
+    cutoff = snapshot.created_at
+    end = cutoff + timedelta(hours=horizon_hours)
     if now < end:
         return {"status": "not_matured", "snapshot_id": snapshot.snapshot_id}
 
     rows = await _metrics_for_window(
         session,
         mint=snapshot.mint_address,
-        start=snapshot.created_at,
-        end=end + timedelta(minutes=15),
+        start=cutoff - BASELINE_LOOKBACK,
+        end=end,
     )
     if not rows:
         return {"status": "no_price_history", "snapshot_id": snapshot.snapshot_id}
 
-    baseline_row = next(
-        (
-            row
-            for row in rows
-            if row.price_usd is not None
-            and row.timestamp <= snapshot.created_at + timedelta(hours=2)
-        ),
-        None,
-    )
-    if baseline_row is None or not baseline_row.price_usd or baseline_row.price_usd <= 0:
-        return {"status": "no_baseline_price", "snapshot_id": snapshot.snapshot_id}
+    baseline_row = _select_baseline(rows, cutoff)
+    if baseline_row is None:
+        return {"status": "no_causal_baseline", "snapshot_id": snapshot.snapshot_id}
 
-    covered = [row for row in rows if row.timestamp <= end + timedelta(minutes=15)]
+    outcome_rows = [
+        row
+        for row in rows
+        if row.price_usd is not None
+        and row.price_usd > 0
+        and cutoff <= row.timestamp <= end
+    ]
     final_candidates = [
         row
-        for row in covered
-        if row.timestamp >= end - timedelta(hours=1) and row.price_usd is not None
+        for row in outcome_rows
+        if row.timestamp >= end - FINAL_COVERAGE_TOLERANCE
     ]
     if not final_candidates:
+        latest = outcome_rows[-1].timestamp.isoformat() if outcome_rows else None
         return {
             "status": "right_censored",
             "snapshot_id": snapshot.snapshot_id,
-            "latest_metric_at": covered[-1].timestamp.isoformat() if covered else None,
+            "latest_metric_at": latest,
         }
-
-    priced = [row for row in covered if row.price_usd is not None and row.price_usd > 0]
-    if not priced:
+    if not outcome_rows:
         return {"status": "no_valid_prices", "snapshot_id": snapshot.snapshot_id}
 
     result = await persist_outcome_values(
@@ -263,16 +287,18 @@ async def evaluate_snapshot_horizon(
         snapshot=snapshot,
         horizon_hours=horizon_hours,
         baseline_price_usd=float(baseline_row.price_usd),
-        max_price_usd=max(float(row.price_usd) for row in priced),
-        min_price_usd=min(float(row.price_usd) for row in priced),
+        max_price_usd=max(float(row.price_usd) for row in outcome_rows),
+        min_price_usd=min(float(row.price_usd) for row in outcome_rows),
         final_price_usd=float(final_candidates[-1].price_usd),
         payload={
             "source": "token_metrics",
-            "snapshot_created_at": snapshot.created_at.isoformat(),
+            "snapshot_created_at": cutoff.isoformat(),
             "horizon_end": end.isoformat(),
             "baseline_metric_at": baseline_row.timestamp.isoformat(),
             "final_metric_at": final_candidates[-1].timestamp.isoformat(),
-            "samples": len(priced),
+            "samples": len(outcome_rows),
+            "causal_baseline": True,
+            "strict_horizon_end": True,
             "right_censoring_checked": True,
         },
     )
