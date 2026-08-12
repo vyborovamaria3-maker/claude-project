@@ -109,6 +109,8 @@ export const telegramContextSchema = z.object({
   windowStart: dateString.optional().nullable(),
   windowEnd: dateString.optional().nullable(),
   analysisMode: z.enum(['telegram_only', 'full_intelligence']).optional().default('telegram_only'),
+  analysisRole: z.enum(['analyst', 'critic']).optional().default('analyst'),
+  priorConclusion: z.string().max(6_000).optional().nullable(),
   intelligenceSnapshot: intelligenceSnapshotSchema.optional(),
 }).strict().default({});
 
