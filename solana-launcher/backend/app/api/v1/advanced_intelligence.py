@@ -31,6 +31,7 @@ class AdvancedReportRequest(BaseModel):
     snapshot: dict
     ai_result: dict | None = None
     persist: bool = True
+    enrich: bool = True
     role: str = Field(default="analyst", pattern="^(analyst|critic)$")
 
 
@@ -78,10 +79,7 @@ async def advanced_report(
         snapshot=payload.snapshot,
         ai_result=payload.ai_result,
     )
-    # The expensive RPC/semantic/performance enrichment is performed for the
-    # analyst report only. A critic pass reuses the same facts and only adds a
-    # lifecycle vote, avoiding a duplicate RPC crawl.
-    if payload.role == "analyst":
+    if payload.role == "analyst" and payload.enrich:
         report = await enrich_advanced_report(
             session,
             get_settings(),
