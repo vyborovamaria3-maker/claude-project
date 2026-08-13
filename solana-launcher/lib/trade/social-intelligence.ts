@@ -943,7 +943,7 @@ export function deriveSocialMetrics(
   ], 0.12).score;
   const activePlatformCoverage = (Number(xAvailable) + Number(tgAvailable)) / 2;
   const socialScore = clamp(
-    socialCore.score * (0.85 + activePlatformCoverage * 0.15),
+    socialCore * (0.85 + activePlatformCoverage * 0.15),
   );
 
   const eventTimes = [...finiteX, ...finiteTg];
