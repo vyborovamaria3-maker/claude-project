@@ -57,7 +57,7 @@ services:
     logging: *default-logging
 
   backend:
-    image: ghcr.io/dima09090/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
     env_file:
       - backend.env
@@ -89,7 +89,7 @@ services:
     logging: *default-logging
 
   celery-worker:
-    image: ghcr.io/dima09090/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
     env_file:
       - backend.env
@@ -110,7 +110,7 @@ services:
 
   telegram-intelligence:
     profiles: ["telegram-intelligence"]
-    image: ghcr.io/dima09090/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
     env_file:
       - backend.env
@@ -135,7 +135,7 @@ services:
     logging: *default-logging
 
   frontend:
-    image: ghcr.io/dima09090/claude-project/frontend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/vyborovamaria3-maker/claude-project/frontend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
     env_file:
       - .env.server
@@ -162,7 +162,7 @@ services:
 
   telegram-bot:
     profiles: ["telegram"]
-    image: ghcr.io/dima09090/claude-project/telegram-bot:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/vyborovamaria3-maker/claude-project/telegram-bot:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
     env_file:
       - backend.env

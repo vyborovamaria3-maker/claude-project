@@ -6,7 +6,7 @@ REPO_DIR="/var/www/claude-project"
 APP_DIR="$REPO_DIR/solana-launcher"
 DEPLOY_DIR="/opt/potapoff-deploy"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
-IMAGE="ghcr.io/dima09090/claude-project/frontend:$NEW_TAG"
+IMAGE="ghcr.io/vyborovamaria3-maker/claude-project/frontend:$NEW_TAG"
 LOCK_FILE="$DEPLOY_DIR/.landing-deploy.lock"
 LANDING_MARKER='Запускайте токены, анализируйте кошельки'
 
