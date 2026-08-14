@@ -8,7 +8,7 @@ DEPLOY_DIR="/opt/potapoff-deploy"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
 IMAGE="ghcr.io/vyborovamaria3-maker/claude-project/frontend:$NEW_TAG"
 LOCK_FILE="$DEPLOY_DIR/.landing-deploy.lock"
-LANDING_MARKER='Запускайте токены, анализируйте кошельки'
+LANDING_MARKER='Не смотри на рынок.'
 
 exec 9>"$LOCK_FILE"
 flock -w 1800 9
