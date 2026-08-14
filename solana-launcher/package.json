@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run analysis:test && next build",
     "start": "next start",
     "lint": "eslint .",
     "security:test": "node scripts/security-regression.mjs",
@@ -49,7 +49,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.17",
-    "idb-keyval": "^6.2.2",
+    "idb-keyval": "^2.2.1",
     "immer": "^11.1.8",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^0.453.0",
