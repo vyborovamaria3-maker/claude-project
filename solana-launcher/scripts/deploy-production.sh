@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-NEW_TAG="${1:?Usage: deploy-production.sh <image-tag>}"
+NEW_TAG="${1:?Usage: deploy-production.sh <image-tag> [expected-build-sha]}"
 
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/potapoff-deploy}"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
 BACKUP_SCRIPT="$DEPLOY_DIR/scripts/backup-production.sh"
 HEALTH_SCRIPT="$DEPLOY_DIR/scripts/healthcheck-production.sh"
 PROMETHEUS_CONFIG="$DEPLOY_DIR/prometheus/prometheus.yml"
+IMAGE_PREFIX="${IMAGE_PREFIX:-ghcr.io/vyborovamaria3-maker/claude-project}"
+EXPECTED_IMAGE_PREFIX="${EXPECTED_IMAGE_PREFIX:-ghcr.io/vyborovamaria3-maker/claude-project}"
+EXPECTED_BUILD_SHA_INPUT="${2:-${EXPECTED_BUILD_SHA:-}}"
+EXPECTED_BUILD_SHA="${EXPECTED_BUILD_SHA:-${EXPECTED_BUILD_SHA_INPUT:-$NEW_TAG}}"
+
+export EXPECTED_BUILD_SHA
+export IMAGE_PREFIX
 
 cd "$DEPLOY_DIR"
 
@@ -17,6 +24,11 @@ test -r "$COMPOSE_FILE"
 test -r "$BACKUP_SCRIPT"
 test -r "$HEALTH_SCRIPT"
 test -r "$PROMETHEUS_CONFIG"
+
+if [[ "$IMAGE_PREFIX" != "$EXPECTED_IMAGE_PREFIX" ]]; then
+  echo "Unexpected IMAGE_PREFIX=$IMAGE_PREFIX; expected $EXPECTED_IMAGE_PREFIX" >&2
+  exit 1
+fi
 
 # Both the product proxy and the separately managed admin service attach to
 # this network. Create it before Compose render/start so first deploy and
@@ -32,6 +44,8 @@ COMPOSE=(
 
 PREVIOUS_TAG=""
 BOT_IMAGE_AVAILABLE=1
+BACKUP_PATH=""
+MIGRATIONS_APPLIED=0
 
 if [[ -f .current-image-tag ]]; then
   PREVIOUS_TAG="$(cat .current-image-tag)"
@@ -47,6 +61,23 @@ telegram_bot_enabled() {
   grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' .env.server \
     && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' .env.server \
     && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' .env.server
+}
+
+env_value() {
+  local key="$1"
+  sed -n "s/^${key}=//p" .env.server | tail -n 1
+}
+
+require_url_safe_secret() {
+  local key="$1"
+  local value
+
+  value="$(env_value "$key")"
+
+  if [[ -z "$value" || ! "$value" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+    echo "$key must be URL-safe because production compose embeds it in connection URLs" >&2
+    exit 1
+  fi
 }
 
 stop_telegram() {
@@ -123,6 +154,11 @@ rollback() {
 
   SKIP_TELEGRAM_BOT_HEALTH="$((1 - BOT_IMAGE_AVAILABLE))" "$HEALTH_SCRIPT"
 
+  if [[ "$MIGRATIONS_APPLIED" -eq 1 ]]; then
+    echo "ROLLBACK_CONTAINERS_OK_DB_RESTORE_REQUIRED tag=$PREVIOUS_TAG backup=$BACKUP_PATH" >&2
+    exit "$exit_code"
+  fi
+
   echo "ROLLBACK_OK tag=$PREVIOUS_TAG"
 
   exit "$exit_code"
@@ -130,10 +166,14 @@ rollback() {
 
 trap rollback ERR
 
-"$BACKUP_SCRIPT"
+require_url_safe_secret POSTGRES_PASSWORD
+require_url_safe_secret RABBITMQ_PASSWORD
+
+BACKUP_PATH="$("$BACKUP_SCRIPT")"
 
 printf '%s\n' "$PREVIOUS_TAG" > .previous-image-tag
-printf '%s\n' "$NEW_TAG" > .current-image-tag
+printf '%s\n' "$EXPECTED_BUILD_SHA" > .pending-build-sha
+printf '%s\n' "$NEW_TAG" > .pending-image-tag
 
 export IMAGE_TAG="$NEW_TAG"
 
@@ -150,17 +190,21 @@ fi
 
 stop_telegram
 
+"${COMPOSE[@]}" up -d postgres redis rabbitmq
+"${COMPOSE[@]}" run --rm backend alembic upgrade heads
+MIGRATIONS_APPLIED=1
+
 "${COMPOSE[@]}" up -d --remove-orphans
 restart_nginx
 sync_telegram_bot
 sync_telegram_intelligence
-
-"${COMPOSE[@]}" exec -T backend alembic upgrade heads
-
 "$HEALTH_SCRIPT"
+
+mv .pending-image-tag .current-image-tag
+mv .pending-build-sha .current-build-sha
 
 trap - ERR
 
 docker image prune -f --filter "until=168h" >/dev/null || true
 
-echo "DEPLOYMENT_OK tag=$NEW_TAG"
+echo "DEPLOYMENT_OK tag=$NEW_TAG backup=$BACKUP_PATH"

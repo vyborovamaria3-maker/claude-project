@@ -4,7 +4,14 @@ set -Eeuo pipefail
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/potapoff-deploy}"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
 IMAGE_TAG="${IMAGE_TAG:-$(cat "$DEPLOY_DIR/.current-image-tag")}"
+if [[ -z "${EXPECTED_BUILD_SHA:-}" && -f "$DEPLOY_DIR/.current-build-sha" ]]; then
+  EXPECTED_BUILD_SHA="$(cat "$DEPLOY_DIR/.current-build-sha")"
+fi
+EXPECTED_BUILD_SHA="${EXPECTED_BUILD_SHA:-$IMAGE_TAG}"
+IMAGE_PREFIX="${IMAGE_PREFIX:-ghcr.io/vyborovamaria3-maker/claude-project}"
 
+export EXPECTED_BUILD_SHA
+export IMAGE_PREFIX
 export IMAGE_TAG
 
 cd "$DEPLOY_DIR"
@@ -43,6 +50,18 @@ env_value() {
   sed -n "s/^${key}=//p" .env.server | tail -n 1
 }
 
+telegram_api_curl() {
+  local proxy_url
+
+  proxy_url="$(env_value TELEGRAM_PROXY_URL)"
+
+  if [[ -n "$proxy_url" ]]; then
+    curl -fsS --connect-timeout 15 --max-time 30 --proxy "$proxy_url" --config -
+  else
+    curl -fsS --connect-timeout 15 --max-time 30 --config -
+  fi
+}
+
 check_telegram_webhook() {
   local token
   local webhook_url
@@ -57,7 +76,7 @@ check_telegram_webhook() {
     | grep -Fq '"status":"ok"' \
     || return 1
 
-  info="$(printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' "$token" | curl -fsS --config -)" \
+  info="$(printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' "$token" | telegram_api_curl)" \
     || return 1
 
   printf '%s' "$info" | grep -Fq '"ok":true' \
@@ -156,9 +175,9 @@ for attempt in $(seq 1 45); do
     && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
     && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
-    && [[ "$admin_location" == "https://potapoff.fun/admin/login" ]] \
+    && [[ "$admin_location" =~ ^https?://[^/]+/admin/login$ ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
-    && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
+    && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$EXPECTED_BUILD_SHA\""; then
     endpoints_ok=1
   fi
 
