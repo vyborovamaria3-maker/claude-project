@@ -15,7 +15,7 @@ const tabs = [
   },
   {
     href: "/trade/analysis/social",
-    label: "X + Telegram",
+    label: "Анализ · 129",
     icon: Network,
     matches: (pathname: string) => pathname.startsWith("/trade/analysis/social"),
   },
