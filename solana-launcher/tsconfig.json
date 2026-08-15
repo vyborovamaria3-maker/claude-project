@@ -23,6 +23,9 @@
       }
     ],
     "paths": {
+      "@/lib/trade/intelligence-agent": [
+        "./lib/trade/intelligence-agent-provenance"
+      ],
       "@/*": [
         "./*"
       ]
