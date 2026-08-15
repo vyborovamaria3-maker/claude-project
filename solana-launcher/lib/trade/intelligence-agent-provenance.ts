@@ -121,6 +121,12 @@ function enrichFeature(feature: BaseIntelligenceFeature): IntelligenceFeature {
   };
 }
 
+export function buildProvenanceFeature(
+  feature: BaseIntelligenceFeature,
+): IntelligenceFeature {
+  return enrichFeature(feature);
+}
+
 export function buildAnalysisSnapshot(
   args: Parameters<typeof buildBaseAnalysisSnapshot>[0],
 ): AnalysisSnapshot {

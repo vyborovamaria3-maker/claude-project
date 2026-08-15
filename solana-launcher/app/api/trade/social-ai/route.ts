@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import type { AnalysisSnapshot, IntelligenceFeature } from "@/lib/trade/intelligence-agent";
+import type { AnalysisSnapshot } from "@/lib/trade/intelligence-agent";
 import {
+  buildProvenanceFeature,
   enrichSnapshotWithMemory,
   loadMemoryContext,
   researchCandidates,
@@ -380,9 +381,9 @@ function advancedFeature(
   snapshot: AnalysisSnapshot,
   layer: string,
   value: unknown,
-): IntelligenceFeature {
+): AnalysisSnapshot["features"][number] {
   const serialized = JSON.stringify(value ?? null).slice(0, 600);
-  return {
+  return buildProvenanceFeature({
     key: `advanced.${layer}`,
     group: "Advanced Intelligence",
     label: layer.replaceAll("_", " "),
@@ -393,7 +394,7 @@ function advancedFeature(
     observedAt: snapshot.createdAt,
     missing: false,
     note: "Deterministic/historical advanced-intelligence layer; verify evidence before causal claims.",
-  };
+  });
 }
 
 function snapshotWithAdvancedReport(
