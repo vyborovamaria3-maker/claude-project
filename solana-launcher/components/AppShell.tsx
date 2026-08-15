@@ -16,7 +16,7 @@ const PUBLIC_ROUTES = new Set(siteDesign.publicRoutes);
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isPublic = useMemo(() => pathname === "/" || PUBLIC_ROUTES.has(pathname), [pathname]);
+  const isPublic = useMemo(() => PUBLIC_ROUTES.has(pathname), [pathname]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);

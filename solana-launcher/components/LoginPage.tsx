@@ -200,7 +200,7 @@ export default function LoginPage() {
                     <button
                       type="button"
                       onClick={handleTelegramAuth}
-                      className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-neon-green px-4 py-3 text-center text-sm font-semibold text-white transition hover:scale-[1.01] sm:px-5 sm:py-3.5"
+                      className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-neon-green px-4 py-3 text-center text-sm font-semibold text-black transition hover:scale-[1.01] sm:px-5 sm:py-3.5"
                     >
                       <ArrowRight className="h-4 w-4 shrink-0" />
                       <span className="min-w-0 break-words">{t("login.continueTelegram")}</span>
