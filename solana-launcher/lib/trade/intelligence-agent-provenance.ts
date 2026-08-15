@@ -85,6 +85,44 @@ export type AnalysisSnapshot = Omit<BaseAnalysisSnapshot, "features"> & {
   };
 };
 
+function buildSnapshotProvenance(features: IntelligenceFeature[]) {
+  const mappedFeatureCount = features.filter((feature) => feature.provenanceMapped).length;
+  const coreFeatures = features.filter((feature) => feature.core);
+  const coreMappedFeatureCount = coreFeatures.filter(
+    (feature) => feature.provenanceMapped,
+  ).length;
+  const agentInputFeatures = features.filter((feature) => feature.role === "input");
+  const aiOutputPlaceholders = features.filter(
+    (feature) => feature.role === "ai_output",
+  );
+  const catalogFeatureCount = Object.values(catalog.groups).reduce(
+    (sum, group) => sum + group.labels.length,
+    0,
+  );
+
+  return {
+    version: catalog.version,
+    catalogFeatureCount,
+    snapshotFeatureCount: features.length,
+    coreFeatureCount: catalog.coreFeatureCount,
+    coreMappedFeatureCount,
+    extendedFeatureCount: Math.max(0, features.length - catalog.coreFeatureCount),
+    mappedFeatureCount,
+    unmappedFeatureCount: features.length - mappedFeatureCount,
+    agentInputFeatureCount: agentInputFeatures.length,
+    availableAgentInputFeatureCount: agentInputFeatures.filter(
+      (feature) => feature.availableAsAgentInput,
+    ).length,
+    aiOutputPlaceholderCount: aiOutputPlaceholders.length,
+    allCoreMapped:
+      coreFeatures.length === catalog.coreFeatureCount
+      && coreMappedFeatureCount === catalog.coreFeatureCount,
+    allFeaturesMapped:
+      features.length === catalogFeatureCount
+      && mappedFeatureCount === features.length,
+  };
+}
+
 function featureRule(group: string, label: string) {
   const groupRule = catalog.groups[group];
   if (!groupRule) {
@@ -132,43 +170,17 @@ export function buildAnalysisSnapshot(
 ): AnalysisSnapshot {
   const snapshot = buildBaseAnalysisSnapshot(args);
   const features = snapshot.features.map(enrichFeature);
-  const mappedFeatureCount = features.filter((feature) => feature.provenanceMapped).length;
-  const coreFeatures = features.filter((feature) => feature.core);
-  const coreMappedFeatureCount = coreFeatures.filter(
-    (feature) => feature.provenanceMapped,
-  ).length;
-  const agentInputFeatures = features.filter((feature) => feature.role === "input");
-  const aiOutputPlaceholders = features.filter(
-    (feature) => feature.role === "ai_output",
-  );
-  const catalogFeatureCount = Object.values(catalog.groups).reduce(
-    (sum, group) => sum + group.labels.length,
-    0,
-  );
 
   return {
     ...snapshot,
     features,
-    provenance: {
-      version: catalog.version,
-      catalogFeatureCount,
-      snapshotFeatureCount: features.length,
-      coreFeatureCount: catalog.coreFeatureCount,
-      coreMappedFeatureCount,
-      extendedFeatureCount: Math.max(0, features.length - catalog.coreFeatureCount),
-      mappedFeatureCount,
-      unmappedFeatureCount: features.length - mappedFeatureCount,
-      agentInputFeatureCount: agentInputFeatures.length,
-      availableAgentInputFeatureCount: agentInputFeatures.filter(
-        (feature) => feature.availableAsAgentInput,
-      ).length,
-      aiOutputPlaceholderCount: aiOutputPlaceholders.length,
-      allCoreMapped:
-        coreFeatures.length === catalog.coreFeatureCount
-        && coreMappedFeatureCount === catalog.coreFeatureCount,
-      allFeaturesMapped:
-        features.length === catalogFeatureCount
-        && mappedFeatureCount === features.length,
-    },
+    provenance: buildSnapshotProvenance(features),
+  };
+}
+
+export function rebuildProvenanceSnapshot(snapshot: AnalysisSnapshot): AnalysisSnapshot {
+  return {
+    ...snapshot,
+    provenance: buildSnapshotProvenance(snapshot.features),
   };
 }

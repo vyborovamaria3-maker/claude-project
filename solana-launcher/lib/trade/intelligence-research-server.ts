@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import type {
   AnalysisSnapshot,
 } from "@/lib/trade/intelligence-agent-provenance";
-import { buildProvenanceFeature } from "@/lib/trade/intelligence-agent-provenance";
+import { buildProvenanceFeature, rebuildProvenanceSnapshot } from "@/lib/trade/intelligence-agent-provenance";
 
 export const INTELLIGENCE_PROMPT_VERSION = "intelligence-qwen-v6-tools-evidence";
 export const MAX_RESEARCH_ENTITIES = 8;
@@ -172,10 +172,12 @@ function appendFeatures(
   const selected = additions
     .filter((item) => !existing.has(item.key))
     .slice(0, Math.max(0, 300 - snapshot.features.length));
+  const features = [...snapshot.features, ...selected];
   return {
     ...snapshot,
-    featureCount: snapshot.features.length + selected.length,
-    features: [...snapshot.features, ...selected],
+    featureCount: features.length,
+    features,
+    provenance: rebuildProvenanceSnapshot({ ...snapshot, features }).provenance,
   };
 }
 

@@ -5,6 +5,7 @@ import {
   buildProvenanceFeature,
   enrichSnapshotWithMemory,
   loadMemoryContext,
+  rebuildProvenanceSnapshot,
   researchCandidates,
   researchMeta,
   runBoundedResearch,
@@ -408,10 +409,12 @@ function snapshotWithAdvancedReport(
     .map(([key, value]) => advancedFeature(snapshot, key, value))
     .slice(0, Math.max(0, 300 - snapshot.features.length));
   if (!additions.length) return snapshot;
+  const features = [...snapshot.features, ...additions];
   return {
     ...snapshot,
-    featureCount: snapshot.features.length + additions.length,
-    features: [...snapshot.features, ...additions],
+    featureCount: features.length,
+    features,
+    provenance: rebuildProvenanceSnapshot({ ...snapshot, features }).provenance,
   };
 }
 
