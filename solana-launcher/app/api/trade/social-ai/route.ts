@@ -2,14 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import type { AnalysisSnapshot } from "@/lib/trade/intelligence-agent";
 import {
-  buildProvenanceFeature,
   enrichSnapshotWithMemory,
   loadMemoryContext,
-  rebuildProvenanceSnapshot,
   researchCandidates,
   researchMeta,
   runBoundedResearch,
 } from "@/lib/trade/intelligence-research-server";
+import { buildProvenanceFeature, rebuildProvenanceSnapshot } from "@/lib/trade/intelligence-agent-provenance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
