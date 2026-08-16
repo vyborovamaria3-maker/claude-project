@@ -11,7 +11,7 @@ from app.database_inventory import build_database_inventory
 class FakeConfig:
     id: str = "prod"
     label: str = "Production"
-    kind: str = "postgres"
+    kind: str = "sqlite"
     role: str = "primary"
 
 
