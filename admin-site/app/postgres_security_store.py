@@ -10,6 +10,9 @@ from fastapi import HTTPException
 from psycopg.rows import dict_row
 
 
+_SCHEMA_LOCK_ID = 726824730
+
+
 class PostgresAdminSessionStore:
     def __init__(
         self,
@@ -27,7 +30,9 @@ class PostgresAdminSessionStore:
         return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
 
     def _init_schema(self) -> None:
+        now = int(time.time())
         with self._connect() as db, db.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_LOCK_ID,))
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS admin_security_sessions(
                     nonce TEXT PRIMARY KEY,
@@ -50,6 +55,8 @@ class PostgresAdminSessionStore:
                 )"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS ix_revoked_admin_sessions_expires ON revoked_admin_sessions(expires_at)")
+            cur.execute("DELETE FROM admin_security_sessions WHERE expires_at<=%s", (now,))
+            cur.execute("DELETE FROM revoked_admin_sessions WHERE expires_at<=%s", (now,))
 
     def is_revoked(self, nonce: str) -> bool:
         if not nonce:
@@ -65,6 +72,7 @@ class PostgresAdminSessionStore:
             return
         with self._connect() as db, db.cursor() as cur:
             cur.execute("DELETE FROM revoked_admin_sessions WHERE expires_at<=%s", (now,))
+            cur.execute("DELETE FROM admin_security_sessions WHERE expires_at<=%s", (now,))
             cur.execute(
                 """INSERT INTO revoked_admin_sessions(nonce,expires_at,revoked_at)
                    VALUES(%s,%s,%s)
@@ -97,7 +105,6 @@ class PostgresAdminSessionStore:
         now = int(time.time())
         nonce = str(payload["nonce"])
         with self._connect() as db, db.cursor() as cur:
-            cur.execute("DELETE FROM admin_security_sessions WHERE expires_at<=%s", (now,))
             cur.execute("SELECT * FROM admin_security_sessions WHERE nonce=%s", (nonce,))
             row = cur.fetchone()
         return dict(row) if row else self._insert_session(payload, request, policy, now)
