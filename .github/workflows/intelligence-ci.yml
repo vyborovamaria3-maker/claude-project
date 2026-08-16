@@ -78,6 +78,7 @@ jobs:
         env:
           POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
           POTAPOFF_TEST_POSTGRES_READONLY_DSN: postgresql://intelligence_readonly:readonly@127.0.0.1:5432/intelligence
+          ADMIN_STATE_DB_PASSWORD: ci-intelligence-compose-password
         run: >-
           python scripts/verify_intelligence.py --full
           --image-tag potapoff-intelligence:${{ github.sha }}
