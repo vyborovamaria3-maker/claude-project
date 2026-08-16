@@ -10,17 +10,19 @@ from psycopg.rows import dict_row
 from .analysis_editor import LiveAnalysisProfileStore
 
 
+_SCHEMA_LOCK_ID = 726824730
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class _PgCompatConnection:
-    """Small DB-API compatibility layer for the existing analysis store SQL.
+def _lock_schema(cur) -> None:
+    cur.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_LOCK_ID,))
 
-    Analysis store queries are parameterized with SQLite '?' placeholders but
-    otherwise use SQL that PostgreSQL supports. This adapter keeps validation and
-    editor semantics in one implementation while moving persistence to Postgres.
-    """
+
+class _PgCompatConnection:
+    """Small DB-API compatibility layer for the existing analysis store SQL."""
 
     def __init__(self, dsn: str) -> None:
         self._db = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5)
@@ -42,6 +44,7 @@ class PostgresAuditStore:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
         with self._connect() as db, db.cursor() as cur:
+            _lock_schema(cur)
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS admin_audit(
                     id BIGSERIAL PRIMARY KEY,
@@ -67,16 +70,7 @@ class PostgresAuditStore:
     def _connect(self):
         return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
 
-    def record(
-        self,
-        *,
-        action: str,
-        success: bool,
-        username: str | None = None,
-        ip_address: str | None = None,
-        resource: str | None = None,
-        details: dict[str, Any] | None = None,
-    ) -> None:
+    def record(self, *, action: str, success: bool, username: str | None = None, ip_address: str | None = None, resource: str | None = None, details: dict[str, Any] | None = None) -> None:
         with self._connect() as db, db.cursor() as cur:
             cur.execute(
                 """INSERT INTO admin_audit(created_at,username,ip_address,action,resource,success,details_json)
@@ -136,6 +130,7 @@ class PostgresControlStore:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
         with self._connect() as db, db.cursor() as cur:
+            _lock_schema(cur)
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS feature_flags(
                     name TEXT PRIMARY KEY,
@@ -228,6 +223,7 @@ class PostgresLiveAnalysisProfileStore(LiveAnalysisProfileStore):
         self.path = dsn
         self.dsn = dsn
         with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as db, db.cursor() as cur:
+            _lock_schema(cur)
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS analysis_parameter_overrides(
                     domain TEXT NOT NULL,
