@@ -44,6 +44,9 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
 def create_app() -> FastAPI:
     app = create_base_app()
     state_dsn = os.getenv("ADMIN_STATE_POSTGRES_DSN", "").strip()
+    web_workers = _bounded_int("ADMIN_WEB_WORKERS", 1, 1, 8)
+    if web_workers > 1 and not state_dsn:
+        raise RuntimeError("ADMIN_STATE_POSTGRES_DSN is required when ADMIN_WEB_WORKERS > 1")
 
     if state_dsn:
         app.state.audit = PostgresAuditStore(state_dsn)
@@ -75,8 +78,6 @@ def create_app() -> FastAPI:
         app.state.shared_security = shared_security
         app.state.security_backend = "postgres"
         security_v2.AdminSessionStore = lambda _path: shared_security
-        # require_admin/security_v2 already call the audit revocation interface.
-        # Point it at the same shared session table to keep replay protection global.
         app.state.audit.is_session_revoked = shared_security.is_revoked
         app.state.audit.revoke_session = shared_security.revoke
     else:
@@ -150,6 +151,7 @@ def create_app() -> FastAPI:
             "task_backend": app.state.task_backend,
             "security_backend": app.state.security_backend,
             "mutable_state_backend": app.state.mutable_state_backend,
+            "web_workers": web_workers,
         }
 
     @app.get("/metrics", include_in_schema=False)
