@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from intelligence.core.hashing import build_document_hash
 from intelligence.core.models import IntelligenceDocument, ProviderHealth
 from intelligence.errors.exceptions import QueueError
 from intelligence.providers.base import IntelligenceProvider
@@ -20,16 +21,15 @@ class FakeProvider(IntelligenceProvider):
     name = "fake"
 
     async def collect(self, query: str) -> list[IntelligenceDocument]:
-        return [
-            IntelligenceDocument(
-                id=f"doc-{query}",
-                source="fake",
-                content=f"evidence:{query}",
-                collected_at=datetime.now(timezone.utc),
-                provider="fake-test",
-                raw_hash=(query.encode("utf-8").hex() + ("0" * 64))[:64],
-            )
-        ]
+        document = IntelligenceDocument(
+            id=f"doc-{query}",
+            source="fake",
+            content=f"evidence:{query}",
+            collected_at=datetime.now(timezone.utc),
+            provider="fake-test",
+        )
+        document.raw_hash = build_document_hash(document)
+        return [document]
 
     async def health(self) -> ProviderHealth:
         return ProviderHealth(provider=self.name, healthy=True)
