@@ -40,10 +40,12 @@ def create_app() -> FastAPI:
     app = create_base_app()
     app.state.analysis_profiles = LiveAnalysisProfileStore(app.state.settings.audit_db_path)
     app.state.intelligence_view = build_intelligence_view_store(app.state.settings)
+    queue_max = _bounded_int("ADMIN_TASK_QUEUE_MAX", 32, 1, 10_000)
+    history_max = max(queue_max, _bounded_int("ADMIN_TASK_HISTORY_MAX", 500, 1, 50_000))
     app.state.task_queue = AdminTaskQueue(
         workers=_bounded_int("ADMIN_TASK_WORKERS", 2, 1, 16),
-        max_queue=_bounded_int("ADMIN_TASK_QUEUE_MAX", 32, 1, 10_000),
-        max_history=_bounded_int("ADMIN_TASK_HISTORY_MAX", 500, 32, 50_000),
+        max_queue=queue_max,
+        max_history=history_max,
     )
     app.state.observability = Observability(
         service_name=app.state.settings.app_name,
@@ -73,9 +75,11 @@ def create_app() -> FastAPI:
                 status_code = response.status_code
                 return response
             finally:
+                route = request.scope.get("route")
+                metric_path = getattr(route, "path", request.url.path)
                 app.state.observability.record_request(
                     method=request.method,
-                    path=request.url.path,
+                    path=metric_path,
                     status_code=status_code,
                     duration_seconds=monotonic() - started,
                 )
