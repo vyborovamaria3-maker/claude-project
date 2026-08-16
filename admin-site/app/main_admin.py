@@ -110,6 +110,10 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     def stop_background_workers() -> None:
         app.state.task_queue.stop(timeout=5.0)
+        registry = getattr(app.state, "registry", None)
+        close_registry = getattr(registry, "close", None)
+        if callable(close_registry):
+            close_registry()
         view = getattr(app.state, "intelligence_view", None)
         close_view = getattr(view, "close", None)
         if callable(close_view):
@@ -143,7 +147,6 @@ def create_app() -> FastAPI:
         if state_dsn:
             checks["shared_security"] = app.state.shared_security.ready()
             checks["admin_state"] = app.state.audit.ready()
-            checks["state_pool"] = bool(state_pool and state_pool.get_stats().get("pool_available", 0) >= 0)
         else:
             try:
                 with contextlib.closing(sqlite3.connect(app.state.settings.audit_db_path, timeout=1.0)) as db:
