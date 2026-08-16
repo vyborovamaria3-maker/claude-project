@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import psycopg
 
@@ -283,34 +286,52 @@ class PostgresIntelligenceViewStoreTests(unittest.TestCase):
 
 
 class IntelligenceBackendConfigTests(unittest.TestCase):
+    @staticmethod
+    def production_env() -> dict[str, str]:
+        return {
+            "ADMIN_REQUIRE_NETWORK_ALLOWLIST": "true",
+            "ADMIN_REQUIRE_MFA": "true",
+            "ADMIN_TOTP_SECRET": "JBSWY3DPEHPK3PXP",
+            "ADMIN_REQUIRE_REAUTH": "true",
+            "ADMIN_SESSION_BIND_IP": "true",
+            "ADMIN_SESSION_BIND_USER_AGENT": "true",
+        }
+
     def base_settings(self, **overrides: Any) -> Settings:
         values: dict[str, Any] = {
             "environment": "production",
-            "admin_password": "x",
+            "admin_password": "",
+            "admin_password_hash": "test-only-nonempty-hash",
             "session_secret": "x" * 64,
+            "secure_cookie": True,
+            "allowed_networks": [ipaddress.ip_network("127.0.0.0/8")],
             "allowed_origins": ["https://admin.example.com"],
             "solana_rpc_url": "https://api.mainnet-beta.solana.com",
         }
         values.update(overrides)
         return Settings(**values)
 
+    def assert_validation_error(self, expected: str, **overrides: Any) -> None:
+        with patch.dict(os.environ, self.production_env(), clear=False):
+            with self.assertRaisesRegex(RuntimeError, expected):
+                self.base_settings(**overrides).validate()
+
     def test_unknown_intelligence_backend_is_rejected(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "ADMIN_INTELLIGENCE_BACKEND"):
-            self.base_settings(intelligence_backend="redis").validate()
+        self.assert_validation_error("ADMIN_INTELLIGENCE_BACKEND", intelligence_backend="redis")
 
     def test_postgres_backend_requires_separate_admin_dsn(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "ADMIN_INTELLIGENCE_POSTGRES_DSN"):
-            self.base_settings(
-                intelligence_backend="postgres",
-                intelligence_postgres_dsn="",
-            ).validate()
+        self.assert_validation_error(
+            "ADMIN_INTELLIGENCE_POSTGRES_DSN",
+            intelligence_backend="postgres",
+            intelligence_postgres_dsn="",
+        )
 
     def test_production_sqlite_requires_absolute_path(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "ADMIN_INTELLIGENCE_DB"):
-            self.base_settings(
-                intelligence_backend="sqlite",
-                intelligence_db_path="relative/intelligence.sqlite3",
-            ).validate()
+        self.assert_validation_error(
+            "ADMIN_INTELLIGENCE_DB",
+            intelligence_backend="sqlite",
+            intelligence_db_path="relative/intelligence.sqlite3",
+        )
 
 
 if __name__ == "__main__":
