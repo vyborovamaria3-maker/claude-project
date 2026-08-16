@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import sqlite3
+import subprocess
 import sys
+import tempfile
 import time
 import unittest
 import uuid
@@ -9,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ADMIN_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ADMIN_ROOT.parent
 sys.path.insert(0, str(ADMIN_ROOT))
 
 from app.postgres_admin_state import PostgresAuditStore, PostgresControlStore, PostgresLiveAnalysisProfileStore
@@ -103,9 +107,7 @@ class PostgresSharedStateTests(unittest.TestCase):
         q1.start(); q2.start()
         try:
             tasks = [
-                (q1 if index % 2 == 0 else q2).submit(
-                    kind="p2_stress", owner="admin", payload={"value": index}
-                )
+                (q1 if index % 2 == 0 else q2).submit(kind="p2_stress", owner="admin", payload={"value": index})
                 for index in range(100)
             ]
             self.assertEqual(len({task.id for task in tasks}), 100)
@@ -124,6 +126,49 @@ class PostgresSharedStateTests(unittest.TestCase):
             self.assertFalse(remaining, f"unfinished tasks: {len(remaining)}")
         finally:
             q1.stop(); q2.stop()
+
+    def test_sqlite_migration_is_idempotent_and_preserves_revocations(self) -> None:
+        suffix = uuid.uuid4().hex[:8]
+        nonce = uuid.uuid4().hex
+        now = int(time.time())
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "admin.db"
+            db = sqlite3.connect(path)
+            try:
+                db.executescript(
+                    """
+                    CREATE TABLE feature_flags(name TEXT PRIMARY KEY, enabled INTEGER NOT NULL, description TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL);
+                    CREATE TABLE alerts(id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT NOT NULL, title TEXT NOT NULL, message TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, acknowledged_at TEXT, acknowledged_by TEXT);
+                    CREATE TABLE analysis_parameter_overrides(domain TEXT NOT NULL,key TEXT NOT NULL,enabled INTEGER NOT NULL,threshold TEXT NOT NULL,label TEXT,source TEXT,value_type TEXT,scale TEXT,description TEXT,custom INTEGER NOT NULL,deleted INTEGER NOT NULL,updated_by TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(domain,key));
+                    CREATE TABLE admin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, username TEXT, ip_address TEXT, action TEXT NOT NULL, resource TEXT, success INTEGER NOT NULL, details_json TEXT);
+                    CREATE TABLE revoked_admin_sessions(nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, revoked_at TEXT NOT NULL);
+                    """
+                )
+                db.execute("INSERT INTO feature_flags VALUES(?,?,?,?,?)", (f"migration.{suffix}", 1, "migrated", "admin", "2026-08-16T09:00:00+00:00"))
+                db.execute(
+                    "INSERT INTO analysis_parameter_overrides VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    ("telegram", f"mig_{suffix}", 1, ">= 1", "Migrated", "metrics.score", "number", "raw", "migrated", 1, 0, "admin", "2026-08-16T09:00:00+00:00"),
+                )
+                db.execute("INSERT INTO admin_audit(created_at,username,action,success,details_json) VALUES(?,?,?,?,?)", ("2026-08-16T09:00:00+00:00", "admin", f"migration_{suffix}", 1, '{"ok":true}'))
+                db.execute("INSERT INTO revoked_admin_sessions VALUES(?,?,?)", (nonce, now + 600, "2026-08-16T09:00:00+00:00"))
+                db.commit()
+            finally:
+                db.close()
+
+            env = os.environ.copy()
+            env.update({"ADMIN_AUDIT_DB": str(path), "ADMIN_STATE_POSTGRES_DSN": DSN})
+            script = ADMIN_ROOT / "scripts" / "migrate_admin_state_to_postgres.py"
+            first = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+            second = subprocess.run([sys.executable, str(script)], cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+            self.assertIn("MIGRATION_OK", first.stdout)
+            self.assertIn("already applied", second.stdout)
+
+        control = PostgresControlStore(DSN)
+        self.assertTrue(any(row["name"] == f"migration.{suffix}" and row["enabled"] for row in control.flags()))
+        profiles = PostgresLiveAnalysisProfileStore(DSN)
+        self.assertTrue(any(row["key"] == f"mig_{suffix}" for row in profiles.list("telegram")))
+        security = PostgresAdminSessionStore(DSN, ip_binding=lambda _request: "", ua_binding=lambda _request: "")
+        self.assertTrue(security.is_revoked(nonce))
 
 
 if __name__ == "__main__":
