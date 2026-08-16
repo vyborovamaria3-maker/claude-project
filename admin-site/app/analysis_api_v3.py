@@ -128,11 +128,6 @@ def build_analysis_router() -> APIRouter:
 
     @router.post("/api/analysis-profiles/{domain}/backtest")
     def analysis_backtest(domain: str, body: AnalysisBacktestBody, request: Request, admin=Depends(require_admin)) -> dict[str, Any]:
-        """Compatibility endpoint for small interactive backtests.
-
-        New heavy callers should use /backtest/jobs so expensive work does not
-        occupy an HTTP worker for the duration of the calculation.
-        """
         _domain_or_404(domain)
         try:
             result = request.app.state.analysis_profiles.backtest(domain, body.records, contract=body.contract)
@@ -147,17 +142,12 @@ def build_analysis_router() -> APIRouter:
         records = [dict(record) for record in body.records]
         contract = body.contract
         owner = str(admin["sub"])
-        profiles = request.app.state.analysis_profiles
         task_queue = request.app.state.task_queue
-
-        def run_backtest() -> dict[str, Any]:
-            return profiles.backtest(domain, records, contract=contract)
-
         try:
             task = task_queue.submit(
-                kind=f"analysis_backtest:{domain}",
+                kind="analysis_backtest",
                 owner=owner,
-                fn=run_backtest,
+                payload={"domain": domain, "records": records, "contract": contract},
             )
         except RuntimeError as exc:
             if "full" in str(exc):
