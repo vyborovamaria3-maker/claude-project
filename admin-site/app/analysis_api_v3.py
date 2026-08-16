@@ -147,12 +147,14 @@ def build_analysis_router() -> APIRouter:
         records = [dict(record) for record in body.records]
         contract = body.contract
         owner = str(admin["sub"])
+        profiles = request.app.state.analysis_profiles
+        task_queue = request.app.state.task_queue
 
         def run_backtest() -> dict[str, Any]:
-            return request.app.state.analysis_profiles.backtest(domain, records, contract=contract)
+            return profiles.backtest(domain, records, contract=contract)
 
         try:
-            task = request.app.state.task_queue.submit(
+            task = task_queue.submit(
                 kind=f"analysis_backtest:{domain}",
                 owner=owner,
                 fn=run_backtest,
