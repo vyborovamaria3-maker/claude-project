@@ -52,14 +52,6 @@ class _WorkItem:
 
 
 class AdminTaskQueue:
-    """Bounded in-process worker queue for expensive admin operations.
-
-    It intentionally caps concurrency and backlog so expensive backtests cannot
-    exhaust request workers or memory. This deployment primitive is suitable for
-    the current single-process admin service. Multi-process/replica deployments
-    must replace it with a shared durable queue.
-    """
-
     def __init__(self, *, workers: int = 2, max_queue: int = 32, max_history: int = 500) -> None:
         if workers < 1 or workers > 16:
             raise ValueError("workers must be between 1 and 16")
@@ -76,6 +68,10 @@ class AdminTaskQueue:
         self._threads: list[threading.Thread] = []
         self._started = False
         self._stopping = False
+        self._handlers: dict[str, Callable[[dict[str, Any]], Any]] = {}
+
+    def register_handler(self, kind: str, handler: Callable[[dict[str, Any]], Any]) -> None:
+        self._handlers[kind.strip()] = handler
 
     def start(self) -> None:
         with self._lock:
@@ -84,11 +80,7 @@ class AdminTaskQueue:
             self._started = True
             self._stopping = False
             for index in range(self._workers_count):
-                thread = threading.Thread(
-                    target=self._worker_loop,
-                    name=f"admin-task-worker-{index + 1}",
-                    daemon=True,
-                )
+                thread = threading.Thread(target=self._worker_loop, name=f"admin-task-worker-{index + 1}", daemon=True)
                 thread.start()
                 self._threads.append(thread)
 
@@ -113,9 +105,22 @@ class AdminTaskQueue:
             self._threads = [thread for thread in threads if thread.is_alive()]
             self._started = bool(self._threads)
 
-    def submit(self, *, kind: str, owner: str, fn: Callable[[], Any]) -> TaskRecord:
+    def submit(
+        self,
+        *,
+        kind: str,
+        owner: str,
+        fn: Callable[[], Any] | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> TaskRecord:
         if not kind.strip() or not owner.strip():
             raise ValueError("kind and owner are required")
+        if fn is None:
+            handler = self._handlers.get(kind.strip())
+            if handler is None:
+                raise RuntimeError("task handler is not registered")
+            task_payload = dict(payload or {})
+            fn = lambda: handler(task_payload)
         with self._lock:
             if not self._started or self._stopping:
                 raise RuntimeError("task queue is not accepting work")
