@@ -223,10 +223,10 @@ class PostgresTaskQueue:
                    WHERE state='running' AND lease_expires_at IS NOT NULL AND lease_expires_at < now()"""
             )
 
-    def _claim_one(self) -> dict[str, Any] | None:
+    def _claim_one(self, db) -> dict[str, Any] | None:
         lease_token = f"{self._instance_id}:{uuid.uuid4().hex}"
         lease_until = _utcnow() + timedelta(seconds=self._lease_seconds)
-        with self._connect() as db, db.cursor() as cur:
+        with db.cursor() as cur:
             cur.execute(
                 """UPDATE admin_background_tasks
                    SET state='queued', lease_owner=NULL, lease_expires_at=NULL, started_at=NULL
@@ -239,6 +239,7 @@ class PostgresTaskQueue:
             )
             row = cur.fetchone()
             if not row:
+                db.commit()
                 return None
             cur.execute(
                 """UPDATE admin_background_tasks
@@ -247,22 +248,36 @@ class PostgresTaskQueue:
                    WHERE id=%s RETURNING *""",
                 (lease_token, lease_until, row["id"]),
             )
-            return cur.fetchone()
+            claimed = cur.fetchone()
+            db.commit()
+            return claimed
 
     def _heartbeat_loop(self, task_id: str, lease_token: str, done: threading.Event) -> None:
         interval = max(5.0, self._lease_seconds / 3.0)
+        db = None
         while not done.wait(interval):
             try:
-                with self._connect() as db, db.cursor() as cur:
+                if db is None or db.closed:
+                    db = self._connect()
+                with db.cursor() as cur:
                     cur.execute(
                         """UPDATE admin_background_tasks SET lease_expires_at=%s
                            WHERE id=%s AND state='running' AND lease_owner=%s""",
                         (_utcnow() + timedelta(seconds=self._lease_seconds), task_id, lease_token),
                     )
                     if cur.rowcount != 1:
+                        db.commit()
                         return
+                    db.commit()
             except psycopg.Error:
-                continue
+                if db is not None:
+                    try:
+                        db.close()
+                    except Exception:
+                        pass
+                db = None
+        if db is not None:
+            db.close()
 
     def _finish(self, task_id: str, lease_token: str, *, result: Any = None, failed: bool = False) -> None:
         with self._connect() as db, db.cursor() as cur:
@@ -284,39 +299,55 @@ class PostgresTaskQueue:
                 )
 
     def _worker_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                row = self._claim_one()
-            except psycopg.Error:
-                self._stop.wait(self._poll_seconds)
-                continue
-            if row is None:
-                self._stop.wait(self._poll_seconds)
-                continue
-            task_id = str(row["id"])
-            lease_token = str(row["lease_owner"])
-            handler = self._handlers.get(str(row["kind"]))
-            if handler is None:
-                self._finish(task_id, lease_token, failed=True)
-                continue
-            payload = row.get("payload_json") or {}
-            done = threading.Event()
-            heartbeat = threading.Thread(
-                target=self._heartbeat_loop,
-                args=(task_id, lease_token, done),
-                name=f"admin-pg-task-heartbeat-{task_id[:8]}",
-                daemon=True,
-            )
-            heartbeat.start()
-            try:
-                result = handler(payload if isinstance(payload, dict) else json.loads(payload))
-            except Exception:
-                self._finish(task_id, lease_token, failed=True)
-            else:
-                self._finish(task_id, lease_token, result=result)
-            finally:
-                done.set()
-                heartbeat.join(timeout=1.0)
+        db = None
+        try:
+            while not self._stop.is_set():
+                try:
+                    if db is None or db.closed:
+                        db = self._connect()
+                    row = self._claim_one(db)
+                except psycopg.Error:
+                    if db is not None:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                    db = None
+                    self._stop.wait(self._poll_seconds)
+                    continue
+                if row is None:
+                    self._stop.wait(self._poll_seconds)
+                    continue
+                task_id = str(row["id"])
+                lease_token = str(row["lease_owner"])
+                handler = self._handlers.get(str(row["kind"]))
+                if handler is None:
+                    self._finish(task_id, lease_token, failed=True)
+                    continue
+                payload = row.get("payload_json") or {}
+                done = threading.Event()
+                heartbeat = threading.Thread(
+                    target=self._heartbeat_loop,
+                    args=(task_id, lease_token, done),
+                    name=f"admin-pg-task-heartbeat-{task_id[:8]}",
+                    daemon=True,
+                )
+                heartbeat.start()
+                try:
+                    result = handler(payload if isinstance(payload, dict) else json.loads(payload))
+                except Exception:
+                    self._finish(task_id, lease_token, failed=True)
+                else:
+                    self._finish(task_id, lease_token, result=result)
+                finally:
+                    done.set()
+                    heartbeat.join(timeout=1.0)
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
 
     def _trim_history(self) -> None:
         with self._connect() as db, db.cursor() as cur:
