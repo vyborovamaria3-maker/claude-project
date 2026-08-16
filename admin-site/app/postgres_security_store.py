@@ -8,6 +8,9 @@ from typing import Any, Callable
 import psycopg
 from fastapi import HTTPException
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+from .postgres_pool import pooled_connection
 
 
 _SCHEMA_LOCK_ID = 726824730
@@ -20,14 +23,16 @@ class PostgresAdminSessionStore:
         *,
         ip_binding: Callable[[Any], str],
         ua_binding: Callable[[Any], str],
+        pool: ConnectionPool | None = None,
     ) -> None:
         self.dsn = dsn
+        self.pool = pool
         self._ip_binding = ip_binding
         self._ua_binding = ua_binding
         self._init_schema()
 
     def _connect(self):
-        return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
+        return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
 
     def _init_schema(self) -> None:
         now = int(time.time())
@@ -47,6 +52,7 @@ class PostgresAdminSessionStore:
                 )"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_security_sessions_expires ON admin_security_sessions(expires_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_security_sessions_user_expires ON admin_security_sessions(username, expires_at DESC)")
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS revoked_admin_sessions(
                     nonce TEXT PRIMARY KEY,
