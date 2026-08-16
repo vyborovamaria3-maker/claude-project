@@ -13,8 +13,9 @@ from .intelligence_view import build_intelligence_router
 from .intelligence_view_factory import build_intelligence_view_store
 from .main import create_app as create_base_app
 from .observability import Observability, monotonic
+from .postgres_security_store import PostgresAdminSessionStore
 from .postgres_task_queue import PostgresTaskQueue
-from .security_v2 import install_security
+from . import security_v2
 from .services import TELEGRAM_TABLES
 from .task_queue import AdminTaskQueue
 
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     history_max = max(queue_max, _bounded_int("ADMIN_TASK_HISTORY_MAX", 500, 1, 250_000))
     workers = _bounded_int("ADMIN_TASK_WORKERS", 2, 1, 16)
     state_dsn = os.getenv("ADMIN_STATE_POSTGRES_DSN", "").strip()
+
     if state_dsn:
         app.state.task_queue = PostgresTaskQueue(
             state_dsn,
@@ -53,9 +55,23 @@ def create_app() -> FastAPI:
             max_history=history_max,
         )
         app.state.task_backend = "postgres"
+        shared_security = PostgresAdminSessionStore(
+            state_dsn,
+            ip_binding=security_v2._ip_binding,
+            ua_binding=security_v2._ua_binding,
+        )
+        app.state.shared_security = shared_security
+        app.state.security_backend = "postgres"
+        # security_v2 already depends on the AdminSessionStore interface. Reuse it
+        # without duplicating MFA/reauth middleware, and route revocation reads/writes
+        # to the same shared PostgreSQL store so replay protection is cross-replica.
+        security_v2.AdminSessionStore = lambda _path: shared_security
+        app.state.audit.is_session_revoked = shared_security.is_revoked
+        app.state.audit.revoke_session = shared_security.revoke
     else:
         app.state.task_queue = AdminTaskQueue(workers=workers, max_queue=queue_max, max_history=history_max)
         app.state.task_backend = "memory"
+        app.state.security_backend = "sqlite"
 
     def run_analysis_backtest(payload: dict) -> dict:
         domain = str(payload.get("domain", ""))
@@ -103,6 +119,8 @@ def create_app() -> FastAPI:
     @app.get("/api/ready")
     def readiness(response: Response) -> dict[str, object]:
         checks: dict[str, bool] = {"task_queue": app.state.task_queue.ready()}
+        if state_dsn:
+            checks["shared_security"] = app.state.shared_security.ready()
         try:
             with contextlib.closing(sqlite3.connect(app.state.settings.audit_db_path, timeout=1.0)) as db:
                 row = db.execute("SELECT 1").fetchone()
@@ -112,7 +130,12 @@ def create_app() -> FastAPI:
         ready = all(checks.values())
         if not ready:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"ready": ready, "checks": checks, "task_backend": app.state.task_backend}
+        return {
+            "ready": ready,
+            "checks": checks,
+            "task_backend": app.state.task_backend,
+            "security_backend": app.state.security_backend,
+        }
 
     @app.get("/metrics", include_in_schema=False)
     def prometheus_metrics() -> Response:
@@ -122,7 +145,7 @@ def create_app() -> FastAPI:
     app.include_router(build_analysis_router())
     app.include_router(build_analysis_editor_router())
     app.include_router(build_intelligence_router())
-    install_security(app)
+    security_v2.install_security(app)
     return app
 
 
