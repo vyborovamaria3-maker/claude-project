@@ -6,8 +6,10 @@ from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from .analysis_editor import LiveAnalysisProfileStore
+from .postgres_pool import pooled_connection
 
 
 _SCHEMA_LOCK_ID = 726824730
@@ -24,8 +26,10 @@ def _lock_schema(cur) -> None:
 class _PgCompatConnection:
     """Small DB-API compatibility layer for the existing analysis store SQL."""
 
-    def __init__(self, dsn: str) -> None:
-        self._db = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5)
+    def __init__(self, dsn: str, pool: ConnectionPool | None = None) -> None:
+        self._context = pooled_connection(pool, dsn, row_factory=dict_row, connect_timeout=5)
+        self._db = self._context.__enter__()
+        self._closed = False
 
     def execute(self, query: str, params: Any = None):
         sql = query.replace("?", "%s")
@@ -37,12 +41,16 @@ class _PgCompatConnection:
         self._db.commit()
 
     def close(self) -> None:
-        self._db.close()
+        if self._closed:
+            return
+        self._closed = True
+        self._context.__exit__(None, None, None)
 
 
 class PostgresAuditStore:
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool: ConnectionPool | None = None) -> None:
         self.dsn = dsn
+        self.pool = pool
         with self._connect() as db, db.cursor() as cur:
             _lock_schema(cur)
             cur.execute(
@@ -58,6 +66,7 @@ class PostgresAuditStore:
                 )"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_created ON admin_audit(created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_audit_action_created ON admin_audit(action, created_at DESC)")
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS revoked_admin_sessions(
                     nonce TEXT PRIMARY KEY,
@@ -68,7 +77,7 @@ class PostgresAuditStore:
             cur.execute("CREATE INDEX IF NOT EXISTS ix_revoked_admin_sessions_expires ON revoked_admin_sessions(expires_at)")
 
     def _connect(self):
-        return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
+        return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
 
     def record(self, *, action: str, success: bool, username: str | None = None, ip_address: str | None = None, resource: str | None = None, details: dict[str, Any] | None = None) -> None:
         with self._connect() as db, db.cursor() as cur:
@@ -127,8 +136,9 @@ class PostgresAuditStore:
 
 
 class PostgresControlStore:
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool: ConnectionPool | None = None) -> None:
         self.dsn = dsn
+        self.pool = pool
         with self._connect() as db, db.cursor() as cur:
             _lock_schema(cur)
             cur.execute(
@@ -154,9 +164,10 @@ class PostgresControlStore:
                 )"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS ix_alerts_status_created ON alerts(status, created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_alerts_created ON alerts(created_at DESC)")
 
     def _connect(self):
-        return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
+        return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
 
     @staticmethod
     def _serialize(row: dict[str, Any]) -> dict[str, Any]:
@@ -219,10 +230,11 @@ class PostgresControlStore:
 
 
 class PostgresLiveAnalysisProfileStore(LiveAnalysisProfileStore):
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool: ConnectionPool | None = None) -> None:
         self.path = dsn
         self.dsn = dsn
-        with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5) as db, db.cursor() as cur:
+        self.pool = pool
+        with self._connect_raw() as db, db.cursor() as cur:
             _lock_schema(cur)
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS analysis_parameter_overrides(
@@ -243,6 +255,10 @@ class PostgresLiveAnalysisProfileStore(LiveAnalysisProfileStore):
                 )"""
             )
             cur.execute("CREATE INDEX IF NOT EXISTS ix_analysis_overrides_domain ON analysis_parameter_overrides(domain, deleted, enabled)")
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_analysis_overrides_active ON analysis_parameter_overrides(domain, key) WHERE deleted=0")
+
+    def _connect_raw(self):
+        return pooled_connection(self.pool, self.dsn, row_factory=dict_row, connect_timeout=5)
 
     def connect(self) -> _PgCompatConnection:
-        return _PgCompatConnection(self.dsn)
+        return _PgCompatConnection(self.dsn, self.pool)
