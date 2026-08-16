@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -244,28 +244,49 @@ def create_app() -> FastAPI:
     def export_table(
         source_id: str,
         table: str,
+        request: Request,
         limit: int = Query(5000, ge=1),
-        request: Request = None,
         admin=Depends(require_admin),
-    ) -> PlainTextResponse:
+    ) -> StreamingResponse:
+        export_limit = min(limit, settings.max_export_rows)
         try:
             source = app.state.registry.get(source_id)
-            csv_text = source.export_csv(table, limit=min(limit, settings.max_export_rows))
-            app.state.audit.record(
-                action="export_table",
-                success=True,
-                username=admin["sub"],
-                ip_address=client_ip(request),
-                resource=f"{source_id}.{table}",
-                details={"limit": min(limit, settings.max_export_rows)},
-            )
-            return PlainTextResponse(
-                csv_text,
-                media_type="text/csv; charset=utf-8",
-                headers={"Content-Disposition": f'attachment; filename="{source_id}-{table}.csv"'},
-            )
+            # Validate the table before sending response headers; iteration itself is lazy.
+            source.columns(table)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
+        except Exception:
+            raise HTTPException(status_code=503, detail="Data source unavailable") from None
+
+        ip = client_ip(request)
+
+        def stream_csv():
+            try:
+                yield from source.iter_csv(table, limit=export_limit)
+                app.state.audit.record(
+                    action="export_table",
+                    success=True,
+                    username=admin["sub"],
+                    ip_address=ip,
+                    resource=f"{source_id}.{table}",
+                    details={"limit": export_limit, "streamed": True},
+                )
+            except Exception as exc:
+                app.state.audit.record(
+                    action="export_table",
+                    success=False,
+                    username=admin["sub"],
+                    ip_address=ip,
+                    resource=f"{source_id}.{table}",
+                    details={"limit": export_limit, "streamed": True, "error": str(exc)[:200]},
+                )
+                raise
+
+        return StreamingResponse(
+            stream_csv(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{source_id}-{table}.csv"'},
+        )
 
     @app.get("/api/users")
     def users(limit: int = Query(500, ge=1, le=5000), admin=Depends(require_admin)) -> dict[str, Any]:
