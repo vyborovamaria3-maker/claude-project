@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.auth import verify_session
 from app.security_v2 import totp_code
 
 
@@ -84,9 +85,14 @@ class SecurityV2Test(unittest.TestCase):
     def test_idle_expiry_revokes_original_cookie_not_just_local_row(self):
         self.login(); self.verify_mfa()
         stolen = self.client.cookies.get("potapoff_admin_session")
+        payload = verify_session(self.client.app.state.settings, stolen)
         with contextlib.closing(sqlite3.connect(self.db)) as db:
             db.execute("UPDATE admin_security_sessions SET last_seen_at=?", (int(time.time()) - 301,))
             db.commit()
+        # The store intentionally keeps recent activity in process memory so normal
+        # requests do not write SQLite every time. Clear that cache here because this
+        # test is explicitly simulating 301 seconds of inactivity via the database.
+        self.client.app.state.security_sessions._forget_activity(str(payload["nonce"]))
         self.assertEqual(self.client.get("/api/me").status_code, 401)
         attacker = TestClient(self.client.app)
         try:
