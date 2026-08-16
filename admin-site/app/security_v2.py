@@ -8,6 +8,7 @@ import ipaddress
 import os
 import sqlite3
 import struct
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -131,8 +132,14 @@ class SecurityPolicy:
 
 
 class AdminSessionStore:
+    CLEANUP_INTERVAL_SECONDS = 300
+    MAX_TOUCH_INTERVAL_SECONDS = 60
+
     def __init__(self, path: str) -> None:
         self.path = path
+        self._state_lock = threading.Lock()
+        self._last_cleanup_monotonic = 0.0
+        self._recent_activity: dict[str, int] = {}
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with contextlib.closing(self.connect()) as db:
             db.executescript(
@@ -158,45 +165,99 @@ class AdminSessionStore:
         db.row_factory = sqlite3.Row
         return db
 
-    def _cleanup(self, db: sqlite3.Connection, now: int) -> None:
+    def _cleanup_if_due(self, db: sqlite3.Connection, now: int) -> None:
+        monotonic_now = time.monotonic()
+        with self._state_lock:
+            if monotonic_now - self._last_cleanup_monotonic < self.CLEANUP_INTERVAL_SECONDS:
+                return
+            self._last_cleanup_monotonic = monotonic_now
         db.execute("DELETE FROM admin_security_sessions WHERE expires_at<=?", (now,))
+        db.commit()
+
+    def _touch_interval(self, policy: SecurityPolicy) -> int:
+        return max(5, min(self.MAX_TOUCH_INTERVAL_SECONDS, policy.idle_timeout_seconds // 4))
+
+    def _remember_activity(self, nonce: str, now: int) -> None:
+        with self._state_lock:
+            self._recent_activity[nonce] = now
+
+    def _last_activity(self, nonce: str, persisted: int) -> int:
+        with self._state_lock:
+            return max(persisted, self._recent_activity.get(nonce, persisted))
+
+    def _forget_activity(self, nonce: str) -> None:
+        with self._state_lock:
+            self._recent_activity.pop(nonce, None)
+
+    def _insert_session(
+        self,
+        db: sqlite3.Connection,
+        payload: dict[str, Any],
+        request: Request,
+        policy: SecurityPolicy,
+        now: int,
+    ) -> dict[str, Any]:
+        nonce = str(payload["nonce"])
+        db.execute(
+            """INSERT INTO admin_security_sessions(nonce,username,issued_at,expires_at,last_seen_at,mfa_verified_at,reauth_until,ip_hash,user_agent_hash)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                nonce,
+                str(payload["sub"]),
+                int(payload["iat"]),
+                int(payload["exp"]),
+                now,
+                None,
+                None,
+                _ip_binding(request) if policy.bind_ip else None,
+                _ua_binding(request) if policy.bind_user_agent else None,
+            ),
+        )
+        db.commit()
+        self._remember_activity(nonce, now)
+        row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
+        return dict(row)
 
     def get_or_create(self, payload: dict[str, Any], request: Request, policy: SecurityPolicy) -> dict[str, Any]:
         now = int(time.time())
         nonce = str(payload["nonce"])
         with contextlib.closing(self.connect()) as db:
-            self._cleanup(db, now)
+            self._cleanup_if_due(db, now)
             row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
             if row is None:
-                db.execute(
-                    """INSERT INTO admin_security_sessions(nonce,username,issued_at,expires_at,last_seen_at,mfa_verified_at,reauth_until,ip_hash,user_agent_hash)
-                       VALUES(?,?,?,?,?,?,?,?,?)""",
-                    (nonce, str(payload["sub"]), int(payload["iat"]), int(payload["exp"]), now, None, None,
-                     _ip_binding(request) if policy.bind_ip else None,
-                     _ua_binding(request) if policy.bind_user_agent else None),
-                )
-                db.commit()
-                row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
-            return dict(row)
+                return self._insert_session(db, payload, request, policy, now)
+            item = dict(row)
+            self._remember_activity(nonce, now)
+            return item
 
     def validate_and_touch(self, payload: dict[str, Any], request: Request, policy: SecurityPolicy) -> dict[str, Any]:
         now = int(time.time())
         nonce = str(payload["nonce"])
         with contextlib.closing(self.connect()) as db:
-            self._cleanup(db, now)
+            self._cleanup_if_due(db, now)
             row = db.execute("SELECT * FROM admin_security_sessions WHERE nonce=?", (nonce,)).fetchone()
             if row is None:
-                return self.get_or_create(payload, request, policy)
+                return self._insert_session(db, payload, request, policy, now)
             item = dict(row)
-            if now - int(item["last_seen_at"]) > policy.idle_timeout_seconds:
+            persisted_last_seen = int(item["last_seen_at"])
+            effective_last_seen = self._last_activity(nonce, persisted_last_seen)
+            if now - effective_last_seen > policy.idle_timeout_seconds:
+                self._forget_activity(nonce)
                 raise HTTPException(status_code=401, detail="Admin session expired due to inactivity")
             if policy.bind_ip and item.get("ip_hash") and not hmac.compare_digest(item["ip_hash"], _ip_binding(request)):
+                self._forget_activity(nonce)
                 raise HTTPException(status_code=401, detail="Admin session client binding changed")
             if policy.bind_user_agent and item.get("user_agent_hash") and not hmac.compare_digest(item["user_agent_hash"], _ua_binding(request)):
+                self._forget_activity(nonce)
                 raise HTTPException(status_code=401, detail="Admin session client binding changed")
-            db.execute("UPDATE admin_security_sessions SET last_seen_at=? WHERE nonce=?", (now, nonce))
-            db.commit()
-            item["last_seen_at"] = now
+
+            self._remember_activity(nonce, now)
+            if now - persisted_last_seen >= self._touch_interval(policy):
+                db.execute("UPDATE admin_security_sessions SET last_seen_at=? WHERE nonce=?", (now, nonce))
+                db.commit()
+                item["last_seen_at"] = now
+            else:
+                item["last_seen_at"] = effective_last_seen
             return item
 
     def mark_mfa(self, nonce: str) -> None:
@@ -206,6 +267,7 @@ class AdminSessionStore:
             db.commit()
             if cur.rowcount != 1:
                 raise KeyError("Unknown admin session")
+        self._remember_activity(nonce, now)
 
     def mark_reauth(self, nonce: str, until: int) -> None:
         now = int(time.time())
@@ -214,8 +276,10 @@ class AdminSessionStore:
             db.commit()
             if cur.rowcount != 1:
                 raise KeyError("Unknown admin session")
+        self._remember_activity(nonce, now)
 
     def delete(self, nonce: str) -> None:
+        self._forget_activity(nonce)
         with contextlib.closing(self.connect()) as db:
             db.execute("DELETE FROM admin_security_sessions WHERE nonce=?", (nonce,))
             db.commit()
@@ -238,27 +302,45 @@ def install_security(app: FastAPI) -> None:
     router = APIRouter()
 
     def signed_payload(request: Request) -> dict[str, Any]:
+        cached = getattr(request.state, "admin_payload", None)
+        if isinstance(cached, dict):
+            return cached
         token = request.cookies.get(app.state.settings.session_cookie, "")
         if not token:
             raise HTTPException(status_code=401, detail="Authentication required")
         payload = verify_session(app.state.settings, token)
         if app.state.audit.is_session_revoked(str(payload.get("nonce", ""))):
             raise HTTPException(status_code=401, detail="Authentication required")
+        request.state.admin_payload = payload
         return payload
+
+    def validated_session_row(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        cached = getattr(request.state, "admin_security_row", None)
+        if isinstance(cached, dict) and str(cached.get("nonce", "")) == str(payload.get("nonce", "")):
+            return cached
+        row = store.validate_and_touch(payload, request, policy)
+        request.state.admin_security_row = row
+        return row
 
     @router.get("/api/security/session")
     def security_session(request: Request) -> dict[str, Any]:
         payload = signed_payload(request)
-        row = store.validate_and_touch(payload, request, policy)
+        row = validated_session_row(request, payload)
         now = int(time.time())
-        return {"authenticated": True, "mfa_required": policy.require_mfa, "mfa_verified": bool(row.get("mfa_verified_at")),
-                "reauth_required": policy.require_reauth, "reauth_valid": int(row.get("reauth_until") or 0) > now,
-                "idle_timeout_seconds": policy.idle_timeout_seconds, "expires_at": int(payload["exp"])}
+        return {
+            "authenticated": True,
+            "mfa_required": policy.require_mfa,
+            "mfa_verified": bool(row.get("mfa_verified_at")),
+            "reauth_required": policy.require_reauth,
+            "reauth_valid": int(row.get("reauth_until") or 0) > now,
+            "idle_timeout_seconds": policy.idle_timeout_seconds,
+            "expires_at": int(payload["exp"]),
+        }
 
     @router.post("/api/security/mfa/verify")
     def verify_mfa(body: MfaBody, request: Request) -> dict[str, Any]:
         payload = signed_payload(request)
-        store.validate_and_touch(payload, request, policy)
+        validated_session_row(request, payload)
         if policy.require_mfa and not verify_totp(policy.totp_secret, body.code):
             app.state.audit.record(action="mfa", success=False, username=payload["sub"], ip_address=_effective_client_ip(request))
             raise HTTPException(status_code=401, detail="Invalid MFA code")
@@ -269,18 +351,30 @@ def install_security(app: FastAPI) -> None:
     @router.post("/api/security/reauth")
     def reauth(body: ReauthBody, request: Request) -> dict[str, Any]:
         payload = signed_payload(request)
-        row = store.validate_and_touch(payload, request, policy)
+        row = validated_session_row(request, payload)
         if policy.require_mfa and not row.get("mfa_verified_at"):
             raise HTTPException(status_code=428, detail="MFA verification required first")
         if not check_admin_password(app.state.settings, payload["sub"], body.password):
             app.state.audit.record(action="reauth", success=False, username=payload["sub"], ip_address=_effective_client_ip(request))
             raise HTTPException(status_code=401, detail="Invalid credentials")
         if policy.require_mfa and not verify_totp(policy.totp_secret, body.code):
-            app.state.audit.record(action="reauth", success=False, username=payload["sub"], ip_address=_effective_client_ip(request), details={"reason":"mfa"})
+            app.state.audit.record(
+                action="reauth",
+                success=False,
+                username=payload["sub"],
+                ip_address=_effective_client_ip(request),
+                details={"reason": "mfa"},
+            )
             raise HTTPException(status_code=401, detail="Invalid MFA code")
         until = int(time.time()) + policy.reauth_ttl_seconds
         store.mark_reauth(str(payload["nonce"]), until)
-        app.state.audit.record(action="reauth", success=True, username=payload["sub"], ip_address=_effective_client_ip(request), details={"valid_until":until})
+        app.state.audit.record(
+            action="reauth",
+            success=True,
+            username=payload["sub"],
+            ip_address=_effective_client_ip(request),
+            details={"valid_until": until},
+        )
         return {"ok": True, "valid_until": until}
 
     app.include_router(router)
@@ -299,16 +393,20 @@ def install_security(app: FastAPI) -> None:
             if app.state.audit.is_session_revoked(str(payload.get("nonce", ""))):
                 raise HTTPException(status_code=401, detail="Authentication required")
             row = store.validate_and_touch(payload, request, policy)
+            request.state.admin_payload = payload
+            request.state.admin_security_row = row
             if path == "/api/logout":
                 response = await call_next(request)
                 store.delete(str(payload["nonce"]))
                 return response
             if policy.require_mfa and path not in {"/api/security/mfa/verify", "/api/security/session"} and not row.get("mfa_verified_at"):
                 from fastapi.responses import JSONResponse
-                return JSONResponse(status_code=428, content={"detail":"MFA verification required","code":"mfa_required"})
+
+                return JSONResponse(status_code=428, content={"detail": "MFA verification required", "code": "mfa_required"})
             if policy.require_reauth and _dangerous_mutation(request) and int(row.get("reauth_until") or 0) <= int(time.time()):
                 from fastapi.responses import JSONResponse
-                return JSONResponse(status_code=428, content={"detail":"Recent re-authentication required","code":"reauth_required"})
+
+                return JSONResponse(status_code=428, content={"detail": "Recent re-authentication required", "code": "reauth_required"})
             return await call_next(request)
         except HTTPException as exc:
             if exc.status_code == 401 and payload is not None:
@@ -318,4 +416,5 @@ def install_security(app: FastAPI) -> None:
                 finally:
                     store.delete(nonce)
             from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=exc.status_code, content={"detail":str(exc.detail)})
+
+            return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail)})
