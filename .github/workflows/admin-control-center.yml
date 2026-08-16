@@ -24,6 +24,22 @@ jobs:
     name: Regression and syntax checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: potapoff_admin_test
+          POSTGRES_USER: potapoff_admin
+          POSTGRES_PASSWORD: ci-admin-state-password
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U potapoff_admin -d potapoff_admin_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ADMIN_STATE_TEST_DSN: postgresql://potapoff_admin:ci-admin-state-password@127.0.0.1:55432/potapoff_admin_test
 
     steps:
       - name: Checkout
