@@ -53,14 +53,8 @@ class PostgresTaskRecord:
 
 
 class PostgresTaskQueue:
-    """Durable multi-process task queue backed by PostgreSQL.
-
-    Claims use FOR UPDATE SKIP LOCKED, every claim gets a unique lease token,
-    and a heartbeat extends the lease while work is running. Expired leases are
-    recovered continuously so a crashed worker does not strand jobs.
-    """
-
     _SUBMIT_LOCK_ID = 726824731
+    _SCHEMA_LOCK_ID = 726824730
 
     def __init__(
         self,
@@ -95,6 +89,7 @@ class PostgresTaskQueue:
 
     def _init_schema(self) -> None:
         with self._connect() as db, db.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (self._SCHEMA_LOCK_ID,))
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS admin_background_tasks(
@@ -171,8 +166,6 @@ class PostgresTaskQueue:
         task_id = uuid.uuid4().hex
         now = _utcnow()
         with self._connect() as db, db.cursor() as cur:
-            # Serialize capacity checks across replicas. Without this lock two
-            # submitters can both observe the last free slot and overfill it.
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (self._SUBMIT_LOCK_ID,))
             cur.execute("SELECT COUNT(*) AS n FROM admin_background_tasks WHERE state IN ('queued','running')")
             if int(cur.fetchone()["n"]) >= self._max_queue:
@@ -269,8 +262,6 @@ class PostgresTaskQueue:
                     if cur.rowcount != 1:
                         return
             except psycopg.Error:
-                # A transient DB failure is tolerated; recovery will only reclaim
-                # the task after the existing lease actually expires.
                 continue
 
     def _finish(self, task_id: str, lease_token: str, *, result: Any = None, failed: bool = False) -> None:
