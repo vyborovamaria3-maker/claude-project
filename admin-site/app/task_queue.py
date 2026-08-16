@@ -98,12 +98,15 @@ class AdminTaskQueue:
                 return
             self._stopping = True
             threads = list(self._threads)
+        deadline = time.monotonic() + max(0.0, timeout)
         for _ in threads:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
-                self._queue.put_nowait(None)
+                self._queue.put(None, timeout=remaining)
             except queue.Full:
                 break
-        deadline = time.monotonic() + max(0.0, timeout)
         for thread in threads:
             thread.join(max(0.0, deadline - time.monotonic()))
         with self._lock:
