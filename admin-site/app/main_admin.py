@@ -14,6 +14,7 @@ from .intelligence_view_factory import build_intelligence_view_store
 from .main import create_app as create_base_app
 from .observability import Observability, monotonic
 from .postgres_admin_state import PostgresAuditStore, PostgresControlStore, PostgresLiveAnalysisProfileStore
+from .postgres_pool import build_postgres_pool
 from .postgres_security_store import PostgresAdminSessionStore
 from .postgres_task_queue import PostgresTaskQueue
 from . import security_v2
@@ -47,10 +48,13 @@ def create_app() -> FastAPI:
         raise RuntimeError("ADMIN_STATE_POSTGRES_DSN is required when ADMIN_WEB_WORKERS > 1")
 
     shared_security = None
+    state_pool = None
     if state_dsn:
-        app.state.audit = PostgresAuditStore(state_dsn)
-        app.state.control = PostgresControlStore(state_dsn)
-        app.state.analysis_profiles = PostgresLiveAnalysisProfileStore(state_dsn)
+        state_pool = build_postgres_pool(state_dsn, name="admin-state")
+        app.state.postgres_state_pool = state_pool
+        app.state.audit = PostgresAuditStore(state_dsn, pool=state_pool)
+        app.state.control = PostgresControlStore(state_dsn, pool=state_pool)
+        app.state.analysis_profiles = PostgresLiveAnalysisProfileStore(state_dsn, pool=state_pool)
         app.state.mutable_state_backend = "postgres"
     else:
         app.state.analysis_profiles = LiveAnalysisProfileStore(app.state.settings.audit_db_path)
@@ -73,6 +77,7 @@ def create_app() -> FastAPI:
             state_dsn,
             ip_binding=security_v2._ip_binding,
             ua_binding=security_v2._ua_binding,
+            pool=state_pool,
         )
         app.state.shared_security = shared_security
         app.state.security_backend = "postgres"
@@ -105,6 +110,12 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     def stop_background_workers() -> None:
         app.state.task_queue.stop(timeout=5.0)
+        view = getattr(app.state, "intelligence_view", None)
+        close_view = getattr(view, "close", None)
+        if callable(close_view):
+            close_view()
+        if state_pool is not None:
+            state_pool.close(timeout=5.0)
 
     @app.middleware("http")
     async def instrument_requests(request, call_next):
@@ -132,6 +143,7 @@ def create_app() -> FastAPI:
         if state_dsn:
             checks["shared_security"] = app.state.shared_security.ready()
             checks["admin_state"] = app.state.audit.ready()
+            checks["state_pool"] = bool(state_pool and state_pool.get_stats().get("pool_available", 0) >= 0)
         else:
             try:
                 with contextlib.closing(sqlite3.connect(app.state.settings.audit_db_path, timeout=1.0)) as db:
