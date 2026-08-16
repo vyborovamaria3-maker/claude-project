@@ -103,9 +103,9 @@ preflight() {
   [[ -z "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" ]] || die "tracked files are modified; deploy from a clean checkout"
 
   "${COMPOSE[@]}" config --quiet
+  grep -Eq '^[[:space:]]*-[[:space:]]*"?127\.0\.0\.1:18080:8080"?[[:space:]]*$' "$ADMIN_DIR/docker-compose.yml" || die "admin port must remain bound to 127.0.0.1:18080"
   local rendered
   rendered="$("${COMPOSE[@]}" config)"
-  grep -q '127.0.0.1:18080' <<<"$rendered" || die "admin port must remain bound to 127.0.0.1:18080"
   ! grep -Eq 'published: "?5432"?' <<<"$rendered" || die "PostgreSQL must not be published publicly"
 
   free_kb="$(df -Pk "$REPO_DIR" | awk 'NR==2 {print $4}')"
