@@ -29,12 +29,51 @@ function databasePreviewCard(title, data) {
   return `<article class="domain-card"><h3>${escapeHtml(title)}</h3><div class="domain-meta"><span>${formatNumber(data.total)} строк</span><span>•</span><span>production PostgreSQL</span></div>${genericTable(data.rows || [], columns)}</article>`;
 }
 
+function databaseEntityCards(inventory) {
+  const entities = inventory?.entities || {};
+  const cards = [
+    ["Кошельки", entities.wallets, "wallet datasets"],
+    ["Монеты / токены", entities.coins, "token datasets"],
+    ["X / Twitter аккаунты", entities.twitter_accounts, "accounts"],
+    ["X / Twitter записи", entities.twitter_posts, "tweets / mentions / posts"],
+    ["Telegram аккаунты", entities.telegram_accounts, "users"],
+    ["Telegram каналы", entities.telegram_channels, "channels"],
+    ["Telegram сообщения", entities.telegram_messages, "messages / posts"],
+    ["Пользователи", entities.users, "user tables"],
+    ["Сделки", entities.trades, "wallet / token trades"],
+    ["Сигналы", entities.signals, "calls / events / AI results"],
+    ["Платежи", entities.payments, "payment records"],
+  ];
+  return `<div class="cards">${cards.map(([label, value, sub]) => renderMetric(label, formatNumber(value || 0), sub)).join("")}</div>`;
+}
+
+function databaseSchemaInventory(inventory) {
+  const sources = inventory?.sources || [];
+  if (!sources.length) return '<div class="empty">Источники базы данных не подключены.</div>';
+  return `<div class="domain-sections">${sources.map((source) => {
+    const tables = source.tables || [];
+    const tableHtml = tables.map((table) => {
+      if (!table.ok) return `<article class="domain-card"><h3>${escapeHtml(table.name)}</h3><div class="error-text">Таблица недоступна</div></article>`;
+      const columns = table.columns || [];
+      const columnRows = columns.map((column) => ({
+        parameter: column.name,
+        type: column.type,
+        nullable: column.nullable ? "yes" : "no",
+        primary_key: column.primary_key ? "yes" : "no",
+      }));
+      return `<article class="domain-card"><h3>${escapeHtml(table.name)}</h3><div class="domain-meta"><span>${formatNumber(table.rows || 0)} строк</span><span>•</span><span>${formatNumber(table.column_count || columns.length)} параметров</span></div>${genericTable(columnRows, ["parameter", "type", "nullable", "primary_key"])}</article>`;
+    }).join("");
+    return `<section class="section full"><div class="section-head"><div><h3>${escapeHtml(source.label)}</h3><p>${escapeHtml(source.kind)} · ${escapeHtml(source.role)} · ${formatNumber(source.table_count)} таблиц · ${formatNumber(source.column_count)} параметров · ${formatNumber(source.row_count)} строк</p></div><span class="status-pill ${source.ok ? "ok" : "bad"}">${source.ok ? "online" : "offline"}</span></div>${tableHtml || '<div class="empty">Таблиц нет.</div>'}</section>`;
+  }).join("")}</div>`;
+}
+
 renderDatabase = async function renderMigratedDatabase(reset = false) {
   loading();
 
-  const [sourcesData, overview, blockchain, telegram, xData, usersData] = await Promise.all([
+  const [sourcesData, overview, inventory, blockchain, telegram, xData, usersData] = await Promise.all([
     api("/api/sources"),
     api("/api/overview"),
+    api("/api/database/inventory").catch(() => ({ totals: {}, entities: {}, sources: [] })),
     api("/api/blockchain?limit=100").catch(() => ({ counts: {}, sections: [] })),
     api("/api/social/telegram?limit=100").catch(() => ({ counts: {}, sections: [], users: [] })),
     api("/api/social/x?limit=100").catch(() => ({ counts: {}, sections: [] })),
@@ -100,20 +139,33 @@ renderDatabase = async function renderMigratedDatabase(reset = false) {
   ].map((name) => databasePreviewCard(name, previews[name])).filter(Boolean).join("");
 
   const telegramUsers = telegram.users || usersData.rows.filter((row) => row.telegram_id || row.telegram_username);
+  const totalLabel = data?.total_is_estimate ? `~${formatNumber(data.total)}` : formatNumber(data?.total || 0);
 
   content.innerHTML = `
     <div class="cards">
       ${renderMetric("Production DB", overview.healthy_sources + " / " + overview.total_sources, "источников online")}
-      ${renderMetric("Таблицы", formatNumber(overview.total_tables), "перенесено в админку")}
-      ${renderMetric("Строки", formatNumber(overview.total_rows), "read-only production")}
+      ${renderMetric("Таблицы", formatNumber(inventory.totals?.tables ?? overview.total_tables), "все подключённые таблицы")}
+      ${renderMetric("Параметры", formatNumber(inventory.totals?.columns || 0), "все колонки таблиц")}
+      ${renderMetric("Строки", formatNumber(inventory.totals?.rows ?? overview.total_rows), "быстрая оценка")}
       ${renderMetric("Пользователи", formatNumber(usersData.total), "основная база")}
-      ${renderMetric("Telegram users", formatNumber(telegramUsers.length), "production data")}
     </div>
 
     ${databaseSection(
+      "Счётчики сущностей",
+      "Быстрые агрегаты по всем подключённым таблицам. Значения берутся из метаданных PostgreSQL без тяжёлого COUNT(*) на каждую таблицу.",
+      databaseEntityCards(inventory)
+    )}
+
+    ${databaseSection(
       "Состояние production-базы",
-      "Раздел База данных перенесён с основного сайта. Источники доступны только после входа в админку.",
+      "Все источники доступны только после входа в админку.",
       `<div class="status-list">${sourceStatus || '<div class="empty">Нет подключённых источников.</div>'}</div>`
+    )}
+
+    ${databaseSection(
+      "Полная структура базы данных",
+      "Каждая база, каждая таблица и все параметры/колонки с типами, nullable и primary key.",
+      databaseSchemaInventory(inventory)
     )}
 
     ${databaseSection(
@@ -124,7 +176,7 @@ renderDatabase = async function renderMigratedDatabase(reset = false) {
 
     ${databaseDomainSection(
       "Blockchain / Solana datasets",
-      "Все доступные blockchain-таблицы, ранее показанные на основном сайте",
+      "Все доступные blockchain-таблицы",
       blockchain,
       "Blockchain-таблицы пока не найдены."
     )}
@@ -137,14 +189,14 @@ renderDatabase = async function renderMigratedDatabase(reset = false) {
 
     ${databaseDomainSection(
       "X / Twitter intelligence",
-      "Анализы, social events/accounts и связанные наборы данных",
+      "Аккаунты, анализы, tweets, mentions, social events и связанные наборы данных",
       xData,
       "X/Twitter-таблицы пока не найдены."
     )}
 
     ${databaseSection(
       "Подписки",
-      "Заказы и настройки подписок перенесены в защищённую часть.",
+      "Заказы и настройки подписок в защищённой части.",
       subscriptionCards ? `<div class="domain-sections">${subscriptionCards}</div>` : '<div class="empty">Subscription-таблицы пока не найдены.</div>'
     )}
 
@@ -156,7 +208,7 @@ renderDatabase = async function renderMigratedDatabase(reset = false) {
 
     <section class="section full">
       <div class="section-head">
-        <div><h3>Read-only explorer</h3><p>Полный просмотр всех таблиц, поиск, пагинация и CSV export.</p></div>
+        <div><h3>Read-only explorer</h3><p>Полный просмотр строк, поиск, пагинация и CSV export.</p></div>
         ${state.db.source && state.db.table ? `<a class="small-btn" href="/api/sources/${encodeURIComponent(state.db.source)}/tables/${encodeURIComponent(state.db.table)}/export.csv">CSV экспорт</a>` : ""}
       </div>
       <div class="toolbar">
@@ -167,7 +219,7 @@ renderDatabase = async function renderMigratedDatabase(reset = false) {
       </div>
       ${data ? genericTable(data.rows, columns) : '<div class="empty">Нет подключённых таблиц.</div>'}
       <div class="pagination">
-        <span>${data ? `Строк ${formatNumber(data.total)} · страница ${data.page} из ${totalPages}` : ""}</span>
+        <span>${data ? `Строк ${totalLabel} · страница ${data.page} из ${totalPages}` : ""}</span>
         <div>
           <button id="dbPrev" class="small-btn" ${!data || data.page <= 1 ? "disabled" : ""}>Назад</button>
           <button id="dbNext" class="small-btn" ${!data || data.page >= totalPages ? "disabled" : ""}>Дальше</button>
