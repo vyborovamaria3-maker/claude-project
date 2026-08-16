@@ -13,6 +13,7 @@ from .intelligence_view import build_intelligence_router
 from .intelligence_view_factory import build_intelligence_view_store
 from .main import create_app as create_base_app
 from .observability import Observability, monotonic
+from .postgres_task_queue import PostgresTaskQueue
 from .security_v2 import install_security
 from .services import TELEGRAM_TABLES
 from .task_queue import AdminTaskQueue
@@ -40,13 +41,31 @@ def create_app() -> FastAPI:
     app = create_base_app()
     app.state.analysis_profiles = LiveAnalysisProfileStore(app.state.settings.audit_db_path)
     app.state.intelligence_view = build_intelligence_view_store(app.state.settings)
-    queue_max = _bounded_int("ADMIN_TASK_QUEUE_MAX", 32, 1, 10_000)
-    history_max = max(queue_max, _bounded_int("ADMIN_TASK_HISTORY_MAX", 500, 1, 50_000))
-    app.state.task_queue = AdminTaskQueue(
-        workers=_bounded_int("ADMIN_TASK_WORKERS", 2, 1, 16),
-        max_queue=queue_max,
-        max_history=history_max,
-    )
+    queue_max = _bounded_int("ADMIN_TASK_QUEUE_MAX", 32, 1, 100_000)
+    history_max = max(queue_max, _bounded_int("ADMIN_TASK_HISTORY_MAX", 500, 1, 250_000))
+    workers = _bounded_int("ADMIN_TASK_WORKERS", 2, 1, 16)
+    state_dsn = os.getenv("ADMIN_STATE_POSTGRES_DSN", "").strip()
+    if state_dsn:
+        app.state.task_queue = PostgresTaskQueue(
+            state_dsn,
+            workers=workers,
+            max_queue=queue_max,
+            max_history=history_max,
+        )
+        app.state.task_backend = "postgres"
+    else:
+        app.state.task_queue = AdminTaskQueue(workers=workers, max_queue=queue_max, max_history=history_max)
+        app.state.task_backend = "memory"
+
+    def run_analysis_backtest(payload: dict) -> dict:
+        domain = str(payload.get("domain", ""))
+        records = payload.get("records") or []
+        contract = payload.get("contract")
+        if not isinstance(records, list):
+            raise ValueError("Invalid backtest payload")
+        return app.state.analysis_profiles.backtest(domain, records, contract=contract)
+
+    app.state.task_queue.register_handler("analysis_backtest", run_analysis_backtest)
     app.state.observability = Observability(
         service_name=app.state.settings.app_name,
         environment=app.state.settings.environment,
@@ -65,10 +84,7 @@ def create_app() -> FastAPI:
     async def instrument_requests(request, call_next):
         started = monotonic()
         status_code = 500
-        attributes = {
-            "http.request.method": request.method,
-            "url.path": request.url.path,
-        }
+        attributes = {"http.request.method": request.method, "url.path": request.url.path}
         with app.state.observability.span("admin.http.request", attributes=attributes):
             try:
                 response = await call_next(request)
@@ -96,7 +112,7 @@ def create_app() -> FastAPI:
         ready = all(checks.values())
         if not ready:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"ready": ready, "checks": checks}
+        return {"ready": ready, "checks": checks, "task_backend": app.state.task_backend}
 
     @app.get("/metrics", include_in_schema=False)
     def prometheus_metrics() -> Response:
