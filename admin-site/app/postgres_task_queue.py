@@ -55,10 +55,12 @@ class PostgresTaskRecord:
 class PostgresTaskQueue:
     """Durable multi-process task queue backed by PostgreSQL.
 
-    Work is claimed with FOR UPDATE SKIP LOCKED. Task payloads/results are JSON,
-    so no in-process Request/closure state is required for execution by another
-    worker or replica.
+    Claims use FOR UPDATE SKIP LOCKED, every claim gets a unique lease token,
+    and a heartbeat extends the lease while work is running. Expired leases are
+    recovered continuously so a crashed worker does not strand jobs.
     """
+
+    _SUBMIT_LOCK_ID = 726824731
 
     def __init__(
         self,
@@ -69,6 +71,7 @@ class PostgresTaskQueue:
         max_history: int = 5000,
         poll_seconds: float = 0.15,
         lease_seconds: int = 120,
+        max_payload_bytes: int = 8 * 1024 * 1024,
     ) -> None:
         if workers < 1 or workers > 16:
             raise ValueError("workers must be between 1 and 16")
@@ -78,6 +81,7 @@ class PostgresTaskQueue:
         self._max_history = max(self._max_queue, min(max_history, 250_000))
         self._poll_seconds = max(0.05, min(poll_seconds, 5.0))
         self._lease_seconds = max(30, min(lease_seconds, 3600))
+        self._max_payload_bytes = max(1024, min(max_payload_bytes, 32 * 1024 * 1024))
         self._handlers: dict[str, Callable[[dict[str, Any]], Any]] = {}
         self._threads: list[threading.Thread] = []
         self._lock = threading.RLock()
@@ -109,12 +113,8 @@ class PostgresTaskQueue:
                 )
                 """
             )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS ix_admin_tasks_claim ON admin_background_tasks(state, created_at)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS ix_admin_tasks_owner_created ON admin_background_tasks(owner, created_at DESC)"
-            )
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_tasks_claim ON admin_background_tasks(state, created_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_admin_tasks_owner_created ON admin_background_tasks(owner, created_at DESC)")
 
     def register_handler(self, kind: str, handler: Callable[[dict[str, Any]], Any]) -> None:
         if not kind.strip():
@@ -165,25 +165,25 @@ class PostgresTaskQueue:
             raise RuntimeError("task handler is not registered")
         if not self.ready():
             raise RuntimeError("task queue is not accepting work")
+        payload_json = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"), default=str)
+        if len(payload_json.encode("utf-8")) > self._max_payload_bytes:
+            raise RuntimeError("task payload is too large")
         task_id = uuid.uuid4().hex
         now = _utcnow()
         with self._connect() as db, db.cursor() as cur:
+            # Serialize capacity checks across replicas. Without this lock two
+            # submitters can both observe the last free slot and overfill it.
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (self._SUBMIT_LOCK_ID,))
             cur.execute("SELECT COUNT(*) AS n FROM admin_background_tasks WHERE state IN ('queued','running')")
             if int(cur.fetchone()["n"]) >= self._max_queue:
                 raise RuntimeError("task queue is full")
             cur.execute(
                 """INSERT INTO admin_background_tasks(id,kind,owner,state,payload_json,created_at)
                    VALUES(%s,%s,%s,'queued',%s::jsonb,%s)""",
-                (task_id, kind, owner, json.dumps(payload or {}, ensure_ascii=False), now),
+                (task_id, kind, owner, payload_json, now),
             )
         self._trim_history()
-        return PostgresTaskRecord(
-            id=task_id,
-            kind=kind,
-            owner=owner,
-            state=TaskState.QUEUED,
-            created_at=now.isoformat(),
-        )
+        return PostgresTaskRecord(id=task_id, kind=kind, owner=owner, state=TaskState.QUEUED, created_at=now.isoformat())
 
     def get(self, task_id: str) -> PostgresTaskRecord | None:
         with self._connect() as db, db.cursor() as cur:
@@ -231,16 +231,18 @@ class PostgresTaskQueue:
             )
 
     def _claim_one(self) -> dict[str, Any] | None:
+        lease_token = f"{self._instance_id}:{uuid.uuid4().hex}"
         lease_until = _utcnow() + timedelta(seconds=self._lease_seconds)
         with self._connect() as db, db.cursor() as cur:
             cur.execute(
-                """
-                SELECT id FROM admin_background_tasks
-                WHERE state='queued'
-                ORDER BY created_at
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-                """
+                """UPDATE admin_background_tasks
+                   SET state='queued', lease_owner=NULL, lease_expires_at=NULL, started_at=NULL
+                   WHERE state='running' AND lease_expires_at IS NOT NULL AND lease_expires_at < now()"""
+            )
+            cur.execute(
+                """SELECT id FROM admin_background_tasks
+                   WHERE state='queued' ORDER BY created_at
+                   FOR UPDATE SKIP LOCKED LIMIT 1"""
             )
             row = cur.fetchone()
             if not row:
@@ -249,13 +251,29 @@ class PostgresTaskQueue:
                 """UPDATE admin_background_tasks
                    SET state='running', started_at=COALESCE(started_at, now()),
                        lease_owner=%s, lease_expires_at=%s
-                   WHERE id=%s
-                   RETURNING *""",
-                (self._instance_id, lease_until, row["id"]),
+                   WHERE id=%s RETURNING *""",
+                (lease_token, lease_until, row["id"]),
             )
             return cur.fetchone()
 
-    def _finish(self, task_id: str, *, result: Any = None, failed: bool = False) -> None:
+    def _heartbeat_loop(self, task_id: str, lease_token: str, done: threading.Event) -> None:
+        interval = max(5.0, self._lease_seconds / 3.0)
+        while not done.wait(interval):
+            try:
+                with self._connect() as db, db.cursor() as cur:
+                    cur.execute(
+                        """UPDATE admin_background_tasks SET lease_expires_at=%s
+                           WHERE id=%s AND state='running' AND lease_owner=%s""",
+                        (_utcnow() + timedelta(seconds=self._lease_seconds), task_id, lease_token),
+                    )
+                    if cur.rowcount != 1:
+                        return
+            except psycopg.Error:
+                # A transient DB failure is tolerated; recovery will only reclaim
+                # the task after the existing lease actually expires.
+                continue
+
+    def _finish(self, task_id: str, lease_token: str, *, result: Any = None, failed: bool = False) -> None:
         with self._connect() as db, db.cursor() as cur:
             if failed:
                 cur.execute(
@@ -263,7 +281,7 @@ class PostgresTaskQueue:
                        SET state='failed', error='task_failed', finished_at=now(),
                            lease_owner=NULL, lease_expires_at=NULL
                        WHERE id=%s AND lease_owner=%s""",
-                    (task_id, self._instance_id),
+                    (task_id, lease_token),
                 )
             else:
                 cur.execute(
@@ -271,7 +289,7 @@ class PostgresTaskQueue:
                        SET state='completed', result_json=%s::jsonb, error=NULL, finished_at=now(),
                            lease_owner=NULL, lease_expires_at=NULL
                        WHERE id=%s AND lease_owner=%s""",
-                    (json.dumps(result, ensure_ascii=False, default=str), task_id, self._instance_id),
+                    (json.dumps(result, ensure_ascii=False, default=str), task_id, lease_token),
                 )
 
     def _worker_loop(self) -> None:
@@ -285,17 +303,29 @@ class PostgresTaskQueue:
                 self._stop.wait(self._poll_seconds)
                 continue
             task_id = str(row["id"])
+            lease_token = str(row["lease_owner"])
             handler = self._handlers.get(str(row["kind"]))
             if handler is None:
-                self._finish(task_id, failed=True)
+                self._finish(task_id, lease_token, failed=True)
                 continue
             payload = row.get("payload_json") or {}
+            done = threading.Event()
+            heartbeat = threading.Thread(
+                target=self._heartbeat_loop,
+                args=(task_id, lease_token, done),
+                name=f"admin-pg-task-heartbeat-{task_id[:8]}",
+                daemon=True,
+            )
+            heartbeat.start()
             try:
                 result = handler(payload if isinstance(payload, dict) else json.loads(payload))
             except Exception:
-                self._finish(task_id, failed=True)
+                self._finish(task_id, lease_token, failed=True)
             else:
-                self._finish(task_id, result=result)
+                self._finish(task_id, lease_token, result=result)
+            finally:
+                done.set()
+                heartbeat.join(timeout=1.0)
 
     def _trim_history(self) -> None:
         with self._connect() as db, db.cursor() as cur:
