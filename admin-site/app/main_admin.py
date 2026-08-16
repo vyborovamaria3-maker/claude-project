@@ -21,8 +21,6 @@ from .services import TELEGRAM_TABLES
 from .task_queue import AdminTaskQueue
 
 
-_ORIGINAL_ADMIN_SESSION_STORE = security_v2.AdminSessionStore
-
 for _table in (
     "telegram_users",
     "telegram_calls",
@@ -48,6 +46,7 @@ def create_app() -> FastAPI:
     if web_workers > 1 and not state_dsn:
         raise RuntimeError("ADMIN_STATE_POSTGRES_DSN is required when ADMIN_WEB_WORKERS > 1")
 
+    shared_security = None
     if state_dsn:
         app.state.audit = PostgresAuditStore(state_dsn)
         app.state.control = PostgresControlStore(state_dsn)
@@ -77,11 +76,9 @@ def create_app() -> FastAPI:
         )
         app.state.shared_security = shared_security
         app.state.security_backend = "postgres"
-        security_v2.AdminSessionStore = lambda _path: shared_security
         app.state.audit.is_session_revoked = shared_security.is_revoked
         app.state.audit.revoke_session = shared_security.revoke
     else:
-        security_v2.AdminSessionStore = _ORIGINAL_ADMIN_SESSION_STORE
         app.state.task_queue = AdminTaskQueue(workers=workers, max_queue=queue_max, max_history=history_max)
         app.state.task_backend = "memory"
         app.state.security_backend = "sqlite"
@@ -162,7 +159,15 @@ def create_app() -> FastAPI:
     app.include_router(build_analysis_router())
     app.include_router(build_analysis_editor_router())
     app.include_router(build_intelligence_router())
-    security_v2.install_security(app)
+    if shared_security is None:
+        security_v2.install_security(app)
+    else:
+        original_store = security_v2.AdminSessionStore
+        security_v2.AdminSessionStore = lambda _path: shared_security
+        try:
+            security_v2.install_security(app)
+        finally:
+            security_v2.AdminSessionStore = original_store
     return app
 
 
