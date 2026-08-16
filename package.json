@@ -11,6 +11,7 @@
     "subscription:build": "npm --prefix solana-subscription-service run build",
     "subscription:test": "npm --prefix solana-subscription-service run test",
     "subscription:typecheck": "npm --prefix solana-subscription-service run typecheck",
-    "subscription:compose": "docker compose -f solana-subscription-service/docker-compose.yml up --build"
+    "subscription:compose": "docker compose -f solana-subscription-service/docker-compose.yml up --build",
+    "hygiene:check": "node scripts/repository-hygiene.mjs"
   }
 }

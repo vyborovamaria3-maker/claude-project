@@ -61,6 +61,12 @@ backups/
 tmp/
 temp/
 
+# Repository hygiene
+/tmp-*
+**/tmp-*
+*.vsix
+*.zip
+
 # Nested repositories and temporary clones
 repo/
 work/free-test-deploy/
