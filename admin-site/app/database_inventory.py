@@ -5,11 +5,13 @@ from typing import Any
 
 from .database import SourceRegistry
 
-ENTITY_TABLE_HINTS: dict[str, tuple[str, ...]] = {
+# Ordered canonical-table fallbacks. Only the first available table per source is
+# counted for an entity, so denormalized/statistics tables do not inflate totals.
+ENTITY_TABLE_PRIORITY: dict[str, tuple[str, ...]] = {
     "wallets": ("wallets", "dev_wallets", "wallet_stats", "wallet_token_stats"),
-    "coins": ("tokens", "dev_tokens", "analyzed_mints", "token_metrics"),
+    "coins": ("tokens", "analyzed_mints", "dev_tokens", "token_metrics"),
     "twitter_accounts": ("twitter_accounts", "social_accounts"),
-    "twitter_posts": ("tweets", "twitter_token_tweets", "x_mentions", "twitter_mentions", "social_posts"),
+    "twitter_posts": ("tweets", "twitter_token_tweets", "social_posts", "x_mentions", "twitter_mentions"),
     "telegram_accounts": ("telegram_users",),
     "telegram_channels": ("telegram_channels",),
     "telegram_messages": ("telegram_messages", "telegram_posts"),
@@ -20,18 +22,10 @@ ENTITY_TABLE_HINTS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _entity_buckets(table_name: str) -> set[str]:
-    normalized = table_name.strip().lower()
-    output: set[str] = set()
-    for bucket, hints in ENTITY_TABLE_HINTS.items():
-        if normalized in {value.lower() for value in hints}:
-            output.add(bucket)
-    return output
-
-
 def build_database_inventory(registry: SourceRegistry) -> dict[str, Any]:
     sources: list[dict[str, Any]] = []
     entity_counts: dict[str, int] = defaultdict(int)
+    entity_sources: dict[str, list[dict[str, Any]]] = defaultdict(list)
     total_tables = 0
     total_columns = 0
     total_rows = 0
@@ -56,6 +50,7 @@ def build_database_inventory(registry: SourceRegistry) -> dict[str, Any]:
             sources.append(item)
             continue
 
+        row_counts_by_table: dict[str, int] = {}
         for table_name in table_names:
             try:
                 columns = source.columns(table_name)
@@ -64,6 +59,7 @@ def build_database_inventory(registry: SourceRegistry) -> dict[str, Any]:
                 item["tables"].append({"name": table_name, "ok": False, "error": "table_unavailable"})
                 continue
 
+            row_counts_by_table[table_name.lower()] = row_count
             column_payload = [
                 {
                     "name": column.name,
@@ -86,8 +82,18 @@ def build_database_inventory(registry: SourceRegistry) -> dict[str, Any]:
             total_tables += 1
             total_columns += len(column_payload)
             total_rows += row_count
-            for bucket in _entity_buckets(table_name):
-                entity_counts[bucket] += row_count
+
+        for entity, priorities in ENTITY_TABLE_PRIORITY.items():
+            selected_table = next((name for name in priorities if name.lower() in row_counts_by_table), None)
+            if selected_table is None:
+                continue
+            count = row_counts_by_table[selected_table.lower()]
+            entity_counts[entity] += count
+            entity_sources[entity].append({
+                "source": source.config.id,
+                "table": selected_table,
+                "count": count,
+            })
 
         sources.append(item)
 
@@ -100,5 +106,6 @@ def build_database_inventory(registry: SourceRegistry) -> dict[str, Any]:
             "rows": total_rows,
         },
         "entities": dict(sorted(entity_counts.items())),
-        "count_semantics": "fast_estimate",
+        "entity_sources": {key: value for key, value in sorted(entity_sources.items())},
+        "count_semantics": "fast_estimate_canonical_table",
     }
