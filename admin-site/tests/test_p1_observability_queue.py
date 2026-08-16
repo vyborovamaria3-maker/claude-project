@@ -78,6 +78,22 @@ class AdminTaskQueueTests(unittest.TestCase):
             gate.set()
             queue.stop()
 
+    def test_start_submit_stop_is_stable_for_100_iterations(self) -> None:
+        for iteration in range(100):
+            with self.subTest(iteration=iteration):
+                queue = AdminTaskQueue(workers=1, max_queue=1, max_history=2)
+                queue.start()
+                task = queue.submit(kind="stress", owner="admin", fn=lambda: True)
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    current = queue.get(task.id)
+                    if current is not None and current.state == TaskState.COMPLETED:
+                        break
+                    time.sleep(0.001)
+                queue.stop(timeout=1.0)
+                self.assertFalse(queue.metrics()["accepting"])
+                self.assertEqual(queue.metrics()["workers_alive"], 0)
+
 
 class ObservabilityTests(unittest.TestCase):
     def test_prometheus_metrics_are_bounded_and_include_queue(self) -> None:
