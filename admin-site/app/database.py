@@ -67,8 +67,11 @@ def _csv_safe(value: Any) -> Any:
 def _mask_nested(value: Any, *, show_sensitive: bool) -> Any:
     if isinstance(value, dict):
         return {
-            str(key): ("••••••" if is_sensitive(str(key)) and not show_sensitive and item not in (None, "")
-                       else _mask_nested(item, show_sensitive=show_sensitive))
+            str(key): (
+                "••••••"
+                if is_sensitive(str(key)) and not show_sensitive and item not in (None, "")
+                else _mask_nested(item, show_sensitive=show_sensitive)
+            )
             for key, item in value.items()
         }
     if isinstance(value, list):
@@ -257,7 +260,13 @@ class DataSource:
             "source": self.config.id,
             "table": table,
             "columns": [
-                {"name": c.name, "type": c.type, "nullable": c.nullable, "primary_key": c.primary_key, "sensitive": is_sensitive(c.name)}
+                {
+                    "name": c.name,
+                    "type": c.type,
+                    "nullable": c.nullable,
+                    "primary_key": c.primary_key,
+                    "sensitive": is_sensitive(c.name),
+                }
                 for c in columns
             ],
             "rows": normalized,
@@ -269,14 +278,52 @@ class DataSource:
         }
 
     def export_csv(self, table: str, *, limit: int) -> str:
-        result = self.rows(table, page=1, page_size=limit, order="asc")
-        names = [column["name"] for column in result["columns"]]
-        stream = io.StringIO()
-        writer = csv.DictWriter(stream, fieldnames=names, extrasaction="ignore")
-        writer.writeheader()
-        for row in result["rows"]:
-            writer.writerow({key: _csv_safe(value) for key, value in row.items()})
-        return stream.getvalue()
+        """Compatibility helper for callers that still need an in-memory CSV string."""
+        return "".join(self.iter_csv(table, limit=limit))
+
+    def iter_csv(self, table: str, *, limit: int, batch_size: int = 1000) -> Iterator[str]:
+        """Yield a CSV export in bounded chunks without COUNT(*) or loading all rows."""
+        columns = self.columns(table)
+        names = [column.name for column in columns]
+        if not names:
+            return
+
+        sort_column = next((column.name for column in columns if column.primary_key), names[0])
+        qualified = self._qualified(table)
+        placeholder = "?" if self.config.kind == "sqlite" else "%s"
+        sql = f"SELECT * FROM {qualified} ORDER BY {_quote(sort_column)} ASC LIMIT {placeholder}"
+        limit = max(1, int(limit))
+        batch_size = max(1, min(int(batch_size), 5000))
+
+        header = io.StringIO()
+        csv.DictWriter(header, fieldnames=names, extrasaction="ignore").writeheader()
+        yield header.getvalue()
+
+        def encode_batch(rows: list[Any]) -> str:
+            stream = io.StringIO()
+            writer = csv.DictWriter(stream, fieldnames=names, extrasaction="ignore")
+            for raw_row in rows:
+                row = self._mask(dict(raw_row))
+                writer.writerow({key: _csv_safe(value) for key, value in row.items()})
+            return stream.getvalue()
+
+        with self.connect() as db:
+            if self.config.kind == "sqlite":
+                cursor = db.execute(sql, (limit,))
+                while True:
+                    batch = cursor.fetchmany(batch_size)
+                    if not batch:
+                        break
+                    yield encode_batch(batch)
+                return
+
+            with db.cursor(name="admin_csv_export") as cursor:
+                cursor.execute(sql, (limit,))
+                while True:
+                    batch = cursor.fetchmany(batch_size)
+                    if not batch:
+                        break
+                    yield encode_batch(batch)
 
     def recent(self, table: str, *, limit: int = 100) -> list[dict[str, Any]]:
         columns = self.columns(table)
