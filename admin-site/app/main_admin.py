@@ -4,11 +4,13 @@ import contextlib
 import os
 import sqlite3
 
-from fastapi import FastAPI, Response, status
+from fastapi import Depends, FastAPI, Response, status
 
 from .analysis_api_v3 import build_analysis_router
 from .analysis_editor import LiveAnalysisProfileStore
 from .analysis_editor_api import build_analysis_editor_router
+from .auth import require_admin
+from .database_inventory import build_database_inventory
 from .intelligence_view import build_intelligence_router
 from .intelligence_view_factory import build_intelligence_view_store
 from .main import create_app as create_base_app
@@ -165,6 +167,11 @@ def create_app() -> FastAPI:
             "mutable_state_backend": app.state.mutable_state_backend,
             "web_workers": web_workers,
         }
+
+    @app.get("/api/database/inventory")
+    def database_inventory(admin=Depends(require_admin)) -> dict[str, object]:
+        del admin
+        return build_database_inventory(app.state.registry)
 
     @app.get("/metrics", include_in_schema=False)
     def prometheus_metrics() -> Response:
