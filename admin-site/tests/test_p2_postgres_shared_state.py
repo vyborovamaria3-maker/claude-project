@@ -90,8 +90,38 @@ class PostgresSharedStateTests(unittest.TestCase):
             assert current is not None
             self.assertEqual(current.state, TaskState.COMPLETED)
             self.assertEqual(current.result, {"value": 42})
-            # A single durable row reaches one terminal state; it is not duplicated per process.
             self.assertEqual(q1.get(task.id).result, {"value": 42})
+        finally:
+            q1.stop(); q2.stop()
+
+    def test_one_hundred_tasks_complete_across_two_queue_instances(self) -> None:
+        q1 = PostgresTaskQueue(DSN, workers=2, max_queue=200, max_history=300)
+        q2 = PostgresTaskQueue(DSN, workers=2, max_queue=200, max_history=300)
+        handler = lambda payload: {"value": int(payload["value"]) * 2}
+        q1.register_handler("p2_stress", handler)
+        q2.register_handler("p2_stress", handler)
+        q1.start(); q2.start()
+        try:
+            tasks = [
+                (q1 if index % 2 == 0 else q2).submit(
+                    kind="p2_stress", owner="admin", payload={"value": index}
+                )
+                for index in range(100)
+            ]
+            self.assertEqual(len({task.id for task in tasks}), 100)
+            deadline = time.monotonic() + 15
+            remaining = {task.id: index for index, task in enumerate(tasks)}
+            while remaining and time.monotonic() < deadline:
+                for task_id, index in list(remaining.items()):
+                    current = q1.get(task_id)
+                    if current is not None and current.state == TaskState.COMPLETED:
+                        self.assertEqual(current.result, {"value": index * 2})
+                        remaining.pop(task_id)
+                    elif current is not None and current.state == TaskState.FAILED:
+                        self.fail(f"task {task_id} failed")
+                if remaining:
+                    time.sleep(0.05)
+            self.assertFalse(remaining, f"unfinished tasks: {len(remaining)}")
         finally:
             q1.stop(); q2.stop()
 
