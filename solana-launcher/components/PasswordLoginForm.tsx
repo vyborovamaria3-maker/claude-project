@@ -80,7 +80,7 @@ export default function PasswordLoginForm() {
       <button
         type="submit"
         disabled={isLoading}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-neon-green px-4 py-3 font-semibold text-white transition hover:scale-[1.02] disabled:opacity-50"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-neon-green px-4 py-3 font-semibold text-black transition hover:scale-[1.02] disabled:opacity-50"
       >
         {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
         Войти

@@ -373,7 +373,7 @@ async def register_password(
     expected_key = settings.backend_api_key
     
     is_dev_internal = (
-        settings.environment == "development"
+        settings.environment.strip().lower() in {"development", "test"}
         and not expected_key
         and request.headers.get("X-Dev-Internal") == "miniapp-subscription"
     )

@@ -1,0 +1,249 @@
+{
+  "version": "feature-provenance-v1",
+  "coreFeatureCount": 129,
+  "groups": {
+    "X / Twitter": {
+      "coreCount": 39,
+      "default": {
+        "source": "x",
+        "sources": ["x"],
+        "role": "input"
+      },
+      "labels": [
+        "X score",
+        "Mentions",
+        "Mentions 5m",
+        "Mentions 15m",
+        "Mentions 1h",
+        "Mentions 6h",
+        "Mentions 24h",
+        "Mentions / h",
+        "Acceleration",
+        "Unique authors",
+        "Unique authors 6h",
+        "Unique authors 24h",
+        "Author growth 6h",
+        "Author diffusion",
+        "Views",
+        "Likes",
+        "Reposts",
+        "Engagement",
+        "Engagement rate",
+        "Verified authors",
+        "Verified ratio",
+        "Influencers",
+        "Potential reach",
+        "Influencer reach",
+        "Quality accounts (proxy)",
+        "Repeat shillers",
+        "Bot risk",
+        "Bot ratio",
+        "Bot burst 1h",
+        "Anomalies",
+        "Follower quality",
+        "Sentiment",
+        "Positive",
+        "Neutral",
+        "Negative",
+        "Sentiment change",
+        "First mover",
+        "First mention",
+        "Account age"
+      ]
+    },
+    "Telegram": {
+      "coreCount": 28,
+      "default": {
+        "source": "telegram",
+        "sources": ["telegram"],
+        "role": "input"
+      },
+      "overrides": {
+        "AI sentiment": { "source": "ai", "sources": ["ai"], "role": "ai_output" },
+        "AI sentiment score": { "source": "ai", "sources": ["ai"], "role": "ai_output" },
+        "AI sentiment confidence": { "source": "ai", "sources": ["ai"], "role": "ai_output" },
+        "Dominant intent": { "source": "ai", "sources": ["ai"], "role": "ai_output" },
+        "AI campaign": { "source": "ai", "sources": ["ai"], "role": "ai_output" },
+        "AI coordination risk": { "source": "ai", "sources": ["ai"], "role": "ai_output" },
+        "AI risk score": { "source": "ai", "sources": ["ai"], "role": "ai_output" },
+        "AI overall confidence": { "source": "ai", "sources": ["ai"], "role": "ai_output" }
+      },
+      "labels": [
+        "TG score",
+        "Mentions",
+        "Retained messages",
+        "Mentions 5m",
+        "Mentions 15m",
+        "Mentions 1h",
+        "Mentions 6h",
+        "Mentions 24h",
+        "Mentions / h",
+        "Acceleration",
+        "Channels",
+        "Channels retained",
+        "Channels 6h",
+        "Channels 24h",
+        "Channel growth 6h",
+        "Explicit calls",
+        "Explicit call share",
+        "Channel score",
+        "Evaluated historical calls",
+        "Historical win rate",
+        "Historical rug rate",
+        "Sentiment",
+        "AI sentiment",
+        "AI sentiment score",
+        "AI sentiment confidence",
+        "Window sentiment change",
+        "Dominant intent",
+        "Top/first source",
+        "First signal",
+        "AI campaign",
+        "AI coordination risk",
+        "AI risk score",
+        "AI overall confidence"
+      ]
+    },
+    "Growth / Quality / Manipulation": {
+      "coreCount": 16,
+      "default": {
+        "source": "derived",
+        "sources": ["x", "telegram"],
+        "role": "input"
+      },
+      "overrides": {
+        "Narrative strength": { "source": "derived", "sources": ["ai", "x", "telegram"], "role": "ai_output" },
+        "Narrative": { "source": "ai", "sources": ["ai"], "role": "ai_output" },
+        "Campaign hypothesis": { "source": "ai", "sources": ["ai"], "role": "ai_output" }
+      },
+      "labels": [
+        "Hype score",
+        "FOMO score",
+        "Organic score",
+        "Paid promotion risk",
+        "Manipulation score",
+        "Social risk",
+        "Social risk level",
+        "Coordination score",
+        "Copy-paste ratio",
+        "Follower quality",
+        "Narrative strength",
+        "Narrative",
+        "Campaign hypothesis",
+        "Peak density",
+        "Velocity change",
+        "Sentiment change"
+      ]
+    },
+    "Cross-platform / Timing": {
+      "coreCount": 24,
+      "default": {
+        "source": "derived",
+        "sources": ["x", "telegram"],
+        "role": "input"
+      },
+      "overrides": {
+        "Early signal score": { "source": "derived", "sources": ["x", "telegram", "market"], "role": "input" },
+        "Early timing delta": { "source": "derived", "sources": ["x", "telegram", "market"], "role": "input" },
+        "Alpha score": { "source": "derived", "sources": ["x", "telegram", "market"], "role": "input" },
+        "Price ↔ Social direction": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Lead / lag": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Lead/lag confidence": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Price after social 5m": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Price after social 15m": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Price after social 1h": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Max upside 1h": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Max drawdown 1h": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Nearest 5m price impulse": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Price 1h snapshot": { "source": "market", "sources": ["market"], "role": "input" },
+        "Price 24h snapshot": { "source": "market", "sources": ["market"], "role": "input" },
+        "Volume 1h": { "source": "market", "sources": ["market"], "role": "input" },
+        "Volume 24h": { "source": "market", "sources": ["market"], "role": "input" },
+        "Liquidity": { "source": "market", "sources": ["market"], "role": "input" }
+      },
+      "labels": [
+        "Cross-platform score",
+        "Cross matched share",
+        "Cross median lag",
+        "Both platforms active",
+        "TG → X first lag",
+        "X → TG first lag",
+        "First X",
+        "First TG",
+        "Social spike",
+        "Early signal score",
+        "Early timing delta",
+        "Alpha score",
+        "Social score",
+        "Price ↔ Social direction",
+        "Lead / lag",
+        "Lead/lag confidence",
+        "Price after social 5m",
+        "Price after social 15m",
+        "Price after social 1h",
+        "Max upside 1h",
+        "Max drawdown 1h",
+        "Nearest 5m price impulse",
+        "Price 1h snapshot",
+        "Price 24h snapshot",
+        "Volume 1h",
+        "Volume 24h",
+        "Liquidity"
+      ]
+    },
+    "Price event evidence": {
+      "coreCount": 12,
+      "default": {
+        "source": "chain",
+        "sources": ["chain"],
+        "role": "input"
+      },
+      "overrides": {
+        "Price at social spike": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Price +5m": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Price +15m": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Price +1h": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Impulse timestamp": { "source": "derived", "sources": ["x", "telegram", "chain"], "role": "input" },
+        "Impulse threshold": { "source": "derived", "sources": ["derived"], "role": "input" }
+      },
+      "labels": [
+        "Trades sampled",
+        "Trade history start",
+        "Trade history end",
+        "Price at social spike",
+        "Price +5m",
+        "Price +15m",
+        "Price +1h",
+        "Impulse timestamp",
+        "Impulse threshold",
+        "On-chain raw trades",
+        "Unique wallets",
+        "Wallets enriched",
+        "Synchronous buy clusters",
+        "History truncated"
+      ]
+    },
+    "AI Agent / Evidence": {
+      "coreCount": 10,
+      "default": {
+        "source": "ai",
+        "sources": ["ai"],
+        "role": "ai_output"
+      },
+      "labels": [
+        "Agent",
+        "AI latency",
+        "AI cache",
+        "Summary",
+        "Claims",
+        "Entities",
+        "Relationships",
+        "Risks",
+        "Originators",
+        "Amplifiers",
+        "AI coordination risk",
+        "AI risk score"
+      ]
+    }
+  }
+}

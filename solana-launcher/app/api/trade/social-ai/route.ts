@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import type { AnalysisSnapshot, IntelligenceFeature } from "@/lib/trade/intelligence-agent";
+import type { AnalysisSnapshot } from "@/lib/trade/intelligence-agent";
 import {
   enrichSnapshotWithMemory,
   loadMemoryContext,
@@ -8,6 +8,7 @@ import {
   researchMeta,
   runBoundedResearch,
 } from "@/lib/trade/intelligence-research-server";
+import { buildProvenanceFeature, rebuildProvenanceSnapshot } from "@/lib/trade/intelligence-agent-provenance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -380,9 +381,9 @@ function advancedFeature(
   snapshot: AnalysisSnapshot,
   layer: string,
   value: unknown,
-): IntelligenceFeature {
+): AnalysisSnapshot["features"][number] {
   const serialized = JSON.stringify(value ?? null).slice(0, 600);
-  return {
+  return buildProvenanceFeature({
     key: `advanced.${layer}`,
     group: "Advanced Intelligence",
     label: layer.replaceAll("_", " "),
@@ -393,7 +394,7 @@ function advancedFeature(
     observedAt: snapshot.createdAt,
     missing: false,
     note: "Deterministic/historical advanced-intelligence layer; verify evidence before causal claims.",
-  };
+  });
 }
 
 function snapshotWithAdvancedReport(
@@ -407,10 +408,12 @@ function snapshotWithAdvancedReport(
     .map(([key, value]) => advancedFeature(snapshot, key, value))
     .slice(0, Math.max(0, 300 - snapshot.features.length));
   if (!additions.length) return snapshot;
+  const features = [...snapshot.features, ...additions];
   return {
     ...snapshot,
-    featureCount: snapshot.features.length + additions.length,
-    features: [...snapshot.features, ...additions],
+    featureCount: features.length,
+    features,
+    provenance: rebuildProvenanceSnapshot({ ...snapshot, features }).provenance,
   };
 }
 

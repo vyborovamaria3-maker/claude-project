@@ -3,8 +3,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type {
   AnalysisSnapshot,
-  IntelligenceFeature,
-} from "@/lib/trade/intelligence-agent";
+} from "@/lib/trade/intelligence-agent-provenance";
+import { buildProvenanceFeature, rebuildProvenanceSnapshot } from "@/lib/trade/intelligence-agent-provenance";
 
 export const INTELLIGENCE_PROMPT_VERSION = "intelligence-qwen-v6-tools-evidence";
 export const MAX_RESEARCH_ENTITIES = 8;
@@ -149,8 +149,8 @@ function feature(
   observedAt: string,
   confidence: number,
   note: string,
-): IntelligenceFeature {
-  return {
+): AnalysisSnapshot["features"][number] {
+  return buildProvenanceFeature({
     key,
     group,
     label,
@@ -161,21 +161,23 @@ function feature(
     observedAt,
     missing: false,
     note,
-  };
+  });
 }
 
 function appendFeatures(
   snapshot: AnalysisSnapshot,
-  additions: IntelligenceFeature[],
+  additions: AnalysisSnapshot["features"],
 ) {
   const existing = new Set(snapshot.features.map((item) => item.key));
   const selected = additions
     .filter((item) => !existing.has(item.key))
     .slice(0, Math.max(0, 300 - snapshot.features.length));
+  const features = [...snapshot.features, ...selected];
   return {
     ...snapshot,
-    featureCount: snapshot.features.length + selected.length,
-    features: [...snapshot.features, ...selected],
+    featureCount: features.length,
+    features,
+    provenance: rebuildProvenanceSnapshot({ ...snapshot, features }).provenance,
   };
 }
 
@@ -186,7 +188,7 @@ export function enrichSnapshotWithMemory(
 ) {
   if (!memory) return snapshot;
   const observedAt = snapshot.createdAt;
-  const additions: IntelligenceFeature[] = [];
+  const additions: AnalysisSnapshot["features"] = [];
   for (const [key, value] of Object.entries(memory.stats || {})) {
     if (!Number.isFinite(value)) continue;
     additions.push(
@@ -312,7 +314,7 @@ function researchFeatures(
   research: ResearchContext | null,
 ) {
   if (!research?.results?.length) return [];
-  const additions: IntelligenceFeature[] = [];
+  const additions: AnalysisSnapshot["features"] = [];
   for (const item of research.results.slice(0, 30)) {
     if (!item.found) continue;
     const tool = String(item.tool || "research");
