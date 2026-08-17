@@ -24,6 +24,22 @@ jobs:
     name: Regression and syntax checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: potapoff_admin_test
+          POSTGRES_USER: potapoff_admin
+          POSTGRES_PASSWORD: ci-admin-state-password
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U potapoff_admin -d potapoff_admin_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ADMIN_STATE_TEST_DSN: postgresql://potapoff_admin:ci-admin-state-password@127.0.0.1:55432/potapoff_admin_test
 
     steps:
       - name: Checkout
@@ -76,23 +92,30 @@ jobs:
           from pathlib import Path
 
           report = json.loads(Path("bandit-report.json").read_text())
-          allowed = {
-              ("B608", "admin-site/app/database.py", 194),
-              ("B608", "admin-site/app/database.py", 203),
-              ("B608", "admin-site/app/database.py", 206),
-          }
+          safe_b608_fragments = (
+              'db.execute(f"SELECT COUNT(*) AS count FROM {qualified}")',
+              'db.execute(f"SELECT MAX(rowid) AS count FROM {qualified}")',
+          )
           blocking = []
           for item in report.get("results", []):
               severity = item.get("issue_severity", "LOW")
               confidence = item.get("issue_confidence", "LOW")
-              key = (item.get("test_id"), item.get("filename"), item.get("line_number"))
-              if severity in {"MEDIUM", "HIGH"} and confidence in {"MEDIUM", "HIGH"} and key not in allowed:
+              is_safe_quoted_identifier_query = (
+                  item.get("test_id") == "B608"
+                  and item.get("filename") == "admin-site/app/database.py"
+                  and any(fragment in item.get("code", "") for fragment in safe_b608_fragments)
+              )
+              if (
+                  severity in {"MEDIUM", "HIGH"}
+                  and confidence in {"MEDIUM", "HIGH"}
+                  and not is_safe_quoted_identifier_query
+              ):
                   blocking.append(item)
           if blocking:
               for item in blocking:
                   print(item.get("test_id"), item.get("filename"), item.get("line_number"), item.get("issue_text"))
               raise SystemExit("Bandit found new blocking security findings")
-          print("Bandit: no new blocking findings; B608 allow-list is limited to validated/quoted table identifiers.")
+          print("Bandit: no new blocking findings; B608 exceptions match only validated/quoted count queries.")
           PY
 
       - name: Dependency CVE audit
@@ -124,6 +147,7 @@ jobs:
       - name: Prepare CI configuration
         run: |
           cp admin-site/.env.example admin-site/.env
+          sed -i 's/^ADMIN_STATE_DB_PASSWORD=.*/ADMIN_STATE_DB_PASSWORD=ci-compose-password/' admin-site/.env
           cp admin-site/.env.intelligence.example admin-site/.env.intelligence
           cp admin-site/sources.example.json admin-site/sources.json
           cp admin-site/logs.example.json admin-site/logs.json

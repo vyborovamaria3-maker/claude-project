@@ -1,8 +1,7 @@
 import ipaddress
 import os
+import unittest
 from unittest.mock import patch
-
-import pytest
 
 from app.config import Settings
 
@@ -32,33 +31,34 @@ def production_env() -> dict[str, str]:
     }
 
 
-def test_production_accepts_strong_admin_policy():
-    with patch.dict(os.environ, production_env(), clear=False):
-        strong_settings().validate()
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "ADMIN_REQUIRE_NETWORK_ALLOWLIST",
-        "ADMIN_REQUIRE_MFA",
-        "ADMIN_REQUIRE_REAUTH",
-        "ADMIN_SESSION_BIND_IP",
-        "ADMIN_SESSION_BIND_USER_AGENT",
-    ],
-)
-def test_production_rejects_disabled_security_controls(name: str):
-    env = production_env()
-    env[name] = "false"
-    with patch.dict(os.environ, env, clear=False):
-        with pytest.raises(RuntimeError):
+class ProductionSecurityPolicyTests(unittest.TestCase):
+    def test_production_accepts_strong_admin_policy(self) -> None:
+        with patch.dict(os.environ, production_env(), clear=False):
             strong_settings().validate()
 
+    def test_production_rejects_disabled_security_controls(self) -> None:
+        for name in (
+            "ADMIN_REQUIRE_NETWORK_ALLOWLIST",
+            "ADMIN_REQUIRE_MFA",
+            "ADMIN_REQUIRE_REAUTH",
+            "ADMIN_SESSION_BIND_IP",
+            "ADMIN_SESSION_BIND_USER_AGENT",
+        ):
+            with self.subTest(name=name):
+                env = production_env()
+                env[name] = "false"
+                with patch.dict(os.environ, env, clear=False):
+                    with self.assertRaises(RuntimeError):
+                        strong_settings().validate()
 
-def test_production_rejects_plaintext_admin_password():
-    settings = strong_settings()
-    settings.admin_password_hash = ""
-    settings.admin_password = "temporary-admin-password"
-    with patch.dict(os.environ, production_env(), clear=False):
-        with pytest.raises(RuntimeError):
-            settings.validate()
+    def test_production_rejects_plaintext_admin_password(self) -> None:
+        settings = strong_settings()
+        settings.admin_password_hash = ""
+        settings.admin_password = "temporary-admin-password"
+        with patch.dict(os.environ, production_env(), clear=False):
+            with self.assertRaises(RuntimeError):
+                settings.validate()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -82,8 +82,9 @@ def _parse_atom(root: ET.Element) -> list[FeedEntry]:
 
 
 def _child_text(element: ET.Element, name: str) -> str | None:
+    target = name.lower()
     for child in element:
-        if _local_name(child.tag) == name:
+        if _local_name(child.tag) == target:
             text = "".join(child.itertext()).strip()
             return text or None
     return None

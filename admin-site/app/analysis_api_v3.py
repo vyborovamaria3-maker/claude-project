@@ -4,7 +4,7 @@ import logging
 import sqlite3
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 
 from .analysis_catalog import DOMAINS
@@ -52,8 +52,6 @@ def _audit(request: Request, admin: dict[str, Any], action: str, resource: str, 
             details=details or {},
         )
     except sqlite3.Error:
-        # The profile mutation has already committed. Do not return a false HTTP failure
-        # for data that is durably saved; surface the audit-store problem in server logs.
         logger.exception("Failed to persist admin audit event action=%s resource=%s", action, resource)
 
 
@@ -137,5 +135,35 @@ def build_analysis_router() -> APIRouter:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         _audit(request, admin, "analysis_backtest", domain, {"records": len(body.records), "contract": result["contract"], "pass_rate": result["pass_rate"], "coverage": result["coverage"]})
         return result
+
+    @router.post("/api/analysis-profiles/{domain}/backtest/jobs", status_code=status.HTTP_202_ACCEPTED)
+    def queue_analysis_backtest(domain: str, body: AnalysisBacktestBody, request: Request, response: Response, admin=Depends(require_admin)) -> dict[str, Any]:
+        _domain_or_404(domain)
+        records = [dict(record) for record in body.records]
+        contract = body.contract
+        owner = str(admin["sub"])
+        task_queue = request.app.state.task_queue
+        try:
+            task = task_queue.submit(
+                kind="analysis_backtest",
+                owner=owner,
+                payload={"domain": domain, "records": records, "contract": contract},
+            )
+        except RuntimeError as exc:
+            if "full" in str(exc):
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Background task queue is full") from None
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Background task queue unavailable") from None
+        _audit(request, admin, "analysis_backtest_queued", domain, {"records": len(records), "contract": contract, "task_id": task.id})
+        response.headers["Location"] = f"/api/analysis-tasks/{task.id}"
+        return task.public(include_result=False)
+
+    @router.get("/api/analysis-tasks/{task_id}")
+    def analysis_task_status(task_id: str, request: Request, admin=Depends(require_admin)) -> dict[str, Any]:
+        if len(task_id) != 32 or any(char not in "0123456789abcdef" for char in task_id.lower()):
+            raise HTTPException(status_code=404, detail="Background task not found")
+        task = request.app.state.task_queue.get(task_id.lower())
+        if task is None or task.owner != str(admin["sub"]):
+            raise HTTPException(status_code=404, detail="Background task not found")
+        return task.public(include_result=True)
 
     return router

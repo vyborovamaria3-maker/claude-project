@@ -37,3 +37,12 @@ def validate_public_http_url(url: str) -> str:
     return urllib.parse.urlunsplit(
         (parsed.scheme.lower(), parsed.netloc, parsed.path or "/", parsed.query, "")
     )
+
+
+def validate_public_url(url: str) -> str:
+    """Backward-compatible name used by provider clients.
+
+    Keep one implementation of the validation policy so providers cannot drift to
+    weaker URL checks while older imports continue to work.
+    """
+    return validate_public_http_url(url)

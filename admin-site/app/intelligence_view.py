@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from psycopg.rows import dict_row
+from psycopg_pool import PoolTimeout
 
 from .auth import require_admin
+from .postgres_pool import build_postgres_pool
 
 
 class IntelligenceViewError(RuntimeError):
@@ -108,27 +113,61 @@ class PostgresIntelligenceViewStore:
             raise ValueError("admin intelligence PostgreSQL DSN must be non-empty")
         self._dsn = dsn.strip()
         self._connect_factory = connect_factory
+        self._pool = None
+        self._summary_lock = threading.Lock()
+        self._summary_cached_at = 0.0
+        self._summary_cache: dict[str, Any] | None = None
+        if connect_factory is psycopg.connect:
+            self._pool = build_postgres_pool(
+                self._dsn,
+                name="admin-intelligence-read",
+                min_size=1,
+                max_size=3,
+                connect_timeout=2,
+            )
 
-    def _connect(self) -> Any:
+    @contextmanager
+    def _connect(self):
         connection: Any = None
         try:
+            if self._pool is not None:
+                with self._pool.connection() as connection:
+                    connection.execute("SET TRANSACTION READ ONLY")
+                    yield connection
+                return
             connection = self._connect_factory(
                 self._dsn,
                 row_factory=dict_row,
                 connect_timeout=2,
             )
-            # Defense in depth: the admin should also use a DB role with SELECT-only grants.
             connection.execute("SET TRANSACTION READ ONLY")
-            return connection
-        except psycopg.Error as exc:
-            if connection is not None:
+            with connection:
+                yield connection
+        except (psycopg.Error, PoolTimeout) as exc:
+            if connection is not None and self._pool is None:
                 try:
                     connection.close()
                 except Exception:
                     pass
             raise IntelligenceViewError("intelligence_runtime_unavailable") from exc
 
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.close(timeout=5.0)
+
+    @staticmethod
+    def _clone_summary(value: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **value,
+            "jobs": dict(value.get("jobs", {})),
+            "sources": dict(value.get("sources", {})),
+        }
+
     def summary(self) -> dict[str, Any]:
+        now = time.monotonic()
+        with self._summary_lock:
+            if self._summary_cache is not None and now - self._summary_cached_at < 0.5:
+                return self._clone_summary(self._summary_cache)
         try:
             with self._connect() as connection:
                 job_rows = connection.execute(
@@ -138,14 +177,18 @@ class PostgresIntelligenceViewStore:
                     "SELECT source, COUNT(*) AS count FROM intelligence_documents GROUP BY source"
                 ).fetchall()
                 latest_job = connection.execute(
-                    "SELECT MAX(created_at) AS value FROM intelligence_jobs"
+                    "SELECT created_at AS value FROM intelligence_jobs ORDER BY created_at DESC, id DESC LIMIT 1"
                 ).fetchone()
                 latest_document = connection.execute(
-                    "SELECT MAX(collected_at) AS value FROM intelligence_documents"
+                    "SELECT collected_at AS value FROM intelligence_documents ORDER BY collected_at DESC, id DESC LIMIT 1"
                 ).fetchone()
-        except psycopg.Error as exc:
-            raise IntelligenceViewError("intelligence_runtime_unavailable") from exc
-        return _summary_payload(job_rows, source_rows, latest_job, latest_document)
+        except IntelligenceViewError:
+            raise
+        result = _summary_payload(job_rows, source_rows, latest_job, latest_document)
+        with self._summary_lock:
+            self._summary_cache = self._clone_summary(result)
+            self._summary_cached_at = time.monotonic()
+        return result
 
     def recent_jobs(self, limit: int) -> list[dict[str, Any]]:
         _validate_limit(limit)
@@ -161,8 +204,8 @@ class PostgresIntelligenceViewStore:
                     """,
                     (limit,),
                 ).fetchall()
-        except psycopg.Error as exc:
-            raise IntelligenceViewError("intelligence_runtime_unavailable") from exc
+        except IntelligenceViewError:
+            raise
         return [_job_payload(row, _native_string_list(row.get("result_document_ids_json"))) for row in rows]
 
     def recent_documents(self, limit: int) -> list[dict[str, Any]]:
@@ -179,8 +222,8 @@ class PostgresIntelligenceViewStore:
                     """,
                     (limit,),
                 ).fetchall()
-        except psycopg.Error as exc:
-            raise IntelligenceViewError("intelligence_runtime_unavailable") from exc
+        except IntelligenceViewError:
+            raise
         return [_document_payload(row, _native_string_list(row.get("entities_json"))) for row in rows]
 
 
@@ -230,7 +273,6 @@ def _job_payload(row: Any, result_ids: list[str]) -> dict[str, Any]:
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
         "result_document_ids": result_ids,
-        # Do not surface provider/query/error text through the admin read model.
         "has_error": bool(row["error"]),
     }
 

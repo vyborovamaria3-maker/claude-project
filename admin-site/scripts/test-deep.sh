@@ -6,6 +6,10 @@ cd "$ROOT"
 python -m unittest discover -s admin-site/tests -v
 python -m compileall -q admin-site
 
+while IFS= read -r -d '' file; do
+  bash -n "$file"
+done < <(find admin-site -type f -name '*.sh' -print0)
+
 python - <<'PY'
 import json
 from pathlib import Path

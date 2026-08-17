@@ -238,19 +238,40 @@ class ControlCenterTest(unittest.TestCase):
         self.assertTrue(limiter.allow("same-ip"))
 
     def test_production_origin_allowlist_blocks_host_header_spoofing(self):
+        from app.auth import hash_password
         from app.main import create_app
         old = os.environ.copy()
         try:
             os.environ.update({
                 "ADMIN_ENVIRONMENT":"production",
                 "ADMIN_ALLOWED_ORIGINS":"https://admin.example.com",
-                "ADMIN_SECURE_COOKIE":"false",
+                "ADMIN_ALLOWED_NETWORKS":"127.0.0.0/8",
+                "ADMIN_REQUIRE_NETWORK_ALLOWLIST":"true",
+                "ADMIN_REQUIRE_MFA":"true",
+                "ADMIN_TOTP_SECRET":"JBSWY3DPEHPK3PXP",
+                "ADMIN_REQUIRE_REAUTH":"true",
+                "ADMIN_SESSION_BIND_IP":"true",
+                "ADMIN_SESSION_BIND_USER_AGENT":"true",
+                "ADMIN_SECURE_COOKIE":"true",
+                "ADMIN_PASSWORD":"",
+                "ADMIN_PASSWORD_HASH":hash_password("correct-password"),
+                "ADMIN_TRUST_PROXY":"true",
+                "ADMIN_TRUSTED_PROXY_HOPS":"1",
                 "SOLANA_RPC_URL":"https://api.mainnet-beta.solana.com",
             })
+            forwarded = "127.0.0.1, 127.0.0.1"
             with TestClient(create_app()) as client:
-                rejected = client.post("/api/login", headers={"origin":"https://evil.example", "host":"evil.example"}, json={"username":"admin","password":"correct-password"})
+                rejected = client.post(
+                    "/api/login",
+                    headers={"origin":"https://evil.example", "host":"evil.example", "x-forwarded-for":forwarded},
+                    json={"username":"admin","password":"correct-password"},
+                )
                 self.assertEqual(rejected.status_code, 403)
-                accepted = client.post("/api/login", headers={"origin":"https://admin.example.com", "host":"evil.example"}, json={"username":"admin","password":"correct-password"})
+                accepted = client.post(
+                    "/api/login",
+                    headers={"origin":"https://admin.example.com", "host":"evil.example", "x-forwarded-for":forwarded},
+                    json={"username":"admin","password":"correct-password"},
+                )
                 self.assertEqual(accepted.status_code, 200)
         finally:
             os.environ.clear(); os.environ.update(old)

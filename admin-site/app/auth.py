@@ -91,13 +91,20 @@ def verify_session(settings: Settings, token: str) -> dict:
 
 def require_admin(request: Request) -> dict:
     settings: Settings = request.app.state.settings
-    token = request.cookies.get(settings.session_cookie, "")
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    payload = verify_session(settings, token)
+    cached = getattr(request.state, "admin_payload", None)
+    if isinstance(cached, dict):
+        payload = cached
+    else:
+        token = request.cookies.get(settings.session_cookie, "")
+        if not token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        payload = verify_session(settings, token)
+        audit = getattr(request.app.state, "audit", None)
+        if audit is not None and audit.is_session_revoked(payload.get("nonce", "")):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        request.state.admin_payload = payload
+
     audit = getattr(request.app.state, "audit", None)
-    if audit is not None and audit.is_session_revoked(payload.get("nonce", "")):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     if request.url.path == "/api/logout" and audit is not None:
         audit.revoke_session(payload["nonce"], int(payload["exp"]))
     return payload

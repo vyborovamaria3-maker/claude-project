@@ -24,6 +24,12 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_documents_source
 CREATE INDEX IF NOT EXISTS idx_intelligence_documents_collected_at
     ON intelligence_documents(collected_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_intelligence_documents_recent
+    ON intelligence_documents(collected_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_documents_source_collected
+    ON intelligence_documents(source, collected_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_intelligence_documents_provider
     ON intelligence_documents(provider)
     WHERE provider IS NOT NULL;
@@ -51,5 +57,11 @@ CREATE TABLE IF NOT EXISTS intelligence_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_intelligence_jobs_status_created
     ON intelligence_jobs(status, created_at ASC, id ASC);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_jobs_recent
+    ON intelligence_jobs(created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_jobs_status_recent
+    ON intelligence_jobs(status, created_at DESC);
 
 COMMIT;

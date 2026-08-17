@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timezone
+from typing import Any
 
 import json
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 
 class AuditStore:
@@ -93,10 +93,13 @@ class AuditStore:
         if not nonce:
             return True
         now = int(time.time())
-        with self._lock, contextlib.closing(self._connect()) as db:
-            db.execute("DELETE FROM revoked_admin_sessions WHERE expires_at<=?", (now,))
-            row = db.execute("SELECT 1 FROM revoked_admin_sessions WHERE nonce=? LIMIT 1", (nonce,)).fetchone()
-            db.commit()
+        # Hot path: this check runs for every authenticated API request. Keep it
+        # read-only; expired rows are cleaned opportunistically by revoke_session().
+        with contextlib.closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT 1 FROM revoked_admin_sessions WHERE nonce=? AND expires_at>? LIMIT 1",
+                (nonce, now),
+            ).fetchone()
             return row is not None
 
     def list(self, limit: int = 200) -> list[dict[str, Any]]:
