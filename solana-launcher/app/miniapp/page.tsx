@@ -1,19 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import {
-  ArrowRight,
-  Check,
-  Copy,
-  CreditCard,
-  KeyRound,
-  Loader2,
-  LockKeyhole,
-  ShieldCheck,
-  Sparkles,
-  UserRound,
-} from "lucide-react";
+import styles from "./MiniApp.module.css";
 
 type TelegramUser = {
   id?: number;
@@ -28,6 +16,7 @@ type MiniAppWebApp = {
   expand?: () => void;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
+  openLink?: (url: string) => void;
   HapticFeedback?: {
     impactOccurred?: (style: "light" | "medium" | "heavy") => void;
     notificationOccurred?: (type: "error" | "success" | "warning") => void;
@@ -83,6 +72,7 @@ type CheckoutResponse = {
 };
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
+const SITE_URL = "https://potapoff.fun";
 
 export default function MiniAppPage() {
   const [login, setLogin] = useState("");
@@ -95,7 +85,7 @@ export default function MiniAppPage() {
   const checkingRef = useRef(false);
   const [copied, setCopied] = useState<"login" | "password" | "payment" | null>(null);
   const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
-  const [statusMessage, setStatusMessage] = useState("Loading subscription settings…");
+  const [statusMessage, setStatusMessage] = useState("Подключаем настройки доступа…");
 
   const webApp =
     typeof window !== "undefined" ? (window.Telegram?.WebApp as MiniAppWebApp | undefined) : undefined;
@@ -106,19 +96,19 @@ export default function MiniAppPage() {
 
   const loginError = useMemo(() => {
     if (!login) return "";
-    return LOGIN_RE.test(login) ? "" : "Use 4-32 characters: letters, digits, or underscore.";
+    return LOGIN_RE.test(login) ? "" : "Логин: 4–32 символа, только A–Z, 0–9 и _.";
   }, [login]);
 
-  const displayName = telegramUser?.first_name || telegramUser?.username || "Trader";
   const solEnabled = Number(config?.monthlyPriceSol || "0") > 0;
   const usdtEnabled = Number(config?.monthlyPriceUsdt || "0") > 0;
+  const displayName = telegramUser?.first_name || telegramUser?.username || "Trader";
 
   useEffect(() => {
     if (webApp) {
       webApp.ready?.();
       webApp.expand?.();
-      webApp.setHeaderColor?.("#06100c");
-      webApp.setBackgroundColor?.("#06100c");
+      webApp.setHeaderColor?.("#05070b");
+      webApp.setBackgroundColor?.("#05070b");
       setTelegramUser(webApp.initDataUnsafe?.user || null);
     }
 
@@ -126,17 +116,17 @@ export default function MiniAppPage() {
       try {
         const response = await fetch("/api/miniapp/config", { cache: "no-store" });
         const data = (await response.json()) as SubscriptionConfig;
-        if (!response.ok) throw new Error(data.error || "Unable to load subscription settings.");
+        if (!response.ok) throw new Error(data.error || "Не удалось загрузить настройки подписки.");
         setConfig(data);
         setStatusMessage(
           data.freeDemoEnabled
-            ? `Free demo is enabled for ${data.demoDays} days.`
-            : "Choose SOL or USDT on Solana to activate 30-day access."
+            ? `Демо-доступ активен на ${data.demoDays} дн.`
+            : "Введите логин и выберите способ активации доступа.",
         );
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Unable to load subscription settings.";
+        const message = err instanceof Error ? err.message : "Не удалось загрузить настройки подписки.";
         setError(message);
-        setStatusMessage("Subscription checkout is temporarily unavailable.");
+        setStatusMessage("Сервис активации временно недоступен.");
       }
     })();
   }, [webApp]);
@@ -156,11 +146,11 @@ export default function MiniAppPage() {
     setCheckout(null);
 
     try {
-      if (!LOGIN_RE.test(login)) throw new Error("Enter a valid login first.");
-      if (!canCheckout) throw new Error("Open this Mini App from Telegram to activate access.");
+      if (!LOGIN_RE.test(login)) throw new Error("Сначала введите корректный логин.");
+      if (!canCheckout) throw new Error("Откройте Mini App из Telegram-бота для активации доступа.");
 
       webApp?.HapticFeedback?.impactOccurred?.("light");
-      setStatusMessage(method === "DEMO" ? "Activating free demo…" : `Creating ${method} payment request…`);
+      setStatusMessage(method === "DEMO" ? "Запрашиваем персональный пароль…" : `Создаём платёж ${method}…`);
 
       const response = await fetch("/api/miniapp/create-invoice", {
         method: "POST",
@@ -168,11 +158,11 @@ export default function MiniAppPage() {
         body: JSON.stringify({ initData, login, method }),
       });
       const data = (await response.json()) as CheckoutResponse;
-      if (!response.ok) throw new Error(data.error || "Could not create subscription checkout.");
-      if (!data.payload) throw new Error("Subscription order was not created correctly.");
+      if (!response.ok) throw new Error(data.error || "Не удалось создать запрос доступа.");
+      if (!data.payload) throw new Error("Backend вернул неполный запрос доступа.");
 
       if (data.mode === "DEMO") {
-        if (!data.password || !data.login) throw new Error("Demo access was not activated correctly.");
+        if (!data.password || !data.login) throw new Error("Backend не выдал данные демо-доступа.");
         setOrder({
           payload: data.payload,
           login: data.login,
@@ -180,27 +170,27 @@ export default function MiniAppPage() {
           password: data.password,
           subscriptionExpiresAt: data.subscriptionExpiresAt,
         });
-        setStatusMessage("Free demo activated. Your site credentials are ready.");
+        setLogin(data.login);
+        setStatusMessage("ACCESS TOKEN RECEIVED · данные для входа готовы");
         webApp?.HapticFeedback?.notificationOccurred?.("success");
         return;
       }
 
       if (!data.currency || !data.displayAmount || !data.paymentUrl) {
-        throw new Error("Solana payment request was not created correctly.");
+        throw new Error("Backend вернул неполный платёжный запрос.");
       }
+
       setCheckout({
         payload: data.payload,
         currency: data.currency,
         displayAmount: data.displayAmount,
         paymentUrl: data.paymentUrl,
       });
-      setStatusMessage(
-        `Send exactly ${data.displayAmount} ${data.currency} using the Solana Pay button. Confirmation is checked automatically.`
-      );
+      setStatusMessage(`Ожидаем ${data.displayAmount} ${data.currency}. Подтверждение проверяется автоматически.`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Checkout error.";
+      const message = err instanceof Error ? err.message : "Ошибка активации.";
       setError(message);
-      setStatusMessage("Checkout needs attention.");
+      setStatusMessage("Запрос требует внимания.");
       webApp?.HapticFeedback?.notificationOccurred?.("error");
     } finally {
       setLoading(false);
@@ -211,6 +201,7 @@ export default function MiniAppPage() {
     if (checkingRef.current) return;
     checkingRef.current = true;
     setChecking(true);
+
     try {
       const response = await fetch("/api/miniapp/verify-payment", {
         method: "POST",
@@ -218,13 +209,14 @@ export default function MiniAppPage() {
         body: JSON.stringify({ initData, payload }),
       });
       const data = (await response.json()) as VerifyPaymentResponse;
+
       if (response.status === 202 || data.status === "pending") {
-        if (showPending) setStatusMessage("Payment is not confirmed yet. Waiting for the Solana transaction…");
+        if (showPending) setStatusMessage("Транзакция пока не подтверждена. Продолжаем проверку…");
         return;
       }
-      if (!response.ok) throw new Error(data.error || "Unable to verify payment.");
+      if (!response.ok) throw new Error(data.error || "Не удалось проверить оплату.");
       if (data.status !== "paid" || !data.payload || !data.login || !data.password) {
-        throw new Error("Payment confirmation is incomplete.");
+        throw new Error("Подтверждение оплаты неполное.");
       }
 
       setOrder({
@@ -235,12 +227,13 @@ export default function MiniAppPage() {
         subscriptionExpiresAt: data.subscriptionExpiresAt,
         paymentSignature: data.paymentSignature,
       });
+      setLogin(data.login);
       setCheckout(null);
-      setStatusMessage("Payment confirmed on Solana. Your access credentials are ready.");
+      setStatusMessage("ACCESS TOKEN RECEIVED · 32/32");
       webApp?.HapticFeedback?.notificationOccurred?.("success");
     } catch (err) {
       if (showPending) {
-        const message = err instanceof Error ? err.message : "Unable to verify payment.";
+        const message = err instanceof Error ? err.message : "Не удалось проверить оплату.";
         setError(message);
         webApp?.HapticFeedback?.notificationOccurred?.("error");
       }
@@ -250,15 +243,41 @@ export default function MiniAppPage() {
     }
   }
 
-  async function copy(value: string, key: "login" | "password" | "payment") {
+  async function copyValue(value: string, key: "login" | "password" | "payment") {
+    if (!value) return;
+
     try {
-      await navigator.clipboard.writeText(value);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        fallbackCopy(value);
+      }
       setCopied(key);
       webApp?.HapticFeedback?.notificationOccurred?.("success");
-      window.setTimeout(() => setCopied(null), 1200);
+      window.setTimeout(() => setCopied((current) => (current === key ? null : current)), 2200);
     } catch {
-      setError("Could not copy automatically. Press and hold the value to copy it.");
+      fallbackCopy(value);
+      setCopied(key);
+      window.setTimeout(() => setCopied((current) => (current === key ? null : current)), 2200);
     }
+  }
+
+  function fallbackCopy(value: string) {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } catch {
+      // Manual long-press remains available in Telegram if the fallback is blocked.
+    }
+    textarea.remove();
   }
 
   function openPayment() {
@@ -267,167 +286,188 @@ export default function MiniAppPage() {
     window.location.href = checkout.paymentUrl;
   }
 
+  function openSite() {
+    webApp?.HapticFeedback?.impactOccurred?.("light");
+    if (webApp?.openLink) {
+      webApp.openLink(SITE_URL);
+      return;
+    }
+    window.open(SITE_URL, "_blank", "noopener,noreferrer");
+  }
+
+  const statusClass = error
+    ? `${styles.status} ${styles.statusError}`
+    : paid
+      ? `${styles.status} ${styles.statusOk}`
+      : styles.status;
+
   return (
-    <main className="relative min-h-[100dvh] overflow-x-hidden bg-[#06100c] text-white">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-        <div className="absolute -left-24 -top-20 h-72 w-72 rounded-full bg-emerald-400/10 blur-3xl" />
-        <div className="absolute -right-28 top-64 h-80 w-80 rounded-full bg-cyan-400/10 blur-3xl" />
-      </div>
-
-      <section className="relative mx-auto flex min-h-[100dvh] w-full max-w-lg flex-col gap-4 px-4 pb-8 pt-4 sm:px-5 sm:pt-5">
-        <header className="flex items-center justify-between gap-3 rounded-3xl border border-white/10 bg-white/[0.045] p-3 backdrop-blur-xl">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-300 to-cyan-400 text-[#06100c]">
-              <Sparkles className="h-5 w-5" />
+    <main className={styles.shell}>
+      <section className={styles.app} aria-label="POTAPoff Telegram Mini App">
+        <div className={styles.pad}>
+          <header className={styles.top}>
+            <div className={styles.logo}>POTAP<span>off</span></div>
+            <div className={`${styles.mode} ${!isTelegram ? styles.modePreview : ""}`}>
+              {isTelegram ? "SECURE ACCESS" : "PREVIEW MODE"}
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-[10px] font-semibold uppercase tracking-[0.25em] text-white/45">Soft777 Mini App</p>
-              <h1 className="truncate text-lg font-bold tracking-tight">Solana Launcher Pro</h1>
-            </div>
-          </div>
-          <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${isTelegram ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-200" : "border-amber-300/25 bg-amber-300/10 text-amber-100"}`}>
-            {isTelegram ? "Connected" : "Preview"}
-          </div>
-        </header>
+          </header>
 
-        <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-white/10 bg-gradient-to-br from-white/[0.075] to-white/[0.025] p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300/65">Premium access</p>
-              <h2 className="mt-2 text-2xl font-black tracking-tight">Welcome, {displayName}</h2>
-              <p className="mt-2 text-sm leading-6 text-white/62">
-                Activate site access with SOL or USDT on the Solana network. Payments are verified on-chain before credentials are issued.
-              </p>
-            </div>
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-emerald-300/20 bg-emerald-300/10 text-emerald-200">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-          </div>
+          <section className={styles.hero}>
+            <div className={styles.eyebrow}>TELEGRAM MINI APP / ACCESS</div>
+            <h1>Hologram Pro<br /><span>Plasma Sweep edition</span></h1>
+            <p>
+              {isTelegram ? `Привет, ${displayName}. ` : ""}
+              Введите логин. После подтверждения backend здесь появится персональный 32-символьный пароль.
+            </p>
+          </section>
 
-          <div className="mt-5 grid grid-cols-3 gap-2">
-            <Metric label="SOL" value={config?.freeDemoEnabled ? "Free demo" : solEnabled ? `${config?.monthlyPriceSol}` : "Off"} />
-            <Metric label="USDT" value={config?.freeDemoEnabled ? "Free demo" : usdtEnabled ? `${config?.monthlyPriceUsdt}` : "Off"} />
-            <Metric label="Access" value={config?.freeDemoEnabled ? `${config.demoDays} days` : "30 days"} />
-          </div>
-        </motion.section>
-
-        <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-5 text-white/72">
-          {statusMessage}
-        </div>
-
-        {paid && order ? (
-          <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-emerald-300/25 bg-emerald-300/[0.08] p-5">
-            <div className="flex items-center gap-3 text-emerald-100">
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-300/15"><Check className="h-5 w-5" /></div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300/65">Activated</p>
-                <h2 className="text-lg font-bold">Your access is ready</h2>
+          <section className={styles.card}>
+            <div className={styles.label}><span>LOGIN</span><small>4–32 символа</small></div>
+            <div className={styles.fieldRow}>
+              <div className={styles.fieldShell}>
+                <input
+                  className={styles.field}
+                  value={login}
+                  onChange={(event) => setLogin(event.target.value)}
+                  placeholder="Логин"
+                  autoComplete="username"
+                  maxLength={32}
+                  disabled={loading || paid}
+                />
               </div>
+              {paid && order ? (
+                <button
+                  className={`${styles.copyBtn} ${copied === "login" ? styles.plasmaDone : ""}`}
+                  type="button"
+                  onClick={() => copyValue(order.login, "login")}
+                >
+                  <span className={styles.copyLabel}>{copied === "login" ? "✓ COPIED" : "COPY"}</span>
+                </button>
+              ) : null}
             </div>
 
-            <div className="mt-5 space-y-3">
-              <CredentialRow label="Login" value={order.login} copied={copied === "login"} onCopy={() => copy(order.login, "login")} />
-              <CredentialRow label="Password" value={order.password || ""} copied={copied === "password"} onCopy={() => copy(order.password || "", "password")} />
+            <div className={styles.label}><span>PASSWORD</span><small>32 символа</small></div>
+            <div className={styles.fieldRow}>
+              <div className={`${styles.passwordShell} ${paid ? styles.passwordReady : ""}`}>
+                <input
+                  className={`${styles.field} ${paid ? styles.readyField : ""}`}
+                  value={paid && order?.password ? order.password : ""}
+                  placeholder={loading || checking ? "Получаем доступ…" : "Пароль"}
+                  readOnly
+                  aria-label="Password"
+                />
+              </div>
+              {paid && order?.password ? (
+                <button
+                  className={`${styles.copyBtn} ${copied === "password" ? styles.plasmaDone : ""}`}
+                  type="button"
+                  onClick={() => copyValue(order.password || "", "password")}
+                >
+                  <span className={styles.copyLabel}>{copied === "password" ? "✓ COPIED" : "COPY"}</span>
+                </button>
+              ) : null}
             </div>
 
-            {order.subscriptionExpiresAt && (
-              <p className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/55">
-                Access valid until {new Date(order.subscriptionExpiresAt).toLocaleDateString()}.
-              </p>
-            )}
-
-            <a href="/login" className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-[#06100c]">
-              Open site login <ArrowRight className="h-4 w-4" />
-            </a>
-          </motion.section>
-        ) : checkout ? (
-          <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-cyan-300/20 bg-cyan-300/[0.06] p-5">
-            <div className="flex items-start gap-3">
-              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-100"><CreditCard className="h-5 w-5" /></div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-200/60">Solana payment</p>
-                <h2 className="text-lg font-bold">{checkout.displayAmount} {checkout.currency}</h2>
-                <p className="mt-1 text-sm leading-5 text-white/55">Use the payment request below so the unique order reference is included on-chain.</p>
-              </div>
+            <div className={styles.meta}>
+              <span>A–Z · 0–9</span>
+              <span className={styles.secure}>encrypted delivery</span>
             </div>
 
-            <button type="button" onClick={openPayment} className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] active:scale-[0.99]">
-              Open in Solana wallet <ArrowRight className="h-4 w-4" />
-            </button>
-            <button type="button" onClick={() => copy(checkout.paymentUrl, "payment")} className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white/80">
-              {copied === "payment" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copied === "payment" ? "Payment link copied" : "Copy Solana Pay link"}
-            </button>
-            <button type="button" disabled={checking} onClick={() => verifyPayment(checkout.payload, true)} className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.08] px-4 py-3 text-sm font-semibold text-emerald-100 disabled:opacity-50">
-              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-              I paid — verify transaction
-            </button>
-          </motion.section>
-        ) : (
-          <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl">
-            <div className="flex items-start gap-3">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/[0.06] text-white/80 ring-1 ring-white/10"><UserRound className="h-5 w-5" /></div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">Step 1</p>
-                <h2 className="text-lg font-bold">Choose your site login</h2>
-                <p className="mt-1 text-sm leading-5 text-white/55">Your password is generated only after payment confirmation or demo activation.</p>
+            {loginError ? <div className={styles.warning}>{loginError}</div> : null}
+            {!isTelegram && process.env.NODE_ENV === "production" ? (
+              <div className={styles.warning}>Активация доступна только внутри Telegram Mini App.</div>
+            ) : null}
+            {error ? <div className={styles.error}>{error}</div> : null}
+
+            {!paid && !checkout ? (
+              config?.freeDemoEnabled ? (
+                <button
+                  className={styles.primaryBtn}
+                  type="button"
+                  onClick={() => createCheckout("DEMO")}
+                  disabled={loading || !login || Boolean(loginError) || !canCheckout}
+                >
+                  {loading ? <span className={styles.spinner} aria-hidden="true" /> : null}
+                  {loading ? "Получаем пароль…" : "Получить пароль"}
+                </button>
+              ) : (
+                <div className={styles.paymentGrid}>
+                  <button
+                    className={styles.paymentBtn}
+                    type="button"
+                    onClick={() => createCheckout("SOL")}
+                    disabled={loading || !solEnabled || !config?.recipientConfigured || !login || Boolean(loginError) || !canCheckout}
+                  >
+                    {loading ? <span className={styles.spinner} aria-hidden="true" /> : null}
+                    {solEnabled ? `Оплатить ${config?.monthlyPriceSol} SOL` : "SOL недоступен"}
+                  </button>
+                  <button
+                    className={styles.paymentBtn}
+                    type="button"
+                    onClick={() => createCheckout("USDT")}
+                    disabled={loading || !usdtEnabled || !config?.recipientConfigured || !login || Boolean(loginError) || !canCheckout}
+                  >
+                    {loading ? <span className={styles.spinner} aria-hidden="true" /> : null}
+                    {usdtEnabled ? `Оплатить ${config?.monthlyPriceUsdt} USDT` : "USDT недоступен"}
+                  </button>
+                </div>
+              )
+            ) : null}
+
+            {checkout ? (
+              <div className={styles.paymentPanel}>
+                <div className={styles.paymentTop}>
+                  <div>
+                    <div className={styles.paymentKicker}>SOLANA PAYMENT</div>
+                    <div className={styles.paymentAmount}>{checkout.displayAmount} {checkout.currency}</div>
+                    <div className={styles.paymentText}>Откройте Solana Pay. После транзакции пароль появится автоматически.</div>
+                  </div>
+                  <div className={styles.paymentBadge}>PENDING</div>
+                </div>
+                <button className={styles.primaryBtn} type="button" onClick={openPayment}>Открыть в кошельке</button>
+                <button
+                  className={styles.secondaryBtn}
+                  type="button"
+                  onClick={() => copyValue(checkout.paymentUrl, "payment")}
+                >
+                  {copied === "payment" ? "✓ Ссылка скопирована" : "Скопировать Solana Pay ссылку"}
+                </button>
+                <button
+                  className={`${styles.secondaryBtn} ${styles.secondaryBtnGreen}`}
+                  type="button"
+                  disabled={checking}
+                  onClick={() => verifyPayment(checkout.payload, true)}
+                >
+                  {checking ? <span className={`${styles.spinner} ${styles.spinnerLight}`} aria-hidden="true" /> : null}
+                  {checking ? "Проверяем…" : "Я оплатил — проверить"}
+                </button>
               </div>
+            ) : null}
+
+            {paid && order ? (
+              <div className={styles.siteCtaWrap}>
+                <button className={styles.siteCta} type="button" onClick={openSite}>
+                  Перейти на сайт POTAPoff
+                  <span className={styles.siteCtaArrow}>↗</span>
+                </button>
+                <div className={styles.siteHint}>Используйте созданные логин и пароль для входа</div>
+                {order.subscriptionExpiresAt ? (
+                  <div className={styles.siteHint}>Доступ до {new Date(order.subscriptionExpiresAt).toLocaleDateString("ru-RU")}</div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className={statusClass}>{statusMessage}</div>
+            <div className={styles.note}>Пароль выдаётся backend только после подтверждения доступа.</div>
+
+            <div className={styles.trust} aria-label="Security features">
+              <div className={styles.trustItem}><span className={styles.trustDot} />TELEGRAM INIT DATA</div>
+              <div className={styles.trustItem}><span className={styles.trustDot} />ON-CHAIN VERIFY</div>
+              <div className={styles.trustItem}><span className={styles.trustDot} />PRIVATE CREDENTIALS</div>
             </div>
-
-            <label className="mt-5 block">
-              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-white/45">Login</span>
-              <div className="mt-2 flex items-center gap-2 rounded-2xl border border-white/10 bg-black/25 px-3 focus-within:border-emerald-300/50">
-                <UserRound className="h-4 w-4 shrink-0 text-white/35" />
-                <input value={login} onChange={(event) => setLogin(event.target.value)} maxLength={32} autoComplete="username" inputMode="text" placeholder="for example dima_pro" className="min-w-0 flex-1 bg-transparent py-3.5 text-base text-white outline-none placeholder:text-white/25" />
-              </div>
-            </label>
-
-            {loginError && <p className="mt-2 text-sm text-amber-200">{loginError}</p>}
-            {!isTelegram && process.env.NODE_ENV === "production" && (
-              <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.08] px-3 py-2.5 text-sm leading-5 text-amber-100">Activation is available only when this page is opened from the Telegram bot.</p>
-            )}
-            {error && <p className="mt-3 rounded-2xl border border-red-300/20 bg-red-400/[0.08] px-3 py-2.5 text-sm leading-5 text-red-100">{error}</p>}
-
-            {config?.freeDemoEnabled ? (
-              <button type="button" onClick={() => createCheckout("DEMO")} disabled={loading || Boolean(loginError) || !login || !canCheckout} className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] disabled:cursor-not-allowed disabled:opacity-40">
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                Activate free {config.demoDays}-day demo
-              </button>
-            ) : (
-              <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <PaymentButton label={solEnabled ? `Pay ${config?.monthlyPriceSol} SOL` : "SOL unavailable"} disabled={loading || !solEnabled || !config?.recipientConfigured || Boolean(loginError) || !login || !canCheckout} loading={loading} onClick={() => createCheckout("SOL")} />
-                <PaymentButton label={usdtEnabled ? `Pay ${config?.monthlyPriceUsdt} USDT` : "USDT unavailable"} disabled={loading || !usdtEnabled || !config?.recipientConfigured || Boolean(loginError) || !login || !canCheckout} loading={loading} onClick={() => createCheckout("USDT")} />
-              </div>
-            )}
-
-            {config && !config.freeDemoEnabled && !config.recipientConfigured && (
-              <p className="mt-3 text-xs leading-5 text-white/45">Payment destination is not configured yet. Set the recipient wallet in the admin subscription settings.</p>
-            )}
-          </motion.section>
-        )}
-
-        <div className="grid grid-cols-3 gap-2 text-[11px] text-white/45">
-          <TrustItem icon={<LockKeyhole className="h-4 w-4" />} text="On-chain verification" />
-          <TrustItem icon={<ShieldCheck className="h-4 w-4" />} text="Unique payment reference" />
-          <TrustItem icon={<KeyRound className="h-4 w-4" />} text="Private credentials" />
+          </section>
         </div>
       </section>
     </main>
   );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">{label}</p><p className="mt-1 truncate text-sm font-bold text-white/85">{value}</p></div>;
-}
-
-function PaymentButton({ label, disabled, loading, onClick }: { label: string; disabled: boolean; loading: boolean; onClick: () => void }) {
-  return <button type="button" onClick={onClick} disabled={disabled} className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3.5 text-sm font-black text-[#06100c] disabled:cursor-not-allowed disabled:opacity-35">{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}{label}</button>;
-}
-
-function CredentialRow({ label, value, copied, onCopy }: { label: string; value: string; copied: boolean; onCopy: () => void }) {
-  return <div className="rounded-2xl border border-white/10 bg-black/25 p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-white/35">{label}</p><div className="mt-1 flex items-center gap-2"><code className="min-w-0 flex-1 break-all text-sm text-white/85">{value}</code><button type="button" onClick={onCopy} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.05] text-white/70">{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}</button></div></div>;
-}
-
-function TrustItem({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return <div className="flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-2xl border border-white/10 bg-white/[0.025] px-2 py-2 text-center">{icon}<span>{text}</span></div>;
 }
