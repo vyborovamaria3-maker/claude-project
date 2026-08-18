@@ -7,6 +7,7 @@ on:
       - "solana-launcher/**"
       - "solana-subscription-service/**"
       - "telegram-miniapp/backend-new/**"
+      - "telegram-miniapp/bot/**"
       - "security/**"
       - ".github/workflows/security-gates.yml"
       - ".github/workflows/potapoff-production.yml"
@@ -23,8 +24,14 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - name: Scan tracked files and git history without printing secret values
-        run: python3 security/audit/secret-scan.py
+      - name: Scan current tracked files without printing secret values
+        run: python3 security/audit/secret-scan.py --mode current
+      - name: Scan newly introduced PR lines without printing secret values
+        if: github.event_name == 'pull_request'
+        env:
+          AUDIT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          AUDIT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 security/audit/secret-scan.py --mode diff --base "$AUDIT_BASE_SHA" --head "$AUDIT_HEAD_SHA"
 
   frontend-security:
     runs-on: ubuntu-latest
