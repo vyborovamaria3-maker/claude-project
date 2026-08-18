@@ -4,7 +4,7 @@
   "private": true,
   "description": "Solana subscription service with Telegram authentication, payments, Mini App and PWA frontend.",
   "engines": {
-    "node": ">=20.11.0"
+    "node": ">=22.0.0"
   },
   "workspaces": [
     "apps/api",
