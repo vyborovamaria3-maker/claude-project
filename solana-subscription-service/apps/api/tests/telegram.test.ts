@@ -17,7 +17,23 @@ vi.stubEnv("TREASURY_WALLET", "11111111111111111111111111111111");
 vi.stubEnv("TREASURY_USDC_TOKEN_ACCOUNT", "11111111111111111111111111111111");
 vi.stubEnv("USDC_MINT", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 
-describe("verifyTelegramLoginWidget", () => {
+function signedMiniAppInitData(authDate: number) {
+  const params = new URLSearchParams({
+    auth_date: String(authDate),
+    query_id: "AAEAAAE",
+    user: JSON.stringify({ id: 42, username: "ada", first_name: "Ada" })
+  });
+  const checkString = [...params.entries()]
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+    .join("\n");
+  const secret = crypto.createHmac("sha256", "WebAppData").update("123456:ABC").digest();
+  const hash = crypto.createHmac("sha256", secret).update(checkString).digest("hex");
+  params.set("hash", hash);
+  return params.toString();
+}
+
+describe("Telegram authentication verification", () => {
   it("accepts a valid login widget signature", async () => {
     const { verifyTelegramLoginWidget } = await import("../src/security/telegram");
     const payload: Record<string, string> = {
@@ -35,5 +51,23 @@ describe("verifyTelegramLoginWidget", () => {
     payload.hash = crypto.createHmac("sha256", secret).update(checkString).digest("hex");
 
     expect(verifyTelegramLoginWidget(payload)).toMatchObject({ id: "42", username: "ada" });
+  });
+
+  it("accepts fresh signed Mini App initData", async () => {
+    const { verifyTelegramMiniAppInitData } = await import("../src/security/telegram");
+    const initData = signedMiniAppInitData(Math.floor(Date.now() / 1000));
+    expect(verifyTelegramMiniAppInitData(initData)).toMatchObject({ id: "42", username: "ada" });
+  });
+
+  it("rejects replayed Mini App initData older than 24 hours", async () => {
+    const { verifyTelegramMiniAppInitData } = await import("../src/security/telegram");
+    const initData = signedMiniAppInitData(Math.floor(Date.now() / 1000) - 60 * 60 * 25);
+    expect(() => verifyTelegramMiniAppInitData(initData)).toThrow(/expired/i);
+  });
+
+  it("rejects Telegram auth timestamps too far in the future", async () => {
+    const { verifyTelegramMiniAppInitData } = await import("../src/security/telegram");
+    const initData = signedMiniAppInitData(Math.floor(Date.now() / 1000) + 60 * 10);
+    expect(() => verifyTelegramMiniAppInitData(initData)).toThrow(/expired/i);
   });
 });
