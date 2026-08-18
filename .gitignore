@@ -52,6 +52,9 @@
 **/__pycache__/
 **/*.pyc
 
+# Local security-scan evidence may contain URLs, headers, payloads or session context.
+security/audit/reports/
+
 # Generated deployment snapshots and temporary exports
 .deploy/
 **/.deploy/

@@ -1,123 +1,87 @@
 /**
- * Set Telegram Bot Menu Button (bottom left corner button)
- * This creates a persistent button that opens the Mini App
+ * Set Telegram Bot Menu Button (bottom left corner button).
+ * Requires BOT_TOKEN and WEBAPP_URL via environment variables.
  */
 
 const https = require('https');
+require('dotenv').config();
 
-const BOT_TOKEN = '8881301382:AAFoB52OPi5VredsbOE7F0mh_SBZubqabj8';
-const WEBAPP_URL = 'https://three-moons-behave.loca.lt';
+function requireEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
 
-// Set Menu Button for all users
-function setMenuButton() {
-  const data = JSON.stringify({
-    menu_button: {
-      type: 'web_app',
-      text: '🚀 Открыть',
-      web_app: {
-        url: WEBAPP_URL
-      }
-    }
-  });
+const BOT_TOKEN = requireEnv('BOT_TOKEN');
+const WEBAPP_URL = requireEnv('WEBAPP_URL');
 
+function telegramRequest(method, data) {
+  const body = JSON.stringify(data);
   const options = {
     hostname: 'api.telegram.org',
     port: 443,
-    path: `/bot${BOT_TOKEN}/setChatMenuButton`,
+    path: `/bot${BOT_TOKEN}/${method}`,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Content-Length': data.length
+      'Content-Length': Buffer.byteLength(body)
     }
   };
 
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
       let responseData = '';
-      res.on('data', (chunk) => responseData += chunk);
+      res.on('data', (chunk) => { responseData += chunk; });
       res.on('end', () => {
-        const result = JSON.parse(responseData);
-        if (result.ok) {
-          console.log('✅ Menu Button set successfully!');
-          console.log('   Button text: 🚀 Открыть');
-          console.log('   WebApp URL:', WEBAPP_URL);
-          resolve(result);
-        } else {
-          console.log('❌ Failed to set Menu Button:', result.description);
-          reject(result);
+        try {
+          const result = JSON.parse(responseData);
+          if (result.ok) return resolve(result);
+          reject(new Error(result.description || `Telegram ${method} failed`));
+        } catch (error) {
+          reject(error);
         }
       });
     });
-
-    req.on('error', (error) => {
-      console.error('❌ Error:', error.message);
-      reject(error);
-    });
-
-    req.write(data);
+    req.on('error', reject);
+    req.write(body);
     req.end();
   });
 }
 
-// Also set bot commands for /start, /help, etc.
-function setCommands() {
-  const data = JSON.stringify({
+async function setMenuButton() {
+  await telegramRequest('setChatMenuButton', {
+    menu_button: {
+      type: 'web_app',
+      text: '🚀 Открыть',
+      web_app: { url: WEBAPP_URL }
+    }
+  });
+  console.log('✅ Menu Button set successfully!');
+}
+
+async function setCommands() {
+  await telegramRequest('setMyCommands', {
     commands: [
       { command: 'start', description: 'Запустить бота' },
       { command: 'help', description: 'Помощь' },
       { command: 'status', description: 'Проверить подписку' }
     ]
   });
-
-  const options = {
-    hostname: 'api.telegram.org',
-    port: 443,
-    path: `/bot${BOT_TOKEN}/setMyCommands`,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': data.length
-    }
-  };
-
-  return new Promise((resolve, reject) => {
-    const req = https.request(options, (res) => {
-      let responseData = '';
-      res.on('data', (chunk) => responseData += chunk);
-      res.on('end', () => {
-        const result = JSON.parse(responseData);
-        if (result.ok) {
-          console.log('✅ Bot commands set!');
-          console.log('   /start - Запустить бота');
-          console.log('   /help - Помощь');
-          console.log('   /status - Проверить подписку');
-          resolve(result);
-        } else {
-          console.log('❌ Failed to set commands:', result.description);
-          reject(result);
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(data);
-    req.end();
-  });
+  console.log('✅ Bot commands set!');
 }
 
-// Run both
 async function setupBot() {
-  console.log('Setting up Telegram bot...\n');
-  
+  console.log('Setting up Telegram bot...');
   try {
     await setMenuButton();
-    console.log('');
     await setCommands();
-    console.log('\n🎉 Bot setup complete!');
-    console.log('   Users will now see 🚀 Открыть button in the menu (bottom left)');
+    console.log('🎉 Bot setup complete!');
   } catch (error) {
-    console.error('Setup failed:', error);
+    console.error('Setup failed:', error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
   }
 }
 
-setupBot();
+void setupBot();

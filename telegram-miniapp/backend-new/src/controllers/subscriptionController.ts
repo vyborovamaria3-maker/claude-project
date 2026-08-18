@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
@@ -8,47 +9,42 @@ import {
   createPayment,
   hasActiveSubscription,
 } from '../services/db';
+import { TelegramAuthError, verifyTelegramInitData } from '../security/telegram';
 
 const createPaymentSchema = z.object({
-  telegramId: z.string().or(z.number()),
-  username: z.string().optional(),
+  initData: z.string().min(1),
   plan: z.enum(['premium']).default('premium'),
 });
 
-const getStatusSchema = z.object({
-  userId: z.string().or(z.number()),
-});
+function sendAuthError(res: Response) {
+  return res.status(401).json({
+    success: false,
+    error: 'Invalid Telegram session',
+  });
+}
 
 /**
  * POST /api/subscription/create
- * Create new payment and return Solana Pay URL
+ * Create new payment for the authenticated Telegram user and return Solana Pay URL.
  */
 export async function createPaymentHandler(req: Request, res: Response) {
   try {
-    const { telegramId, username, plan } = createPaymentSchema.parse(req.body);
-    
-    const tgId = BigInt(telegramId);
-    
-    // Get or create user
-    const user = await getOrCreateUser(tgId, username);
-    
-    // Generate unique memo
-    const memo = `${telegramId}_${Date.now()}`;
-    
-    // Fixed price: 1000 USDT
+    const { initData, plan } = createPaymentSchema.parse(req.body);
+    const telegramUser = verifyTelegramInitData(initData);
+    const tgId = BigInt(telegramUser.id);
+
+    const user = await getOrCreateUser(tgId, telegramUser.username);
+
+    // Unpredictable memo prevents user-id leakage and makes payment references non-guessable.
+    const memo = `sub_${crypto.randomBytes(24).toString('hex')}`;
+
+    // Fixed legacy price: 1000 USDT.
     const amount = 1000;
-    
-    // Create payment record
     const payment = await createPayment(user.id, amount, memo, plan);
-    
-    // Generate Solana Pay URL
-    const payUrl = generateSolanaPayUrl(
-      config.merchantWallet,
-      amount,
-      memo
-    );
-    
-    res.json({
+    const payUrl = generateSolanaPayUrl(config.merchantWallet, amount, memo);
+
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({
       success: true,
       payUrl,
       paymentId: payment.id,
@@ -57,6 +53,9 @@ export async function createPaymentHandler(req: Request, res: Response) {
     });
   } catch (error) {
     console.error('Create payment error:', error);
+    if (error instanceof TelegramAuthError) {
+      return sendAuthError(res);
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({
         success: false,
@@ -64,7 +63,7 @@ export async function createPaymentHandler(req: Request, res: Response) {
         details: error.errors,
       });
     }
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Failed to create payment',
     });
@@ -73,19 +72,20 @@ export async function createPaymentHandler(req: Request, res: Response) {
 
 /**
  * GET /api/subscription/status
- * Check subscription status for user
+ * Check subscription status for the authenticated Telegram user only.
  */
 export async function getSubscriptionStatus(req: Request, res: Response) {
   try {
-    const { userId } = getStatusSchema.parse({ userId: req.query.userId });
-    
-    const tgId = BigInt(userId);
-    
+    const initData = req.header('x-telegram-init-data') || '';
+    const telegramUser = verifyTelegramInitData(initData);
+    const tgId = BigInt(telegramUser.id);
+
     const [user, active] = await Promise.all([
       getUserByTelegramId(tgId),
       hasActiveSubscription(tgId),
     ]);
-    
+
+    res.setHeader('Cache-Control', 'no-store');
     if (!user) {
       return res.json({
         success: true,
@@ -94,8 +94,8 @@ export async function getSubscriptionStatus(req: Request, res: Response) {
         userExists: false,
       });
     }
-    
-    res.json({
+
+    return res.json({
       success: true,
       active,
       subscriptionEnd: user.subscriptionEnd,
@@ -105,13 +105,10 @@ export async function getSubscriptionStatus(req: Request, res: Response) {
     });
   } catch (error) {
     console.error('Get status error:', error);
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid userId',
-      });
+    if (error instanceof TelegramAuthError) {
+      return sendAuthError(res);
     }
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Failed to get status',
     });

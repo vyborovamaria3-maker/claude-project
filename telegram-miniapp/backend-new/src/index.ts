@@ -3,8 +3,8 @@ import cors from 'cors';
 import { config, validateConfig } from './config';
 import { createPaymentHandler, getSubscriptionStatus } from './controllers/subscriptionController';
 import { handleHeliusWebhook, webhookHealth } from './controllers/webhookController';
+import { fixedWindowRateLimit } from './security/rateLimit';
 
-// Validate config on startup
 try {
   validateConfig();
 } catch (error) {
@@ -13,15 +13,34 @@ try {
 }
 
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', config.trustProxyHops > 0 ? config.trustProxyHops : false);
 
-// Middleware
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  next();
+});
+
 app.use(cors({
   origin: config.frontendUrl,
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '256kb' }));
 
-// Health check
+const subscriptionRateLimit = fixedWindowRateLimit({
+  windowMs: 60_000,
+  max: 30,
+  namespace: 'subscription',
+});
+const webhookRateLimit = fixedWindowRateLimit({
+  windowMs: 60_000,
+  max: 300,
+  namespace: 'helius-webhook',
+});
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -29,15 +48,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API Routes
-app.post('/api/subscription/create', createPaymentHandler);
-app.get('/api/subscription/status', getSubscriptionStatus);
+app.post('/api/subscription/create', subscriptionRateLimit, createPaymentHandler);
+app.get('/api/subscription/status', subscriptionRateLimit, getSubscriptionStatus);
 
-// Webhook Routes
-app.post('/webhook/helius', handleHeliusWebhook);
+app.post('/webhook/helius', webhookRateLimit, handleHeliusWebhook);
 app.get('/webhook/helius/health', webhookHealth);
 
-// Error handler
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Express error:', err);
   res.status(500).json({
@@ -46,7 +62,6 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
   });
 });
 
-// Start server
 const PORT = config.port;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);

@@ -89,16 +89,23 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def validate_production_admin_credentials(self) -> "Settings":
+    def validate_production_security(self) -> "Settings":
         if self.environment.strip().lower() not in {"production", "prod"}:
             return self
 
         password = self.admin_password.strip()
         session_secret = self.admin_session_secret.strip()
+        backend_api_key = self.backend_api_key.strip()
+        if self.debug:
+            raise ValueError("DEBUG must be false in production")
         if not password or password == "ChangeMe123!" or len(password) < 16:
             raise ValueError("ADMIN_PASSWORD must be explicitly configured with at least 16 characters in production")
         if not session_secret or session_secret == "admin-session-secret" or len(session_secret) < 32:
             raise ValueError("ADMIN_SESSION_SECRET must be explicitly configured with at least 32 characters in production")
+        if not backend_api_key or len(backend_api_key) < 32:
+            raise ValueError("BACKEND_API_KEY must be explicitly configured with at least 32 characters in production")
+        if "*" in self.cors_origins:
+            raise ValueError("Wildcard CORS origins are not allowed in production")
         return self
 
 

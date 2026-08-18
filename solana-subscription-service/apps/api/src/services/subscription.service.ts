@@ -82,43 +82,72 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
   });
 
   const now = new Date();
-  const endsAt = addBillingPeriod(now, payment.period);
   const updated = await prisma.$transaction(async (tx) => {
-    const subscription = await tx.subscription.upsert({
-      where: { id: payment.subscriptionId ?? "__missing__" },
-      update: {
-        planId: payment.planId,
-        period: payment.period,
-        status: SubscriptionStatus.ACTIVE,
-        startsAt: now,
-        endsAt,
-        reminderSentAt: null
-      },
-      create: {
+    const claim = await tx.paymentTransaction.updateMany({
+      where: {
+        id: payment.id,
         userId,
-        planId: payment.planId,
-        period: payment.period,
-        status: SubscriptionStatus.ACTIVE,
-        startsAt: now,
-        endsAt
-      }
-    });
-
-    return tx.paymentTransaction.update({
-      where: { id: payment.id },
+        status: PaymentStatus.PENDING,
+        expiresAt: { gt: now }
+      },
       data: {
         status: PaymentStatus.CONFIRMED,
         signature,
-        confirmedAt: now,
-        subscriptionId: subscription.id
+        confirmedAt: now
+      }
+    });
+
+    if (claim.count !== 1) {
+      throw new AppError(409, "Payment was already processed", "PAYMENT_ALREADY_PROCESSED");
+    }
+
+    const activeSubscription = await tx.subscription.findFirst({
+      where: {
+        userId,
+        status: SubscriptionStatus.ACTIVE,
+        endsAt: { gt: now }
       },
+      orderBy: { endsAt: "desc" }
+    });
+
+    const baseDate = activeSubscription?.endsAt && activeSubscription.endsAt > now
+      ? activeSubscription.endsAt
+      : now;
+    const endsAt = addBillingPeriod(baseDate, payment.period);
+
+    const subscription = activeSubscription
+      ? await tx.subscription.update({
+          where: { id: activeSubscription.id },
+          data: {
+            planId: payment.planId,
+            period: payment.period,
+            status: SubscriptionStatus.ACTIVE,
+            endsAt,
+            reminderSentAt: null
+          }
+        })
+      : await tx.subscription.create({
+          data: {
+            userId,
+            planId: payment.planId,
+            period: payment.period,
+            status: SubscriptionStatus.ACTIVE,
+            startsAt: now,
+            endsAt
+          }
+        });
+
+    return tx.paymentTransaction.update({
+      where: { id: payment.id },
+      data: { subscriptionId: subscription.id },
       include: { plan: true, user: true, subscription: true }
     });
   });
 
+  const endsAt = updated.subscription?.endsAt;
   await sendTelegramMessage(
     updated.user,
-    `Payment confirmed. Your ${updated.plan.name} subscription is active until ${endsAt.toISOString().slice(0, 10)}.`,
+    `Payment confirmed. Your ${updated.plan.name} subscription is active until ${endsAt?.toISOString().slice(0, 10) ?? "n/a"}.`,
     NotificationType.PAYMENT_CONFIRMED
   );
 
@@ -135,7 +164,14 @@ export async function getSubscriptionStatus(userId: string) {
 }
 
 async function quoteUsdcAmount(amountSol: number) {
-  // Production deployments should replace this deterministic demo quote with a price oracle.
+  if (env.NODE_ENV === "production") {
+    throw new AppError(
+      503,
+      "USDC checkout is disabled until a live SOL/USD price oracle is configured",
+      "USDC_PRICE_ORACLE_REQUIRED"
+    );
+  }
+
   const demoSolUsd = 150;
   return Number((amountSol * demoSolUsd).toFixed(6));
 }
