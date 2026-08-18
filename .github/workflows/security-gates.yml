@@ -13,6 +13,10 @@ on:
       - ".github/workflows/potapoff-production.yml"
   workflow_dispatch:
 
+concurrency:
+  group: security-gates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
