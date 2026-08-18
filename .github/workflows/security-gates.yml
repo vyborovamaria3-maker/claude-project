@@ -74,6 +74,7 @@ jobs:
           cache-dependency-path: solana-launcher/backend/pyproject.toml
       - name: Install backend and audit tool
         run: |
+          python -m pip install --upgrade "setuptools>=83"
           python -m pip install -e ".[dev]"
           python -m pip install pip-audit
       - name: Auth, entitlement and production-secret regression
