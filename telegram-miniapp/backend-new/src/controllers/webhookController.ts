@@ -1,11 +1,10 @@
 import crypto from 'node:crypto';
 import { Request, Response } from 'express';
 import { config } from '../config';
-import { isValidSignature } from '../services/solana';
+import { isValidSignature, verifyFinalizedUsdtPayment } from '../services/solana';
 import {
   getPaymentByMemo,
-  confirmPayment,
-  updateSubscription,
+  confirmPaymentAndExtendSubscription,
 } from '../services/db';
 
 interface TokenTransfer {
@@ -29,11 +28,6 @@ function secureEqual(received: string | undefined, expected: string) {
   return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-/**
- * POST /webhook/helius
- * Handle authenticated Helius webhook events. The memo is an opaque random
- * payment reference and never carries a Telegram identity.
- */
 export async function handleHeliusWebhook(req: Request, res: Response) {
   try {
     const authHeader = req.headers.authorization;
@@ -58,7 +52,6 @@ export async function handleHeliusWebhook(req: Request, res: Response) {
     return res.sendStatus(200);
   } catch (error) {
     console.error('Webhook error:', error);
-    // Processing failures should be retried by the webhook provider rather than silently acknowledged.
     return res.sendStatus(500);
   }
 }
@@ -81,19 +74,25 @@ async function processTransaction(tx: HeliusTransaction) {
   }
 
   const payment = await getPaymentByMemo(tx.memo);
-  if (!payment || payment.status === 'confirmed') {
+  if (!payment || payment.status !== 'pending') {
     return;
   }
-
   if (Math.abs(usdtTransfer.tokenAmount - payment.amount) > 0.01) {
     return;
   }
 
-  await confirmPayment(payment.id, tx.signature);
-  await updateSubscription(payment.userId, 365);
+  const onChainVerified = await verifyFinalizedUsdtPayment(
+    tx.signature,
+    tx.memo,
+    payment.amount
+  );
+  if (!onChainVerified) {
+    return;
+  }
+
+  await confirmPaymentAndExtendSubscription(payment.id, tx.signature, 365);
 }
 
-/** GET /webhook/helius/health */
 export function webhookHealth(req: Request, res: Response) {
   res.json({
     status: 'ok',
