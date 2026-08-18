@@ -34,6 +34,10 @@ export function buildSolanaPayUrl(input: {
 
 export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   const status = await solanaConnection.getSignatureStatus(check.signature, { searchTransactionHistory: true });
+  if (status.value?.err) {
+    throw new AppError(400, "Solana transaction failed on-chain", "PAYMENT_TX_FAILED");
+  }
+
   const confirmation = status.value?.confirmationStatus;
   if (!confirmation || !["confirmed", "finalized"].includes(confirmation)) {
     throw new AppError(409, "Transaction is not confirmed yet", "PAYMENT_NOT_CONFIRMED");
@@ -45,6 +49,9 @@ export async function verifySolanaPayment(check: SolanaPaymentCheck) {
   });
   if (!tx) {
     throw new AppError(404, "Solana transaction not found", "PAYMENT_TX_NOT_FOUND");
+  }
+  if (tx.meta?.err) {
+    throw new AppError(400, "Solana transaction failed on-chain", "PAYMENT_TX_FAILED");
   }
 
   const allInstructions = tx.transaction.message.instructions;
