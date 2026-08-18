@@ -67,14 +67,19 @@ function balanceSum(balances: TokenBalance[] | undefined): {
 
     const amount = balance.uiTokenAmount?.amount;
     const currentDecimals = balance.uiTokenAmount?.decimals;
-    if (!amount || !/^\d+$/.test(amount) || !Number.isInteger(currentDecimals)) {
+    if (
+      !amount ||
+      !/^\d+$/.test(amount) ||
+      typeof currentDecimals !== 'number' ||
+      !Number.isInteger(currentDecimals)
+    ) {
       continue;
     }
     if (decimals !== null && decimals !== currentDecimals) {
       throw new Error('Inconsistent token decimals in Solana transaction');
     }
 
-    decimals = currentDecimals as number;
+    decimals = currentDecimals;
     raw += BigInt(amount);
   }
 
@@ -93,7 +98,6 @@ function decimalAmountToRaw(amount: number, decimals: number): bigint {
 
 /**
  * Independently verify a Helius-reported payment against finalized Solana RPC data.
- * This deliberately does not trust the webhook's transfer fields as proof of payment.
  */
 export async function verifyFinalizedUsdtPayment(
   signature: string,
@@ -132,7 +136,6 @@ export async function verifyFinalizedUsdtPayment(
     return false;
   }
 
-  // The unique payment reference must be committed into the finalized transaction.
   if (!JSON.stringify(tx).includes(memo)) {
     return false;
   }
