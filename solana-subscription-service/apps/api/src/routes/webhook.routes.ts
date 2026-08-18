@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { PaymentStatus } from "@prisma/client";
@@ -9,11 +10,18 @@ import { appLink } from "../services/telegram.service";
 
 const router = Router();
 
+function secureEqual(received: string | undefined, expected: string) {
+  if (!received || !expected) return false;
+  const left = Buffer.from(received);
+  const right = Buffer.from(expected);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
 router.post(
   "/telegram",
   asyncHandler(async (req, res) => {
     const secret = req.header("x-telegram-bot-api-secret-token");
-    if (secret !== env.TELEGRAM_WEBHOOK_SECRET) {
+    if (!secureEqual(secret, env.TELEGRAM_WEBHOOK_SECRET)) {
       return res.status(401).json({ error: "BAD_WEBHOOK_SECRET" });
     }
 
@@ -39,23 +47,27 @@ router.post(
   })
 );
 
-const heliusSchema = z.array(
-  z.object({
-    signature: z.string(),
-    instructions: z.unknown().optional(),
-    nativeTransfers: z.unknown().optional(),
-    tokenTransfers: z.unknown().optional()
-  })
-);
+const heliusSchema = z
+  .array(
+    z.object({
+      signature: z.string().min(32).max(128),
+      instructions: z.unknown().optional(),
+      nativeTransfers: z.unknown().optional(),
+      tokenTransfers: z.unknown().optional()
+    })
+  )
+  .max(100);
 
 router.post(
   "/solana",
   asyncHandler(async (req, res) => {
-    if (env.HELIUS_WEBHOOK_AUTH_TOKEN) {
-      const token = req.header("authorization")?.replace(/^Bearer\s+/i, "");
-      if (token !== env.HELIUS_WEBHOOK_AUTH_TOKEN) {
-        return res.status(401).json({ error: "BAD_WEBHOOK_TOKEN" });
-      }
+    if (!env.HELIUS_WEBHOOK_AUTH_TOKEN) {
+      return res.status(503).json({ error: "WEBHOOK_AUTH_NOT_CONFIGURED" });
+    }
+
+    const token = req.header("authorization")?.replace(/^Bearer\s+/i, "");
+    if (!secureEqual(token, env.HELIUS_WEBHOOK_AUTH_TOKEN)) {
+      return res.status(401).json({ error: "BAD_WEBHOOK_TOKEN" });
     }
 
     const events = heliusSchema.parse(req.body);
