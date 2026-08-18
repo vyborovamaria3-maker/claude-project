@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
+import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -42,7 +43,7 @@ async def get_current_user(
         if subject is None:
             raise credentials_exception
         user_id = UUID(str(subject))
-    except (JWTError, ValueError):
+    except (InvalidTokenError, ValueError):
         raise credentials_exception from None
 
     user = await get_user_by_id(session, user_id)
