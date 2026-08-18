@@ -59,22 +59,22 @@ export const landingDesign = {
   ],
 
   visual: {
-    badge: "Strands demo",
+    badge: "Hologram Pro",
     kickerKey: "landing.liveOverview",
     titleKey: "landing.surfaceTitle",
-    panelLabel: "Vue Bits / Strands",
+    panelLabel: "Plasma Sweep / Hologram",
     statusKey: "landing.ready",
-    body: "Edit landingDesign.ts to quickly tune this visual, buttons, cards, and copy.",
+    body: "Shared landing primitives now mirror the Telegram Mini App design language.",
     outerGlowClassName:
-      "absolute inset-0 -z-10 rounded-[2rem] bg-[radial-gradient(circle_at_top_left,rgba(244,63,94,0.5),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(192,132,252,0.4),transparent_32%)] blur-3xl",
+      "absolute inset-0 -z-10 rounded-[2rem] bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.45),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(192,132,252,0.34),transparent_32%)] blur-3xl",
     frameClassName:
-      "rounded-[2rem] border border-fuchsia-200/20 bg-black/35 p-4 shadow-2xl backdrop-blur-xl sm:p-6",
+      "rounded-[2rem] border border-cyan-200/20 bg-black/35 p-4 shadow-2xl backdrop-blur-xl sm:p-6",
     stageClassName:
-      "relative min-h-[460px] overflow-hidden rounded-[1.5rem] border border-fuchsia-200/20 bg-[radial-gradient(circle_at_top,rgba(124,58,237,0.35),transparent_28%),radial-gradient(circle_at_bottom,rgba(34,197,94,0.18),transparent_34%),linear-gradient(160deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02))] p-5 sm:p-6",
+      "relative min-h-[460px] overflow-hidden rounded-[1.5rem] border border-cyan-200/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.28),transparent_28%),radial-gradient(circle_at_bottom,rgba(192,132,252,0.18),transparent_34%),linear-gradient(160deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02))] p-5 sm:p-6",
     overlayClassName:
       "absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(10,15,23,0),rgba(10,15,23,0.58)_72%)]",
     strandProps: {
-      colors: ["#FFFFFF", "#C084FC", "#22D3EE", "#4ADE80", "#FDE047"],
+      colors: ["#FFFFFF", "#C084FC", "#22D3EE", "#4ADE80", "#A78BFA"],
       count: 6,
       speed: 1.15,
       amplitude: 1.15,

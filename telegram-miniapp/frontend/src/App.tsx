@@ -1,477 +1,218 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { motion } from 'framer-motion';
-import {
-  ArrowRight,
-  BarChart3,
-  Check,
-  Clock3,
-  Eye,
-  Grid2X2,
-  Layers3,
-  Lock,
-  ListPlus,
-  Sparkles,
-  Wallet,
-  Zap,
-  Crown,
-  ShieldCheck,
-  SignalHigh,
-  PanelTopOpen,
-} from 'lucide-react';
-
-import { paymentSchema, accessSchema, watchlistSchema } from './utils/validation';
-import { sendToBot } from './utils/api';
+import { Loader2, ShieldCheck, Sparkles, Copy, Check, Zap, CircleDollarSign } from 'lucide-react';
 import { useTelegram } from './hooks/useTelegram';
-import { useSubscription } from './hooks/useSubscription';
-import { initTelegram, getTelegramUser } from './lib/telegram';
-import { Button } from './components/UI/Button';
-import { Card } from './components/UI/Card';
-import { Input } from './components/UI/Input';
-import { PayButton } from './components/PayButton';
-import { SubscriptionStatus } from './components/SubscriptionStatus';
+import { initTelegram, getTelegramUser, copyToClipboard, openExternalLink } from './lib/telegram';
 
-type PaymentForm = { network: string };
-type AccessForm = { password: string };
-type WatchlistForm = { symbol: string; note?: string };
-type TabKey = 'overview' | 'access' | 'watchlist' | 'swap';
+const API_BASE_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
-const networks = ['Solana', 'Ethereum', 'BSC', 'Base', 'Arbitrum', 'Optimism'];
+type AccessPayload = {
+  login?: string | null;
+  password?: string | null;
+  subscriptionExpiresAt?: string | null;
+  paymentUrl?: string | null;
+  currency?: 'SOL' | 'USDT' | 'DEMO';
+};
 
-const tabs: Array<{
-  key: TabKey;
-  label: string;
-  icon: typeof Sparkles;
-}> = [
-  { key: 'overview', label: 'Overview', icon: Sparkles },
-  { key: 'access', label: 'Access', icon: Lock },
-  { key: 'watchlist', label: 'Watchlist', icon: ListPlus },
-  { key: 'swap', label: 'Swap', icon: Eye },
-];
+const methods = ['SOL', 'USDT', 'DEMO'] as const;
 
-function StatCard({
-  icon: Icon,
-  label,
+function PlasmaSweep({ active }: { active: boolean }) {
+  return <div className={`plasma-sweep ${active ? 'plasma-sweep--active' : ''}`} aria-hidden="true" />;
+}
+
+function CopyButton({
   value,
-  tone = 'neutral',
-}: {
-  icon: typeof ShieldCheck;
-  label: string;
-  value: string;
-  tone?: 'neutral' | 'blue' | 'purple' | 'green' | 'gold';
-}) {
-  const toneClass: Record<string, string> = {
-    neutral: 'from-white/8 to-white/4 border-white/10',
-    blue: 'from-sky-500/15 to-cyan-500/10 border-sky-400/20',
-    purple: 'from-violet-500/15 to-fuchsia-500/10 border-violet-400/20',
-    green: 'from-emerald-500/15 to-lime-500/10 border-emerald-400/20',
-    gold: 'from-amber-400/20 to-orange-500/10 border-amber-300/30',
-  };
-
-  return (
-    <div className={`rounded-2xl border bg-gradient-to-br ${toneClass[tone]} p-4 shadow-[0_16px_60px_rgba(0,0,0,0.18)]`}>
-      <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-black/20 ring-1 ring-white/10">
-          <Icon size={18} className="text-white/90" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.22em] text-white/55">{label}</p>
-          <p className="truncate text-base font-semibold text-white">{value}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SectionHeader({
-  eyebrow,
-  title,
-  description,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/45">{eyebrow}</span>
-      <h2 className="text-lg font-semibold text-white">{title}</h2>
-      <p className="text-sm leading-6 text-white/70">{description}</p>
-    </div>
-  );
-}
-
-function TabButton({
-  active,
-  icon: Icon,
   label,
-  onClick,
+  copied,
+  onCopy,
 }: {
-  active: boolean;
-  icon: typeof Sparkles;
+  value: string | null | undefined;
   label: string;
-  onClick: () => void;
+  copied: boolean;
+  onCopy: () => void;
 }) {
+  if (!value) return null;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all ${
-        active
-          ? 'bg-white text-slate-950 shadow-[0_8px_32px_rgba(255,255,255,0.18)]'
-          : 'bg-white/6 text-white/72 ring-1 ring-white/10 hover:bg-white/10 hover:text-white'
-      }`}
-    >
-      <Icon size={15} className={active ? 'text-slate-950' : 'text-white/80'} />
-      <span>{label}</span>
+    <button type="button" className="copy-btn" onClick={onCopy} aria-label={`Copy ${label}`}>
+      <span>{copied ? '✓ COPIED' : 'COPY'}</span>
+      {copied ? <Check size={14} /> : <Copy size={14} />}
     </button>
   );
 }
 
 export default function App() {
-  const { theme, sendData, hapticNotify } = useTelegram();
-  const { active, loading, subscriptionEnd, refresh } = useSubscription();
+  const { theme, hapticNotify, sendData } = useTelegram();
   const user = getTelegramUser();
-  const [tab, setTab] = useState<TabKey>('overview');
-  const [status, setStatus] = useState('Ready to connect and trade.');
+  const [method, setMethod] = useState<(typeof methods)[number]>('SOL');
+  const [loading, setLoading] = useState(false);
+  const [sweep, setSweep] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState('Connected to Telegram WebApp.');
+  const [access, setAccess] = useState<AccessPayload | null>(null);
+  const [checkoutPayload, setCheckoutPayload] = useState<string | null>(null);
+  const [copied, setCopied] = useState<{ login: boolean; password: boolean }>({ login: false, password: false });
+  const hasFullAccess = Boolean(access?.login && access?.password);
 
   useEffect(() => {
     initTelegram();
   }, []);
 
-  const paymentForm = useForm<PaymentForm>({
-    resolver: zodResolver(paymentSchema),
-    defaultValues: { network: networks[0] },
-  });
-  const accessForm = useForm<AccessForm>({ resolver: zodResolver(accessSchema) });
-  const watchForm = useForm<WatchlistForm>({ resolver: zodResolver(watchlistSchema) });
+  const userLabel = useMemo(() => user?.first_name || user?.username || 'Trader', [user]);
 
-  const marketSnapshot = useMemo(
-    () => [
-      { icon: BarChart3, label: 'Pairs scanned', value: '1,284', tone: 'blue' as const },
-      { icon: SignalHigh, label: 'Momentum', value: 'Hot', tone: 'purple' as const },
-      { icon: ShieldCheck, label: 'Safety check', value: 'Active', tone: 'green' as const },
-      { icon: Clock3, label: 'Refresh', value: 'Live', tone: 'gold' as const },
-    ],
-    [],
-  );
+  useEffect(() => {
+    if (!checkoutPayload || hasFullAccess) return;
+    const timer = window.setInterval(() => {
+      void verifyPayment(checkoutPayload, false);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [checkoutPayload, hasFullAccess]);
 
-  const onPay = paymentForm.handleSubmit((data) => {
-    sendToBot(sendData, { action: 'payment', amount_usdt: 1000, network: data.network });
-    setStatus(`Payment sent for 1000 USDT on ${data.network}.`);
+  async function createAccess() {
+    setLoading(true);
+    setError(null);
+    setStatus(`Creating ${method} access...`);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/miniapp/create-invoice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData: window.Telegram?.WebApp?.initData || '', method, login: user?.username || `tg_${user?.id ?? 'user'}` }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || 'Failed to create access');
+
+      if (data?.paymentUrl) {
+        openExternalLink(data.paymentUrl);
+      }
+
+      if (data?.payload) {
+        setCheckoutPayload(data.payload);
+      }
+
+      setAccess({
+        login: data.login,
+        password: data.password,
+        subscriptionExpiresAt: data.subscriptionExpiresAt,
+        paymentUrl: data.paymentUrl,
+        currency: method,
+      });
+
+      setStatus(data.password ? 'Access credentials received.' : 'Payment initiated. Waiting for credentials...');
+      hapticNotify('success');
+      sendData?.({ action: 'payment_initiated', method, payload: data.payload || null });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to start checkout');
+      setStatus('Checkout failed.');
+      hapticNotify('error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function verifyPayment(payload: string, showPending: boolean) {
+    if (!payload || hasFullAccess) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/miniapp/verify-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData: window.Telegram?.WebApp?.initData || '', payload }),
+      });
+      const data = await response.json();
+      if (response.status === 202 || data?.status === 'pending') {
+        if (showPending) setStatus('Transaction is pending. We keep checking…');
+        return;
+      }
+      if (!response.ok) throw new Error(data?.error || 'Failed to verify payment');
+      if (data?.status !== 'paid' || !data?.login || !data?.password) throw new Error('Incomplete paid response');
+
+      setAccess({
+        login: data.login,
+        password: data.password,
+        subscriptionExpiresAt: data.subscriptionExpiresAt,
+        paymentUrl: data.paymentUrl || access?.paymentUrl,
+        currency: data.currency || method,
+      });
+      setCheckoutPayload(null);
+      setStatus('Access credentials received.');
+      hapticNotify('success');
+    } catch (err) {
+      if (showPending) {
+        setError(err instanceof Error ? err.message : 'Unable to verify payment');
+        hapticNotify('error');
+      }
+    }
+  }
+
+  async function handleCopy(key: 'login' | 'password', value: string) {
+    const ok = await copyToClipboard(value);
+    if (!ok) {
+      setError('Clipboard is unavailable in this webview.');
+      return;
+    }
+    setCopied((prev) => ({ ...prev, [key]: true }));
+    setSweep(true);
     hapticNotify('success');
-  });
-
-  const onAccess = accessForm.handleSubmit((data) => {
-    sendToBot(sendData, { action: 'access', password: data.password });
-    setStatus('Password saved and sent to the bot.');
-    hapticNotify('success');
-  });
-
-  const onWatchlist = watchForm.handleSubmit((data) => {
-    sendToBot(sendData, { action: 'watchlist', symbol: data.symbol, note: data.note });
-    setStatus(`${data.symbol.toUpperCase()} added to watchlist.`);
-    hapticNotify('success');
-    watchForm.reset();
-  });
-
-  const activeUserLabel = user?.first_name || user?.username || 'Trader';
+    window.setTimeout(() => {
+      setCopied((prev) => ({ ...prev, [key]: false }));
+      setSweep(false);
+    }, 3000);
+  }
 
   return (
-    <div className={`${theme === 'dark' ? 'dark' : ''} app-shell min-h-screen overflow-x-hidden text-white`}>
-      <div className="app-bg" />
-      <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-4 py-5 sm:px-5 lg:px-6">
-        <header className="glass-panel sticky top-3 z-20 rounded-3xl p-4 backdrop-blur-xl">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-start gap-3">
-              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-cyan-400 via-sky-500 to-indigo-500 shadow-[0_20px_60px_rgba(56,189,248,0.35)]">
-                <Layers3 size={22} className="text-white" />
+    <div className={`miniapp-shell ${theme === 'dark' ? 'miniapp-shell--dark' : ''}`}>
+      <PlasmaSweep active={sweep} />
+      <main className="miniapp-page">
+        <section className="hero-card">
+          <div className="hero-top">
+            <div className="eyebrow"><Sparkles size={14} /> Hologram Pro</div>
+            <div className="status-pill"><ShieldCheck size={14} /> Telegram-safe</div>
+          </div>
+          <h1>POTAPoff access for {userLabel}</h1>
+          <p>{access ? 'Credentials are ready. Copy only real values received from backend.' : 'Choose SOL, USDT, or demo. The same design language powers the main site and Mini App.'}</p>
+          <div className="method-row">
+            {methods.map((item) => (
+              <button key={item} type="button" className={`method-chip ${method === item ? 'is-active' : ''}`} onClick={() => setMethod(item)}>
+                <CircleDollarSign size={14} /> {item}
+              </button>
+            ))}
+          </div>
+          <button className="primary-btn" type="button" onClick={createAccess} disabled={loading}>
+            {loading ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+            <span>{loading ? 'Creating...' : 'Unlock access'}</span>
+          </button>
+        </section>
+
+        <section className="grid-card">
+          <div className="info-card">
+            <div>
+              <div className="section-label">Access payload</div>
+              <h2>Real credentials only</h2>
+            </div>
+            <div className="access-grid">
+              <div className="kv">
+                <span>Login</span>
+                <strong>{access?.login || 'Pending backend response'}</strong>
+                {hasFullAccess ? <CopyButton value={access?.login} label="login" copied={copied.login} onCopy={() => access?.login && void handleCopy('login', access.login)} /> : null}
               </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/45">
-                  Premium Terminal
-                </p>
-                <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-                  Swap Access
-                </h1>
-                <p className="mt-1 text-sm text-white/65">
-                  Modular watchlists, quick actions, and cleaner token workflows.
-                </p>
+              <div className="kv">
+                <span>Password</span>
+                <strong>{access?.password ? 'Received' : 'Pending backend response'}</strong>
+                {hasFullAccess ? <CopyButton value={access?.password} label="password" copied={copied.password} onCopy={() => access?.password && void handleCopy('password', access.password)} /> : null}
               </div>
             </div>
-
-            <div className="flex flex-wrap gap-2">
-              {tabs.map((item) => (
-                <TabButton
-                  key={item.key}
-                  active={tab === item.key}
-                  icon={item.icon}
-                  label={item.label}
-                  onClick={() => setTab(item.key)}
-                />
-              ))}
+            <div className="note-row">
+              <span>{access?.subscriptionExpiresAt ? `Valid until ${new Date(access.subscriptionExpiresAt).toLocaleString()}` : 'Waiting for backend confirmation'}</span>
+              {access?.paymentUrl ? <button type="button" className="link-btn" onClick={() => openExternalLink(access.paymentUrl!)}>Open payment</button> : null}
             </div>
           </div>
-        </header>
 
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass-panel rounded-3xl px-4 py-3 text-sm text-white/80 backdrop-blur-xl"
-        >
-          {status}
-        </motion.div>
-
-        <SubscriptionStatus active={active} subscriptionEnd={subscriptionEnd} loading={loading} />
-
-        {tab === 'overview' && (
-          <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-            <motion.section
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="glass-panel overflow-hidden rounded-[28px] p-5"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/8 via-transparent to-fuchsia-500/8" />
-              <div className="relative flex flex-col gap-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="max-w-xl">
-                    <SectionHeader
-                      eyebrow="Overview"
-                      title={active ? 'Premium active' : 'Unlock the terminal'}
-                      description={
-                        active
-                          ? `Welcome back, ${activeUserLabel}. Your subscription is active and the dashboard is ready.`
-                          : 'A compact terminal for subscriptions, watchlists, and fast swap previews.'
-                      }
-                    />
-                  </div>
-                  <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/70">
-                    {active ? 'Live' : 'Preview'}
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  {marketSnapshot.map((item) => (
-                    <StatCard
-                      key={item.label}
-                      icon={item.icon}
-                      label={item.label}
-                      value={item.value}
-                      tone={item.tone}
-                    />
-                  ))}
-                </div>
-
-                <div className="grid gap-3 rounded-[24px] border border-white/10 bg-black/15 p-4 sm:grid-cols-2">
-                  <div className="flex flex-col gap-2">
-                    <p className="text-xs uppercase tracking-[0.22em] text-white/45">Flow</p>
-                    <p className="text-lg font-semibold">Keep blocks editable and shallow</p>
-                    <p className="text-sm leading-6 text-white/68">
-                      Each tab is isolated, and each section can be tuned independently without touching the rest.
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between rounded-2xl bg-white/5 p-4 ring-1 ring-white/10">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.22em] text-white/45">Action</p>
-                      <p className="mt-1 text-sm font-medium text-white/80">Open the flow that fits the task</p>
-                    </div>
-                    <ArrowRight className="text-white/60" size={20} />
-                  </div>
-                </div>
-              </div>
-            </motion.section>
-
-            <div className="flex flex-col gap-5">
-              <motion.section
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="glass-panel rounded-[28px] p-5"
-              >
-                <SectionHeader
-                  eyebrow="Subscription"
-                  title="Status"
-                  description="Paywall and active subscription are separated from the rest of the UI."
-                />
-                <div className="mt-4">
-                  {active ? (
-                    <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-400/15">
-                          <Crown size={20} className="text-emerald-300" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-emerald-200">Premium active</p>
-                          <p className="text-sm text-white/65">
-                            {subscriptionEnd
-                              ? `Valid until ${subscriptionEnd.toLocaleDateString()}`
-                              : 'Subscription is confirmed.'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-sm font-medium text-white/80">No active subscription yet.</p>
-                      <p className="mt-1 text-sm text-white/60">
-                        The payment card below is isolated so it can be redesigned independently.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </motion.section>
-
-              <motion.section
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="glass-panel rounded-[28px] p-5"
-              >
-                <SectionHeader
-                  eyebrow="Quick action"
-                  title="Payment"
-                  description="The payment surface stays separate from analysis and watchlists."
-                />
-                <div className="mt-4">
-                  <PayButton onPaymentInitiated={refresh} />
-                </div>
-              </motion.section>
+          <div className="info-card">
+            <div className="section-label">Live status</div>
+            <div className="status-box">{status}</div>
+            <div className="status-box status-box--muted">
+              Subscription flow, initData verification, and payment semantics stay server-side. Mini App only renders real state.
             </div>
+            {error && <div className="error-box">{error}</div>}
           </div>
-        )}
-
-        {tab === 'access' && (
-          <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
-            <Card className="glass-card rounded-[28px] p-5">
-              <SectionHeader
-                eyebrow="Access"
-                title="Password block"
-                description="Credential entry stays in one isolated panel for easier future edits."
-              />
-              <form onSubmit={onAccess} className="mt-5 flex flex-col gap-4">
-                <Input
-                  label="Password"
-                  type="password"
-                  placeholder="Enter your secret password"
-                  {...accessForm.register('password')}
-                  error={accessForm.formState.errors.password?.message}
-                />
-                <Button type="submit">Save password</Button>
-              </form>
-            </Card>
-
-            <Card className="glass-card rounded-[28px] p-5">
-              <SectionHeader
-                eyebrow="Notes"
-                title="Access flow"
-                description="After payment, the bot sends a login. This screen stores the password and forwards it."
-              />
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <StatCard icon={ShieldCheck} label="Security" value="Separated" tone="green" />
-                <StatCard icon={Clock3} label="UX" value="Fast input" tone="blue" />
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {tab === 'watchlist' && (
-          <div className="grid gap-5 lg:grid-cols-[0.92fr_1.08fr]">
-            <Card className="glass-card rounded-[28px] p-5">
-              <SectionHeader
-                eyebrow="Watchlist"
-                title="Add a token"
-                description="Each field is isolated to make future changes to validation or labels straightforward."
-              />
-              <form onSubmit={onWatchlist} className="mt-5 flex flex-col gap-4">
-                <Input
-                  label="Ticker / pair"
-                  placeholder="SOL/USDT"
-                  {...watchForm.register('symbol')}
-                  error={watchForm.formState.errors.symbol?.message}
-                />
-                <Input
-                  label="Note"
-                  placeholder="Why this token matters"
-                  {...watchForm.register('note')}
-                />
-                <Button type="submit">Add to watchlist</Button>
-              </form>
-            </Card>
-
-            <Card className="glass-card rounded-[28px] p-5">
-              <SectionHeader
-                eyebrow="Watchlist blocks"
-                title="Optimized for later expansion"
-                description="This panel can become a list, filters, or compact alerts feed without changing the form."
-              />
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <StatCard icon={Zap} label="Momentum" value="Ready" tone="gold" />
-                <StatCard icon={PanelTopOpen} label="Layout" value="Modular" tone="purple" />
-                <StatCard icon={Grid2X2} label="Blocks" value="Reusable" tone="blue" />
-                <StatCard icon={ListPlus} label="Update path" value="Simple" tone="green" />
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {tab === 'swap' && (
-          <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
-            <Card className="glass-card overflow-hidden rounded-[28px] p-5">
-              <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-violet-500/10" />
-              <div className="relative flex flex-col gap-4">
-                <SectionHeader
-                  eyebrow="Swap preview"
-                  title="Quick market card"
-                  description="This block is isolated so price data, quote routing, and buttons can evolve separately."
-                />
-                <div className="rounded-[24px] border border-white/10 bg-black/15 p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-500">
-                      <Wallet size={22} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-lg font-semibold">Quick swap preview</p>
-                      <p className="text-sm text-white/65">Indicative routing and quote layout</p>
-                    </div>
-                  </div>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-xs uppercase tracking-[0.22em] text-white/45">Rate</p>
-                      <p className="mt-2 text-2xl font-semibold">1 SOL</p>
-                      <p className="text-sm text-white/65">≈ 160 USDT example</p>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-xs uppercase tracking-[0.22em] text-white/45">Route</p>
-                      <p className="mt-2 text-2xl font-semibold">Solana</p>
-                      <p className="text-sm text-white/65">Wallet route placeholder</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            <Card className="glass-card rounded-[28px] p-5">
-              <SectionHeader
-                eyebrow="Editing"
-                title="Simplified blocks"
-                description="If you change one panel, the other tabs remain untouched."
-              />
-              <div className="mt-5 grid gap-3">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-sm font-semibold">Market data</p>
-                  <p className="mt-1 text-sm text-white/65">Plug in real quotes later.</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-sm font-semibold">Buttons</p>
-                  <p className="mt-1 text-sm text-white/65">Keep CTA styles centralized.</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-sm font-semibold">Layout</p>
-                  <p className="mt-1 text-sm text-white/65">All spacing comes from one page shell.</p>
-                </div>
-              </div>
-            </Card>
-          </div>
-        )}
+        </section>
       </main>
     </div>
   );

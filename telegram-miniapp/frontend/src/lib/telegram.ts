@@ -1,69 +1,23 @@
-/**
- * Telegram WebApp SDK integration
- */
-
 declare global {
   interface Window {
     Telegram?: {
       WebApp?: {
         initData: string;
         initDataUnsafe: {
-          user?: {
-            id: number;
-            username?: string;
-            first_name?: string;
-            last_name?: string;
-          };
-          start_param?: string;
+          user?: { id: number; username?: string; first_name?: string; last_name?: string };
         };
         ready: () => void;
         expand: () => void;
         close: () => void;
-        openLink: (url: string, options?: { try_instant_view?: boolean }) => void;
-        showPopup: (params: { title?: string; message: string; buttons?: Array<{ id: string; type: string; text: string }> }) => void;
-        showAlert: (message: string) => void;
-        showConfirm: (message: string, callback: (confirmed: boolean) => void) => void;
-        enableClosingConfirmation: () => void;
-        disableClosingConfirmation: () => void;
-        setHeaderColor: (color: string) => void;
-        setBackgroundColor: (color: string) => void;
-        MainButton: {
-          text: string;
-          color: string;
-          textColor: string;
-          isVisible: boolean;
-          isActive: boolean;
-          setText: (text: string) => void;
-          onClick: (callback: () => void) => void;
-          show: () => void;
-          hide: () => void;
-          enable: () => void;
-          disable: () => void;
-          setParams: (params: { text?: string; color?: string; text_color?: string }) => void;
-        };
-        BackButton: {
-          isVisible: boolean;
-          onClick: (callback: () => void) => void;
-          show: () => void;
-          hide: () => void;
-        };
-        HapticFeedback: {
-          impactOccurred: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft') => void;
+        openLink: (url: string) => void;
+        sendData: (data: string) => void;
+        onEvent?: (eventType: string, eventHandler: (...args: any[]) => void) => void;
+        offEvent?: (eventType: string, eventHandler: (...args: any[]) => void) => void;
+        HapticFeedback?: {
           notificationOccurred: (type: 'error' | 'success' | 'warning') => void;
-          selectionChanged: () => void;
         };
-        platform: string;
-        version: string;
         colorScheme: 'light' | 'dark';
-        themeParams: {
-          bg_color: string;
-          text_color: string;
-          hint_color: string;
-          link_color: string;
-          button_color: string;
-          button_text_color: string;
-        };
-        isExpanded: boolean;
+        themeParams: Record<string, string>;
         viewportHeight: number;
         viewportStableHeight: number;
       };
@@ -73,96 +27,61 @@ declare global {
 
 const tg = typeof window !== 'undefined' ? window.Telegram?.WebApp : undefined;
 
-export { tg };
-
-/**
- * Initialize Telegram WebApp
- */
 export function initTelegram() {
-  if (!tg) {
-    console.warn('Telegram WebApp not available');
-    return null;
-  }
-  
-  tg.ready();
-  tg.expand();
-  
-  return tg;
+  tg?.ready();
+  tg?.expand();
+  return tg ?? null;
 }
 
-/**
- * Get Telegram user data
- */
 export function getTelegramUser() {
   return tg?.initDataUnsafe?.user || null;
 }
 
-/**
- * Open external link (e.g., Solana Pay URL)
- */
+export function getTelegramInitData() {
+  return tg?.initData || '';
+}
+
 export function openExternalLink(url: string) {
-  if (tg?.openLink) {
-    tg.openLink(url);
-  } else {
-    window.open(url, '_blank');
-  }
+  if (tg?.openLink) tg.openLink(url);
+  else window.open(url, '_blank', 'noopener,noreferrer');
 }
 
-/**
- * Show success notification
- */
+export function sendData(data: unknown) {
+  return tg ? (window.Telegram?.WebApp as any)?.sendData?.(JSON.stringify(data)) : undefined;
+}
+
 export function showSuccess(message: string) {
-  if (tg?.HapticFeedback) {
-    tg.HapticFeedback.notificationOccurred('success');
-  }
-  if (tg?.showPopup) {
-    tg.showPopup({ title: 'Success', message });
-  } else {
-    alert(message);
-  }
+  tg?.HapticFeedback?.notificationOccurred('success');
+  window.Telegram?.WebApp?.sendData?.(JSON.stringify({ type: 'toast', level: 'success', message }));
 }
 
-/**
- * Show error notification
- */
 export function showError(message: string) {
-  if (tg?.HapticFeedback) {
-    tg.HapticFeedback.notificationOccurred('error');
-  }
-  if (tg?.showPopup) {
-    tg.showPopup({ title: 'Error', message });
-  } else {
-    alert(message);
-  }
+  tg?.HapticFeedback?.notificationOccurred('error');
+  window.Telegram?.WebApp?.sendData?.(JSON.stringify({ type: 'toast', level: 'error', message }));
 }
 
-/**
- * Set main button parameters
- */
-export function setMainButton(params: {
-  text: string;
-  color?: string;
-  text_color?: string;
-  onClick?: () => void;
-}) {
-  if (!tg?.MainButton) return;
-  
-  tg.MainButton.setParams({
-    text: params.text,
-    color: params.color,
-    text_color: params.text_color,
-  });
-  
-  if (params.onClick) {
-    tg.MainButton.onClick(params.onClick);
+export async function copyToClipboard(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // fallback below
   }
-  
-  tg.MainButton.show();
-}
 
-/**
- * Hide main button
- */
-export function hideMainButton() {
-  tg?.MainButton?.hide();
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', 'true');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }

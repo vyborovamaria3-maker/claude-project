@@ -1,31 +1,25 @@
 import { useEffect, useState } from 'react';
 
-declare global {
-  interface Window {
-    Telegram: any;
-  }
-}
+type Theme = 'light' | 'dark';
 
 export const useTelegram = () => {
-  const [tg, setTg] = useState<any>(null);
-  const [user, setUser] = useState<any>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<Theme>('dark');
 
   useEffect(() => {
     const webapp = window.Telegram?.WebApp;
     if (!webapp) return;
+
     webapp.ready();
     webapp.expand();
-    setTg(webapp);
-    setUser(webapp.initDataUnsafe?.user);
-    setTheme(webapp.colorScheme);
-    webapp.onEvent('themeChanged', () => setTheme(webapp.colorScheme));
-    return () => webapp.offEvent('themeChanged');
+    setTheme(webapp.colorScheme || 'dark');
+
+    const handleTheme = () => setTheme(webapp.colorScheme || 'dark');
+    (webapp as any).onEvent?.('themeChanged', handleTheme);
+    return () => (webapp as any).offEvent?.('themeChanged', handleTheme);
   }, []);
 
-  const sendData = (data: any) => tg?.sendData(JSON.stringify(data));
-  const hapticImpact = (style: 'light' | 'medium' | 'heavy' = 'medium') => tg?.HapticFeedback?.impactOccurred(style);
-  const hapticNotify = (type: 'error' | 'success' | 'warning') => tg?.HapticFeedback?.notificationOccurred(type);
+  const sendData = (data: unknown) => window.Telegram?.WebApp?.sendData(JSON.stringify(data));
+  const hapticNotify = (type: 'error' | 'success' | 'warning') => window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred(type);
 
-  return { tg, user, theme, sendData, hapticImpact, hapticNotify };
+  return { theme, sendData, hapticNotify };
 };
