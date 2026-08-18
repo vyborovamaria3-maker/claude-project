@@ -5,6 +5,7 @@ dotenv.config();
 export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '3001', 10),
+  trustProxyHops: parseInt(process.env.TRUST_PROXY_HOPS || '0', 10),
 
   databaseUrl: process.env.DATABASE_URL!,
 
@@ -44,6 +45,9 @@ export function validateConfig() {
 
   if (!Number.isSafeInteger(config.port) || config.port <= 0 || config.port > 65535) {
     throw new Error('PORT must be between 1 and 65535');
+  }
+  if (!Number.isSafeInteger(config.trustProxyHops) || config.trustProxyHops < 0 || config.trustProxyHops > 2) {
+    throw new Error('TRUST_PROXY_HOPS must be an integer between 0 and 2');
   }
   if (config.heliusWebhookSecret.trim().length < 32) {
     throw new Error('HELIUS_WEBHOOK_SECRET must contain at least 32 characters');
