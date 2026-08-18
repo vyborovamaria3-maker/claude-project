@@ -3,6 +3,7 @@ import cors from 'cors';
 import { config, validateConfig } from './config';
 import { createPaymentHandler, getSubscriptionStatus } from './controllers/subscriptionController';
 import { handleHeliusWebhook, webhookHealth } from './controllers/webhookController';
+import { fixedWindowRateLimit } from './security/rateLimit';
 
 try {
   validateConfig();
@@ -13,6 +14,7 @@ try {
 
 const app = express();
 app.disable('x-powered-by');
+app.set('trust proxy', config.trustProxyHops > 0 ? config.trustProxyHops : false);
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -28,6 +30,17 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '256kb' }));
 
+const subscriptionRateLimit = fixedWindowRateLimit({
+  windowMs: 60_000,
+  max: 30,
+  namespace: 'subscription',
+});
+const webhookRateLimit = fixedWindowRateLimit({
+  windowMs: 60_000,
+  max: 300,
+  namespace: 'helius-webhook',
+});
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -35,10 +48,10 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.post('/api/subscription/create', createPaymentHandler);
-app.get('/api/subscription/status', getSubscriptionStatus);
+app.post('/api/subscription/create', subscriptionRateLimit, createPaymentHandler);
+app.get('/api/subscription/status', subscriptionRateLimit, getSubscriptionStatus);
 
-app.post('/webhook/helius', handleHeliusWebhook);
+app.post('/webhook/helius', webhookRateLimit, handleHeliusWebhook);
 app.get('/webhook/helius/health', webhookHealth);
 
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
