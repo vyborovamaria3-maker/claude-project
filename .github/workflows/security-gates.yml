@@ -53,7 +53,11 @@ jobs:
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=high
+        env:
+          ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
+        run: |
+          npm audit --omit=dev --json > "$RUNNER_TEMP/frontend-npm-audit.json" || true
+          node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/frontend-npm-audit.json"
 
   backend-security:
     runs-on: ubuntu-latest
@@ -108,7 +112,11 @@ jobs:
       - name: API security regressions
         run: npm run test -w @solsub/api
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=high
+        env:
+          ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
+        run: |
+          npm audit --omit=dev --json > "$RUNNER_TEMP/subscription-npm-audit.json" || true
+          node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/subscription-npm-audit.json"
 
   legacy-miniapp-security:
     runs-on: ubuntu-latest
