@@ -53,11 +53,11 @@ check_telegram_webhook() {
   webhook_url="$(env_value TELEGRAM_WEBHOOK_URL)"
   webhook_secret="$(env_value TELEGRAM_WEBHOOK_SECRET)"
 
-  curl -fsS -H "x-webhook-secret: $webhook_secret" "$webhook_url" \
+  curl -fsS --max-time 10 -H "x-webhook-secret: $webhook_secret" "$webhook_url" \
     | grep -Fq '"status":"ok"' \
     || return 1
 
-  info="$(printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' "$token" | curl -fsS --config -)" \
+  info="$(printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' "$token" | curl -fsS --max-time 10 --config -)" \
     || return 1
 
   printf '%s' "$info" | grep -Fq '"ok":true' \
@@ -136,10 +136,10 @@ check_services() {
 
 for attempt in $(seq 1 45); do
   endpoints_ok=0
-  build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
+  build_info="$(curl -fsS --max-time 5 http://127.0.0.1/api/build-info 2>/dev/null || true)"
 
   admin_location="$(
-    curl -fsSI http://127.0.0.1/admin/ 2>/dev/null \
+    curl -fsSI --max-time 5 http://127.0.0.1/admin/ 2>/dev/null \
       | tr -d '\r' \
       | awk 'tolower($1) == "location:" {print $2; exit}' \
       || true
@@ -151,11 +151,12 @@ for attempt in $(seq 1 45); do
     telegram_ok=0
   fi
 
-  if curl -fsS http://127.0.0.1/ >/dev/null \
-    && curl -fsS http://127.0.0.1/miniapp >/dev/null \
-    && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
-    && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
-    && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
+  if curl -fsS --max-time 5 http://127.0.0.1/ >/dev/null \
+    && curl -fsS --max-time 5 http://127.0.0.1/miniapp >/dev/null \
+    && curl -fsS --max-time 5 http://127.0.0.1/trade/analysis >/dev/null \
+    && curl -fsS --max-time 5 http://127.0.0.1/trade/analysis/x >/dev/null \
+    && curl -fsS --max-time 5 http://127.0.0.1/trade/analysis/social >/dev/null \
+    && curl -fsS --max-time 5 http://127.0.0.1/fastapi/health >/dev/null \
     && [[ "$admin_location" == "https://potapoff.fun/admin/login" ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
     && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
@@ -165,7 +166,7 @@ for attempt in $(seq 1 45); do
   bad_services="$(check_services)"
 
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok frontend_build=verified"
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG x_analysis=ok social_analysis=ok frontend_build=verified"
     exit 0
   fi
 
