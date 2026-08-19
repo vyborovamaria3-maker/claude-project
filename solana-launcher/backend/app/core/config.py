@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     )
     backend_api_key: str = Field(default="", alias="BACKEND_API_KEY")
 
+    @field_validator("telegram_api_id", mode="before")
+    @classmethod
+    def normalize_optional_telegram_api_id(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("secret_key", mode="after")
     @classmethod
     def validate_secret_key(cls, v: str) -> str:
