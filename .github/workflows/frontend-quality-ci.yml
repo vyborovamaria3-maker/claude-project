@@ -5,6 +5,11 @@ on:
     paths:
       - "solana-launcher/**"
       - ".github/workflows/frontend-quality-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
