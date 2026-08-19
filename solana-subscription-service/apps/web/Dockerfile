@@ -34,4 +34,4 @@ COPY --from=build /app/node_modules ./node_modules
 COPY package*.json ./
 COPY apps/web/package.json apps/web/package.json
 EXPOSE 3000
-CMD ["npm", "run", "start", "-w", "@solsub/web"]
+CMD ["./node_modules/.bin/next", "start", "apps/web", "-p", "3000"]
