@@ -29,9 +29,7 @@ services:
       retries: 10
 
   api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
+    image: ${SOLSUB_API_IMAGE:?SOLSUB_API_IMAGE is required}
     restart: unless-stopped
     env_file:
       - .env
@@ -39,19 +37,23 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-solsub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-solsub}?schema=public
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-    command: sh -c "npm run prisma:deploy -w @solsub/api && npm run prisma:seed -w @solsub/api && npm run start -w @solsub/api"
+    command: npm run start -w @solsub/api
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    expose:
-      - "4000"
+    ports:
+      - "127.0.0.1:${SOLSUB_API_HOST_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
+    image: ${SOLSUB_WEB_IMAGE:?SOLSUB_WEB_IMAGE is required}
     restart: unless-stopped
     env_file:
       - .env
@@ -64,14 +66,19 @@ services:
       NEXT_PUBLIC_RPC_ENDPOINT: ${NEXT_PUBLIC_RPC_ENDPOINT}
       NEXT_PUBLIC_TREASURY_WALLET: ${NEXT_PUBLIC_TREASURY_WALLET}
     depends_on:
-      - api
-    expose:
-      - "3000"
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SOLSUB_WEB_HOST_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   bot:
-    build:
-      context: .
-      dockerfile: apps/bot/Dockerfile
+    image: ${SOLSUB_BOT_IMAGE:?SOLSUB_BOT_IMAGE is required}
     restart: unless-stopped
     env_file:
       - .env
@@ -83,6 +90,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      api:
         condition: service_healthy
 
 volumes:
