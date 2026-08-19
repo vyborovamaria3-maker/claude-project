@@ -24,7 +24,8 @@ The workflow executes:
 2. existing POTAPoff production deployment;
 3. Solana subscription production deployment;
 4. legacy Mini App backend deployment;
-5. health checks after every deployment stage.
+5. health checks after every deployment stage;
+6. conservative passive production DAST before the release is marked complete.
 
 The workflow is intentionally manual. Merge to `main` is not sufficient approval for the full multi-service release.
 
@@ -42,7 +43,9 @@ The `production` environment must provide:
 
 Existing POTAPoff production secrets required by `potapoff-production.yml` must remain configured.
 
-## GitHub production variables required for subscription web build
+## GitHub production variables required
+
+For the subscription web build:
 
 - `SOLSUB_PUBLIC_API_URL`
 - `SOLSUB_PUBLIC_WEB_URL`
@@ -51,7 +54,22 @@ Existing POTAPoff production secrets required by `potapoff-production.yml` must 
 - `SOLSUB_PUBLIC_RPC_ENDPOINT`
 - `SOLSUB_TREASURY_WALLET`
 
-These values are compiled into the public Next.js bundle. Do not put private credentials into `NEXT_PUBLIC_*` values.
+For post-deploy DAST:
+
+- `PRODUCTION_PUBLIC_URL` — the authorized public HTTPS target for the production passive scan.
+
+`NEXT_PUBLIC_*` values are compiled into the public Next.js bundle. Do not put private credentials into them.
+
+## Self-hosted production runner requirements
+
+The production runner must have:
+
+- Docker Engine and Docker Compose v2;
+- SSH client and `scp`;
+- `curl`/standard shell utilities;
+- `webscan` installed and callable from `PATH` for the conservative production DAST step.
+
+Production DAST fails closed when `webscan` is unavailable. `ghostmap` and `xhunter` are intentionally disabled in the production profile and remain staging/lab tools.
 
 ## Server-side files required
 
@@ -119,13 +137,13 @@ The documented `bigint-buffer` advisory exception remains accepted only until **
 
 ## Post-deploy validation
 
-After all stages are healthy:
+The full release automatically requires the passive production `webscan`. After all stages are healthy also:
 
 - verify public landing and `/dashboard`;
 - verify FastAPI `/health` and `/ready`;
 - verify subscription API `/health` and web root;
 - verify legacy backend `/health`;
-- run conservative production DAST;
+- review the uploaded production DAST artifact;
 - run authenticated staging DAST/BOLA checks before treating the security audit as fully closed;
 - record the deployed Git SHA and backup paths.
 
