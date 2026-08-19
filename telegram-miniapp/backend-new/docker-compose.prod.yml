@@ -21,3 +21,4 @@ services:
 
 volumes:
   legacy_miniapp_data:
+    name: legacy_miniapp_data
