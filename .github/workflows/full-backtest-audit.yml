@@ -6,9 +6,14 @@ on:
     paths:
       - "solana-launcher/**"
       - ".github/workflows/full-backtest-audit.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: full-backtest-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend-audit:
@@ -21,7 +26,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
       - name: Install frontend dependencies
@@ -88,9 +93,13 @@ jobs:
           done
           BASE_URL=http://127.0.0.1:3001 node tests/full-route-audit.mjs
       - id: audit
-        name: Production dependency vulnerability audit
+        name: Production dependency vulnerability policy
         continue-on-error: true
-        run: npm audit --omit=dev --audit-level=high
+        env:
+          ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
+        run: |
+          npm audit --omit=dev --json > "$RUNNER_TEMP/full-backtest-npm-audit.json" || true
+          node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/full-backtest-npm-audit.json"
 
       - name: Frontend audit summary
         if: always()
@@ -163,6 +172,7 @@ jobs:
           cache-dependency-path: solana-launcher/backend/pyproject.toml
       - name: Install backend and audit tools
         run: |
+          python -m pip install --upgrade "setuptools>=83"
           python -m pip install -e ".[dev]"
           python -m pip install pip-audit
       - id: pipcheck
