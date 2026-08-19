@@ -54,9 +54,10 @@ For the subscription web build:
 - `SOLSUB_PUBLIC_RPC_ENDPOINT`
 - `SOLSUB_TREASURY_WALLET`
 
-For post-deploy DAST:
+For release security/preflight:
 
-- `PRODUCTION_PUBLIC_URL` — the authorized public HTTPS target for the production passive scan.
+- `PRODUCTION_PUBLIC_URL` — the authorized public HTTPS target for the production passive scan;
+- `SECURITY_CREDENTIAL_ROTATION_CONFIRMED=yes` — set this only after SEC-012 and SEC-013 credentials have been rotated at their providers and the old values are verified invalid.
 
 `NEXT_PUBLIC_*` values are compiled into the public Next.js bundle. Do not put private credentials into them.
 
@@ -127,9 +128,10 @@ After rotation:
 
 - update the corresponding GitHub/server secret stores;
 - verify the old credentials are invalid;
+- set `SECURITY_CREDENTIAL_ROTATION_CONFIRMED=yes` in the GitHub `production` environment;
 - do not commit the replacement values to Git.
 
-These are provider-side operations and cannot be completed by repository changes alone.
+These are provider-side operations and cannot be completed by repository changes alone. The full release workflow fails closed until the confirmation variable is set.
 
 ## Residual accepted risk
 
