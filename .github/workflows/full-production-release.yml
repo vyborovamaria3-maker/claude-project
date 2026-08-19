@@ -38,8 +38,13 @@ jobs:
     uses: ./.github/workflows/release-readiness.yml
     secrets: inherit
 
-  potapoff:
+  quality:
     needs: readiness
+    uses: ./.github/workflows/release-quality.yml
+    secrets: inherit
+
+  potapoff:
+    needs: quality
     uses: ./.github/workflows/potapoff-production.yml
     secrets: inherit
 
