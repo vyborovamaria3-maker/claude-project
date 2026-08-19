@@ -1,0 +1,166 @@
+name: Legacy Mini App Production
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: legacy-miniapp-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/claude-project/legacy-miniapp-backend
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: telegram-miniapp/backend-new
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: telegram-miniapp/backend-new/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: TypeScript build
+        run: npm run build
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Render production compose
+        env:
+          LEGACY_MINIAPP_IMAGE: example.invalid/legacy-miniapp:ci
+        run: |
+          cp .env.example .env.production
+          sed -i 's/^NODE_ENV=.*/NODE_ENV=production/' .env.production
+          sed -i 's#^FRONTEND_URL=.*#FRONTEND_URL=https://example.com#' .env.production
+          docker compose -f docker-compose.prod.yml config >/tmp/legacy-miniapp-compose.yml
+          rm -f .env.production
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: telegram-miniapp/backend-new
+          file: telegram-miniapp/backend-new/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha,scope=legacy-miniapp-backend
+          cache-to: type=gha,mode=max,scope=legacy-miniapp-backend
+
+  deploy:
+    needs: build
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 25
+    environment: production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Configure SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          for name in SERVER_HOST SERVER_PORT SERVER_USER SERVER_SSH_KEY SERVER_SSH_KNOWN_HOSTS; do
+            test -n "${!name}" || { echo "Missing production secret: $name" >&2; exit 1; }
+          done
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SERVER_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          ssh-keygen -F "$SERVER_HOST" -f ~/.ssh/known_hosts >/dev/null
+      - name: Upload production compose
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" 'mkdir -p /opt/legacy-miniapp-deploy/backups && chmod 700 /opt/legacy-miniapp-deploy /opt/legacy-miniapp-deploy/backups'
+          scp -i ~/.ssh/deploy_key -P "$SERVER_PORT" telegram-miniapp/backend-new/docker-compose.prod.yml "$SERVER_USER@$SERVER_HOST:/opt/legacy-miniapp-deploy/docker-compose.prod.yml"
+      - name: Login server to GHCR
+        env:
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" "docker login ghcr.io -u '$GHCR_USERNAME' --password-stdin"
+      - name: Deploy with SQLite backup and image rollback
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" "bash -s -- '${GITHUB_SHA}' '${IMAGE}'" <<'REMOTE'
+          set -euo pipefail
+          sha="$1"
+          image="$2"
+          cd /opt/legacy-miniapp-deploy
+          test -s .env.production || { echo '/opt/legacy-miniapp-deploy/.env.production is required' >&2; exit 1; }
+          chmod 600 .env.production
+          if [[ -f .release.env ]]; then cp .release.env .release.env.prev; fi
+          printf 'LEGACY_MINIAPP_IMAGE=%s:%s\n' "$image" "$sha" > .release.env
+          chmod 600 .release.env
+          cat .env.production .release.env > .deploy.env
+          chmod 600 .deploy.env
+          compose() { docker compose --env-file .deploy.env -f docker-compose.prod.yml "$@"; }
+          rollback() {
+            rc=$?
+            if [[ $rc -ne 0 && -f .release.env.prev ]]; then
+              echo 'Deployment failed; restoring previous legacy image.' >&2
+              cp .release.env.prev .release.env
+              cat .env.production .release.env > .deploy.env
+              compose pull backend || true
+              compose up -d backend || true
+            fi
+            exit "$rc"
+          }
+          trap rollback EXIT
+          compose pull backend
+          docker volume create legacy_miniapp_data >/dev/null
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          docker run --rm -v legacy_miniapp_data:/data:ro -v "$PWD/backups:/backup" "$image:$sha" sh -c "if [ -f /data/miniapp.db ]; then cp /data/miniapp.db /backup/miniapp-${timestamp}.db; fi"
+          compose run --rm backend npm run db:push
+          compose up -d backend
+          for _ in $(seq 1 30); do
+            compose exec -T backend wget -qO- http://127.0.0.1:3001/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          compose exec -T backend wget -qO- http://127.0.0.1:3001/health >/dev/null
+          compose ps
+          trap - EXIT
+          echo "LEGACY_MINIAPP_DEPLOY_OK sha=${sha} backup=backups/miniapp-${timestamp}.db"
+          REMOTE
