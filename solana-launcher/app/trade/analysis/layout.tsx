@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Activity, Network, Twitter } from "lucide-react";
+import { Activity, Twitter } from "lucide-react";
 import clsx from "clsx";
 import { siteDesign } from "@/lib/siteDesign";
 
@@ -17,13 +17,8 @@ const tabs = [
     href: "/trade/analysis/x",
     label: "X",
     icon: Twitter,
-    matches: (pathname: string) => pathname.startsWith("/trade/analysis/x"),
-  },
-  {
-    href: "/trade/analysis/social",
-    label: "Social / AI · 129",
-    icon: Network,
-    matches: (pathname: string) => pathname.startsWith("/trade/analysis/social"),
+    matches: (pathname: string) =>
+      pathname.startsWith("/trade/analysis/x") || pathname.startsWith("/trade/analysis/social"),
   },
 ];
 
