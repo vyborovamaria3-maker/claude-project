@@ -16,6 +16,11 @@ on:
       - "admin-site/requirements.txt"
       - ".gitignore"
       - ".github/workflows/intelligence-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: intelligence-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
