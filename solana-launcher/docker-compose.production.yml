@@ -146,7 +146,7 @@ services:
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_BACKEND_URL: https://potapoff.fun/fastapi
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     volumes:
       - ./data:/app/data
     depends_on:
