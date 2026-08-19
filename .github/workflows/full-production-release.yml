@@ -19,12 +19,18 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Require explicit production confirmation
+        env:
+          CREDENTIAL_ROTATION_CONFIRMED: ${{ vars.SECURITY_CREDENTIAL_ROTATION_CONFIRMED }}
+          PRODUCTION_PUBLIC_URL: ${{ vars.PRODUCTION_PUBLIC_URL }}
         run: |
           set -euo pipefail
           test "${{ github.event.inputs.confirm }}" = "DEPLOY" || { echo 'Confirmation must be DEPLOY' >&2; exit 1; }
           test "${GITHUB_REF_NAME}" = "main" || { echo 'Full production release may only run from main' >&2; exit 1; }
+          test "$CREDENTIAL_ROTATION_CONFIRMED" = "yes" || { echo 'SECURITY_CREDENTIAL_ROTATION_CONFIRMED must be yes after provider-side rotation of SEC-012/SEC-013' >&2; exit 1; }
+          test -n "$PRODUCTION_PUBLIC_URL" || { echo 'PRODUCTION_PUBLIC_URL is required for post-deploy DAST' >&2; exit 1; }
           echo "FULL_RELEASE_CONFIRMED sha=${GITHUB_SHA}"
 
   readiness:
