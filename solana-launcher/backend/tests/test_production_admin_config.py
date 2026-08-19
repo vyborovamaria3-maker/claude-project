@@ -43,3 +43,8 @@ def test_production_accepts_explicit_strong_security_settings():
     settings = production_settings()
     assert settings.environment == "production"
     assert settings.debug is False
+
+
+def test_blank_telegram_api_id_disables_telegram_intelligence():
+    settings = production_settings(telegram_api_id="")
+    assert settings.telegram_api_id is None
