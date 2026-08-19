@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PATH="$HOME/.local/bin:$PATH"
+
 : "${AUDIT_TARGET:?Set AUDIT_TARGET to an authorized http(s) URL}"
 : "${AUDIT_AUTHORIZED:?Set AUDIT_AUTHORIZED=yes after confirming authorization}"
 
