@@ -38,12 +38,16 @@ async def read_tokens(
     limit: int = Query(default=50, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
 ) -> TokenListResponse:
-    items, total = await list_tokens(session, limit=limit, offset=offset, sort_by=sort_by, order=order)
+    items, total = await list_tokens(
+        session, limit=limit, offset=offset, sort_by=sort_by, order=order
+    )
     return TokenListResponse(items=items, meta={"limit": limit, "offset": offset, "total": total})
 
 
 @router.get("/tokens/{mint_address}/analysis", response_model=TokenAnalysisResponse)
-async def read_token_analysis(mint_address: str, session: AsyncSession = Depends(get_db)) -> TokenAnalysisResponse:
+async def read_token_analysis(
+    mint_address: str, session: AsyncSession = Depends(get_db)
+) -> TokenAnalysisResponse:
     try:
         data = await get_token_analysis(session, mint_address)
     except ValueError as exc:
@@ -69,7 +73,9 @@ async def read_top_wallets(
 
 
 @router.get("/wallets/{wallet_address}/activity", response_model=WalletActivityResponse)
-async def read_wallet_activity(wallet_address: str, session: AsyncSession = Depends(get_db)) -> WalletActivityResponse:
+async def read_wallet_activity(
+    wallet_address: str, session: AsyncSession = Depends(get_db)
+) -> WalletActivityResponse:
     try:
         data = await get_wallet_activity(session, wallet_address)
     except ValueError as exc:
@@ -96,7 +102,14 @@ async def run_collector(
 ) -> CollectorRunResponse:
     result = await run_full_collection(session)
     await get_or_create_jobs(session)
-    return CollectorRunResponse(detail="collection queued", tasks=[f"tokens={result['tokens']}", f"metrics={result['metrics']}", f"links={result['links']}"])
+    return CollectorRunResponse(
+        detail="collection queued",
+        tasks=[
+            f"tokens={result['tokens']}",
+            f"metrics={result['metrics']}",
+            f"links={result['links']}",
+        ],
+    )
 
 
 @router.websocket("/ws/token/{mint_address}")
@@ -110,6 +123,12 @@ async def stream_token_updates(websocket: WebSocket, mint_address: str) -> None:
 
 
 async def _token_stream(mint_address: str) -> AsyncIterator[dict]:
-    # Placeholder stream implementation: in production this can subscribe to PumpPortal or Helius WS.
+    # Placeholder stream implementation.
+    # In production this can subscribe to PumpPortal or Helius WS.
     for index in range(3):
-        yield {"mint_address": mint_address, "sequence": index, "price_usd": None, "volume_24h": None}
+        yield {
+            "mint_address": mint_address,
+            "sequence": index,
+            "price_usd": None,
+            "volume_24h": None,
+        }

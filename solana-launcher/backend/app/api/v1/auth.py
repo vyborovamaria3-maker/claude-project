@@ -1,6 +1,5 @@
 import hmac
-import secrets
-from datetime import timedelta, timezone, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -9,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.config import Settings
 from app.core.rate_limit import RateLimitResult, make_limit_key
+from app.core.security import get_password_hash, verify_password
 from app.db.session import get_db
 from app.middleware.client_ip import get_client_ip
 from app.schemas.auth import (
@@ -26,7 +26,6 @@ from app.services.auth import (
     LoginResult,
     build_phantom_message,
     create_auth_log,
-    generate_nonce,
     get_user_by_telegram_id,
     get_user_by_wallet,
     issue_token_for_user,
@@ -35,7 +34,6 @@ from app.services.auth import (
     verify_phantom_signature,
     verify_telegram_init_data,
 )
-from app.core.security import get_password_hash, verify_password
 from app.services.users import authenticate_user, create_user
 
 router = APIRouter()
@@ -58,8 +56,8 @@ def _token_response(result: LoginResult) -> Token:
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -87,7 +85,9 @@ async def login(
     )
     user = await authenticate_user(session, form_data.username, form_data.password)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials"
+        )
 
     await sync_login_metadata(session, user, ip_address=ip_address, source="password")
     result = await issue_token_for_user(session, user, settings)
@@ -110,7 +110,9 @@ async def login_json(
     )
     user = await authenticate_user(session, login_in.email, login_in.password)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials"
+        )
 
     await sync_login_metadata(session, user, ip_address=ip_address, source="password")
     result = await issue_token_for_user(session, user, settings)
@@ -157,7 +159,9 @@ async def telegram_verify(
             ip_address=ip_address,
             error_message="Invalid Telegram init_data",
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+        ) from None
 
     telegram_id = str(user_data["id"])
     user = await get_user_by_telegram_id(session, telegram_id)
@@ -198,24 +202,32 @@ async def link_identity(
     if payload.wallet_address and payload.signature and payload.nonce is not None:
         await _rate_limit(
             request,
-            key=make_limit_key("link", "wallet", ip_address, current_user.id, payload.wallet_address),
+            key=make_limit_key(
+                "link", "wallet", ip_address, current_user.id, payload.wallet_address
+            ),
             limit=settings.auth_verify_rate_limit,
             window_seconds=settings.auth_rate_limit_window_seconds,
         )
 
         wallet_user = await get_user_by_wallet(session, payload.wallet_address)
         if wallet_user is None or wallet_user.nonce is None or wallet_user.nonce_expires_at is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
 
         if wallet_user.id != current_user.id:
             if not current_user.wallet_address:
                 try:
                     current_user = merge_user_records(current_user, wallet_user)
                 except ValueError:
-                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Wallet already linked")
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT, detail="Wallet already linked"
+                    ) from None
                 await session.delete(wallet_user)
             else:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Wallet already linked")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="Wallet already linked"
+                )
 
         wallet_message = build_phantom_message(
             app_name=settings.app_name,
@@ -230,10 +242,14 @@ async def link_identity(
                 signature=payload.signature,
             )
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            ) from None
 
-        if wallet_user.nonce != payload.nonce or wallet_user.nonce_expires_at < datetime.now(timezone.utc):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if wallet_user.nonce != payload.nonce or wallet_user.nonce_expires_at < datetime.now(UTC):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
 
         current_user.wallet_address = payload.wallet_address
         current_user.nonce = None
@@ -262,7 +278,9 @@ async def link_identity(
                 max_age_hours=settings.telegram_auth_max_age_hours,
             )
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            ) from None
 
         telegram_id = str(user_data["id"])
         existing = await get_user_by_telegram_id(session, telegram_id)
@@ -271,10 +289,15 @@ async def link_identity(
                 try:
                     current_user = merge_user_records(current_user, existing)
                 except ValueError:
-                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Telegram account already linked")
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Telegram account already linked",
+                    ) from None
                 await session.delete(existing)
             else:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Telegram account already linked")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="Telegram account already linked"
+                )
 
         current_user.telegram_id = telegram_id
         current_user.telegram_username = user_data.get("username")
@@ -297,7 +320,10 @@ async def link_identity(
         )
         return UserRead.model_validate(current_user)
 
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide wallet signature or Telegram init_data")
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Provide wallet signature or Telegram init_data",
+    )
 
 
 @router.post("/telegram/callback", response_model=TelegramCallbackResponse)
@@ -324,7 +350,9 @@ async def telegram_callback(
             ip_address=ip_address,
             error_message="Invalid Telegram init_data",
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+        ) from None
 
     telegram_id = str(user_data["id"])
 
@@ -367,11 +395,11 @@ async def register_password(
 ) -> dict:
     """Register password from Telegram bot after payment"""
     settings: Settings = request.app.state.settings
-    
+
     # Verify API key using constant-time comparison to prevent timing attacks
     api_key = request.headers.get("X-API-Key", "")
     expected_key = settings.backend_api_key
-    
+
     is_dev_internal = (
         settings.environment.strip().lower() in {"development", "test"}
         and not expected_key
@@ -381,19 +409,18 @@ async def register_password(
     # Use compare_digest for constant-time comparison
     if not is_dev_internal and (
         not expected_key
-        or not hmac.compare_digest(api_key.encode('utf-8'), expected_key.encode('utf-8'))
+        or not hmac.compare_digest(api_key.encode("utf-8"), expected_key.encode("utf-8"))
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
-    
+
     telegram_id = str(payload.telegram_id)
-    
+
     # Check if user exists
     user = await get_user_by_telegram_id(session, telegram_id)
-    
+
     password_hash = get_password_hash(payload.password)
-    from datetime import timedelta
-    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
-    
+    expires_at = datetime.now(UTC) + timedelta(days=30)
+
     if user:
         user.hashed_password = password_hash
         user.subscription_expires_at = expires_at
@@ -401,6 +428,7 @@ async def register_password(
         user.telegram_username = payload.telegram_username
     else:
         from app.models.user import User
+
         user = User(
             telegram_id=telegram_id,
             email=payload.login,
@@ -410,7 +438,7 @@ async def register_password(
             is_active=True,
         )
         session.add(user)
-    
+
     await session.commit()
     return {"status": "success", "message": "Password registered"}
 
@@ -424,7 +452,7 @@ async def login_password(
     """Login with 32-character password"""
     settings: Settings = request.app.state.settings
     ip_address = get_client_ip(request)
-    
+
     # Rate limiting
     await _rate_limit(
         request,
@@ -432,30 +460,27 @@ async def login_password(
         limit=5,
         window_seconds=60,
     )
-    
-    from app.models.user import User
+
     from sqlalchemy import select
 
+    from app.models.user import User
+
     result = await session.execute(
-        select(User)
-        .where(User.hashed_password.isnot(None))
-        .where(User.email == payload.login)
+        select(User).where(User.hashed_password.isnot(None)).where(User.email == payload.login)
     )
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid password"
-        )
-    
+    if (
+        user is None
+        or user.hashed_password is None
+        or not verify_password(payload.password, user.hashed_password)
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+
     # Check subscription expiry
-    if user.subscription_expires_at and _as_utc(user.subscription_expires_at) < datetime.now(timezone.utc):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Subscription expired"
-        )
-    
+    if user.subscription_expires_at and _as_utc(user.subscription_expires_at) < datetime.now(UTC):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Subscription expired")
+
     user = await sync_login_metadata(session, user, ip_address=ip_address, source="password")
-    result = await issue_token_for_user(session, user, settings)
-    return _token_response(result)
+    login_result = await issue_token_for_user(session, user, settings)
+    return _token_response(login_result)

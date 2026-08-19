@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +19,7 @@ from app.models.intelligence_memory import (
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _dict(value: Any) -> dict:
@@ -74,9 +75,7 @@ def _parse_nodes(nodes: list) -> list[tuple[str, str, str, dict | None]]:
 def _parse_edges(
     edges: list,
 ) -> list[tuple[str, str, str, float, list | None, dict | None]]:
-    parsed: list[
-        tuple[str, str, str, float, list | None, dict | None]
-    ] = []
+    parsed: list[tuple[str, str, str, float, list | None, dict | None]] = []
     seen: set[tuple[str, str, str]] = set()
     for raw_edge in edges[:2500]:
         edge = _dict(raw_edge)
@@ -139,27 +138,18 @@ async def persist_intelligence_memory(
         snapshot_id=snapshot_id,
         mint_address=mint[:64],
         symbol=(str(snapshot.get("symbol"))[:32] if snapshot.get("symbol") else None),
-        token_name=(
-            str(snapshot.get("tokenName"))[:128]
-            if snapshot.get("tokenName")
-            else None
-        ),
+        token_name=(str(snapshot.get("tokenName"))[:128] if snapshot.get("tokenName") else None),
         snapshot_version=str(snapshot.get("version") or "unknown")[:80],
-        graph_version=str(
-            snapshot.get("graphVersion") or graph.get("version") or "unknown"
-        )[:80],
+        graph_version=str(snapshot.get("graphVersion") or graph.get("version") or "unknown")[:80],
         feature_count=int(
-            actual_input.get("featureCount")
-            or len(_list(actual_input.get("features")))
+            actual_input.get("featureCount") or len(_list(actual_input.get("features")))
         ),
         missing_feature_count=int(actual_input.get("missingFeatureCount") or 0),
         provider=(provider[:64] if provider else None),
         model=(model[:160] if model else None),
         prompt_version=(prompt_version[:80] if prompt_version else None),
         overall_confidence=(
-            _bounded_float(overall_confidence)
-            if overall_confidence is not None
-            else None
+            _bounded_float(overall_confidence) if overall_confidence is not None else None
         ),
         payload=snapshot,
         analysis_payload=analysis_snapshot,
@@ -187,20 +177,21 @@ async def persist_intelligence_memory(
     seen_entity_keys_on_mint: set[str] = set()
     if node_ids:
         entity_rows = (
-            await session.execute(
-                select(IntelligenceEntity).where(
-                    IntelligenceEntity.entity_key.in_(node_ids)
+            (
+                await session.execute(
+                    select(IntelligenceEntity).where(IntelligenceEntity.entity_key.in_(node_ids))
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         existing_entities = {item.entity_key: item for item in entity_rows}
 
         seen_rows = await session.execute(
             select(IntelligenceSnapshotEntity.entity_key)
             .join(
                 IntelligenceSnapshot,
-                IntelligenceSnapshot.snapshot_id
-                == IntelligenceSnapshotEntity.snapshot_id,
+                IntelligenceSnapshot.snapshot_id == IntelligenceSnapshotEntity.snapshot_id,
             )
             .where(
                 IntelligenceSnapshotEntity.entity_key.in_(node_ids),
@@ -246,15 +237,16 @@ async def persist_intelligence_memory(
     seen_edges_on_mint: set[tuple[str, str, str]] = set()
     if edge_sources:
         edge_rows = (
-            await session.execute(
-                select(IntelligenceEdge).where(
-                    IntelligenceEdge.source_key.in_(edge_sources)
+            (
+                await session.execute(
+                    select(IntelligenceEdge).where(IntelligenceEdge.source_key.in_(edge_sources))
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         existing_edges = {
-            (item.source_key, item.target_key, item.edge_type): item
-            for item in edge_rows
+            (item.source_key, item.target_key, item.edge_type): item for item in edge_rows
         }
 
         seen_rows = await session.execute(
@@ -265,8 +257,7 @@ async def persist_intelligence_memory(
             )
             .join(
                 IntelligenceSnapshot,
-                IntelligenceSnapshot.snapshot_id
-                == IntelligenceSnapshotEdge.snapshot_id,
+                IntelligenceSnapshot.snapshot_id == IntelligenceSnapshotEdge.snapshot_id,
             )
             .where(
                 IntelligenceSnapshotEdge.source_key.in_(edge_sources),
@@ -275,8 +266,7 @@ async def persist_intelligence_memory(
             )
         )
         seen_edges_on_mint = {
-            (source, target, edge_type)
-            for source, target, edge_type in seen_rows.all()
+            (source, target, edge_type) for source, target, edge_type in seen_rows.all()
         }
 
     for source, target, edge_type, confidence, evidence, attributes in parsed_edges:
@@ -357,32 +347,26 @@ async def persist_intelligence_memory(
     for raw_discovery in discoveries[:500]:
         discovery = _dict(raw_discovery)
         dtype = str(discovery.get("type") or "other")[:120]
-        source = _canonical_ref(discovery.get("source"), node_ids, label_to_id)
-        target = _canonical_ref(discovery.get("target"), node_ids, label_to_id)
+        discovery_source = _canonical_ref(discovery.get("source"), node_ids, label_to_id)
+        discovery_target = _canonical_ref(discovery.get("target"), node_ids, label_to_id)
         status = str(discovery.get("status") or "hypothesis")[:32]
-        signature = (dtype, source, target, status)
-        if signature in seen_discoveries:
+        discovery_signature = (dtype, discovery_source, discovery_target, status)
+        if discovery_signature in seen_discoveries:
             continue
-        seen_discoveries.add(signature)
+        seen_discoveries.add(discovery_signature)
         session.add(
             IntelligenceDiscovery(
                 snapshot_id=snapshot_id,
-                source_key=source,
-                target_key=target,
+                source_key=discovery_source,
+                target_key=discovery_target,
                 discovery_type=dtype,
                 status=status,
                 confidence=_bounded_float(discovery.get("confidence")),
-                rationale=str(
-                    discovery.get("rationale")
-                    or discovery.get("explanation")
-                    or ""
-                )[:10000],
-                evidence_ids=(
-                    _list(discovery.get("evidenceMessageIds"))[:50] or None
-                ),
-                related_feature_keys=(
-                    _list(discovery.get("relatedFeatureKeys"))[:50] or None
-                ),
+                rationale=str(discovery.get("rationale") or discovery.get("explanation") or "")[
+                    :10000
+                ],
+                evidence_ids=(_list(discovery.get("evidenceMessageIds"))[:50] or None),
+                related_feature_keys=(_list(discovery.get("relatedFeatureKeys"))[:50] or None),
                 payload=_dict(discovery.get("payload")) or discovery,
                 created_at=now,
             )
@@ -422,13 +406,17 @@ async def token_memory_history(
     limit: int = 20,
 ) -> list[dict]:
     rows = (
-        await session.execute(
-            select(IntelligenceSnapshot)
-            .where(IntelligenceSnapshot.mint_address == mint)
-            .order_by(IntelligenceSnapshot.created_at.desc())
-            .limit(limit)
+        (
+            await session.execute(
+                select(IntelligenceSnapshot)
+                .where(IntelligenceSnapshot.mint_address == mint)
+                .order_by(IntelligenceSnapshot.created_at.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [
         {
             "snapshot_id": item.snapshot_id,
@@ -457,43 +445,49 @@ async def entity_memory(
 ) -> dict | None:
     entity = (
         await session.execute(
-            select(IntelligenceEntity).where(
-                IntelligenceEntity.entity_key == entity_key
-            )
+            select(IntelligenceEntity).where(IntelligenceEntity.entity_key == entity_key)
         )
     ).scalar_one_or_none()
     if entity is None:
         return None
 
     edges = (
-        await session.execute(
-            select(IntelligenceEdge)
-            .where(
-                or_(
-                    IntelligenceEdge.source_key == entity_key,
-                    IntelligenceEdge.target_key == entity_key,
+        (
+            await session.execute(
+                select(IntelligenceEdge)
+                .where(
+                    or_(
+                        IntelligenceEdge.source_key == entity_key,
+                        IntelligenceEdge.target_key == entity_key,
+                    )
                 )
+                .order_by(
+                    IntelligenceEdge.occurrence_count.desc(),
+                    IntelligenceEdge.last_seen_at.desc(),
+                )
+                .limit(edge_limit)
             )
-            .order_by(
-                IntelligenceEdge.occurrence_count.desc(),
-                IntelligenceEdge.last_seen_at.desc(),
-            )
-            .limit(edge_limit)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     discoveries = (
-        await session.execute(
-            select(IntelligenceDiscovery)
-            .where(
-                or_(
-                    IntelligenceDiscovery.source_key == entity_key,
-                    IntelligenceDiscovery.target_key == entity_key,
+        (
+            await session.execute(
+                select(IntelligenceDiscovery)
+                .where(
+                    or_(
+                        IntelligenceDiscovery.source_key == entity_key,
+                        IntelligenceDiscovery.target_key == entity_key,
+                    )
                 )
+                .order_by(IntelligenceDiscovery.created_at.desc())
+                .limit(edge_limit)
             )
-            .order_by(IntelligenceDiscovery.created_at.desc())
-            .limit(edge_limit)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {
         "entity": {
             "key": entity.entity_key,
@@ -510,9 +504,7 @@ async def entity_memory(
                 "target": edge.target_key,
                 "type": edge.edge_type,
                 "occurrence_count": edge.occurrence_count,
-                "avg_confidence": (
-                    edge.confidence_sum / max(1, edge.occurrence_count)
-                ),
+                "avg_confidence": (edge.confidence_sum / max(1, edge.occurrence_count)),
                 "max_confidence": edge.max_confidence,
                 "first_seen_at": edge.first_seen_at.isoformat(),
                 "last_seen_at": edge.last_seen_at.isoformat(),
@@ -561,12 +553,14 @@ async def build_memory_context(
     entities = []
     if keys:
         rows = (
-            await session.execute(
-                select(IntelligenceEntity).where(
-                    IntelligenceEntity.entity_key.in_(keys)
+            (
+                await session.execute(
+                    select(IntelligenceEntity).where(IntelligenceEntity.entity_key.in_(keys))
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         entities = [
             {
                 "key": item.entity_key,
@@ -580,57 +574,63 @@ async def build_memory_context(
             for item in rows
         ]
 
-    edge_rows = []
+    edge_rows: Sequence[IntelligenceEdge] = []
     if keys:
         edge_rows = (
-            await session.execute(
-                select(IntelligenceEdge)
-                .where(
-                    or_(
-                        IntelligenceEdge.source_key.in_(keys),
-                        IntelligenceEdge.target_key.in_(keys),
+            (
+                await session.execute(
+                    select(IntelligenceEdge)
+                    .where(
+                        or_(
+                            IntelligenceEdge.source_key.in_(keys),
+                            IntelligenceEdge.target_key.in_(keys),
+                        )
                     )
+                    .order_by(
+                        IntelligenceEdge.occurrence_count.desc(),
+                        IntelligenceEdge.last_seen_at.desc(),
+                    )
+                    .limit(max_edges)
                 )
-                .order_by(
-                    IntelligenceEdge.occurrence_count.desc(),
-                    IntelligenceEdge.last_seen_at.desc(),
-                )
-                .limit(max_edges)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     edges = [
         {
             "source": item.source_key,
             "target": item.target_key,
             "type": item.edge_type,
             "occurrence_count": item.occurrence_count,
-            "avg_confidence": (
-                item.confidence_sum / max(1, item.occurrence_count)
-            ),
+            "avg_confidence": (item.confidence_sum / max(1, item.occurrence_count)),
             "max_confidence": item.max_confidence,
             "last_seen_at": item.last_seen_at.isoformat(),
         }
         for item in edge_rows
     ]
 
-    discovery_rows = []
+    discovery_rows: Sequence[IntelligenceDiscovery] = []
     if keys:
         discovery_rows = (
-            await session.execute(
-                select(IntelligenceDiscovery)
-                .where(
-                    or_(
-                        IntelligenceDiscovery.source_key.in_(keys),
-                        IntelligenceDiscovery.target_key.in_(keys),
+            (
+                await session.execute(
+                    select(IntelligenceDiscovery)
+                    .where(
+                        or_(
+                            IntelligenceDiscovery.source_key.in_(keys),
+                            IntelligenceDiscovery.target_key.in_(keys),
+                        )
                     )
+                    .order_by(
+                        IntelligenceDiscovery.confidence.desc(),
+                        IntelligenceDiscovery.created_at.desc(),
+                    )
+                    .limit(max_edges * 3)
                 )
-                .order_by(
-                    IntelligenceDiscovery.confidence.desc(),
-                    IntelligenceDiscovery.created_at.desc(),
-                )
-                .limit(max_edges * 3)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     discoveries = []
     seen: set[tuple[str, str | None, str | None, str]] = set()
@@ -658,9 +658,7 @@ async def build_memory_context(
         if len(discoveries) >= max_edges:
             break
 
-    prior_snapshots = (
-        await token_memory_history(session, mint, limit=10) if mint else []
-    )
+    prior_snapshots = await token_memory_history(session, mint, limit=10) if mint else []
     return {
         "entities": entities,
         "edges": edges,

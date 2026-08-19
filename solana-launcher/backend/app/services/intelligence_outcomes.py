@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,7 +89,7 @@ async def _apply_calibration_delta(
         row.confirmed_count += 1
     else:
         row.contradicted_count += 1
-    row.updated_at = datetime.now(timezone.utc)
+    row.updated_at = datetime.now(UTC)
     return True
 
 
@@ -184,7 +185,7 @@ async def persist_outcome_values(
         "max_drawdown_pct": drawdown,
         "outcome_label": label,
         "payload": merged_payload,
-        "evaluated_at": datetime.now(timezone.utc),
+        "evaluated_at": datetime.now(UTC),
     }
     if existing is None:
         existing = IntelligenceOutcome(
@@ -241,7 +242,9 @@ async def _metrics_for_window(
                 )
                 .order_by(TokenMetric.timestamp.asc())
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
 
@@ -266,7 +269,7 @@ async def evaluate_snapshot_horizon(
     horizon_hours: int,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cutoff = snapshot.created_at
     end = cutoff + timedelta(hours=horizon_hours)
     if now < end:
@@ -288,17 +291,13 @@ async def evaluate_snapshot_horizon(
     outcome_rows = [
         row
         for row in rows
-        if row.price_usd is not None
-        and row.price_usd > 0
-        and cutoff <= row.timestamp <= end
+        if row.price_usd is not None and row.price_usd > 0 and cutoff <= row.timestamp <= end
     ]
     if not outcome_rows:
         return {"status": "no_valid_prices", "snapshot_id": snapshot.snapshot_id}
 
     final_candidates = [
-        row
-        for row in outcome_rows
-        if row.timestamp >= end - FINAL_COVERAGE_TOLERANCE
+        row for row in outcome_rows if row.timestamp >= end - FINAL_COVERAGE_TOLERANCE
     ]
     if not final_candidates:
         return {
@@ -312,10 +311,10 @@ async def evaluate_snapshot_horizon(
         session,
         snapshot=snapshot,
         horizon_hours=horizon_hours,
-        baseline_price_usd=float(baseline_row.price_usd),
-        max_price_usd=max(float(row.price_usd) for row in outcome_rows),
-        min_price_usd=min(float(row.price_usd) for row in outcome_rows),
-        final_price_usd=float(final_candidates[-1].price_usd),
+        baseline_price_usd=float(baseline_row.price_usd or 0.0),
+        max_price_usd=max(float(row.price_usd or 0.0) for row in outcome_rows),
+        min_price_usd=min(float(row.price_usd or 0.0) for row in outcome_rows),
+        final_price_usd=float(final_candidates[-1].price_usd or 0.0),
         max_drawdown_pct=peak_to_trough,
         payload={
             "source": "token_metrics",
@@ -341,7 +340,7 @@ async def evaluate_matured_outcomes(
     now: datetime | None = None,
     limit: int = MAX_SNAPSHOTS_PER_RUN,
 ) -> dict[str, int]:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     horizons = tuple(sorted({int(value) for value in horizons if int(value) > 0}))
     if not horizons:
         return {
@@ -361,7 +360,9 @@ async def evaluate_matured_outcomes(
                 .order_by(IntelligenceSnapshot.created_at.asc())
                 .limit(limit * SCAN_MULTIPLIER)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     candidate_ids = [row.snapshot_id for row in candidates]
     existing_rows: list[IntelligenceOutcome] = []
@@ -374,7 +375,9 @@ async def evaluate_matured_outcomes(
                         IntelligenceOutcome.horizon_hours.in_(horizons),
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
     existing = {(row.snapshot_id, row.horizon_hours) for row in existing_rows}
 

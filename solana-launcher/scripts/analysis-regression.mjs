@@ -11,7 +11,7 @@ const wrapperPath = join(root, "lib", "trade", "intelligence-agent-provenance.ts
 const provenancePath = join(root, "lib", "trade", "analysis-feature-provenance.json");
 const tsconfigPath = join(root, "tsconfig.json");
 
-const metricsSource = readFileSync(metricsPath, "utf8");
+const metricsSource = readFileSync(metricsPath, "utf8").replace(/\r\n?/g, "\n");
 const layoutSource = readFileSync(layoutPath, "utf8");
 const panelSource = readFileSync(panelPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");

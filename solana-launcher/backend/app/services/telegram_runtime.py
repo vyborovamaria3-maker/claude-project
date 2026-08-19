@@ -81,8 +81,12 @@ class TelegramMonitorManager:
     def status(self) -> dict[str, Any]:
         if self.service is None:
             return {
-                "configured": bool(self.settings.telegram_api_id and self.settings.telegram_api_hash),
-                "session_configured": bool(self._runtime_session_string or self.settings.telegram_session_string),
+                "configured": bool(
+                    self.settings.telegram_api_id and self.settings.telegram_api_hash
+                ),
+                "session_configured": bool(
+                    self._runtime_session_string or self.settings.telegram_session_string
+                ),
                 "running": False,
                 "channels": [],
                 "connected": False,

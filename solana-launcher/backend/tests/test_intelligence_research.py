@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from app.db.base import Base
-from app.models.analytics import Token, Wallet, WalletLink, WalletTrade
+from app.models.analytics import Token, TokenMetric, Wallet, WalletLink, WalletTrade
 from app.models.intelligence_memory import IntelligenceSnapshot, IntelligenceSnapshotEntity
 from app.models.social_intelligence import (
     SocialEvent,
@@ -22,8 +20,9 @@ from app.services.intelligence_research import (
     funding_graph,
     related_launches,
 )
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-NOW = datetime(2026, 8, 12, 4, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 12, 4, 0, tzinfo=UTC)
 MINT_A = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
 MINT_B = "So11111111111111111111111111111111111111112"
 WALLET_A = "8YpQMWqkVJbR4QdQ8kCj4Yw2cBzX9rWv2KjC5uE1aBcD"
@@ -35,6 +34,7 @@ async def session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     tables = [
         Token.__table__,
+        TokenMetric.__table__,
         Wallet.__table__,
         WalletTrade.__table__,
         WalletLink.__table__,

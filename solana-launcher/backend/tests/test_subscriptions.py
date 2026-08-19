@@ -5,7 +5,7 @@ from app.models.subscription_order import SubscriptionOrder
 from app.models.user import User
 from sqlalchemy import select
 
-INTERNAL_HEADERS = {"X-Dev-Internal": "miniapp-subscription"}
+INTERNAL_HEADERS = {"X-API-Key": "test-backend-api-key-0123456789abcdef"}
 RECIPIENT = "11111111111111111111111111111111"
 
 

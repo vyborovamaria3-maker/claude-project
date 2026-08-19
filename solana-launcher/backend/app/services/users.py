@@ -16,7 +16,9 @@ async def get_user_by_id(session: AsyncSession, user_id) -> User | None:
     return await session.get(User, str(user_id))
 
 
-async def create_user(session: AsyncSession, user_in: UserCreate, *, is_superuser: bool = False) -> User:
+async def create_user(
+    session: AsyncSession, user_in: UserCreate, *, is_superuser: bool = False
+) -> User:
     existing_user = await get_user_by_email(session, user_in.email)
     if existing_user is not None:
         raise ValueError("User with this email already exists")
@@ -36,7 +38,11 @@ async def create_user(session: AsyncSession, user_in: UserCreate, *, is_superuse
 
 async def authenticate_user(session: AsyncSession, email: str, password: str) -> User | None:
     user = await get_user_by_email(session, email)
-    if user is None or not verify_password(password, user.hashed_password):
+    if (
+        user is None
+        or user.hashed_password is None
+        or not verify_password(password, user.hashed_password)
+    ):
         return None
     return user
 

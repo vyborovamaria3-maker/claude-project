@@ -3,10 +3,11 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from statistics import mean, median
-from typing import Any, Iterable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,11 +45,7 @@ LIMITATIONS = (
 
 
 def _utc(value: datetime) -> datetime:
-    return (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -62,9 +59,7 @@ def _source(value: str | None) -> str:
 def _text(value: str) -> str:
     normalized = URL_RE.sub(" ", value.lower())
     normalized = SOLANA_RE.sub(" ", normalized)
-    return " ".join(
-        re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).split()
-    )[:220]
+    return " ".join(re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE).split())[:220]
 
 
 def _copy_ratio(events: list[SocialEvent]) -> float:
@@ -257,11 +252,7 @@ def build_historical_features(
     cutoff = _utc(cutoff)
     x_events = [event for event in events if event.platform == "x"]
     tg_events = [event for event in events if event.platform == "telegram"]
-    x_authors = {
-        _source(event.source_handle)
-        for event in x_events
-        if event.source_handle
-    }
+    x_authors = {_source(event.source_handle) for event in x_events if event.source_handle}
 
     # Historical mutable engagement/profile data is intentionally excluded.
     x_verified_ratio = 0.0
@@ -294,15 +285,10 @@ def build_historical_features(
         wins = sum(call.outcome in {"win", "win_then_rug"} for call in matured)
         rugs = sum(call.outcome in {"rug", "win_then_rug"} for call in matured)
         early = sum(
-            call.call_market_cap_usd is not None
-            and call.call_market_cap_usd <= 50_000
+            call.call_market_cap_usd is not None and call.call_market_cap_usd <= 50_000
             for call in matured
         )
-        rois = [
-            float(call.roi_multiple)
-            for call in matured
-            if call.roi_multiple is not None
-        ]
+        rois = [float(call.roi_multiple) for call in matured if call.roi_multiple is not None]
         channel_scores.append(
             score_channel_metrics(
                 calls=len(matured),
@@ -324,11 +310,7 @@ def build_historical_features(
     positive_sentiment, _, _ = _sentiment(event.text or "" for event in events)
     first_x = min((_utc(event.occurred_at) for event in x_events), default=None)
     first_tg = min((_utc(event.occurred_at) for event in tg_events), default=None)
-    first_lag = (
-        abs((first_x - first_tg).total_seconds()) / 60.0
-        if first_x and first_tg
-        else None
-    )
+    first_lag = abs((first_x - first_tg).total_seconds()) / 60.0 if first_x and first_tg else None
     first_social = min(
         (item for item in (first_x, first_tg) if item is not None),
         default=None,
@@ -342,21 +324,13 @@ def build_historical_features(
     author_ratio = len(x_authors) / len(x_events) * 100.0 if x_events else 0.0
     mention_quality = _clamp(math.log10(len(x_events) + 1.0) / 2.0 * 100.0)
     x_score = (
-        _clamp(
-            (100.0 - x_suspicious_ratio) * 0.40
-            + author_ratio * 0.40
-            + mention_quality * 0.20
-        )
+        _clamp((100.0 - x_suspicious_ratio) * 0.40 + author_ratio * 0.40 + mention_quality * 0.20)
         if x_events
         else 0.0
     )
 
     channel_quality = (
-        _clamp(
-            channel_score * 0.55
-            + win_rate * 0.25
-            + (100.0 - rug_rate) * 0.20
-        )
+        _clamp(channel_score * 0.55 + win_rate * 0.25 + (100.0 - rug_rate) * 0.20)
         if historical_channels
         else 0.0
     )
@@ -372,25 +346,12 @@ def build_historical_features(
 
     coordination = _clamp(copy_ratio * 0.80)
     manipulation = _clamp(coordination * 0.55 + x_suspicious_ratio * 0.45)
-    source_diversity = _clamp(
-        author_ratio * 0.60
-        + min(len(tg_channels) * 10.0, 100.0) * 0.40
-    )
-    organic = _clamp(
-        50.0 - manipulation * 0.55 - copy_ratio * 0.15 + source_diversity * 0.35
-    )
+    source_diversity = _clamp(author_ratio * 0.60 + min(len(tg_channels) * 10.0, 100.0) * 0.40)
+    organic = _clamp(50.0 - manipulation * 0.55 - copy_ratio * 0.15 + source_diversity * 0.35)
     channel_risk = rug_rate if historical_channels else 50.0
-    social_risk = _clamp(
-        manipulation * 0.50
-        + channel_risk * 0.20
-        + (100.0 - organic) * 0.30
-    )
+    social_risk = _clamp(manipulation * 0.50 + channel_risk * 0.20 + (100.0 - organic) * 0.30)
     cross_score = _cross_alignment(x_events, tg_events)
-    early_score = (
-        _pair_relative_early(early_minutes)
-        if early_minutes is not None
-        else 0.0
-    )
+    early_score = _pair_relative_early(early_minutes) if early_minutes is not None else 0.0
 
     available_weights = 0.15
     score_sum = organic * 0.15
@@ -459,26 +420,16 @@ def build_historical_outcome(
     cutoff = _utc(cutoff)
     end = cutoff + timedelta(hours=horizon_hours)
     tolerance = timedelta(minutes=max(1, baseline_tolerance_minutes))
-    valid = [
-        metric
-        for metric in metrics
-        if metric.price_usd is not None and metric.price_usd > 0
-    ]
+    valid = [metric for metric in metrics if metric.price_usd is not None and metric.price_usd > 0]
     valid.sort(key=lambda item: _utc(item.timestamp))
     baseline_rows = [
-        metric
-        for metric in valid
-        if cutoff - tolerance <= _utc(metric.timestamp) <= cutoff
+        metric for metric in valid if cutoff - tolerance <= _utc(metric.timestamp) <= cutoff
     ]
     if not baseline_rows:
         return None
-    baseline = float(baseline_rows[-1].price_usd)
+    baseline = float(baseline_rows[-1].price_usd or 0.0)
 
-    outcome_rows = [
-        metric
-        for metric in valid
-        if cutoff <= _utc(metric.timestamp) <= end
-    ]
+    outcome_rows = [metric for metric in valid if cutoff <= _utc(metric.timestamp) <= end]
     if not outcome_rows:
         return None
     final_rows = [
@@ -489,9 +440,9 @@ def build_historical_outcome(
     if not final_rows:
         return None
 
-    prices = [float(metric.price_usd) for metric in outcome_rows]
+    prices = [float(metric.price_usd or 0.0) for metric in outcome_rows]
     peak = max([baseline, *prices])
-    final = float(final_rows[-1].price_usd)
+    final = float(final_rows[-1].price_usd or 0.0)
     multiple = peak / baseline
     final_return = (final / baseline - 1.0) * 100.0
     drawdown = _peak_drawdown([baseline, *prices])
@@ -504,7 +455,7 @@ def build_historical_outcome(
         roi_multiple=multiple,
         final_to_peak=final_to_peak,
         observed_hours=observed_hours,
-        horizon_hours=float(horizon_hours),
+        maturity_hours=float(horizon_hours),
     )
     return HistoricalOutcome(
         baseline_price=baseline,
@@ -528,24 +479,16 @@ def _threshold(
     selected = [
         sample
         for sample in samples
-        if sample.features.core_social_score >= threshold
-        and sample.features.social_risk <= 60
+        if sample.features.core_social_score >= threshold and sample.features.social_risk <= 60
     ]
     positives = [sample for sample in samples if sample.outcome.hit_2x]
     selected_keys = {(sample.mint, sample.cutoff) for sample in selected}
     true_positives = sum(sample.outcome.hit_2x for sample in selected)
     false_positives = len(selected) - true_positives
-    false_negatives = sum(
-        (sample.mint, sample.cutoff) not in selected_keys
-        for sample in positives
-    )
+    false_negatives = sum((sample.mint, sample.cutoff) not in selected_keys for sample in positives)
     precision = true_positives / len(selected) if selected else 0.0
     recall = true_positives / len(positives) if positives else 0.0
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if precision + recall
-        else 0.0
-    )
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     multiples = [
         sample.outcome.max_multiple
         for sample in selected
@@ -575,7 +518,7 @@ def evaluate_samples(
     train_fraction: float = 0.70,
 ) -> BacktestReport:
     ordered = sorted(samples, key=lambda sample: sample.cutoff)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     feature_mode = "causal_core_v4_strict_cutoff"
     if not ordered:
         return BacktestReport(
@@ -601,32 +544,15 @@ def evaluate_samples(
             LIMITATIONS,
         )
     split = (
-        max(1, min(len(ordered) - 1, int(len(ordered) * train_fraction)))
-        if len(ordered) > 1
-        else 1
+        max(1, min(len(ordered) - 1, int(len(ordered) * train_fraction))) if len(ordered) > 1 else 1
     )
     train = ordered[:split]
     test = ordered[split:] if split < len(ordered) else []
     baseline = sum(sample.outcome.hit_2x for sample in ordered) / len(ordered)
-    train_baseline = (
-        sum(sample.outcome.hit_2x for sample in train) / len(train)
-        if train
-        else 0.0
-    )
-    test_baseline = (
-        sum(sample.outcome.hit_2x for sample in test) / len(test)
-        if test
-        else 0.0
-    )
-    sweep = tuple(
-        _threshold(train, value, train_baseline)
-        for value in range(40, 91, 5)
-    )
-    eligible = [
-        row
-        for row in sweep
-        if row.selected >= max(3, math.ceil(len(train) * 0.05))
-    ]
+    train_baseline = sum(sample.outcome.hit_2x for sample in train) / len(train) if train else 0.0
+    test_baseline = sum(sample.outcome.hit_2x for sample in test) / len(test) if test else 0.0
+    sweep = tuple(_threshold(train, value, train_baseline) for value in range(40, 91, 5))
+    eligible = [row for row in sweep if row.selected >= max(3, math.ceil(len(train) * 0.05))]
     best = (
         max(
             eligible,
@@ -639,11 +565,7 @@ def evaluate_samples(
 
     calibration: list[dict[str, Any]] = []
     for low, high in ((0, 49), (50, 59), (60, 69), (70, 79), (80, 89), (90, 100)):
-        bucket = [
-            sample
-            for sample in ordered
-            if low <= sample.features.core_social_score <= high
-        ]
+        bucket = [sample for sample in ordered if low <= sample.features.core_social_score <= high]
         if not bucket:
             continue
         multiples = [
@@ -656,9 +578,7 @@ def evaluate_samples(
                 "score_min": low,
                 "score_max": high,
                 "samples": len(bucket),
-                "hit_2x_rate": (
-                    sum(sample.outcome.hit_2x for sample in bucket) / len(bucket)
-                ),
+                "hit_2x_rate": (sum(sample.outcome.hit_2x for sample in bucket) / len(bucket)),
                 "median_max_multiple": median(multiples) if multiples else None,
             }
         )
@@ -682,8 +602,7 @@ def evaluate_samples(
             / len(ordered)
         ),
         historical_channel_coverage=(
-            sum(sample.features.historical_channels > 0 for sample in ordered)
-            / len(ordered)
+            sum(sample.features.historical_channels > 0 for sample in ordered) / len(ordered)
         ),
         baseline_hit_rate=baseline,
         selected_threshold=best.threshold if best else None,
@@ -714,7 +633,9 @@ async def run_social_backtest(
                 .order_by(TelegramCall.called_at.asc())
                 .limit(max(1, min(int(limit), 20_000)))
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     if not rows:
         return evaluate_samples(
@@ -725,11 +646,7 @@ async def run_social_backtest(
 
     mints = sorted({call.mint_address for call in rows})
     tokens = list(
-        (
-            await session.execute(
-                select(Token).where(Token.mint_address.in_(mints))
-            )
-        ).scalars().all()
+        (await session.execute(select(Token).where(Token.mint_address.in_(mints)))).scalars().all()
     )
     token_by_mint = {token.mint_address: token for token in tokens}
     token_ids = [token.id for token in tokens]
@@ -742,13 +659,14 @@ async def run_social_backtest(
                 select(SocialEvent)
                 .where(
                     SocialEvent.mint_address.in_(mints),
-                    SocialEvent.occurred_at
-                    >= min_cutoff - timedelta(hours=lookback_hours),
+                    SocialEvent.occurred_at >= min_cutoff - timedelta(hours=lookback_hours),
                     SocialEvent.occurred_at <= max_cutoff,
                 )
                 .order_by(SocialEvent.occurred_at.asc())
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     events_by_mint: dict[str, list[SocialEvent]] = defaultdict(list)
     for event in events:
@@ -764,12 +682,13 @@ async def run_social_backtest(
                     .where(
                         TokenMetric.token_id.in_(token_ids),
                         TokenMetric.timestamp >= min_cutoff - BASELINE_LOOKBACK,
-                        TokenMetric.timestamp
-                        <= max_cutoff + timedelta(hours=horizon_hours),
+                        TokenMetric.timestamp <= max_cutoff + timedelta(hours=horizon_hours),
                     )
                     .order_by(TokenMetric.timestamp.asc())
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
     metrics_by_token: dict[int, list[TokenMetric]] = defaultdict(list)
     for item in metrics:
@@ -785,7 +704,9 @@ async def run_social_backtest(
                 )
                 .order_by(TelegramCall.called_at.asc())
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     calls_by_channel: dict[int, list[TelegramCall]] = defaultdict(list)
     for call in prior_calls:
@@ -798,11 +719,7 @@ async def run_social_backtest(
             key = _source(raw)
             if key:
                 source_ids[key].add(channel.id)
-    channel_by_source = {
-        key: next(iter(ids))
-        for key, ids in source_ids.items()
-        if len(ids) == 1
-    }
+    channel_by_source = {key: next(iter(ids)) for key, ids in source_ids.items() if len(ids) == 1}
 
     samples: list[BacktestSample] = []
     skipped: dict[str, int] = defaultdict(int)
@@ -833,10 +750,7 @@ async def run_social_backtest(
                 channel_id = channel_by_source.get(_source(raw))
                 if channel_id is not None:
                     channel_ids.add(channel_id)
-        history = {
-            channel_id: calls_by_channel.get(channel_id, [])
-            for channel_id in channel_ids
-        }
+        history = {channel_id: calls_by_channel.get(channel_id, []) for channel_id in channel_ids}
         features = build_historical_features(
             mint=call.mint_address,
             cutoff=cutoff,

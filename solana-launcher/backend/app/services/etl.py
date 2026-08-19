@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -11,9 +10,22 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.models.analytics import CollectorJob, Token, TokenMetric, TokenStatus, Wallet, WalletLink, WalletTrade
+from app.models.analytics import (
+    CollectorJob,
+    Token,
+    TokenMetric,
+    TokenStatus,
+    Wallet,
+    WalletLink,
+    WalletTrade,
+)
 from app.services.cache import cache_json, read_json_cache
-from app.services.observability import ETL_ERRORS, ETL_RUNTIME, TOKENS_PROCESSED, WALLET_LINKS_CREATED
+from app.services.observability import (
+    ETL_ERRORS,
+    ETL_RUNTIME,
+    TOKENS_PROCESSED,
+    WALLET_LINKS_CREATED,
+)
 
 
 @dataclass(slots=True)
@@ -63,8 +75,10 @@ class TradePayload:
     extra: dict[str, Any] | None = None
 
 
-async def _request_json(url: str, headers: dict[str, str] | None = None, timeout: float = 20.0) -> Any:
-    async with httpx.AsyncClient(timeout=timeout) as client:
+async def _request_json(
+    url: str, headers: dict[str, str] | None = None, request_timeout: float = 20.0
+) -> Any:
+    async with httpx.AsyncClient(timeout=request_timeout) as client:
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
@@ -91,7 +105,9 @@ async def fetch_pumpfun_tokens(settings: Settings | None = None) -> list[TokenSo
                 creation_date=_parse_datetime(item.get("createdAt") or item.get("creationDate")),
                 migrated_to_raydium=bool(item.get("migrated") or item.get("isMigrated")),
                 migration_date=_parse_datetime(item.get("migrationDate")),
-                status=(TokenStatus.MIGRATED.value if item.get("migrated") else TokenStatus.ACTIVE.value),
+                status=(
+                    TokenStatus.MIGRATED.value if item.get("migrated") else TokenStatus.ACTIVE.value
+                ),
             )
         )
     await cache_json(cache_key, [item.__dict__ for item in tokens], ttl_seconds=60)
@@ -112,7 +128,9 @@ async def fetch_raydium_pools(settings: Settings | None = None) -> list[dict[str
     return list(pools)
 
 
-async def fetch_birdeye_metrics(mint_address: str, settings: Settings | None = None) -> dict[str, Any]:
+async def fetch_birdeye_metrics(
+    mint_address: str, settings: Settings | None = None
+) -> dict[str, Any]:
     settings = settings or get_settings()
     cache_key = f"birdeye:metrics:{mint_address}"
     cached = await read_json_cache(cache_key)
@@ -136,7 +154,9 @@ async def fetch_birdeye_metrics(mint_address: str, settings: Settings | None = N
     return result
 
 
-async def fetch_social_links_from_source(mint_address: str, settings: Settings | None = None) -> dict[str, str | None]:
+async def fetch_social_links_from_source(
+    mint_address: str, settings: Settings | None = None
+) -> dict[str, str | None]:
     settings = settings or get_settings()
     cache_key = f"social-links:{mint_address}"
     cached = await read_json_cache(cache_key)
@@ -145,7 +165,7 @@ async def fetch_social_links_from_source(mint_address: str, settings: Settings |
 
     # Lightweight, provider-agnostic placeholder: in production this can be replaced with
     # token metadata parsers from Pump.fun/Raydium/Helius and X/Twitter scrapers.
-    links = {
+    links: dict[str, str | None] = {
         "twitter_url": None,
         "telegram_url": None,
         "discord_url": None,
@@ -159,7 +179,7 @@ async def upsert_token(session: AsyncSession, payload: TokenSourcePayload) -> To
     statement = select(Token).where(Token.mint_address == payload.mint_address)
     result = await session.execute(statement)
     token = result.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if token is None:
         token = Token(
             mint_address=payload.mint_address,
@@ -188,13 +208,25 @@ async def upsert_token(session: AsyncSession, payload: TokenSourcePayload) -> To
     return token
 
 
-async def upsert_wallet(session: AsyncSession, wallet_address: str, *, first_seen_date: datetime | None = None, tags: list[str] | None = None) -> Wallet:
+async def upsert_wallet(
+    session: AsyncSession,
+    wallet_address: str,
+    *,
+    first_seen_date: datetime | None = None,
+    tags: list[str] | None = None,
+) -> Wallet:
     statement = select(Wallet).where(Wallet.wallet_address == wallet_address)
     result = await session.execute(statement)
     wallet = result.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if wallet is None:
-        wallet = Wallet(wallet_address=wallet_address, first_seen_date=first_seen_date, tags=tags or [], created_at=now, updated_at=now)
+        wallet = Wallet(
+            wallet_address=wallet_address,
+            first_seen_date=first_seen_date,
+            tags=tags or [],
+            created_at=now,
+            updated_at=now,
+        )
         session.add(wallet)
     else:
         if first_seen_date and wallet.first_seen_date is None:
@@ -207,7 +239,9 @@ async def upsert_wallet(session: AsyncSession, wallet_address: str, *, first_see
     return wallet
 
 
-async def add_token_metric(session: AsyncSession, token_id: int, payload: TokenMetricPayload) -> TokenMetric:
+async def add_token_metric(
+    session: AsyncSession, token_id: int, payload: TokenMetricPayload
+) -> TokenMetric:
     metric = TokenMetric(token_id=token_id, **payload.__dict__)
     session.add(metric)
     await session.flush()
@@ -259,9 +293,11 @@ async def upsert_trade(session: AsyncSession, payload: TradePayload) -> WalletTr
 async def ensure_job(session: AsyncSession, job_name: str, status: str = "pending") -> CollectorJob:
     result = await session.execute(select(CollectorJob).where(CollectorJob.job_name == job_name))
     job = result.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if job is None:
-        job = CollectorJob(job_name=job_name, status=status, last_run=None, meta={}, created_at=now, updated_at=now)
+        job = CollectorJob(
+            job_name=job_name, status=status, last_run=None, meta={}, created_at=now, updated_at=now
+        )
         session.add(job)
     else:
         job.status = status
@@ -270,12 +306,14 @@ async def ensure_job(session: AsyncSession, job_name: str, status: str = "pendin
     return job
 
 
-async def mark_job(session: AsyncSession, job_name: str, status: str, meta: dict[str, Any] | None = None) -> CollectorJob:
+async def mark_job(
+    session: AsyncSession, job_name: str, status: str, meta: dict[str, Any] | None = None
+) -> CollectorJob:
     job = await ensure_job(session, job_name, status=status)
     job.status = status
-    job.last_run = datetime.now(timezone.utc)
+    job.last_run = datetime.now(UTC)
     job.meta = meta or {}
-    job.updated_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(UTC)
     await session.flush()
     return job
 
@@ -293,7 +331,9 @@ async def sync_pumpfun_tokens(session: AsyncSession, settings: Settings | None =
     return count
 
 
-async def sync_metrics_for_active_tokens(session: AsyncSession, settings: Settings | None = None) -> int:
+async def sync_metrics_for_active_tokens(
+    session: AsyncSession, settings: Settings | None = None
+) -> int:
     settings = settings or get_settings()
     result = await session.execute(select(Token).where(Token.status == TokenStatus.ACTIVE.value))
     tokens = list(result.scalars().all())
@@ -304,14 +344,16 @@ async def sync_metrics_for_active_tokens(session: AsyncSession, settings: Settin
         price_payload = metrics.get("price", {})
         price_data = price_payload.get("data") or price_payload.get("data", {})
         if isinstance(price_data, dict):
-            price_value = price_data.get("value") or price_data.get("price") or price_data.get("priceUsd")
+            price_value = (
+                price_data.get("value") or price_data.get("price") or price_data.get("priceUsd")
+            )
         else:
             price_value = None
         metric_payload = TokenMetricPayload(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             price_usd=_to_float(price_value),
             ath_usd=_to_float(price_value),
-            ath_date=datetime.now(timezone.utc),
+            ath_date=datetime.now(UTC),
             market_cap=_to_float(_extract_number(metrics, ["marketCap", "market_cap", "fdv"])),
             fdv=_to_float(_extract_number(metrics, ["fdv", "fullyDilutedValuation"])),
             liquidity_usd=_to_float(_extract_number(metrics, ["liquidity", "liquidityUsd"])),
@@ -343,13 +385,19 @@ async def sync_wallet_links_and_top_wallets(session: AsyncSession) -> int:
 
     # Simple first-pass cluster builder based on shared token participation.
     trade_rows = await session.execute(
-        select(WalletTrade.wallet_id, WalletTrade.token_id, WalletTrade.buy_timestamp).where(WalletTrade.token_id.in_(token_ids))
+        select(WalletTrade.wallet_id, WalletTrade.token_id, WalletTrade.buy_timestamp).where(
+            WalletTrade.token_id.in_(token_ids)
+        )
     )
     token_to_wallets: dict[int, set[int]] = defaultdict(set)
     token_to_first_seen: dict[int, datetime] = {}
     for wallet_id, token_id, buy_timestamp in trade_rows.all():
         token_to_wallets[int(token_id)].add(int(wallet_id))
-        token_to_first_seen[token_id] = min(token_to_first_seen.get(token_id, buy_timestamp), buy_timestamp) if token_id in token_to_first_seen else buy_timestamp
+        token_to_first_seen[token_id] = (
+            min(token_to_first_seen.get(token_id, buy_timestamp), buy_timestamp)
+            if token_id in token_to_first_seen
+            else buy_timestamp
+        )
 
     created = 0
     for token_id, wallets in token_to_wallets.items():
@@ -378,16 +426,27 @@ async def sync_wallet_links_and_top_wallets(session: AsyncSession) -> int:
                     created += 1
                 else:
                     link.shared_tokens_count += 1
-                    link.first_interaction_date = min(filter(None, [link.first_interaction_date, token_to_first_seen.get(token_id)])) if token_to_first_seen.get(token_id) else link.first_interaction_date
+                    link.first_interaction_date = (
+                        min(
+                            filter(
+                                None,
+                                [link.first_interaction_date, token_to_first_seen.get(token_id)],
+                            )
+                        )
+                        if token_to_first_seen.get(token_id)
+                        else link.first_interaction_date
+                    )
                     link.similarity_score = float(link.shared_tokens_count)
                     link.details = {**(link.details or {}), "last_token_id": token_id}
     WALLET_LINKS_CREATED.inc(created)
     return created
 
 
-async def run_full_collection(session: AsyncSession, settings: Settings | None = None) -> dict[str, int]:
+async def run_full_collection(
+    session: AsyncSession, settings: Settings | None = None
+) -> dict[str, int]:
     settings = settings or get_settings()
-    async with ETL_RUNTIME.time():
+    with ETL_RUNTIME.time():
         try:
             tokens = await sync_pumpfun_tokens(session, settings)
             metrics = await sync_metrics_for_active_tokens(session, settings)
@@ -400,36 +459,40 @@ async def run_full_collection(session: AsyncSession, settings: Settings | None =
             raise
 
 
-async def list_tokens(session: AsyncSession, limit: int, offset: int, sort_by: str = "ath", order: str = "desc") -> tuple[list[dict[str, Any]], int]:
+async def list_tokens(
+    session: AsyncSession, limit: int, offset: int, sort_by: str = "ath", order: str = "desc"
+) -> tuple[list[dict[str, Any]], int]:
     metric = TokenMetric
-    latest_metric = (
-        select(
-            metric.id,
-            metric.token_id,
-            metric.price_usd,
-            metric.ath_usd,
-            metric.ath_date,
-            metric.market_cap,
-            metric.fdv,
-            metric.liquidity_usd,
-            metric.volume_24h,
-            metric.tx_count_24h,
-            metric.holder_count,
-            metric.twitter_url,
-            metric.telegram_url,
-            metric.discord_url,
-            metric.website_url,
-            metric.social_engagements,
-            func.row_number().over(partition_by=metric.token_id, order_by=metric.timestamp.desc()).label("rn"),
-        ).subquery()
-    )
+    latest_metric = select(
+        metric.id,
+        metric.token_id,
+        metric.price_usd,
+        metric.ath_usd,
+        metric.ath_date,
+        metric.market_cap,
+        metric.fdv,
+        metric.liquidity_usd,
+        metric.volume_24h,
+        metric.tx_count_24h,
+        metric.holder_count,
+        metric.twitter_url,
+        metric.telegram_url,
+        metric.discord_url,
+        metric.website_url,
+        metric.social_engagements,
+        func.row_number()
+        .over(partition_by=metric.token_id, order_by=metric.timestamp.desc())
+        .label("rn"),
+    ).subquery()
 
     total = await session.scalar(select(func.count()).select_from(Token)) or 0
     tokens_result = await session.execute(select(Token).order_by(Token.id.asc()))
     tokens = list(tokens_result.scalars().all())
 
     latest_result = await session.execute(
-        select(latest_metric).where(latest_metric.c.rn == 1, latest_metric.c.token_id.in_([token.id for token in tokens]))
+        select(latest_metric).where(
+            latest_metric.c.rn == 1, latest_metric.c.token_id.in_([token.id for token in tokens])
+        )
     )
     latest_map = {int(row.token_id): dict(row._mapping) for row in latest_result.all()}
 
@@ -456,11 +519,19 @@ async def list_tokens(session: AsyncSession, limit: int, offset: int, sort_by: s
     sort_key = sort_by.lower()
     reverse = order.lower() != "asc"
     if sort_key == "ath":
-        items.sort(key=lambda item: (item.get("latest_metric") or {}).get("ath_usd") or 0, reverse=reverse)
+        items.sort(
+            key=lambda item: (item.get("latest_metric") or {}).get("ath_usd") or 0, reverse=reverse
+        )
     elif sort_key == "volume":
-        items.sort(key=lambda item: (item.get("latest_metric") or {}).get("volume_24h") or 0, reverse=reverse)
+        items.sort(
+            key=lambda item: (item.get("latest_metric") or {}).get("volume_24h") or 0,
+            reverse=reverse,
+        )
     elif sort_key == "liquidity":
-        items.sort(key=lambda item: (item.get("latest_metric") or {}).get("liquidity_usd") or 0, reverse=reverse)
+        items.sort(
+            key=lambda item: (item.get("latest_metric") or {}).get("liquidity_usd") or 0,
+            reverse=reverse,
+        )
     else:
         items.sort(key=lambda item: item["id"], reverse=reverse)
     return items[offset : offset + limit], int(total)
@@ -473,7 +544,10 @@ async def get_token_analysis(session: AsyncSession, mint_address: str) -> dict[s
         raise ValueError("Token not found")
 
     metrics_result = await session.execute(
-        select(TokenMetric).where(TokenMetric.token_id == token.id).order_by(TokenMetric.timestamp.desc()).limit(100)
+        select(TokenMetric)
+        .where(TokenMetric.token_id == token.id)
+        .order_by(TokenMetric.timestamp.desc())
+        .limit(100)
     )
     metrics = list(metrics_result.scalars().all())
 
@@ -540,7 +614,9 @@ async def get_token_analysis(session: AsyncSession, mint_address: str) -> dict[s
                 "discord_url": metrics[0].discord_url,
                 "website_url": metrics[0].website_url,
                 "social_engagements": metrics[0].social_engagements,
-            } if metrics else None,
+            }
+            if metrics
+            else None,
         },
         "metrics": [
             {
@@ -571,13 +647,17 @@ async def get_token_analysis(session: AsyncSession, mint_address: str) -> dict[s
 
 
 async def get_wallet_activity(session: AsyncSession, wallet_address: str) -> dict[str, Any]:
-    wallet_result = await session.execute(select(Wallet).where(Wallet.wallet_address == wallet_address))
+    wallet_result = await session.execute(
+        select(Wallet).where(Wallet.wallet_address == wallet_address)
+    )
     wallet = wallet_result.scalar_one_or_none()
     if wallet is None:
         raise ValueError("Wallet not found")
 
     trades_result = await session.execute(
-        select(WalletTrade).where(WalletTrade.wallet_id == wallet.id).order_by(WalletTrade.buy_timestamp.desc())
+        select(WalletTrade)
+        .where(WalletTrade.wallet_id == wallet.id)
+        .order_by(WalletTrade.buy_timestamp.desc())
     )
     trades = list(trades_result.scalars().all())
     profit_total = sum((trade.realized_profit_usd or 0) for trade in trades)
@@ -590,7 +670,9 @@ async def get_wallet_activity(session: AsyncSession, wallet_address: str) -> dic
     }
 
 
-async def get_top_wallets(session: AsyncSession, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
+async def get_top_wallets(
+    session: AsyncSession, limit: int, offset: int
+) -> tuple[list[dict[str, Any]], int]:
     total = await session.scalar(select(func.count()).select_from(Wallet)) or 0
     rows = await session.execute(
         select(
@@ -641,7 +723,7 @@ def _parse_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        return datetime.fromtimestamp(float(value), tz=UTC)
     if isinstance(value, str):
         try:
             return datetime.fromisoformat(value.replace("Z", "+00:00"))

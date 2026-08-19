@@ -188,9 +188,7 @@ async def complete_subscription_order(
     secret_key: str,
 ) -> tuple[SubscriptionOrder, str, datetime, bool]:
     result = await session.execute(
-        select(SubscriptionOrder)
-        .where(SubscriptionOrder.payload == payload)
-        .with_for_update()
+        select(SubscriptionOrder).where(SubscriptionOrder.payload == payload).with_for_update()
     )
     order = result.scalar_one_or_none()
     if order is None:

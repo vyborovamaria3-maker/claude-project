@@ -11,5 +11,7 @@ def test_password_hash_roundtrip():
 
 def test_create_access_token():
     settings = get_settings()
-    token = create_access_token(subject="123", settings=settings, expires_delta=timedelta(minutes=5))
+    token = create_access_token(
+        subject="123", settings=settings, expires_delta=timedelta(minutes=5)
+    )
     assert token

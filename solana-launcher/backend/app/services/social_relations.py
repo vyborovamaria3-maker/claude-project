@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +9,7 @@ from app.models.social_intelligence import SocialRelation
 
 
 def _aware(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 async def upsert_social_relation(
@@ -23,7 +23,7 @@ async def upsert_social_relation(
     evidence: str = "",
     occurred_at: datetime | None = None,
 ) -> SocialRelation:
-    when = occurred_at or datetime.now(timezone.utc)
+    when = occurred_at or datetime.now(UTC)
     relation = (
         await session.execute(
             select(SocialRelation).where(

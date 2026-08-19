@@ -145,11 +145,7 @@ async def verify_wallet_funding(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
             signatures, history_exhausted = await _signatures(client, rpc_url, address)
-            valid = [
-                row
-                for row in signatures
-                if row.get("signature") and row.get("err") is None
-            ]
+            valid = [row for row in signatures if row.get("signature") and row.get("err") is None]
             oldest_scanned = list(reversed(valid))
             inspect = oldest_scanned[:MAX_TRANSACTIONS_TO_INSPECT]
             semaphore = asyncio.Semaphore(MAX_TRANSACTION_CONCURRENCY)
@@ -359,7 +355,5 @@ async def verify_snapshot_wallet_funding(
         "initial_funding_edges": initial_edges,
         "observed_incoming_transfers": observed_transfers,
         "same_funder_groups": same_funder,
-        "note": (
-            "Same initial funder is a graph clue, not proof of common ownership or control."
-        ),
+        "note": ("Same initial funder is a graph clue, not proof of common ownership or control."),
     }
