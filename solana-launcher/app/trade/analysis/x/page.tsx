@@ -1,5 +1,5 @@
-import XIntelligencePanel from "@/components/trade/XIntelligencePanel";
+import SocialIntelligencePanel from "@/components/trade/SocialIntelligencePanel";
 
 export default function TradeXAnalysisPage() {
-  return <XIntelligencePanel />;
+  return <SocialIntelligencePanel />;
 }
