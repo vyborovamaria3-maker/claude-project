@@ -1,0 +1,34 @@
+name: Production Webscan Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type INSTALL to install the pinned passive production scanner"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-webscan-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Require explicit confirmation
+        run: test "${{ github.event.inputs.confirm }}" = INSTALL
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install pinned webscan without sudo
+        run: bash security/audit/install-production-webscan.sh
+      - name: Verify runner command
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v webscan
+          webscan --version
+          webscan --list-checks >/dev/null
