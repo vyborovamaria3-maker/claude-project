@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const metricsPath = join(root, "lib", "trade", "social-intelligence.ts");
 const layoutPath = join(root, "app", "trade", "analysis", "layout.tsx");
+const xPagePath = join(root, "app", "trade", "analysis", "x", "page.tsx");
 const panelPath = join(root, "components", "trade", "SocialIntelligencePanel.tsx");
 const routePath = join(root, "app", "api", "trade", "social-ai", "route.ts");
 const wrapperPath = join(root, "lib", "trade", "intelligence-agent-provenance.ts");
@@ -13,6 +14,7 @@ const tsconfigPath = join(root, "tsconfig.json");
 
 const metricsSource = readFileSync(metricsPath, "utf8").replace(/\r\n?/g, "\n");
 const layoutSource = readFileSync(layoutPath, "utf8");
+const xPageSource = readFileSync(xPagePath, "utf8");
 const panelSource = readFileSync(panelPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");
 const wrapperSource = readFileSync(wrapperPath, "utf8");
@@ -24,12 +26,16 @@ function assert(condition, message) {
 }
 
 assert(
-  layoutSource.includes('href: "/trade/analysis/social"'),
-  "the Social Intelligence route must remain in the Trade Analysis tabs",
+  layoutSource.includes('href: "/trade/analysis/x"'),
+  "the unified X Intelligence route must remain in the Trade Analysis tabs",
 );
 assert(
-  layoutSource.includes('label: "Анализ · 129"'),
-  "the visible 129-parameter Analysis tab must remain present",
+  layoutSource.includes('label: "X"'),
+  "the visible X Intelligence tab must remain present",
+);
+assert(
+  xPageSource.includes('SocialIntelligencePanel'),
+  "the X route must render the unified X + Telegram + blockchain intelligence panel",
 );
 assert(
   panelSource.includes('>Все параметры</h2>'),
