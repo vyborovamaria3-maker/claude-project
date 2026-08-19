@@ -81,6 +81,15 @@ restart_nginx() {
   "${COMPOSE[@]}" restart nginx
 }
 
+core_images_available_locally() {
+  local tag="$1"
+  local backend_image="ghcr.io/vyborovamaria3-maker/claude-project/backend:${tag}"
+  local frontend_image="ghcr.io/vyborovamaria3-maker/claude-project/frontend:${tag}"
+
+  docker image inspect "$backend_image" >/dev/null 2>&1 \
+    && docker image inspect "$frontend_image" >/dev/null 2>&1
+}
+
 rollback() {
   local exit_code=$?
 
@@ -96,10 +105,17 @@ rollback() {
   printf '%s\n' "$PREVIOUS_TAG" > .current-image-tag
   export IMAGE_TAG="$PREVIOUS_TAG"
 
-  "${COMPOSE[@]}" pull \
+  if ! "${COMPOSE[@]}" pull \
     backend \
     celery-worker \
-    frontend
+    frontend; then
+    echo "Previous core images are unavailable in GHCR; checking local Docker cache" >&2
+    if ! core_images_available_locally "$PREVIOUS_TAG"; then
+      echo "Previous core images are missing from both GHCR and local Docker cache" >&2
+      exit "$exit_code"
+    fi
+    echo "Using locally cached previous core images for rollback" >&2
+  fi
 
   if telegram_bot_enabled; then
     if ! "${COMPOSE[@]}" --profile telegram pull telegram-bot; then
