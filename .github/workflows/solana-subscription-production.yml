@@ -1,0 +1,209 @@
+name: Solana Subscription Production
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: solana-subscription-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/claude-project
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: solana-subscription-service
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: solana-subscription-service/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm run test
+      - name: Render production compose
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          REDIS_PASSWORD: ci-redis-password
+          SOLSUB_API_IMAGE: example.invalid/solsub-api:ci
+          SOLSUB_WEB_IMAGE: example.invalid/solsub-web:ci
+          SOLSUB_BOT_IMAGE: example.invalid/solsub-bot:ci
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.prod.yml config >/tmp/solsub-compose.yml
+          rm -f .env
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: solsub-api
+            dockerfile: solana-subscription-service/apps/api/Dockerfile
+          - service: solsub-web
+            dockerfile: solana-subscription-service/apps/web/Dockerfile
+          - service: solsub-bot
+            dockerfile: solana-subscription-service/apps/bot/Dockerfile
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Validate public web build configuration
+        if: matrix.service == 'solsub-web'
+        env:
+          API_URL: ${{ vars.SOLSUB_PUBLIC_API_URL }}
+          WEB_URL: ${{ vars.SOLSUB_PUBLIC_WEB_URL }}
+          BOT_USERNAME: ${{ vars.SOLSUB_TELEGRAM_BOT_USERNAME }}
+          SOLANA_CLUSTER: ${{ vars.SOLSUB_SOLANA_CLUSTER }}
+          RPC_ENDPOINT: ${{ vars.SOLSUB_PUBLIC_RPC_ENDPOINT }}
+          TREASURY_WALLET: ${{ vars.SOLSUB_TREASURY_WALLET }}
+        run: |
+          set -euo pipefail
+          for name in API_URL WEB_URL BOT_USERNAME SOLANA_CLUSTER RPC_ENDPOINT TREASURY_WALLET; do
+            test -n "${!name}" || { echo "Missing production variable: $name" >&2; exit 1; }
+          done
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: solana-subscription-service
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.SOLSUB_PUBLIC_API_URL }}
+            NEXT_PUBLIC_WEB_URL=${{ vars.SOLSUB_PUBLIC_WEB_URL }}
+            NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=${{ vars.SOLSUB_TELEGRAM_BOT_USERNAME }}
+            NEXT_PUBLIC_SOLANA_CLUSTER=${{ vars.SOLSUB_SOLANA_CLUSTER }}
+            NEXT_PUBLIC_RPC_ENDPOINT=${{ vars.SOLSUB_PUBLIC_RPC_ENDPOINT }}
+            NEXT_PUBLIC_TREASURY_WALLET=${{ vars.SOLSUB_TREASURY_WALLET }}
+
+  deploy:
+    needs: build
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Configure SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          for name in SERVER_HOST SERVER_PORT SERVER_USER SERVER_SSH_KEY SERVER_SSH_KNOWN_HOSTS; do
+            test -n "${!name}" || { echo "Missing production secret: $name" >&2; exit 1; }
+          done
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SERVER_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          ssh-keygen -F "$SERVER_HOST" -f ~/.ssh/known_hosts >/dev/null
+      - name: Upload production compose
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" 'mkdir -p /opt/solsub-deploy/backups && chmod 700 /opt/solsub-deploy /opt/solsub-deploy/backups'
+          scp -i ~/.ssh/deploy_key -P "$SERVER_PORT" solana-subscription-service/docker-compose.prod.yml "$SERVER_USER@$SERVER_HOST:/opt/solsub-deploy/docker-compose.prod.yml"
+      - name: Login server to GHCR
+        env:
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" "docker login ghcr.io -u '$GHCR_USERNAME' --password-stdin"
+      - name: Deploy with migration, backup and image rollback
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" "bash -s -- '${GITHUB_SHA}' '${IMAGE_PREFIX}'" <<'REMOTE'
+          set -euo pipefail
+          sha="$1"
+          prefix="$2"
+          cd /opt/solsub-deploy
+          test -s .env || { echo '/opt/solsub-deploy/.env is required' >&2; exit 1; }
+          chmod 600 .env
+          if [[ -f .release.env ]]; then cp .release.env .release.env.prev; fi
+          cat > .release.env.new <<EOF
+          SOLSUB_API_IMAGE=${prefix}/solsub-api:${sha}
+          SOLSUB_WEB_IMAGE=${prefix}/solsub-web:${sha}
+          SOLSUB_BOT_IMAGE=${prefix}/solsub-bot:${sha}
+          EOF
+          chmod 600 .release.env.new
+          mv .release.env.new .release.env
+          cat .env .release.env > .deploy.env
+          chmod 600 .deploy.env
+          compose() { docker compose --env-file .deploy.env -f docker-compose.prod.yml "$@"; }
+          rollback() {
+            rc=$?
+            if [[ $rc -ne 0 && -f .release.env.prev ]]; then
+              echo 'Deployment failed; restoring previous image set.' >&2
+              cp .release.env.prev .release.env
+              cat .env .release.env > .deploy.env
+              compose pull api web bot || true
+              compose up -d api web bot || true
+            fi
+            exit "$rc"
+          }
+          trap rollback EXIT
+          compose pull api web bot
+          compose up -d postgres redis
+          for _ in $(seq 1 30); do
+            compose exec -T postgres pg_isready -U "${POSTGRES_USER:-solsub}" -d "${POSTGRES_DB:-solsub}" >/dev/null 2>&1 && break
+            sleep 2
+          done
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "backups/postgres-${timestamp}.sql.gz"
+          compose run --rm api npm run prisma:deploy -w @solsub/api
+          compose up -d api web bot
+          for _ in $(seq 1 30); do
+            compose exec -T api wget -qO- http://127.0.0.1:4000/health >/dev/null 2>&1 && compose exec -T web wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 && break
+            sleep 2
+          done
+          compose exec -T api wget -qO- http://127.0.0.1:4000/health >/dev/null
+          compose exec -T web wget -qO- http://127.0.0.1:3000/ >/dev/null
+          compose ps
+          trap - EXIT
+          echo "SOLSUB_DEPLOY_OK sha=${sha} backup=backups/postgres-${timestamp}.sql.gz"
+          REMOTE
