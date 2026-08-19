@@ -1,0 +1,105 @@
+name: Production Server Preflight
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-server-preflight
+  cancel-in-progress: false
+
+jobs:
+  server-preflight:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Validate runner tools and production inputs
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          PRODUCTION_PUBLIC_URL: ${{ vars.PRODUCTION_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          for name in SERVER_HOST SERVER_PORT SERVER_USER SERVER_SSH_KEY SERVER_SSH_KNOWN_HOSTS GHCR_USERNAME GHCR_TOKEN PRODUCTION_PUBLIC_URL; do
+            test -n "${!name}" || { echo "Missing production input: $name" >&2; exit 1; }
+          done
+          [[ "$PRODUCTION_PUBLIC_URL" =~ ^https:// ]] || { echo 'PRODUCTION_PUBLIC_URL must use HTTPS' >&2; exit 1; }
+          command -v docker >/dev/null
+          docker compose version >/dev/null
+          command -v ssh >/dev/null
+          command -v scp >/dev/null
+          command -v curl >/dev/null
+          command -v gzip >/dev/null
+          command -v webscan >/dev/null || { echo 'webscan is required for production DAST' >&2; exit 1; }
+
+      - name: Configure SSH
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SERVER_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          ssh-keygen -F "$SERVER_HOST" -f ~/.ssh/known_hosts >/dev/null \
+            || { echo 'SERVER_SSH_KNOWN_HOSTS does not contain SERVER_HOST' >&2; exit 1; }
+
+      - name: Validate server-side release configuration without printing secrets
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          command -v docker >/dev/null
+          docker compose version >/dev/null
+
+          test -s /opt/potapoff-deploy/.env.server || { echo 'Missing /opt/potapoff-deploy/.env.server' >&2; exit 1; }
+          test -s /opt/potapoff-deploy/backend.env || { echo 'Missing /opt/potapoff-deploy/backend.env' >&2; exit 1; }
+          test -s /opt/solsub-deploy/.env || { echo 'Missing /opt/solsub-deploy/.env' >&2; exit 1; }
+          test -s /opt/legacy-miniapp-deploy/.env.production || { echo 'Missing /opt/legacy-miniapp-deploy/.env.production' >&2; exit 1; }
+
+          require_key() {
+            file="$1"
+            key="$2"
+            grep -Eq "^${key}=.+$" "$file" || { echo "Missing required key ${key} in ${file}" >&2; exit 1; }
+          }
+
+          solsub=/opt/solsub-deploy/.env
+          require_key "$solsub" POSTGRES_PASSWORD
+          require_key "$solsub" REDIS_PASSWORD
+          require_key "$solsub" JWT_ACCESS_SECRET
+          require_key "$solsub" JWT_REFRESH_SECRET
+          require_key "$solsub" TELEGRAM_BOT_TOKEN
+          require_key "$solsub" RPC_ENDPOINT
+          require_key "$solsub" TREASURY_WALLET
+
+          legacy=/opt/legacy-miniapp-deploy/.env.production
+          grep -Eq '^NODE_ENV=production$' "$legacy" || { echo 'Legacy NODE_ENV must be production' >&2; exit 1; }
+          grep -Eq '^FRONTEND_URL=https://.+' "$legacy" || { echo 'Legacy FRONTEND_URL must use HTTPS' >&2; exit 1; }
+          require_key "$legacy" TELEGRAM_BOT_TOKEN
+          require_key "$legacy" HELIUS_API_KEY
+          require_key "$legacy" HELIUS_WEBHOOK_SECRET
+          require_key "$legacy" MERCHANT_WALLET
+          require_key "$legacy" SOLANA_RPC_URL
+
+          mkdir -p /opt/solsub-deploy/backups /opt/legacy-miniapp-deploy/backups
+          test -w /opt/solsub-deploy/backups
+          test -w /opt/legacy-miniapp-deploy/backups
+          echo 'PRODUCTION_SERVER_PREFLIGHT_OK'
+          REMOTE
