@@ -1,0 +1,54 @@
+name: Full Production Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DEPLOY to release the current main SHA"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: full-production-release
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit production confirmation
+        run: |
+          set -euo pipefail
+          test "${{ github.event.inputs.confirm }}" = "DEPLOY" || { echo 'Confirmation must be DEPLOY' >&2; exit 1; }
+          test "${GITHUB_REF_NAME}" = "main" || { echo 'Full production release may only run from main' >&2; exit 1; }
+          echo "FULL_RELEASE_CONFIRMED sha=${GITHUB_SHA}"
+
+  readiness:
+    needs: preflight
+    uses: ./.github/workflows/release-readiness.yml
+    secrets: inherit
+
+  potapoff:
+    needs: readiness
+    uses: ./.github/workflows/potapoff-production.yml
+    secrets: inherit
+
+  subscription:
+    needs: potapoff
+    uses: ./.github/workflows/solana-subscription-production.yml
+    secrets: inherit
+
+  legacy-miniapp:
+    needs: subscription
+    uses: ./.github/workflows/legacy-miniapp-production.yml
+    secrets: inherit
+
+  complete:
+    needs: legacy-miniapp
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "FULL_PRODUCTION_RELEASE_OK sha=${GITHUB_SHA}"
