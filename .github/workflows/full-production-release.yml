@@ -30,11 +30,16 @@ jobs:
           test "${{ github.event.inputs.confirm }}" = "DEPLOY" || { echo 'Confirmation must be DEPLOY' >&2; exit 1; }
           test "${GITHUB_REF_NAME}" = "main" || { echo 'Full production release may only run from main' >&2; exit 1; }
           test "$CREDENTIAL_ROTATION_CONFIRMED" = "yes" || { echo 'SECURITY_CREDENTIAL_ROTATION_CONFIRMED must be yes after provider-side rotation of SEC-012/SEC-013' >&2; exit 1; }
-          test -n "$PRODUCTION_PUBLIC_URL" || { echo 'PRODUCTION_PUBLIC_URL is required for post-deploy DAST' >&2; exit 1; }
+          [[ "$PRODUCTION_PUBLIC_URL" =~ ^https:// ]] || { echo 'PRODUCTION_PUBLIC_URL must be configured and use HTTPS' >&2; exit 1; }
           echo "FULL_RELEASE_CONFIRMED sha=${GITHUB_SHA}"
 
-  readiness:
+  server-preflight:
     needs: preflight
+    uses: ./.github/workflows/production-preflight.yml
+    secrets: inherit
+
+  readiness:
+    needs: server-preflight
     uses: ./.github/workflows/release-readiness.yml
     secrets: inherit
 
@@ -73,7 +78,7 @@ jobs:
           AUDIT_OUT: security/audit/reports/production-${{ github.sha }}
         run: |
           set -euo pipefail
-          test -n "$AUDIT_TARGET" || { echo 'PRODUCTION_PUBLIC_URL production variable is required' >&2; exit 1; }
+          [[ "$AUDIT_TARGET" =~ ^https:// ]] || { echo 'PRODUCTION_PUBLIC_URL production variable must use HTTPS' >&2; exit 1; }
           bash security/audit/run-dast.sh
       - name: Upload production DAST report
         if: always()
