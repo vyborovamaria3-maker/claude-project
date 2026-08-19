@@ -29,6 +29,7 @@ jobs:
           PRODUCTION_PUBLIC_URL: ${{ vars.PRODUCTION_PUBLIC_URL }}
         run: |
           set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
           for name in SERVER_HOST SERVER_PORT SERVER_USER SERVER_SSH_KEY SERVER_SSH_KNOWN_HOSTS GHCR_USERNAME GHCR_TOKEN PRODUCTION_PUBLIC_URL; do
             test -n "${!name}" || { echo "Missing production input: $name" >&2; exit 1; }
           done
@@ -39,7 +40,8 @@ jobs:
           command -v scp >/dev/null
           command -v curl >/dev/null
           command -v gzip >/dev/null
-          command -v webscan >/dev/null || { echo 'webscan is required for production DAST' >&2; exit 1; }
+          command -v webscan >/dev/null || { echo 'webscan is required for production DAST; run Production Webscan Bootstrap first' >&2; exit 1; }
+          webscan --version
 
       - name: Configure SSH
         env:
