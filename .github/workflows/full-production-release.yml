@@ -47,8 +47,33 @@ jobs:
     uses: ./.github/workflows/legacy-miniapp-production.yml
     secrets: inherit
 
-  complete:
+  production-dast:
     needs: legacy-miniapp
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Conservative production DAST
+        env:
+          AUDIT_TARGET: ${{ vars.PRODUCTION_PUBLIC_URL }}
+          AUDIT_AUTHORIZED: "yes"
+          AUDIT_PROFILE: production
+          AUDIT_OUT: security/audit/reports/production-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$AUDIT_TARGET" || { echo 'PRODUCTION_PUBLIC_URL production variable is required' >&2; exit 1; }
+          bash security/audit/run-dast.sh
+      - name: Upload production DAST report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-dast-${{ github.sha }}
+          path: security/audit/reports/production-${{ github.sha }}
+          if-no-files-found: error
+
+  complete:
+    needs: production-dast
     runs-on: ubuntu-latest
     steps:
       - run: echo "FULL_PRODUCTION_RELEASE_OK sha=${GITHUB_SHA}"
