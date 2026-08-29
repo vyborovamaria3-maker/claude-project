@@ -186,6 +186,9 @@ services:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - default
+      - potapoff-shared
     depends_on:
       frontend:
         condition: service_healthy
@@ -211,3 +214,7 @@ volumes:
   postgres-data:
   redis-data:
   rabbitmq-data:
+
+networks:
+  potapoff-shared:
+    external: true

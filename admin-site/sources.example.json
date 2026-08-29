@@ -10,7 +10,7 @@
     "id": "potapoff",
     "label": "POTAPoff backend",
     "kind": "postgres",
-    "dsn": "postgresql://potapoff:${POTAPOFF_DB_PASSWORD}@potapoff-postgres:5432/potapoff",
+    "dsn": "postgresql://potapoff:${POTAPOFF_DB_PASSWORD}@postgres:5432/potapoff",
     "schema": "public",
     "role": "core"
   },
