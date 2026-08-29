@@ -32,22 +32,34 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(UTC)
 
 
-def _fernet(secret_key: str) -> Fernet:
-    digest = hashlib.sha256(secret_key.encode("utf-8")).digest()
+def _fernet(encryption_key: str) -> Fernet:
+    digest = hashlib.sha256(encryption_key.encode("utf-8")).digest()
     return Fernet(base64.urlsafe_b64encode(digest))
 
 
-def encrypt_order_password(password: str, secret_key: str) -> str:
-    return _fernet(secret_key).encrypt(password.encode("utf-8")).decode("ascii")
+def encrypt_order_password(password: str, encryption_key: str) -> str:
+    return _fernet(encryption_key).encrypt(password.encode("utf-8")).decode("ascii")
 
 
-def decrypt_order_password(ciphertext: str | None, secret_key: str) -> str | None:
+def decrypt_order_password(
+    ciphertext: str | None,
+    encryption_key: str,
+    *,
+    legacy_encryption_key: str | None = None,
+) -> str | None:
     if not ciphertext:
         return None
-    try:
-        return _fernet(secret_key).decrypt(ciphertext.encode("ascii")).decode("utf-8")
-    except (InvalidToken, ValueError) as exc:
-        raise SubscriptionPasswordError("Unable to decrypt subscription password") from exc
+
+    keys = [encryption_key]
+    if legacy_encryption_key and legacy_encryption_key != encryption_key:
+        keys.append(legacy_encryption_key)
+
+    for key in keys:
+        try:
+            return _fernet(key).decrypt(ciphertext.encode("ascii")).decode("utf-8")
+        except (InvalidToken, ValueError):
+            continue
+    raise SubscriptionPasswordError("Unable to decrypt subscription password")
 
 
 async def get_subscription_settings(session: AsyncSession) -> SubscriptionSettings:
@@ -185,7 +197,8 @@ async def complete_subscription_order(
     payload: str,
     completion: SubscriptionOrderComplete,
     *,
-    secret_key: str,
+    encryption_key: str,
+    legacy_encryption_key: str | None = None,
 ) -> tuple[SubscriptionOrder, str, datetime, bool]:
     result = await session.execute(
         select(SubscriptionOrder)
@@ -197,7 +210,11 @@ async def complete_subscription_order(
         raise LookupError("Subscription order not found")
 
     if order.status == "paid":
-        password = decrypt_order_password(order.password_ciphertext, secret_key)
+        password = decrypt_order_password(
+            order.password_ciphertext,
+            encryption_key,
+            legacy_encryption_key=legacy_encryption_key,
+        )
         if not password:
             raise SubscriptionPasswordError("Paid subscription has no recoverable password")
         user_result = await session.execute(
@@ -261,7 +278,7 @@ async def complete_subscription_order(
     user.subscription_expires_at = expires_at
 
     order.status = "paid"
-    order.password_ciphertext = encrypt_order_password(completion.password, secret_key)
+    order.password_ciphertext = encrypt_order_password(completion.password, encryption_key)
     order.payment_signature = completion.payment_signature
     order.paid_at = now
 
