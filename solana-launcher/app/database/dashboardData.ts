@@ -176,7 +176,7 @@ let dashboardCache: { signature: string; fetchedAt: number; data: DatabaseDashbo
 
 function resolveBackendDbPath() {
   for (const candidate of BACKEND_DB_PATH_CANDIDATES) {
-    if (fs.existsSync(candidate)) {
+    if (fs.existsSync(/* turbopackIgnore: true */ candidate)) {
       return candidate;
     }
   }
@@ -187,7 +187,7 @@ function getDashboardSignature() {
   try {
     const tradeStat = fs.statSync(DB_PATH);
     const backendDbPath = resolveBackendDbPath();
-    const backendStat = backendDbPath ? fs.statSync(backendDbPath) : null;
+    const backendStat = backendDbPath ? fs.statSync(/* turbopackIgnore: true */ backendDbPath) : null;
     return `${tradeStat.size}:${tradeStat.mtimeMs}|${backendStat ? `${backendStat.size}:${backendStat.mtimeMs}` : "missing"}`;
   } catch {
     return "missing";
@@ -211,7 +211,7 @@ function readSubscriptionClients(): {
   subscriptionSummary: DatabaseDashboardDataInternal["subscriptionSummary"];
 } {
   const backendDbPath = resolveBackendDbPath();
-  if (!backendDbPath || !fs.existsSync(backendDbPath)) {
+  if (!backendDbPath || !fs.existsSync(/* turbopackIgnore: true */ backendDbPath)) {
     return {
       subscriptionClients: [],
       subscriptionSummary: {
