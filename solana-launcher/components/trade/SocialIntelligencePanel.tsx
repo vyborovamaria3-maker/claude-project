@@ -334,22 +334,42 @@ function MainFindings({
   const trades = snapshot?.rawSummary.trades ?? chain?.trades?.length ?? chain?.summary?.totalTrades ?? 0;
   const wallets = snapshot?.rawSummary.wallets ?? chain?.wallets?.length ?? chain?.summary?.uniqueWallets ?? 0;
   const bundles = snapshot?.rawSummary.bundles ?? chain?.bundles?.length ?? 0;
-  const priceChange = market?.pair?.changeH1 ?? market?.pair?.change24h ?? null;
+  const chainWallets = chain?.wallets || [];
+  const washWallets = chainWallets.filter((wallet) => wallet.isWashTrader === true).length;
+  const verifiedFreshWallets = chainWallets.filter((wallet) => wallet.freshnessVerified && wallet.isFresh === true).length;
+  const verifiedSmartWallets = chainWallets.filter((wallet) => wallet.smartClassificationAvailable && wallet.isSmart === true).length;
+  const pricePeriod = market?.pair?.changeH1 != null
+    ? "1h"
+    : market?.pair?.change24h != null
+      ? "24h"
+      : null;
+  const priceChange = pricePeriod === "1h"
+    ? market?.pair?.changeH1
+    : pricePeriod === "24h"
+      ? market?.pair?.change24h
+      : null;
   const strongest = [
     { label: "X", score: derived.xScore },
     { label: "Telegram", score: derived.tgScore },
-    { label: "On-chain", score: derived.alpha },
+    { label: "Alpha composite", score: derived.alpha },
   ].sort((left, right) => right.score - left.score)[0]?.label || "—";
-  const riskText = derived.socialRisk >= 70
-    ? "высокий риск, лучше проверять руками"
-    : derived.socialRisk >= 35
-      ? "средний риск, есть что перепроверить"
-      : "риск низкий по текущей выборке";
   const organicText = derived.organic >= 70
     ? "выглядит органично"
     : derived.manipulation >= 55
       ? "похоже на разгон"
       : "сигнал смешанный";
+  const onChainBase = washWallets > 0
+    ? `обнаружены wash-признаки у ${washWallets} кошельков`
+    : bundles > 0
+      ? `есть ${bundles} синхронных buy-кластеров — стоит перепроверить`
+      : verifiedSmartWallets > 0
+        ? `есть ${verifiedSmartWallets} верифицированных smart-wallet сигналов`
+        : trades > 0
+          ? "явных on-chain аномалий в доступной выборке не видно"
+          : "on-chain данных пока мало";
+  const onChainVerdict = chain
+    ? `${onChainBase}${chain.truncated || chain.summary?.historyTruncated ? "; история обрезана" : ""}`
+    : "trade history ещё не загрузилась";
   return (
     <section className="surface-panel rounded-2xl border border-bg-border p-4">
       <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -386,12 +406,12 @@ function MainFindings({
         <FindingCard
           icon={<Network />}
           title="Blockchain"
-          verdict={chain ? `alpha ${score(derived.alpha)}; ${riskText}` : "trade history ещё не загрузилась"}
+          verdict={onChainVerdict}
           facts={[
-            `${trades} трейдов собрано`,
-            `${wallets} кошельков найдено`,
+            `${trades} трейдов · ${wallets} кошельков`,
+            `${washWallets} wash · ${verifiedSmartWallets} smart · ${verifiedFreshWallets} fresh`,
             `${bundles} синхронных buy-кластеров`,
-            `цена: ${signedPct(priceChange)}`,
+            `цена${pricePeriod ? ` ${pricePeriod}` : ""}: ${signedPct(priceChange)}`,
           ]}
         />
       </div>
