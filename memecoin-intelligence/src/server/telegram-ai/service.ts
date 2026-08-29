@@ -26,19 +26,21 @@ function assertEnabled() {
   if (!env.TELEGRAM_AI_ENABLED) throw Object.assign(new Error('Telegram AI is disabled. Set TELEGRAM_AI_ENABLED=true.'), { statusCode: 503 });
 }
 
-export async function telegramAiStatus() {
+export async function telegramAiStatus(options: { detailed?: boolean } = {}) {
+  const detailed = options.detailed !== false;
+  const inference = await qwenHealth();
   return {
-    telegramOnly: false,
-    fullIntelligence: true,
+    telegramOnly: true,
+    fullIntelligence: false,
     analysisModes: ['telegram_only', 'full_intelligence'],
     promptVersion: 'intelligence-qwen-v3',
     enabled: env.TELEGRAM_AI_ENABLED,
     limits: { maxMessages: env.TELEGRAM_AI_MAX_MESSAGES, maxChars: env.TELEGRAM_AI_MAX_CHARS, maxOutputTokens: env.TELEGRAM_AI_MAX_TOKENS },
-    inference: await qwenHealth(),
+    inference: detailed ? inference : { configured: inference.configured, reachable: inference.reachable },
   };
 }
 
-export async function analyzeTelegram(input: unknown) {
+export async function analyzeTelegram(input: unknown, ownerId: string | null = null) {
   assertEnabled();
   const parsed = telegramAnalyzeRequestSchema.parse(input);
   const selected = selectMessages(parsed.messages);
@@ -46,7 +48,7 @@ export async function analyzeTelegram(input: unknown) {
   const context = parsed.context ?? {};
   const inputHash = telegramAiInputHash(selected.messages, context);
   let runId: string | null = null;
-  if (parsed.persist) runId = await createTelegramAiRun(selected.messages, context, inputHash, 'running');
+  if (parsed.persist) runId = await createTelegramAiRun(selected.messages, context, inputHash, 'running', ownerId);
   try {
     const completion = await runTelegramAi(selected.messages, context);
     if (runId) await completeTelegramAiRun(runId, completion);
@@ -57,14 +59,14 @@ export async function analyzeTelegram(input: unknown) {
   }
 }
 
-export async function enqueueTelegramAi(input: unknown) {
+export async function enqueueTelegramAi(input: unknown, ownerId: string | null = null) {
   assertEnabled();
   const parsed = telegramEnqueueRequestSchema.parse(input);
   const selected = selectMessages(parsed.messages);
   if (!selected.messages.length) throw new Error('No message text remains after limits');
   const context = parsed.context ?? {};
   const inputHash = telegramAiInputHash(selected.messages, context);
-  const runId = await createTelegramAiRun(selected.messages, context, inputHash, 'queued');
+  const runId = await createTelegramAiRun(selected.messages, context, inputHash, 'queued', ownerId);
   try {
     await telegramAiQueue.add('analyze-telegram-batch', { runId }, { jobId: `telegram-ai:${runId}` });
   } catch (error) {
@@ -74,7 +76,9 @@ export async function enqueueTelegramAi(input: unknown) {
   return { status: 'queued' as const, runId, input: { receivedMessages: parsed.messages.length, analyzedMessages: selected.messages.length, droppedMessages: selected.droppedMessages, droppedChars: selected.droppedChars } };
 }
 
-export async function telegramAiJob(input: unknown) {
+export async function telegramAiJob(input: unknown, access: { ownerId: string; isAdmin: boolean }) {
   const { runId } = z.object({ runId: z.string().uuid() }).parse(input);
-  return getTelegramAiRun(runId);
+  const run = await getTelegramAiRun(runId, access);
+  if (!run) throw Object.assign(new Error('Telegram AI run not found'), { statusCode: 404 });
+  return run;
 }

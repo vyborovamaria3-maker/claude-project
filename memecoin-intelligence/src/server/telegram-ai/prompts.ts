@@ -1,4 +1,4 @@
-import type { TelegramAnalysisContext, TelegramMessageInput } from './schemas.js';
+import { telegramContextSchema, type TelegramAnalysisContext, type TelegramMessageInput } from './schemas.js';
 
 export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v7-critic';
 
@@ -113,6 +113,7 @@ function compactMessages(messages: TelegramMessageInput[], fullMode: boolean) {
 }
 
 export function buildTelegramPrompt(messages: TelegramMessageInput[], context: TelegramAnalysisContext = {}) {
+  context = telegramContextSchema.parse(context);
   const fullMode = context.analysisMode === 'full_intelligence' && Boolean(context.intelligenceSnapshot);
   const compact = compactMessages(messages, fullMode);
   const analysisRole = context.analysisRole ?? 'analyst';

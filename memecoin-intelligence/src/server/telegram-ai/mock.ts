@@ -92,8 +92,13 @@ export function mockTelegramAnalysis(messages: TelegramMessageInput[], context: 
       ...[...contracts].map(([value, ids]) => ({ type: 'contract' as const, value, normalizedValue: value, confidence: 0.99, evidenceMessageIds: [...ids] })),
     ],
     claims: [],
+    featureAssessments: [],
+    discoveredRelationships: [],
     relationships,
     coordinationSignals,
+    anomalies: [],
+    contradictions: [],
+    whatWouldChangeConclusion: [],
     campaignHypothesis: { label: messages.length < 3 ? 'insufficient_data' : coordinated ? 'coordinated' : 'organic', confidence: messages.length < 3 ? 0.35 : coordinated ? 0.78 : 0.58, likelyOriginators: originator ? [originator] : [], amplifiers: sorted.slice(1).map(channelLabel).filter((value, index, values) => values.indexOf(value) === index).slice(0, 20), narrative: coordinated ? 'Repeated content, shared links, or tight timing suggest cross-channel amplification.' : 'The observed messages look more diverse than synchronized.', evidenceMessageIds: coordinationSignals.flatMap((signal) => signal.evidenceMessageIds).filter((id, index, ids) => ids.indexOf(id) === index) },
     risks: coordinationSignals.length ? [{ type: 'coordinated_promotion', severity: coordinated ? 'high' : 'medium', confidence: 0.75, explanation: 'Coordination indicators should be reviewed before treating message volume as organic demand.', evidenceMessageIds: coordinationSignals.flatMap((signal) => signal.evidenceMessageIds).filter((id, index, ids) => ids.indexOf(id) === index) }] : [],
     reasoningSummary: [

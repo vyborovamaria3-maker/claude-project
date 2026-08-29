@@ -77,16 +77,16 @@ async function upsertFeatures(client: pg.PoolClient, messages: TelegramMessageIn
   ]);
 }
 
-export async function createTelegramAiRun(messages: TelegramMessageInput[], context: TelegramAnalysisContext, inputHash: string, status: 'queued' | 'running' = 'queued') {
+export async function createTelegramAiRun(messages: TelegramMessageInput[], context: TelegramAnalysisContext, inputHash: string, status: 'queued' | 'running' = 'queued', ownerId: string | null = null) {
   return withTransaction(async (client) => {
     const channels = await upsertChannels(client, messages);
     const refs = await upsertMessages(client, messages, channels);
     await upsertFeatures(client, messages, refs);
     const run = await client.query<{ id: string }>(`
-      INSERT INTO telegram_ai_runs(status,mode,model,prompt_version,input_hash,input_context,message_count,started_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, [
+      INSERT INTO telegram_ai_runs(status,mode,model,prompt_version,input_hash,input_context,message_count,started_at,owner_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, [
       status, env.TELEGRAM_AI_MODE, env.TELEGRAM_AI_MODEL, TELEGRAM_PROMPT_VERSION, inputHash, context,
-      refs.length, status === 'running' ? new Date() : null,
+      refs.length, status === 'running' ? new Date() : null, ownerId,
     ]);
     const runId = run.rows[0]!.id;
     if (refs.length) await client.query(`
@@ -99,7 +99,12 @@ export async function createTelegramAiRun(messages: TelegramMessageInput[], cont
 }
 
 export async function markTelegramAiRunRunning(runId: string) {
-  await pool.query(`UPDATE telegram_ai_runs SET status='running',started_at=COALESCE(started_at,now()),error=NULL WHERE id=$1`, [runId]);
+  const result = await pool.query(
+    `UPDATE telegram_ai_runs SET status='running',started_at=COALESCE(started_at,now()),error=NULL
+     WHERE id=$1 AND status IN ('queued','running')`,
+    [runId],
+  );
+  return result.rowCount === 1;
 }
 
 export async function loadTelegramAiRun(runId: string): Promise<{ messages: TelegramMessageInput[]; context: TelegramAnalysisContext } | null> {
@@ -138,19 +143,30 @@ export async function completeTelegramAiRun(runId: string, completion: TelegramA
       runId, completion.provider, completion.model, TELEGRAM_PROMPT_VERSION, completion.result,
       completion.latencyMs, completion.inputTokens, completion.outputTokens,
     ]);
-    await client.query(`UPDATE telegram_ai_runs SET status='completed',completed_at=now(),error=NULL WHERE id=$1`, [runId]);
+    await client.query(
+      `UPDATE telegram_ai_runs SET status='completed',completed_at=now(),error=NULL
+       WHERE id=$1 AND status NOT IN ('completed','failed')`,
+      [runId],
+    );
   });
 }
 
 export async function failTelegramAiRun(runId: string, error: unknown) {
-  await pool.query(`UPDATE telegram_ai_runs SET status='failed',error=$2,completed_at=now() WHERE id=$1`, [runId, error instanceof Error ? error.message : String(error)]);
+  await pool.query(
+    `UPDATE telegram_ai_runs SET status='failed',error=$2,completed_at=now()
+     WHERE id=$1 AND status NOT IN ('completed','failed')`,
+    [runId, error instanceof Error ? error.message : String(error)],
+  );
 }
 
-export async function getTelegramAiRun(runId: string) {
+export async function getTelegramAiRun(runId: string, access?: { ownerId: string; isAdmin: boolean }) {
+  const ownerFilter = access ? ` AND ($2::boolean OR r.owner_id=$3)` : '';
   const query = await pool.query(`
     SELECT r.id,r.status,r.mode,r.model,r.prompt_version,r.input_hash,r.input_context,r.message_count,
       r.error,r.created_at,r.started_at,r.completed_at,
       a.provider,a.result,a.latency_ms,a.input_tokens,a.output_tokens
-    FROM telegram_ai_runs r LEFT JOIN telegram_ai_results a ON a.run_id=r.id WHERE r.id=$1`, [runId]);
+     FROM telegram_ai_runs r LEFT JOIN telegram_ai_results a ON a.run_id=r.id WHERE r.id=$1${ownerFilter}`,
+    access ? [runId, access.isAdmin, access.ownerId] : [runId],
+  );
   return query.rows[0] ?? null;
 }

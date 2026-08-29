@@ -6,7 +6,8 @@ import { runTelegramAi } from '@/server/telegram-ai/qwenClient.js';
 
 export const telegramAiWorker = new Worker('telegram-ai', async (job) => {
   const { runId } = job.data as { runId: string };
-  await markTelegramAiRunRunning(runId);
+  const claimed = await markTelegramAiRunRunning(runId);
+  if (!claimed) return { runId, skipped: true };
   try {
     const input = await loadTelegramAiRun(runId);
     if (!input) throw new Error(`Telegram AI run not found: ${runId}`);
@@ -14,7 +15,11 @@ export const telegramAiWorker = new Worker('telegram-ai', async (job) => {
     await completeTelegramAiRun(runId, completion);
     return { runId, result: completion.result, latencyMs: completion.latencyMs };
   } catch (error) {
-    await failTelegramAiRun(runId, error);
+    try {
+      await failTelegramAiRun(runId, error);
+    } catch (persistError) {
+      console.error(JSON.stringify({ event: 'telegram-ai-failure-persist-failed', runId, error: persistError instanceof Error ? persistError.message : String(persistError) }));
+    }
     throw error;
   }
 }, { connection: queueConnection, concurrency: env.TELEGRAM_AI_WORKER_CONCURRENCY, lockDuration: env.TELEGRAM_AI_TIMEOUT_MS + 30_000 });

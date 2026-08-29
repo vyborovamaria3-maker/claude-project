@@ -3,7 +3,7 @@ import { env } from '@/server/config/env.js';
 import { cacheGet, cacheSet } from '@/server/cache/redis.js';
 import { buildTelegramPrompt, promptVisibleFeatureKeys, TELEGRAM_PROMPT_VERSION } from './prompts.js';
 import { mockTelegramAnalysis } from './mock.js';
-import { telegramAiResultSchema, type TelegramAiResult, type TelegramAnalysisContext, type TelegramMessageInput } from './schemas.js';
+import { telegramAiResultSchema, telegramContextSchema, type TelegramAiResult, type TelegramAnalysisContext, type TelegramMessageInput } from './schemas.js';
 
 export type TelegramAiCompletion = {
   result: TelegramAiResult;
@@ -61,6 +61,8 @@ function parseJsonObject(raw: string): unknown {
 }
 
 function validateResult(result: TelegramAiResult, messages: TelegramMessageInput[], context: TelegramAnalysisContext): TelegramAiResult {
+  context = telegramContextSchema.parse(context);
+  result = telegramAiResultSchema.parse(result);
   const allowedEvidence = new Set(messages.map((message) => message.id));
   for (const evidence of context.intelligenceSnapshot?.evidence ?? []) allowedEvidence.add(evidence.id);
   const evidenceGroups: string[][] = [
