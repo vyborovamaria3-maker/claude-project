@@ -174,10 +174,11 @@ export type ChainBundle = {
 };
 
 export type ChainAnalysis = {
-  trades?: Array<{ ts: number; p: number; w?: string; sig?: string }>;
+  trades?: Array<{ ts: number; p: number; w?: string; sig?: string; t?: 0 | 1; s?: number; n?: number; f?: number | null; src?: string | null }>;
   wallets?: ChainWallet[];
   bundles?: ChainBundle[];
   truncated?: boolean;
+  fetchedAt?: number;
   summary?: {
     totalRawTrades?: number;
     totalTrades?: number;

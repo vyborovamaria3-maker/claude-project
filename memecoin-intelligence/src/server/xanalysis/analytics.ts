@@ -84,7 +84,7 @@ function looksSuspicious(author: XMention['author'], now: Date): boolean {
   const veryNew = ageDays !== null && ageDays < 14;
   const extremeFollowing = author.followers < 50 && author.following >= 500;
   const highOutputLowReach = author.followers < 100 && author.posts >= 5_000;
-  return author.handle === 'unknown' || veryNew || extremeFollowing || highOutputLowReach;
+  return author.handle === 'unknown' || author.handle.startsWith('unknown_') || veryNew || extremeFollowing || highOutputLowReach;
 }
 
 function normalizePostText(text: string): string {
