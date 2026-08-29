@@ -90,7 +90,7 @@ function validateRule(rule, context) {
 }
 
 const groupsStart = metricsSource.indexOf('const groups: DerivedSocial["groups"] = [');
-const groupsEnd = metricsSource.indexOf("\n  return {\n    groups,", groupsStart);
+const groupsEnd = metricsSource.indexOf("\n  return {", groupsStart);
 assert(groupsStart >= 0 && groupsEnd > groupsStart, "unable to locate derived Social Intelligence groups");
 
 const groupsSource = metricsSource.slice(groupsStart, groupsEnd);
