@@ -189,6 +189,54 @@ function validateSnapshot(body: RequestBody, mint: string) {
   return snapshot;
 }
 
+type QwenSnapshot = Omit<AnalysisSnapshot, "features" | "rawSummary" | "provenance"> & {
+  features: Array<Pick<
+    AnalysisSnapshot["features"][number],
+    "key" | "group" | "label" | "value" | "numericValue" | "confidence" | "observedAt" | "missing" | "note"
+  > & { source: "derived" | "x" | "telegram" | "market" | "chain" }>;
+  rawSummary: {
+    xPosts: number;
+    telegramMessages: number;
+    trades: number;
+    wallets: number;
+    bundles: number;
+    chainTruncated: boolean;
+    marketAvailable: boolean;
+  };
+};
+
+function qwenSnapshot(snapshot: AnalysisSnapshot): QwenSnapshot {
+  const { provenance: _provenance, ...baseSnapshot } = snapshot as AnalysisSnapshot & {
+    provenance?: unknown;
+  };
+  return {
+    ...baseSnapshot,
+    features: snapshot.features.map((feature) => ({
+      key: feature.key,
+      group: feature.group,
+      label: feature.label,
+      value: feature.value,
+      numericValue: feature.numericValue,
+      source: ["derived", "x", "telegram", "market", "chain"].includes(feature.source)
+        ? feature.source as "derived" | "x" | "telegram" | "market" | "chain"
+        : "derived",
+      confidence: feature.confidence,
+      observedAt: feature.observedAt,
+      missing: feature.missing,
+      ...(feature.note ? { note: feature.note } : {}),
+    })),
+    rawSummary: {
+      xPosts: snapshot.rawSummary.xPosts,
+      telegramMessages: snapshot.rawSummary.telegramMessages,
+      trades: snapshot.rawSummary.trades,
+      wallets: snapshot.rawSummary.wallets,
+      bundles: snapshot.rawSummary.bundles,
+      chainTruncated: snapshot.rawSummary.chainTruncated,
+      marketAvailable: snapshot.rawSummary.marketAvailable,
+    },
+  };
+}
+
 function aiPayload(
   snapshot: AnalysisSnapshot | null,
   timeline: TimelineItem[],
@@ -217,7 +265,7 @@ function aiPayload(
       analysisMode: snapshot ? "full_intelligence" : "telegram_only",
       analysisRole: options.role || "analyst",
       priorConclusion: options.priorConclusion?.slice(0, 6_000) || null,
-      ...(snapshot ? { intelligenceSnapshot: snapshot } : {}),
+      ...(snapshot ? { intelligenceSnapshot: qwenSnapshot(snapshot) } : {}),
     },
     persist: false,
   };

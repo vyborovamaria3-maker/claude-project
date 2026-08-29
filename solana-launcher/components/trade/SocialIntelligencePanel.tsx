@@ -272,6 +272,7 @@ export default function SocialIntelligencePanel() {
       {warnings.length > 0 && <Notice tone="warning" text={warnings.join(" · ")} />}
 
       {(x || tg) && <>
+        <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-9">
           <Kpi label="Social score" value={score(derived.socialScore)} icon={<Gauge />} />
           <Kpi label="X score" value={score(derived.xScore)} icon={<Twitter />} />
@@ -310,6 +311,95 @@ function Notice({ tone, text }: { tone: "danger" | "warning"; text: string }) {
 }
 function Kpi({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
   return <div className="surface-panel rounded-xl border border-bg-border p-3"><div className="flex items-center justify-between text-content-faint"><span className="text-[9px] uppercase tracking-wider">{label}</span><span className="[&>svg]:h-3.5 [&>svg]:w-3.5">{icon}</span></div><div className="mt-2 font-mono text-lg font-bold text-content">{value}</div></div>;
+}
+function MainFindings({
+  derived,
+  x,
+  tg,
+  chain,
+  market,
+  snapshot,
+}: {
+  derived: ReturnType<typeof deriveSocialMetrics>;
+  x: TwitterStats | null;
+  tg: SocialTimeline | null;
+  chain: ChainAnalysis | null;
+  market: Market | null;
+  snapshot: AnalysisSnapshot | null;
+}) {
+  const xPosts = snapshot?.rawSummary.xPosts ?? x?.topTweets?.length ?? 0;
+  const xRiskPosts = snapshot?.rawSummary.xRiskUniversePosts ?? x?.riskUniverse?.totalTweets ?? x?.totalTweets ?? 0;
+  const tgMessages = snapshot?.rawSummary.telegramMessages ?? tg?.timeline?.length ?? 0;
+  const tgMatched = snapshot?.rawSummary.telegramMatchedBeforeLimit ?? tg?.mentions ?? 0;
+  const trades = snapshot?.rawSummary.trades ?? chain?.trades?.length ?? chain?.summary?.totalTrades ?? 0;
+  const wallets = snapshot?.rawSummary.wallets ?? chain?.wallets?.length ?? chain?.summary?.uniqueWallets ?? 0;
+  const bundles = snapshot?.rawSummary.bundles ?? chain?.bundles?.length ?? 0;
+  const priceChange = market?.pair?.changeH1 ?? market?.pair?.change24h ?? null;
+  const strongest = [
+    { label: "X", score: derived.xScore },
+    { label: "Telegram", score: derived.tgScore },
+    { label: "On-chain", score: derived.alpha },
+  ].sort((left, right) => right.score - left.score)[0]?.label || "—";
+  const riskText = derived.socialRisk >= 70
+    ? "высокий риск, лучше проверять руками"
+    : derived.socialRisk >= 35
+      ? "средний риск, есть что перепроверить"
+      : "риск низкий по текущей выборке";
+  const organicText = derived.organic >= 70
+    ? "выглядит органично"
+    : derived.manipulation >= 55
+      ? "похоже на разгон"
+      : "сигнал смешанный";
+  return (
+    <section className="surface-panel rounded-2xl border border-bg-border p-4">
+      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-semibold text-content">Главные выводы</h2>
+          </div>
+          <p className="mt-1 text-[10px] text-content-faint">Короткая сводка перед таблицей: что видно по соцсетям и блокчейну.</p>
+        </div>
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-content-faint">Сильнее всего: {strongest}</div>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-3">
+        <FindingCard
+          icon={<Twitter />}
+          title="Twitter / X"
+          verdict={x ? `${organicText}; X score ${score(derived.xScore)}` : "данные X не пришли"}
+          facts={[
+            `${xPosts} постов в отображаемой выборке`,
+            `${xRiskPosts || xPosts} постов в risk-universe`,
+            `бот-риск ${score(x?.riskUniverse?.botRiskScore ?? x?.botRiskScore ?? 0)}`,
+          ]}
+        />
+        <FindingCard
+          icon={<Send />}
+          title="Telegram"
+          verdict={tg ? `TG score ${score(derived.tgScore)}; ${tgMessages ? "есть сигналы" : "сигналов мало"}` : "Telegram сейчас недоступен"}
+          facts={[
+            `${tgMessages} сообщений в timeline`,
+            `${tgMatched} совпадений до лимита`,
+            `первый сигнал: ${tg?.origin?.source_handle || tg?.origin?.source_name || "—"}`,
+          ]}
+        />
+        <FindingCard
+          icon={<Network />}
+          title="Blockchain"
+          verdict={chain ? `alpha ${score(derived.alpha)}; ${riskText}` : "trade history ещё не загрузилась"}
+          facts={[
+            `${trades} трейдов собрано`,
+            `${wallets} кошельков найдено`,
+            `${bundles} синхронных buy-кластеров`,
+            `цена: ${signedPct(priceChange)}`,
+          ]}
+        />
+      </div>
+    </section>
+  );
+}
+function FindingCard({ icon, title, verdict, facts }: { icon: ReactNode; title: string; verdict: string; facts: string[] }) {
+  return <div className="rounded-xl border border-bg-border bg-bg-card p-3"><div className="flex items-center gap-2 text-content"><span className="text-primary [&>svg]:h-4 [&>svg]:w-4">{icon}</span><h3 className="text-xs font-semibold">{title}</h3></div><p className="mt-2 min-h-10 text-sm leading-5 text-content-soft">{verdict}</p><div className="mt-3 space-y-1.5">{facts.map((fact) => <div key={fact} className="flex items-start gap-2 text-[10px] leading-4 text-content-muted"><span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-primary" />{fact}</div>)}</div></div>;
 }
 function GraphStats({ snapshot }: { snapshot: AnalysisSnapshot }) {
   const graph = snapshot.graph.stats;
