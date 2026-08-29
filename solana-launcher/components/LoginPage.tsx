@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ArrowRight, CheckCircle2, Lock, Sparkles, ShieldCheck, Key } from "lucide-react";
 import { useI18n } from "@/components/providers/I18nProvider";
@@ -41,7 +40,6 @@ function getTelegramLaunchUrls(botUrl: string) {
 }
 
 export default function LoginPage() {
-  const router = useRouter();
   const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
 
