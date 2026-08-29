@@ -108,11 +108,11 @@ export const telegramContextSchema = z.object({
   tokenName: z.string().trim().max(128).optional().nullable(),
   windowStart: dateString.optional().nullable(),
   windowEnd: dateString.optional().nullable(),
-  analysisMode: z.enum(['telegram_only', 'full_intelligence']).optional().default('telegram_only'),
-  analysisRole: z.enum(['analyst', 'critic']).optional().default('analyst'),
+  analysisMode: z.enum(['telegram_only', 'full_intelligence']).default('telegram_only'),
+  analysisRole: z.enum(['analyst', 'critic']).default('analyst'),
   priorConclusion: z.string().max(6_000).optional().nullable(),
   intelligenceSnapshot: intelligenceSnapshotSchema.optional(),
-}).strict().default({});
+}).strict().default({ analysisMode: 'telegram_only', analysisRole: 'analyst' });
 
 const discoveredRelationshipSchema = z.object({
   source: z.string().min(1).max(512),
@@ -199,8 +199,8 @@ export const telegramAiResultSchema = z.object({
     confidence,
     explanation: z.string().min(1).max(1_000),
     evidenceMessageIds: evidenceIds,
-  }).strict()).max(120).optional().default([]),
-  discoveredRelationships: z.array(discoveredRelationshipSchema).max(150).optional().default([]),
+  }).strict()).max(120).default([]),
+  discoveredRelationships: z.array(discoveredRelationshipSchema).max(150).default([]),
   anomalies: z.array(z.object({
     type: z.string().min(1).max(120),
     severity,
@@ -208,13 +208,13 @@ export const telegramAiResultSchema = z.object({
     explanation: z.string().min(1).max(1_500),
     relatedFeatureKeys: z.array(z.string().max(160)).max(30).default([]),
     evidenceMessageIds: evidenceIds,
-  }).strict()).max(100).optional().default([]),
+  }).strict()).max(100).default([]),
   contradictions: z.array(z.object({
     statement: z.string().min(1).max(1_500),
     confidence,
     evidenceMessageIds: evidenceIds,
-  }).strict()).max(60).optional().default([]),
-  whatWouldChangeConclusion: z.array(z.string().min(1).max(700)).max(20).optional().default([]),
+  }).strict()).max(60).default([]),
+  whatWouldChangeConclusion: z.array(z.string().min(1).max(700)).max(20).default([]),
   finalIntelligence: z.object({
     marketState: z.string().min(1).max(1_500),
     socialState: z.string().min(1).max(1_500),
@@ -239,5 +239,7 @@ export const telegramEnqueueRequestSchema = telegramAnalyzeRequestSchema.extend(
 });
 
 export type TelegramMessageInput = z.infer<typeof telegramMessageSchema>;
-export type TelegramAnalysisContext = z.infer<typeof telegramContextSchema>;
+// Input types preserve optional defaulted fields for callers building requests
+// and mock responses; schema.parse() still produces the normalized output.
+export type TelegramAnalysisContext = NonNullable<z.input<typeof telegramContextSchema>>;
 export type TelegramAiResult = z.infer<typeof telegramAiResultSchema>;

@@ -45,6 +45,7 @@ services:
     networks:
       - admin-internal
       - potapoff-shared
+      - potapoff-data
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -109,6 +110,9 @@ networks:
     internal: true
   potapoff-shared:
     external: true
+  potapoff-data:
+    external: true
+    name: potapoff_default
 
 volumes:
   admin-state:

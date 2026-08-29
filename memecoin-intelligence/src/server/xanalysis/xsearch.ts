@@ -98,7 +98,7 @@ function stringValue(value: unknown): string | null {
 
 function countValue(value: unknown): number {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+  return Number.isFinite(parsed) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(parsed))) : 0;
 }
 
 function booleanValue(value: unknown): boolean {

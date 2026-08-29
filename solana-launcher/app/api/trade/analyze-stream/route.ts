@@ -199,6 +199,8 @@ export async function GET(req: NextRequest) {
           n: Number(trade.amountTokens.toFixed(6)),
           p: Number(trade.priceSol.toFixed(12)),
           sig: trade.signature,
+          f: typeof trade.fee === "number" && Number.isFinite(trade.fee) ? trade.fee : null,
+          src: trade.source || null,
           // Legacy display estimate only; downstream intelligence must not treat this as USD truth.
           u: Number((trade.amountSol * 150).toFixed(2)),
         }));

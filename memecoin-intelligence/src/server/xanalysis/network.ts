@@ -231,7 +231,7 @@ export function analyzeAccountNetwork(rawMentions: XMention[], options: Options)
       handle, name: author.name, profileUrl: author.profileUrl, avatarUrl: author.avatarUrl,
       followers: author.followers, posts: posts.length,
       firstPostAt: first === null ? null : new Date(first), lastPostAt: last === null ? null : new Date(last),
-      averageDelayMinutes: first === null || !Number.isFinite(firstTimestamp) ? null : median(timestamps.map((timestamp) => (timestamp - firstTimestamp) / 60_000)),
+       averageDelayMinutes: first === null ? null : median(timestamps.map((timestamp) => (timestamp - first) / 60_000)),
       influenceScore, coordinationScore, role,
       sharedContracts: features.get(handle)!.contracts.size, sharedLinks: features.get(handle)!.links.size,
     };

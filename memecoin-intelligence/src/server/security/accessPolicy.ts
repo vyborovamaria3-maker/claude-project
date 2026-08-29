@@ -1,9 +1,15 @@
+import { createHash } from 'node:crypto';
 import { verifyApiKey, type Role } from './auth.js';
 
 export type SecurityIdentity = {
   role: Role;
   source: 'legacy' | 'admin' | 'user';
+  ownerId: string;
 };
+
+function ownerId(providedApiKey: string): string {
+  return `key:${createHash('sha256').update(providedApiKey).digest('hex')}`;
+}
 
 export type AccessPolicyConfig = {
   rbacEnabled: boolean;
@@ -17,9 +23,9 @@ export function resolveIdentity(
   config: AccessPolicyConfig,
 ): SecurityIdentity | null {
   if (!providedApiKey) return null;
-  if (verifyApiKey(providedApiKey, config.adminApiKey)) return { role: 'admin', source: 'admin' };
-  if (verifyApiKey(providedApiKey, config.userApiKey)) return { role: 'user', source: 'user' };
-  if (verifyApiKey(providedApiKey, config.legacyApiKey)) return { role: 'admin', source: 'legacy' };
+  if (verifyApiKey(providedApiKey, config.adminApiKey)) return { role: 'admin', source: 'admin', ownerId: ownerId(providedApiKey) };
+  if (verifyApiKey(providedApiKey, config.userApiKey)) return { role: 'user', source: 'user', ownerId: ownerId(providedApiKey) };
+  if (verifyApiKey(providedApiKey, config.legacyApiKey)) return { role: 'admin', source: 'legacy', ownerId: ownerId(providedApiKey) };
   return null;
 }
 

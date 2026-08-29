@@ -10,13 +10,15 @@ export async function installAccessControl(app: FastifyInstance, config: AccessP
     const providedApiKey = Array.isArray(rawKey) ? rawKey[0] : rawKey;
     const identity = resolveIdentity(providedApiKey, config);
 
+    if (identity) {
+      (request as typeof request & { securityIdentity?: typeof identity }).securityIdentity = identity;
+    }
+
     if (!requiresAuthentication(config)) return;
     if (!identity) {
       auditEvent('api-auth-rejected', { method: request.method, url: request.url });
       return reply.code(401).send({ error: 'unauthorized' });
     }
 
-    // Context is additive only; existing handlers do not depend on it.
-    (request as typeof request & { securityIdentity?: typeof identity }).securityIdentity = identity;
   });
 }

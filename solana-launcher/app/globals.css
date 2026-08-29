@@ -65,6 +65,50 @@ html, body {
   overflow-x: hidden;
 }
 
+/* X Analysis view system: five intentional compositions share the same data model. */
+.x-analysis-view {
+  --x-accent: var(--theme-secondary);
+  --x-accent-soft: color-mix(in srgb, var(--x-accent) 14%, transparent);
+  --x-panel: color-mix(in srgb, var(--theme-bg-card) 88%, transparent);
+  --x-radius: 1rem;
+}
+.x-analysis-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--x-accent) 25%, var(--theme-bg-border));
+  border-radius: calc(var(--x-radius) + .25rem);
+  padding: 1.25rem;
+  background: radial-gradient(circle at 88% 0%, var(--x-accent-soft), transparent 34%), var(--x-panel);
+}
+.x-analysis-kicker { color: var(--x-accent); font-size: .68rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+.x-analysis-variant-picker {
+  display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--theme-bg-border);
+  border-radius: 999px; padding: .55rem .7rem; background: var(--theme-bg-card); color: var(--theme-content-muted);
+}
+.x-analysis-variant-picker select { max-width: 11rem; border: 0; outline: 0; background: transparent; color: var(--theme-content); font-size: .7rem; }
+.x-analysis-variant-picker option { background: var(--theme-bg-card); color: var(--theme-content); }
+.x-analysis-view--command { --x-accent: #14f195; --x-radius: 1.1rem; }
+.x-analysis-view--command .surface-panel { box-shadow: 0 18px 50px -38px rgba(20,241,149,.7); }
+.x-analysis-view--terminal { --x-accent: #38bdf8; --x-radius: .35rem; font-family: var(--font-mono), ui-monospace, monospace; }
+.x-analysis-view--terminal .surface-panel, .x-analysis-view--terminal .x-analysis-hero { border-radius: .35rem; background-image: linear-gradient(90deg, color-mix(in srgb, #38bdf8 4%, transparent) 1px, transparent 1px), linear-gradient(var(--x-panel), var(--x-panel)); background-size: 24px 24px, auto; }
+.x-analysis-view--terminal .surface-panel { border-color: color-mix(in srgb, #38bdf8 28%, var(--theme-bg-border)); }
+.x-analysis-view--editorial { --x-accent: #f59e0b; --x-radius: .25rem; }
+.x-analysis-view--editorial .x-analysis-hero { background: linear-gradient(120deg, #332413, var(--theme-bg-card) 58%, #1d1710); border-width: 0 0 1px; }
+.x-analysis-view--editorial .surface-panel { border-radius: .25rem; background: color-mix(in srgb, var(--theme-bg-card) 94%, #f59e0b 6%); }
+.x-analysis-view--editorial h1 { font-family: Georgia, 'Times New Roman', serif; letter-spacing: -.04em; }
+.x-analysis-view--signal { --x-accent: #f43f5e; --x-radius: 1.6rem; }
+.x-analysis-view--signal .x-analysis-hero { background: linear-gradient(135deg, color-mix(in srgb, #f43f5e 16%, var(--theme-bg-card)), var(--theme-bg-card) 58%); }
+.x-analysis-view--signal .surface-panel { border-radius: 1.6rem; border-color: color-mix(in srgb, #f43f5e 20%, var(--theme-bg-border)); }
+.x-analysis-view--atlas { --x-accent: #a78bfa; --x-radius: .8rem; }
+.x-analysis-view--atlas { background: radial-gradient(circle at 50% 8%, color-mix(in srgb, #a78bfa 9%, transparent), transparent 30%); }
+.x-analysis-view--atlas .surface-panel { border-radius: .8rem; background: linear-gradient(145deg, color-mix(in srgb, #a78bfa 6%, var(--theme-bg-card)), var(--theme-bg-card)); }
+@media (min-width: 1024px) {
+  .x-analysis-view--terminal > section:nth-of-type(2) { position: sticky; top: 1rem; z-index: 2; }
+  .x-analysis-view--editorial > section:nth-of-type(3) { max-width: 72rem; }
+  .x-analysis-view--signal > section:nth-of-type(3) { transform: translateY(-.25rem); }
+  .x-analysis-view--atlas > section { border-left: 2px solid color-mix(in srgb, #a78bfa 30%, transparent); }
+}
+
 body {
   background-image:
     radial-gradient(circle at 12% 4%, var(--page-glow, var(--theme-primary-soft)), transparent 24%),

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>POTAPoff — Solana Launch & Market Intelligence</title>
+  <style>
+    :root{
+      --bg:#050505; --panel:rgba(18,18,18,.92); --line:rgba(217,177,85,.18); --text:#f7f5ef;
+      --muted:#a7a197; --accent:#f1c35c; --accent2:#d79a2f; --shadow:0 40px 120px rgba(0,0,0,.55);
+      --radius:30px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    *{box-sizing:border-box} html{scroll-behavior:smooth}
+    body{
+      margin:0;color:var(--text);background:
+        radial-gradient(circle at 50% 80%, rgba(215,154,47,.10), transparent 28%),
+        radial-gradient(circle at 80% 0%, rgba(241,195,92,.09), transparent 22%),
+        linear-gradient(180deg,#050505 0%, #090909 100%);
+      min-height:100vh;overflow-x:hidden;
+    }
+    a{text-decoration:none;color:inherit}
+    .page{max-width:1600px;margin:0 auto;padding:0 16px 28px}
+    .header{position:sticky;top:0;z-index:20;background:rgba(5,5,5,.86);backdrop-filter:blur(18px);border-bottom:1px solid rgba(255,255,255,.05)}
+    .header-inner{max-width:1600px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand{display:flex;align-items:center;gap:12px;font-weight:600;color:#f1dfad}
+    .logo{display:grid;gap:3px}.logo span{display:block;width:24px;height:6px;border-radius:999px;background:linear-gradient(90deg,#f5d07a,#9a6d1f);box-shadow:0 0 24px rgba(241,195,92,.25)}
+    .nav{display:none;gap:34px;color:#c8c0b3;font-size:15px}
+    .actions{display:flex;align-items:center;gap:10px}
+    .theme{display:flex;align-items:center;gap:8px;height:40px;padding:0 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.02);color:#f3e6c1;font-size:14px}
+    .switch{display:flex;gap:4px;align-items:center}.switch i{width:12px;height:12px;border-radius:50%;display:block}.switch i:first-child{background:#f1c35c}.switch i:last-child{background:#d79a2f}
+    .button{height:40px;padding:0 20px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.02);color:#f5f2ea;font-size:14px;display:inline-flex;align-items:center;gap:10px}
+    .button.primary{background:linear-gradient(180deg,#f3cf7d 0%, #d9a53f 100%);color:#1c1404;border-color:rgba(244,196,100,.42);box-shadow:0 10px 30px rgba(217,165,63,.18)}
+    .hero{position:relative;padding:38px 0 18px;min-height:calc(100vh - 70px)}
+    .hero::before{content:"";position:absolute;inset:0;background:linear-gradient(120deg, transparent 0 47%, rgba(203,155,58,.12) 47% 47.5%, transparent 47.5% 100%), linear-gradient(25deg, transparent 0 44%, rgba(203,155,58,.06) 44% 44.4%, transparent 44.4% 100%);pointer-events:none;opacity:.55}
+    .hero-grid{position:relative;z-index:1;display:grid;gap:22px;grid-template-columns:1fr;align-items:center}
+    .copy{max-width:620px;padding-top:62px}
+    .eyebrow{display:inline-flex;align-items:center;gap:10px;height:28px;padding:0 12px;border-radius:999px;border:1px solid rgba(241,195,92,.22);background:rgba(241,195,92,.08);color:#e4c77d;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+    .dot{width:7px;height:7px;border-radius:50%;background:#58d98e;box-shadow:0 0 12px rgba(88,217,142,.6)}
+    h1{margin:18px 0 18px;font-size:clamp(52px,6vw,98px);line-height:.92;letter-spacing:-.06em;font-weight:800}
+    .accent{display:block;background:linear-gradient(90deg,#fff1c1 0%, #f0c86b 48%, #d39122 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .lead{max-width:520px;margin:0 0 28px;color:#b7b0a4;font-size:19px;line-height:1.58}
+    .cta-row{display:flex;gap:12px;flex-wrap:wrap}
+    .cta{height:45px;padding:0 22px;border-radius:13px;border:1px solid rgba(255,255,255,.10);display:inline-flex;align-items:center;gap:12px;font-size:16px}
+    .cta.primary{background:linear-gradient(180deg,#f5d47f 0%, #d4a03b 100%);color:#211607;border-color:rgba(244,196,100,.48)}
+    .cta.secondary{background:rgba(255,255,255,.02)}
+    .meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:22px;color:#a39a8e;font-size:14px}.meta span{display:flex;align-items:center;gap:8px}.meta i{width:6px;height:6px;border-radius:50%;background:#f1c35c;display:block}
+    .market-shell{position:relative;width:min(100%, 860px);margin:0 auto;padding:18px;border-radius:38px;background:linear-gradient(180deg, rgba(39,31,18,.36), rgba(10,10,10,.72));border:1px solid rgba(199,156,64,.35);box-shadow:var(--shadow);backdrop-filter:blur(14px)}
+    .market-shell::before{content:"";position:absolute;inset:-20px;border-radius:44px;border:1px solid rgba(241,195,92,.10);pointer-events:none}
+    .market{position:relative;overflow:hidden;border-radius:26px;background:radial-gradient(circle at 80% 25%, rgba(241,195,92,.09), transparent 20%), linear-gradient(180deg, rgba(21,18,14,.96), rgba(11,11,11,.98));min-height:640px;border:1px solid rgba(199,156,64,.22);padding:28px 26px 20px}
+    .market::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg, transparent 0 8%, rgba(255,255,255,.03) 8% 8.2%, transparent 8.2% 100%), linear-gradient(transparent 0 18%, rgba(255,255,255,.035) 18% 18.2%, transparent 18.2% 100%);pointer-events:none;opacity:.45}
+    .market-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px}
+    .pair{display:flex;align-items:center;gap:14px}
+    .mark{width:40px;height:40px;border-radius:12px;background:linear-gradient(180deg,#2a2216,#17120c);border:1px solid rgba(244,196,100,.24);display:grid;place-items:center;box-shadow:0 0 40px rgba(241,195,92,.12)}
+    .mark span{display:block;width:22px;height:4px;border-radius:99px;background:linear-gradient(90deg,#f8e3a8,#c4922e);box-shadow:0 8px 0 #f8e3a8, 0 -8px 0 #f8e3a8}
+    .pair-title{font-size:19px;font-weight:700}.pair-sub{color:#8e8678;font-size:12px;margin-top:3px}
+    .status{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:999px;border:1px solid rgba(241,195,92,.22);background:rgba(241,195,92,.08);color:#f1c35c;font-size:13px;font-weight:700}
+    .status .dot{width:8px;height:8px}
+    .price-row{display:flex;align-items:baseline;gap:14px;margin:8px 0 12px}.price{font-size:72px;line-height:.9;font-weight:800;letter-spacing:-.06em}.change{font-size:18px;font-weight:700;color:#60df9e}
+    .chart-wrap{position:relative;margin-top:10px;height:370px;border-radius:16px;background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01));overflow:hidden}
+    .chart-grid{position:absolute;inset:18px 0 0;display:grid;grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(4,1fr);opacity:.34}
+    .chart-grid div{border-top:1px solid rgba(255,255,255,.05);border-left:1px solid rgba(255,255,255,.04)}
+    .chart-svg{position:absolute;inset:0;width:100%;height:100%}
+    .chart-svg path.area{fill:rgba(208,160,64,.10)} .chart-svg path.line{fill:none;stroke:url(#lineGrad);stroke-width:3.3;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 8px rgba(245,196,103,.16))}
+    .chart-svg circle{fill:#f7d68a;stroke:#2f2110;stroke-width:2}
+    .floating{position:absolute;right:24px;top:110px;width:150px;padding:14px 16px;border-radius:16px;background:rgba(15,15,15,.88);border:1px solid rgba(199,156,64,.28);box-shadow:0 22px 58px rgba(0,0,0,.35)}
+    .floating .label{color:#9d9488;font-size:12px;margin-bottom:10px}.floating .val{font-size:24px;font-weight:800;color:#6de09b}
+    .range{position:absolute;left:-18px;bottom:98px;width:154px;padding:14px 16px;border-radius:16px;background:rgba(15,15,15,.88);border:1px solid rgba(199,156,64,.28)}
+    .range .label{color:#9d9488;font-size:12px;margin-bottom:10px}.range .val{font-size:22px;font-weight:800}
+    .tooltip{position:absolute;right:54px;bottom:170px;padding:10px 12px;border-radius:12px;background:rgba(243,198,95,.92);color:#281a04;font-weight:800;font-size:13px}
+    .timeline{display:flex;justify-content:space-between;color:#6f685d;font-size:12px;margin-top:8px;padding:0 12px}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:22px}
+    .stat{padding:14px 14px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)} .stat .label{color:#8f887c;font-size:11px;text-transform:uppercase;letter-spacing:.08em} .stat .value{margin-top:8px;font-size:18px;font-weight:800}
+    .market-foot{display:flex;justify-content:space-between;gap:12px;align-items:center;color:#8d8578;font-size:12px;margin-top:10px;padding:0 4px}
+    .section{margin-top:28px}
+    .proof{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0 28px}
+    .proof-item{display:flex;gap:14px;align-items:flex-start;padding:18px;border-radius:18px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07)}
+    .proof-icon{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:rgba(241,195,92,.08);color:#f1c35c}
+    .proof-title{font-weight:700;margin-bottom:4px}.proof-text{color:var(--muted);font-size:13px;line-height:1.5}
+    .section-head{text-align:left;max-width:920px}.kicker{color:#d9ab4d;font-size:13px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;margin-bottom:12px}
+    .section-title{font-size:clamp(30px,4vw,52px);line-height:.98;letter-spacing:-.05em;margin:0 0 14px}.section-copy{max-width:760px;color:#a8a196;font-size:18px;line-height:1.65;margin:0}
+    .features{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px}
+    .feature{padding:22px;border-radius:22px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)} .feature .ico{width:46px;height:46px;border-radius:16px;background:rgba(241,195,92,.08);border:1px solid rgba(241,195,92,.14);display:grid;place-items:center;margin-bottom:14px;color:#f1c35c} .feature h3{margin:0 0 10px;font-size:18px} .feature p{margin:0;color:var(--muted);font-size:14px;line-height:1.65}
+    .workspace{display:grid;grid-template-columns:1fr 1.1fr;gap:20px;align-items:stretch;margin-top:26px;padding:22px;border-radius:28px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08)}
+    .workspace-copy{padding:10px 8px 12px}.workspace-copy h3{font-size:34px;line-height:1.05;letter-spacing:-.04em;margin:0 0 14px}.workspace-copy p{margin:0 0 18px;color:var(--muted);font-size:17px;line-height:1.62}
+    .work-list{display:grid;gap:10px;margin:0 0 20px;padding:0;list-style:none}.work-list li{display:flex;align-items:center;gap:10px;color:#d6d1c7;font-size:15px}.work-list i{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:rgba(241,195,92,.12);color:#f1c35c;font-style:normal;font-size:12px}
+    .preview{border-radius:24px;padding:18px;background:linear-gradient(180deg, rgba(13,13,13,.92), rgba(24,20,14,.76));border:1px solid rgba(255,255,255,.08)}
+    .preview-top{display:flex;justify-content:space-between;color:#c7bba5;font-size:12px;margin-bottom:12px}.preview-brand{font-weight:800;color:#f1dfad}
+    .preview-nav{display:flex;gap:10px;flex-wrap:wrap;color:#aea69a;font-size:12px;margin-bottom:16px}.preview-nav span{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06)}
+    .preview-main{padding:16px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06)}
+    .preview-title{font-size:16px;font-weight:800;margin-bottom:12px}
+    .preview-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+    .metric{padding:12px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06)} .metric small{display:block;color:#9c9588;margin-bottom:6px} .metric strong{font-size:18px}
+    .preview-chart{height:190px;border-radius:16px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);display:grid;place-items:center;color:#f1c35c}
+    .preview-chart svg{width:100%;height:100%}
+    .footer{margin:30px 0 0;padding:18px 4px 0;color:#897f71;font-size:12px;display:flex;justify-content:space-between;gap:12px;align-items:center}
+    @media (min-width: 1024px){ .nav{display:flex} .hero-grid{grid-template-columns:470px 1fr;gap:34px} .copy{padding-top:110px} }
+    @media (max-width: 1023px){ .copy{padding-top:20px} .market-shell{width:100%} .proof,.features,.stats,.workspace{grid-template-columns:1fr 1fr} }
+    @media (max-width: 720px){
+      .header-inner{padding:12px 14px}.theme,.button{height:38px}.page{padding:0 12px 18px}.hero{padding-top:22px;min-height:auto}.copy{padding-top:0}
+      h1{font-size:54px}.lead{font-size:16px}.market{min-height:580px;padding:18px}.market-shell{padding:12px;border-radius:26px}.market-top,.price-row{gap:10px}
+      .price{font-size:56px}.stats,.proof,.features,.workspace,.preview-metrics{grid-template-columns:1fr}.floating,.range{display:none}.workspace-copy h3{font-size:28px}.footer{flex-direction:column;align-items:flex-start}
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <a class="brand" href="#top"><span class="logo" aria-hidden="true"><span></span><span></span><span></span></span><span>POTAPoff</span></a>
+      <nav class="nav" aria-label="Навигация"><a href="#product">Продукт</a><a href="#features">Возможности</a><a href="#market">Рынок SOL</a><a href="#workspace">Рабочая среда</a></nav>
+      <div class="actions"><button class="theme" type="button"><span>☯</span><span class="switch"><i></i><i></i></span><span>Gold</span></button><button class="button" id="openLoginBtn" type="button">Войти</button><button class="button primary" id="openMiniAppBtn" type="button">Открыть платформу →</button></div>
+    </div>
+  </header>
+
+  <main class="page" id="top">
+    <section class="hero" id="product">
+      <div class="hero-grid">
+        <div class="copy">
+          <div class="eyebrow"><span class="dot"></span>ПРОФЕССИОНАЛЬНАЯ ПЛАТФОРМА ДЛЯ SOLANA</div>
+          <h1>POTAPoff — <span class="accent">интеллектуальное преимущество</span></h1>
+          <p class="lead">Запускайте токены, анализируйте кошельки и отслеживайте рынок Solana в одной рабочей среде. Данные. Скорость. Контроль.</p>
+          <div class="cta-row"><button class="cta primary" id="heroOpenLoginBtn" type="button">Открыть платформу →</button><a class="cta secondary" href="#features">Смотреть возможности</a></div>
+          <div class="meta"><span><i></i>Реальный SOL/USD</span><span><i></i>Реальные market points</span><span><i></i>Телефон · планшет · desktop</span></div>
+        </div>
+        <div class="market-shell" id="market">
+          <div class="market">
+            <div class="market-top">
+              <div class="pair"><div class="mark" aria-hidden="true"><span></span></div><div><div class="pair-title">SOL / USD</div><div class="pair-sub">Solana · реальный рынок · 24 часа</div></div></div>
+              <div class="status"><span class="dot"></span>ЗАДЕРЖКА</div>
+            </div>
+            <div class="price-row"><div class="price">$75.83</div><div class="change">+0.77%</div></div>
+            <div class="chart-wrap" aria-label="График SOL/USD">
+              <div class="chart-grid"><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div></div>
+              <svg class="chart-svg" viewBox="0 0 760 300" preserveAspectRatio="none">
+                <defs><linearGradient id="lineGrad" x1="0" x2="1"><stop offset="0%" stop-color="#8a6422"/><stop offset="45%" stop-color="#f1c35c"/><stop offset="100%" stop-color="#fff0ba"/></linearGradient></defs>
+                <path class="area" d="M20 235 L40 150 L56 145 L72 120 L92 190 L112 220 L128 180 L146 250 L160 140 L178 165 L194 160 L214 115 L232 135 L246 92 L262 104 L280 72 L300 140 L320 75 L338 110 L356 66 L374 106 L392 74 L412 125 L430 118 L448 86 L466 96 L486 132 L504 88 L522 108 L540 100 L558 114 L576 154 L594 194 L612 232 L630 214 L648 236 L666 208 L684 148 L702 118 L720 90 L740 105 L740 300 L20 300 Z"></path>
+                <path class="line" d="M20 235 L40 150 L56 145 L72 120 L92 190 L112 220 L128 180 L146 250 L160 140 L178 165 L194 160 L214 115 L232 135 L246 92 L262 104 L280 72 L300 140 L320 75 L338 110 L356 66 L374 106 L392 74 L412 125 L430 118 L448 86 L466 96 L486 132 L504 88 L522 108 L540 100 L558 114 L576 154 L594 194 L612 232 L630 214 L648 236 L666 208 L684 148 L702 118 L720 90 L740 105"></path>
+                <circle cx="246" cy="92" r="4"></circle><circle cx="612" cy="232" r="4"></circle><circle cx="720" cy="90" r="4"></circle>
+              </svg>
+              <div class="floating"><div class="label">Изменение 24ч</div><div class="val">+0.77%</div></div>
+              <div class="range"><div class="label">Диапазон 24ч</div><div class="val">$0.94</div></div>
+              <div class="tooltip">$75.83</div>
+            </div>
+            <div class="timeline"><span>−18ч</span><span>−12ч</span><span>−6ч</span><span>сейчас</span></div>
+            <div style="text-align:center;color:#73695b;font-size:12px;margin:8px 0 10px">Проведите по графику — каждая показанная цена привязана к реальной временной точке.</div>
+            <div class="stats"><div class="stat"><div class="label">24ч максимум</div><div class="value">$76.14</div></div><div class="stat"><div class="label">24ч минимум</div><div class="value">$75.20</div></div><div class="stat"><div class="label">Объём 24ч</div><div class="value">$1.29B</div></div><div class="stat"><div class="label">Market cap</div><div class="value">$44.2B</div></div></div>
+            <div class="market-foot"><span>CoinGecko · 289 исходных точек · 14м назад · 12:42</span><strong style="color:#f1c35c">120 точек на графике</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="proof">
+        <div class="proof-item"><div class="proof-icon">🛡</div><div><div class="proof-title">Контекст перед действием</div><div class="proof-text">Проверка рынка и активности до следующего шага.</div></div></div>
+        <div class="proof-item"><div class="proof-icon">📈</div><div><div class="proof-title">Live SOL market</div><div class="proof-text">Цена и 24ч график приходят из реального market feed.</div></div></div>
+        <div class="proof-item"><div class="proof-icon">⚡</div><div><div class="proof-title">Быстрый workflow</div><div class="proof-text">Запуск, анализ и мониторинг без лишних переходов.</div></div></div>
+        <div class="proof-item"><div class="proof-icon">🌐</div><div><div class="proof-title">Solana-first</div><div class="proof-text">Интерфейс и инструменты сфокусированы на экосистеме Solana.</div></div></div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="section-head"><div class="kicker">Всё, что нужно для преимущества на рынке</div><h2 class="section-title">Один продукт вместо набора разрозненных инструментов.</h2><p class="section-copy">От первого сигнала до запуска и проверки контекста — POTAPoff объединяет ежедневный Solana workflow в одном интерфейсе.</p></div>
+      <div class="features"><article class="feature"><div class="ico">🚀</div><h3>Запуск токенов</h3><p>Создавайте и запускайте токены на Solana в одном потоке — от параметров до финальной проверки.</p></article><article class="feature"><div class="ico">👛</div><h3>Wallet Intelligence</h3><p>Разбирайте поведение кошельков, историю сделок и движение капитала без постоянного переключения между сервисами.</p></article><article class="feature"><div class="ico">📡</div><h3>Сканер рынка</h3><p>Следите за динамикой рынка, новыми активами и ключевыми сигналами, когда скорость решения действительно важна.</p></article><article class="feature"><div class="ico">🧩</div><h3>Bundle Intelligence</h3><p>Анализируйте бандлы, связанные операции и структуру активности, чтобы быстрее понимать контекст движения токена.</p></article></div>
+    </section>
+
+    <section class="section" id="workspace">
+      <div class="workspace">
+        <div class="workspace-copy"><div class="kicker">Профессиональная рабочая среда</div><h3>Рынок, кошельки и запуск — в одном контексте</h3><p>Интерфейс строится вокруг действий: увидеть сигнал, проверить контекст и перейти к следующему шагу без потери фокуса.</p><ul class="work-list"><li><i>✓</i> Live SOL market context</li><li><i>✓</i> Wallet и bundle intelligence</li><li><i>✓</i> Быстрый переход к запуску токена</li><li><i>✓</i> Один responsive workflow</li></ul><button class="cta primary" id="workspaceOpenLoginBtn" type="button">Открыть workspace →</button></div>
+        <div class="preview">
+          <div class="preview-top"><span class="preview-brand">POTAPoff</span><span>SOLANA · LIVE</span></div>
+          <div class="preview-nav"><span>Обзор рынка</span><span>Кошельки</span><span>Bundle Intelligence</span><span>Запуск токена</span><span>История</span></div>
+          <div class="preview-main"><div class="preview-title">Solana workspace</div><div class="preview-metrics"><div class="metric"><small>SOL / USD</small><strong>$75.83</strong></div><div class="metric"><small>Объём 24ч</small><strong>$1.29B</strong></div><div class="metric"><small>Изменение</small><strong style="color:#60df9e">+0.77%</strong></div></div><div class="preview-chart"><svg viewBox="0 0 760 300" preserveAspectRatio="none"><defs><linearGradient id="pgrad" x1="0" x2="1"><stop offset="0%" stop-color="#8a6422"/><stop offset="45%" stop-color="#f1c35c"/><stop offset="100%" stop-color="#fff0ba"/></linearGradient></defs><path d="M20 235 L40 150 L56 145 L72 120 L92 190 L112 220 L128 180 L146 250 L160 140 L178 165 L194 160 L214 115 L232 135 L246 92 L262 104 L280 72 L300 140 L320 75 L338 110 L356 66 L374 106 L392 74 L412 125 L430 118 L448 86 L466 96 L486 132 L504 88 L522 108 L540 100 L558 114 L576 154 L594 194 L612 232 L630 214 L648 236 L666 208 L684 148 L702 118 L720 90 L740 105" fill="none" stroke="url(#pgrad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer"><div><strong>POTAPoff</strong> · Production landing snapshot</div><div>Standalone HTML preview of the current landing</div></div>
+  </main>
+
+  <div id="loginBackdrop" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(10px);display:grid;place-items:center;z-index:100;">
+    <div style="width:min(92vw,460px);border:1px solid rgba(241,195,92,.22);border-radius:24px;background:linear-gradient(180deg,rgba(15,15,15,.98),rgba(8,8,8,.98));box-shadow:0 30px 120px rgba(0,0,0,.55);padding:24px;">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px;">
+        <div>
+          <div style="color:#f1c35c;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">Авторизация</div>
+          <h2 style="margin:8px 0 0;font-size:28px;letter-spacing:-.04em;">Войти в POTAPoff</h2>
+        </div>
+        <button id="closeLoginBtn" type="button" class="button" style="height:34px;padding:0 12px;">✕</button>
+      </div>
+      <form id="loginForm" style="display:grid;gap:12px;">
+        <label style="display:grid;gap:6px;">
+          <span style="color:#b5aea5;font-size:12px;">Логин</span>
+          <input id="loginInput" autocomplete="username" maxlength="32" style="height:48px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:#090909;color:#fff;padding:0 14px;outline:none;">
+        </label>
+        <label style="display:grid;gap:6px;">
+          <span style="color:#b5aea5;font-size:12px;">Пароль</span>
+          <input id="passwordInput" type="password" autocomplete="current-password" maxlength="32" style="height:48px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:#090909;color:#fff;padding:0 14px;outline:none;">
+        </label>
+        <div id="loginMsg" style="min-height:20px;color:#9d968c;font-size:13px;line-height:1.5;"></div>
+        <button class="button primary" type="submit" style="height:48px;">Войти в платформу</button>
+        <button id="miniAppFromModal" type="button" class="button" style="height:48px;">Открыть Telegram Mini App</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const loginBackdrop = document.getElementById('loginBackdrop');
+    const loginForm = document.getElementById('loginForm');
+    const loginMsg = document.getElementById('loginMsg');
+    const loginInput = document.getElementById('loginInput');
+    const passwordInput = document.getElementById('passwordInput');
+    const authUrl = '/api/v1/auth/login-password';
+
+    const openLogin = () => { loginBackdrop.hidden = false; loginMsg.textContent = ''; setTimeout(() => loginInput.focus(), 0); };
+    const closeLogin = () => { loginBackdrop.hidden = true; };
+    const openMiniApp = () => { window.location.href = '/miniapp'; };
+
+    document.getElementById('openLoginBtn').addEventListener('click', openLogin);
+    document.getElementById('heroOpenLoginBtn').addEventListener('click', openLogin);
+    document.getElementById('workspaceOpenLoginBtn').addEventListener('click', openLogin);
+    document.getElementById('openMiniAppBtn').addEventListener('click', openMiniApp);
+    document.getElementById('miniAppFromModal').addEventListener('click', openMiniApp);
+    document.getElementById('closeLoginBtn').addEventListener('click', closeLogin);
+    loginBackdrop.addEventListener('click', (event) => { if (event.target === loginBackdrop) closeLogin(); });
+    window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !loginBackdrop.hidden) closeLogin(); });
+
+    loginForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const login = (loginInput.value || '').trim();
+      const password = (passwordInput.value || '').trim();
+      if (!login || !password) { loginMsg.textContent = 'Введите логин и пароль.'; return; }
+      loginMsg.textContent = 'Проверяем доступ…';
+      try {
+        const response = await fetch(authUrl, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ login, password }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || data.error || 'Ошибка входа');
+        if (data.access_token) {
+          localStorage.setItem('potapoff.access_token', data.access_token);
+          localStorage.setItem('potapoff.auth_meta', JSON.stringify({ access_token: data.access_token, expires_in: data.expires_in || 86400, saved_at: Date.now() }));
+        }
+        loginMsg.textContent = 'Доступ подтверждён. Открываем платформу…';
+        setTimeout(() => window.location.assign('/dashboard'), 450);
+      } catch (error) {
+        loginMsg.textContent = error instanceof Error ? error.message : 'Ошибка входа';
+      }
+    });
+  </script>
+</body>
+</html>

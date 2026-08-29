@@ -1,0 +1,163 @@
+.page {
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(245, 184, 67, 0.14), transparent 30%),
+    radial-gradient(circle at top right, rgba(94, 211, 255, 0.12), transparent 28%),
+    #050607;
+  color: #f7f5ef;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: end;
+  margin-bottom: 24px;
+  padding: 20px 0 8px;
+}
+
+.kicker {
+  color: #f1c35c;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.hero h1 {
+  margin: 0 0 10px;
+  font-size: clamp(30px, 4vw, 54px);
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+}
+
+.hero p {
+  margin: 0;
+  max-width: 68ch;
+  color: rgba(247, 245, 239, 0.72);
+  line-height: 1.6;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.primary,
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  text-decoration: none;
+  color: inherit;
+  font-weight: 700;
+}
+
+.primary {
+  background: linear-gradient(180deg, #f3cf7d 0%, #d9a53f 100%);
+  color: #1c1404;
+}
+
+.secondary {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: rgba(10, 10, 10, 0.72);
+  overflow: hidden;
+  min-height: 860px;
+}
+
+.mobileCard {
+  min-height: 860px;
+}
+
+.cardHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+  padding: 16px 16px 0;
+}
+
+.cardHead h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.cardHead p {
+  margin: 0;
+  color: rgba(247, 245, 239, 0.65);
+  font-size: 13px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(241, 195, 92, 0.08);
+  border: 1px solid rgba(241, 195, 92, 0.18);
+  color: #f1c35c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.frameWrap {
+  height: calc(100% - 56px);
+  padding: 14px 16px 16px;
+}
+
+.frameMobile {
+  max-width: 430px;
+  margin: 0 auto;
+}
+
+.frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 16px;
+  background: #050505;
+}
+
+@media (max-width: 1200px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .card {
+    min-height: 780px;
+  }
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 14px;
+  }
+
+  .hero {
+    flex-direction: column;
+    align-items: start;
+  }
+
+  .card {
+    min-height: 720px;
+  }
+}
