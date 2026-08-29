@@ -2,15 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { ArrowRight, CheckCircle2, Lock, Sparkles, ShieldCheck, Key } from "lucide-react";
 import { useI18n } from "@/components/providers/I18nProvider";
 import PasswordLoginForm from "@/components/PasswordLoginForm";
-
-type TokenResponse = {
-  access_token: string;
-  expires_in: number;
-};
 
 type TelegramWebApp = {
   initData: string;
@@ -45,38 +40,17 @@ function getTelegramLaunchUrls(botUrl: string) {
   }
 }
 
-function saveToken(payload: TokenResponse) {
-  localStorage.setItem("potapoff.access_token", payload.access_token);
-  localStorage.setItem(
-    "potapoff.auth_meta",
-    JSON.stringify({ access_token: payload.access_token, expires_in: payload.expires_in, saved_at: Date.now() })
-  );
-}
-
 export default function LoginPage() {
   const router = useRouter();
   const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   const telegramReady = typeof window !== "undefined" && Boolean((window as AuthWindow).Telegram?.WebApp);
 
   const telegramBotUrl = process.env.NEXT_PUBLIC_TELEGRAM_BOT_URL || "https://t.me/Soft777bot";
 
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const token = urlParams.get("token");
-    if (token) {
-      saveToken({ access_token: token, expires_in: 86400 });
-      setSuccess(t("login.success"));
-      router.replace("/");
-      router.refresh();
-    }
-  }, [router, t]);
-
   async function handleTelegramAuth() {
     setError(null);
-    setSuccess(null);
 
     try {
       if (!telegramBotUrl || telegramBotUrl.includes("your_bot_username")) {
@@ -212,12 +186,6 @@ export default function LoginPage() {
               {error && (
                 <div className="mt-4 break-words rounded-2xl border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger">
                   {error}
-                </div>
-              )}
-
-              {success && (
-                <div className="mt-4 break-words rounded-2xl border border-success-border bg-success-soft px-4 py-3 text-sm text-success">
-                  {success}
                 </div>
               )}
 
