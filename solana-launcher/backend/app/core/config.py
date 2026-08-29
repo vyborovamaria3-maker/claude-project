@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", alias="ENVIRONMENT")
     debug: bool = Field(default=True, alias="DEBUG")
     secret_key: str = Field(alias="SECRET_KEY")
+    subscription_password_encryption_key: str = Field(
+        default="",
+        alias="SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY",
+    )
     access_token_expire_minutes: int = Field(default=1440, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     algorithm: str = Field(default="HS256", alias="ALGORITHM")
     api_v1_prefix: str = Field(default="/api/v1", alias="API_V1_PREFIX")
@@ -89,16 +93,23 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def validate_production_admin_credentials(self) -> "Settings":
+    def validate_production_secrets(self) -> "Settings":
         if self.environment.strip().lower() not in {"production", "prod"}:
             return self
 
         password = self.admin_password.strip()
         session_secret = self.admin_session_secret.strip()
+        encryption_key = self.subscription_password_encryption_key.strip()
         if not password or password == "ChangeMe123!" or len(password) < 16:
             raise ValueError("ADMIN_PASSWORD must be explicitly configured with at least 16 characters in production")
         if not session_secret or session_secret == "admin-session-secret" or len(session_secret) < 32:
             raise ValueError("ADMIN_SESSION_SECRET must be explicitly configured with at least 32 characters in production")
+        if len(encryption_key) < 32:
+            raise ValueError(
+                "SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY must be explicitly configured with at least 32 characters in production"
+            )
+        if encryption_key == self.secret_key:
+            raise ValueError("SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY must be different from SECRET_KEY")
         return self
 
 
