@@ -7,7 +7,11 @@ const ROOT_SELECTOR = '[data-tag="trade.live_intelligence.v2"]';
 function stableKey(details: HTMLDetailsElement, index: number) {
   const explicit = details.dataset.collapse?.trim();
   if (explicit) return explicit;
-  const summary = details.querySelector("summary")?.textContent?.trim().replace(/\s+/g, " ").slice(0, 80);
+  const summary = details.querySelector("summary")?.textContent
+    ?.trim()
+    .replace(/\d+(?:[.,]\d+)?/g, "#")
+    .replace(/\s+/g, " ")
+    .slice(0, 80);
   return summary ? `auto-${index}-${summary}` : `auto-${index}`;
 }
 
