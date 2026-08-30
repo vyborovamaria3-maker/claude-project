@@ -39,9 +39,21 @@ async def lifespan(app: FastAPI):
             service = await app.state.telegram_intelligence.get_service()
             channels = [item.strip() for item in settings.telegram_monitor_channels.split(",") if item.strip()]
             if channels:
-                await service.start_monitor(channels)
+                graph = await service.scan_graph(
+                    channels,
+                    max_depth=settings.telegram_graph_depth,
+                    post_limit=settings.telegram_history_limit,
+                    entity_limit=settings.telegram_entity_limit,
+                )
+                discovered = [
+                    str(row.get("username") or "").strip()
+                    for row in graph.get("results", [])
+                    if not row.get("error") and row.get("username")
+                ]
+                monitored = list(dict.fromkeys([*channels, *discovered]))
+                await service.start_monitor(monitored)
         except Exception:
-            # Telegram intelligence is optional; a stale session must not prevent API startup.
+            # Telegram intelligence is optional; a stale/missing MTProto session must not prevent API startup.
             pass
 
     yield
