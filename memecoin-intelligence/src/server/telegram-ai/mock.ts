@@ -17,7 +17,10 @@ function channelLabel(message: TelegramMessageInput) {
 
 function snapshotFeature(context: TelegramAnalysisContext, key: string) {
   const feature = context.intelligenceSnapshot?.features.find((row) => row.key === key);
-  const value = Number(feature?.numericValue ?? feature?.value);
+  if (!feature || feature.missing) return null;
+  const raw = feature.numericValue ?? feature.value;
+  if (raw == null || raw === '') return null;
+  const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
 
