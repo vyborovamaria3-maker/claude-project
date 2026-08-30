@@ -55,27 +55,41 @@ function rows(value: unknown, limit: number) {
     : [];
 }
 
+function unavailableQwen(ai: AiEnvelope | null): QwenSynthesis {
+  const error = text(ai?.error);
+  const provider = text(ai?.provider);
+  const model = text(ai?.model);
+  const serviceDisabled = Boolean(error && /disabled|TELEGRAM_AI_ENABLED/i.test(error));
+  const headline = error
+    ? serviceDisabled
+      ? "Qwen-сервис выключен"
+      : "Qwen не смог завершить анализ"
+    : "Qwen ожидает пригодный snapshot";
+  const summary = error
+    ? `Причина: ${error}${provider || model ? ` · ${[provider, model].filter(Boolean).join(" / ")}` : ""}`
+    : "Детерминированный анализ уже работает. AI-интерпретация запустится, когда будет собран хотя бы один пригодный structured feature; текстовые Telegram-сообщения для full-intelligence больше не обязательны.";
+  return {
+    available: false,
+    headline,
+    summary,
+    marketState: null,
+    socialState: null,
+    manipulationAssessment: null,
+    bullCase: null,
+    bearCase: null,
+    entryVerdict: null,
+    priceState: null,
+    entryAction: null,
+    whatWouldChange: [],
+    unknowns: [],
+    contradictions: [],
+    reasoning: [],
+    confidence: 0,
+  };
+}
+
 export function buildQwenSynthesis(ai: AiEnvelope | null): QwenSynthesis {
-  if (!ai || ai.available === false || !ai.result) {
-    return {
-      available: false,
-      headline: "Qwen-анализ пока недоступен",
-      summary: "Детерминированная модель продолжает работать без AI-интерпретации.",
-      marketState: null,
-      socialState: null,
-      manipulationAssessment: null,
-      bullCase: null,
-      bearCase: null,
-      entryVerdict: null,
-      priceState: null,
-      entryAction: null,
-      whatWouldChange: [],
-      unknowns: [],
-      contradictions: [],
-      reasoning: [],
-      confidence: 0,
-    };
-  }
+  if (!ai || ai.available === false || !ai.result) return unavailableQwen(ai);
 
   const result = ai.result as ExtendedAiResult;
   const final = result.finalIntelligence;
