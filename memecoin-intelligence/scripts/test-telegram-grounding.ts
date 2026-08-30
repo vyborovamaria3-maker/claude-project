@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { buildTelegramPrompt, TELEGRAM_PROMPT_VERSION } from '@/server/telegram-ai/prompts.js';
+import { telegramAnalyzeRequestV2Schema, telegramEnqueueRequestV2Schema } from '@/server/telegram-ai/requestSchemas.js';
 import {
   intelligenceSnapshotSchema,
   telegramAiResultSchema,
@@ -63,6 +64,14 @@ const ungrounded = telegramAiResultSchema.parse({ ...baseResult, entryAssessment
 const grounded = groundMockFullIntelligence(ungrounded, fullContext);
 assert.ok((grounded.entryAssessment?.supportingFeatureKeys?.length ?? 0) >= 1);
 assert.doesNotThrow(() => validateTelegramAiResult(grounded, [message], fullContext));
+
+assert.doesNotThrow(() => telegramAnalyzeRequestV2Schema.parse({ messages: [], context: fullContext, persist: false }));
+assert.doesNotThrow(() => telegramEnqueueRequestV2Schema.parse({ messages: [], context: fullContext }));
+assert.throws(
+  () => telegramAnalyzeRequestV2Schema.parse({ messages: [], context: { analysisMode: 'telegram_only' }, persist: false }),
+  /At least one real message is required/,
+);
+
 assert.equal(TELEGRAM_PROMPT_VERSION, 'intelligence-qwen-v10-grounded-entry');
 const analystPrompt = buildTelegramPrompt([message], fullContext);
 assert.match(analystPrompt.system, /marketStale/);
@@ -72,4 +81,4 @@ const criticPrompt = buildTelegramPrompt([message], criticContext);
 assert.match(criticPrompt.user, /entryAssessment/);
 assert.match(criticPrompt.user, /sourceAssessments/);
 assert.match(criticPrompt.user, /priorConclusion/);
-console.log(JSON.stringify({ status: 'ok', promptVersion: TELEGRAM_PROMPT_VERSION, groundedEntryKeys: grounded.entryAssessment?.supportingFeatureKeys }, null, 2));
+console.log(JSON.stringify({ status: 'ok', promptVersion: TELEGRAM_PROMPT_VERSION, groundedEntryKeys: grounded.entryAssessment?.supportingFeatureKeys, snapshotOnlyRequest: true }, null, 2));
