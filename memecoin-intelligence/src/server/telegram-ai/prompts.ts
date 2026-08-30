@@ -1,6 +1,6 @@
 import type { TelegramAnalysisContext, TelegramMessageInput } from './schemas.js';
 
-export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v7-critic';
+export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v8-entry-thesis';
 
 const systemPrompt = `You are the evidence-first intelligence analyst for a memecoin research platform.
 Use only supplied messages, structured features, deterministic graph and evidence. Never invent outside facts, identities, ownership, payments, wallet control or coordination.
@@ -13,7 +13,11 @@ Never create a positive feedback loop by citing a prior AI discovery as independ
 Graph edges marked copies/amplifies/shared_link are candidate relationships, not proof of common control. New discoveredRelationships must remain hypotheses unless multiple independent current evidence items support them.
 Use stable graph node IDs for discoveredRelationships source/target whenever an existing node represents the entity.
 If analysisRole is critic, independently try to falsify priorConclusion using the supplied facts. Do not assume the analyst is correct. Identify unsupported leaps, alternative explanations, missing evidence and contradictions. Do not reveal hidden reasoning; return the same structured schema with concise evidence-based conclusions.
-If analysisRole is analyst, perform the work in passes internally: observations -> actors -> graph -> manipulation -> temporal/market causality -> bounded research synthesis -> adversarial critique.
+If analysisRole is analyst, perform the work in passes internally: observations -> actors -> graph -> manipulation -> temporal/market causality -> entry timing -> bounded research synthesis -> adversarial critique.
+For full_intelligence, explicitly separate token quality from entry timing. A strong token can still be a bad or late entry after a vertical move. Assess whether the CURRENT price/moment is discounted, reasonable, stretched or overheated relative to the supplied evidence, not relative to an invented intrinsic value.
+Never call a token intrinsically cheap or expensive without valuation evidence. Use the phraseology encoded by priceState: cheap/expensive only RELATIVE TO CURRENT SIGNAL AND CONFIRMATION. If fresh market/price evidence is missing, set priceState to unknown.
+For entryAssessment, compare price movement/overextension with social timing, organic-vs-manipulated attention, Telegram call quality, smart-wallet behavior, seller pressure, wash/bundle risk, liquidity, source agreement and data coverage. Explain what is already priced in and what evidence is still missing.
+Do not issue personalized financial instructions or position sizing. entryAction is an analytical status for the observed setup, not a command to the user.
 Every non-trivial claim, relationship, discovery, anomaly and risk must cite supplied evidence IDs whenever current evidence exists. Never cite an ID not in the input.
 Explicitly identify missing data and contradictions. State what additional evidence would change the conclusion.
 Return exactly one valid JSON object matching the requested schema. No markdown, XML, comments or prose outside JSON. Use confidence values from 0 to 1.`;
@@ -35,6 +39,16 @@ const outputShape = {
   contradictions: [{ statement: 'string', confidence: '0..1', evidenceMessageIds: ['id'] }],
   whatWouldChangeConclusion: ['specific missing or contradictory evidence'],
   finalIntelligence: { marketState: 'string', socialState: 'string', manipulationAssessment: 'string', bullCase: 'string', bearCase: 'string', unknowns: ['string'], confidence: '0..1' },
+  entryAssessment: {
+    priceState: 'discounted_vs_signal|reasonable_vs_signal|stretched_vs_signal|overheated_vs_signal|unknown',
+    entryAction: 'strong_entry|consider|wait_confirmation|late_weak|avoid',
+    oneLineVerdict: 'plain-language sentence explaining whether the current entry is attractive, acceptable, late/expensive, or should wait and why',
+    whyNow: ['evidence-based reasons supporting the current setup'],
+    alreadyPricedIn: ['specific evidence suggesting part of the move is already reflected in current price'],
+    missingConfirmation: ['specific evidence still needed before confidence should rise'],
+    invalidation: ['specific observable developments that would break the entry thesis'],
+    confidence: '0..1',
+  },
   reasoningSummary: ['short evidence-based conclusion'],
   overallConfidence: 'number 0..1',
 };
@@ -128,9 +142,9 @@ export function buildTelegramPrompt(messages: TelegramMessageInput[], context: T
     intelligenceSnapshot: fullMode ? compactSnapshot(context) : undefined,
   };
   const task = analysisRole === 'critic'
-    ? 'Independently audit and try to falsify the prior conclusion. Use only supplied evidence/features, identify unsupported leaps and alternative explanations, downgrade claims that are not independently supported, and state what survives the critique.'
+    ? 'Independently audit and try to falsify the prior conclusion. Use only supplied evidence/features, identify unsupported leaps and alternative explanations, downgrade claims that are not independently supported, and state what survives the critique. In full_intelligence also audit the entryAssessment: challenge whether the current price/moment is actually justified by the evidence or already late/overheated.'
     : fullMode
-      ? 'Analyze the complete memecoin intelligence snapshot. Assess every supplied core feature, compare current evidence with memory.* historical priors without treating priors as proof, use research.* read-only tool observations with their stated limitations and supportingFeatureKeys, explain actor/graph propagation, discover new evidence-backed relationships, identify anomalies/contradictions, and challenge the deterministic scores.'
+      ? 'Analyze the complete memecoin intelligence snapshot. Assess every supplied core feature, compare current evidence with memory.* historical priors without treating priors as proof, use research.* read-only tool observations with their stated limitations and supportingFeatureKeys, explain actor/graph propagation, discover new evidence-backed relationships, identify anomalies/contradictions, challenge the deterministic scores, and produce an explicit entryAssessment that separates token strength from current entry timing and explains whether the current price is cheap/normal/stretched/overheated relative to the supplied signal.'
       : 'Analyze Telegram memecoin discussion and cross-channel relationships.';
   return { system: systemPrompt, user: JSON.stringify({ task, context: analysisContext, outputSchema: outputShape, messages: compact }) };
 }
