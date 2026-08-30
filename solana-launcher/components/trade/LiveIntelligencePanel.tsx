@@ -76,6 +76,7 @@ const LIVE_OPTIONS = {
 };
 
 type LoadState = "idle" | "loading" | "ready" | "error";
+type Snapshot = ReturnType<typeof buildAnalysisSnapshot>;
 
 function compact(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -116,10 +117,19 @@ export default function LiveIntelligencePanel() {
   const chainBusyRef = useRef(false);
   const aiBusyRef = useRef(false);
   const chainRef = useRef<ChainAnalysis | null>(null);
+  const mintRef = useRef(initialMint);
+  const snapshotRef = useRef<Snapshot | null>(null);
+  const tgRef = useRef<SocialTimeline | null>(null);
 
   useEffect(() => {
     chainRef.current = chain;
   }, [chain]);
+  useEffect(() => {
+    mintRef.current = mint;
+  }, [mint]);
+  useEffect(() => {
+    tgRef.current = tg;
+  }, [tg]);
 
   const deterministic = useMemo(
     () => deriveSocialMetrics(x, tg, market, chain, null, channels, LIVE_OPTIONS),
@@ -142,6 +152,10 @@ export default function LiveIntelligencePanel() {
       chain,
     });
   }, [mint, x, tg, market, chain, deterministic]);
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
   const featureCoverage = snapshot && snapshot.featureCount > 0
     ? (snapshot.featureCount - snapshot.missingFeatureCount) / snapshot.featureCount
     : null;
@@ -177,9 +191,11 @@ export default function LiveIntelligencePanel() {
 
   const refreshAi = useCallback(async (
     currentMint: string,
-    currentSnapshot = snapshot,
-    currentTg = tg,
+    suppliedSnapshot?: Snapshot | null,
+    suppliedTg?: SocialTimeline | null,
   ) => {
+    const currentSnapshot = suppliedSnapshot ?? snapshotRef.current;
+    const currentTg = suppliedTg ?? tgRef.current;
     if (!currentSnapshot?.evidence.length || aiBusyRef.current) return;
     aiBusyRef.current = true;
     try {
@@ -188,20 +204,21 @@ export default function LiveIntelligencePanel() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           mint: currentMint,
-          symbol: x?.symbol || "",
-          tokenName: market?.pair?.name,
+          symbol: currentSnapshot.symbol || "",
+          tokenName: currentSnapshot.tokenName || undefined,
           timeline: (currentTg?.timeline || []).filter((item) => !item.platform || item.platform.toLowerCase() === "telegram"),
           snapshot: currentSnapshot,
         }),
       });
-      setAi(value);
+      if (mintRef.current === currentMint) setAi(value);
     } catch (error) {
+      if (mintRef.current !== currentMint) return;
       const message = error instanceof Error ? error.message : "AI недоступен";
       setWarnings((value) => [...value.filter((item) => !item.startsWith("Qwen:")), `Qwen: ${message}`]);
     } finally {
       aiBusyRef.current = false;
     }
-  }, [snapshot, tg, x?.symbol, market?.pair?.name]);
+  }, []);
 
   const load = useCallback(async (nextMint: string) => {
     const contract = nextMint.trim();
@@ -213,10 +230,19 @@ export default function LiveIntelligencePanel() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    mintRef.current = contract;
+    snapshotRef.current = null;
+    tgRef.current = null;
+    chainRef.current = null;
     setState("loading");
     setWarnings([]);
     setMint(contract);
     setQuery(contract);
+    setX(null);
+    setTg(null);
+    setMarket(null);
+    setChain(null);
+    setChannels([]);
     setLiveSignals([]);
     setLiveImpact(0);
     setAi(null);
@@ -224,7 +250,7 @@ export default function LiveIntelligencePanel() {
 
     const { x: xParams, tg: tgParams } = buildSocialSourceParams(contract, LIVE_OPTIONS);
     const chainPromise = readChainStream(contract, controller.signal).catch((error: unknown) => {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && mintRef.current === contract) {
         const message = error instanceof Error ? error.message : "недоступен";
         setWarnings((value) => [...value, `Blockchain: ${message}`]);
       }
@@ -237,7 +263,7 @@ export default function LiveIntelligencePanel() {
       fetchJson<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(contract)}`, controller.signal),
       fetchJson<{ items: Channel[] }>(`${BACKEND}/api/v1/telegram/channels?limit=100`, controller.signal),
     ]);
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted || mintRef.current !== contract) return;
 
     const nextX = results[0].status === "fulfilled" ? results[0].value : null;
     const nextTg = results[1].status === "fulfilled" ? results[1].value : null;
@@ -246,13 +272,14 @@ export default function LiveIntelligencePanel() {
       ? results[3].value.items
       : [];
     const nextChain = await chainPromise;
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted || mintRef.current !== contract) return;
 
     setX(nextX);
     setTg(nextTg);
     setMarket(nextMarket);
     setChannels(nextChannels);
     setChain(nextChain);
+    tgRef.current = nextTg;
     chainRef.current = nextChain;
     setLastUpdated(Date.now());
 
@@ -280,24 +307,28 @@ export default function LiveIntelligencePanel() {
       market: nextMarket,
       chain: nextChain,
     });
+    snapshotRef.current = nextSnapshot;
     setState("ready");
     void refreshAi(contract, nextSnapshot, nextTg);
   }, [refreshAi, router]);
 
   const refreshFast = useCallback(async () => {
     if (!mint || fastBusyRef.current) return;
+    const currentMint = mint;
     fastBusyRef.current = true;
     try {
-      const { x: xParams, tg: tgParams } = buildSocialSourceParams(mint, LIVE_OPTIONS);
+      const { x: xParams, tg: tgParams } = buildSocialSourceParams(currentMint, LIVE_OPTIONS);
       const results = await Promise.allSettled([
         fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`),
-        fetchJson<SocialTimeline>(`${BACKEND}/api/v1/social/token/${encodeURIComponent(mint)}?${tgParams}`),
-        fetchJson<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(mint)}`),
+        fetchJson<SocialTimeline>(`${BACKEND}/api/v1/social/token/${encodeURIComponent(currentMint)}?${tgParams}`),
+        fetchJson<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(currentMint)}`),
       ]);
-      if (results[0].status === "fulfilled") setX(results[0].value);
-      if (results[1].status === "fulfilled") setTg(results[1].value);
-      if (results[2].status === "fulfilled") setMarket(results[2].value);
-      setLastUpdated(Date.now());
+      if (mintRef.current !== currentMint) return;
+      let changed = false;
+      if (results[0].status === "fulfilled") { setX(results[0].value); changed = true; }
+      if (results[1].status === "fulfilled") { setTg(results[1].value); tgRef.current = results[1].value; changed = true; }
+      if (results[2].status === "fulfilled") { setMarket(results[2].value); changed = true; }
+      if (changed) setLastUpdated(Date.now());
     } finally {
       fastBusyRef.current = false;
     }
@@ -305,11 +336,12 @@ export default function LiveIntelligencePanel() {
 
   const refreshChain = useCallback(async () => {
     if (!mint || chainBusyRef.current) return;
+    const currentMint = mint;
     chainBusyRef.current = true;
     const controller = new AbortController();
     try {
-      const value = await readChainStream(mint, controller.signal);
-      if (value) {
+      const value = await readChainStream(currentMint, controller.signal);
+      if (value && mintRef.current === currentMint) {
         setChain(value);
         chainRef.current = value;
         setLiveSignals([]);
@@ -317,7 +349,7 @@ export default function LiveIntelligencePanel() {
         setLastUpdated(Date.now());
       }
     } catch {
-      // Fast live layer keeps the previous classified snapshot until the next successful refresh.
+      // The fast live layer keeps the previous classified snapshot until the next successful refresh.
     } finally {
       chainBusyRef.current = false;
     }
@@ -633,9 +665,17 @@ function PromoterTable({ rows, kind }: { rows: PromoterRow[]; kind: "x" | "teleg
       <div className="divide-y divide-bg-border">
         {(rows.length ? rows.slice(0, 5) : []).map((row) => (
           <div key={row.name} className="grid grid-cols-[1.25fr_.55fr_.55fr] gap-2 px-2.5 py-2 text-[9px]">
-            <div className="min-w-0"><div className="truncate font-semibold text-content">{row.name}</div><div className="mt-0.5 truncate text-[8px] text-content-faint">{row.assessment}</div></div>
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-content">{row.name}</div>
+              <div className="mt-0.5 truncate text-[8px] text-content-faint">
+                {row.assessment}
+                {kind === "x" && row.verified ? " · verified" : ""}
+                {kind === "telegram" && row.winRate != null ? ` · win ${row.winRate.toFixed(0)}%` : ""}
+                {kind === "telegram" && row.rugRate != null ? ` · rug ${row.rugRate.toFixed(0)}%` : ""}
+              </div>
+            </div>
             <div className="font-mono text-content-muted">{kind === "x" ? compact(row.followers) : row.sourceScore == null ? "—" : Math.round(row.sourceScore)}</div>
-            <div className="text-content-muted">{kind === "x" ? `${row.messages} пост.` : `${row.messages} msg · ${row.explicitCalls} call`}</div>
+            <div className="text-content-muted">{kind === "x" ? `${row.messages} пост. · ${compact(row.engagement)} eng` : `${row.messages} msg · ${row.explicitCalls} call`}</div>
           </div>
         ))}
         {!rows.length && <div className="px-3 py-4 text-[9px] text-content-faint">Нет достаточных данных по авторам/каналам.</div>}
