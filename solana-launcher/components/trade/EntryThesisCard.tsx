@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   AlertTriangle,
   BrainCircuit,
@@ -40,7 +41,7 @@ function ListBlock({
 }: {
   title: string;
   rows: string[];
-  icon: React.ReactNode;
+  icon: ReactNode;
   className?: string;
 }) {
   if (!rows.length) return null;
