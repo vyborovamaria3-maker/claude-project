@@ -235,6 +235,16 @@ export const telegramAiResultSchema = z.object({
     unknowns: z.array(z.string().min(1).max(700)).max(30),
     confidence,
   }).strict().optional(),
+  entryAssessment: z.object({
+    priceState: z.enum(['discounted_vs_signal', 'reasonable_vs_signal', 'stretched_vs_signal', 'overheated_vs_signal', 'unknown']),
+    entryAction: z.enum(['strong_entry', 'consider', 'wait_confirmation', 'late_weak', 'avoid']),
+    oneLineVerdict: z.string().min(1).max(1_500),
+    whyNow: z.array(z.string().min(1).max(700)).max(12),
+    alreadyPricedIn: z.array(z.string().min(1).max(700)).max(12),
+    missingConfirmation: z.array(z.string().min(1).max(700)).max(12),
+    invalidation: z.array(z.string().min(1).max(700)).max(12),
+    confidence,
+  }).strict().optional(),
   reasoningSummary: z.array(z.string().min(1).max(700)).min(1).max(20),
   overallConfidence: confidence,
 }).strict();
