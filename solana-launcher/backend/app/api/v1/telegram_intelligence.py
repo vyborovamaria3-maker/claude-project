@@ -38,6 +38,18 @@ def _manager(request: Request) -> TelegramMonitorManager:
     return request.app.state.telegram_intelligence
 
 
+def _safe_collector_status(request: Request) -> dict:
+    runtime = _manager(request).status()
+    channels = runtime.get("channels") or []
+    return {
+        "configured": bool(runtime.get("configured")),
+        "session_configured": bool(runtime.get("session_configured")),
+        "running": bool(runtime.get("running")),
+        "connected": bool(runtime.get("connected")),
+        "monitored_channels": len(channels) if isinstance(channels, list) else 0,
+    }
+
+
 def _source_set(raw: str | None) -> set[str]:
     if not raw:
         return set()
@@ -196,6 +208,7 @@ async def evaluate(
 @router.get("/token/{mint}")
 async def telegram_token(
     mint: str,
+    request: Request,
     hours: int | None = Query(default=None, ge=1, le=8760),
     sources: str | None = Query(default=None, description="Comma-separated Telegram channel usernames"),
     explicit_calls_only: bool = Query(default=False),
@@ -207,7 +220,7 @@ async def telegram_token(
 ) -> dict:
     if not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
-    return await _filtered_timeline(
+    payload = await _filtered_timeline(
         session,
         mint,
         platform="telegram",
@@ -218,6 +231,8 @@ async def telegram_token(
         min_channel_score=min_channel_score,
         limit=limit,
     )
+    payload.setdefault("meta", {})["telegramCollector"] = _safe_collector_status(request)
+    return payload
 
 
 @router.get("/top-callers")
@@ -249,6 +264,7 @@ async def social_relations(
 @social_router.get("/token/{mint}")
 async def social_token(
     mint: str,
+    request: Request,
     platform: str | None = Query(default=None),
     hours: int | None = Query(default=None, ge=1, le=8760),
     sources: str | None = Query(default=None, description="Comma-separated source handles"),
@@ -263,7 +279,7 @@ async def social_token(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
     if platform and platform not in {"telegram", "x"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x")
-    return await _filtered_timeline(
+    payload = await _filtered_timeline(
         session,
         mint,
         platform=platform,
@@ -274,6 +290,9 @@ async def social_token(
         min_channel_score=min_channel_score,
         limit=limit,
     )
+    if platform in {None, "telegram"}:
+        payload.setdefault("meta", {})["telegramCollector"] = _safe_collector_status(request)
+    return payload
 
 
 @social_router.post("/x/refresh/{mint}")
