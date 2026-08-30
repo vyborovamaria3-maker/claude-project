@@ -23,6 +23,8 @@ const TF_MAP: Record<string, { tf: "minute" | "hour" | "day"; agg: number }> = {
   "1h":  { tf: "hour",   agg: 1 },
   "4h":  { tf: "hour",   agg: 4 },
   "1d":  { tf: "day",    agg: 1 },
+  "1w":  { tf: "day",    agg: 1 },
+  "all": { tf: "day",    agg: 1 },
 };
 
 // Bitquery interval per timeframe
@@ -36,6 +38,8 @@ const BQ_INTERVAL: Record<string, { count: number; unit: "seconds" | "minutes" |
   "1h":  { count: 1, unit: "hours" },
   "4h":  { count: 4, unit: "hours" },
   "1d":  { count: 1, unit: "days" },
+  "1w":  { count: 1, unit: "days" },
+  "all": { count: 1, unit: "days" },
 };
 
 // Time window per timeframe — wide enough to capture Pump.fun bonding curve from token creation.
@@ -50,6 +54,8 @@ const TF_TIME_WINDOWS: Record<string, number> = {
   "1h":  60 * 24 * 60 * 60 * 1000,  // 60 days
   "4h":  90 * 24 * 60 * 60 * 1000,  // 90 days
   "1d":  365 * 24 * 60 * 60 * 1000, // 1 year
+  "1w":  7 * 24 * 60 * 60 * 1000,   // 7 days
+  "all": 5 * 365 * 24 * 60 * 60 * 1000, // deep available history
 };
 
 // Per-timeframe row limits for Bitquery (each row = 1 aggregated candle bucket)
@@ -63,6 +69,8 @@ const BQ_LIMIT: Record<string, number> = {
   "1h": 2000,
   "4h": 1000,
   "1d": 500,
+  "1w": 7,
+  "all": 1500,
 };
 
 interface Candle { time: number; open: number; high: number; low: number; close: number; volume: number; }
@@ -80,12 +88,16 @@ const PUMP_INTERVAL: Record<string, string> = {
   "1h":  "1h",
   "4h":  "4h",
   "1d":  "1h",   // not native — fetch 1h and bucket into 1d
+  "1w":  "1h",   // week view uses daily buckets over the last 7 days
+  "all": "1h",   // full view uses daily buckets over deep available history
 };
 
 // Bucket size in seconds when we need server-side re-aggregation
 const PUMP_BUCKET: Record<string, number> = {
   "5s": 5,
   "1d": 86400,
+  "1w": 86400,
+  "all": 86400,
 };
 
 function rebucket(candles: Candle[], bucketSec: number): Candle[] {
@@ -127,6 +139,8 @@ const PUMP_CACHE_TTL: Record<string, number> = {
   "1h":  120_000,
   "4h":  300_000,
   "1d":  300_000,
+  "1w":  300_000,
+  "all": 600_000,
 };
 
 /**

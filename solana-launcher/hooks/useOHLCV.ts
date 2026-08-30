@@ -30,6 +30,8 @@ const CANDLE_LIMIT: Record<string, number> = {
   "1h": 5000,    // ~7 months
   "4h": 3000,    // ~1.4 years
   "1d": 1500,    // ~4 years
+  "1w": 7,        // 7 daily candles
+  "all": 1500,    // deep daily history
 };
 function capCandles(c: Candle[], tf: Timeframe): Candle[] {
   const lim = CANDLE_LIMIT[tf] ?? 120;
@@ -199,7 +201,7 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
     
     try {
       const r = await fetch(
-        `/api/token-history?mint=${encodeURIComponent(mint)}&tf=${apiTf}`,
+        `/api/token-history?mint=${encodeURIComponent(mint)}&tf=${apiTf}${tf === "all" ? "&deep=1" : ""}`,
         { 
           cache: "no-store",
           signal: abortSignal,

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, CheckCircle2, Lock, Sparkles, ShieldCheck, Key } from "lucide-react";
+import { ArrowRight, CheckCircle2, Key, Lock, Send, ShieldCheck, Sparkles } from "lucide-react";
 import { useI18n } from "@/components/providers/I18nProvider";
 import PasswordLoginForm from "@/components/PasswordLoginForm";
 
@@ -107,9 +107,9 @@ export default function LoginPage() {
         </section>
 
         <section id="auth-form" className="relative min-w-0">
-          <div className="absolute inset-0 -z-10 rounded-[2rem] bg-[radial-gradient(circle_at_top_left,rgba(244,63,94,0.25),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(192,132,252,0.18),transparent_34%)] blur-2xl" />
-          <div className="min-w-0 rounded-2xl border border-white/10 bg-black/25 p-3 shadow-2xl backdrop-blur-xl sm:rounded-[2rem] sm:p-6">
-            <div className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:rounded-[1.5rem] sm:p-6">
+          <div className="absolute inset-0 -z-10 rounded-[2rem] bg-[radial-gradient(circle_at_top_left,rgba(0,255,133,0.20),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(42,169,224,0.22),transparent_36%)] blur-2xl" />
+          <div className="min-w-0 rounded-2xl border border-white/10 bg-black/30 p-3 shadow-2xl backdrop-blur-xl sm:rounded-[2rem] sm:p-6">
+            <div className="min-w-0 rounded-2xl border border-neon-green/20 bg-[linear-gradient(155deg,rgba(255,255,255,0.07),rgba(255,255,255,0.025))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] sm:rounded-[1.5rem] sm:p-6">
               <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-neon-green/25 bg-neon-green/10 px-3 py-1 text-xs font-semibold text-neon-green">
@@ -136,7 +136,7 @@ export default function LoginPage() {
                     type="button"
                     disabled
                     aria-disabled="true"
-                    className="min-w-0 rounded-2xl border border-neon-green/40 bg-neon-green/10 px-4 py-4 text-left text-sm font-semibold text-white transition"
+                    className="min-w-0 rounded-2xl border border-neon-green/35 bg-neon-green/10 px-4 py-4 text-left text-sm font-semibold text-white transition"
                   >
                     <div className="flex min-w-0 items-center gap-2">
                       {tab.label === "Telegram" ? <MessageCircleIcon /> : <Key className="h-4 w-4 shrink-0" />}
@@ -151,7 +151,7 @@ export default function LoginPage() {
                 {t("login.telegramSubscriptionHint")}
               </p>
 
-              <div className="mt-6 min-w-0 rounded-2xl border border-white/10 bg-black/20 p-3 sm:p-4">
+              <div className="mt-6 min-w-0 rounded-2xl border border-white/10 bg-black/25 p-3 sm:p-4">
                 <div className="min-w-0 space-y-3">
                   <div className="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
@@ -163,8 +163,6 @@ export default function LoginPage() {
                     </div>
                   </div>
 
-                  <PasswordLoginForm />
-
                   <div className="space-y-1">
                     <p className="break-words text-xs leading-5 text-white/50">
                       {t("login.telegramHint")}
@@ -172,12 +170,20 @@ export default function LoginPage() {
                     <button
                       type="button"
                       onClick={handleTelegramAuth}
-                      className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-neon-green px-4 py-3 text-center text-sm font-semibold text-black transition hover:scale-[1.01] sm:px-5 sm:py-3.5"
+                      className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#2aa9e0] px-4 py-3 text-center text-sm font-black text-black shadow-[0_18px_50px_-32px_rgba(42,169,224,0.95)] transition hover:scale-[1.01] sm:px-5 sm:py-3.5"
                     >
-                      <ArrowRight className="h-4 w-4 shrink-0" />
-                      <span className="min-w-0 break-words">{t("login.continueTelegram")}</span>
+                      <Send className="h-4 w-4 shrink-0" />
+                      <span className="min-w-0 break-words">Авторизоваться в TG</span>
                     </button>
                   </div>
+
+                  <div className="flex items-center gap-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
+                    <span className="h-px flex-1 bg-white/10" />
+                    пароль доступа
+                    <span className="h-px flex-1 bg-white/10" />
+                  </div>
+
+                  <PasswordLoginForm />
                 </div>
               </div>
 

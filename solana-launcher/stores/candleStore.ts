@@ -137,7 +137,8 @@ export const useCandleStore = create<CandleState & CandleActions>()(
               const tfSeconds = {
                 "1s": 1, "5s": 5, "15s": 15,
                 "1m": 60, "5m": 300, "15m": 900,
-                "1h": 3600, "4h": 14400, "1d": 86400
+                "1h": 3600, "4h": 14400, "1d": 86400,
+                "1w": 86400, "all": 86400
               }[state.timeframe] || 60;
 
               const bucket = Math.floor(trade.timestamp / 1000 / tfSeconds) * tfSeconds;

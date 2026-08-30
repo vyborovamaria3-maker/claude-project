@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 // data-tag: hook.use_pumpfun_ohlcv
 
-export type Timeframe = "1s" | "5s" | "15s" | "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+export type Timeframe = "1s" | "5s" | "15s" | "1m" | "5m" | "15m" | "1h" | "4h" | "1d" | "1w" | "all";
 
 export type Candle = {
   time: number;   // unix seconds (UTC)
@@ -42,6 +42,8 @@ const TF_SECONDS: Record<Timeframe, number> = {
   "1h": 3600,
   "4h": 14400,
   "1d": 86400,
+  "1w": 86400,
+  "all": 86400,
 };
 
 // In-memory cache by mint+tf

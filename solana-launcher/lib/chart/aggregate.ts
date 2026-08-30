@@ -14,6 +14,8 @@ export const TF_MINUTES: Record<Timeframe, number> = {
   "1h": 60,
   "4h": 240,
   "1d": 1440,
+  "1w": 1440,
+  "all": 1440,
 };
 
 /**

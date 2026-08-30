@@ -11,15 +11,19 @@ import {
   Radar,
   Radio,
   Rocket,
+  Send,
   ShieldCheck,
   WalletCards,
   X,
   Zap,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import {
   FormEvent,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
+  WheelEvent as ReactWheelEvent,
   useEffect,
   useMemo,
   useRef,
@@ -44,7 +48,7 @@ type MarketData = {
   stale: boolean;
   staleReason: "delayed_source" | "upstream_error" | null;
   points: MarketPoint[];
-  source: "CoinGecko";
+  source: "CoinGecko" | "Coinbase";
   quote: "USD";
 };
 
@@ -56,6 +60,7 @@ type AuthResponse = {
 
 type LandingTheme = "gold" | "solana";
 type ChartCoord = MarketPoint & { x: number; y: number };
+type MarketPeriod = "5m" | "1h" | "1d" | "1w" | "all";
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 const THEME_KEY = "potapoff.landing_theme";
@@ -65,6 +70,14 @@ const CHART_HEIGHT = 300;
 const AUTH_TIMEOUT_MS = 12_000;
 const MARKET_LIVE_MAX_AGE_MS = 10 * 60 * 1000;
 const MARKET_CLOCK_INTERVAL_MS = 30_000;
+const TELEGRAM_BOT_URL = process.env.NEXT_PUBLIC_TELEGRAM_BOT_URL || "https://t.me/Soft777bot";
+const MARKET_PERIODS: Array<{ id: MarketPeriod; label: string; short: string }> = [
+  { id: "5m", label: "5 мин", short: "-24ч" },
+  { id: "1h", label: "1 час", short: "-7д" },
+  { id: "1d", label: "1 день", short: "-24ч" },
+  { id: "1w", label: "неделя", short: "-7д" },
+  { id: "all", label: "все время", short: "старт" },
+];
 const USD_FORMAT = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -160,12 +173,12 @@ function chartPaths(points: MarketPoint[], width = CHART_WIDTH, height = CHART_H
 
 function isValidMarketData(data: MarketData) {
   if (
-    data.source !== "CoinGecko" ||
+    (data.source !== "CoinGecko" && data.source !== "Coinbase") ||
     data.quote !== "USD" ||
     !Number.isFinite(data.price) ||
     data.price <= 0 ||
     !Array.isArray(data.points) ||
-    data.points.length < 24
+    data.points.length < 2
   ) {
     return false;
   }
@@ -187,38 +200,62 @@ function authError(status: number, detail?: string) {
   return detail || "Не удалось выполнить вход.";
 }
 
+function zoomMarketPoints(points: MarketPoint[], zoom: number) {
+  if (zoom <= 1 || points.length <= 2) return points;
+  const visibleCount = Math.max(2, Math.ceil(points.length / zoom));
+  return points.slice(points.length - visibleCount);
+}
+
+function getTelegramLaunchUrls(botUrl: string) {
+  const fallbackUrl = botUrl.trim();
+
+  try {
+    const parsed = new URL(fallbackUrl);
+    const domain = parsed.pathname.replace(/^\/+/, "").split("/")[0];
+    if (!domain) return { appUrl: fallbackUrl, fallbackUrl };
+
+    const params = parsed.searchParams.toString();
+    return {
+      fallbackUrl,
+      appUrl: `tg://resolve?domain=${domain}${params ? `&${params}` : ""}`,
+    };
+  } catch {
+    return { appUrl: fallbackUrl, fallbackUrl };
+  }
+}
+
 const features = [
   {
     icon: Rocket,
     title: "Запуск токенов",
-    text: "Создавайте и запускайте токены на Solana в одном потоке — от параметров до финальной проверки.",
+    text: "Собирайте параметры запуска, проверяйте готовность, контролируйте supply, fee и финальные действия в одном понятном сценарии.",
     link: "Перейти к запуску",
   },
   {
     icon: WalletCards,
     title: "Wallet Intelligence",
-    text: "Разбирайте поведение кошельков, историю сделок и движение капитала без постоянного переключения между сервисами.",
+    text: "Видно кто покупает, кто выходит, где fresh/smart wallets, wash-паттерны и подозрительные кластеры вокруг токена.",
     link: "Исследовать кошельки",
   },
   {
     icon: Radar,
-    title: "Сканер рынка",
-    text: "Следите за динамикой рынка, новыми активами и ключевыми сигналами, когда скорость решения действительно важна.",
+    title: "Social + Market Intelligence",
+    text: "X, Telegram, граф связей, price lead/lag и 129 параметров анализа помогают понять не только цену, но и причину движения.",
     link: "Открыть обзор рынка",
   },
   {
     icon: Boxes,
     title: "Bundle Intelligence",
-    text: "Анализируйте бандлы, связанные операции и структуру активности, чтобы быстрее понимать контекст движения токена.",
+    text: "Находите синхронные покупки, связанные кошельки и структуру активности до того, как движение станет очевидным в графике.",
     link: "Анализировать бандлы",
   },
 ];
 
 const proof = [
-  { icon: ShieldCheck, title: "Контекст перед действием", text: "Проверка рынка и активности до следующего шага." },
+  { icon: ShieldCheck, title: "Проверка до входа", text: "Сначала контекст: кошельки, бандлы, соцсигналы и рынок." },
   { icon: Radio, title: "Live SOL market", text: "Цена и 24ч график приходят из реального market feed." },
-  { icon: Zap, title: "Быстрый workflow", text: "Запуск, анализ и мониторинг без лишних переходов." },
-  { icon: Globe2, title: "Solana-first", text: "Интерфейс и инструменты сфокусированы на экосистеме Solana." },
+  { icon: Zap, title: "Меньше ручной рутины", text: "Один экран ведёт от сигнала к проверке и следующему действию." },
+  { icon: Globe2, title: "Telegram-доступ", text: "Mini App выдаёт доступ и держит подписку рядом с рабочим процессом." },
 ];
 
 export default function PublicLandingPage() {
@@ -230,6 +267,8 @@ export default function PublicLandingPage() {
   const [authSuccess, setAuthSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [market, setMarket] = useState<MarketData | null>(null);
+  const [marketPeriod, setMarketPeriod] = useState<MarketPeriod>("1d");
+  const [marketZoom, setMarketZoom] = useState(1);
   const [marketClock, setMarketClock] = useState(0);
   const [theme, setTheme] = useState<LandingTheme>("gold");
   const [activeChartIndex, setActiveChartIndex] = useState<number | null>(null);
@@ -240,8 +279,10 @@ export default function PublicLandingPage() {
   const authAbortRef = useRef<AbortController | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
 
-  const paths = useMemo(() => chartPaths(market?.points ?? []), [market]);
+  const visibleMarketPoints = useMemo(() => zoomMarketPoints(market?.points ?? [], marketZoom), [market, marketZoom]);
+  const paths = useMemo(() => chartPaths(visibleMarketPoints), [visibleMarketPoints]);
   const marketPositive = (market?.change24h ?? 0) >= 0;
+  const activeMarketPeriod = MARKET_PERIODS.find((item) => item.id === marketPeriod) ?? MARKET_PERIODS[2];
   const marketFresh = Boolean(
     market &&
     !market.stale &&
@@ -249,6 +290,34 @@ export default function PublicLandingPage() {
     marketClock - market.updatedAt <= MARKET_LIVE_MAX_AGE_MS,
   );
   const activeCoord = activeChartIndex == null ? null : paths.coords[activeChartIndex] ?? null;
+
+  const changeMarketPeriod = (period: MarketPeriod) => {
+    if (period === marketPeriod) return;
+    setMarketPeriod(period);
+    setMarketZoom(1);
+    setMarket(null);
+    setActiveChartIndex(null);
+  };
+
+  const zoomMarketIn = () => {
+    setMarketZoom((value) => Math.min(8, value * 2));
+    setActiveChartIndex(null);
+  };
+
+  const zoomMarketOut = () => {
+    setMarketZoom((value) => Math.max(1, value / 2));
+    setActiveChartIndex(null);
+  };
+
+  const zoomMarketWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!market || visibleMarketPoints.length <= 2) return;
+    event.preventDefault();
+    setMarketZoom((value) => {
+      const next = event.deltaY < 0 ? value * 1.25 : value / 1.25;
+      return Math.min(8, Math.max(1, Number(next.toFixed(2))));
+    });
+    setActiveChartIndex(null);
+  };
 
   useEffect(() => {
     const saved = window.localStorage.getItem(THEME_KEY);
@@ -283,7 +352,7 @@ export default function PublicLandingPage() {
 
     const loadMarket = async () => {
       try {
-        const response = await fetch("/api/market/solana", {
+        const response = await fetch(`/api/market/solana?period=${marketPeriod}`, {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -312,7 +381,7 @@ export default function PublicLandingPage() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, []);
+  }, [marketPeriod]);
 
   useEffect(() => {
     if (!("IntersectionObserver" in window)) {
@@ -501,6 +570,27 @@ export default function PublicLandingPage() {
     setAuthSuccess(false);
   };
 
+  const openTelegramAuth = () => {
+    setAuthMessage("");
+    setAuthSuccess(false);
+
+    if (!TELEGRAM_BOT_URL || TELEGRAM_BOT_URL.includes("your_bot_username")) {
+      setAuthMessage("Telegram bot URL не настроен.");
+      return;
+    }
+
+    const { appUrl, fallbackUrl } = getTelegramLaunchUrls(TELEGRAM_BOT_URL);
+    const fallbackTimer = window.setTimeout(() => {
+      if (!document.hidden) window.location.replace(fallbackUrl);
+    }, 250);
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) window.clearTimeout(fallbackTimer);
+    }, { once: true });
+
+    window.location.href = appUrl;
+  };
+
   const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAuthMessage("");
@@ -577,7 +667,7 @@ export default function PublicLandingPage() {
       <header className={styles.header}>
         <div className={`${styles.shell} ${styles.headerInner}`} data-landing-header-inner>
           <a className={styles.brand} href="#top" aria-label="POTAPoff — главная">
-            <span className={styles.brandMark} aria-hidden="true"><span /><span /><span /></span>
+            <img className={styles.brandLogo} src="/brand/logo.webp" alt="" aria-hidden="true" />
             <span>POTAP<span className={styles.brandAccent}>off</span></span>
           </a>
 
@@ -637,8 +727,9 @@ export default function PublicLandingPage() {
             <div className={styles.eyebrow}><span className={styles.liveDot} /> Профессиональная платформа для Solana</div>
             <h1 className={styles.heroTitle}>POTAPoff — <span className={styles.heroAccent}>интеллектуальное преимущество</span></h1>
             <p className={styles.heroCopy}>
-              Запускайте токены, анализируйте кошельки и отслеживайте рынок Solana в одной рабочей среде.
-              Данные. Скорость. Контроль.
+              Рабочее место для быстрых Solana-решений: запуск токенов, wallet intelligence,
+              bundle-проверки, social analysis по X/Telegram и рыночный контекст перед действием.
+              Меньше вкладок, больше проверяемых сигналов.
             </p>
             <div className={styles.heroActions}>
               <button type="button" className={styles.button} onClick={openLogin}>Открыть платформу <ArrowRight size={17} /></button>
@@ -646,8 +737,8 @@ export default function PublicLandingPage() {
             </div>
             <div className={styles.heroMeta}>
               <span><i /> Реальный SOL/USD</span>
-              <span><i /> Реальные market points</span>
-              <span><i /> Телефон · планшет · desktop</span>
+              <span><i /> 129 параметров анализа</span>
+              <span><i /> Telegram Mini App доступ</span>
             </div>
           </div>
 
@@ -659,7 +750,7 @@ export default function PublicLandingPage() {
                   <div className={styles.solanaCoin} aria-hidden="true"><span /></div>
                   <div>
                     <div className={styles.pairLabel}>SOL / USD</div>
-                    <div className={styles.pairSub}>Solana · реальный рынок · 24 часа</div>
+                    <div className={styles.pairSub}>Solana · реальный рынок · {activeMarketPeriod.label}</div>
                   </div>
                 </div>
                 <div data-landing-market-status className={`${styles.marketStatus} ${market && !marketFresh ? styles.marketStatusStale : ""}`}>
@@ -673,6 +764,28 @@ export default function PublicLandingPage() {
                 {market && <div className={`${styles.marketChange} ${marketPositive ? styles.positive : styles.negative}`}>{formatPercent(market.change24h)}</div>}
               </div>
 
+              <div className={styles.marketPeriods} aria-label="Период графика SOL">
+                {MARKET_PERIODS.map((period) => (
+                  <button
+                    key={period.id}
+                    type="button"
+                    className={period.id === marketPeriod ? styles.marketPeriodActive : ""}
+                    onClick={() => changeMarketPeriod(period.id)}
+                  >
+                    {period.label}
+                  </button>
+                ))}
+                <div className={styles.marketZoomControls} aria-label="Масштаб графика SOL">
+                  <button type="button" onClick={zoomMarketOut} disabled={marketZoom <= 1} title="Уменьшить график">
+                    <ZoomOut size={14} />
+                  </button>
+                  <span>{marketZoom === 1 ? "100%" : `${marketZoom}x`}</span>
+                  <button type="button" onClick={zoomMarketIn} disabled={!market || visibleMarketPoints.length <= 2} title="Приблизить график">
+                    <ZoomIn size={14} />
+                  </button>
+                </div>
+              </div>
+
               <div
                 data-landing-chart
                 className={`${styles.chartWrap} ${paths.line ? styles.chartInteractive : ""}`}
@@ -683,13 +796,14 @@ export default function PublicLandingPage() {
                 }}
                 onPointerCancel={() => setActiveChartIndex(null)}
                 onKeyDown={inspectChartKeyboard}
+                onWheel={zoomMarketWheel}
                 role="group"
                 tabIndex={paths.line ? 0 : -1}
-                aria-label="Интерактивный график реальных точек цены Solana за 24 часа. Используйте стрелки влево и вправо для просмотра точек."
+                aria-label={`Интерактивный график реальных точек цены Solana за период ${activeMarketPeriod.label}. Используйте стрелки влево и вправо для просмотра точек.`}
               >
                 {paths.line ? (
                   <>
-                    <svg className={styles.chartSvg} viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label="Реальный график цены Solana за последние 24 часа">
+                    <svg key={`${marketPeriod}-${marketZoom}-${market?.windowStart ?? 0}-${market?.windowEnd ?? 0}`} className={styles.chartSvg} viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={`Реальный график цены Solana за период ${activeMarketPeriod.label}`}>
                       <defs>
                         <linearGradient id="potap-market-line" x1="0" x2="1">
                           <stop offset="0%" stopColor="var(--chart-a)" />
@@ -743,37 +857,31 @@ export default function PublicLandingPage() {
                 ) : <div className={styles.chartFallback}>Получаем рыночные данные SOL…</div>}
               </div>
 
-              <div className={styles.chartTimeline} aria-hidden="true"><span>−24ч</span><span>−18ч</span><span>−12ч</span><span>−6ч</span><span>сейчас</span></div>
+              <div className={styles.chartTimeline} aria-hidden="true"><span>{activeMarketPeriod.short}</span><span>середина</span><span>сейчас</span></div>
               <div className={styles.chartVerification}>
                 <span>Проведите по графику — каждая показанная цена привязана к реальной временной точке.</span>
-                <strong>{market ? `${market.plottedPointCount} точек на графике` : ""}</strong>
+                <strong>{market ? `${visibleMarketPoints.length} точек на графике` : ""}</strong>
               </div>
 
               <div className={styles.marketStats}>
-                <div className={styles.marketStat}><div className={styles.marketStatLabel}>24ч максимум</div><div className={styles.marketStatValue}>{formatUsd(market?.high24h)}</div></div>
-                <div className={styles.marketStat}><div className={styles.marketStatLabel}>24ч минимум</div><div className={styles.marketStatValue}>{formatUsd(market?.low24h)}</div></div>
+                <div className={styles.marketStat}><div className={styles.marketStatLabel}>Максимум</div><div className={styles.marketStatValue}>{formatUsd(market?.high24h)}</div></div>
+                <div className={styles.marketStat}><div className={styles.marketStatLabel}>Минимум</div><div className={styles.marketStatValue}>{formatUsd(market?.low24h)}</div></div>
                 <div className={styles.marketStat}><div className={styles.marketStatLabel}>Объём 24ч</div><div className={styles.marketStatValue}>{formatCompactUsd(market?.volume24h)}</div></div>
                 <div className={styles.marketStat}><div className={styles.marketStatLabel}>Market cap</div><div className={styles.marketStatValue}>{formatCompactUsd(market?.marketCap)}</div></div>
+                {market && (
+                  <>
+                    <div className={styles.marketStat}><div className={styles.marketStatLabel}>Диапазон</div><div className={styles.marketStatValue}>{formatUsd(market.high24h - market.low24h)}</div></div>
+                    <div className={styles.marketStat}><div className={styles.marketStatLabel}>Изменение</div><div className={`${styles.marketStatValue} ${marketPositive ? styles.positive : styles.negative}`}>{formatPercent(market.change24h)}</div></div>
+                  </>
+                )}
               </div>
               <span className={styles.marketSource}>
                 {market
-                  ? `CoinGecko · ${market.sourcePointCount} исходных точек · ${formatMarketAge(market.updatedAt, marketClock || market.servedAt)} · ${formatMarketTime(market.updatedAt)}`
+                  ? `${market.source} · ${market.sourcePointCount} исходных точек · ${formatMarketAge(market.updatedAt, marketClock || market.servedAt)} · ${formatMarketTime(market.updatedAt)}`
                   : "CoinGecko · ожидаем данные"}
               </span>
             </div>
 
-            {market && (
-              <>
-                <div className={`${styles.floatCard} ${styles.floatA}`}>
-                  <div className={styles.floatLabel}>Диапазон 24ч</div>
-                  <div className={styles.floatValue}>{formatUsd(market.high24h - market.low24h)}</div>
-                </div>
-                <div className={`${styles.floatCard} ${styles.floatB}`}>
-                  <div className={styles.floatLabel}>Изменение 24ч</div>
-                  <div className={`${styles.floatValue} ${marketPositive ? styles.positive : styles.negative}`}>{formatPercent(market.change24h)}</div>
-                </div>
-              </>
-            )}
           </div>
         </section>
 
@@ -787,10 +895,10 @@ export default function PublicLandingPage() {
         </section>
 
         <section id="features" className={styles.section}>
-          <div className={styles.sectionHead} data-reveal>
-            <div className={styles.kicker}>Всё, что нужно для преимущества на рынке</div>
+            <div className={styles.sectionHead} data-reveal>
+              <div className={styles.kicker}>Всё, что нужно для преимущества на рынке</div>
             <h2 className={styles.sectionTitle}>Один продукт вместо набора разрозненных инструментов.</h2>
-            <p className={styles.sectionCopy}>От первого сигнала до запуска и проверки контекста — POTAPoff объединяет ежедневный Solana workflow в одном интерфейсе.</p>
+            <p className={styles.sectionCopy}>POTAPoff собирает практические данные в одну картину: кто двигает токен, как ведут себя кошельки, есть ли синхронные покупки, насколько органичен social-сигнал и что происходит с рынком SOL прямо сейчас.</p>
           </div>
           <div className={styles.featureGrid}>
             {features.map(({ icon: Icon, title, text, link }) => (
@@ -809,12 +917,12 @@ export default function PublicLandingPage() {
             <div className={styles.workspaceCopy}>
               <div className={styles.kicker}>Профессиональная рабочая среда</div>
               <h3>Рынок, кошельки и запуск — в одном контексте</h3>
-              <p>Интерфейс строится вокруг действий: увидеть сигнал, проверить контекст и перейти к следующему шагу без потери фокуса.</p>
+              <p>Интерфейс строится вокруг действий: увидеть сигнал, проверить источники, оценить риск и перейти к запуску или мониторингу без потери фокуса.</p>
               <div className={styles.workspaceList}>
                 <span><i><Check size={12} /></i> Live SOL market context</span>
                 <span><i><Check size={12} /></i> Wallet и bundle intelligence</span>
-                <span><i><Check size={12} /></i> Быстрый переход к запуску токена</span>
-                <span><i><Check size={12} /></i> Один responsive workflow</span>
+                <span><i><Check size={12} /></i> Social Intelligence по X, Telegram и on-chain</span>
+                <span><i><Check size={12} /></i> Telegram Mini App для выдачи доступа</span>
               </div>
               <button type="button" className={styles.button} onClick={openLogin}>Открыть workspace <ArrowRight size={16} /></button>
             </div>
@@ -840,7 +948,7 @@ export default function PublicLandingPage() {
         </section>
 
         <section className={styles.cta} data-landing-cta data-reveal>
-          <div><div className={styles.ctaCrown} aria-hidden="true">✦</div><h2>Будущее Solana начинается с лучшего контекста.</h2><p>Откройте POTAPoff и соберите весь рабочий процесс в одном месте.</p></div>
+          <div><div className={styles.ctaCrown} aria-hidden="true">✦</div><h2>Лучшее решение начинается с полной картины.</h2><p>Откройте POTAPoff, проверьте сигнал по social/on-chain данным и работайте с токеном из одного workspace.</p></div>
           <div className={styles.ctaActions}>
             <button type="button" className={styles.button} onClick={openLogin}>Открыть POTAPoff <ArrowRight size={17} /></button>
             <button className={`${styles.button} ${styles.buttonGhost}`} type="button" onClick={toggleTheme}>Тема: {theme === "gold" ? "Gold" : "Solana"}</button>
@@ -851,7 +959,7 @@ export default function PublicLandingPage() {
       <footer className={styles.footer}>
         <div className={`${styles.shell} ${styles.footerInner}`} data-landing-footer-inner>
           <div>
-            <div className={styles.brand}><span className={styles.brandMark} aria-hidden="true"><span /><span /><span /></span><span>POTAP<span className={styles.brandAccent}>off</span></span></div>
+            <div className={styles.brand}><img className={styles.brandLogo} src="/brand/logo.webp" alt="" aria-hidden="true" /><span>POTAP<span className={styles.brandAccent}>off</span></span></div>
             <div className={styles.footerCopy}>Профессиональная рабочая среда для запуска, анализа и мониторинга в экосистеме Solana.</div>
           </div>
           <div className={styles.footerLinks}><a href="#features">Возможности</a><a href="#market">Рынок SOL</a><a href="#workspace">Workspace</a></div>
@@ -867,9 +975,14 @@ export default function PublicLandingPage() {
         >
           <div ref={dialogRef} className={styles.loginCard} role="dialog" aria-modal="true" aria-labelledby="login-title">
             <div className={styles.loginTop}>
-              <div><h2 id="login-title">Войти в POTAPoff</h2><p>Используйте действующие данные доступа к платформе.</p></div>
+              <div><h2 id="login-title">Войти в POTAPoff</h2><p>Через Telegram Mini App или по выданному 32-символьному паролю.</p></div>
               <button type="button" className={styles.closeButton} onClick={closeLogin} aria-label="Закрыть"><X size={17} /></button>
             </div>
+            <button type="button" className={styles.telegramLoginButton} onClick={openTelegramAuth}>
+              <Send size={17} />
+              Авторизоваться в Telegram
+            </button>
+            <div className={styles.loginDivider}><span>или войти по паролю</span></div>
             <form className={styles.loginForm} onSubmit={submitLogin}>
               <label>Логин<input ref={loginInputRef} name="username" autoComplete="username" value={login} onChange={(event) => setLogin(event.target.value)} maxLength={32} /></label>
               <label>Пароль<input name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} maxLength={32} /></label>

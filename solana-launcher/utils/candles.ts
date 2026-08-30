@@ -14,6 +14,8 @@ export const TF_MINUTES: Record<Timeframe, number> = {
   "1h": 60,
   "4h": 240,
   "1d": 1440,
+  "1w": 1440,
+  "all": 1440,
 };
 
 /** Seconds per timeframe */
@@ -27,6 +29,8 @@ export const TF_SECONDS: Record<Timeframe, number> = {
   "1h": 3600,
   "4h": 14400,
   "1d": 86400,
+  "1w": 86400,
+  "all": 86400,
 };
 
 /**
@@ -144,6 +148,8 @@ export function getTimeWindowForTf(timeframe: Timeframe): number {
     "1h": 7 * 24 * 60 * 60 * 1000,  // 7 days
     "4h": 7 * 24 * 60 * 60 * 1000,  // 7 days
     "1d": 30 * 24 * 60 * 60 * 1000, // 30 days
+    "1w": 7 * 24 * 60 * 60 * 1000,  // 7 days
+    "all": 5 * 365 * 24 * 60 * 60 * 1000, // deep available history
   };
   return windows[timeframe];
 }

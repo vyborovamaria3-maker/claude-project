@@ -3,7 +3,7 @@
 
 import React from "react";
 import { RotateCcw, ZoomIn } from "lucide-react";
-import { TIMEFRAMES, type Timeframe } from "@/lib/chart/types";
+import { TIMEFRAMES, TIMEFRAME_LABELS, type Timeframe } from "@/lib/chart/types";
 
 interface Props {
   timeframe: Timeframe;
@@ -14,21 +14,21 @@ interface Props {
 
 const ChartToolbar = React.memo(function ChartToolbar({ timeframe, onTimeframeChange, onResetZoom, onFitCurrent }: Props) {
   return (
-    <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[#2a2a4a]">
-      <div className="flex items-center gap-0.5">
+    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-[#2a2a4a]">
+      <div className="flex min-w-0 flex-wrap items-center gap-1">
         {TIMEFRAMES.map(tf => (
           <button
             key={tf}
             type="button"
             onClick={() => onTimeframeChange(tf)}
             className={[
-              "px-2.5 py-1 rounded text-[11px] font-semibold transition-colors",
+              "h-7 whitespace-nowrap rounded px-2.5 text-[11px] font-semibold transition-colors",
               timeframe === tf
                 ? "bg-[#4a9eff]/20 text-[#4a9eff] border border-[#4a9eff]/30"
                 : "text-[#d1d4dc]/60 hover:text-[#d1d4dc] hover:bg-white/5",
             ].join(" ")}
           >
-            {tf}
+            {TIMEFRAME_LABELS[tf]}
           </button>
         ))}
       </div>
