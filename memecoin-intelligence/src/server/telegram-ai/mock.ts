@@ -24,6 +24,74 @@ function snapshotFeature(context: TelegramAnalysisContext, key: string) {
   return Number.isFinite(value) ? value : null;
 }
 
+function featureKeys(context: TelegramAnalysisContext, matcher: (key: string) => boolean) {
+  return (context.intelligenceSnapshot?.features || [])
+    .filter((feature) => !feature.missing && matcher(feature.key))
+    .map((feature) => feature.key)
+    .slice(0, 8);
+}
+
+function mockSourceAssessments(
+  context: TelegramAnalysisContext,
+  coordinated: boolean,
+  sentimentScore: number,
+): NonNullable<TelegramAiResult['sourceAssessments']> | undefined {
+  const snapshot = context.intelligenceSnapshot;
+  if (context.analysisMode !== 'full_intelligence' || !snapshot) return undefined;
+  const social = snapshotFeature(context, 'scores.social');
+  const xScore = snapshotFeature(context, 'scores.x');
+  const tgScore = snapshotFeature(context, 'scores.telegram');
+  const organic = snapshotFeature(context, 'scores.organic');
+  const manipulation = snapshotFeature(context, 'scores.manipulation');
+  const xKeys = featureKeys(context, (key) => key.startsWith('x_twitter.') || key === 'scores.x' || key === 'scores.organic' || key === 'scores.manipulation');
+  const tgKeys = featureKeys(context, (key) => key.startsWith('telegram.') || key === 'scores.telegram' || key === 'scores.organic' || key === 'scores.manipulation');
+  const chainKeys = featureKeys(context, (key) => key.startsWith('price_event_evidence.') || key.includes('on_chain') || key.includes('wallet'));
+  const walletCount = snapshot.rawSummary.wallets;
+  const tradeCount = snapshot.rawSummary.trades;
+
+  return {
+    x: {
+      currentSituation: xScore == null
+        ? 'В mock-режиме нет достаточной X-оценки для отдельного вывода.'
+        : `X даёт сигнал ${Math.round(xScore)}/100${social != null ? ` при общем social ${Math.round(social)}/100` : ''}.`,
+      interpretation: coordinated || (manipulation ?? 0) >= 60
+        ? 'Внимание нельзя считать полностью органическим: координационные или manipulation-признаки повышены.'
+        : organic != null && organic >= 65
+          ? `Распространение выглядит сравнительно органичным: organic ${Math.round(organic)}/100.`
+          : 'Качество X-сигнала смешанное; mock не повышает уверенность только из-за количества публикаций.',
+      entryImpact: xScore != null && xScore >= 65 && !coordinated
+        ? 'X поддерживает входной тезис, но не заменяет market/on-chain подтверждение.'
+        : 'X пока не даёт достаточно чистого независимого подтверждения текущего входа.',
+      supportingFeatureKeys: xKeys,
+      confidence: xScore == null ? 0.45 : 0.62,
+    },
+    telegram: {
+      currentSituation: `В snapshot учтено ${snapshot.rawSummary.telegramMessages} Telegram-сообщений${tgScore != null ? `, TG score ${Math.round(tgScore)}/100` : ''}.`,
+      interpretation: coordinated
+        ? 'В Telegram есть признаки синхронного распространения; количество сообщений может переоценивать независимый интерес.'
+        : sentimentScore > 0.15
+          ? 'Telegram-тон скорее позитивный, но mock не считает позитивный текст доказательством реального спроса.'
+          : 'Telegram-картина смешанная или нейтральная; важнее качество каналов и подтверждение другими источниками.',
+      entryImpact: tgScore != null && tgScore >= 65 && !coordinated
+        ? 'Telegram поддерживает текущий тезис как дополнительный источник, если market и blockchain не расходятся с ним.'
+        : 'Telegram сам по себе не оправдывает вход по текущей цене.',
+      supportingFeatureKeys: tgKeys,
+      confidence: 0.62,
+    },
+    chain: {
+      currentSituation: `On-chain snapshot содержит ${walletCount} кошельков и ${tradeCount} трейдов.`,
+      interpretation: walletCount > 0
+        ? 'Mock видит наличие on-chain активности, но не будет придумывать направление smart-money без соответствующих направленных feature.'
+        : 'Данных кошельков недостаточно для содержательного on-chain вывода.',
+      entryImpact: walletCount > 0
+        ? 'Blockchain должен подтверждать качество спроса; одних social-сигналов недостаточно.'
+        : 'Без классифицированных кошельков on-chain не может подтверждать текущий вход.',
+      supportingFeatureKeys: chainKeys,
+      confidence: walletCount > 0 ? 0.55 : 0.35,
+    },
+  };
+}
+
 function mockEntryAssessment(
   context: TelegramAnalysisContext,
   coordinated: boolean,
@@ -166,6 +234,7 @@ export function mockTelegramAnalysis(messages: TelegramMessageInput[], context: 
     mentionedTokens.unshift({ address: context.tokenAddress, symbol: context.symbol ?? null, name: context.tokenName ?? null, confidence: 0.6, evidenceMessageIds: [] });
   }
   const entryAssessment = mockEntryAssessment(context, coordinated, score);
+  const sourceAssessments = mockSourceAssessments(context, coordinated, score);
 
   return {
     summary: `Analyzed ${messages.length} Telegram messages across ${new Set(messages.map(channelLabel)).size} channels. ${coordinated ? 'The sample contains coordination indicators.' : 'No strong coordination pattern was found in the sample.'}`,
@@ -190,6 +259,7 @@ export function mockTelegramAnalysis(messages: TelegramMessageInput[], context: 
       unknowns: ['Mock mode cannot independently validate valuation or future price behavior.'],
       confidence: 0.58,
     } : undefined,
+    sourceAssessments,
     entryAssessment,
     reasoningSummary: [
       `${new Set(messages.map(channelLabel)).size} distinct Telegram channels were present.`,
