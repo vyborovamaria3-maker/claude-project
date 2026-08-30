@@ -1,0 +1,103 @@
+"use client";
+
+import { useMemo, type ReactNode } from "react";
+import { Send, Twitter, WalletCards } from "lucide-react";
+import EntryThesisCard from "@/components/trade/EntryThesisCard";
+import SourceNarrativeCard from "@/components/trade/SourceNarrativeCard";
+import { buildEntryThesis } from "@/lib/trade/entry-thesis";
+import { buildSourceNarratives } from "@/lib/trade/source-narrative";
+import type { LiveIntelligenceModel } from "@/lib/trade/live-intelligence";
+import type {
+  AiEnvelope,
+  ChainAnalysis,
+  Channel,
+  DerivedSocial,
+  Market,
+  SocialTimeline,
+  TwitterStats,
+} from "@/lib/trade/social-intelligence";
+
+type Props = {
+  x: TwitterStats | null;
+  telegram: SocialTimeline | null;
+  chain: ChainAnalysis | null;
+  market: Market | null;
+  channels: Channel[];
+  derived: DerivedSocial;
+  ai: AiEnvelope | null;
+  model: LiveIntelligenceModel;
+  xDetails?: ReactNode;
+  telegramDetails?: ReactNode;
+  chainDetails?: ReactNode;
+};
+
+export default function IntelligenceNarrativeBundle({
+  x,
+  telegram,
+  chain,
+  market,
+  channels,
+  derived,
+  ai,
+  model,
+  xDetails,
+  telegramDetails,
+  chainDetails,
+}: Props) {
+  const narratives = useMemo(
+    () => buildSourceNarratives({
+      x,
+      tg: telegram,
+      chain,
+      channels,
+      derived,
+      ai,
+    }),
+    [x, telegram, chain, channels, derived, ai],
+  );
+
+  const entryThesis = useMemo(
+    () => buildEntryThesis({
+      market,
+      chain,
+      derived,
+      ai,
+      model,
+      narratives,
+    }),
+    [market, chain, derived, ai, model, narratives],
+  );
+
+  return (
+    <section className="space-y-3" data-tag="trade.intelligence_narrative_bundle.v1">
+      <EntryThesisCard thesis={entryThesis} />
+
+      <SourceNarrativeCard
+        title="X / Twitter"
+        icon={<Twitter />}
+        narrative={narratives.x}
+        collapseKey="twitter"
+      >
+        {xDetails}
+      </SourceNarrativeCard>
+
+      <SourceNarrativeCard
+        title="Telegram"
+        icon={<Send />}
+        narrative={narratives.telegram}
+        collapseKey="telegram"
+      >
+        {telegramDetails}
+      </SourceNarrativeCard>
+
+      <SourceNarrativeCard
+        title="Blockchain"
+        icon={<WalletCards />}
+        narrative={narratives.chain}
+        collapseKey="blockchain"
+      >
+        {chainDetails}
+      </SourceNarrativeCard>
+    </section>
+  );
+}
