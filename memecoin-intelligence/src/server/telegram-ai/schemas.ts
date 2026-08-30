@@ -144,6 +144,14 @@ const discoveredRelationshipSchema = z.object({
   }
 });
 
+const sourceAssessmentSchema = z.object({
+  currentSituation: z.string().min(1).max(2_000),
+  interpretation: z.string().min(1).max(2_000),
+  entryImpact: z.string().min(1).max(2_000),
+  supportingFeatureKeys: z.array(z.string().min(1).max(160)).max(30),
+  confidence,
+}).strict();
+
 export const telegramAiResultSchema = z.object({
   summary: z.string().min(1).max(4_000),
   sentiment: z.object({
@@ -235,8 +243,13 @@ export const telegramAiResultSchema = z.object({
     unknowns: z.array(z.string().min(1).max(700)).max(30),
     confidence,
   }).strict().optional(),
+  sourceAssessments: z.object({
+    x: sourceAssessmentSchema,
+    telegram: sourceAssessmentSchema,
+    chain: sourceAssessmentSchema,
+  }).strict().optional(),
   entryAssessment: z.object({
-    priceState: z.enum(['discounted_vs_signal', 'reasonable_vs_signal', 'stretched_vs_signal', 'overheated_vs_signal', 'unknown']),
+    priceState: z.enum(['discounted_vs_signal', 'reasonable_vs_signal', 'stretched_vs_signal', 'overheated_vs_signal', 'unstable_vs_signal', 'unknown']),
     entryAction: z.enum(['strong_entry', 'consider', 'wait_confirmation', 'late_weak', 'avoid']),
     oneLineVerdict: z.string().min(1).max(1_500),
     whyNow: z.array(z.string().min(1).max(700)).max(12),
