@@ -11,6 +11,7 @@ import {
   ColorType,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type CandlestickData,
   type HistogramData,
   type SeriesMarker,
@@ -127,7 +128,7 @@ export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSign
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const markerPluginRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null);
+  const markerPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   const {
     candles,
