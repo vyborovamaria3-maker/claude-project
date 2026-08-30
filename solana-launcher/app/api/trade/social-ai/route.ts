@@ -24,6 +24,18 @@ const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY 
 const REQUEST_BUDGET_MS = 112_000;
 const MAX_DYNAMIC_RESEARCH_ROUNDS = 3;
 const INTELLIGENCE_PROMPT_VERSION = "intelligence-qwen-v7-critic";
+const SNAPSHOT_HARD_LIMITS = {
+  features: 500,
+  nodes: 4_000,
+  edges: 8_000,
+  evidence: 500,
+} as const;
+const QWEN_SNAPSHOT_LIMITS = {
+  features: 300,
+  nodes: 240,
+  edges: 600,
+  evidence: 180,
+} as const;
 
 type TimelineItem = {
   source_handle?: string | null;
@@ -83,6 +95,26 @@ type AdvancedReport = Record<string, unknown> & {
 };
 
 type ResearchRun = Awaited<ReturnType<typeof runBoundedResearch>>;
+type SnapshotSize = {
+  features: number;
+  nodes: number;
+  edges: number;
+  evidence: number;
+};
+type GraphNode = AnalysisSnapshot["graph"]["nodes"][number];
+type GraphEdge = AnalysisSnapshot["graph"]["edges"][number];
+
+class SnapshotLimitError extends Error {
+  size: SnapshotSize;
+  limits: typeof SNAPSHOT_HARD_LIMITS;
+
+  constructor(size: SnapshotSize) {
+    super("snapshot_too_large");
+    this.name = "SnapshotLimitError";
+    this.size = size;
+    this.limits = SNAPSHOT_HARD_LIMITS;
+  }
+}
 
 function n(value: unknown) {
   const parsed = Number(value);
@@ -137,7 +169,7 @@ function timelineMessages(timeline: TimelineItem[]) {
 
 function snapshotMessages(snapshot: AnalysisSnapshot) {
   return snapshot.evidence
-    .slice(0, 180)
+    .slice(0, QWEN_SNAPSHOT_LIMITS.evidence)
     .map((entry) => {
       const isX = entry.platform === "x";
       const sentAt =
@@ -167,6 +199,15 @@ function snapshotMessages(snapshot: AnalysisSnapshot) {
     .filter((message) => message.text.trim().length > 0);
 }
 
+function snapshotSize(snapshot: AnalysisSnapshot): SnapshotSize {
+  return {
+    features: snapshot.features.length,
+    nodes: snapshot.graph.nodes.length,
+    edges: snapshot.graph.edges.length,
+    evidence: snapshot.evidence.length,
+  };
+}
+
 function validateSnapshot(body: RequestBody, mint: string) {
   const snapshot = body.snapshot;
   if (!snapshot) return null;
@@ -174,34 +215,150 @@ function validateSnapshot(body: RequestBody, mint: string) {
   if (
     !Array.isArray(snapshot.features) ||
     !snapshot.graph ||
+    !Array.isArray(snapshot.graph.nodes) ||
+    !Array.isArray(snapshot.graph.edges) ||
     !Array.isArray(snapshot.evidence)
   ) {
     throw new Error("invalid_snapshot");
   }
+  const size = snapshotSize(snapshot);
   if (
-    snapshot.features.length > 300 ||
-    snapshot.graph.nodes.length > 500 ||
-    snapshot.graph.edges.length > 1500 ||
-    snapshot.evidence.length > 300
+    size.features > SNAPSHOT_HARD_LIMITS.features ||
+    size.nodes > SNAPSHOT_HARD_LIMITS.nodes ||
+    size.edges > SNAPSHOT_HARD_LIMITS.edges ||
+    size.evidence > SNAPSHOT_HARD_LIMITS.evidence
   ) {
-    throw new Error("snapshot_too_large");
+    throw new SnapshotLimitError(size);
   }
   return snapshot;
 }
 
-type QwenSnapshot = Omit<AnalysisSnapshot, "features" | "rawSummary" | "provenance"> & {
+const EDGE_PRIORITY: Record<GraphEdge["type"], number> = {
+  calls: 800,
+  mentions_wallet: 760,
+  copies: 720,
+  amplifies: 700,
+  bundle_member: 660,
+  shared_link: 620,
+  mentions: 580,
+  trades: 420,
+};
+
+function edgeScore(edge: GraphEdge, nodeById: Map<string, GraphNode>) {
+  const source = nodeById.get(edge.source);
+  const attributes = source?.attributes || {};
+  const onChainSignal = edge.type === "trades"
+    ? (attributes.wash === true ? 120 : 0)
+      + (attributes.smart === true ? 90 : 0)
+      + Math.min(60, Math.log10(Math.max(1, Number(attributes.volumeSol || 0))) * 20)
+    : 0;
+  return (
+    (EDGE_PRIORITY[edge.type] || 0)
+    + edge.confidence * 100
+    + Math.min(25, edge.evidenceIds.length * 5)
+    + onChainSignal
+  );
+}
+
+function compactGraphForQwen(graph: AnalysisSnapshot["graph"]): AnalysisSnapshot["graph"] {
+  if (
+    graph.nodes.length <= QWEN_SNAPSHOT_LIMITS.nodes &&
+    graph.edges.length <= QWEN_SNAPSHOT_LIMITS.edges
+  ) {
+    return graph;
+  }
+
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const selectedNodeIds = new Set(
+    graph.nodes.filter((node) => node.type === "token").map((node) => node.id),
+  );
+  const selectedEdges: GraphEdge[] = [];
+  const rankedEdges = [...graph.edges].sort(
+    (left, right) => edgeScore(right, nodeById) - edgeScore(left, nodeById),
+  );
+
+  for (const edge of rankedEdges) {
+    if (selectedEdges.length >= QWEN_SNAPSHOT_LIMITS.edges) break;
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    if (!source || !target) continue;
+    const missing = new Set<string>();
+    if (!selectedNodeIds.has(source.id)) missing.add(source.id);
+    if (!selectedNodeIds.has(target.id)) missing.add(target.id);
+    if (selectedNodeIds.size + missing.size > QWEN_SNAPSHOT_LIMITS.nodes) continue;
+    selectedEdges.push(edge);
+    selectedNodeIds.add(source.id);
+    selectedNodeIds.add(target.id);
+  }
+
+  const nodePriority: Record<GraphNode["type"], number> = {
+    token: 100,
+    tg_channel: 90,
+    x_account: 85,
+    wallet: 80,
+    bundle: 75,
+    url: 60,
+  };
+  const remainingNodes = graph.nodes
+    .filter((node) => !selectedNodeIds.has(node.id))
+    .sort((left, right) => (nodePriority[right.type] || 0) - (nodePriority[left.type] || 0));
+  for (const node of remainingNodes) {
+    if (selectedNodeIds.size >= QWEN_SNAPSHOT_LIMITS.nodes) break;
+    selectedNodeIds.add(node.id);
+  }
+
+  const nodes = graph.nodes.filter((node) => selectedNodeIds.has(node.id));
+  const edges = selectedEdges.filter(
+    (edge) => selectedNodeIds.has(edge.source) && selectedNodeIds.has(edge.target),
+  );
+  return {
+    version: graph.version,
+    nodes,
+    edges,
+    stats: {
+      nodes: nodes.length,
+      edges: edges.length,
+      xAccounts: nodes.filter((node) => node.type === "x_account").length,
+      tgChannels: nodes.filter((node) => node.type === "tg_channel").length,
+      wallets: nodes.filter((node) => node.type === "wallet").length,
+      bundles: nodes.filter((node) => node.type === "bundle").length,
+      socialWalletLinks: edges.filter((edge) => edge.type === "mentions_wallet").length,
+      sharedLinks: edges.filter((edge) => edge.type === "shared_link").length,
+      copyEdges: edges.filter((edge) => edge.type === "copies").length,
+      amplificationEdges: edges.filter((edge) => edge.type === "amplifies").length,
+    },
+  };
+}
+
+type QwenSnapshot = Omit<
+  AnalysisSnapshot,
+  "features" | "graph" | "evidence" | "rawSummary" | "provenance"
+> & {
   features: Array<Pick<
     AnalysisSnapshot["features"][number],
     "key" | "group" | "label" | "value" | "numericValue" | "confidence" | "observedAt" | "missing" | "note"
   > & { source: "derived" | "x" | "telegram" | "market" | "chain" }>;
+  graph: AnalysisSnapshot["graph"];
+  evidence: AnalysisSnapshot["evidence"];
   rawSummary: {
     xPosts: number;
+    xRiskUniversePosts: number;
     telegramMessages: number;
+    telegramMatchedBeforeLimit: number;
     trades: number;
     wallets: number;
     bundles: number;
     chainTruncated: boolean;
     marketAvailable: boolean;
+    marketStale: boolean;
+    originalFeatures: number;
+    originalGraphNodes: number;
+    originalGraphEdges: number;
+    originalEvidence: number;
+    qwenGraphNodes: number;
+    qwenGraphEdges: number;
+    qwenEvidence: number;
+    qwenGraphCompacted: boolean;
   };
 };
 
@@ -209,9 +366,19 @@ function qwenSnapshot(snapshot: AnalysisSnapshot): QwenSnapshot {
   const { provenance: _provenance, ...baseSnapshot } = snapshot as AnalysisSnapshot & {
     provenance?: unknown;
   };
-  return {
-    ...baseSnapshot,
-    features: snapshot.features.map((feature) => ({
+  const originalSize = snapshotSize(snapshot);
+  const graph = compactGraphForQwen(snapshot.graph);
+  const evidence = snapshot.evidence.slice(0, QWEN_SNAPSHOT_LIMITS.evidence);
+  const features = [...snapshot.features]
+    .sort((left, right) => {
+      const leftPriority = (left.key.startsWith("scores.") ? 2 : 0)
+        + (left.key.startsWith("advanced.") ? 1 : 0);
+      const rightPriority = (right.key.startsWith("scores.") ? 2 : 0)
+        + (right.key.startsWith("advanced.") ? 1 : 0);
+      return rightPriority - leftPriority || right.confidence - left.confidence;
+    })
+    .slice(0, QWEN_SNAPSHOT_LIMITS.features)
+    .map((feature) => ({
       key: feature.key,
       group: feature.group,
       label: feature.label,
@@ -224,15 +391,34 @@ function qwenSnapshot(snapshot: AnalysisSnapshot): QwenSnapshot {
       observedAt: feature.observedAt,
       missing: feature.missing,
       ...(feature.note ? { note: feature.note } : {}),
-    })),
+    }));
+  return {
+    ...baseSnapshot,
+    featureCount: features.length,
+    missingFeatureCount: features.filter((feature) => feature.missing).length,
+    features,
+    graph,
+    evidence,
     rawSummary: {
       xPosts: snapshot.rawSummary.xPosts,
+      xRiskUniversePosts: snapshot.rawSummary.xRiskUniversePosts,
       telegramMessages: snapshot.rawSummary.telegramMessages,
+      telegramMatchedBeforeLimit: snapshot.rawSummary.telegramMatchedBeforeLimit,
       trades: snapshot.rawSummary.trades,
       wallets: snapshot.rawSummary.wallets,
       bundles: snapshot.rawSummary.bundles,
       chainTruncated: snapshot.rawSummary.chainTruncated,
       marketAvailable: snapshot.rawSummary.marketAvailable,
+      marketStale: snapshot.rawSummary.marketStale,
+      originalFeatures: originalSize.features,
+      originalGraphNodes: originalSize.nodes,
+      originalGraphEdges: originalSize.edges,
+      originalEvidence: originalSize.evidence,
+      qwenGraphNodes: graph.nodes.length,
+      qwenGraphEdges: graph.edges.length,
+      qwenEvidence: evidence.length,
+      qwenGraphCompacted:
+        graph.nodes.length !== originalSize.nodes || graph.edges.length !== originalSize.edges,
     },
   };
 }
@@ -496,6 +682,16 @@ export async function POST(req: NextRequest) {
   try {
     snapshot = validateSnapshot(body, mint);
   } catch (error) {
+    if (error instanceof SnapshotLimitError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          snapshotSize: error.size,
+          limits: error.limits,
+        },
+        { status: 400 },
+      );
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "invalid_snapshot" },
       { status: 400 },
@@ -663,12 +859,25 @@ export async function POST(req: NextRequest) {
     const lastResearch = researchRuns.length
       ? researchRuns[researchRuns.length - 1]
       : null;
+    const diagnosticSnapshot = analysisSnapshot ? qwenSnapshot(analysisSnapshot) : null;
     return NextResponse.json(
       {
         agent: "qwen",
         available: true,
         analysisMode: analysisSnapshot ? "full_intelligence" : "telegram_only",
         snapshotId: snapshot?.snapshotId || null,
+        snapshotDiagnostics: snapshot && diagnosticSnapshot
+          ? {
+              received: snapshotSize(snapshot),
+              qwen: {
+                features: diagnosticSnapshot.features.length,
+                nodes: diagnosticSnapshot.graph.nodes.length,
+                edges: diagnosticSnapshot.graph.edges.length,
+                evidence: diagnosticSnapshot.evidence.length,
+              },
+              graphCompacted: diagnosticSnapshot.rawSummary.qwenGraphCompacted,
+            }
+          : null,
         requestBudget: {
           maxMs: REQUEST_BUDGET_MS,
           elapsedMs: Date.now() - startedAt,
