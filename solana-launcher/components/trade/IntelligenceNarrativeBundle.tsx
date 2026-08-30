@@ -9,7 +9,7 @@ import SourceNarrativeCard from "@/components/trade/SourceNarrativeCard";
 import { buildCrossSourceThesis } from "@/lib/trade/cross-source-thesis";
 import { buildEntryThesis } from "@/lib/trade/entry-thesis";
 import { buildQwenSynthesis } from "@/lib/trade/qwen-synthesis";
-import { buildSourceNarratives } from "@/lib/trade/source-narrative";
+import { buildSourceNarrativeSynthesis } from "@/lib/trade/source-narrative-synthesis";
 import type { LiveIntelligenceModel } from "@/lib/trade/live-intelligence";
 import type {
   AiEnvelope,
@@ -49,7 +49,7 @@ export default function IntelligenceNarrativeBundle({
   chainDetails,
 }: Props) {
   const narratives = useMemo(
-    () => buildSourceNarratives({
+    () => buildSourceNarrativeSynthesis({
       x,
       tg: telegram,
       chain,
