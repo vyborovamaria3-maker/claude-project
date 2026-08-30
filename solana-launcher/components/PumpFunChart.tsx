@@ -11,7 +11,6 @@ import {
   ColorType,
   type IChartApi,
   type ISeriesApi,
-  type ISeriesMarkersPluginApi,
   type CandlestickData,
   type HistogramData,
   type SeriesMarker,
@@ -67,8 +66,6 @@ const TF_VIEWPORT: Record<Timeframe, { visibleBars: number; barSpacing: number; 
   "1h": { visibleBars: 60, barSpacing: 11, rightOffset: 7 },
   "4h": { visibleBars: 48, barSpacing: 12, rightOffset: 6 },
   "1d": { visibleBars: 40, barSpacing: 14, rightOffset: 5 },
-  "1w": { visibleBars: 7, barSpacing: 28, rightOffset: 3 },
-  "all": { visibleBars: 120, barSpacing: 7, rightOffset: 4 },
 };
 
 function applyViewport(chart: IChartApi | null, timeframe: Timeframe, candleCount: number) {
@@ -130,7 +127,7 @@ export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSign
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const markerPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const markerPluginRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null);
 
   const {
     candles,
@@ -143,7 +140,7 @@ export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSign
     retry,
   } = useOHLCV(mint, tf);
 
-  const normalizedCandles = tf === "1w" ? candles.slice(-7) : candles;
+  const normalizedCandles = candles;
 
   const handleLiveTrade = useCallback((trade: TradeItem) => {
     ingestTrade({
@@ -407,9 +404,9 @@ export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSign
         onFitCurrent={handleFitCurrent}
       />
 
-      <div className="flex min-h-0 overflow-hidden" style={{ height: 360 }}>
+      <div className="flex min-h-0" style={{ height: 300 }}>
         <div className="flex-1 min-h-0 relative bg-bg-card">
-          <div ref={chartContainerRef} className="w-full h-full" style={{ minHeight: 360 }} />
+          <div ref={chartContainerRef} className="w-full h-full" style={{ minHeight: 300 }} />
           {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-bg-overlay/70 pointer-events-none">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />

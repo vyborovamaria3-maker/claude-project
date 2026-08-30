@@ -23,7 +23,6 @@ import {
   FormEvent,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
-  WheelEvent as ReactWheelEvent,
   useEffect,
   useMemo,
   useRef,
@@ -275,6 +274,7 @@ export default function PublicLandingPage() {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const loginInputRef = useRef<HTMLInputElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const chartWrapRef = useRef<HTMLDivElement | null>(null);
   const lastFocusedRef = useRef<HTMLElement | null>(null);
   const authAbortRef = useRef<AbortController | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
@@ -309,11 +309,10 @@ export default function PublicLandingPage() {
     setActiveChartIndex(null);
   };
 
-  const zoomMarketWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+  const zoomMarketByDelta = (deltaY: number) => {
     if (!market || visibleMarketPoints.length <= 2) return;
-    event.preventDefault();
     setMarketZoom((value) => {
-      const next = event.deltaY < 0 ? value * 1.25 : value / 1.25;
+      const next = deltaY < 0 ? value * 1.25 : value / 1.25;
       return Math.min(8, Math.max(1, Number(next.toFixed(2))));
     });
     setActiveChartIndex(null);
@@ -346,6 +345,20 @@ export default function PublicLandingPage() {
       document.removeEventListener("visibilitychange", updateWhenVisible);
     };
   }, [market]);
+
+  useEffect(() => {
+    const chart = chartWrapRef.current;
+    if (!chart) return;
+
+    const onWheel = (event: WheelEvent) => {
+      if (!market || visibleMarketPoints.length <= 2) return;
+      event.preventDefault();
+      zoomMarketByDelta(event.deltaY);
+    };
+
+    chart.addEventListener("wheel", onWheel, { passive: false });
+    return () => chart.removeEventListener("wheel", onWheel);
+  }, [market, visibleMarketPoints.length]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -787,6 +800,7 @@ export default function PublicLandingPage() {
               </div>
 
               <div
+                ref={chartWrapRef}
                 data-landing-chart
                 className={`${styles.chartWrap} ${paths.line ? styles.chartInteractive : ""}`}
                 onPointerMove={inspectChart}
@@ -796,7 +810,6 @@ export default function PublicLandingPage() {
                 }}
                 onPointerCancel={() => setActiveChartIndex(null)}
                 onKeyDown={inspectChartKeyboard}
-                onWheel={zoomMarketWheel}
                 role="group"
                 tabIndex={paths.line ? 0 : -1}
                 aria-label={`Интерактивный график реальных точек цены Solana за период ${activeMarketPeriod.label}. Используйте стрелки влево и вправо для просмотра точек.`}

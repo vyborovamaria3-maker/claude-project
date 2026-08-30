@@ -686,21 +686,67 @@ function PromoterTable({ rows, kind }: { rows: PromoterRow[]; kind: "x" | "teleg
 
 function WalletTable({ rows }: { rows: WalletActor[] }) {
   return (
-    <div className="mt-4 overflow-hidden rounded-xl border border-bg-border">
-      <div className="grid grid-cols-[1.2fr_.65fr_.55fr] gap-2 border-b border-bg-border bg-bg-elevated px-2.5 py-2 text-[8px] uppercase tracking-wider text-content-faint">
-        <span>Кто двигает деньги</span><span>Объём</span><span>Действие</span>
+    <details className="mt-4 overflow-hidden rounded-xl border border-bg-border">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-bg-elevated px-3 py-2 text-[9px] font-semibold text-content">
+        <span>??? ??????? ??????</span>
+        <span className="flex items-center gap-2 text-[8px] font-normal text-content-faint">
+          {rows.length} ?????????
+          <ChevronDown className="h-3.5 w-3.5" />
+        </span>
+      </summary>
+
+      <div className="border-t border-bg-border">
+        <div className="grid grid-cols-[1.2fr_.65fr_.55fr] gap-2 border-b border-bg-border bg-bg-elevated px-2.5 py-2 text-[8px] uppercase tracking-wider text-content-faint">
+          <span>???????</span>
+          <span>?????</span>
+          <span>????????</span>
+        </div>
+
+        <div className="divide-y divide-bg-border">
+          {rows.slice(0, 6).map((row) => (
+            <div
+              key={row.address}
+              className="grid grid-cols-[1.2fr_.65fr_.55fr] gap-2 px-2.5 py-2 text-[9px]"
+            >
+              <div>
+                <div className="font-mono font-semibold text-content">
+                  {shortAddress(row.address)}
+                </div>
+                <div className="mt-0.5 text-[8px] text-content-faint">
+                  {row.role} ? {row.buys} buy / {row.sells} sell
+                </div>
+              </div>
+
+              <div className="font-mono text-content-muted">
+                {row.volumeSol.toFixed(1)} SOL
+              </div>
+
+              <div
+                className={
+                  row.direction === "buying"
+                    ? "text-success"
+                    : row.direction === "selling"
+                      ? "text-danger"
+                      : "text-content-muted"
+                }
+              >
+                {row.direction === "buying"
+                  ? "????????"
+                  : row.direction === "selling"
+                    ? "???????"
+                    : "????????"}
+              </div>
+            </div>
+          ))}
+
+          {!rows.length && (
+            <div className="px-3 py-4 text-[9px] text-content-faint">
+              ???????? ??? ?? ????????????????.
+            </div>
+          )}
+        </div>
       </div>
-      <div className="divide-y divide-bg-border">
-        {rows.slice(0, 6).map((row) => (
-          <div key={row.address} className="grid grid-cols-[1.2fr_.65fr_.55fr] gap-2 px-2.5 py-2 text-[9px]">
-            <div><div className="font-mono font-semibold text-content">{shortAddress(row.address)}</div><div className="mt-0.5 text-[8px] text-content-faint">{row.role} · {row.buys} buy / {row.sells} sell</div></div>
-            <div className="font-mono text-content-muted">{row.volumeSol.toFixed(1)} SOL</div>
-            <div className={row.direction === "buying" ? "text-success" : row.direction === "selling" ? "text-danger" : "text-content-muted"}>{row.direction === "buying" ? "покупает" : row.direction === "selling" ? "продаёт" : "смешанно"}</div>
-          </div>
-        ))}
-        {!rows.length && <div className="px-3 py-4 text-[9px] text-content-faint">Кошельки ещё не классифицированы.</div>}
-      </div>
-    </div>
+    </details>
   );
 }
 

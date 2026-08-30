@@ -13,7 +13,7 @@ import {
 } from "lightweight-charts";
 import { RefreshCw, AlertTriangle, Loader2 } from "lucide-react";
 import { usePumpFunOHLCV } from "@/hooks/usePumpFunOHLCV";
-import { TIMEFRAMES, TIMEFRAME_LABELS, type Timeframe } from "@/lib/chart/types";
+import { TIMEFRAMES, type Timeframe } from "@/lib/chart/types";
 import { applyChartTheme, CHART_COLORS } from "@/lib/chart/config";
 
 // data-tag: components.token_price_chart
@@ -30,7 +30,7 @@ function formatPrice(p: number) {
 }
 
 export default function TokenPriceChart({ mint }: Props) {
-  const [tf, setTf] = useState<Timeframe>("5m");
+  const [tf, setTf] = useState<Timeframe>("1m");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeries = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -216,20 +216,20 @@ export default function TokenPriceChart({ mint }: Props) {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1 px-4 py-2 border-b border-bg-border">
+      <div className="flex items-center gap-1 px-4 py-2 border-b border-bg-border">
         {TIMEFRAMES.map(t => (
           <button
             key={t}
             type="button"
             onClick={() => setTf(t)}
             className={[
-              "h-7 whitespace-nowrap rounded px-2.5 text-[11px] font-semibold transition",
+              "px-2.5 py-1 rounded text-[11px] font-semibold transition",
               tf === t
                 ? "bg-bg-elevated text-content"
                 : "text-content-muted hover:text-content hover:bg-bg-elevated",
             ].join(" ")}
           >
-            {TIMEFRAME_LABELS[t]}
+            {t}
           </button>
         ))}
       </div>

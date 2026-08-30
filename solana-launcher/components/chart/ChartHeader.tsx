@@ -118,17 +118,17 @@ const ChartHeader = React.memo(function ChartHeader({
   const buyPct = totalTxns1 > 0 ? Math.round((buys1 / totalTxns1) * 100) : 50;
 
   return (
-    <div className="flex flex-col overflow-hidden border-b border-[#1a1a2e] bg-[#0a0a14]">
+    <div className="flex flex-col border-b border-[#1a1a2e] bg-[#0a0a14]">
       {/* Row 1: identity + price + live */}
-      <div className="grid grid-cols-1 gap-3 px-4 pt-3 pb-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-3 pb-1">
         {/* Token identity */}
-        <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a855f7] to-[#10b981] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
             {displaySymbol.slice(0, 2).toUpperCase()}
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="max-w-[160px] truncate text-sm font-bold text-white">{displaySymbol}</span>
+              <span className="text-sm font-bold text-white truncate">{displaySymbol}</span>
               <span className="text-[11px] text-[#d1d4dc]/40 truncate max-w-[120px]">{displayName}</span>
               {pair?.bcMigrated === false && pair.bcProgress !== null && (
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#a855f7]/20 text-[#a855f7] font-semibold">
@@ -170,40 +170,38 @@ const ChartHeader = React.memo(function ChartHeader({
         </div>
 
         {/* Price */}
-        <div className="flex min-w-0 flex-wrap items-center gap-3 lg:justify-end">
-          <div className="min-w-0">
-            <span className="block truncate text-2xl font-bold text-white tabular-nums">{fmtMcap(displayPrice)}</span>
+        <div className="flex items-baseline gap-2">
+          <span className="text-2xl font-bold text-white tabular-nums">{fmtMcap(displayPrice)}</span>
+        </div>
+
+        {/* Age */}
+        {pair?.createdAt && (
+          <div className="text-center">
+            <div className="text-[10px] text-[#d1d4dc]/40 uppercase tracking-wide">Age</div>
+            <div className="text-xs font-semibold text-[#d1d4dc]/70 tabular-nums">{metrics.age}</div>
           </div>
+        )}
 
-          {/* Age */}
-          {pair?.createdAt && (
-            <div className="text-left lg:text-center">
-              <div className="text-[10px] text-[#d1d4dc]/40 uppercase tracking-wide">Age</div>
-              <div className="text-xs font-semibold text-[#d1d4dc]/70 tabular-nums">{metrics.age}</div>
-            </div>
-          )}
-
-          {/* Live + Export */}
-          <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0">
-            <button
-              onClick={handleExport}
-              disabled={candles.length === 0}
-              className="flex items-center gap-1 px-2 py-1 rounded bg-[#1a1a2e] text-[#d1d4dc] text-[10px] hover:bg-[#a855f7]/20 transition disabled:opacity-50"
-              title="Export to CSV"
-            >
-              <Download className="w-3 h-3" />
-              CSV
-            </button>
-            <div className="flex items-center gap-1.5">
-              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOnline ? "bg-[#a855f7] animate-pulse" : "bg-[#ef5350]"}`} />
-              <span className="text-[10px] text-[#d1d4dc]/50">{isOnline ? "Live" : "Offline"}</span>
-            </div>
+        {/* Live + Export */}
+        <div className="flex items-center gap-2 ml-auto">
+          <button
+            onClick={handleExport}
+            disabled={candles.length === 0}
+            className="flex items-center gap-1 px-2 py-1 rounded bg-[#1a1a2e] text-[#d1d4dc] text-[10px] hover:bg-[#a855f7]/20 transition disabled:opacity-50"
+            title="Export to CSV"
+          >
+            <Download className="w-3 h-3" />
+            CSV
+          </button>
+          <div className="flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOnline ? "bg-[#a855f7] animate-pulse" : "bg-[#ef5350]"}`} />
+            <span className="text-[10px] text-[#d1d4dc]/50">{isOnline ? "Live" : "Offline"}</span>
           </div>
         </div>
       </div>
 
       {/* Row 2: metrics */}
-      <div className="grid grid-cols-2 gap-2 px-4 pb-3 sm:grid-cols-3 lg:grid-cols-6 xl:grid-cols-8">
+      <div className="flex items-center gap-5 px-4 pb-2.5 flex-wrap">
         <Metric label="MCap" value={metrics.mcap} />
         <Metric label="24h Vol" value={metrics.vol24h} />
         <Metric label="1h Vol" value={metrics.vol1h} />
@@ -215,7 +213,7 @@ const ChartHeader = React.memo(function ChartHeader({
 
         {/* Buy/Sell pressure bar */}
         {totalTxns1 > 0 && (
-          <div className="min-w-0 rounded-md border border-white/5 bg-white/[0.025] px-2 py-1.5 text-left">
+          <div className="text-right">
             <div className="text-[10px] text-[#d1d4dc]/40 uppercase tracking-wide">
               B/S 1h
             </div>
@@ -234,7 +232,7 @@ const ChartHeader = React.memo(function ChartHeader({
 
         {/* Bonding curve progress bar */}
         {pair?.bcMigrated === false && pair.bcProgress !== null && (
-          <div className="min-w-0 rounded-md border border-white/5 bg-white/[0.025] px-2 py-1.5 text-left">
+          <div className="text-right">
             <div className="text-[10px] text-[#d1d4dc]/40 uppercase tracking-wide">Bonding Curve</div>
             <div className="flex items-center gap-1.5 mt-0.5">
               <div className="w-20 h-1.5 rounded-full overflow-hidden bg-[#1a1a2e]">
@@ -254,9 +252,9 @@ const ChartHeader = React.memo(function ChartHeader({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-md border border-white/5 bg-white/[0.025] px-2 py-1.5 text-left">
+    <div className="text-right">
       <div className="text-[10px] text-[#d1d4dc]/40 uppercase tracking-wide">{label}</div>
-      <div className="truncate text-xs font-semibold text-white tabular-nums">{value}</div>
+      <div className="text-xs font-semibold text-white tabular-nums">{value}</div>
     </div>
   );
 }
