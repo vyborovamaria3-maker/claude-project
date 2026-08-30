@@ -282,7 +282,7 @@ function qwenSnapshot(snapshot: AnalysisSnapshot): QwenSnapshot {
 
 function aiPayload(snapshot: AnalysisSnapshot | null, timeline: TimelineItem[], mint: string, body: RequestBody, options: { role?: "analyst" | "critic"; priorConclusion?: string } = {}) {
   const messages = snapshot ? snapshotMessages(snapshot) : timelineMessages(timeline);
-  if (!messages.length) return null;
+  if (!snapshot && !messages.length) return null;
   const times = messages.map((message) => Date.parse(message.sentAt)).filter(Number.isFinite).sort((a, b) => a - b);
   return {
     messages,
@@ -415,7 +415,7 @@ export async function POST(req: NextRequest) {
     const initialMemory = snapshot ? await loadMemoryContext(snapshot) : null;
     let analysisSnapshot = snapshot ? enrichSnapshotWithMemory(snapshot, initialMemory) : null;
     const firstPayload = aiPayload(analysisSnapshot, timeline, mint, body);
-    if (!firstPayload) return NextResponse.json({ error: analysisSnapshot ? "no_snapshot_evidence_for_ai" : "no_telegram_text_for_ai" }, { status: 400 });
+    if (!firstPayload) return NextResponse.json({ error: analysisSnapshot ? "no_usable_snapshot_for_ai" : "no_telegram_text_for_ai" }, { status: 400 });
 
     let result = await runQwen(firstPayload, Math.min(45_000, Math.max(12_000, remainingBudget(startedAt) - 15_000)));
     let researchRound = 0;
