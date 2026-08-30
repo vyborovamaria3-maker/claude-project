@@ -89,8 +89,8 @@ export function buildQwenSynthesis(ai: AiEnvelope | null): QwenSynthesis {
     : 0;
 
   const entryVerdict = text(entry?.oneLineVerdict);
-  const summary = text(result.summary)
-    || entryVerdict
+  const summary = entryVerdict
+    || text(result.summary)
     || text(final?.marketState)
     || "Qwen вернул структурированный анализ без общего резюме.";
 
