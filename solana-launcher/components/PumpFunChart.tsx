@@ -344,12 +344,17 @@ export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSign
 
   useEffect(() => {
     const plugin = markerPluginRef.current;
-    if (!plugin || normalizedCandles.length === 0) return;
+    if (!plugin) return;
+    if (normalizedCandles.length === 0) {
+      plugin.setMarkers([]);
+      return;
+    }
     const markers = intelligenceSignals
       .map((signal): SeriesMarker<Time> | null => {
         const time = nearestCandleTime(normalizedCandles, signal.time);
         if (time == null) return null;
         return {
+          id: signal.id,
           time,
           position: signal.impact >= 0 ? "belowBar" : "aboveBar",
           color: markerColor(signal.tone),
