@@ -199,7 +199,12 @@ function buildXPromoters(x: TwitterStats | null): PromoterRow[] {
 
 function buildTgPromoters(tg: SocialTimeline | null, channels: Channel[]): PromoterRow[] {
   if (!tg) return [];
-  const byChannel = new Map(channels.map((channel) => [norm(channel.username || channel.title), channel]));
+  const byChannel = new Map<string, Channel>();
+  for (const channel of channels) {
+    for (const key of [norm(channel.username), norm(channel.title)]) {
+      if (key) byChannel.set(key, channel);
+    }
+  }
   const grouped = new Map<string, { name: string; messages: number; calls: number; times: number[] }>();
   for (const item of tg.timeline || []) {
     if (item.platform && item.platform.toLowerCase() !== "telegram") continue;
@@ -261,16 +266,19 @@ function buildChainActors(chain: ChainAnalysis | null) {
   const actors: WalletActor[] = top.map((wallet) => {
     const buys = numberOr(wallet.buys);
     const sells = numberOr(wallet.sells);
+    const volumeSol = numberOr(wallet.volumeSol);
     const role: WalletActor["role"] = wallet.isWashTrader
       ? "wash"
       : wallet.smartClassificationAvailable && wallet.isSmart
         ? "smart"
         : wallet.freshnessVerified && wallet.isFresh
           ? "fresh"
-          : "whale";
+          : volumeSol >= 10
+            ? "whale"
+            : "wallet";
     return {
       address: wallet.address,
-      volumeSol: numberOr(wallet.volumeSol),
+      volumeSol,
       buys,
       sells,
       role,
@@ -333,7 +341,6 @@ function marketScore(market: Market | null) {
 function buildSignals(
   x: TwitterStats | null,
   tgPromoters: PromoterRow[],
-  chain: ChainAnalysis | null,
   chainActors: WalletActor[],
 ): LiveIntelligenceSignal[] {
   const signals: LiveIntelligenceSignal[] = [];
@@ -384,7 +391,7 @@ function buildSignals(
       shortLabel: `SMART +${impact.toFixed(1)}`,
     });
   }
-  const whaleSeller = chainActors.find((row) => row.role !== "wash" && row.direction === "selling" && row.volumeSol >= 10);
+  const whaleSeller = chainActors.find((row) => row.role === "whale" && row.direction === "selling");
   if (whaleSeller?.latestTradeAt) {
     const impact = -clamp(2.2 + Math.log10(Math.max(1, whaleSeller.volumeSol)), 2.4, 5);
     signals.push({
@@ -490,12 +497,16 @@ export function buildLiveIntelligence(args: BuildArgs): LiveIntelligenceModel {
     market?.pair ? marketData.score : null,
   ].filter((value): value is number => value != null);
   const disagreement = stddev(crossScores);
-  const stability = clamp(100 - disagreement * 2.1 - (market?.meta?.stale ? 12 : 0));
-  const crossState = disagreement >= 18
-    ? "источники заметно расходятся"
-    : disagreement >= 10
-      ? "есть умеренное расхождение между источниками"
-      : "основные источники подтверждают друг друга";
+  const availableSourceCount = crossScores.length;
+  const missingSourcePenalty = Math.max(0, 4 - availableSourceCount) * 12;
+  const stability = clamp(100 - disagreement * 2.1 - missingSourcePenalty - (market?.meta?.stale ? 12 : 0));
+  const crossState = availableSourceCount < 2
+    ? "недостаточно источников для оценки согласованности"
+    : disagreement >= 18
+      ? "источники заметно расходятся"
+      : disagreement >= 10
+        ? "есть умеренное расхождение между источниками"
+        : "основные источники подтверждают друг друга";
   const crossSummary = `${crossState}. Cross-platform score ${Math.round(derived.socialScore)}/100; median lead/lag ${derived.price.leadLagMinutes == null ? "—" : `${Math.abs(derived.price.leadLagMinutes).toFixed(1)} мин`}.`;
 
   const tokenStrengthBase = weighted([
@@ -526,14 +537,18 @@ export function buildLiveIntelligence(args: BuildArgs): LiveIntelligenceModel {
 
   const whaleSellerCount = chainData.actors.filter((actor) => actor.role === "whale" && actor.direction === "selling").length;
   const sellerPenalty = whaleSellerCount * 4 + Math.max(0, smartSellers - smartBuyers) * 5;
+  const hasRiskEvidence = Boolean(x || tg || chain || market?.pair);
+  const entryBase = weighted([
+    { value: tokenStrength, weight: 0.44 },
+    { value: x || tg ? derived.early : null, weight: 0.14 },
+    { value: x || tg ? derived.organic : null, weight: 0.10 },
+    { value: chain ? chainData.score : null, weight: 0.12 },
+    { value: hasRiskEvidence ? 100 - riskScore : null, weight: 0.20 },
+  ]);
   const entryScore = clamp(
-    tokenStrength * 0.44
-    + derived.early * 0.14
-    + derived.organic * 0.10
-    + chainData.score * 0.12
-    + (100 - riskScore) * 0.20
-    - marketData.overextension * 0.34
-    - sellerPenalty
+    entryBase
+    - (market?.pair ? marketData.overextension * 0.34 : 0)
+    - (chain ? sellerPenalty : 0)
     + liveImpact * 0.55,
   );
   const entryStatus = entryScore >= 78
@@ -646,7 +661,7 @@ export function buildLiveIntelligence(args: BuildArgs): LiveIntelligenceModel {
       facts: [
         `1ч: ${marketData.changeH1 == null ? "—" : `${marketData.changeH1 >= 0 ? "+" : ""}${marketData.changeH1.toFixed(1)}%`}`,
         `24ч: ${marketData.change24h == null ? "—" : `${marketData.change24h >= 0 ? "+" : ""}${marketData.change24h.toFixed(1)}%`}`,
-        `overextension ${Math.round(marketData.overextension)}/100`,
+        `перегрев ${Math.round(marketData.overextension)}/100`,
       ],
       changeH1: marketData.changeH1,
       change24h: marketData.change24h,
@@ -659,10 +674,10 @@ export function buildLiveIntelligence(args: BuildArgs): LiveIntelligenceModel {
       summary: crossSummary,
       facts: [
         `согласованность ${Math.round(stability)}/100`,
-        `social ${Math.round(derived.socialScore)}/100 · chain ${Math.round(chainData.score)}/100 · market ${Math.round(marketData.score)}/100`,
+        `соцсети ${Math.round(derived.socialScore)}/100 · блокчейн ${Math.round(chainData.score)}/100 · рынок ${Math.round(marketData.score)}/100`,
         `AI: ${ai?.result?.summary || "нет отдельного AI-вывода"}`,
       ],
     },
-    signals: buildSignals(x, tgPromoters, chain, chainData.actors),
+    signals: buildSignals(x, tgPromoters, chainData.actors),
   };
 }
