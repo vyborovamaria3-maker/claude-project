@@ -2,9 +2,11 @@
 
 import { useMemo, type ReactNode } from "react";
 import { Send, Twitter, WalletCards } from "lucide-react";
+import CrossSourceThesisCard from "@/components/trade/CrossSourceThesisCard";
 import EntryThesisCard from "@/components/trade/EntryThesisCard";
 import QwenSynthesisCard from "@/components/trade/QwenSynthesisCard";
 import SourceNarrativeCard from "@/components/trade/SourceNarrativeCard";
+import { buildCrossSourceThesis } from "@/lib/trade/cross-source-thesis";
 import { buildEntryThesis } from "@/lib/trade/entry-thesis";
 import { buildQwenSynthesis } from "@/lib/trade/qwen-synthesis";
 import { buildSourceNarratives } from "@/lib/trade/source-narrative";
@@ -70,12 +72,27 @@ export default function IntelligenceNarrativeBundle({
     [market, chain, derived, ai, model, narratives],
   );
 
+  const crossSourceThesis = useMemo(
+    () => buildCrossSourceThesis({
+      x,
+      telegram,
+      chain,
+      market,
+      derived,
+      ai,
+      narratives,
+      entry: entryThesis,
+    }),
+    [x, telegram, chain, market, derived, ai, narratives, entryThesis],
+  );
+
   const qwenSynthesis = useMemo(() => buildQwenSynthesis(ai), [ai]);
 
   return (
     <section className="space-y-3" data-tag="trade.intelligence_narrative_bundle.v1">
       <EntryThesisCard thesis={entryThesis} />
       <QwenSynthesisCard synthesis={qwenSynthesis} />
+      <CrossSourceThesisCard thesis={crossSourceThesis} />
 
       <SourceNarrativeCard
         title="X / Twitter"
