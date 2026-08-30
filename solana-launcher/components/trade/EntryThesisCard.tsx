@@ -15,6 +15,7 @@ function priceStateLabel(state: EntryPriceState) {
   if (state === "reasonable_vs_signal") return "Цена выглядит нормальной";
   if (state === "stretched_vs_signal") return "Цена растянута";
   if (state === "overheated_vs_signal") return "Цена перегрета";
+  if (state === "unstable_vs_signal") return "Цена нестабильна";
   return "Цена не оценена";
 }
 
@@ -30,6 +31,7 @@ function priceClass(state: EntryPriceState) {
   if (state === "reasonable_vs_signal") return "text-primary";
   if (state === "stretched_vs_signal") return "text-warning";
   if (state === "overheated_vs_signal") return "text-danger";
+  if (state === "unstable_vs_signal") return "text-danger";
   return "text-content-muted";
 }
 
