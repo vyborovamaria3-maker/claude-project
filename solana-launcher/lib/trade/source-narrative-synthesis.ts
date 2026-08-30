@@ -72,18 +72,19 @@ function unavailable(
   base: SourceNarrative,
   currentSituation: string,
   detail: string,
+  parameters: SourceNarrative["parameters"] = [],
 ): SourceNarrative {
   return {
     ...base,
     tone: "unknown",
-    headline: "Недостаточно данных для вывода",
+    headline: "Недостаточно покрытия для вывода",
     currentSituation,
     interpretation: "Отсутствие пригодных событий не считается негативным сигналом и не превращается в оценку 0/100.",
     entryMeaning: "Источник исключён из подтверждения и риска текущего входа, пока не появится реальное покрытие.",
     keyActors: [],
     positiveEvidence: [],
     warningEvidence: [detail],
-    parameters: [],
+    parameters,
     confidence: 0,
   };
 }
@@ -134,13 +135,42 @@ export function buildSourceNarrativeSynthesis(args: Args): SourceNarratives {
         "X-ответ пришёл без пригодных постов/авторов для этого токена.",
         "Нужны реальные X-публикации или авторы, прежде чем источник сможет менять входной тезис.",
       );
+
+  const telegramIndexed = args.tg != null;
+  const telegramMatched = Number(
+    args.tg?.meta?.matchedPlatforms?.telegram
+      ?? args.tg?.meta?.matchedBeforeLimit
+      ?? args.tg?.platforms?.telegram
+      ?? args.tg?.mentions
+      ?? 0,
+  );
+  const telegramRetained = (args.tg?.timeline || []).filter(
+    (item) => !item.platform || item.platform.toLowerCase() === "telegram",
+  ).length;
   const telegram = telegramAvailable
     ? deterministic.telegram
     : unavailable(
         deterministic.telegram,
-        "Telegram-ответ не содержит пригодных сообщений или совпадений по токену.",
-        "Нужны реальные сообщения/calls, а не пустой объект источника.",
+        telegramIndexed
+          ? "В локальном Telegram-индексе нет пригодных сообщений по этому mint за выбранное окно. Это означает отсутствие покрытия в текущем индексе, а не доказательство того, что токен нигде не обсуждают."
+          : "Telegram-источник не ответил, поэтому система не знает, есть ли обсуждение токена в отслеживаемых каналах.",
+        telegramIndexed
+          ? "Проверь MTProto collector/monitor и набор отслеживаемых каналов. Пока индекс пуст, Telegram не влияет на решение о входе."
+          : "Нужно восстановить соединение с Telegram backend/collector; до этого источник исключён из оценки.",
+        [
+          {
+            label: "Indexed TG events",
+            value: String(Math.max(telegramMatched, telegramRetained)),
+            note: telegramIndexed ? "совпадения в текущем локальном индексе" : "источник не ответил",
+          },
+          {
+            label: "Coverage state",
+            value: telegramIndexed ? "index empty" : "source unavailable",
+            note: "нулевое покрытие не трактуется как bearish-сигнал",
+          },
+        ],
       );
+
   const chain = chainAvailable
     ? deterministic.chain
     : unavailable(
