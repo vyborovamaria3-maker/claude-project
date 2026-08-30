@@ -462,10 +462,10 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
       <details className="overflow-hidden rounded-xl border border-bg-border">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
           <span className="text-sm font-semibold text-white">
-            ??????? ????????? ({filtered.length.toLocaleString()})
+            Таблицы кошельков ({filtered.length.toLocaleString()})
           </span>
           <span className="text-[10px] text-white/40">
-            ??????? / ???????
+            открыть / закрыть
           </span>
         </summary>
 

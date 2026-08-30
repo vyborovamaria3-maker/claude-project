@@ -573,54 +573,147 @@ function ScoreCell({ label, value, helper }: { label: string; value: string; hel
 
 function DecisionCard({ model }: { model: ReturnType<typeof buildLiveIntelligence> }) {
   return (
-    <article className="surface-panel rounded-2xl border border-bg-border p-4">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <details
+      open
+      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
+    >
+      <summary className="flex cursor-pointer list-none flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="text-[9px] font-semibold uppercase tracking-[0.16em] text-content-faint">Главный вывод</div>
-          <h2 className="mt-2 max-w-3xl text-base font-semibold leading-6 text-content">{model.verdict}</h2>
-          <p className="mt-2 max-w-3xl text-xs leading-5 text-content-muted">{model.summary}</p>
+          <div className="flex items-center gap-2">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.16em] text-content-faint">
+              Главный вывод
+            </div>
+            <ChevronDown className="h-4 w-4 text-content-faint" />
+          </div>
+
+          <h2 className="mt-2 max-w-3xl text-base font-semibold leading-6 text-content">
+            {model.verdict}
+          </h2>
         </div>
+
         <div className="shrink-0 rounded-xl border border-primary/25 bg-primary/5 p-3 text-right">
-          <div className="text-[8px] uppercase tracking-wider text-content-faint">Вход сейчас</div>
-          <div className="mt-1 font-mono text-3xl font-bold text-content">{Math.round(model.entryScore)}<span className="text-sm text-content-faint">/100</span></div>
-          <div className="mt-1 text-xs font-semibold text-primary">{model.entryStatus}</div>
+          <div className="text-[8px] uppercase tracking-wider text-content-faint">
+            Вход сейчас
+          </div>
+          <div className="mt-1 font-mono text-3xl font-bold text-content">
+            {Math.round(model.entryScore)}
+            <span className="text-sm text-content-faint">/100</span>
+          </div>
+          <div className="mt-1 text-xs font-semibold text-primary">
+            {model.entryStatus}
+          </div>
+        </div>
+      </summary>
+
+      <div className="border-t border-bg-border px-4 pb-4 pt-3">
+        <p className="max-w-3xl text-xs leading-5 text-content-muted">
+          {model.summary}
+        </p>
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <ScoreCell
+            label="Сила монеты"
+            value={`${Math.round(model.tokenStrength)}/100`}
+            helper="Качество структуры, не тайминг."
+          />
+          <ScoreCell
+            label="Риск"
+            value={`${Math.round(model.riskScore)}/100`}
+            helper="Social + chain + перегрев."
+          />
+          <ScoreCell
+            label="Уверенность"
+            value={`${Math.round(model.confidence)}%`}
+            helper="Покрытие и качество источников."
+          />
+          <ScoreCell
+            label="Согласованность"
+            value={`${Math.round(model.stability)}/100`}
+            helper="Насколько X/TG/chain/market совпадают."
+          />
         </div>
       </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <ScoreCell label="Сила монеты" value={`${Math.round(model.tokenStrength)}/100`} helper="Качество структуры, не тайминг." />
-        <ScoreCell label="Риск" value={`${Math.round(model.riskScore)}/100`} helper="Social + chain + перегрев." />
-        <ScoreCell label="Уверенность" value={`${Math.round(model.confidence)}%`} helper="Покрытие и качество источников." />
-        <ScoreCell label="Согласованность" value={`${Math.round(model.stability)}/100`} helper="Насколько X/TG/chain/market совпадают." />
-      </div>
-    </article>
+    </details>
   );
 }
 
-function FactorsCard({ model, signals }: { model: ReturnType<typeof buildLiveIntelligence>; signals: LiveIntelligenceSignal[] }) {
+function FactorsCard({
+  model,
+  signals,
+}: {
+  model: ReturnType<typeof buildLiveIntelligence>;
+  signals: LiveIntelligenceSignal[];
+}) {
   const latest = [...signals].sort((a, b) => b.time - a.time).slice(0, 4);
+
   return (
-    <article className="surface-panel rounded-2xl border border-bg-border p-4">
-      <div className="flex items-center gap-2">
-        <Zap className="h-4 w-4 text-primary" />
-        <h2 className="text-sm font-semibold text-content">Что меняет вывод сейчас</h2>
-      </div>
-      <div className="mt-3 space-y-2">
-        {latest.length ? latest.map((signal) => (
-          <div key={signal.id} className="grid grid-cols-[52px_1fr_auto] gap-2 rounded-xl border border-bg-border bg-bg-card p-2.5">
-            <span className={`font-mono text-xs font-bold ${signal.impact >= 0 ? "text-success" : "text-danger"}`}>{signal.impact >= 0 ? "+" : ""}{signal.impact.toFixed(1)}</span>
-            <div>
-              <div className="text-[10px] font-semibold text-content">{signal.title}</div>
-              <div className="mt-0.5 text-[9px] leading-4 text-content-faint">{signal.detail}</div>
+    <details
+      open
+      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+        <div className="flex items-center gap-2">
+          <Zap className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-content">
+            Что меняет вывод сейчас
+          </h2>
+        </div>
+
+        <ChevronDown className="h-4 w-4 text-content-faint" />
+      </summary>
+
+      <div className="border-t border-bg-border p-4">
+        <div className="space-y-2">
+          {latest.length ? (
+            latest.map((signal) => (
+              <div
+                key={signal.id}
+                className="grid grid-cols-[52px_1fr_auto] gap-2 rounded-xl border border-bg-border bg-bg-card p-2.5"
+              >
+                <span
+                  className={`font-mono text-xs font-bold ${
+                    signal.impact >= 0 ? "text-success" : "text-danger"
+                  }`}
+                >
+                  {signal.impact >= 0 ? "+" : ""}
+                  {signal.impact.toFixed(1)}
+                </span>
+
+                <div>
+                  <div className="text-[10px] font-semibold text-content">
+                    {signal.title}
+                  </div>
+                  <div className="mt-0.5 text-[9px] leading-4 text-content-faint">
+                    {signal.detail}
+                  </div>
+                </div>
+
+                <span className="text-[8px] text-content-faint">
+                  {ago(signal.time)}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="text-xs text-content-faint">
+              Значимых событий пока нет.
             </div>
-            <span className="text-[8px] text-content-faint">{ago(signal.time)}</span>
-          </div>
-        )) : <div className="text-xs text-content-faint">Значимых событий пока нет.</div>}
+          )}
+        </div>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <FactorList
+            title="Поддерживает"
+            rows={model.positiveFactors}
+            tone="positive"
+          />
+          <FactorList
+            title="Мешает"
+            rows={model.negativeFactors}
+            tone="negative"
+          />
+        </div>
       </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <FactorList title="Поддерживает" rows={model.positiveFactors} tone="positive" />
-        <FactorList title="Мешает" rows={model.negativeFactors} tone="negative" />
-      </div>
-    </article>
+    </details>
   );
 }
 
@@ -637,22 +730,68 @@ function FactorList({ title, rows, tone }: { title: string; rows: string[]; tone
   );
 }
 
-function SourceCard({ icon, title, conclusion, children }: { icon: ReactNode; title: string; conclusion: SourceConclusion; children?: ReactNode }) {
+function SourceCard({
+  icon,
+  title,
+  conclusion,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  conclusion: SourceConclusion;
+  children?: ReactNode;
+}) {
   return (
-    <article className="surface-panel rounded-2xl border border-bg-border p-4">
-      <div className="flex items-start justify-between gap-3">
+    <details
+      open
+      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
+    >
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-3 p-4">
         <div className="flex items-center gap-2">
-          <span className="text-primary [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
-          <div><h2 className="text-sm font-semibold text-content">{title}</h2><div className="mt-0.5 text-[9px] text-content-faint">{conclusion.state}</div></div>
+          <span className="text-primary [&>svg]:h-4 [&>svg]:w-4">
+            {icon}
+          </span>
+
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-content">
+                {title}
+              </h2>
+              <ChevronDown className="h-3.5 w-3.5 text-content-faint" />
+            </div>
+
+            <div className="mt-0.5 text-[9px] text-content-faint">
+              {conclusion.state}
+            </div>
+          </div>
         </div>
-        <div className="font-mono text-lg font-bold text-content">{Math.round(conclusion.score)}<span className="text-[10px] text-content-faint">/100</span></div>
+
+        <div className="font-mono text-lg font-bold text-content">
+          {Math.round(conclusion.score)}
+          <span className="text-[10px] text-content-faint">/100</span>
+        </div>
+      </summary>
+
+      <div className="border-t border-bg-border p-4 pt-3">
+        <p className="min-h-12 text-[11px] leading-5 text-content-muted">
+          {conclusion.summary}
+        </p>
+
+        <div className="mt-3 space-y-1.5">
+          {conclusion.facts.map((fact) => (
+            <div
+              key={fact}
+              className="flex gap-2 text-[9px] leading-4 text-content-faint"
+            >
+              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary" />
+              {fact}
+            </div>
+          ))}
+        </div>
+
+        {children}
       </div>
-      <p className="mt-3 min-h-12 text-[11px] leading-5 text-content-muted">{conclusion.summary}</p>
-      <div className="mt-3 space-y-1.5">
-        {conclusion.facts.map((fact) => <div key={fact} className="flex gap-2 text-[9px] leading-4 text-content-faint"><span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary" />{fact}</div>)}
-      </div>
-      {children}
-    </article>
+    </details>
   );
 }
 
@@ -686,20 +825,20 @@ function PromoterTable({ rows, kind }: { rows: PromoterRow[]; kind: "x" | "teleg
 
 function WalletTable({ rows }: { rows: WalletActor[] }) {
   return (
-    <details className="mt-4 overflow-hidden rounded-xl border border-bg-border">
+    <details open className="mt-4 overflow-hidden rounded-xl border border-bg-border">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-bg-elevated px-3 py-2 text-[9px] font-semibold text-content">
-        <span>??? ??????? ??????</span>
+        <span>Кто двигает деньги</span>
         <span className="flex items-center gap-2 text-[8px] font-normal text-content-faint">
-          {rows.length} ?????????
+          {rows.length} кошельков
           <ChevronDown className="h-3.5 w-3.5" />
         </span>
       </summary>
 
       <div className="border-t border-bg-border">
         <div className="grid grid-cols-[1.2fr_.65fr_.55fr] gap-2 border-b border-bg-border bg-bg-elevated px-2.5 py-2 text-[8px] uppercase tracking-wider text-content-faint">
-          <span>???????</span>
-          <span>?????</span>
-          <span>????????</span>
+          <span>Кошелёк</span>
+          <span>Объём</span>
+          <span>Действие</span>
         </div>
 
         <div className="divide-y divide-bg-border">
@@ -713,7 +852,7 @@ function WalletTable({ rows }: { rows: WalletActor[] }) {
                   {shortAddress(row.address)}
                 </div>
                 <div className="mt-0.5 text-[8px] text-content-faint">
-                  {row.role} ? {row.buys} buy / {row.sells} sell
+                  {row.role} · {row.buys} buy / {row.sells} sell
                 </div>
               </div>
 
@@ -731,17 +870,17 @@ function WalletTable({ rows }: { rows: WalletActor[] }) {
                 }
               >
                 {row.direction === "buying"
-                  ? "????????"
+                  ? "покупает"
                   : row.direction === "selling"
-                    ? "???????"
-                    : "????????"}
+                    ? "продаёт"
+                    : "смешанно"}
               </div>
             </div>
           ))}
 
           {!rows.length && (
             <div className="px-3 py-4 text-[9px] text-content-faint">
-              ???????? ??? ?? ????????????????.
+              Кошельки ещё не классифицированы.
             </div>
           )}
         </div>
@@ -750,16 +889,53 @@ function WalletTable({ rows }: { rows: WalletActor[] }) {
   );
 }
 
-function TriggerCard({ title, tone, rows }: { title: string; tone: "positive" | "negative"; rows: string[] }) {
+function TriggerCard({
+  title,
+  tone,
+  rows,
+}: {
+  title: string;
+  tone: "positive" | "negative";
+  rows: string[];
+}) {
   return (
-    <article className="surface-panel rounded-2xl border border-bg-border p-4">
-      <div className="flex items-center gap-2">
-        {tone === "positive" ? <TrendingUp className="h-4 w-4 text-success" /> : <ShieldAlert className="h-4 w-4 text-danger" />}
-        <h2 className="text-sm font-semibold text-content">{title}</h2>
+    <details
+      open
+      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+        <div className="flex items-center gap-2">
+          {tone === "positive" ? (
+            <TrendingUp className="h-4 w-4 text-success" />
+          ) : (
+            <ShieldAlert className="h-4 w-4 text-danger" />
+          )}
+
+          <h2 className="text-sm font-semibold text-content">
+            {title}
+          </h2>
+        </div>
+
+        <ChevronDown className="h-4 w-4 text-content-faint" />
+      </summary>
+
+      <div className="space-y-2 border-t border-bg-border p-4">
+        {rows.map((row) => (
+          <div
+            key={row}
+            className="flex gap-2 rounded-lg border border-bg-border bg-bg-card p-2.5 text-[10px] leading-4 text-content-muted"
+          >
+            <span
+              className={
+                `mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
+                  tone === "positive" ? "bg-success" : "bg-danger"
+                }`
+              }
+            />
+            {row}
+          </div>
+        ))}
       </div>
-      <div className="mt-3 space-y-2">
-        {rows.map((row) => <div key={row} className="flex gap-2 rounded-lg border border-bg-border bg-bg-card p-2.5 text-[10px] leading-4 text-content-muted"><span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${tone === "positive" ? "bg-success" : "bg-danger"}`} />{row}</div>)}
-      </div>
-    </article>
+    </details>
   );
 }
