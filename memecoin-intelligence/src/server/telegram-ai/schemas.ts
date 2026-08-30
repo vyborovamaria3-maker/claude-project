@@ -93,12 +93,23 @@ export const intelligenceSnapshotSchema = z.object({
   evidence: z.array(intelligenceEvidenceSchema).max(300),
   rawSummary: z.object({
     xPosts: z.number().int().min(0),
+    xRiskUniversePosts: z.number().int().min(0).optional(),
     telegramMessages: z.number().int().min(0),
+    telegramMatchedBeforeLimit: z.number().int().min(0).optional(),
     trades: z.number().int().min(0),
     wallets: z.number().int().min(0),
     bundles: z.number().int().min(0),
     chainTruncated: z.boolean(),
     marketAvailable: z.boolean(),
+    marketStale: z.boolean().optional(),
+    originalFeatures: z.number().int().min(0).optional(),
+    originalGraphNodes: z.number().int().min(0).optional(),
+    originalGraphEdges: z.number().int().min(0).optional(),
+    originalEvidence: z.number().int().min(0).optional(),
+    qwenGraphNodes: z.number().int().min(0).optional(),
+    qwenGraphEdges: z.number().int().min(0).optional(),
+    qwenEvidence: z.number().int().min(0).optional(),
+    qwenGraphCompacted: z.boolean().optional(),
   }).strict(),
 }).strict();
 
