@@ -88,6 +88,19 @@ function shortAddress(value: string) {
   return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-5)}` : value;
 }
 
+function settledError(result: PromiseSettledResult<unknown>, label: string) {
+  if (result.status !== "rejected") return null;
+  const message = result.reason instanceof Error ? result.reason.message : String(result.reason || "данные недоступны");
+  return `${label}: ${message}`;
+}
+
+function telegramEvents(value: SocialTimeline | null) {
+  if (!value) return 0;
+  const retained = (value.timeline || []).filter((item) => !item.platform || item.platform.toLowerCase() === "telegram").length;
+  const matched = Number(value.meta?.matchedPlatforms?.telegram ?? value.meta?.matchedBeforeLimit ?? value.platforms?.telegram ?? value.mentions ?? 0);
+  return Math.max(retained, Number.isFinite(matched) ? matched : 0);
+}
+
 export default function LiveIntelligencePanel() {
   const router = useRouter();
   const params = useSearchParams();
@@ -127,7 +140,7 @@ export default function LiveIntelligencePanel() {
     [x, tg, market, chain, ai, channels],
   );
   const snapshot = useMemo(() => {
-    if (!mint || (!x && !tg)) return null;
+    if (!mint || (!x && !tg && !market && !chain)) return null;
     return buildAnalysisSnapshot({
       mint,
       symbol: x?.symbol || null,
@@ -181,7 +194,11 @@ export default function LiveIntelligencePanel() {
   ) => {
     const currentSnapshot = suppliedSnapshot ?? snapshotRef.current;
     const currentTg = suppliedTg ?? tgRef.current;
-    if (!currentSnapshot?.evidence.length || aiBusyRef.current) return;
+    const hasUsableSnapshot = Boolean(
+      currentSnapshot
+      && (currentSnapshot.evidence.length > 0 || currentSnapshot.features.some((feature) => !feature.missing)),
+    );
+    if (!hasUsableSnapshot || !currentSnapshot || aiBusyRef.current) return;
     aiBusyRef.current = true;
     try {
       const value = await fetchJson<AiEnvelope>("/api/trade/social-ai", undefined, {
@@ -195,10 +212,14 @@ export default function LiveIntelligencePanel() {
           snapshot: currentSnapshot,
         }),
       });
-      if (mintRef.current === currentMint) setAi(value);
+      if (mintRef.current === currentMint) {
+        setAi(value);
+        setWarnings((items) => items.filter((item) => !item.startsWith("Qwen:")));
+      }
     } catch (error) {
       if (mintRef.current !== currentMint) return;
       const message = error instanceof Error ? error.message : "AI недоступен";
+      setAi({ available: false, error: message });
       setWarnings((value) => [...value.filter((item) => !item.startsWith("Qwen:")), `Qwen: ${message}`]);
     } finally {
       aiBusyRef.current = false;
@@ -267,14 +288,17 @@ export default function LiveIntelligencePanel() {
     setLastUpdated(Date.now());
 
     const sourceWarnings = [
-      nextX ? null : "X: данные недоступны",
-      nextTg ? null : "Telegram: данные недоступны",
-      nextMarket ? null : "Market: данные недоступны",
-      nextChain ? null : "Blockchain: данные недоступны",
+      settledError(results[0], "X"),
+      settledError(results[1], "Telegram"),
+      settledError(results[2], "Market"),
+      settledError(results[3], "Telegram channels"),
+      nextTg && telegramEvents(nextTg) === 0
+        ? "Telegram: локальный индекс ответил, но по этому mint нет сообщений за выбранное окно; это отсутствие покрытия, а не bearish-сигнал"
+        : null,
     ].filter((value): value is string => value != null);
     setWarnings((value) => [...new Set([...value, ...sourceWarnings])]);
 
-    if (!nextX && !nextTg && !nextChain) {
+    if (!nextX && !nextTg && !nextMarket && !nextChain) {
       setState("error");
       return;
     }
@@ -311,6 +335,8 @@ export default function LiveIntelligencePanel() {
       if (results[0].status === "fulfilled") { setX(results[0].value); changed = true; }
       if (results[1].status === "fulfilled") { setTg(results[1].value); tgRef.current = results[1].value; changed = true; }
       if (results[2].status === "fulfilled") { setMarket(results[2].value); changed = true; }
+      const tgError = settledError(results[1], "Telegram");
+      if (tgError) setWarnings((items) => [...items.filter((item) => !item.startsWith("Telegram:")), tgError]);
       if (changed) setLastUpdated(Date.now());
     } finally {
       fastBusyRef.current = false;
