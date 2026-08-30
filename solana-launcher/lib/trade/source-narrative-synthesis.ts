@@ -1,9 +1,22 @@
-import { clamp, type AiEnvelope, type ChainAnalysis, type Channel, type DerivedSocial, type SocialTimeline, type TwitterStats } from "./social-intelligence";
+import {
+  clamp,
+  type AiEnvelope,
+  type ChainAnalysis,
+  type Channel,
+  type DerivedSocial,
+  type SocialTimeline,
+  type TwitterStats,
+} from "./social-intelligence";
 import {
   buildSourceNarratives,
   type SourceNarrative,
   type SourceNarratives,
 } from "./source-narrative";
+import {
+  hasChainIntelligence,
+  hasTelegramIntelligence,
+  hasXIntelligence,
+} from "./intelligence-coverage";
 
 type Args = {
   x: TwitterStats | null;
@@ -55,11 +68,31 @@ function appendQwen(base: string, qwen: string | null) {
   return `${base} Qwen: ${qwen}`;
 }
 
+function unavailable(
+  base: SourceNarrative,
+  currentSituation: string,
+  detail: string,
+): SourceNarrative {
+  return {
+    ...base,
+    tone: "unknown",
+    headline: "Недостаточно данных для вывода",
+    currentSituation,
+    interpretation: "Отсутствие пригодных событий не считается негативным сигналом и не превращается в оценку 0/100.",
+    entryMeaning: "Источник исключён из подтверждения и риска текущего входа, пока не появится реальное покрытие.",
+    keyActors: [],
+    positiveEvidence: [],
+    warningEvidence: [detail],
+    parameters: [],
+    confidence: 0,
+  };
+}
+
 function mergeOne(
   base: SourceNarrative,
   assessment: AiSourceAssessment | null,
 ): SourceNarrative {
-  if (!assessment) return base;
+  if (!assessment || base.tone === "unknown") return base;
   const aiConfidenceRaw = Number(assessment.confidence);
   const aiConfidence = clamp(aiConfidenceRaw <= 1 ? aiConfidenceRaw * 100 : aiConfidenceRaw);
   const keys = Array.isArray(assessment.supportingFeatureKeys)
@@ -84,10 +117,41 @@ function mergeOne(
 }
 
 export function buildSourceNarrativeSynthesis(args: Args): SourceNarratives {
-  const deterministic = buildSourceNarratives(args);
+  const xAvailable = hasXIntelligence(args.x);
+  const telegramAvailable = hasTelegramIntelligence(args.tg);
+  const chainAvailable = hasChainIntelligence(args.chain);
+  const deterministic = buildSourceNarratives({
+    ...args,
+    x: xAvailable ? args.x : null,
+    tg: telegramAvailable ? args.tg : null,
+    chain: chainAvailable ? args.chain : null,
+  });
+
+  const x = xAvailable
+    ? deterministic.x
+    : unavailable(
+        deterministic.x,
+        "X-ответ пришёл без пригодных постов/авторов для этого токена.",
+        "Нужны реальные X-публикации или авторы, прежде чем источник сможет менять входной тезис.",
+      );
+  const telegram = telegramAvailable
+    ? deterministic.telegram
+    : unavailable(
+        deterministic.telegram,
+        "Telegram-ответ не содержит пригодных сообщений или совпадений по токену.",
+        "Нужны реальные сообщения/calls, а не пустой объект источника.",
+      );
+  const chain = chainAvailable
+    ? deterministic.chain
+    : unavailable(
+        deterministic.chain,
+        "Blockchain-ответ не содержит кошельков, трейдов, bundle-кластеров или summary-покрытия.",
+        "Нужны реальные on-chain события; пустой snapshot не считается нейтральным подтверждением.",
+      );
+
   return {
-    x: mergeOne(deterministic.x, qwenAssessment(args.ai, "x")),
-    telegram: mergeOne(deterministic.telegram, qwenAssessment(args.ai, "telegram")),
-    chain: mergeOne(deterministic.chain, qwenAssessment(args.ai, "chain")),
+    x: mergeOne(x, qwenAssessment(args.ai, "x")),
+    telegram: mergeOne(telegram, qwenAssessment(args.ai, "telegram")),
+    chain: mergeOne(chain, qwenAssessment(args.ai, "chain")),
   };
 }

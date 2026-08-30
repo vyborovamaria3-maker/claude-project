@@ -38,7 +38,7 @@ const schema = z.object({
   TELEGRAM_AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(900_000).default(180_000),
   TELEGRAM_AI_MAX_MESSAGES: z.coerce.number().int().min(1).max(500).default(60),
   TELEGRAM_AI_MAX_CHARS: z.coerce.number().int().min(1_000).max(1_000_000).default(24_000),
-  TELEGRAM_AI_MAX_TOKENS: z.coerce.number().int().min(64).max(8_192).default(1_200),
+  TELEGRAM_AI_MAX_TOKENS: z.coerce.number().int().min(64).max(8_192).default(3_200),
   TELEGRAM_AI_TEMPERATURE: z.coerce.number().min(0).max(1.5).default(0.1),
   TELEGRAM_AI_CACHE_SECONDS: z.coerce.number().int().min(0).max(2_592_000).default(604_800),
   TELEGRAM_AI_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),

@@ -37,6 +37,8 @@ type ExtendedAiResult = NonNullable<AiEnvelope["result"]> & {
     alreadyPricedIn?: string[];
     missingConfirmation?: string[];
     invalidation?: string[];
+    supportingFeatureKeys?: string[];
+    evidenceMessageIds?: string[];
     confidence?: number;
   };
   whatWouldChangeConclusion?: string[];
@@ -89,15 +91,15 @@ export function buildQwenSynthesis(ai: AiEnvelope | null): QwenSynthesis {
     : 0;
 
   const entryVerdict = text(entry?.oneLineVerdict);
-  const summary = entryVerdict
-    || text(result.summary)
+  const summary = text(result.summary)
     || text(final?.marketState)
+    || entryVerdict
     || "Qwen вернул структурированный анализ без общего резюме.";
 
   const headline = entryVerdict
-    ? `Qwen по текущему входу: ${entryVerdict}`
+    ? "Qwen: независимая оценка текущего входа"
     : text(final?.marketState)
-      ? `Qwen по рынку: ${final?.marketState}`
+      ? "Qwen: независимая оценка рынка"
       : "Qwen: независимая интерпретация текущей ситуации";
 
   return {

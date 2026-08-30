@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { env } from '@/server/config/env.js';
 import { telegramAiQueue } from '@/server/workers/queues.js';
 import { createTelegramAiRun, completeTelegramAiRun, failTelegramAiRun, getTelegramAiRun } from './repository.js';
-import { qwenHealth, runTelegramAi, telegramAiInputHash } from './qwenClient.js';
+import { FULL_INTELLIGENCE_MIN_OUTPUT_TOKENS, qwenHealth, runTelegramAi, telegramAiInputHash } from './qwenClient.js';
+import { TELEGRAM_PROMPT_VERSION } from './prompts.js';
 import { telegramAnalyzeRequestSchema, telegramEnqueueRequestSchema, type TelegramMessageInput } from './schemas.js';
 
 function selectMessages(messages: TelegramMessageInput[]) {
@@ -15,11 +16,7 @@ function selectMessages(messages: TelegramMessageInput[]) {
   const bounded = selected.map((message) => ({ ...message, text: message.text.slice(0, perMessageCap) }));
   const receivedChars = messages.reduce((sum, message) => sum + message.text.length, 0);
   const analyzedChars = bounded.reduce((sum, message) => sum + message.text.length, 0);
-  return {
-    messages: bounded,
-    droppedMessages: Math.max(0, messages.length - bounded.length),
-    droppedChars: Math.max(0, receivedChars - analyzedChars),
-  };
+  return { messages: bounded, droppedMessages: Math.max(0, messages.length - bounded.length), droppedChars: Math.max(0, receivedChars - analyzedChars) };
 }
 
 function assertEnabled() {
@@ -31,9 +28,14 @@ export async function telegramAiStatus() {
     telegramOnly: false,
     fullIntelligence: true,
     analysisModes: ['telegram_only', 'full_intelligence'],
-    promptVersion: 'intelligence-qwen-v3',
+    promptVersion: TELEGRAM_PROMPT_VERSION,
     enabled: env.TELEGRAM_AI_ENABLED,
-    limits: { maxMessages: env.TELEGRAM_AI_MAX_MESSAGES, maxChars: env.TELEGRAM_AI_MAX_CHARS, maxOutputTokens: env.TELEGRAM_AI_MAX_TOKENS },
+    limits: {
+      maxMessages: env.TELEGRAM_AI_MAX_MESSAGES,
+      maxChars: env.TELEGRAM_AI_MAX_CHARS,
+      maxOutputTokens: env.TELEGRAM_AI_MAX_TOKENS,
+      fullIntelligenceMinOutputTokens: FULL_INTELLIGENCE_MIN_OUTPUT_TOKENS,
+    },
     inference: await qwenHealth(),
   };
 }

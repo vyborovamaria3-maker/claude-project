@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { env } from '@/server/config/env.js';
 import { cacheGet, cacheSet } from '@/server/cache/redis.js';
-import { buildTelegramPrompt, promptVisibleFeatureKeys, TELEGRAM_PROMPT_VERSION } from './prompts.js';
+import { buildTelegramPrompt, TELEGRAM_PROMPT_VERSION } from './prompts.js';
 import { mockTelegramAnalysis } from './mock.js';
 import { telegramAiResultSchema, type TelegramAiResult, type TelegramAnalysisContext, type TelegramMessageInput } from './schemas.js';
+import { groundMockFullIntelligence, validateTelegramAiResult } from './validation.js';
+
+export const FULL_INTELLIGENCE_MIN_OUTPUT_TOKENS = 3_200;
 
 export type TelegramAiCompletion = {
   result: TelegramAiResult;
@@ -23,9 +26,19 @@ type OpenAiResponse = {
   error?: { message?: string };
   detail?: string;
 };
-
 type RawCompletion = { raw: string; inputTokens: number | null; outputTokens: number | null };
+type CompletionOptions = { jsonMode: boolean; temperature: number; maxTokens: number };
 const inFlight = new Map<string, Promise<Omit<TelegramAiCompletion, 'cache'>>>();
+
+function isFullIntelligence(context: TelegramAnalysisContext) {
+  return context.analysisMode === 'full_intelligence' && Boolean(context.intelligenceSnapshot);
+}
+
+export function completionTokenBudget(context: TelegramAnalysisContext) {
+  return isFullIntelligence(context)
+    ? Math.max(env.TELEGRAM_AI_MAX_TOKENS, FULL_INTELLIGENCE_MIN_OUTPUT_TOKENS)
+    : env.TELEGRAM_AI_MAX_TOKENS;
+}
 
 function stableInput(messages: TelegramMessageInput[], context: TelegramAnalysisContext) {
   return JSON.stringify({
@@ -33,7 +46,7 @@ function stableInput(messages: TelegramMessageInput[], context: TelegramAnalysis
     mode: env.TELEGRAM_AI_MODE,
     model: env.TELEGRAM_AI_MODEL,
     baseUrl: env.TELEGRAM_AI_MODE === 'openai-compatible' ? env.TELEGRAM_AI_BASE_URL : null,
-    maxTokens: env.TELEGRAM_AI_MAX_TOKENS,
+    maxTokens: completionTokenBudget(context),
     temperature: env.TELEGRAM_AI_TEMPERATURE,
     context,
     messages: [...messages].sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt) || a.id.localeCompare(b.id)),
@@ -60,53 +73,20 @@ function parseJsonObject(raw: string): unknown {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-function validateResult(result: TelegramAiResult, messages: TelegramMessageInput[], context: TelegramAnalysisContext): TelegramAiResult {
-  const allowedEvidence = new Set(messages.map((message) => message.id));
-  for (const evidence of context.intelligenceSnapshot?.evidence ?? []) allowedEvidence.add(evidence.id);
-  const evidenceGroups: string[][] = [
-    ...result.mentionedTokens.map((entry) => entry.evidenceMessageIds),
-    ...result.entities.map((entry) => entry.evidenceMessageIds),
-    ...result.claims.map((entry) => entry.evidenceMessageIds),
-    ...result.relationships.map((entry) => entry.evidenceMessageIds),
-    ...result.coordinationSignals.map((entry) => entry.evidenceMessageIds),
-    result.campaignHypothesis.evidenceMessageIds,
-    ...result.risks.map((entry) => entry.evidenceMessageIds),
-    ...result.featureAssessments.map((entry) => entry.evidenceMessageIds),
-    ...result.discoveredRelationships.map((entry) => entry.evidenceMessageIds),
-    ...result.anomalies.map((entry) => entry.evidenceMessageIds),
-    ...result.contradictions.map((entry) => entry.evidenceMessageIds),
-  ];
-  const unknownEvidence = [...new Set(evidenceGroups.flat().filter((id) => !allowedEvidence.has(id)))];
-  if (unknownEvidence.length) throw new Error(`Qwen cited unknown evidence IDs: ${unknownEvidence.slice(0, 10).join(', ')}`);
-
-  const visibleFeatureKeys = promptVisibleFeatureKeys(context);
-  if (visibleFeatureKeys.size) {
-    const unknownFeatureKeys = [...new Set([
-      ...result.featureAssessments.map((entry) => entry.featureKey),
-      ...result.discoveredRelationships.flatMap((entry) => entry.supportingFeatureKeys),
-      ...result.anomalies.flatMap((entry) => entry.relatedFeatureKeys),
-    ].filter((key) => !visibleFeatureKeys.has(key)))];
-    if (unknownFeatureKeys.length) throw new Error(`Qwen cited feature keys not present in its prompt: ${unknownFeatureKeys.slice(0, 10).join(', ')}`);
-  }
-
-  if (/<\/?think>/i.test(JSON.stringify(result))) throw new Error('Qwen returned hidden-reasoning tags instead of a concise reasoning summary');
-  return result;
-}
-
 function parseResult(raw: string, messages: TelegramMessageInput[], context: TelegramAnalysisContext): TelegramAiResult {
-  return validateResult(telegramAiResultSchema.parse(parseJsonObject(raw)), messages, context);
+  return validateTelegramAiResult(telegramAiResultSchema.parse(parseJsonObject(raw)), messages, context);
 }
 
 function endpointUrl() {
   return new URL('chat/completions', env.TELEGRAM_AI_BASE_URL.endsWith('/') ? env.TELEGRAM_AI_BASE_URL : `${env.TELEGRAM_AI_BASE_URL}/`);
 }
 
-async function requestCompletion(messages: OpenAiMessage[], options: { jsonMode: boolean; temperature: number }): Promise<RawCompletion> {
+async function requestCompletion(messages: OpenAiMessage[], options: CompletionOptions): Promise<RawCompletion> {
   const body: Record<string, unknown> = {
     model: env.TELEGRAM_AI_MODEL,
     messages,
     temperature: options.temperature,
-    max_tokens: env.TELEGRAM_AI_MAX_TOKENS,
+    max_tokens: options.maxTokens,
     stream: false,
   };
   if (options.jsonMode) body.response_format = { type: 'json_object' };
@@ -136,11 +116,12 @@ async function requestCompletion(messages: OpenAiMessage[], options: { jsonMode:
 async function callOpenAiCompatible(messages: TelegramMessageInput[], context: TelegramAnalysisContext): Promise<Omit<TelegramAiCompletion, 'cache'>> {
   const prompt = buildTelegramPrompt(messages, context);
   const started = performance.now();
+  const maxTokens = completionTokenBudget(context);
   const baseMessages: OpenAiMessage[] = [
     { role: 'system', content: prompt.system },
     { role: 'user', content: prompt.user },
   ];
-  const first = await requestCompletion(baseMessages, { jsonMode: true, temperature: env.TELEGRAM_AI_TEMPERATURE });
+  const first = await requestCompletion(baseMessages, { jsonMode: true, temperature: env.TELEGRAM_AI_TEMPERATURE, maxTokens });
   let result: TelegramAiResult;
   let inputTokens = first.inputTokens;
   let outputTokens = first.outputTokens;
@@ -152,7 +133,7 @@ async function callOpenAiCompatible(messages: TelegramMessageInput[], context: T
       ...baseMessages,
       { role: 'assistant', content: first.raw.slice(0, 12_000) },
       { role: 'user', content: `The previous answer failed JSON schema validation: ${validation}. Return a corrected JSON object only. Do not add markdown or explanations.` },
-    ], { jsonMode: true, temperature: 0 });
+    ], { jsonMode: true, temperature: 0, maxTokens });
     result = parseResult(repaired.raw, messages, context);
     inputTokens = inputTokens === null || repaired.inputTokens === null ? null : inputTokens + repaired.inputTokens;
     outputTokens = outputTokens === null || repaired.outputTokens === null ? null : outputTokens + repaired.outputTokens;
@@ -163,8 +144,10 @@ async function callOpenAiCompatible(messages: TelegramMessageInput[], context: T
 async function execute(messages: TelegramMessageInput[], context: TelegramAnalysisContext): Promise<Omit<TelegramAiCompletion, 'cache'>> {
   if (env.TELEGRAM_AI_MODE === 'mock') {
     const started = performance.now();
+    const parsed = telegramAiResultSchema.parse(mockTelegramAnalysis(messages, context));
+    const grounded = groundMockFullIntelligence(parsed, context);
     return {
-      result: validateResult(telegramAiResultSchema.parse(mockTelegramAnalysis(messages, context)), messages, context),
+      result: validateTelegramAiResult(grounded, messages, context),
       provider: 'mock',
       model: 'deterministic-telegram-mock',
       latencyMs: performance.now() - started,
@@ -183,8 +166,9 @@ export async function runTelegramAi(messages: TelegramMessageInput[], context: T
     const cached = await cacheGet<Omit<TelegramAiCompletion, 'cache'>>(cacheKey);
     if (cached) {
       try {
-        const result = validateResult(telegramAiResultSchema.parse(cached.result), messages, context);
-        return { ...cached, result, cache: 'hit' };
+        const parsed = telegramAiResultSchema.parse(cached.result);
+        const result = cached.provider === 'mock' ? groundMockFullIntelligence(parsed, context) : parsed;
+        return { ...cached, result: validateTelegramAiResult(result, messages, context), cache: 'hit' };
       } catch {
         // Treat stale/corrupt cache entries as misses instead of returning invalid AI data.
       }

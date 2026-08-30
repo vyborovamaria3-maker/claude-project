@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type ReactNode,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -16,16 +15,11 @@ import {
   BrainCircuit,
   ChevronDown,
   Clock3,
-  Network,
   RefreshCw,
   Search,
-  Send,
-  ShieldAlert,
-  TrendingUp,
-  Twitter,
-  WalletCards,
   Zap,
 } from "lucide-react";
+import IntelligenceNarrativeBundle from "@/components/trade/IntelligenceNarrativeBundle";
 import {
   DEFAULT_SOCIAL_OPTIONS,
   MINT_RE,
@@ -45,12 +39,11 @@ import {
 } from "@/lib/trade/social-intelligence-api";
 import { buildAnalysisSnapshot } from "@/lib/trade/intelligence-agent";
 import {
-  buildLiveIntelligence,
   type LiveIntelligenceSignal,
   type PromoterRow,
-  type SourceConclusion,
   type WalletActor,
 } from "@/lib/trade/live-intelligence";
+import { buildCoverageAwareLiveIntelligence } from "@/lib/trade/live-intelligence-safe";
 import { useTradeStream, type TradeItem } from "@/hooks/useTradeStream";
 import type { PumpFunChartSignal } from "@/components/PumpFunChart";
 
@@ -121,15 +114,9 @@ export default function LiveIntelligencePanel() {
   const snapshotRef = useRef<Snapshot | null>(null);
   const tgRef = useRef<SocialTimeline | null>(null);
 
-  useEffect(() => {
-    chainRef.current = chain;
-  }, [chain]);
-  useEffect(() => {
-    mintRef.current = mint;
-  }, [mint]);
-  useEffect(() => {
-    tgRef.current = tg;
-  }, [tg]);
+  useEffect(() => { chainRef.current = chain; }, [chain]);
+  useEffect(() => { mintRef.current = mint; }, [mint]);
+  useEffect(() => { tgRef.current = tg; }, [tg]);
 
   const deterministic = useMemo(
     () => deriveSocialMetrics(x, tg, market, chain, null, channels, LIVE_OPTIONS),
@@ -152,15 +139,13 @@ export default function LiveIntelligencePanel() {
       chain,
     });
   }, [mint, x, tg, market, chain, deterministic]);
-  useEffect(() => {
-    snapshotRef.current = snapshot;
-  }, [snapshot]);
+  useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
 
   const featureCoverage = snapshot && snapshot.featureCount > 0
     ? (snapshot.featureCount - snapshot.missingFeatureCount) / snapshot.featureCount
     : null;
   const model = useMemo(
-    () => buildLiveIntelligence({
+    () => buildCoverageAwareLiveIntelligence({
       x,
       tg,
       market,
@@ -268,9 +253,7 @@ export default function LiveIntelligencePanel() {
     const nextX = results[0].status === "fulfilled" ? results[0].value : null;
     const nextTg = results[1].status === "fulfilled" ? results[1].value : null;
     const nextMarket = results[2].status === "fulfilled" ? results[2].value : null;
-    const nextChannels = results[3].status === "fulfilled" && Array.isArray(results[3].value.items)
-      ? results[3].value.items
-      : [];
+    const nextChannels = results[3].status === "fulfilled" && Array.isArray(results[3].value.items) ? results[3].value.items : [];
     const nextChain = await chainPromise;
     if (controller.signal.aborted || mintRef.current !== contract) return;
 
@@ -349,7 +332,7 @@ export default function LiveIntelligencePanel() {
         setLastUpdated(Date.now());
       }
     } catch {
-      // The fast live layer keeps the previous classified snapshot until the next successful refresh.
+      // Keep the previous classified snapshot until the next successful refresh.
     } finally {
       chainBusyRef.current = false;
     }
@@ -389,7 +372,6 @@ export default function LiveIntelligencePanel() {
   useEffect(() => {
     if (initialMint && MINT_RE.test(initialMint)) void load(initialMint);
     return () => abortRef.current?.abort();
-    // The URL mint is loaded once; future changes go through the search form.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -412,7 +394,7 @@ export default function LiveIntelligencePanel() {
 
   if (!mint && state === "idle") {
     return (
-      <div className="space-y-4" data-tag="trade.live_intelligence.v1">
+      <div className="space-y-4" data-tag="trade.live_intelligence.v2">
         <PageHeader query={query} setQuery={setQuery} submit={submit} loading={false} lastUpdated={null} />
         <div className="rounded-2xl border border-bg-border bg-bg-card p-12 text-center text-sm text-content-muted">
           Вставь mint токена, чтобы собрать X, Telegram, блокчейн, рынок и общий вывод в одной системе.
@@ -422,7 +404,7 @@ export default function LiveIntelligencePanel() {
   }
 
   return (
-    <div className="space-y-4" data-tag="trade.live_intelligence.v1">
+    <div className="space-y-4" data-tag="trade.live_intelligence.v2">
       <PageHeader query={query} setQuery={setQuery} submit={submit} loading={state === "loading"} lastUpdated={lastUpdated} />
 
       {warnings.length > 0 && (
@@ -443,44 +425,21 @@ export default function LiveIntelligencePanel() {
         </section>
       )}
 
-      <section className="grid gap-3 xl:grid-cols-[1.15fr_.85fr]">
-        <DecisionCard model={model} />
-        <FactorsCard model={model} signals={[...model.signals, ...liveSignals]} />
-      </section>
+      <IntelligenceNarrativeBundle
+        x={x}
+        telegram={tg}
+        chain={chain}
+        market={market}
+        channels={channels}
+        derived={derived}
+        ai={ai}
+        model={model}
+        xDetails={<PromoterTable rows={model.x.promoters} kind="x" />}
+        telegramDetails={<PromoterTable rows={model.telegram.promoters} kind="telegram" />}
+        chainDetails={<WalletTable rows={model.chain.actors} />}
+      />
 
-      <section className="grid gap-3 xl:grid-cols-3">
-        <SourceCard icon={<Twitter />} title="X / Twitter" conclusion={model.x}>
-          <PromoterTable rows={model.x.promoters} kind="x" />
-        </SourceCard>
-        <SourceCard icon={<Send />} title="Telegram" conclusion={model.telegram}>
-          <PromoterTable rows={model.telegram.promoters} kind="telegram" />
-        </SourceCard>
-        <SourceCard icon={<WalletCards />} title="Blockchain" conclusion={model.chain}>
-          <WalletTable rows={model.chain.actors} />
-        </SourceCard>
-      </section>
-
-      <section className="grid gap-3 xl:grid-cols-2">
-        <SourceCard icon={<Network />} title="Связь источников" conclusion={model.crossSource} />
-        <SourceCard icon={<TrendingUp />} title="Рынок и момент входа" conclusion={model.market}>
-          <div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3">
-            <div className="text-[9px] uppercase tracking-wider text-content-faint">Сигнал входа сейчас</div>
-            <div className="mt-1 flex items-end gap-2">
-              <span className="font-mono text-3xl font-bold text-content">{Math.round(model.entryScore)}</span>
-              <span className="pb-1 text-xs text-content-faint">/100</span>
-            </div>
-            <div className="mt-1 text-sm font-semibold text-content">{model.entryStatus}</div>
-            <p className="mt-2 text-[10px] leading-4 text-content-muted">
-              Это аналитическая оценка текущего момента по доступным данным, а не гарантия доходности и не персональная рекомендация.
-            </p>
-          </div>
-        </SourceCard>
-      </section>
-
-      <section className="grid gap-3 xl:grid-cols-2">
-        <TriggerCard title="Что подтвердит тезис" tone="positive" rows={model.confirmationTriggers} />
-        <TriggerCard title="Что сломает тезис" tone="negative" rows={model.invalidationTriggers} />
-      </section>
+      <FactorsCard model={model} signals={[...model.signals, ...liveSignals]} />
 
       <details className="overflow-hidden rounded-2xl border border-bg-border bg-bg-card">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-semibold text-content">
@@ -513,13 +472,7 @@ export default function LiveIntelligencePanel() {
   );
 }
 
-function PageHeader({
-  query,
-  setQuery,
-  submit,
-  loading,
-  lastUpdated,
-}: {
+function PageHeader({ query, setQuery, submit, loading, lastUpdated }: {
   query: string;
   setQuery: (value: string) => void;
   submit: (event: FormEvent) => void;
@@ -533,9 +486,7 @@ function PageHeader({
           <BrainCircuit className="h-5 w-5 text-primary" />
           <h1 className="text-lg font-semibold text-content">Живой интеллект по токену</h1>
         </div>
-        <p className="mt-1 max-w-3xl text-xs text-content-muted">
-          Что происходит в X и Telegram, кто двигает внимание, кто покупает/продаёт в блокчейне и насколько качественный вход прямо сейчас.
-        </p>
+        <p className="mt-1 max-w-3xl text-xs text-content-muted">Что происходит в X и Telegram, кто двигает внимание, кто покупает/продаёт в блокчейне и насколько качественный вход прямо сейчас.</p>
         <div className="mt-2 flex items-center gap-2 text-[9px] text-content-faint">
           <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_currentColor]" />
           <span>Fast refresh 15с · chain classification 30с · AI critic 60с</span>
@@ -545,12 +496,7 @@ function PageHeader({
       <form onSubmit={submit} className="flex w-full gap-2 xl:w-auto">
         <div className="relative min-w-0 flex-1 xl:w-[430px]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-faint" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="w-full rounded-lg border border-bg-border bg-bg-card py-2.5 pl-9 pr-3 font-mono text-xs text-content outline-none focus:border-primary/40"
-            placeholder="Solana mint / CA"
-          />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} className="w-full rounded-lg border border-bg-border bg-bg-card py-2.5 pl-9 pr-3 font-mono text-xs text-content outline-none focus:border-primary/40" placeholder="Solana mint / CA" />
         </div>
         <button type="submit" disabled={loading} className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary disabled:opacity-50">
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -561,156 +507,33 @@ function PageHeader({
   );
 }
 
-function ScoreCell({ label, value, helper }: { label: string; value: string; helper: string }) {
-  return (
-    <div className="rounded-xl border border-bg-border bg-bg-card p-3">
-      <div className="text-[8px] uppercase tracking-wider text-content-faint">{label}</div>
-      <div className="mt-1 font-mono text-xl font-bold text-content">{value}</div>
-      <div className="mt-1 text-[9px] leading-4 text-content-faint">{helper}</div>
-    </div>
-  );
-}
-
-function DecisionCard({ model }: { model: ReturnType<typeof buildLiveIntelligence> }) {
-  return (
-    <details
-      open
-      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
-    >
-      <summary className="flex cursor-pointer list-none flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="text-[9px] font-semibold uppercase tracking-[0.16em] text-content-faint">
-              Главный вывод
-            </div>
-            <ChevronDown className="h-4 w-4 text-content-faint" />
-          </div>
-
-          <h2 className="mt-2 max-w-3xl text-base font-semibold leading-6 text-content">
-            {model.verdict}
-          </h2>
-        </div>
-
-        <div className="shrink-0 rounded-xl border border-primary/25 bg-primary/5 p-3 text-right">
-          <div className="text-[8px] uppercase tracking-wider text-content-faint">
-            Вход сейчас
-          </div>
-          <div className="mt-1 font-mono text-3xl font-bold text-content">
-            {Math.round(model.entryScore)}
-            <span className="text-sm text-content-faint">/100</span>
-          </div>
-          <div className="mt-1 text-xs font-semibold text-primary">
-            {model.entryStatus}
-          </div>
-        </div>
-      </summary>
-
-      <div className="border-t border-bg-border px-4 pb-4 pt-3">
-        <p className="max-w-3xl text-xs leading-5 text-content-muted">
-          {model.summary}
-        </p>
-
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          <ScoreCell
-            label="Сила монеты"
-            value={`${Math.round(model.tokenStrength)}/100`}
-            helper="Качество структуры, не тайминг."
-          />
-          <ScoreCell
-            label="Риск"
-            value={`${Math.round(model.riskScore)}/100`}
-            helper="Social + chain + перегрев."
-          />
-          <ScoreCell
-            label="Уверенность"
-            value={`${Math.round(model.confidence)}%`}
-            helper="Покрытие и качество источников."
-          />
-          <ScoreCell
-            label="Согласованность"
-            value={`${Math.round(model.stability)}/100`}
-            helper="Насколько X/TG/chain/market совпадают."
-          />
-        </div>
-      </div>
-    </details>
-  );
-}
-
-function FactorsCard({
-  model,
-  signals,
-}: {
-  model: ReturnType<typeof buildLiveIntelligence>;
-  signals: LiveIntelligenceSignal[];
-}) {
+function FactorsCard({ model, signals }: { model: ReturnType<typeof buildCoverageAwareLiveIntelligence>; signals: LiveIntelligenceSignal[] }) {
   const latest = [...signals].sort((a, b) => b.time - a.time).slice(0, 4);
-
   return (
-    <details
-      open
-      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
-    >
+    <details open className="surface-panel overflow-hidden rounded-2xl border border-bg-border">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
         <div className="flex items-center gap-2">
           <Zap className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-content">
-            Что меняет вывод сейчас
-          </h2>
+          <h2 className="text-sm font-semibold text-content">Что меняет вывод сейчас</h2>
         </div>
-
         <ChevronDown className="h-4 w-4 text-content-faint" />
       </summary>
-
       <div className="border-t border-bg-border p-4">
         <div className="space-y-2">
-          {latest.length ? (
-            latest.map((signal) => (
-              <div
-                key={signal.id}
-                className="grid grid-cols-[52px_1fr_auto] gap-2 rounded-xl border border-bg-border bg-bg-card p-2.5"
-              >
-                <span
-                  className={`font-mono text-xs font-bold ${
-                    signal.impact >= 0 ? "text-success" : "text-danger"
-                  }`}
-                >
-                  {signal.impact >= 0 ? "+" : ""}
-                  {signal.impact.toFixed(1)}
-                </span>
-
-                <div>
-                  <div className="text-[10px] font-semibold text-content">
-                    {signal.title}
-                  </div>
-                  <div className="mt-0.5 text-[9px] leading-4 text-content-faint">
-                    {signal.detail}
-                  </div>
-                </div>
-
-                <span className="text-[8px] text-content-faint">
-                  {ago(signal.time)}
-                </span>
+          {latest.length ? latest.map((signal) => (
+            <div key={signal.id} className="grid grid-cols-[52px_1fr_auto] gap-2 rounded-xl border border-bg-border bg-bg-card p-2.5">
+              <span className={`font-mono text-xs font-bold ${signal.impact >= 0 ? "text-success" : "text-danger"}`}>{signal.impact >= 0 ? "+" : ""}{signal.impact.toFixed(1)}</span>
+              <div>
+                <div className="text-[10px] font-semibold text-content">{signal.title}</div>
+                <div className="mt-0.5 text-[9px] leading-4 text-content-faint">{signal.detail}</div>
               </div>
-            ))
-          ) : (
-            <div className="text-xs text-content-faint">
-              Значимых событий пока нет.
+              <span className="text-[8px] text-content-faint">{ago(signal.time)}</span>
             </div>
-          )}
+          )) : <div className="text-xs text-content-faint">Значимых событий пока нет.</div>}
         </div>
-
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <FactorList
-            title="Поддерживает"
-            rows={model.positiveFactors}
-            tone="positive"
-          />
-          <FactorList
-            title="Мешает"
-            rows={model.negativeFactors}
-            tone="negative"
-          />
+          <FactorList title="Поддерживает" rows={model.positiveFactors} tone="positive" />
+          <FactorList title="Мешает" rows={model.negativeFactors} tone="negative" />
         </div>
       </div>
     </details>
@@ -730,71 +553,6 @@ function FactorList({ title, rows, tone }: { title: string; rows: string[]; tone
   );
 }
 
-function SourceCard({
-  icon,
-  title,
-  conclusion,
-  children,
-}: {
-  icon: ReactNode;
-  title: string;
-  conclusion: SourceConclusion;
-  children?: ReactNode;
-}) {
-  return (
-    <details
-      open
-      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
-    >
-      <summary className="flex cursor-pointer list-none items-start justify-between gap-3 p-4">
-        <div className="flex items-center gap-2">
-          <span className="text-primary [&>svg]:h-4 [&>svg]:w-4">
-            {icon}
-          </span>
-
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-content">
-                {title}
-              </h2>
-              <ChevronDown className="h-3.5 w-3.5 text-content-faint" />
-            </div>
-
-            <div className="mt-0.5 text-[9px] text-content-faint">
-              {conclusion.state}
-            </div>
-          </div>
-        </div>
-
-        <div className="font-mono text-lg font-bold text-content">
-          {Math.round(conclusion.score)}
-          <span className="text-[10px] text-content-faint">/100</span>
-        </div>
-      </summary>
-
-      <div className="border-t border-bg-border p-4 pt-3">
-        <p className="min-h-12 text-[11px] leading-5 text-content-muted">
-          {conclusion.summary}
-        </p>
-
-        <div className="mt-3 space-y-1.5">
-          {conclusion.facts.map((fact) => (
-            <div
-              key={fact}
-              className="flex gap-2 text-[9px] leading-4 text-content-faint"
-            >
-              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary" />
-              {fact}
-            </div>
-          ))}
-        </div>
-
-        {children}
-      </div>
-    </details>
-  );
-}
-
 function PromoterTable({ rows, kind }: { rows: PromoterRow[]; kind: "x" | "telegram" }) {
   return (
     <div className="mt-4 overflow-hidden rounded-xl border border-bg-border">
@@ -802,7 +560,7 @@ function PromoterTable({ rows, kind }: { rows: PromoterRow[]; kind: "x" | "teleg
         <span>Кто двигает внимание</span><span>{kind === "x" ? "Охват" : "Рейтинг"}</span><span>Активность</span>
       </div>
       <div className="divide-y divide-bg-border">
-        {(rows.length ? rows.slice(0, 5) : []).map((row) => (
+        {rows.slice(0, 5).map((row) => (
           <div key={row.name} className="grid grid-cols-[1.25fr_.55fr_.55fr] gap-2 px-2.5 py-2 text-[9px]">
             <div className="min-w-0">
               <div className="truncate font-semibold text-content">{row.name}</div>
@@ -828,113 +586,27 @@ function WalletTable({ rows }: { rows: WalletActor[] }) {
     <details open className="mt-4 overflow-hidden rounded-xl border border-bg-border">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-bg-elevated px-3 py-2 text-[9px] font-semibold text-content">
         <span>Кто двигает деньги</span>
-        <span className="flex items-center gap-2 text-[8px] font-normal text-content-faint">
-          {rows.length} кошельков
-          <ChevronDown className="h-3.5 w-3.5" />
-        </span>
+        <span className="flex items-center gap-2 text-[8px] font-normal text-content-faint">{rows.length} кошельков<ChevronDown className="h-3.5 w-3.5" /></span>
       </summary>
-
       <div className="border-t border-bg-border">
         <div className="grid grid-cols-[1.2fr_.65fr_.55fr] gap-2 border-b border-bg-border bg-bg-elevated px-2.5 py-2 text-[8px] uppercase tracking-wider text-content-faint">
-          <span>Кошелёк</span>
-          <span>Объём</span>
-          <span>Действие</span>
+          <span>Кошелёк</span><span>Объём</span><span>Действие</span>
         </div>
-
         <div className="divide-y divide-bg-border">
           {rows.slice(0, 6).map((row) => (
-            <div
-              key={row.address}
-              className="grid grid-cols-[1.2fr_.65fr_.55fr] gap-2 px-2.5 py-2 text-[9px]"
-            >
+            <div key={row.address} className="grid grid-cols-[1.2fr_.65fr_.55fr] gap-2 px-2.5 py-2 text-[9px]">
               <div>
-                <div className="font-mono font-semibold text-content">
-                  {shortAddress(row.address)}
-                </div>
-                <div className="mt-0.5 text-[8px] text-content-faint">
-                  {row.role} · {row.buys} buy / {row.sells} sell
-                </div>
+                <div className="font-mono font-semibold text-content">{shortAddress(row.address)}</div>
+                <div className="mt-0.5 text-[8px] text-content-faint">{row.role} · {row.buys} buy / {row.sells} sell</div>
               </div>
-
-              <div className="font-mono text-content-muted">
-                {row.volumeSol.toFixed(1)} SOL
-              </div>
-
-              <div
-                className={
-                  row.direction === "buying"
-                    ? "text-success"
-                    : row.direction === "selling"
-                      ? "text-danger"
-                      : "text-content-muted"
-                }
-              >
-                {row.direction === "buying"
-                  ? "покупает"
-                  : row.direction === "selling"
-                    ? "продаёт"
-                    : "смешанно"}
+              <div className="font-mono text-content-muted">{row.volumeSol.toFixed(1)} SOL</div>
+              <div className={row.direction === "buying" ? "text-success" : row.direction === "selling" ? "text-danger" : "text-content-muted"}>
+                {row.direction === "buying" ? "покупает" : row.direction === "selling" ? "продаёт" : "смешанно"}
               </div>
             </div>
           ))}
-
-          {!rows.length && (
-            <div className="px-3 py-4 text-[9px] text-content-faint">
-              Кошельки ещё не классифицированы.
-            </div>
-          )}
+          {!rows.length && <div className="px-3 py-4 text-[9px] text-content-faint">Кошельки ещё не классифицированы.</div>}
         </div>
-      </div>
-    </details>
-  );
-}
-
-function TriggerCard({
-  title,
-  tone,
-  rows,
-}: {
-  title: string;
-  tone: "positive" | "negative";
-  rows: string[];
-}) {
-  return (
-    <details
-      open
-      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
-        <div className="flex items-center gap-2">
-          {tone === "positive" ? (
-            <TrendingUp className="h-4 w-4 text-success" />
-          ) : (
-            <ShieldAlert className="h-4 w-4 text-danger" />
-          )}
-
-          <h2 className="text-sm font-semibold text-content">
-            {title}
-          </h2>
-        </div>
-
-        <ChevronDown className="h-4 w-4 text-content-faint" />
-      </summary>
-
-      <div className="space-y-2 border-t border-bg-border p-4">
-        {rows.map((row) => (
-          <div
-            key={row}
-            className="flex gap-2 rounded-lg border border-bg-border bg-bg-card p-2.5 text-[10px] leading-4 text-content-muted"
-          >
-            <span
-              className={
-                `mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
-                  tone === "positive" ? "bg-success" : "bg-danger"
-                }`
-              }
-            />
-            {row}
-          </div>
-        ))}
       </div>
     </details>
   );
