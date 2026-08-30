@@ -2,6 +2,7 @@
 
 import { useMemo, type ReactNode } from "react";
 import { Send, Twitter, WalletCards } from "lucide-react";
+import CollapsePersistence from "@/components/trade/CollapsePersistence";
 import CrossSourceThesisCard from "@/components/trade/CrossSourceThesisCard";
 import EntryThesisCard from "@/components/trade/EntryThesisCard";
 import QwenSynthesisCard from "@/components/trade/QwenSynthesisCard";
@@ -59,6 +60,7 @@ export default function IntelligenceNarrativeBundle({ x, telegram, chain, market
 
   return (
     <section className="space-y-3" data-tag="trade.intelligence_narrative_bundle.v2">
+      <CollapsePersistence />
       <EntryThesisCard thesis={entryThesis} />
       <QwenSynthesisCard synthesis={qwenSynthesis} />
       <CrossSourceThesisCard thesis={crossSourceThesis} />
