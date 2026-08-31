@@ -81,7 +81,9 @@ export type TelegramCallerReputationView = {
 export type TelegramTokenIntelligenceView = {
   coordination: TelegramCoordinationView | null;
   firstCall: {
-    source: string;
+    source: string | null;
+    sources: string[];
+    tied: boolean;
     calledAt: string | null;
     callMarketCapUsd: number | null;
   } | null;
@@ -154,8 +156,6 @@ export function telegramTokenIntelligence(
 
   const coordinationRaw = object(raw.coordination);
   const coordinationSources = coordinationRaw ? nonNegative(coordinationRaw.sources) : 0;
-  // An empty deterministic result means "no Telegram evidence", not "0 coordination risk".
-  // Keeping it null prevents Qwen and cross-source scoring from treating absence as a clean signal.
   const coordination: TelegramCoordinationView | null = coordinationRaw && coordinationSources > 0
     ? {
         sources: coordinationSources,
@@ -177,10 +177,18 @@ export function telegramTokenIntelligence(
     : null;
 
   const firstRaw = object(camelOrSnake(raw, "firstCall", "first_call"));
-  const firstCall = firstRaw && text(firstRaw.source)
+  const firstSources = firstRaw && Array.isArray(firstRaw.sources)
+    ? [...new Set(firstRaw.sources.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim()))].slice(0, 20)
+    : [];
+  const firstSource = firstRaw ? text(firstRaw.source) : null;
+  if (firstSource && !firstSources.includes(firstSource)) firstSources.unshift(firstSource);
+  const firstCalledAt = firstRaw ? text(camelOrSnake(firstRaw, "calledAt", "called_at")) : null;
+  const firstCall = firstRaw && (firstSource || firstSources.length || firstCalledAt)
     ? {
-        source: text(firstRaw.source) as string,
-        calledAt: text(camelOrSnake(firstRaw, "calledAt", "called_at")),
+        source: firstSource ?? (firstSources.length === 1 ? firstSources[0] : null),
+        sources: firstSources,
+        tied: Boolean(firstRaw.tied) || firstSources.length > 1,
+        calledAt: firstCalledAt,
         callMarketCapUsd: finite(camelOrSnake(firstRaw, "callMarketCapUsd", "call_market_cap_usd")),
       }
     : null;
@@ -263,8 +271,10 @@ export function telegramCoverageConfidence(timeline: SocialTimeline | null): num
 export function firstCallerReputation(
   intelligence: TelegramTokenIntelligenceView | null,
 ): TelegramCallerReputationView | null {
-  if (!intelligence?.firstCall) return null;
-  const key = intelligence.firstCall.source.toLowerCase().replace(/^@/, "");
+  const source = intelligence?.firstCall?.source;
+  // An exact tie has no single first caller. Do not arbitrarily assign one reputation.
+  if (!source || intelligence?.firstCall?.tied) return null;
+  const key = source.toLowerCase().replace(/^@/, "");
   return intelligence.callers.find(
     (caller) => caller.username.toLowerCase().replace(/^@/, "") === key,
   ) ?? null;
