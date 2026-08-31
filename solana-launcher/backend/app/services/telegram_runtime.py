@@ -195,15 +195,32 @@ class TelegramMonitorManager:
         self._background_running = True
         try:
             while True:
+                mtproto_running = False
+                mtproto_error: str | None = None
                 try:
                     mtproto_running = await self._ensure_mtproto_monitor()
-                    if not mtproto_running:
-                        await self._refresh_public_web_once()
-                    self._last_background_error = None
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    self._last_background_error = str(exc)[:500]
+                    mtproto_error = str(exc)[:500]
+
+                public_error: str | None = None
+                if not mtproto_running:
+                    try:
+                        await self._refresh_public_web_once()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        public_error = str(exc)[:500]
+
+                if public_error:
+                    self._last_background_error = public_error
+                elif mtproto_error and not self.settings.telegram_public_web_enabled:
+                    self._last_background_error = mtproto_error
+                elif mtproto_error:
+                    self._last_background_error = f"MTProto: {mtproto_error}; Public Web fallback active"
+                else:
+                    self._last_background_error = None
                 await asyncio.sleep(self.settings.telegram_public_web_refresh_tick_seconds)
         finally:
             self._background_running = False
