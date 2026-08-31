@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     telegram_public_web_discovery_entity_limit: int = Field(default=25, ge=1, le=500, alias="TG_PUBLIC_WEB_DISCOVERY_ENTITY_LIMIT")
     telegram_public_web_discovery_history_limit: int = Field(default=40, ge=10, le=200, alias="TG_PUBLIC_WEB_DISCOVERY_HISTORY_LIMIT")
     telegram_public_web_relevance_min_score: float = Field(default=35.0, ge=0.0, le=100.0, alias="TG_PUBLIC_WEB_RELEVANCE_MIN_SCORE")
+    telegram_public_web_seed_database: str = Field(default="data/tgdataset/telegram_seed_database.json", alias="TG_PUBLIC_WEB_SEED_DATABASE")
+    telegram_public_web_seed_database_limit: int = Field(default=12, ge=0, le=100, alias="TG_PUBLIC_WEB_SEED_DATABASE_LIMIT")
     phantom_nonce_ttl_minutes: int = Field(default=5, alias="PHANTOM_NONCE_TTL_MINUTES")
     telegram_auth_max_age_hours: int = Field(default=24, alias="TELEGRAM_AUTH_MAX_AGE_HOURS")
     auth_rate_limit_window_seconds: int = Field(default=60, alias="AUTH_RATE_LIMIT_WINDOW_SECONDS")
