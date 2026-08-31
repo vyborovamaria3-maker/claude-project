@@ -12,6 +12,8 @@ const liveSafe = read("lib/trade/live-intelligence-safe.ts");
 const entrySafe = read("lib/trade/entry-thesis-safe.ts");
 const entryCard = read("components/trade/EntryThesisCard.tsx");
 const sourceNarrative = read("lib/trade/source-narrative-synthesis.ts");
+const telegramView = read("lib/trade/telegram-intelligence-view.ts");
+const intelligenceAgent = read("lib/trade/intelligence-agent.ts");
 const qwenSynthesis = read("lib/trade/qwen-synthesis.ts");
 const socialAiRoute = read("app/api/trade/social-ai/route.ts");
 
@@ -35,12 +37,21 @@ assert(liveSafe.includes("stale market: исключён из current-entry scor
 assert(entrySafe.includes('priceState = "unknown"'), "entry thesis must report unknown price state without fresh market data");
 assert(entrySafe.includes("неизвестное время сигнала не считается ни ранним, ни поздним"), "unknown timing must not be converted to a zero/late signal");
 assert(entryCard.includes('data-tag="entry-thesis-technical-body"'), "entry thesis technical details must have visible content");
-assert(sourceNarrative.includes("telegramCollector"), "Telegram narrative must consume collector coverage state");
+assert(sourceNarrative.includes("telegramCollectorStatus"), "Telegram narrative must consume collector coverage state");
 assert(sourceNarrative.includes("monitor stopped"), "Telegram narrative must distinguish a stopped MTProto collector from an empty monitored index");
 assert(sourceNarrative.includes('collector?.mode === "public_web"'), "Telegram narrative must recognize public-web fallback mode");
 assert(sourceNarrative.includes("Telegram: публичное web-покрытие"), "public-web Telegram coverage must be explicit to the user");
 assert(sourceNarrative.includes("private groups"), "public-web narrative must state private-group coverage limitations");
+assert(sourceNarrative.includes("Coordination risk"), "Telegram narrative must expose deterministic coordination risk");
+assert(sourceNarrative.includes("Independent sources"), "Telegram narrative must expose independent source estimate");
+assert(sourceNarrative.includes("First caller reputation"), "Telegram narrative must expose first-caller reputation");
+assert(telegramView.includes("telegramCoverageConfidence"), "Telegram coverage confidence must have a dedicated deterministic adapter");
+assert(telegramView.includes("not a bullish/bearish probability"), "coverage confidence must not be represented as an outcome probability");
+assert(intelligenceAgent.includes('"telegram.coordination_risk"'), "Qwen snapshot must contain Telegram coordination risk");
+assert(intelligenceAgent.includes('"telegram.independent_sources"'), "Qwen snapshot must contain Telegram independent source count");
+assert(intelligenceAgent.includes('"telegram.first_caller_reputation"'), "Qwen snapshot must contain first-caller reputation");
+assert(intelligenceAgent.includes("must not be described as probability of manipulation"), "coordination feature must carry anti-overclaim grounding");
 assert(qwenSynthesis.includes("Qwen-сервис выключен"), "Qwen synthesis must explain disabled service state");
 assert(socialAiRoute.includes("if (!snapshot && !messages.length) return null"), "social AI route must allow snapshot-only full intelligence");
 
-console.log("[live-intelligence-regression] OK: entry coverage, Telegram MTProto/public-web diagnostics, snapshot-only Qwen, persisted details and technical wiring are guarded");
+console.log("[live-intelligence-regression] OK: entry coverage, Telegram collector diagnostics, independence/reputation grounding, snapshot-only Qwen, persisted details and technical wiring are guarded");
