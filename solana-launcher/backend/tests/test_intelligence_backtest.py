@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import inspect
+
 from app.services.intelligence_backtest import (
     aggregate_backtest_rows,
     classify_signal_level,
     historical_caller_reputation,
+)
+from app.services.intelligence_backtest_v2 import (
+    BACKTEST_VERSION_V2,
+    run_intelligence_backtest_v2,
 )
 
 
@@ -88,3 +94,17 @@ def test_aggregate_backtest_rows_keeps_horizon_sample_counts_separate() -> None:
     assert summary["levels"]["strong"]["windows"]["1h"]["samples"] == 1
     assert summary["levels"]["strong"]["windows"]["4h"]["samples"] == 0
     assert summary["levels"]["strong"]["windows"]["1h"]["two_x_rate"] == 1.0
+
+
+def test_v2_backtest_limit_is_unique_mints_and_builds_missing_history_on_demand() -> None:
+    source = inspect.getsource(run_intelligence_backtest_v2)
+    helper_source = inspect.getsource(__import__(
+        "app.services.intelligence_backtest_v2",
+        fromlist=["_first_signal_times"],
+    )._first_signal_times)
+
+    assert BACKTEST_VERSION_V2 >= 2
+    assert "group_by(TelegramCall.mint_address)" in helper_source
+    assert "signal_limit" in source
+    assert "_ensure_matured_24h_window" in source
+    assert "historical_windows_built_on_demand" in source
