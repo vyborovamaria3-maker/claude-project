@@ -170,8 +170,10 @@ export function buildAnalysisSnapshot(
   args: Parameters<typeof buildBaseAnalysisSnapshot>[0],
 ): AnalysisSnapshot {
   const snapshot = buildBaseAnalysisSnapshot(args);
-  const extended = crossSourceSnapshotFeatures(args, snapshot.createdAt) as BaseIntelligenceFeature[];
-  const features = [...snapshot.features, ...extended].map(enrichFeature);
+  const baseFeatures = snapshot.features.map(enrichFeature);
+  const extendedFeatures = crossSourceSnapshotFeatures(args, snapshot.createdAt)
+    .map((feature) => enrichFeature(feature as BaseIntelligenceFeature));
+  const features = [...baseFeatures, ...extendedFeatures];
 
   return {
     ...snapshot,
