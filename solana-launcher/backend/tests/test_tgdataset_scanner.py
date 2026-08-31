@@ -1,0 +1,151 @@
+from __future__ import annotations
+
+import io
+import json
+import tarfile
+
+from app.services.tgdataset_scanner import (
+    TGDatasetChannelAccumulator,
+    build_outputs,
+    iter_tgdataset_channels,
+    scan_tar_stream,
+    zenodo_archive_url,
+)
+
+
+ADDR_1 = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
+ADDR_2 = "DksAcB4w38E7bfzQ2KbjwG3sf95vUPWX9x7rhniwpump"
+
+
+def _dataset_bytes() -> bytes:
+    payload = {
+        "1001": {
+            "creation_date": 1,
+            "username": "solana_calls",
+            "title": "Solana Meme Calls",
+            "description": "Solana memecoin alpha and gems",
+            "scam": False,
+            "verified": False,
+            "n_subscribers": 12345,
+            "text_messages": {
+                "1": {
+                    "message": f"New Solana gem CA {ADDR_1} entry now",
+                    "date": 1,
+                    "author": 1001,
+                    "is_forwarded": False,
+                },
+                "2": {
+                    "message": f"Another memecoin call CA {ADDR_2} 10x setup",
+                    "date": 2,
+                    "author": 1001,
+                    "is_forwarded": True,
+                },
+            },
+            "generic_media": {},
+        },
+        "1002": {
+            "creation_date": 1,
+            "username": "gaming_mods",
+            "title": "Game Modding",
+            "description": "Mods and maps",
+            "scam": False,
+            "verified": False,
+            "n_subscribers": 5000,
+            "text_messages": {
+                "1": {
+                    "message": "New texture pack released today",
+                    "date": 1,
+                    "author": 1002,
+                    "is_forwarded": False,
+                }
+            },
+            "generic_media": {},
+        },
+        "1003": {
+            "creation_date": 1,
+            "username": "eth_meme_gems",
+            "title": "ETH Meme Gems",
+            "description": "Ethereum memecoin calls",
+            "scam": False,
+            "verified": False,
+            "n_subscribers": 8000,
+            "text_messages": {
+                "1": {
+                    "message": "Meme gem contract 0x1111111111111111111111111111111111111111 buy entry",
+                    "date": 1,
+                    "author": 1003,
+                    "is_forwarded": False,
+                }
+            },
+            "generic_media": {},
+        },
+    }
+    return json.dumps(payload).encode("utf-8")
+
+
+def _tar_bytes() -> bytes:
+    data = _dataset_bytes()
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        info = tarfile.TarInfo("TGDataset_1/channels_000.json")
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+    return output.getvalue()
+
+
+def test_streaming_json_classifies_crypto_without_loading_archive() -> None:
+    rows = list(iter_tgdataset_channels(io.BytesIO(_dataset_bytes())))
+    by_username = {row["username"]: row for row in rows}
+
+    solana = by_username["solana_calls"]
+    assert "crypto" in solana["classifications"]
+    assert "memecoin" in solana["classifications"]
+    assert "solana" in solana["classifications"]
+    assert "caller" in solana["classifications"]
+    assert solana["signals"]["unique_solana_mints"] == 2
+    assert solana["signals"]["forwarded_messages"] == 1
+
+    assert by_username["gaming_mods"]["classifications"] == []
+    assert "memecoin" in by_username["eth_meme_gems"]["classifications"]
+    assert by_username["eth_meme_gems"]["signals"]["unique_evm_contracts"] == 1
+
+
+def test_tar_stream_emits_only_candidates() -> None:
+    emitted = []
+    stats = scan_tar_stream(
+        io.BytesIO(_tar_bytes()),
+        archive_name="TGDataset_1.tar.gz",
+        on_candidate=emitted.append,
+    )
+    assert stats.json_members == 1
+    assert stats.channels_scanned == 3
+    assert stats.candidates == 2
+    assert {row["username"] for row in emitted} == {"solana_calls", "eth_meme_gems"}
+
+
+def test_build_outputs_creates_small_seed_database(tmp_path) -> None:
+    rows = list(iter_tgdataset_channels(io.BytesIO(_dataset_bytes())))
+    candidate_path = tmp_path / "TGDataset_1.tar.gz.candidates.jsonl"
+    with candidate_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            if row["classifications"]:
+                handle.write(json.dumps(row) + "\n")
+
+    summary = build_outputs(tmp_path, seed_limit=10)
+    payload = json.loads((tmp_path / "telegram_seed_database.json").read_text(encoding="utf-8"))
+    usernames = {row["username"] for row in payload["channels"]}
+    assert summary["candidate_channels"] == 2
+    assert "solana_calls" in usernames
+    assert "gaming_mods" not in usernames
+
+
+def test_seed_scoring_does_not_treat_stock_ticker_alone_as_crypto() -> None:
+    channel = TGDatasetChannelAccumulator(channel_id="7", username="stocks")
+    channel.observe_message("$AAPL buy entry")
+    result = channel.result()
+    assert result["classifications"] == []
+
+
+def test_zenodo_url_targets_original_archive() -> None:
+    url = zenodo_archive_url("TGDataset_4.tar.gz")
+    assert "zenodo.org/records/7640712/files/TGDataset_4.tar.gz" in url
