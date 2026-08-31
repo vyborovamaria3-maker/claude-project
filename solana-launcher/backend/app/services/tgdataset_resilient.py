@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import http.client
 import json
+import socket
 import tarfile
 import time
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterable
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.services.tgdataset_scanner import (
     ArchiveScanStats,
-    ZENODO_ARCHIVES,
     ZENODO_RECORD_ID,
     build_outputs,
     iter_tgdataset_channels,
@@ -18,7 +20,8 @@ from app.services.tgdataset_scanner import (
 )
 
 
-_USER_AGENT = "POTAPoff-TGDataset-Scanner/1.1"
+_USER_AGENT = "POTAPoff-TGDataset-Scanner/1.2"
+_RETRYABLE_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
 
 def _checkpoint_path(output_dir: Path, archive_name: str) -> Path:
@@ -73,6 +76,28 @@ def _stats_from_checkpoint(checkpoint: dict[str, Any], archive_name: str) -> Arc
     )
 
 
+def _is_retryable_stream_error(exc: BaseException) -> bool:
+    if isinstance(exc, HTTPError):
+        return int(exc.code) in _RETRYABLE_HTTP_STATUS
+    if isinstance(exc, URLError):
+        reason = exc.reason
+        return isinstance(
+            reason,
+            (TimeoutError, socket.timeout, ConnectionError, OSError),
+        )
+    return isinstance(
+        exc,
+        (
+            TimeoutError,
+            socket.timeout,
+            ConnectionError,
+            ConnectionResetError,
+            BrokenPipeError,
+            http.client.IncompleteRead,
+        ),
+    )
+
+
 def scan_tar_stream_resumable(
     fileobj: BinaryIO,
     *,
@@ -114,11 +139,9 @@ def scan_tar_stream_resumable(
                 messages_scanned=stats.messages_scanned,
             )
             member_output_offset = output.tell()
-            member_channels = 0
             try:
                 for channel in iter_tgdataset_channels(extracted):
                     stats.channels_scanned += 1
-                    member_channels += 1
                     stats.messages_scanned += int(channel.get("signals", {}).get("messages_total") or 0)
                     if channel.get("classifications"):
                         stats.candidates += 1
@@ -276,7 +299,8 @@ def scan_archives_resilient(
                             )
                 break
             except Exception as exc:
-                if source_path is not None or attempt >= retries:
+                retryable = _is_retryable_stream_error(exc)
+                if source_path is not None or attempt >= retries or not retryable:
                     raise
                 attempt += 1
                 checkpoint = _read_checkpoint(checkpoint_path, archive_name)
@@ -289,22 +313,30 @@ def scan_archives_resilient(
                 if delay > 0:
                     time.sleep(delay)
 
+        stats_payload = stats.as_dict()
+        stats_payload["completed_at"] = utcnow_iso()
+        stats_payload["source"] = str(source_path) if source_path else source_url
+        stats_payload["network_retries"] = attempt
+        stats_payload["read_timeout_seconds"] = read_timeout_seconds if source_path is None else None
+
         if stopped_early:
-            stats_payload = stats.as_dict()
-            stats_payload["completed_at"] = utcnow_iso()
-            stats_payload["source"] = str(source_path) if source_path else source_url
+            # Smoke/development scans are intentionally partial, but their candidates must still be
+            # visible to build_outputs(). Promote the partial file as a partial result and do not
+            # mark the archive completed in the manifest. A later full scan will replace it.
+            partial.replace(final_candidates)
+            checkpoint_path.unlink(missing_ok=True)
             stats_payload["partial"] = True
+            final_stats.write_text(json.dumps(stats_payload, ensure_ascii=False, indent=2), encoding="utf-8")
             archive_stats.append(stats_payload)
+            if progress is not None:
+                progress(
+                    f"[{archive_name}] development limit reached; partial candidates promoted for output generation"
+                )
             continue
 
         partial.replace(final_candidates)
         checkpoint_path.unlink(missing_ok=True)
-        stats_payload = stats.as_dict()
-        stats_payload["completed_at"] = utcnow_iso()
-        stats_payload["source"] = str(source_path) if source_path else source_url
         stats_payload["partial"] = False
-        stats_payload["network_retries"] = attempt
-        stats_payload["read_timeout_seconds"] = read_timeout_seconds if source_path is None else None
         final_stats.write_text(json.dumps(stats_payload, ensure_ascii=False, indent=2), encoding="utf-8")
         archive_stats.append(stats_payload)
         completed_archives.add(archive_name)
@@ -320,5 +352,6 @@ def scan_archives_resilient(
     summary = build_outputs(destination, seed_limit=seed_limit)
     summary["archives"] = archive_stats
     summary["resumable_json_member_checkpoints"] = True
+    summary["retry_policy"] = "network_timeouts_connection_resets_http_408_425_429_5xx_only"
     (destination / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
