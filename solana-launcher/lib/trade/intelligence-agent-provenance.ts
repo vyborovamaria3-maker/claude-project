@@ -57,6 +57,32 @@ const fallbackRule: ProvenanceRule = {
   role: "input",
 };
 
+// Extended deterministic groups are intentionally outside the frozen 129/core catalog. They stay
+// provenanceMapped=false so the core audit remains meaningful, but their real evidence sources must
+// still be preserved for Qwen grounding instead of silently falling back to "derived".
+const extendedGroupRules: Record<string, ProvenanceRule> = {
+  "Telegram source intelligence": {
+    source: "telegram",
+    sources: ["telegram"],
+    role: "input",
+  },
+  "Telegram caller temporal outcomes": {
+    source: "telegram",
+    sources: ["telegram"],
+    role: "input",
+  },
+  "Cross-source Independence": {
+    source: "derived",
+    sources: ["x", "telegram", "chain"],
+    role: "input",
+  },
+  "Cross-source Chronology": {
+    source: "derived",
+    sources: ["x", "telegram", "chain", "market"],
+    role: "input",
+  },
+};
+
 export type IntelligenceFeature = Omit<BaseIntelligenceFeature, "source"> & {
   source: IntelligenceFeatureSource;
   sources: IntelligenceFeatureSource[];
@@ -128,7 +154,7 @@ function featureRule(group: string, label: string) {
   const groupRule = catalog.groups[group];
   if (!groupRule) {
     return {
-      rule: fallbackRule,
+      rule: extendedGroupRules[group] || fallbackRule,
       mapped: false,
       core: false,
     };
