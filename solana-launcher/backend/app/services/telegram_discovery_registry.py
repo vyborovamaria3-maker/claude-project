@@ -157,7 +157,15 @@ async def record_discovery_results(
 
             relevance = result.get("memecoin_relevance")
             relevance = relevance if isinstance(relevance, dict) else {}
-            relevance_score = float(relevance.get("score") or old_registry.get("relevance_score") or 0.0)
+            new_score = relevance.get("score")
+            if new_score is None:
+                new_score = old_registry.get("relevance_score")
+            try:
+                relevance_score = float(new_score) if new_score is not None else 0.0
+            except (TypeError, ValueError):
+                relevance_score = 0.0
+            relevance_score = max(0.0, min(100.0, relevance_score))
+
             source = "graph"
             if username in manual:
                 source = "manual"
@@ -201,8 +209,6 @@ async def record_discovery_results(
                 "discovery_registry": registry,
                 **({"memecoin_relevance": relevance} if relevance else {}),
             }
-            # last_seen_at means the channel was actually observable. Network/404/private errors
-            # update last_checked_at but must not make a dead source look freshly seen.
             if state != "unavailable":
                 channel.last_seen_at = now
             if state == "validated":
