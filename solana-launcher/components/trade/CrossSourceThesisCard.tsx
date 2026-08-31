@@ -37,6 +37,15 @@ function Evidence({
   );
 }
 
+function value(value: number | null, suffix = "/100") {
+  return value == null ? "—" : `${Math.round(value)}${suffix}`;
+}
+
+function timeLabel(timestamp: number | null) {
+  if (timestamp == null) return "нет timestamp";
+  return new Date(timestamp).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
 export default function CrossSourceThesisCard({ thesis }: { thesis: CrossSourceThesis }) {
   return (
     <article className="surface-panel overflow-hidden rounded-2xl border border-bg-border">
@@ -63,6 +72,67 @@ export default function CrossSourceThesisCard({ thesis }: { thesis: CrossSourceT
             Что происходит сейчас
           </div>
           <p className="mt-2 text-[12px] leading-5 text-content">{thesis.currentSituation}</p>
+        </div>
+
+        <div className="mt-3 grid gap-3 xl:grid-cols-4">
+          <div className="rounded-xl border border-bg-border bg-bg-card p-3.5">
+            <div className="text-[9px] font-semibold uppercase tracking-wider text-content-faint">Source independence</div>
+            <div className="mt-2 font-mono text-lg font-semibold text-content">{value(thesis.independence.score)}</div>
+            <div className="mt-1 text-[10px] leading-4 text-content-muted">
+              независимых слоёв {thesis.independence.independentLayers}/{thesis.independence.availableLayers}
+            </div>
+          </div>
+          <div className="rounded-xl border border-bg-border bg-bg-card p-3.5">
+            <div className="text-[9px] font-semibold uppercase tracking-wider text-content-faint">Concentration risk</div>
+            <div className="mt-2 font-mono text-lg font-semibold text-content">{value(thesis.independence.concentrationRisk)}</div>
+            <div className="mt-1 text-[10px] leading-4 text-content-muted">{thesis.independence.verdict}</div>
+          </div>
+          <div className="rounded-xl border border-bg-border bg-bg-card p-3.5">
+            <div className="text-[9px] font-semibold uppercase tracking-wider text-content-faint">Chronology coverage</div>
+            <div className="mt-2 font-mono text-lg font-semibold text-content">{value(thesis.chronology.coverage, "%")}</div>
+            <div className="mt-1 text-[10px] leading-4 text-content-muted">
+              стадий {thesis.chronology.observedStages}/4
+            </div>
+          </div>
+          <div className="rounded-xl border border-bg-border bg-bg-card p-3.5">
+            <div className="text-[9px] font-semibold uppercase tracking-wider text-content-faint">Order alignment</div>
+            <div className="mt-2 font-mono text-lg font-semibold text-content">{value(thesis.chronology.alignmentScore, "%")}</div>
+            <div className="mt-1 text-[10px] leading-4 text-content-muted">
+              smart wallet → TG → X → market
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-3 xl:grid-cols-3">
+          {thesis.independence.layers.map((layer) => (
+            <div key={layer.source} className="rounded-xl border border-bg-border bg-bg-card p-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[9px] font-semibold uppercase tracking-wider text-content-faint">{layer.source}</div>
+                <div className="font-mono text-[10px] text-content">{value(layer.independenceScore)}</div>
+              </div>
+              <div className="mt-1 text-[10px] text-content-muted">
+                independent actors {layer.independentActors}/{layer.actors} · coverage {value(layer.coverageConfidence, "%")}
+              </div>
+              <p className="mt-2 text-[10px] leading-4 text-content-faint">{layer.note}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3.5">
+          <div className="text-[9px] font-semibold uppercase tracking-wider text-content-faint">Cross-source chronology</div>
+          <div className="mt-3 grid gap-2 lg:grid-cols-4">
+            {thesis.chronology.stages.map((stage, index) => (
+              <div key={stage.key} className="rounded-lg border border-bg-border bg-bg-elevated/30 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[9px] text-content-faint">{index + 1}</span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${stage.observed ? "bg-success" : "bg-content-faint"}`} />
+                </div>
+                <div className="mt-2 text-[10px] font-semibold text-content">{stage.label}</div>
+                <div className="mt-1 font-mono text-[9px] text-content-muted">{timeLabel(stage.timestamp)}</div>
+                <p className="mt-2 text-[9px] leading-4 text-content-faint">{stage.note}</p>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="mt-3 grid gap-3 xl:grid-cols-2">
