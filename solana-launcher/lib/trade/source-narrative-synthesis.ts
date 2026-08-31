@@ -44,11 +44,20 @@ type ExtendedResult = NonNullable<AiEnvelope["result"]> & {
 };
 
 type TelegramCollectorStatus = {
+  mode?: "mtproto" | "public_web" | "unavailable" | string;
   configured?: boolean;
+  mtproto_configured?: boolean;
   session_configured?: boolean;
   running?: boolean;
   connected?: boolean;
   monitored_channels?: number;
+  public_web_enabled?: boolean;
+  public_web_configured?: boolean;
+  public_web_channels?: number;
+  last_scan_at?: string | null;
+  last_scan_messages?: number;
+  last_scan_matches?: number;
+  last_error?: string | null;
 };
 
 function clean(value: unknown) {
@@ -134,44 +143,107 @@ function telegramCoverageExplanation(tg: SocialTimeline | null) {
   const collector = collectorStatus(tg);
   if (!tg) {
     return {
-      situation: "Telegram backend не ответил, поэтому система не знает, есть ли обсуждение токена в отслеживаемых каналах.",
+      situation: "Telegram backend не ответил, поэтому система не знает, есть ли обсуждение токена в отслеживаемых источниках.",
       detail: "Нужно восстановить соединение с Telegram backend; до этого источник исключён из оценки.",
       state: "source unavailable",
     };
   }
-  if (collector && collector.configured === false) {
+
+  if (collector?.mode === "public_web") {
+    const channels = collector.public_web_channels ?? collector.monitored_channels ?? 0;
+    if (collector.last_scan_at) {
+      return {
+        situation: `Telegram: публичное web-покрытие. Просканировано ${channels} публичных каналов; в последнем проходе обработано ${collector.last_scan_messages ?? 0} сообщений, но по этому mint за выбранное окно совпадений нет.`,
+        detail: "Public Web покрывает только настроенные публичные каналы и не видит private groups. Пустой результат не считается bearish-сигналом и не означает тишину во всём Telegram.",
+        state: "public web index empty",
+      };
+    }
     return {
-      situation: "Telegram API отвечает, но MTProto collector не настроен. В таком режиме локальный индекс не может собирать реальные сообщения из Telegram.",
-      detail: "Нужны TG_API_ID и TG_API_HASH; без collector нельзя интерпретировать пустой индекс как отсутствие обсуждения.",
+      situation: `Telegram Public Web fallback настроен на ${channels} публичных каналов, но успешный history scan ещё не зафиксирован.`,
+      detail: collector.last_error
+        ? `Последний public-web scan завершился ошибкой: ${collector.last_error}. Пока источник не влияет на входной тезис.`
+        : "Нужно дождаться или запустить bounded public-web scan; private groups этим режимом всё равно не покрываются.",
+      state: "public web pending",
+    };
+  }
+
+  if (collector?.mode === "unavailable" || collector?.configured === false) {
+    return {
+      situation: "Telegram API отвечает, но ни MTProto collector, ни Public Web fallback сейчас не дают покрытия.",
+      detail: "Настрой MTProto либо TG_PUBLIC_WEB_ENABLED + список публичных каналов. Без collector нельзя трактовать пустой индекс как отсутствие обсуждения.",
       state: "collector not configured",
     };
   }
-  if (collector && collector.session_configured === false) {
+
+  if (collector?.mode === "mtproto" && collector.session_configured === false) {
     return {
-      situation: "Telegram collector знает API credentials, но пользовательская MTProto session не подключена. История каналов сейчас не собирается.",
-      detail: "Нужна авторизованная TG_SESSION_STRING или локальная session; пока Telegram не влияет на входной тезис.",
+      situation: "Telegram MTProto знает API credentials, но пользовательская session не подключена. История и realtime сейчас не собираются.",
+      detail: "Нужна авторизованная TG_SESSION_STRING либо включённый Public Web fallback; пока Telegram не влияет на входной тезис.",
       state: "session missing",
     };
   }
-  if (collector && collector.running === false) {
+
+  if (collector?.mode === "mtproto" && collector.running === false) {
     return {
-      situation: "Telegram collector настроен, но monitor сейчас остановлен. Поэтому свежие сообщения не попадают в локальный индекс автоматически.",
-      detail: "Запусти monitor/worker для настроенного набора каналов; до этого нулевой индекс означает отсутствие покрытия, а не тишину в Telegram.",
+      situation: "Telegram MTProto collector настроен, но realtime monitor сейчас остановлен. Поэтому свежие сообщения не попадают в локальный индекс автоматически.",
+      detail: "Запусти monitor/worker или Public Web fallback; нулевой индекс означает отсутствие покрытия, а не тишину в Telegram.",
       state: "monitor stopped",
     };
   }
-  if (collector?.running) {
+
+  if (collector?.mode === "mtproto" && collector.running) {
     return {
-      situation: `Telegram collector работает и отслеживает ${collector.monitored_channels ?? 0} каналов, но по этому mint за выбранное окно совпадений не найдено. Это вывод только по отслеживаемому universe каналов, не по всему Telegram.`,
+      situation: `Telegram MTProto collector работает и отслеживает ${collector.monitored_channels ?? 0} каналов, но по этому mint за выбранное окно совпадений не найдено. Это вывод только по отслеживаемому universe каналов, не по всему Telegram.`,
       detail: "Чтобы расширить покрытие, нужно добавить релевантные каналы/источники в monitored or scanned universe.",
       state: "monitored index empty",
     };
   }
+
   return {
     situation: "В локальном Telegram-индексе нет пригодных сообщений по этому mint за выбранное окно. Это отсутствие покрытия в текущем индексе, а не доказательство того, что токен нигде не обсуждают.",
-    detail: "Проверь MTProto collector/monitor и набор отслеживаемых каналов. Пока индекс пуст, Telegram не влияет на решение о входе.",
+    detail: "Проверь collector и набор отслеживаемых каналов. Пока индекс пуст, Telegram не влияет на решение о входе.",
     state: "index empty",
   };
+}
+
+function annotateTelegramCollector(
+  base: SourceNarrative,
+  collector: TelegramCollectorStatus | null,
+): SourceNarrative {
+  if (!collector) return base;
+  if (collector.mode === "public_web") {
+    const channels = collector.public_web_channels ?? collector.monitored_channels ?? 0;
+    return {
+      ...base,
+      currentSituation: `Telegram: публичное web-покрытие. ${base.currentSituation}`,
+      warningEvidence: [
+        ...base.warningEvidence,
+        "Public Web анализирует только настроенные публичные каналы; private groups и весь остальной Telegram не покрываются.",
+      ],
+      parameters: [
+        ...base.parameters,
+        {
+          label: "Telegram collector",
+          value: "public_web",
+          note: `${channels} публичных каналов · history scan без MTProto session`,
+        },
+      ],
+    };
+  }
+  if (collector.mode === "mtproto") {
+    return {
+      ...base,
+      parameters: [
+        ...base.parameters,
+        {
+          label: "Telegram collector",
+          value: "mtproto",
+          note: `${collector.monitored_channels ?? 0} каналов · history + realtime при запущенном monitor`,
+        },
+      ],
+    };
+  }
+  return base;
 }
 
 export function buildSourceNarrativeSynthesis(args: Args): SourceNarratives {
@@ -206,7 +278,7 @@ export function buildSourceNarrativeSynthesis(args: Args): SourceNarratives {
   const coverage = telegramCoverageExplanation(args.tg);
   const collector = collectorStatus(args.tg);
   const telegram = telegramAvailable
-    ? deterministic.telegram
+    ? annotateTelegramCollector(deterministic.telegram, collector)
     : unavailable(
         deterministic.telegram,
         coverage.situation,
@@ -224,8 +296,10 @@ export function buildSourceNarrativeSynthesis(args: Args): SourceNarratives {
           },
           ...(collector ? [{
             label: "Collector",
-            value: collector.running ? "running" : "stopped",
-            note: `configured ${collector.configured ? "yes" : "no"} · session ${collector.session_configured ? "yes" : "no"} · channels ${collector.monitored_channels ?? 0}`,
+            value: collector.mode ?? (collector.running ? "running" : "stopped"),
+            note: collector.mode === "public_web"
+              ? `public channels ${collector.public_web_channels ?? collector.monitored_channels ?? 0} · last scan messages ${collector.last_scan_messages ?? 0}`
+              : `configured ${collector.configured ? "yes" : "no"} · session ${collector.session_configured ? "yes" : "no"} · channels ${collector.monitored_channels ?? 0}`,
           }] : []),
         ],
       );
