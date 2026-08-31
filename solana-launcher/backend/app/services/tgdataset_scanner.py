@@ -123,7 +123,9 @@ class TGDatasetChannelAccumulator:
 
     def finalize_metadata(self) -> None:
         evidence = "\n".join(part for part in (self.username, self.title, self.description) if part)
-        self.metadata_crypto = bool(_CRYPTO_RE.search(evidence) or _MEME_RE.search(evidence) or _SOLANA_RE.search(evidence))
+        self.metadata_crypto = bool(
+            _CRYPTO_RE.search(evidence) or _MEME_RE.search(evidence) or _SOLANA_RE.search(evidence)
+        )
         self.metadata_memecoin = bool(_MEME_RE.search(evidence))
         self.metadata_solana = bool(_SOLANA_RE.search(evidence))
         self.metadata_caller = bool(_CALL_RE.search(evidence) and self.metadata_crypto)
@@ -157,18 +159,21 @@ class TGDatasetChannelAccumulator:
                 if len(self._evm_contracts) < _MAX_UNIQUE_CONTRACTS:
                     self._evm_contracts.add(address.lower())
 
-        token_evidence = bool(parsed.addresses or evm_contracts or parsed.tickers)
-        if meme_hit or solana_hit or token_evidence:
+        contract_evidence = bool(parsed.addresses or evm_contracts)
+        ticker_evidence = bool(parsed.tickers and (crypto_hit or meme_hit or solana_hit))
+        token_evidence = contract_evidence or ticker_evidence
+        if meme_hit or solana_hit or contract_evidence:
             crypto_hit = True
+
         if crypto_hit:
             self.crypto_messages += 1
         if meme_hit:
             self.memecoin_messages += 1
         if solana_hit:
             self.solana_messages += 1
-        if parsed.addresses or evm_contracts:
+        if contract_evidence:
             self.contract_messages += 1
-        if parsed.tickers:
+        if parsed.tickers and crypto_hit:
             self.ticker_messages += 1
         if pumpfun_hit:
             self.pumpfun_messages += 1
@@ -226,7 +231,9 @@ class TGDatasetChannelAccumulator:
             classifications.append("caller")
         if "memecoin" in classifications and "caller" in classifications:
             classifications.append("memecoin_calls")
-        if "solana" in classifications and (scores["memecoin"] >= 25.0 or "caller" in classifications):
+        if "solana" in classifications and (
+            scores["memecoin"] >= 25.0 or "caller" in classifications
+        ):
             classifications.append("solana_memecoin")
 
         seed_score = round(
@@ -274,7 +281,9 @@ def iter_tgdataset_channels(fileobj: BinaryIO) -> Iterator[dict[str, Any]]:
     try:
         import ijson
     except ImportError as exc:  # pragma: no cover - dependency guard for manual environments
-        raise RuntimeError("TGDataset scanning requires ijson. Install the backend dependencies first.") from exc
+        raise RuntimeError(
+            "TGDataset scanning requires ijson. Install the backend dependencies first."
+        ) from exc
 
     current: TGDatasetChannelAccumulator | None = None
     current_id = ""
@@ -299,13 +308,12 @@ def iter_tgdataset_channels(fileobj: BinaryIO) -> Iterator[dict[str, Any]]:
         if relative.startswith("text_messages.") and relative.endswith(".message") and event == "string":
             current.observe_message(str(value or ""))
             continue
-        if relative.startswith("text_messages.") and relative.endswith(".is_forwarded") and event == "boolean":
+        if (
+            relative.startswith("text_messages.")
+            and relative.endswith(".is_forwarded")
+            and event == "boolean"
+        ):
             current.observe_forwarded(value)
-            continue
-        if relative.startswith("generic_media.") and relative.endswith(".title") and event == "string":
-            title = str(value or "")
-            if title and _GATE_RE.search(title):
-                current.observe_message(title)
 
     if current is not None:
         yield current.result()
@@ -390,10 +398,18 @@ def build_outputs(output_dir: Path, *, seed_limit: int = 250) -> dict[str, Any]:
         if not key:
             continue
         previous = deduped.get(key)
-        if previous is None or float(row.get("seed_score") or 0.0) > float(previous.get("seed_score") or 0.0):
+        if previous is None or float(row.get("seed_score") or 0.0) > float(
+            previous.get("seed_score") or 0.0
+        ):
             deduped[key] = row
     rows = list(deduped.values())
-    rows.sort(key=lambda row: (float(row.get("seed_score") or 0.0), int(row.get("n_subscribers") or 0)), reverse=True)
+    rows.sort(
+        key=lambda row: (
+            float(row.get("seed_score") or 0.0),
+            int(row.get("n_subscribers") or 0),
+        ),
+        reverse=True,
+    )
 
     categories = {
         "crypto_channels.json": "crypto",
@@ -403,7 +419,9 @@ def build_outputs(output_dir: Path, *, seed_limit: int = 250) -> dict[str, Any]:
     }
     for filename, label in categories.items():
         selected = [row for row in rows if label in (row.get("classifications") or [])]
-        (output_dir / filename).write_text(json.dumps(selected, ensure_ascii=False, indent=2), encoding="utf-8")
+        (output_dir / filename).write_text(
+            json.dumps(selected, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     seed_candidates = [
         row
@@ -419,7 +437,10 @@ def build_outputs(output_dir: Path, *, seed_limit: int = 250) -> dict[str, Any]:
         "version": 1,
         "generated_at": utcnow_iso(),
         "source": f"zenodo:{ZENODO_RECORD_ID}",
-        "note": "Historical candidates only. Public-web collector must revalidate current relevance before use.",
+        "note": (
+            "Historical candidates only. Public-web collector must revalidate current relevance "
+            "before use."
+        ),
         "channels": [
             {
                 "username": row["username"],
@@ -432,19 +453,25 @@ def build_outputs(output_dir: Path, *, seed_limit: int = 250) -> dict[str, Any]:
         ],
     }
     seed_path = output_dir / "telegram_seed_database.json"
-    seed_path.write_text(json.dumps(seed_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    seed_path.write_text(
+        json.dumps(seed_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     summary = {
         "generated_at": utcnow_iso(),
         "candidate_channels": len(rows),
         "crypto_channels": sum("crypto" in (row.get("classifications") or []) for row in rows),
-        "memecoin_channels": sum("memecoin" in (row.get("classifications") or []) for row in rows),
+        "memecoin_channels": sum(
+            "memecoin" in (row.get("classifications") or []) for row in rows
+        ),
         "solana_channels": sum("solana" in (row.get("classifications") or []) for row in rows),
         "caller_channels": sum("caller" in (row.get("classifications") or []) for row in rows),
         "seed_channels": len(seed_candidates),
         "seed_database": str(seed_path),
     }
-    (output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    (output_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return summary
 
 
@@ -478,7 +505,11 @@ def scan_archives(
 
     manifest_path = destination / "manifest.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+        manifest = (
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest_path.exists()
+            else {}
+        )
     except json.JSONDecodeError:
         manifest = {}
     completed = set(manifest.get("completed_archives") or [])
@@ -505,7 +536,9 @@ def scan_archives(
             source_url = zenodo_archive_url(archive_name)
 
         if progress is not None:
-            progress(f"[{archive_name}] starting {'local' if source_path else 'Zenodo stream'} scan")
+            progress(
+                f"[{archive_name}] starting {'local' if source_path else 'Zenodo stream'} scan"
+            )
 
         with partial.open("w", encoding="utf-8") as output:
             def emit(row: dict[str, Any]) -> None:
@@ -521,8 +554,10 @@ def scan_archives(
                         progress=progress,
                     )
             else:
-                request = Request(source_url or "", headers={"User-Agent": _USER_AGENT}, method="GET")
-                with urlopen(request, timeout=120) as stream:  # noqa: S310 - fixed Zenodo dataset URLs only
+                request = Request(
+                    source_url or "", headers={"User-Agent": _USER_AGENT}, method="GET"
+                )
+                with urlopen(request, timeout=120) as stream:  # noqa: S310 - fixed Zenodo URLs
                     stats = scan_tar_stream(
                         stream,
                         archive_name=archive_name,
@@ -535,18 +570,28 @@ def scan_archives(
         stats_payload = stats.as_dict()
         stats_payload["completed_at"] = utcnow_iso()
         stats_payload["source"] = str(source_path) if source_path else source_url
-        final_stats.write_text(json.dumps(stats_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        stats_payload["partial"] = max_channels is not None
+        final_stats.write_text(
+            json.dumps(stats_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         archive_stats.append(stats_payload)
-        completed.add(archive_name)
+        if max_channels is None:
+            completed.add(archive_name)
+        else:
+            completed.discard(archive_name)
         manifest = {
             "version": 1,
             "record_id": ZENODO_RECORD_ID,
             "completed_archives": sorted(completed),
             "updated_at": utcnow_iso(),
         }
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     summary = build_outputs(destination, seed_limit=seed_limit)
     summary["archives"] = archive_stats
-    (destination / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    (destination / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return summary
