@@ -43,6 +43,8 @@ def _settings():
         telegram_public_web_discovery_entity_limit = 10
         telegram_public_web_discovery_history_limit = 40
         telegram_public_web_relevance_min_score = 35.0
+        telegram_public_web_seed_database = ""
+        telegram_public_web_seed_database_limit = 0
 
     return StubSettings()
 
@@ -129,6 +131,28 @@ def test_graph_accepts_relevant_channel_and_filters_noise() -> None:
     assert result["discovery"]["discovered"] == 2
     assert result["discovery"]["accepted"] == 1
     assert result["discovery"]["rejected"] == 1
+    assert result["discovery"]["seed_validated"] == 1
     rejected = next(row for row in result["results"] if row.get("filtered"))
     assert rejected["username"] == "random_news"
     assert rejected["reason"] == "memecoin_relevance_below_threshold"
+
+
+def test_seed_revalidation_is_not_counted_as_graph_discovery() -> None:
+    collector = TelegramPublicWebDiscoveryCollector(_settings(), None)  # type: ignore[arg-type]
+
+    async def fake_load(username: str, limit: int):
+        return [_message(username, 1, "general macro news with no contract address")]
+
+    collector._load_channel = fake_load  # type: ignore[method-assign]
+    result = asyncio.run(
+        collector.scan_channels(
+            ["historical_seed"],
+            history_limit=40,
+            force_accept_explicit=False,
+        )
+    )
+
+    assert result["discovery"]["discovered"] == 0
+    assert result["discovery"]["accepted"] == 0
+    assert result["discovery"]["rejected"] == 0
+    assert result["discovery"]["seed_rejected"] == 1
