@@ -57,9 +57,10 @@ assert(sourceNarrative.includes("First caller reputation"), "Telegram narrative 
 assert(telegramView.includes("telegramCoverageConfidence"), "Telegram coverage confidence must have a dedicated deterministic adapter");
 assert(telegramView.includes("not a bullish/bearish probability"), "coverage confidence must not be represented as an outcome probability");
 assert(telegramView.includes("if (value == null) return null"), "nullable Telegram numbers must not be coerced to zero");
+assert(telegramView.includes("coordinationSources > 0"), "empty Telegram coordination must stay unavailable instead of becoming 0-risk evidence");
 assert(telegramView.includes("temporalOutcomeScore"), "live caller adapter must expose temporal outcome score");
 assert(telegramView.includes("outcomeWindows"), "live caller adapter must expose temporal outcome windows");
-assert(intelligenceAgent.includes('"telegram.coordination_risk"'), "Qwen snapshot must contain Telegram coordination risk");
+assert(intelligenceAgent.includes('"telegram.coordination_risk"'), "Qwen snapshot must contain Telegram coordination risk when Telegram evidence exists");
 assert(intelligenceAgent.includes('"telegram.independent_sources"'), "Qwen snapshot must contain Telegram independent source count");
 assert(intelligenceAgent.includes('"telegram.first_caller_reputation"'), "Qwen snapshot must contain first-caller reputation");
 assert(intelligenceAgent.includes("must not be described as probability of manipulation"), "coordination feature must carry anti-overclaim grounding");
@@ -73,12 +74,18 @@ assert(crossSource.includes('"cross_source.independence_score"'), "cross-source 
 assert(crossSource.includes('"cross_source.chronology_alignment"'), "cross-source snapshot must expose chronology alignment");
 assert(crossSource.includes('"cross_source.price_led_social"'), "cross-source snapshot must expose price-led-social state");
 assert(crossSourceSafe.includes("item === null ? undefined"), "cross-source unknown values must be preserved instead of Number(null) => 0");
-assert(crossSourceSafe.includes("observedStages: chronology.orderableStages"), "chronology displayed stage count must match timestamp coverage");
+assert(crossSourceSafe.includes("RELIABLE_CHRONOLOGY_CONFIDENCE"), "entry chronology must have an explicit confidence gate");
+assert(crossSourceSafe.includes('queryMode === "top"'), "top-ranked X samples must not pretend to provide reliable chronology");
+assert(crossSourceSafe.includes("replaceChronologySnapshotValues"), "Qwen chronology features must use the same reliable chronology as Entry Timing");
 assert(crossSourceSafe.includes("Timestamp:"), "chronology diagnostics must include the date as well as clock time");
 assert(crossSourceSafe.includes('"telegram.first_caller_temporal_outcome_score"'), "grounded snapshot must contain temporal caller history");
+assert(crossSourceSafe.includes("excluding the current mint"), "temporal caller snapshot notes must document current-mint exclusion");
 assert(crossSourceThesisSafe.includes("falseConfirmed"), "confirmed cross-source state must require strong independence");
+assert(crossSourceThesisSafe.includes("Math.min(base.confidence"), "downgraded cross-source state must not keep optimistic confirmed confidence");
 assert(provenanceAgent.includes("cross-source-intelligence-safe"), "provenance/Qwen snapshot must use null-safe cross-source feature keys");
 assert(provenanceAgent.includes("snapshot.features.map(enrichFeature)"), "129/core snapshot features must keep the provenance enrichment pass");
+assert(provenanceAgent.includes('"Telegram caller temporal outcomes"'), "temporal Telegram features must retain Telegram provenance outside the 129 catalog");
+assert(provenanceAgent.includes('"Cross-source Chronology"'), "extended chronology features must have explicit multi-source provenance");
 assert(crossSourceThesis.includes("independenceWeak"), "cross-source thesis must downgrade concentrated confirmation");
 assert(crossSourceThesis.includes("chronology.priceLedSocial"), "cross-source thesis must surface late social reaction risk");
 assert(crossSourceCard.includes("Source independence"), "cross-source UI must show source independence");
@@ -87,4 +94,4 @@ assert(crossSourceCard.includes("smart wallet → TG → X → market"), "cross-
 assert(qwenSynthesis.includes("Qwen-сервис выключен"), "Qwen synthesis must explain disabled service state");
 assert(socialAiRoute.includes("if (!snapshot && !messages.length) return null"), "social AI route must allow snapshot-only full intelligence");
 
-console.log("[live-intelligence-regression] OK: entry coverage, null-safe cross-source intelligence, temporal Telegram caller outcomes, snapshot-only Qwen, persisted details and technical wiring are guarded");
+console.log("[live-intelligence-regression] OK: entry coverage, null-safe evidence, reliable chronology, current-mint-safe caller history, extended provenance and snapshot-only Qwen are guarded");
