@@ -34,27 +34,42 @@ async def lifespan(app: FastAPI):
     async with app.state.sessionmaker() as session:
         await get_or_create_jobs(session)
 
-    if settings.telegram_autostart and settings.telegram_monitor_channels.strip():
+    manager: TelegramMonitorManager = app.state.telegram_intelligence
+    mtproto_started = False
+    channels = [item.strip() for item in settings.telegram_monitor_channels.split(",") if item.strip()]
+
+    if settings.telegram_autostart and channels and manager.mtproto_configured:
         try:
-            service = await app.state.telegram_intelligence.get_service()
-            channels = [item.strip() for item in settings.telegram_monitor_channels.split(",") if item.strip()]
-            if channels:
-                graph = await service.scan_graph(
-                    channels,
-                    max_depth=settings.telegram_graph_depth,
-                    post_limit=settings.telegram_history_limit,
-                    entity_limit=settings.telegram_entity_limit,
-                )
-                discovered = [
-                    str(row.get("username") or "").strip()
-                    for row in graph.get("results", [])
-                    if not row.get("error") and row.get("username")
-                ]
-                monitored = list(dict.fromkeys([*channels, *discovered]))
-                await service.start_monitor(monitored)
+            service = await manager.get_service()
+            graph = await service.scan_graph(
+                channels,
+                max_depth=settings.telegram_graph_depth,
+                post_limit=settings.telegram_history_limit,
+                entity_limit=settings.telegram_entity_limit,
+            )
+            discovered = [
+                str(row.get("username") or "").strip()
+                for row in graph.get("results", [])
+                if not row.get("error") and row.get("username")
+            ]
+            monitored = list(dict.fromkeys([*channels, *discovered]))
+            await service.start_monitor(monitored)
+            mtproto_started = True
         except Exception:
-            # Telegram intelligence is optional; a stale/missing MTProto session must not prevent API startup.
-            pass
+            # A stale/missing MTProto session must not prevent API startup or the public fallback.
+            mtproto_started = False
+
+    if settings.telegram_public_web_enabled and not mtproto_started:
+        public_channels = manager.public_web.configured_channels
+        if public_channels:
+            try:
+                await manager.scan_public_web(
+                    public_channels,
+                    history_limit=settings.telegram_public_web_history_limit,
+                )
+            except Exception:
+                # Telegram intelligence is optional; public preview failures must never block API startup.
+                pass
 
     yield
     await app.state.telegram_intelligence.close()
