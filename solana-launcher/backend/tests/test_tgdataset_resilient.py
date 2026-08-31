@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import ssl
 import tarfile
 
 import pytest
@@ -96,6 +97,7 @@ def test_resumable_scan_rolls_back_interrupted_member_and_skips_completed_json(m
 def test_retry_policy_does_not_retry_deterministic_parser_errors() -> None:
     assert tgdataset_resilient._is_retryable_stream_error(TimeoutError("network stall")) is True
     assert tgdataset_resilient._is_retryable_stream_error(ConnectionResetError("reset")) is True
+    assert tgdataset_resilient._is_retryable_stream_error(ssl.SSLError("tls stream closed")) is True
     assert tgdataset_resilient._is_retryable_stream_error(
         json.JSONDecodeError("bad json", "{", 0)
     ) is False
