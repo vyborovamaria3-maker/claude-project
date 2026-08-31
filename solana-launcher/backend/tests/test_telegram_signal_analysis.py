@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+from app.services.telegram_signal_analysis import (
+    analyze_coordination_events,
+    build_caller_reputation,
+)
+
+
+NOW = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+
+
+def test_coordination_detector_separates_repost_from_late_independent_source() -> None:
+    events = [
+        {
+            "source_handle": "alpha_calls",
+            "text": "New Solana gem entry now CA 3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump",
+            "occurred_at": NOW,
+            "payload": {},
+        },
+        {
+            "source_handle": "copy_calls",
+            "text": "New Solana gem entry now CA 3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump",
+            "occurred_at": NOW + timedelta(minutes=2),
+            "payload": {"forwarded_from": "alpha_calls"},
+        },
+        {
+            "source_handle": "independent_calls",
+            "text": "I found this mint from on-chain volume, watching the holder distribution",
+            "occurred_at": NOW + timedelta(minutes=22),
+            "payload": {},
+        },
+    ]
+
+    result = analyze_coordination_events(events)
+
+    assert result["sources"] == 3
+    assert result["coordinated_sources"] == 1
+    assert result["independent_sources"] == 2
+    assert result["leader"] == "alpha_calls"
+    assert result["burst_sources_5m"] == 2
+    assert result["coordination_risk"] > 0
+    assert result["source_independence_score"] < 100
+
+
+def test_coordination_detector_deduplicates_multiple_messages_from_same_source() -> None:
+    events = [
+        {
+            "source_handle": "alpha",
+            "text": "first post",
+            "occurred_at": NOW,
+            "payload": {},
+        },
+        {
+            "source_handle": "alpha",
+            "text": "second post",
+            "occurred_at": NOW + timedelta(minutes=1),
+            "payload": {},
+        },
+    ]
+
+    result = analyze_coordination_events(events)
+    assert result["sources"] == 1
+    assert result["independent_sources"] == 1
+    assert result["coordinated_sources"] == 0
+
+
+def test_caller_reputation_rewards_early_original_caller_over_reposter() -> None:
+    rows = [
+        {
+            "username": "alpha",
+            "mint_address": "mint-a",
+            "called_at": NOW,
+            "outcome": "win",
+            "roi_multiple": 3.0,
+            "call_market_cap_usd": 20_000,
+            "forwarded_from": None,
+        },
+        {
+            "username": "copy",
+            "mint_address": "mint-a",
+            "called_at": NOW + timedelta(minutes=12),
+            "outcome": "win",
+            "roi_multiple": 2.0,
+            "call_market_cap_usd": 80_000,
+            "forwarded_from": "alpha",
+        },
+        {
+            "username": "alpha",
+            "mint_address": "mint-b",
+            "called_at": NOW + timedelta(hours=1),
+            "outcome": "win",
+            "roi_multiple": 4.0,
+            "call_market_cap_usd": 25_000,
+            "forwarded_from": None,
+        },
+        {
+            "username": "copy",
+            "mint_address": "mint-b",
+            "called_at": NOW + timedelta(hours=1, minutes=20),
+            "outcome": "rug",
+            "roi_multiple": 0.2,
+            "call_market_cap_usd": 100_000,
+            "forwarded_from": "alpha",
+        },
+    ]
+
+    result = {row["username"]: row for row in build_caller_reputation(rows)}
+    alpha = result["alpha"]
+    copy = result["copy"]
+
+    assert alpha["first_calls"] == 2
+    assert alpha["median_lead_minutes"] == 16.0
+    assert alpha["repost_rate"] == 0.0
+    assert alpha["originality_score"] > copy["originality_score"]
+    assert alpha["timing_score"] > copy["timing_score"]
+    assert alpha["reputation_score"] > copy["reputation_score"]
+    assert copy["repost_rate"] == 1.0
