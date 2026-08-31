@@ -62,10 +62,17 @@ export function buildCrossSourceThesis(args: Args): CrossSourceThesis {
   const independenceText = intelligence.independence.score == null
     ? "независимость пока не измерена"
     : `independence ${Math.round(intelligence.independence.score)}/100, concentration risk ${Math.round(concentrationRisk ?? 0)}/100`;
+  const agreements = base.agreements.filter((row) => {
+    const value = row.toLowerCase();
+    return !value.includes("независим") && !value.includes("independence");
+  });
 
   return {
     ...base,
     state,
+    // A corrected divergence/risk state must not retain a high confidence inherited from the
+    // optimistic base "confirmed" branch.
+    confidence: Math.min(base.confidence, state === "risk_dominates" ? 55 : 65),
     headline: state === "risk_dominates"
       ? "Источники совпадают по направлению, но их независимость недостаточна"
       : "Направление источников совпадает, но независимое cross-source подтверждение ещё не доказано",
@@ -74,6 +81,7 @@ export function buildCrossSourceThesis(args: Args): CrossSourceThesis {
     entryMeaning: "Не повышать Entry Timing только из-за количества совпадающих сигналов. Нужен новый независимый слой подтверждения либо снижение concentration risk.",
     independence: intelligence.independence,
     chronology: intelligence.chronology,
+    agreements,
     contradictions: [
       ...base.contradictions,
       `Cross-source direction совпадает, но независимость не strong (${independenceText}).`,
