@@ -188,6 +188,8 @@ export function telegramTokenIntelligence(
 }
 
 export function telegramCoverageConfidence(timeline: SocialTimeline | null): number | null {
+  // Coverage confidence describes how well our configured Telegram universe was observed.
+  // It is not a bullish/bearish probability and must never be used as a token outcome probability.
   const collector = telegramCollectorStatus(timeline);
   if (!timeline || !collector || collector.configured === false || collector.mode === "unavailable") return null;
 
