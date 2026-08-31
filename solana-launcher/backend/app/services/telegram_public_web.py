@@ -31,6 +31,7 @@ _MAX_RESPONSE_BYTES = 3 * 1024 * 1024
 _MAX_PAGES_PER_CHANNEL = 20
 _REQUEST_INTERVAL_SECONDS = 0.35
 _RETRY_DELAYS_SECONDS = (0.6, 1.5)
+_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Safari/537.36"
@@ -80,6 +81,11 @@ def _clean_text(parts: list[str]) -> str:
     return text.strip()
 
 
+def _message_evidence(message: "PublicTelegramMessage") -> str:
+    parts = [message.text, *message.links]
+    return "\n".join(part.strip() for part in parts if part and part.strip())
+
+
 @dataclass(slots=True)
 class PublicTelegramMessage:
     channel_username: str
@@ -114,7 +120,9 @@ class TelegramPublicPageParser(HTMLParser):
         return {key: value or "" for key, value in attrs}
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self._depth += 1
+        is_void = tag in _VOID_TAGS
+        if not is_void:
+            self._depth += 1
         values = self._attrs(attrs)
         classes = set(values.get("class", "").split())
         data_post = values.get("data-post", "").strip()
@@ -147,8 +155,6 @@ class TelegramPublicPageParser(HTMLParser):
                 href = "https://" + href.split("://", 1)[1]
             if href not in current.links:
                 current.links.append(href)
-            if "tgme_widget_message_date" in classes:
-                current.url = href
             if "tgme_widget_message_reply" in classes:
                 current.reply_url = href
 
@@ -167,6 +173,11 @@ class TelegramPublicPageParser(HTMLParser):
         if tag == "br" and self._text_depth is not None:
             self._text_parts.append("\n")
 
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if tag not in _VOID_TAGS:
+            self.handle_endtag(tag)
+
     def handle_data(self, data: str) -> None:
         if self._current is None:
             return
@@ -178,6 +189,8 @@ class TelegramPublicPageParser(HTMLParser):
             self._forward_parts.append(data)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in _VOID_TAGS:
+            return
         if self._current is not None:
             if self._text_depth == self._depth:
                 self._text_depth = None
@@ -309,13 +322,15 @@ class TelegramPublicWebCollector:
         messages: dict[int, PublicTelegramMessage] = {}
         before: int | None = None
         max_pages = min(_MAX_PAGES_PER_CHANNEL, max(1, (limit + 19) // 20 + 1))
-        for _ in range(max_pages):
+        for page_index in range(max_pages):
             url = f"https://t.me/s/{username}"
             if before is not None:
                 url += f"?before={before}"
             html = await self._fetch(url)
             page = [item for item in parse_public_telegram_html(html) if item.channel_username == username]
             if not page:
+                if page_index == 0:
+                    raise TelegramPublicWebUnavailable("Telegram public preview exposed no messages")
                 break
             new_count = 0
             for item in page:
@@ -368,7 +383,8 @@ class TelegramPublicWebCollector:
     ) -> int:
         if message.published_at is None:
             return 0
-        parsed = parse_telegram_message(message.text)
+        evidence = _message_evidence(message)
+        parsed = parse_telegram_message(evidence)
         stored = (
             await session.execute(
                 select(TelegramMessage).where(
@@ -418,7 +434,7 @@ class TelegramPublicWebCollector:
                         target_platform="telegram",
                         target_handle=target,
                         relation_type="mention",
-                        evidence=message.text,
+                        evidence=evidence,
                         occurred_at=message.published_at,
                     )
             for target in parsed.x_usernames:
@@ -429,7 +445,7 @@ class TelegramPublicWebCollector:
                     target_platform="x",
                     target_handle=target,
                     relation_type="link",
-                    evidence=message.text,
+                    evidence=evidence,
                     occurred_at=message.published_at,
                 )
 
@@ -553,6 +569,8 @@ class TelegramPublicWebCollector:
                     continue
                 matches += await self._save_message(session, channel, message)
                 saved += 1
+            if saved == 0:
+                raise TelegramPublicWebUnavailable("Telegram public preview had no timestamped messages")
             if matches:
                 await upsert_channel_score(session, channel.id)
             channel.last_scanned_at = utcnow()
@@ -584,6 +602,7 @@ class TelegramPublicWebCollector:
         self._running = True
         self._channels = cleaned
         self._last_error = None
+        self._last_scan_at = None
         results: list[dict[str, Any]] = []
         try:
             async def run_one(channel: str) -> dict[str, Any]:
@@ -595,12 +614,14 @@ class TelegramPublicWebCollector:
             results = await asyncio.gather(*(run_one(channel) for channel in cleaned))
             self._last_scan_messages = sum(int(row.get("posts_saved") or 0) for row in results)
             self._last_scan_matches = sum(int(row.get("token_mentions_created") or 0) for row in results)
+            successful = [row for row in results if not row.get("error")]
             errors = [str(row.get("error")) for row in results if row.get("error")]
-            self._last_error = errors[0] if errors and len(errors) == len(results) else None
-            self._last_scan_at = utcnow()
+            self._last_error = errors[0] if errors and not successful else None
+            self._last_scan_at = utcnow() if successful else None
             return {
                 "collector": "public_web",
                 "processed": len(results),
+                "successful": len(successful),
                 "posts_saved": self._last_scan_messages,
                 "token_mentions_created": self._last_scan_matches,
                 "results": results,
