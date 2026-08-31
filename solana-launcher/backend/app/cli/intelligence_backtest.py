@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
-from app.services.intelligence_backtest import run_intelligence_backtest
+from app.services.intelligence_backtest_v2 import run_intelligence_backtest_v2
 from app.services.telegram_outcomes import evaluate_outcome_windows
 
 
@@ -18,7 +18,12 @@ def build_parser() -> argparse.ArgumentParser:
             "source independence using only evidence available at each historical decision time."
         )
     )
-    parser.add_argument("--limit", type=int, default=2000, help="maximum explicit Telegram calls to load")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=2000,
+        help="maximum unique mint signals (first explicit Telegram call per mint)",
+    )
     parser.add_argument(
         "--decision-delay",
         type=int,
@@ -33,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-window-refresh",
         action="store_true",
-        help="do not refresh stored +5m/+15m/+1h/+4h/+24h call outcome windows first",
+        help="skip best-effort stored outcome refresh; missing prior windows are still built on demand",
     )
     return parser
 
@@ -49,9 +54,10 @@ async def _run(args: argparse.Namespace) -> dict:
                     session,
                     limit=max(1, min(int(args.limit), 20_000)),
                     commit=True,
+                    order="asc",
                 )
         async with sessionmaker() as session:
-            report = await run_intelligence_backtest(
+            report = await run_intelligence_backtest_v2(
                 session,
                 limit=args.limit,
                 decision_delay_minutes=args.decision_delay,
@@ -77,10 +83,12 @@ def main() -> None:
 
     summary = {
         "method": report.get("method"),
+        "signal_limit": report.get("signal_limit"),
         "calls_loaded": report.get("calls_loaded"),
         "unique_mints_seen": report.get("unique_mints_seen"),
         "signals_evaluated": report.get("signals_evaluated"),
         "skipped_no_outcomes": report.get("skipped_no_outcomes"),
+        "historical_windows_built_on_demand": report.get("historical_windows_built_on_demand"),
         "levels": (report.get("aggregate") or {}).get("levels"),
         "output": str(output),
     }
