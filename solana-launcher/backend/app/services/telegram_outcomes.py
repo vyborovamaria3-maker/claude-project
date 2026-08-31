@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,14 @@ OUTCOME_WINDOWS_MINUTES: tuple[tuple[str, int], ...] = (
     ("4h", 240),
     ("24h", 1440),
 )
-OUTCOME_WINDOWS_VERSION = 1
+OUTCOME_TARGET_TOLERANCE_MINUTES: dict[str, int] = {
+    "5m": 2,
+    "15m": 3,
+    "1h": 10,
+    "4h": 30,
+    "24h": 90,
+}
+OUTCOME_WINDOWS_VERSION = 2
 
 
 def _utcnow() -> datetime:
@@ -71,10 +78,9 @@ def build_outcome_windows(
 ) -> dict[str, dict[str, Any]]:
     """Build causal forward outcome windows from metrics observed after one call.
 
-    Each window uses only metrics at or before the horizon target. `complete` is true only
-    when the metric series itself reaches that horizon, so missing history never becomes 0x.
-    Market cap is the preferred baseline/value when both call and metric market cap exist;
-    otherwise price is used.
+    A horizon is complete only if the series reaches the target *and* the last metric at or before
+    the target is sufficiently close to that target. This prevents a +1m observation from being
+    mislabeled as the +15m close just because another metric exists later at +30m.
     """
 
     start = _aware(called_at)
@@ -89,15 +95,31 @@ def build_outcome_windows(
 
     for label, minutes in OUTCOME_WINDOWS_MINUTES:
         target = start + timedelta(minutes=minutes)
+        tolerance_minutes = OUTCOME_TARGET_TOLERANCE_MINUTES[label]
         eligible = [metric for metric in rows if _metric_timestamp(metric) <= target]
-        complete = latest_available is not None and latest_available >= target
-        if not eligible:
+        close = eligible[-1] if eligible else None
+        close_gap_minutes = (
+            (target - _metric_timestamp(close)).total_seconds() / 60.0
+            if close is not None
+            else None
+        )
+        reaches_target = latest_available is not None and latest_available >= target
+        complete = bool(
+            reaches_target
+            and close is not None
+            and close_gap_minutes is not None
+            and close_gap_minutes <= tolerance_minutes
+        )
+
+        if close is None:
             result[label] = {
                 "minutes": minutes,
                 "target_at": target.isoformat(),
                 "complete": False,
                 "samples": 0,
                 "observed_at": None,
+                "target_gap_minutes": None,
+                "target_tolerance_minutes": tolerance_minutes,
                 "baseline_kind": "market_cap" if baseline_cap is not None else "price" if baseline_price is not None else None,
                 "close_multiple": None,
                 "peak_multiple": None,
@@ -107,7 +129,6 @@ def build_outcome_windows(
             }
             continue
 
-        close = eligible[-1]
         close_cap = _metric_cap(close)
         close_price = _metric_price(close)
         caps = [value for value in (_metric_cap(metric) for metric in eligible) if value is not None]
@@ -134,9 +155,11 @@ def build_outcome_windows(
         result[label] = {
             "minutes": minutes,
             "target_at": target.isoformat(),
-            "complete": bool(complete),
+            "complete": complete,
             "samples": len(eligible),
             "observed_at": _metric_timestamp(close).isoformat(),
+            "target_gap_minutes": _round(close_gap_minutes, 3),
+            "target_tolerance_minutes": tolerance_minutes,
             "baseline_kind": baseline_kind,
             "close_price_usd": _round(close_price),
             "close_market_cap_usd": _round(close_cap),
@@ -155,13 +178,15 @@ async def evaluate_outcome_windows(
     *,
     limit: int = 5000,
     commit: bool = True,
+    order: Literal["asc", "desc"] = "desc",
 ) -> dict[str, Any]:
+    ordering = TelegramCall.called_at.asc() if order == "asc" else TelegramCall.called_at.desc()
     rows = list(
         (
             await session.execute(
                 select(TelegramCall)
                 .where(TelegramCall.is_explicit_call.is_(True))
-                .order_by(TelegramCall.called_at.desc())
+                .order_by(ordering)
                 .limit(max(1, min(int(limit), 20_000)))
             )
         ).scalars().all()
@@ -233,9 +258,11 @@ async def evaluate_outcome_windows(
     return {
         "processed": processed,
         "requested": len(rows),
+        "order": order,
         "skipped_no_token": skipped_no_token,
         "skipped_no_metrics": skipped_no_metrics,
         "complete": complete_counts,
         "windows": [label for label, _ in OUTCOME_WINDOWS_MINUTES],
+        "target_tolerance_minutes": dict(OUTCOME_TARGET_TOLERANCE_MINUTES),
         "version": OUTCOME_WINDOWS_VERSION,
     }
