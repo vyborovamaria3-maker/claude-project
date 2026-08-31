@@ -48,12 +48,21 @@ export function sanitizeCrossSourceArgs(args: SafeCrossSourceArgs): SafeCrossSou
   return stripNulls(args);
 }
 
+function timestampNote(timestamp: number | null) {
+  if (timestamp == null || !Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).toISOString().replace("T", " ").replace(".000Z", " UTC");
+}
+
 function normalizeChronology(chronology: CrossSourceChronology): CrossSourceChronology {
   return {
     ...chronology,
     // UI chronology coverage is timestamp coverage. A current-state breakout without an exact
     // timestamp is still "observed", but must not be displayed as an orderable chronology stage.
     observedStages: chronology.orderableStages,
+    stages: chronology.stages.map((stage) => {
+      const dated = timestampNote(stage.timestamp);
+      return dated ? { ...stage, note: `${stage.note} Timestamp: ${dated}.` } : stage;
+    }),
   };
 }
 
