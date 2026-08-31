@@ -72,7 +72,28 @@ def _jaccard(left: set[str], right: set[str]) -> float:
 def _forwarded_from(payload: Any) -> str:
     if not isinstance(payload, dict):
         return ""
-    return str(payload.get("forwarded_from") or "").strip().lower().lstrip("@")
+    value = (
+        payload.get("forwarded_from")
+        or payload.get("forwarded_from_username")
+        or payload.get("forwarded_from_id")
+    )
+    return str(value or "").strip().lower().lstrip("@")
+
+
+def _flag(value: Any) -> bool:
+    if value is True or value == 1:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return False
+
+
+def _is_forwarded_payload(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return bool(_forwarded_from(payload)) or _flag(payload.get("is_forwarded")) or _flag(
+        payload.get("forwarded")
+    )
 
 
 def _window(meta: Any, label: str) -> dict[str, Any] | None:
@@ -105,8 +126,12 @@ def _temporal_outcome_profile(rows: Iterable[dict[str, Any]]) -> dict[str, dict[
             "samples": len(samples),
             "median_close_multiple": round(median(closes), 4) if closes else None,
             "median_peak_multiple": round(median(peaks), 4) if peaks else None,
-            "positive_close_rate": round(sum(value > 1 for value in closes) / len(closes), 4) if closes else None,
-            "two_x_rate": round(sum(value >= 2 for value in peaks) / len(peaks), 4) if peaks else None,
+            "positive_close_rate": (
+                round(sum(value > 1 for value in closes) / len(closes), 4) if closes else None
+            ),
+            "two_x_rate": (
+                round(sum(value >= 2 for value in peaks) / len(peaks), 4) if peaks else None
+            ),
         }
     return profile
 
@@ -177,7 +202,9 @@ def analyze_coordination_events(events: Iterable[dict[str, Any]]) -> dict[str, A
             parents[right_root] = left_root
 
     for index, row in enumerate(rows):
-        forwarded = _forwarded_from(row.get("payload"))
+        payload = row.get("payload")
+        forwarded = _forwarded_from(payload)
+        is_forwarded = _is_forwarded_payload(payload)
         best_index: int | None = None
         best_similarity = 0.0
         for previous in range(index - 1, -1, -1):
@@ -197,7 +224,7 @@ def analyze_coordination_events(events: Iterable[dict[str, Any]]) -> dict[str, A
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_index = previous
-        if forwarded:
+        if is_forwarded:
             coordinated.add(index)
         if best_index is not None and best_similarity >= _HIGH_SIMILARITY:
             union(best_index, index)
@@ -220,7 +247,9 @@ def analyze_coordination_events(events: Iterable[dict[str, Any]]) -> dict[str, A
     independent_estimate = max(1, total - coordinated_count)
 
     clusters = []
-    for indices in sorted(clusters_by_root.values(), key=lambda group: rows[group[0]]["occurred_at"]):
+    for indices in sorted(
+        clusters_by_root.values(), key=lambda group: rows[group[0]]["occurred_at"]
+    ):
         clusters.append(
             {
                 "leader": rows[indices[0]]["source_handle"],
@@ -245,10 +274,19 @@ def analyze_coordination_events(events: Iterable[dict[str, Any]]) -> dict[str, A
     }
 
 
-def build_caller_reputation(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build caller reputation from chronology, legacy outcomes, temporal windows and repost metadata."""
+def build_caller_reputation(
+    rows: Iterable[dict[str, Any]],
+    *,
+    exclude_mint: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build reputation from other calls; optionally exclude one mint to avoid self-influence."""
 
-    calls = [dict(row) for row in rows if row.get("username")]
+    excluded = str(exclude_mint or "").strip()
+    calls = [
+        dict(row)
+        for row in rows
+        if row.get("username") and str(row.get("mint_address") or "").strip() != excluded
+    ]
     by_mint: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     by_caller: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -286,10 +324,20 @@ def build_caller_reputation(rows: Iterable[dict[str, Any]]) -> list[dict[str, An
     result: list[dict[str, Any]] = []
     for username, caller_rows in by_caller.items():
         unique_mints = {str(row.get("mint_address") or "") for row in caller_rows}
-        evaluated = [row for row in caller_rows if row.get("outcome") not in {None, "pending"}]
-        wins = sum(1 for row in evaluated if row.get("outcome") in {"win", "win_then_rug"})
-        rugs = sum(1 for row in evaluated if row.get("outcome") in {"rug", "win_then_rug"})
-        rois = [float(row["roi_multiple"]) for row in evaluated if row.get("roi_multiple") is not None]
+        evaluated = [
+            row for row in caller_rows if row.get("outcome") not in {None, "pending"}
+        ]
+        wins = sum(
+            1 for row in evaluated if row.get("outcome") in {"win", "win_then_rug"}
+        )
+        rugs = sum(
+            1 for row in evaluated if row.get("outcome") in {"rug", "win_then_rug"}
+        )
+        rois = [
+            float(row["roi_multiple"])
+            for row in evaluated
+            if row.get("roi_multiple") is not None
+        ]
         avg_roi = mean(rois) if rois else 0.0
         early = sum(
             1
@@ -317,7 +365,9 @@ def build_caller_reputation(rows: Iterable[dict[str, Any]]) -> list[dict[str, An
             (1.0 - repost_rate) * 55.0 + first_rate * 30.0 + top3_rate * 15.0
         )
         timing_score = _clamp(first_rate * 65.0 + top3_rate * 35.0)
-        coordination_risk = _clamp(repost_rate * 80.0 + max(0.0, 0.3 - first_rate) * 30.0)
+        coordination_risk = _clamp(
+            repost_rate * 80.0 + max(0.0, 0.3 - first_rate) * 30.0
+        )
         experience_score = min(100.0, calls_count / 30.0 * 100.0)
         if temporal_outcome_score is None:
             reputation = _clamp(
@@ -354,7 +404,11 @@ def build_caller_reputation(rows: Iterable[dict[str, Any]]) -> list[dict[str, An
                 "originality_score": round(originality_score, 1),
                 "timing_score": round(timing_score, 1),
                 "outcome_score": round(outcome_score, 1),
-                "temporal_outcome_score": round(temporal_outcome_score, 1) if temporal_outcome_score is not None else None,
+                "temporal_outcome_score": (
+                    round(temporal_outcome_score, 1)
+                    if temporal_outcome_score is not None
+                    else None
+                ),
                 "outcome_windows": outcome_windows,
                 "coordination_risk": round(coordination_risk, 1),
                 "reputation_score": round(reputation, 1),
@@ -368,21 +422,26 @@ async def caller_reputation(
     session: AsyncSession,
     *,
     limit: int = 50,
+    exclude_mint: str | None = None,
 ) -> list[dict[str, Any]]:
-    db_rows = (
-        await session.execute(
-            select(TelegramCall, TelegramMessage, TelegramChannel)
-            .join(TelegramMessage, TelegramMessage.id == TelegramCall.message_id)
-            .join(TelegramChannel, TelegramChannel.id == TelegramCall.channel_id)
-            .where(TelegramCall.is_explicit_call.is_(True))
-        )
-    ).all()
+    statement = (
+        select(TelegramCall, TelegramMessage, TelegramChannel)
+        .join(TelegramMessage, TelegramMessage.id == TelegramCall.message_id)
+        .join(TelegramChannel, TelegramChannel.id == TelegramCall.channel_id)
+        .where(TelegramCall.is_explicit_call.is_(True))
+    )
+    if exclude_mint:
+        statement = statement.where(TelegramCall.mint_address != exclude_mint)
+    db_rows = (await session.execute(statement)).all()
+
     rows: list[dict[str, Any]] = []
     for call, message, channel in db_rows:
         raw = message.raw if isinstance(message.raw, dict) else {}
+        fallback = str(channel.telegram_id) if channel.telegram_id is not None else channel.title
         username = normalize_caller_username(
-            call.caller_username or channel.username or str(channel.telegram_id)
+            call.caller_username or channel.username or fallback
         )
+        forwarded_source = _forwarded_from(raw)
         rows.append(
             {
                 "username": username,
@@ -391,7 +450,10 @@ async def caller_reputation(
                 "outcome": call.outcome,
                 "roi_multiple": call.roi_multiple,
                 "call_market_cap_usd": call.call_market_cap_usd,
-                "forwarded_from": raw.get("forwarded_from"),
+                "forwarded_from": (
+                    forwarded_source
+                    or ("__forwarded__" if _is_forwarded_payload(raw) else None)
+                ),
                 "meta": call.meta or {},
             }
         )
@@ -445,11 +507,18 @@ async def telegram_token_intelligence(
             )
         ).all()
     )
-    relevant = {
-        normalize_caller_username(call.caller_username or channel.username or str(channel.telegram_id))
-        for call, channel in calls
-    }
-    all_reputation = await caller_reputation(session, limit=250)
+
+    def caller_name(call: TelegramCall, channel: TelegramChannel) -> str:
+        fallback = str(channel.telegram_id) if channel.telegram_id is not None else channel.title
+        return normalize_caller_username(call.caller_username or channel.username or fallback)
+
+    relevant = {caller_name(call, channel) for call, channel in calls}
+    # Current-token outcomes must never boost the historical reputation shown for that same token.
+    all_reputation = await caller_reputation(
+        session,
+        limit=250,
+        exclude_mint=mint_address,
+    )
     caller_rows = [row for row in all_reputation if row["username"] in relevant]
     caller_rows.sort(key=lambda item: item["reputation_score"], reverse=True)
 
@@ -457,9 +526,7 @@ async def telegram_token_intelligence(
     if calls:
         call, channel = calls[0]
         first_call = {
-            "source": normalize_caller_username(
-                call.caller_username or channel.username or str(channel.telegram_id)
-            ),
+            "source": caller_name(call, channel),
             "called_at": call.called_at,
             "call_market_cap_usd": call.call_market_cap_usd,
         }
