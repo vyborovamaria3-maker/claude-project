@@ -5,8 +5,8 @@ import {
 import {
   buildCrossSourceIntelligence,
   sanitizeCrossSourceArgs,
-  type CrossSourceChronology,
 } from "./cross-source-intelligence-safe";
+import type { CrossSourceChronology } from "./cross-source-intelligence";
 import type { EntryThesis } from "./entry-thesis";
 import type { SourceNarratives } from "./source-narrative";
 import type {
