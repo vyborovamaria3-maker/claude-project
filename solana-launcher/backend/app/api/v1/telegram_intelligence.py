@@ -27,6 +27,7 @@ from app.services.social_intelligence import (
 )
 from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
+from app.services.telegram_public_web import TelegramPublicWebError
 from app.services.telegram_runtime import TelegramMonitorManager
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,20 @@ def _safe_collector_status(request: Request) -> dict:
     runtime = _manager(request).status()
     channels = runtime.get("channels") or []
     return {
+        "mode": runtime.get("mode") or "unavailable",
         "configured": bool(runtime.get("configured")),
+        "mtproto_configured": bool(runtime.get("mtproto_configured")),
         "session_configured": bool(runtime.get("session_configured")),
         "running": bool(runtime.get("running")),
         "connected": bool(runtime.get("connected")),
         "monitored_channels": len(channels) if isinstance(channels, list) else 0,
+        "public_web_enabled": bool(runtime.get("public_web_enabled")),
+        "public_web_configured": bool(runtime.get("public_web_configured")),
+        "public_web_channels": int(runtime.get("public_web_channels") or 0),
+        "last_scan_at": runtime.get("last_scan_at"),
+        "last_scan_messages": int(runtime.get("last_scan_messages") or 0),
+        "last_scan_matches": int(runtime.get("last_scan_matches") or 0),
+        "last_error": runtime.get("last_error"),
     }
 
 
@@ -137,6 +147,21 @@ async def scan_telegram(
             entity_limit=payload.entity_limit,
         )
     except (TelegramSessionError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/public-web/scan")
+async def scan_telegram_public_web(
+    payload: TelegramScanRequest,
+    request: Request,
+    current_user=Depends(get_current_superuser),
+) -> dict:
+    try:
+        return await _manager(request).scan_public_web(
+            payload.seeds,
+            history_limit=min(payload.post_limit, 500),
+        )
+    except (TelegramPublicWebError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
