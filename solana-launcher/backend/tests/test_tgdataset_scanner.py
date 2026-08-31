@@ -110,6 +110,18 @@ def test_streaming_json_classifies_crypto_without_loading_archive() -> None:
     assert by_username["eth_meme_gems"]["signals"]["unique_evm_contracts"] == 1
 
 
+def test_ca_only_solana_message_survives_fast_gate() -> None:
+    channel = TGDatasetChannelAccumulator(channel_id="1004", username="raw_mints")
+    channel.observe_message(ADDR_2)
+    result = channel.result()
+
+    assert result["signals"]["signal_messages"] == 1
+    assert result["signals"]["contract_messages"] == 1
+    assert result["signals"]["solana_messages"] == 1
+    assert result["signals"]["unique_solana_mints"] == 1
+    assert "solana" in result["classifications"]
+
+
 def test_tar_stream_emits_only_candidates() -> None:
     emitted = []
     stats = scan_tar_stream(
