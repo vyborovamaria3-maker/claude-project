@@ -58,10 +58,7 @@ class TelegramMonitorManager:
 
     @property
     def manual_public_channels(self) -> list[str]:
-        raw = (
-            self.settings.telegram_public_web_channels.strip()
-            or self.settings.telegram_monitor_channels.strip()
-        )
+        raw = self.settings.telegram_public_web_channels.strip() or self.settings.telegram_monitor_channels.strip()
         result: list[str] = []
         for item in raw.split(","):
             normalized = normalize_telegram_target(item)
@@ -168,17 +165,13 @@ class TelegramMonitorManager:
             return
         if not self.settings.telegram_public_web_refresh_enabled:
             if not self._public_bootstrapped and self.public_web.configured_channels:
-                await self.scan_public_web(
-                    history_limit=self.settings.telegram_public_web_history_limit,
-                )
+                await self.scan_public_web(history_limit=self.settings.telegram_public_web_history_limit)
                 self._public_bootstrapped = True
             return
 
         if not self._public_bootstrapped:
             if self.public_web.configured_channels:
-                await self.scan_public_web(
-                    history_limit=self.settings.telegram_public_web_history_limit,
-                )
+                await self.scan_public_web(history_limit=self.settings.telegram_public_web_history_limit)
                 self._public_bootstrapped = True
                 return
             self._registry_summary = await registry_summary(self.sessionmaker)
@@ -205,11 +198,7 @@ class TelegramMonitorManager:
         self._next_evaluation_at = now + self.settings.telegram_evaluate_interval_seconds
         try:
             async with self.sessionmaker() as session:
-                self._last_evaluation = await evaluate_calls(
-                    session,
-                    limit=1000,
-                    window_hours=72,
-                )
+                self._last_evaluation = await evaluate_calls(session, limit=1000, window_hours=72)
             async with self.sessionmaker() as session:
                 self._last_outcome_windows = await evaluate_outcome_windows(
                     session,
@@ -303,45 +292,38 @@ class TelegramMonitorManager:
 
     def status(self) -> dict[str, Any]:
         if self.service is None:
-            mtproto = {
-                "running": False,
-                "channels": [],
-                "connected": False,
-            }
+            mtproto = {"running": False, "channels": [], "connected": False}
         else:
             mtproto = self.service.monitor_status()
 
         public_web = self.public_web.status()
         mtproto_active = bool(mtproto.get("running") or mtproto.get("connected"))
         public_web_active = bool(public_web.get("configured") and public_web.get("last_scan_at"))
+        public_available = bool(public_web.get("configured") or self._registry_summary.get("total"))
+        mtproto_ready = bool(self.mtproto_configured and self.session_configured)
 
         if mtproto_active:
             mode = "mtproto"
         elif public_web_active:
             mode = "public_web"
-        elif self.mtproto_configured:
-            mode = "mtproto"
-        elif public_web.get("configured") or self._registry_summary.get("total"):
+        elif public_available:
             mode = "public_web"
+        elif mtproto_ready:
+            mode = "mtproto"
         else:
             mode = "unavailable"
 
         channels = mtproto.get("channels") if mode == "mtproto" else public_web.get("channels")
         channels = channels if isinstance(channels, list) else []
+        collector_running = bool(mtproto.get("running") or public_web.get("running"))
         return {
             "mode": mode,
-            "configured": bool(
-                self.mtproto_configured
-                or public_web.get("configured")
-                or self._registry_summary.get("total")
-            ),
+            "configured": bool(self.mtproto_configured or public_available),
             "mtproto_configured": self.mtproto_configured,
             "session_configured": self.session_configured,
-            "running": bool(
-                mtproto.get("running")
-                or public_web.get("running")
-                or self._background_running
-            ),
+            # Collector execution and background scheduler are separate states. A healthy scheduler
+            # must not make an unconfigured/stopped collector look actively connected.
+            "running": collector_running,
             "background_running": self._background_running,
             "channels": channels,
             "connected": bool(mtproto.get("connected")),
