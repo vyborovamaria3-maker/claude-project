@@ -134,7 +134,20 @@ def build_outcome_windows(
         caps = [value for value in (_metric_cap(metric) for metric in eligible) if value is not None]
         prices = [value for value in (_metric_price(metric) for metric in eligible) if value is not None]
 
-        if baseline_cap is not None and (close_cap is not None or caps):
+        # Prefer market cap only when the actual horizon close has a market-cap observation.
+        # Otherwise fall back to price when both the call and horizon close have price data.
+        # A cap seen only in an earlier sample must not erase a usable close-price return.
+        if baseline_cap is not None and close_cap is not None:
+            baseline_kind = "market_cap"
+            close_value = close_cap
+            peak_value = max(caps) if caps else None
+            baseline_value = baseline_cap
+        elif baseline_price is not None and close_price is not None:
+            baseline_kind = "price"
+            close_value = close_price
+            peak_value = max(prices) if prices else None
+            baseline_value = baseline_price
+        elif baseline_cap is not None:
             baseline_kind = "market_cap"
             close_value = close_cap
             peak_value = max(caps) if caps else None
