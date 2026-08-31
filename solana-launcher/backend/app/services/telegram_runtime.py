@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.services.telegram_intelligence import TelegramIntelligenceService
-from app.services.telegram_public_web import TelegramPublicWebCollector
+from app.services.telegram_public_discovery import TelegramPublicWebDiscoveryCollector
 
 
 class TelegramMonitorManager:
@@ -17,7 +17,7 @@ class TelegramMonitorManager:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.service: TelegramIntelligenceService | None = None
-        self.public_web = TelegramPublicWebCollector(settings, sessionmaker)
+        self.public_web = TelegramPublicWebDiscoveryCollector(settings, sessionmaker)
         self._lock = asyncio.Lock()
         self._runtime_session_string: str | None = None
 
@@ -135,6 +135,13 @@ class TelegramMonitorManager:
             "public_web_enabled": bool(public_web.get("enabled")),
             "public_web_configured": bool(public_web.get("configured")),
             "public_web_channels": len(public_web.get("channels") or []),
+            "public_web_discovery_enabled": bool(public_web.get("discovery_enabled")),
+            "public_web_discovery_depth": int(public_web.get("discovery_depth") or 0),
+            "public_web_discovery_entity_limit": int(public_web.get("discovery_entity_limit") or 0),
+            "public_web_relevance_min_score": float(public_web.get("relevance_min_score") or 0.0),
+            "public_web_discovered_channels": int(public_web.get("last_discovered_channels") or 0),
+            "public_web_accepted_discovered": int(public_web.get("last_accepted_discovered") or 0),
+            "public_web_rejected_discovered": int(public_web.get("last_rejected_discovered") or 0),
             "last_scan_at": public_web.get("last_scan_at"),
             "last_scan_messages": int(public_web.get("last_scan_messages") or 0),
             "last_scan_matches": int(public_web.get("last_scan_matches") or 0),
