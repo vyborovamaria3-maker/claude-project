@@ -7,6 +7,10 @@ import {
   type CrossSourceIntelligence,
   type SourceIndependence,
 } from "./cross-source-intelligence";
+import {
+  firstCallerReputation,
+  telegramTokenIntelligence,
+} from "./telegram-intelligence-view";
 import type {
   ChainAnalysis,
   DerivedSocial,
@@ -70,6 +74,75 @@ export function buildCrossSourceIntelligence(args: SafeCrossSourceArgs): CrossSo
   };
 }
 
+function temporalCallerSnapshotFeatures(args: SafeCrossSourceArgs, observedAt: string) {
+  const caller = firstCallerReputation(telegramTokenIntelligence(args.telegram));
+  if (!caller) return [];
+  const rows: Array<{
+    key: string;
+    group: string;
+    label: string;
+    value: number | null;
+    numericValue: number | null;
+    source: "telegram";
+    confidence: number;
+    observedAt: string;
+    missing: boolean;
+    note: string;
+  }> = [];
+  const add = (key: string, label: string, value: number | null, confidence: number, note: string) => {
+    rows.push({
+      key,
+      group: "Telegram caller temporal outcomes",
+      label,
+      value,
+      numericValue: value,
+      source: "telegram",
+      confidence: value == null ? 0 : confidence,
+      observedAt,
+      missing: value == null,
+      note,
+    });
+  };
+
+  add(
+    "telegram.first_caller_temporal_outcome_score",
+    "First caller temporal outcome score",
+    caller.temporalOutcomeScore,
+    0.64,
+    "Historical 15m/1h/4h/24h caller outcome composite. It is descriptive historical evidence, not a probability of this token rising.",
+  );
+  for (const label of ["15m", "1h", "4h", "24h"]) {
+    const window = caller.outcomeWindows[label];
+    if (!window || window.samples <= 0) continue;
+    add(
+      `telegram.first_caller_${label}_median_close_multiple`,
+      `First caller ${label} median close multiple`,
+      window.medianCloseMultiple,
+      0.7,
+      `Median historical close multiple at ${label} across ${window.samples} complete outcome windows.`,
+    );
+    add(
+      `telegram.first_caller_${label}_positive_close_rate`,
+      `First caller ${label} positive close rate`,
+      window.positiveCloseRate,
+      0.68,
+      `Historical fraction of complete ${label} windows closing above the call baseline; not a forecast probability.`,
+    );
+    add(
+      `telegram.first_caller_${label}_two_x_rate`,
+      `First caller ${label} 2x peak rate`,
+      window.twoXRate,
+      0.66,
+      `Historical fraction of complete ${label} windows whose observed peak reached at least 2x; not a forecast probability.`,
+    );
+  }
+  return rows;
+}
+
 export function crossSourceSnapshotFeatures(args: SafeCrossSourceArgs, observedAt: string) {
-  return buildBaseSnapshotFeatures(sanitizeCrossSourceArgs(args), observedAt);
+  const safe = sanitizeCrossSourceArgs(args);
+  return [
+    ...buildBaseSnapshotFeatures(safe, observedAt),
+    ...temporalCallerSnapshotFeatures(safe, observedAt),
+  ];
 }
