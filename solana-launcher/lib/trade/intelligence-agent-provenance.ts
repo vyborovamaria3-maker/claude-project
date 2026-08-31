@@ -1,5 +1,5 @@
 import catalogJson from "./analysis-feature-provenance.json";
-import { crossSourceSnapshotFeatures } from "./cross-source-intelligence";
+import { crossSourceSnapshotFeatures } from "./cross-source-intelligence-safe";
 import {
   buildAnalysisSnapshot as buildBaseAnalysisSnapshot,
   type AnalysisSnapshot as BaseAnalysisSnapshot,
