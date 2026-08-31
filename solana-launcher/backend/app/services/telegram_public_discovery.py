@@ -310,25 +310,19 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
             return await super().scan_channels(seeds, history_limit=history_limit)
 
         manual_seeds = set(super().configured_channels)
-        force_accept = (
-            set(seeds)
-            if explicit_seed_list and force_accept_explicit
-            else manual_seeds
-        )
+        force_accept = set(seeds) if explicit_seed_list and force_accept_explicit else manual_seeds
         seed_history_limit = max(
             1,
             min(int(history_limit or self.settings.telegram_public_web_history_limit), 500),
         )
         candidate_history_limit = min(seed_history_limit, self.discovery_history_limit)
         max_entities = max(len(seeds), self.discovery_entity_limit)
-        queue = deque(
-            _QueueItem(seed, 0, None, seed in force_accept)
-            for seed in seeds
-        )
+        queue = deque(_QueueItem(seed, 0, None, seed in force_accept) for seed in seeds)
         scheduled = set(seeds)
         results: list[dict[str, Any]] = []
         accepted_channels: list[str] = []
         discovered_total = accepted_discovered = rejected_discovered = 0
+        validated_seeds = rejected_seeds = 0
 
         self._running = True
         self._channels = list(seeds)
@@ -344,9 +338,13 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
                     accepted = item.force_accept or (
                         relevance.token_posts > 0 and relevance.score >= self.relevance_min_score
                     )
+                    is_graph_discovered = item.discovered_from is not None
 
                     if not accepted:
-                        rejected_discovered += 1
+                        if is_graph_discovered:
+                            rejected_discovered += 1
+                        else:
+                            rejected_seeds += 1
                         results.append(
                             {
                                 "username": item.username,
@@ -370,8 +368,10 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
                     results.append(persisted)
                     if item.username not in accepted_channels:
                         accepted_channels.append(item.username)
-                    if not item.force_accept:
+                    if is_graph_discovered:
                         accepted_discovered += 1
+                    else:
+                        validated_seeds += 1
 
                     if item.depth >= self.discovery_depth:
                         continue
@@ -422,6 +422,8 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
                     "entity_limit": self.discovery_entity_limit,
                     "relevance_min_score": self.relevance_min_score,
                     "seed_database_channels": len(self.database_seed_channels),
+                    "seed_validated": validated_seeds,
+                    "seed_rejected": rejected_seeds,
                     "discovered": discovered_total,
                     "accepted": accepted_discovered,
                     "rejected": rejected_discovered,
