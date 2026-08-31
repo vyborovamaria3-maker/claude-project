@@ -7,7 +7,7 @@ import CrossSourceThesisCard from "@/components/trade/CrossSourceThesisCard";
 import EntryThesisCard from "@/components/trade/EntryThesisCard";
 import QwenSynthesisCard from "@/components/trade/QwenSynthesisCard";
 import SourceNarrativeCard from "@/components/trade/SourceNarrativeCard";
-import { buildCrossSourceThesis } from "@/lib/trade/cross-source-thesis";
+import { buildCrossSourceThesis } from "@/lib/trade/cross-source-thesis-safe";
 import { buildCoverageAwareEntryThesis } from "@/lib/trade/entry-thesis-safe";
 import { hasChainIntelligence, hasFreshMarket, hasTelegramIntelligence, hasXIntelligence } from "@/lib/trade/intelligence-coverage";
 import { buildQwenSynthesis } from "@/lib/trade/qwen-synthesis";
