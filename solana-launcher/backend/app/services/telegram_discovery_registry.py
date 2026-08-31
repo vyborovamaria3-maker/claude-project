@@ -12,6 +12,9 @@ from app.models.social_intelligence import TelegramChannel
 from app.services.telegram_parser import normalize_telegram_target
 
 
+_REGISTRY_PAGE_SIZE = 5000
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -90,6 +93,33 @@ async def _upsert_registry_channel(session: AsyncSession, username: str) -> Tele
     return row
 
 
+async def _load_registry_channels(
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> list[TelegramChannel]:
+    """Load the complete registry in bounded DB pages instead of silently truncating at 5000."""
+
+    rows: list[TelegramChannel] = []
+    offset = 0
+    async with sessionmaker() as session:
+        while True:
+            page = list(
+                (
+                    await session.execute(
+                        select(TelegramChannel)
+                        .where(TelegramChannel.username.is_not(None))
+                        .order_by(TelegramChannel.id.asc())
+                        .offset(offset)
+                        .limit(_REGISTRY_PAGE_SIZE)
+                    )
+                ).scalars().all()
+            )
+            rows.extend(page)
+            if len(page) < _REGISTRY_PAGE_SIZE:
+                break
+            offset += len(page)
+    return rows
+
+
 async def record_discovery_results(
     sessionmaker: async_sessionmaker[AsyncSession],
     results: list[dict[str, Any]],
@@ -127,7 +157,7 @@ async def record_discovery_results(
 
             relevance = result.get("memecoin_relevance")
             relevance = relevance if isinstance(relevance, dict) else {}
-            relevance_score = float(relevance.get("score") or 0.0)
+            relevance_score = float(relevance.get("score") or old_registry.get("relevance_score") or 0.0)
             source = "graph"
             if username in manual:
                 source = "manual"
@@ -135,6 +165,15 @@ async def record_discovery_results(
                 source = "tgdataset"
             elif not result.get("discovered_from"):
                 source = str(old_registry.get("source") or "registry")
+
+            discovered_from = result.get("discovered_from") or old_registry.get("discovered_from")
+            result_depth = result.get("discovery_depth")
+            if discovered_from is None:
+                depth = int(old_registry.get("depth") or result_depth or 0)
+            elif result.get("discovered_from"):
+                depth = int(result_depth or 0)
+            else:
+                depth = int(old_registry.get("depth") or 0)
 
             delay = _next_delay(
                 state=state,
@@ -148,8 +187,8 @@ async def record_discovery_results(
             registry = {
                 "state": state,
                 "source": source,
-                "discovered_from": result.get("discovered_from"),
-                "depth": int(result.get("discovery_depth") or 0),
+                "discovered_from": discovered_from,
+                "depth": depth,
                 "relevance_score": relevance_score,
                 "failure_count": failure_count,
                 "last_checked_at": now.isoformat(),
@@ -162,7 +201,10 @@ async def record_discovery_results(
                 "discovery_registry": registry,
                 **({"memecoin_relevance": relevance} if relevance else {}),
             }
-            channel.last_seen_at = now
+            # last_seen_at means the channel was actually observable. Network/404/private errors
+            # update last_checked_at but must not make a dead source look freshly seen.
+            if state != "unavailable":
+                channel.last_seen_at = now
             if state == "validated":
                 channel.is_active = True
                 channel.last_scanned_at = now
@@ -178,17 +220,7 @@ async def due_registry_channels(
 ) -> list[str]:
     now = _utcnow()
     safe_limit = max(1, min(int(limit), 200))
-    async with sessionmaker() as session:
-        rows = list(
-            (
-                await session.execute(
-                    select(TelegramChannel)
-                    .where(TelegramChannel.username.is_not(None))
-                    .order_by(TelegramChannel.last_seen_at.desc())
-                    .limit(5000)
-                )
-            ).scalars().all()
-        )
+    rows = await _load_registry_channels(sessionmaker)
     due: list[tuple[datetime, str]] = []
     for channel in rows:
         meta = channel.meta or {}
@@ -209,14 +241,7 @@ async def registry_summary(
     sessionmaker: async_sessionmaker[AsyncSession],
 ) -> dict[str, Any]:
     now = _utcnow()
-    async with sessionmaker() as session:
-        rows = list(
-            (
-                await session.execute(
-                    select(TelegramChannel).where(TelegramChannel.username.is_not(None)).limit(5000)
-                )
-            ).scalars().all()
-        )
+    rows = await _load_registry_channels(sessionmaker)
     states: Counter[str] = Counter()
     due = 0
     for channel in rows:
