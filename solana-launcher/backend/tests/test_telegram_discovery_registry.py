@@ -1,4 +1,6 @@
-from app.services.telegram_discovery_registry import _next_delay
+import inspect
+
+from app.services.telegram_discovery_registry import _next_delay, record_discovery_results
 
 
 def test_registry_refreshes_strong_channels_more_often() -> None:
@@ -67,3 +69,10 @@ def test_unavailable_registry_uses_bounded_exponential_backoff() -> None:
     assert first == 3600
     assert fourth == 28800
     assert huge <= 7 * 86400
+
+
+def test_registry_does_not_use_truthiness_for_new_relevance_score() -> None:
+    source = inspect.getsource(record_discovery_results)
+    assert 'new_score = relevance.get("score")' in source
+    assert "if new_score is None" in source
+    assert 'relevance.get("score") or old_registry' not in source
