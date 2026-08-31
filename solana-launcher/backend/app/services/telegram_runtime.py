@@ -139,6 +139,7 @@ class TelegramMonitorManager:
             "public_web_discovery_depth": int(public_web.get("discovery_depth") or 0),
             "public_web_discovery_entity_limit": int(public_web.get("discovery_entity_limit") or 0),
             "public_web_relevance_min_score": float(public_web.get("relevance_min_score") or 0.0),
+            "public_web_seed_database_channels": int(public_web.get("seed_database_channels") or 0),
             "public_web_discovered_channels": int(public_web.get("last_discovered_channels") or 0),
             "public_web_accepted_discovered": int(public_web.get("last_accepted_discovered") or 0),
             "public_web_rejected_discovered": int(public_web.get("last_rejected_discovered") or 0),
