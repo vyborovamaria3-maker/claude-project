@@ -5,6 +5,7 @@ import {
 import {
   buildCrossSourceIntelligence,
   sanitizeCrossSourceArgs,
+  type CrossSourceChronology,
 } from "./cross-source-intelligence-safe";
 import type { EntryThesis } from "./entry-thesis";
 import type { SourceNarratives } from "./source-narrative";
@@ -28,6 +29,82 @@ type Args = {
   entry: EntryThesis;
 };
 
+function unique(rows: string[]) {
+  return [...new Set(rows.filter((row) => Boolean(row?.trim())).map((row) => row.trim()))];
+}
+
+function chronologySequence(chronology: CrossSourceChronology) {
+  const ordered = chronology.stages
+    .filter((stage) => stage.timestamp != null)
+    .sort((left, right) => Number(left.timestamp) - Number(right.timestamp));
+  let sequence = ordered.length >= 2
+    ? `${ordered.map((stage) => stage.label).join(" → ")}. Chronology coverage ${Math.round(chronology.coverage)}%${chronology.alignmentScore == null ? "" : `; canonical-order alignment ${Math.round(chronology.alignmentScore)}%`}.`
+    : "Недостаточно надёжных timestamp-источников для устойчивой cross-source chronology.";
+
+  const lags = [
+    ["smart wallet → TG", chronology.walletToTelegramMinutes],
+    ["TG → X", chronology.telegramToXMinutes],
+    ["X → market", chronology.xToMarketMinutes],
+  ] as const;
+  const visibleLags = lags
+    .filter((row): row is readonly [string, number] => row[1] != null)
+    .map(([label, lag]) => `${label}: ${lag >= 0 ? "+" : ""}${Math.round(lag * 10) / 10} мин`);
+  if (visibleLags.length) sequence += ` Лаги: ${visibleLags.join(" · ")}.`;
+  if (chronology.priceLedSocial) {
+    sequence += " Наблюдаемый market impulse появился раньше надёжного X/TG timestamp evidence; social мог частично реагировать на уже начавшееся движение.";
+  }
+  return sequence;
+}
+
+function withoutUnsafeChronologyClaims(rows: string[]) {
+  return rows.filter((row) => {
+    const value = row.toLowerCase();
+    return !value.includes("cross-source chronology")
+      && !value.includes("chronology согласована")
+      && !value.includes("chronology плохо")
+      && !value.includes("market impulse предшествует")
+      && !value.includes("price impulse появился раньше")
+      && !value.includes("timestamps недостающих chronology")
+      && !value.includes("smart wallet → tg → x → market");
+  });
+}
+
+function chronologyEvidence(chronology: CrossSourceChronology) {
+  const agreements: string[] = [];
+  const contradictions: string[] = [];
+  const nextEvidence: string[] = [];
+  if (
+    chronology.orderableStages >= 3
+    && chronology.alignmentScore != null
+    && chronology.alignmentScore >= 67
+    && chronology.coverage >= 75
+  ) {
+    agreements.push(
+      `Надёжная chronology согласована примерно на ${Math.round(chronology.alignmentScore)}% при timestamp coverage ${Math.round(chronology.coverage)}%.`,
+    );
+  }
+  if (chronology.priceLedSocial) {
+    contradictions.push(
+      "Market impulse предшествует надёжному social timestamp evidence; позднюю X/TG активность нельзя считать ранним подтверждением.",
+    );
+  }
+  if (
+    chronology.orderableStages >= 3
+    && chronology.alignmentScore != null
+    && chronology.alignmentScore < 50
+  ) {
+    contradictions.push(
+      "Надёжная chronology плохо совпадает с ранним сценарием smart wallet → TG → X → market.",
+    );
+  }
+  if (chronology.coverage < 75) {
+    nextEvidence.push(
+      "Нужны надёжные timestamps недостающих chronology-стадий; truncated/top-ranked samples не используются как точное время ускорения.",
+    );
+  }
+  return { agreements, contradictions, nextEvidence };
+}
+
 export function buildCrossSourceThesis(args: Args): CrossSourceThesis {
   const safeCore = sanitizeCrossSourceArgs({
     x: args.x,
@@ -41,6 +118,11 @@ export function buildCrossSourceThesis(args: Args): CrossSourceThesis {
     ...args,
     ...safeCore,
   });
+  const safeChronologyEvidence = chronologyEvidence(intelligence.chronology);
+  const safeSequence = chronologySequence(intelligence.chronology);
+  const baseAgreements = withoutUnsafeChronologyClaims(base.agreements);
+  const baseContradictions = withoutUnsafeChronologyClaims(base.contradictions);
+  const baseNextEvidence = withoutUnsafeChronologyClaims(base.nextEvidence);
 
   const independenceStrong = intelligence.independence.verdict === "strong";
   const concentrationRisk = intelligence.independence.concentrationRisk;
@@ -54,15 +136,19 @@ export function buildCrossSourceThesis(args: Args): CrossSourceThesis {
   if (!falseConfirmed) {
     return {
       ...base,
+      sequence: safeSequence,
       independence: intelligence.independence,
       chronology: intelligence.chronology,
+      agreements: unique([...baseAgreements, ...safeChronologyEvidence.agreements]),
+      contradictions: unique([...baseContradictions, ...safeChronologyEvidence.contradictions]),
+      nextEvidence: unique([...baseNextEvidence, ...safeChronologyEvidence.nextEvidence]),
     };
   }
 
   const independenceText = intelligence.independence.score == null
     ? "независимость пока не измерена"
     : `independence ${Math.round(intelligence.independence.score)}/100, concentration risk ${Math.round(concentrationRisk ?? 0)}/100`;
-  const agreements = base.agreements.filter((row) => {
+  const independenceAgreements = baseAgreements.filter((row) => {
     const value = row.toLowerCase();
     return !value.includes("независим") && !value.includes("independence");
   });
@@ -70,21 +156,22 @@ export function buildCrossSourceThesis(args: Args): CrossSourceThesis {
   return {
     ...base,
     state,
-    // A corrected divergence/risk state must not retain a high confidence inherited from the
-    // optimistic base "confirmed" branch.
     confidence: Math.min(base.confidence, state === "risk_dominates" ? 55 : 65),
     headline: state === "risk_dominates"
       ? "Источники совпадают по направлению, но их независимость недостаточна"
       : "Направление источников совпадает, но независимое cross-source подтверждение ещё не доказано",
     currentSituation: `Social и on-chain могут смотреть в одну сторону, но это ещё не подтверждённая независимая структура: ${independenceText}. Совпадение направления не приравнивается к независимости источников.`,
+    sequence: safeSequence,
     interpretation: "Несколько положительных сигналов могут быть частью одной волны — связанных каналов, авторов или кошельков. Статус confirmed разрешён только когда deterministic Source Independence действительно strong.",
     entryMeaning: "Не повышать Entry Timing только из-за количества совпадающих сигналов. Нужен новый независимый слой подтверждения либо снижение concentration risk.",
     independence: intelligence.independence,
     chronology: intelligence.chronology,
-    agreements,
-    contradictions: [
-      ...base.contradictions,
+    agreements: unique([...independenceAgreements, ...safeChronologyEvidence.agreements]),
+    contradictions: unique([
+      ...baseContradictions,
+      ...safeChronologyEvidence.contradictions,
       `Cross-source direction совпадает, но независимость не strong (${independenceText}).`,
-    ],
+    ]),
+    nextEvidence: unique([...baseNextEvidence, ...safeChronologyEvidence.nextEvidence]),
   };
 }
