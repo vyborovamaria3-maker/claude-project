@@ -9,6 +9,7 @@ from app.services.intelligence_backtest import (
 )
 from app.services.intelligence_backtest_v2 import (
     BACKTEST_VERSION_V2,
+    _tied_caller_reputation,
     run_intelligence_backtest_v2,
 )
 
@@ -47,6 +48,25 @@ def test_historical_reputation_uses_only_complete_prior_windows() -> None:
     assert reputation["avg_peak_multiple"] == 2.6
 
 
+def test_unknown_caller_history_is_null_not_synthetic_low_score() -> None:
+    reputation = historical_caller_reputation([])
+    assert reputation["score"] is None
+    assert reputation["evaluated"] == 0
+    assert reputation["win_rate"] is None
+    assert classify_signal_level(
+        independence_score=25,
+        independent_layers=0,
+        caller_reputation=None,
+        coordination_risk=20,
+    ) == "wait"
+    assert classify_signal_level(
+        independence_score=85,
+        independent_layers=3,
+        caller_reputation=None,
+        coordination_risk=10,
+    ) == "wait"
+
+
 def test_level_classifier_requires_independent_layers_for_strong_signal() -> None:
     assert classify_signal_level(
         independence_score=82,
@@ -74,6 +94,19 @@ def test_level_classifier_requires_independent_layers_for_strong_signal() -> Non
     ) == "avoid"
 
 
+def test_tied_first_callers_use_median_of_known_prior_reputations() -> None:
+    tied = [{"username": "alpha"}, {"username": "beta"}, {"username": "gamma"}]
+    history = {
+        "alpha": [_history_row(peak=3.0, final_to_peak=0.8)],
+        "beta": [_history_row(peak=1.2, final_to_peak=0.9)],
+        "gamma": [],
+    }
+    score, profiles = _tied_caller_reputation(tied, history)
+    known = [profiles["alpha"]["score"], profiles["beta"]["score"]]
+    assert profiles["gamma"]["score"] is None
+    assert score == round(sum(known) / 2, 1)
+
+
 def test_aggregate_backtest_rows_keeps_horizon_sample_counts_separate() -> None:
     rows = [
         {
@@ -87,13 +120,21 @@ def test_aggregate_backtest_rows_keeps_horizon_sample_counts_separate() -> None:
                 "4h": {"complete": False, "close_multiple": 2.0, "peak_multiple": 2.5, "drawdown_from_peak_pct": 20},
                 "24h": {"complete": False, "close_multiple": None, "peak_multiple": None, "drawdown_from_peak_pct": None},
             },
-        }
+        },
+        {
+            "level": "strong",
+            "independence_score": 75,
+            "caller_reputation": None,
+            "outcomes": {},
+        },
     ]
     summary = aggregate_backtest_rows(rows)
 
     assert summary["levels"]["strong"]["windows"]["1h"]["samples"] == 1
     assert summary["levels"]["strong"]["windows"]["4h"]["samples"] == 0
     assert summary["levels"]["strong"]["windows"]["1h"]["two_x_rate"] == 1.0
+    assert summary["levels"]["strong"]["median_caller_reputation"] == 70
+    assert summary["levels"]["strong"]["caller_reputation_samples"] == 1
 
 
 def test_v2_backtest_limit_is_unique_mints_and_builds_missing_history_on_demand() -> None:
@@ -103,8 +144,10 @@ def test_v2_backtest_limit_is_unique_mints_and_builds_missing_history_on_demand(
         fromlist=["_first_signal_times"],
     )._first_signal_times)
 
-    assert BACKTEST_VERSION_V2 >= 2
+    assert BACKTEST_VERSION_V2 >= 3
     assert "group_by(TelegramCall.mint_address)" in helper_source
     assert "signal_limit" in source
     assert "_ensure_matured_24h_window" in source
     assert "historical_windows_built_on_demand" in source
+    assert "tied_first_callers_are_aggregated_not_arbitrarily_selected" in source
+    assert "unknown_caller_history_is_not_zero" in source
