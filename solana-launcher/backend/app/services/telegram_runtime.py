@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from time import monotonic
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
+from app.services.social_intelligence import evaluate_calls
 from app.services.telegram_discovery_registry import (
     due_registry_channels,
     record_discovery_results,
     registry_summary,
 )
 from app.services.telegram_intelligence import TelegramIntelligenceService
+from app.services.telegram_outcomes import evaluate_outcome_windows
 from app.services.telegram_parser import normalize_telegram_target
 from app.services.telegram_public_discovery import TelegramPublicWebDiscoveryCollector
 
@@ -32,6 +35,10 @@ class TelegramMonitorManager:
         self._public_bootstrapped = False
         self._last_background_error: str | None = None
         self._last_refresh_due = 0
+        self._next_evaluation_at = 0.0
+        self._last_evaluation: dict[str, Any] | None = None
+        self._last_outcome_windows: dict[str, Any] | None = None
+        self._last_evaluation_error: str | None = None
         self._registry_summary: dict[str, Any] = {
             "total": 0,
             "validated": 0,
@@ -191,6 +198,30 @@ class TelegramMonitorManager:
         else:
             self._registry_summary = await registry_summary(self.sessionmaker)
 
+    async def _evaluate_calls_if_due(self) -> None:
+        now = monotonic()
+        if now < self._next_evaluation_at:
+            return
+        self._next_evaluation_at = now + self.settings.telegram_evaluate_interval_seconds
+        try:
+            async with self.sessionmaker() as session:
+                self._last_evaluation = await evaluate_calls(
+                    session,
+                    limit=1000,
+                    window_hours=72,
+                )
+            async with self.sessionmaker() as session:
+                self._last_outcome_windows = await evaluate_outcome_windows(
+                    session,
+                    limit=1000,
+                    commit=True,
+                )
+            self._last_evaluation_error = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._last_evaluation_error = str(exc)[:500]
+
     async def _background_loop(self) -> None:
         self._background_running = True
         try:
@@ -212,6 +243,8 @@ class TelegramMonitorManager:
                         raise
                     except Exception as exc:
                         public_error = str(exc)[:500]
+
+                await self._evaluate_calls_if_due()
 
                 if public_error:
                     self._last_background_error = public_error
@@ -329,5 +362,8 @@ class TelegramMonitorManager:
             "last_scan_at": public_web.get("last_scan_at"),
             "last_scan_messages": int(public_web.get("last_scan_messages") or 0),
             "last_scan_matches": int(public_web.get("last_scan_matches") or 0),
+            "evaluation": self._last_evaluation,
+            "outcome_windows": self._last_outcome_windows,
+            "evaluation_error": self._last_evaluation_error,
             "last_error": public_web.get("last_error") or self._last_background_error,
         }
