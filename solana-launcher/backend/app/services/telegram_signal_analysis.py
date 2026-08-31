@@ -19,6 +19,7 @@ _EVM_LIKE_RE = re.compile(r"0x[0-9a-fA-F]{40}")
 _WORD_RE = re.compile(r"[a-z0-9_$]{2,}", re.IGNORECASE)
 _COORDINATION_WINDOW_SECONDS = 15 * 60
 _HIGH_SIMILARITY = 0.72
+_OUTCOME_WINDOW_LABELS = ("5m", "15m", "1h", "4h", "24h")
 
 
 def _aware(value: datetime) -> datetime:
@@ -29,6 +30,14 @@ def _aware(value: datetime) -> datetime:
 
 def _clamp(value: float) -> float:
     return max(0.0, min(100.0, value))
+
+
+def _finite(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed == parsed and abs(parsed) != float("inf") else None
 
 
 def _normalized_tokens(text: str) -> set[str]:
@@ -64,6 +73,60 @@ def _forwarded_from(payload: Any) -> str:
     if not isinstance(payload, dict):
         return ""
     return str(payload.get("forwarded_from") or "").strip().lower().lstrip("@")
+
+
+def _window(meta: Any, label: str) -> dict[str, Any] | None:
+    if not isinstance(meta, dict):
+        return None
+    windows = meta.get("outcome_windows")
+    if not isinstance(windows, dict):
+        return None
+    value = windows.get(label)
+    return value if isinstance(value, dict) else None
+
+
+def _temporal_outcome_profile(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    materialized = list(rows)
+    profile: dict[str, dict[str, Any]] = {}
+    for label in _OUTCOME_WINDOW_LABELS:
+        samples: list[tuple[float, float]] = []
+        for row in materialized:
+            window = _window(row.get("meta"), label)
+            if not window or not window.get("complete"):
+                continue
+            close = _finite(window.get("close_multiple"))
+            peak = _finite(window.get("peak_multiple"))
+            if close is None or peak is None:
+                continue
+            samples.append((close, peak))
+        closes = [item[0] for item in samples]
+        peaks = [item[1] for item in samples]
+        profile[label] = {
+            "samples": len(samples),
+            "median_close_multiple": round(median(closes), 4) if closes else None,
+            "median_peak_multiple": round(median(peaks), 4) if peaks else None,
+            "positive_close_rate": round(sum(value > 1 for value in closes) / len(closes), 4) if closes else None,
+            "two_x_rate": round(sum(value >= 2 for value in peaks) / len(peaks), 4) if peaks else None,
+        }
+    return profile
+
+
+def _temporal_outcome_score(profile: dict[str, dict[str, Any]]) -> float | None:
+    weighted: list[tuple[float, float]] = []
+    for label, weight in (("15m", 0.15), ("1h", 0.35), ("4h", 0.25), ("24h", 0.25)):
+        row = profile.get(label) or {}
+        samples = int(row.get("samples") or 0)
+        positive = _finite(row.get("positive_close_rate"))
+        two_x = _finite(row.get("two_x_rate"))
+        if samples <= 0 or (positive is None and two_x is None):
+            continue
+        value = _clamp((positive or 0.0) * 65.0 + (two_x or 0.0) * 35.0)
+        reliability = min(1.0, samples / 12.0)
+        weighted.append((value, weight * max(0.25, reliability)))
+    denominator = sum(weight for _, weight in weighted)
+    if denominator <= 0:
+        return None
+    return sum(value * weight for value, weight in weighted) / denominator
 
 
 def analyze_coordination_events(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -183,7 +246,7 @@ def analyze_coordination_events(events: Iterable[dict[str, Any]]) -> dict[str, A
 
 
 def build_caller_reputation(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build caller reputation from historical call chronology, outcomes and repost metadata."""
+    """Build caller reputation from chronology, legacy outcomes, temporal windows and repost metadata."""
 
     calls = [dict(row) for row in rows if row.get("username")]
     by_mint: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
@@ -248,18 +311,29 @@ def build_caller_reputation(rows: Iterable[dict[str, Any]]) -> list[dict[str, An
             early=early,
             avg_roi=avg_roi,
         )
+        outcome_windows = _temporal_outcome_profile(caller_rows)
+        temporal_outcome_score = _temporal_outcome_score(outcome_windows)
         originality_score = _clamp(
             (1.0 - repost_rate) * 55.0 + first_rate * 30.0 + top3_rate * 15.0
         )
         timing_score = _clamp(first_rate * 65.0 + top3_rate * 35.0)
         coordination_risk = _clamp(repost_rate * 80.0 + max(0.0, 0.3 - first_rate) * 30.0)
         experience_score = min(100.0, calls_count / 30.0 * 100.0)
-        reputation = _clamp(
-            timing_score * 0.30
-            + outcome_score * 0.30
-            + originality_score * 0.25
-            + experience_score * 0.15
-        )
+        if temporal_outcome_score is None:
+            reputation = _clamp(
+                timing_score * 0.30
+                + outcome_score * 0.30
+                + originality_score * 0.25
+                + experience_score * 0.15
+            )
+        else:
+            reputation = _clamp(
+                timing_score * 0.27
+                + outcome_score * 0.18
+                + temporal_outcome_score * 0.17
+                + originality_score * 0.23
+                + experience_score * 0.15
+            )
         leads = lead_minutes.get(username, [])
         result.append(
             {
@@ -280,6 +354,8 @@ def build_caller_reputation(rows: Iterable[dict[str, Any]]) -> list[dict[str, An
                 "originality_score": round(originality_score, 1),
                 "timing_score": round(timing_score, 1),
                 "outcome_score": round(outcome_score, 1),
+                "temporal_outcome_score": round(temporal_outcome_score, 1) if temporal_outcome_score is not None else None,
+                "outcome_windows": outcome_windows,
                 "coordination_risk": round(coordination_risk, 1),
                 "reputation_score": round(reputation, 1),
             }
@@ -316,6 +392,7 @@ async def caller_reputation(
                 "roi_multiple": call.roi_multiple,
                 "call_market_cap_usd": call.call_market_cap_usd,
                 "forwarded_from": raw.get("forwarded_from"),
+                "meta": call.meta or {},
             }
         )
     return build_caller_reputation(rows)[: max(1, min(int(limit), 250))]
