@@ -46,6 +46,14 @@ export type TelegramCoordinationView = {
   clusters: Array<{ leader?: string; sources?: string[]; size?: number }>;
 };
 
+export type TelegramCallerOutcomeWindowView = {
+  samples: number;
+  medianCloseMultiple: number | null;
+  medianPeakMultiple: number | null;
+  positiveCloseRate: number | null;
+  twoXRate: number | null;
+};
+
 export type TelegramCallerReputationView = {
   username: string;
   calls: number;
@@ -66,6 +74,7 @@ export type TelegramCallerReputationView = {
   outcomeScore: number | null;
   coordinationRisk: number | null;
   reputationScore: number | null;
+  outcomeWindows: Record<string, TelegramCallerOutcomeWindowView>;
 };
 
 export type TelegramTokenIntelligenceView = {
@@ -79,6 +88,8 @@ export type TelegramTokenIntelligenceView = {
 };
 
 function finite(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === "string" && !value.trim()) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -105,6 +116,24 @@ function object(value: unknown): Record<string, unknown> | null {
 
 function camelOrSnake(row: Record<string, unknown>, camel: string, snake: string) {
   return row[camel] ?? row[snake];
+}
+
+function parseOutcomeWindows(value: unknown): Record<string, TelegramCallerOutcomeWindowView> {
+  const raw = object(value);
+  if (!raw) return {};
+  const result: Record<string, TelegramCallerOutcomeWindowView> = {};
+  for (const [label, candidate] of Object.entries(raw)) {
+    const row = object(candidate);
+    if (!row) continue;
+    result[label] = {
+      samples: nonNegative(row.samples),
+      medianCloseMultiple: finite(camelOrSnake(row, "medianCloseMultiple", "median_close_multiple")),
+      medianPeakMultiple: finite(camelOrSnake(row, "medianPeakMultiple", "median_peak_multiple")),
+      positiveCloseRate: finite(camelOrSnake(row, "positiveCloseRate", "positive_close_rate")),
+      twoXRate: finite(camelOrSnake(row, "twoXRate", "two_x_rate")),
+    };
+  }
+  return result;
 }
 
 export function telegramCollectorStatus(
@@ -178,6 +207,7 @@ export function telegramTokenIntelligence(
             outcomeScore: score(camelOrSnake(item, "outcomeScore", "outcome_score")),
             coordinationRisk: score(camelOrSnake(item, "coordinationRisk", "coordination_risk")),
             reputationScore: score(camelOrSnake(item, "reputationScore", "reputation_score")),
+            outcomeWindows: parseOutcomeWindows(camelOrSnake(item, "outcomeWindows", "outcome_windows")),
           };
         })
         .filter((item): item is TelegramCallerReputationView => item != null)
