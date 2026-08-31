@@ -15,7 +15,8 @@ from app.services.telegram_outcomes import OUTCOME_WINDOWS_MINUTES, build_outcom
 from app.services.telegram_signal_analysis import analyze_coordination_events
 
 
-BACKTEST_VERSION = 1
+BACKTEST_VERSION = 2
+BACKTEST_BASELINE_MAX_AGE_MINUTES = 15
 LEVELS = ("strong", "consider", "wait", "avoid")
 
 
@@ -58,6 +59,17 @@ def _smart_tags(tags: Any) -> bool:
     return bool(normalized & {"smart", "smart_money", "smartwallet", "smart_wallet"})
 
 
+def _caller_name(call: TelegramCall, channel: TelegramChannel) -> str:
+    raw = (
+        call.caller_username
+        or channel.username
+        or channel.title
+        or (str(channel.telegram_id) if channel.telegram_id is not None else None)
+        or f"channel-{channel.id}"
+    )
+    return normalize_caller_username(str(raw))
+
+
 def historical_caller_reputation(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     history = [row for row in rows if isinstance(_window(row.get("meta"), "24h"), dict)]
     evaluated = []
@@ -92,9 +104,14 @@ def historical_caller_reputation(rows: Iterable[dict[str, Any]]) -> dict[str, An
     )
     originality = (1 - reposts / calls) * 100 if calls else 50.0
     experience = min(100.0, calls / 20.0 * 100.0)
-    score = _clamp(outcome_score * 0.60 + originality * 0.25 + experience * 0.15)
+    # No mature evaluable outcome means caller quality is unknown, not a low synthetic score.
+    score = (
+        _clamp(outcome_score * 0.60 + originality * 0.25 + experience * 0.15)
+        if evaluated
+        else None
+    )
     return {
-        "score": round(score, 1),
+        "score": round(score, 1) if score is not None else None,
         "calls": calls,
         "evaluated": len(evaluated),
         "wins": wins,
@@ -111,16 +128,35 @@ def classify_signal_level(
     *,
     independence_score: float | None,
     independent_layers: int,
-    caller_reputation: float,
+    caller_reputation: float | None,
     coordination_risk: float | None,
 ) -> str:
     independence = independence_score if independence_score is not None else 0.0
     coordination = coordination_risk if coordination_risk is not None else 50.0
-    if coordination >= 78 or (independent_layers <= 1 and caller_reputation < 30 and independence < 40):
+    if coordination >= 78:
         return "avoid"
-    if independent_layers >= 3 and independence >= 70 and caller_reputation >= 58 and coordination < 45:
+    if (
+        caller_reputation is not None
+        and independent_layers <= 1
+        and caller_reputation < 30
+        and independence < 40
+    ):
+        return "avoid"
+    if (
+        caller_reputation is not None
+        and independent_layers >= 3
+        and independence >= 70
+        and caller_reputation >= 58
+        and coordination < 45
+    ):
         return "strong"
-    if independent_layers >= 2 and independence >= 56 and caller_reputation >= 42 and coordination < 62:
+    if (
+        caller_reputation is not None
+        and independent_layers >= 2
+        and independence >= 56
+        and caller_reputation >= 42
+        and coordination < 62
+    ):
         return "consider"
     return "wait"
 
@@ -170,6 +206,11 @@ def aggregate_backtest_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
                     "two_x_rate": None,
                     "severe_drawdown_rate": None,
                 }
+        caller_scores = [
+            float(row["caller_reputation"])
+            for row in level_rows
+            if row.get("caller_reputation") is not None
+        ]
         result[level] = {
             "signals": len(level_rows),
             "windows": windows,
@@ -177,10 +218,8 @@ def aggregate_backtest_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
                 median([float(row["independence_score"]) for row in level_rows if row.get("independence_score") is not None]),
                 2,
             ) if any(row.get("independence_score") is not None for row in level_rows) else None,
-            "median_caller_reputation": round(
-                median([float(row.get("caller_reputation") or 0.0) for row in level_rows]),
-                2,
-            ) if level_rows else None,
+            "median_caller_reputation": round(median(caller_scores), 2) if caller_scores else None,
+            "caller_reputation_samples": len(caller_scores),
         }
     return {
         "signals": len(materialized),
@@ -228,7 +267,7 @@ async def _decision_outcomes(
             .where(
                 TokenMetric.token_id == token.id,
                 TokenMetric.timestamp <= start,
-                TokenMetric.timestamp >= start - timedelta(minutes=30),
+                TokenMetric.timestamp >= start - timedelta(minutes=BACKTEST_BASELINE_MAX_AGE_MINUTES),
             )
             .order_by(TokenMetric.timestamp.desc())
             .limit(1)
@@ -348,12 +387,11 @@ async def run_intelligence_backtest(
     limit: int = 2000,
     decision_delay_minutes: int = 15,
 ) -> dict[str, Any]:
-    """Walk-forward backtest of the deterministic source-independence levels.
+    """Legacy call-limited walk-forward implementation kept for compatibility.
 
-    The signal is anchored to each mint's first explicit Telegram call. The decision is delayed
-    by `decision_delay_minutes`; only evidence at or before that decision timestamp is used.
-    Caller reputation uses only prior calls whose 24h outcome horizon had already matured before
-    the current signal, preventing future-result leakage.
+    New CLI runs the unique-mint implementation from intelligence_backtest_v2. This legacy path
+    still preserves the same causal unknown/baseline semantics so direct callers cannot silently
+    turn missing caller history into a bearish score.
     """
 
     safe_limit = max(1, min(int(limit), 20_000))
@@ -370,13 +408,10 @@ async def run_intelligence_backtest(
     ).all()
     records: list[dict[str, Any]] = []
     for call, channel, message in db_rows:
-        username = normalize_caller_username(
-            call.caller_username or channel.username or str(channel.telegram_id)
-        )
         records.append(
             {
                 "id": call.id,
-                "username": username,
+                "username": _caller_name(call, channel),
                 "mint": call.mint_address,
                 "called_at": _aware(call.called_at),
                 "call_market_cap_usd": call.call_market_cap_usd,
@@ -437,7 +472,7 @@ async def run_intelligence_backtest(
         level = classify_signal_level(
             independence_score=independence_score,
             independent_layers=independent_layers,
-            caller_reputation=float(prior_reputation["score"]),
+            caller_reputation=prior_reputation["score"],
             coordination_risk=coordination_risk,
         )
         outcomes = await _decision_outcomes(
@@ -476,18 +511,21 @@ async def run_intelligence_backtest(
     return {
         "version": BACKTEST_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "method": "walk_forward_first_tg_call",
+        "method": "walk_forward_first_tg_call_legacy",
         "decision_delay_minutes": decision_delay_minutes,
+        "baseline_max_age_minutes": BACKTEST_BASELINE_MAX_AGE_MINUTES,
         "lookahead_guards": {
             "caller_reputation_uses_only_matured_prior_24h_outcomes": True,
             "signal_features_cut_off_at_decision_time": True,
             "one_signal_per_mint": True,
             "outcomes_measured_from_decision_time": True,
+            "unknown_caller_history_is_not_zero": True,
         },
         "limitations": [
             "Historical X independence uses unique ingested X sources; historical bot-risk snapshots are not persisted.",
             "Historical chain independence uses unique WalletTrade buyers; smart-wallet tags are reported separately and are not required for the level score.",
-            "Missing TokenMetric history excludes a signal instead of treating its return as zero.",
+            "Missing or stale TokenMetric baseline history excludes a signal instead of treating its return as zero.",
+            "Legacy path limits calls before mint de-duplication; production CLI uses intelligence_backtest_v2.",
         ],
         "calls_loaded": len(records),
         "unique_mints_seen": len(seen_mints),
