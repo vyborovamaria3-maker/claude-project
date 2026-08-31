@@ -34,42 +34,9 @@ async def lifespan(app: FastAPI):
     async with app.state.sessionmaker() as session:
         await get_or_create_jobs(session)
 
-    manager: TelegramMonitorManager = app.state.telegram_intelligence
-    mtproto_started = False
-    channels = [item.strip() for item in settings.telegram_monitor_channels.split(",") if item.strip()]
-
-    if settings.telegram_autostart and channels and manager.mtproto_configured:
-        try:
-            service = await manager.get_service()
-            graph = await service.scan_graph(
-                channels,
-                max_depth=settings.telegram_graph_depth,
-                post_limit=settings.telegram_history_limit,
-                entity_limit=settings.telegram_entity_limit,
-            )
-            discovered = [
-                str(row.get("username") or "").strip()
-                for row in graph.get("results", [])
-                if not row.get("error") and row.get("username")
-            ]
-            monitored = list(dict.fromkeys([*channels, *discovered]))
-            await service.start_monitor(monitored)
-            mtproto_started = True
-        except Exception:
-            # A stale/missing MTProto session must not prevent API startup or the public fallback.
-            mtproto_started = False
-
-    if settings.telegram_public_web_enabled and not mtproto_started:
-        # Passing no explicit list is deliberate: manual env seeds remain trusted, while
-        # historical TGDataset seeds are revalidated against current public posts first.
-        if manager.public_web.configured_channels:
-            try:
-                await manager.scan_public_web(
-                    history_limit=settings.telegram_public_web_history_limit,
-                )
-            except Exception:
-                # Telegram intelligence is optional; public preview failures must never block API startup.
-                pass
+    # Telegram discovery/MTProto backfill is intentionally detached from startup.
+    # Slow Telegram/network calls must never delay /health or the rest of the API.
+    app.state.telegram_intelligence.start_background()
 
     yield
     await app.state.telegram_intelligence.close()
