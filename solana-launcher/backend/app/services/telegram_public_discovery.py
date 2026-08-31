@@ -24,7 +24,7 @@ _TME_CHANNEL_RE = re.compile(
 )
 _MEMECOIN_KEYWORDS_RE = re.compile(
     r"\b(?:memecoin|meme\s*coin|solana|pumpfun|pump\.fun|raydium|dexscreener|birdeye|"
-    r"market\s*cap|mcap|bonding|cto|gem|entry|ape|launch|caller|call)\b",
+    r"gmgn|photon|bullx|market\s*cap|mcap|bonding|cto|gem|entry|ape|launch|caller|call)\b",
     re.IGNORECASE,
 )
 _RESERVED_TME_TARGETS = {
@@ -289,6 +289,7 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
         channels: list[str] | None = None,
         *,
         history_limit: int | None = None,
+        force_accept_explicit: bool = True,
     ) -> dict[str, Any]:
         if not self.settings.telegram_public_web_enabled:
             raise TelegramPublicWebUnavailable("TG_PUBLIC_WEB_ENABLED is false")
@@ -309,7 +310,11 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
             return await super().scan_channels(seeds, history_limit=history_limit)
 
         manual_seeds = set(super().configured_channels)
-        force_accept = set(seeds) if explicit_seed_list else manual_seeds
+        force_accept = (
+            set(seeds)
+            if explicit_seed_list and force_accept_explicit
+            else manual_seeds
+        )
         seed_history_limit = max(
             1,
             min(int(history_limit or self.settings.telegram_public_web_history_limit), 500),
