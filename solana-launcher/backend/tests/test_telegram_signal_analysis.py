@@ -117,3 +117,50 @@ def test_caller_reputation_rewards_early_original_caller_over_reposter() -> None
     assert alpha["timing_score"] > copy["timing_score"]
     assert alpha["reputation_score"] > copy["reputation_score"]
     assert copy["repost_rate"] == 1.0
+
+
+def test_caller_reputation_includes_complete_temporal_outcome_windows() -> None:
+    def windows(close_1h: float, peak_1h: float, close_24h: float, peak_24h: float) -> dict:
+        return {
+            "outcome_windows": {
+                "1h": {
+                    "complete": True,
+                    "close_multiple": close_1h,
+                    "peak_multiple": peak_1h,
+                },
+                "24h": {
+                    "complete": True,
+                    "close_multiple": close_24h,
+                    "peak_multiple": peak_24h,
+                },
+            }
+        }
+
+    rows = [
+        {
+            "username": "alpha",
+            "mint_address": "mint-a",
+            "called_at": NOW,
+            "outcome": "win",
+            "roi_multiple": 2.5,
+            "call_market_cap_usd": 25_000,
+            "forwarded_from": None,
+            "meta": windows(1.4, 2.1, 1.8, 3.0),
+        },
+        {
+            "username": "alpha",
+            "mint_address": "mint-b",
+            "called_at": NOW + timedelta(hours=2),
+            "outcome": "win",
+            "roi_multiple": 2.0,
+            "call_market_cap_usd": 35_000,
+            "forwarded_from": None,
+            "meta": windows(1.2, 1.8, 1.3, 2.2),
+        },
+    ]
+
+    alpha = build_caller_reputation(rows)[0]
+    assert alpha["outcome_windows"]["1h"]["samples"] == 2
+    assert alpha["outcome_windows"]["1h"]["median_close_multiple"] == 1.3
+    assert alpha["outcome_windows"]["24h"]["two_x_rate"] == 1.0
+    assert alpha["temporal_outcome_score"] is not None
