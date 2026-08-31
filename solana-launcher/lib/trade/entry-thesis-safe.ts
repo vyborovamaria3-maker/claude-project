@@ -15,6 +15,10 @@ import {
 import type { LiveIntelligenceModel } from "./live-intelligence";
 import type { SourceNarratives } from "./source-narrative";
 import {
+  buildCrossSourceChronology,
+  buildSourceIndependence,
+} from "./cross-source-intelligence";
+import {
   hasChainIntelligence,
   hasEarlyTimingEvidence,
   hasFreshMarket,
@@ -101,6 +105,15 @@ export function buildCoverageAwareEntryThesis(args: BuildArgs): EntryThesis {
     args.market,
   );
   const hasSocial = xAvailable || tgAvailable;
+  const crossSourceArgs = {
+    x: xAvailable ? args.x : null,
+    telegram: tgAvailable ? args.telegram : null,
+    chain: chainAvailable ? args.chain : null,
+    market: marketFresh ? args.market : null,
+    derived: args.derived,
+  };
+  const independence = buildSourceIndependence(crossSourceArgs);
+  const chronology = buildCrossSourceChronology(crossSourceArgs);
 
   const base = buildEntryThesis({
     market: marketFresh ? args.market : null,
@@ -148,6 +161,64 @@ export function buildCoverageAwareEntryThesis(args: BuildArgs): EntryThesis {
     confidence = clamp(confidence - (stale ? 8 : 4));
   }
 
+  const concentrationRisk = independence.concentrationRisk;
+  if (
+    independence.availableLayers >= 2
+    && concentrationRisk != null
+    && concentrationRisk >= 65
+  ) {
+    if (rank(action) > rank("wait_confirmation")) action = "wait_confirmation";
+    confirmationNeeded.push(
+      `Source concentration risk ${Math.round(concentrationRisk)}/100: нужен новый независимый слой подтверждения, а не дополнительный репост/связанный кластер.`,
+    );
+    confidence = clamp(confidence - Math.min(16, (concentrationRisk - 55) * 0.35));
+    if (concentrationRisk >= 82 && independence.independentLayers <= 1) {
+      alreadyPricedIn.push(
+        "Видимая активность концентрируется в одном независимом слое; количество сообщений/кошельков может переоценивать реальную ширину спроса.",
+      );
+    }
+  } else if (
+    independence.verdict === "strong"
+    && independence.confirmationQuality != null
+    && independence.confirmationQuality >= 68
+  ) {
+    whyNow.push(
+      `Подтверждение распределено между ${independence.independentLayers} независимыми слоями; confirmation quality ${Math.round(independence.confirmationQuality)}/100.`,
+    );
+  }
+
+  if (chronology.priceLedSocial) {
+    if (action === "strong_entry") action = "consider";
+    alreadyPricedIn.push(
+      "Наблюдаемый market impulse появился раньше доступного X/Telegram evidence; часть social-активности может быть реакцией на уже начавшееся движение.",
+    );
+    confirmationNeeded.push(
+      "Для усиления входного тезиса нужен новый независимый спрос после social-сигнала, а не продолжение уже начавшегося price move.",
+    );
+    confidence = clamp(confidence - 7);
+  }
+
+  if (
+    chronology.orderableStages >= 3
+    && chronology.alignmentScore != null
+    && chronology.alignmentScore < 50
+  ) {
+    if (rank(action) > rank("wait_confirmation")) action = "wait_confirmation";
+    confirmationNeeded.push(
+      `Cross-source chronology согласована только на ${Math.round(chronology.alignmentScore)}%: ранний сценарий smart wallet → TG → X → market пока не подтверждён.`,
+    );
+    confidence = clamp(confidence - 6);
+  } else if (
+    chronology.orderableStages >= 3
+    && chronology.alignmentScore != null
+    && chronology.alignmentScore >= 67
+    && chronology.coverage >= 75
+  ) {
+    whyNow.push(
+      `Chronology подтверждена на ${Math.round(chronology.alignmentScore)}% при coverage ${Math.round(chronology.coverage)}%: доступные стадии идут в последовательности, совместимой с ранним распространением сигнала.`,
+    );
+  }
+
   if (!chainAvailable) {
     confirmationNeeded.push(
       "Нужно реальное on-chain покрытие: пустой blockchain-объект не считается нейтральным подтверждением.",
@@ -156,6 +227,11 @@ export function buildCoverageAwareEntryThesis(args: BuildArgs): EntryThesis {
   if (!hasSocial) {
     confirmationNeeded.push(
       "Нет пригодного X/Telegram покрытия; пустые social-источники исключены из поддержки и риска вместо оценки 0/100.",
+    );
+  }
+  if (independence.availableLayers < 2) {
+    confirmationNeeded.push(
+      "Source Independence пока не подтверждена минимум двумя доступными слоями; один источник не считается cross-source подтверждением.",
     );
   }
 
@@ -168,8 +244,8 @@ export function buildCoverageAwareEntryThesis(args: BuildArgs): EntryThesis {
     thesis,
     priceExplanation,
     whyNow: unique(whyNow).slice(0, 8),
-    alreadyPricedIn: unique(alreadyPricedIn).slice(0, 7),
-    confirmationNeeded: unique(confirmationNeeded).slice(0, 8),
+    alreadyPricedIn: unique(alreadyPricedIn).slice(0, 8),
+    confirmationNeeded: unique(confirmationNeeded).slice(0, 9),
     invalidation: unique(invalidation).slice(0, 8),
     confidence,
   };
