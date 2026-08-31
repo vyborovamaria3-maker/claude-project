@@ -60,11 +60,11 @@ async def lifespan(app: FastAPI):
             mtproto_started = False
 
     if settings.telegram_public_web_enabled and not mtproto_started:
-        public_channels = manager.public_web.configured_channels
-        if public_channels:
+        # Passing no explicit list is deliberate: manual env seeds remain trusted, while
+        # historical TGDataset seeds are revalidated against current public posts first.
+        if manager.public_web.configured_channels:
             try:
                 await manager.scan_public_web(
-                    public_channels,
                     history_limit=settings.telegram_public_web_history_limit,
                 )
             except Exception:
