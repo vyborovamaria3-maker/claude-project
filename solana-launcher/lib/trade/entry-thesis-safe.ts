@@ -17,7 +17,7 @@ import type { SourceNarratives } from "./source-narrative";
 import {
   buildCrossSourceChronology,
   buildSourceIndependence,
-} from "./cross-source-intelligence";
+} from "./cross-source-intelligence-safe";
 import {
   hasChainIntelligence,
   hasEarlyTimingEvidence,
@@ -92,6 +92,22 @@ function removeFalseEarlyClaims(rows: string[]) {
       && !value.includes("сигнал остаётся относительно ранним")
       && !value.includes("социальный сигнал выглядит запоздалым");
   });
+}
+
+function downgradedThesis(action: EntryAction) {
+  if (action === "consider") {
+    return "Сигнал можно рассматривать, но текущий момент не подтверждает безусловно сильный вход: часть движения уже могла начаться до social-подтверждения или качество независимых источников недостаточно высокое.";
+  }
+  if (action === "wait_confirmation") {
+    return "У токена есть наблюдаемое подтверждение, но качество текущего входа ограничено независимостью источников, chronology или свежестью данных. Нужен новый независимый факт, прежде чем повышать статус входа.";
+  }
+  if (action === "late_weak") {
+    return "Сигнал присутствует, но текущая точка выглядит поздней или слабой относительно уже произошедшего движения; дополнительный social-шум сам по себе не улучшает вход.";
+  }
+  if (action === "avoid") {
+    return "Текущая совокупность риска, структуры источников и цены не поддерживает вход; для пересмотра нужен существенный новый независимый evidence.";
+  }
+  return "Текущий вход подтверждается несколькими независимыми факторами при достаточной свежести данных.";
 }
 
 export function buildCoverageAwareEntryThesis(args: BuildArgs): EntryThesis {
@@ -233,6 +249,10 @@ export function buildCoverageAwareEntryThesis(args: BuildArgs): EntryThesis {
     confirmationNeeded.push(
       "Source Independence пока не подтверждена минимум двумя доступными слоями; один источник не считается cross-source подтверждением.",
     );
+  }
+
+  if (action !== base.action && thesis === base.thesis) {
+    thesis = downgradedThesis(action);
   }
 
   return {
