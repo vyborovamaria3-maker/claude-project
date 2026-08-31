@@ -23,12 +23,12 @@ from app.services.social_intelligence import (
     list_social_relations,
     refresh_x_for_mint,
     token_timeline,
-    top_callers,
 )
 from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
 from app.services.telegram_public_web import TelegramPublicWebError
 from app.services.telegram_runtime import TelegramMonitorManager
+from app.services.telegram_signal_analysis import caller_reputation, telegram_token_intelligence
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -42,17 +42,39 @@ def _manager(request: Request) -> TelegramMonitorManager:
 def _safe_collector_status(request: Request) -> dict:
     runtime = _manager(request).status()
     channels = runtime.get("channels") or []
+    registry = runtime.get("registry") if isinstance(runtime.get("registry"), dict) else {}
     return {
         "mode": runtime.get("mode") or "unavailable",
         "configured": bool(runtime.get("configured")),
         "mtproto_configured": bool(runtime.get("mtproto_configured")),
         "session_configured": bool(runtime.get("session_configured")),
         "running": bool(runtime.get("running")),
+        "background_running": bool(runtime.get("background_running")),
         "connected": bool(runtime.get("connected")),
         "monitored_channels": len(channels) if isinstance(channels, list) else 0,
         "public_web_enabled": bool(runtime.get("public_web_enabled")),
         "public_web_configured": bool(runtime.get("public_web_configured")),
         "public_web_channels": int(runtime.get("public_web_channels") or 0),
+        "public_web_seed_database_channels": int(
+            runtime.get("public_web_seed_database_channels") or 0
+        ),
+        "public_web_discovered_channels": int(runtime.get("public_web_discovered_channels") or 0),
+        "public_web_accepted_discovered": int(
+            runtime.get("public_web_accepted_discovered") or 0
+        ),
+        "public_web_rejected_discovered": int(
+            runtime.get("public_web_rejected_discovered") or 0
+        ),
+        "registry": {
+            "total": int(registry.get("total") or 0),
+            "validated": int(registry.get("validated") or 0),
+            "rejected": int(registry.get("rejected") or 0),
+            "unavailable": int(registry.get("unavailable") or 0),
+            "candidate": int(registry.get("candidate") or 0),
+            "due": int(registry.get("due") or 0),
+        },
+        "refresh_due": int(runtime.get("refresh_due") or 0),
+        "refresh_tick_seconds": int(runtime.get("refresh_tick_seconds") or 0),
         "last_scan_at": runtime.get("last_scan_at"),
         "last_scan_messages": int(runtime.get("last_scan_messages") or 0),
         "last_scan_matches": int(runtime.get("last_scan_matches") or 0),
@@ -216,7 +238,13 @@ async def calls(
 ) -> dict:
     if mint and not is_solana_address(mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
-    items, total = await list_calls(session, limit=limit, offset=offset, channel_id=channel_id, mint_address=mint)
+    items, total = await list_calls(
+        session,
+        limit=limit,
+        offset=offset,
+        channel_id=channel_id,
+        mint_address=mint,
+    )
     return {"items": items, "meta": {"limit": limit, "offset": offset, "total": total}}
 
 
@@ -257,6 +285,7 @@ async def telegram_token(
         limit=limit,
     )
     payload.setdefault("meta", {})["telegramCollector"] = _safe_collector_status(request)
+    payload["telegramIntelligence"] = await telegram_token_intelligence(session, mint)
     return payload
 
 
@@ -266,7 +295,7 @@ async def callers(
     session: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_subscriber),
 ) -> dict:
-    return {"items": await top_callers(session, limit=limit)}
+    return {"items": await caller_reputation(session, limit=limit)}
 
 
 @social_router.get("/relations")
@@ -281,7 +310,10 @@ async def social_relations(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x")
     return {
         "items": await list_social_relations(
-            session, source_handle=source_handle, platform=platform, limit=limit
+            session,
+            source_handle=source_handle,
+            platform=platform,
+            limit=limit,
         )
     }
 
@@ -317,6 +349,7 @@ async def social_token(
     )
     if platform in {None, "telegram"}:
         payload.setdefault("meta", {})["telegramCollector"] = _safe_collector_status(request)
+        payload["telegramIntelligence"] = await telegram_token_intelligence(session, mint)
     return payload
 
 
@@ -352,7 +385,10 @@ async def x_ingest(
 ) -> dict:
     expected = request.app.state.settings.backend_api_key
     if not expected:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="BACKEND_API_KEY is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="BACKEND_API_KEY is not configured",
+        )
     if not x_backend_api_key or not hmac.compare_digest(x_backend_api_key, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid backend API key")
     if not is_solana_address(payload.token_mint):
