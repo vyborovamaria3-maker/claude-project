@@ -338,7 +338,7 @@ def build_caller_reputation(
             for row in evaluated
             if row.get("roi_multiple") is not None
         ]
-        avg_roi = mean(rois) if rois else 0.0
+        avg_roi_for_score = mean(rois) if rois else 0.0
         early = sum(
             1
             for row in caller_rows
@@ -357,7 +357,7 @@ def build_caller_reputation(
             wins=wins,
             rugs=rugs,
             early=early,
-            avg_roi=avg_roi,
+            avg_roi=avg_roi_for_score,
         )
         outcome_windows = _temporal_outcome_profile(caller_rows)
         temporal_outcome_score = _temporal_outcome_score(outcome_windows)
@@ -392,9 +392,10 @@ def build_caller_reputation(
                 "unique_mints": len(unique_mints),
                 "evaluated": len(evaluated),
                 "wins": wins,
-                "win_rate": round(wins / len(evaluated), 4) if evaluated else 0.0,
-                "rug_rate": round(rugs / len(evaluated), 4) if evaluated else 0.0,
-                "avg_roi": round(float(avg_roi), 4),
+                # Unknown historical outcome coverage stays null instead of looking like a 0% record.
+                "win_rate": round(wins / len(evaluated), 4) if evaluated else None,
+                "rug_rate": round(rugs / len(evaluated), 4) if evaluated else None,
+                "avg_roi": round(float(mean(rois)), 4) if rois else None,
                 "early_calls": early,
                 "first_calls": first_count[username],
                 "top3_calls": top3_count[username],
@@ -418,11 +419,21 @@ def build_caller_reputation(
     return result
 
 
+def _channel_caller_name(call: TelegramCall, channel: TelegramChannel) -> str:
+    fallback = (
+        str(channel.telegram_id)
+        if channel.telegram_id is not None
+        else (channel.title or f"channel-{channel.id}")
+    )
+    return normalize_caller_username(call.caller_username or channel.username or fallback)
+
+
 async def caller_reputation(
     session: AsyncSession,
     *,
     limit: int = 50,
     exclude_mint: str | None = None,
+    include_usernames: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     statement = (
         select(TelegramCall, TelegramMessage, TelegramChannel)
@@ -437,10 +448,9 @@ async def caller_reputation(
     rows: list[dict[str, Any]] = []
     for call, message, channel in db_rows:
         raw = message.raw if isinstance(message.raw, dict) else {}
-        fallback = str(channel.telegram_id) if channel.telegram_id is not None else channel.title
-        username = normalize_caller_username(
-            call.caller_username or channel.username or fallback
-        )
+        username = _channel_caller_name(call, channel)
+        if include_usernames is not None and username not in include_usernames:
+            continue
         forwarded_source = _forwarded_from(raw)
         rows.append(
             {
@@ -457,7 +467,10 @@ async def caller_reputation(
                 "meta": call.meta or {},
             }
         )
-    return build_caller_reputation(rows)[: max(1, min(int(limit), 250))]
+    reputations = build_caller_reputation(rows)
+    if include_usernames is not None:
+        reputations = [row for row in reputations if row["username"] in include_usernames]
+    return reputations[: max(1, min(int(limit), 250))]
 
 
 async def token_coordination(
@@ -503,30 +516,36 @@ async def telegram_token_intelligence(
                     TelegramCall.mint_address == mint_address,
                     TelegramCall.is_explicit_call.is_(True),
                 )
-                .order_by(TelegramCall.called_at.asc())
+                .order_by(TelegramCall.called_at.asc(), TelegramCall.id.asc())
             )
         ).all()
     )
 
-    def caller_name(call: TelegramCall, channel: TelegramChannel) -> str:
-        fallback = str(channel.telegram_id) if channel.telegram_id is not None else channel.title
-        return normalize_caller_username(call.caller_username or channel.username or fallback)
-
-    relevant = {caller_name(call, channel) for call, channel in calls}
-    # Current-token outcomes must never boost the historical reputation shown for that same token.
-    all_reputation = await caller_reputation(
+    relevant = {_channel_caller_name(call, channel) for call, channel in calls}
+    # Filter relevant callers before applying a global ranking limit. Otherwise a caller for this
+    # token could disappear merely because 250 unrelated historical callers ranked above it.
+    caller_rows = await caller_reputation(
         session,
-        limit=250,
+        limit=max(1, min(int(caller_limit), 25)),
         exclude_mint=mint_address,
-    )
-    caller_rows = [row for row in all_reputation if row["username"] in relevant]
+        include_usernames=relevant,
+    ) if relevant else []
     caller_rows.sort(key=lambda item: item["reputation_score"], reverse=True)
 
     first_call = None
     if calls:
+        first_at = calls[0][0].called_at
+        tied = [
+            (call, channel)
+            for call, channel in calls
+            if call.called_at == first_at
+        ]
+        sources = sorted({_channel_caller_name(call, channel) for call, channel in tied})
         call, channel = calls[0]
         first_call = {
-            "source": caller_name(call, channel),
+            "source": sources[0] if len(sources) == 1 else None,
+            "sources": sources,
+            "tied": len(sources) > 1,
             "called_at": call.called_at,
             "call_market_cap_usd": call.call_market_cap_usd,
         }
