@@ -1,4 +1,5 @@
 import catalogJson from "./analysis-feature-provenance.json";
+import { crossSourceSnapshotFeatures } from "./cross-source-intelligence";
 import {
   buildAnalysisSnapshot as buildBaseAnalysisSnapshot,
   type AnalysisSnapshot as BaseAnalysisSnapshot,
@@ -169,10 +170,13 @@ export function buildAnalysisSnapshot(
   args: Parameters<typeof buildBaseAnalysisSnapshot>[0],
 ): AnalysisSnapshot {
   const snapshot = buildBaseAnalysisSnapshot(args);
-  const features = snapshot.features.map(enrichFeature);
+  const extended = crossSourceSnapshotFeatures(args, snapshot.createdAt) as BaseIntelligenceFeature[];
+  const features = [...snapshot.features, ...extended].map(enrichFeature);
 
   return {
     ...snapshot,
+    featureCount: features.length,
+    missingFeatureCount: features.filter((feature) => feature.missing).length,
     features,
     provenance: buildSnapshotProvenance(features),
   };
@@ -181,6 +185,8 @@ export function buildAnalysisSnapshot(
 export function rebuildProvenanceSnapshot(snapshot: AnalysisSnapshot): AnalysisSnapshot {
   return {
     ...snapshot,
+    featureCount: snapshot.features.length,
+    missingFeatureCount: snapshot.features.filter((feature) => feature.missing).length,
     provenance: buildSnapshotProvenance(snapshot.features),
   };
 }
