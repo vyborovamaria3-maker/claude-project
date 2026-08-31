@@ -153,9 +153,12 @@ export function telegramTokenIntelligence(
   if (!raw) return null;
 
   const coordinationRaw = object(raw.coordination);
-  const coordination: TelegramCoordinationView | null = coordinationRaw
+  const coordinationSources = coordinationRaw ? nonNegative(coordinationRaw.sources) : 0;
+  // An empty deterministic result means "no Telegram evidence", not "0 coordination risk".
+  // Keeping it null prevents Qwen and cross-source scoring from treating absence as a clean signal.
+  const coordination: TelegramCoordinationView | null = coordinationRaw && coordinationSources > 0
     ? {
-        sources: nonNegative(coordinationRaw.sources),
+        sources: coordinationSources,
         independentSources: nonNegative(camelOrSnake(coordinationRaw, "independentSources", "independent_sources")),
         coordinatedSources: nonNegative(camelOrSnake(coordinationRaw, "coordinatedSources", "coordinated_sources")),
         sourceIndependenceScore: score(camelOrSnake(coordinationRaw, "sourceIndependenceScore", "source_independence_score")),
