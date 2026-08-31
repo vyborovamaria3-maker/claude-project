@@ -14,6 +14,10 @@ const entryCard = read("components/trade/EntryThesisCard.tsx");
 const sourceNarrative = read("lib/trade/source-narrative-synthesis.ts");
 const telegramView = read("lib/trade/telegram-intelligence-view.ts");
 const intelligenceAgent = read("lib/trade/intelligence-agent.ts");
+const provenanceAgent = read("lib/trade/intelligence-agent-provenance.ts");
+const crossSource = read("lib/trade/cross-source-intelligence.ts");
+const crossSourceThesis = read("lib/trade/cross-source-thesis.ts");
+const crossSourceCard = read("components/trade/CrossSourceThesisCard.tsx");
 const qwenSynthesis = read("lib/trade/qwen-synthesis.ts");
 const socialAiRoute = read("app/api/trade/social-ai/route.ts");
 
@@ -51,7 +55,23 @@ assert(intelligenceAgent.includes('"telegram.coordination_risk"'), "Qwen snapsho
 assert(intelligenceAgent.includes('"telegram.independent_sources"'), "Qwen snapshot must contain Telegram independent source count");
 assert(intelligenceAgent.includes('"telegram.first_caller_reputation"'), "Qwen snapshot must contain first-caller reputation");
 assert(intelligenceAgent.includes("must not be described as probability of manipulation"), "coordination feature must carry anti-overclaim grounding");
+assert(crossSource.includes("buildSourceIndependence"), "cross-source layer must compute source independence deterministically");
+assert(crossSource.includes("buildCrossSourceChronology"), "cross-source layer must compute chronology deterministically");
+assert(crossSource.includes('key: "smart_wallet"'), "chronology must include smart-wallet demand stage");
+assert(crossSource.includes('key: "telegram_caller"'), "chronology must include Telegram caller stage");
+assert(crossSource.includes('key: "x_acceleration"'), "chronology must include X acceleration stage");
+assert(crossSource.includes('key: "market_breakout"'), "chronology must include market breakout stage");
+assert(crossSource.includes('"cross_source.independence_score"'), "cross-source snapshot must expose independence score");
+assert(crossSource.includes('"cross_source.chronology_alignment"'), "cross-source snapshot must expose chronology alignment");
+assert(crossSource.includes('"cross_source.price_led_social"'), "cross-source snapshot must expose price-led-social state");
+assert(provenanceAgent.includes("crossSourceSnapshotFeatures"), "provenance/Qwen snapshot must append cross-source feature keys");
+assert(provenanceAgent.includes("snapshot.features.map(enrichFeature)"), "129/core snapshot features must keep the provenance enrichment pass");
+assert(crossSourceThesis.includes("independenceWeak"), "cross-source thesis must downgrade concentrated confirmation");
+assert(crossSourceThesis.includes("chronology.priceLedSocial"), "cross-source thesis must surface late social reaction risk");
+assert(crossSourceCard.includes("Source independence"), "cross-source UI must show source independence");
+assert(crossSourceCard.includes("Chronology coverage"), "cross-source UI must show chronology coverage");
+assert(crossSourceCard.includes("smart wallet → TG → X → market"), "cross-source UI must name canonical chronology");
 assert(qwenSynthesis.includes("Qwen-сервис выключен"), "Qwen synthesis must explain disabled service state");
 assert(socialAiRoute.includes("if (!snapshot && !messages.length) return null"), "social AI route must allow snapshot-only full intelligence");
 
-console.log("[live-intelligence-regression] OK: entry coverage, Telegram collector diagnostics, independence/reputation grounding, snapshot-only Qwen, persisted details and technical wiring are guarded");
+console.log("[live-intelligence-regression] OK: entry coverage, Telegram collector/reputation, cross-source independence/chronology, snapshot-only Qwen, persisted details and technical wiring are guarded");
