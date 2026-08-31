@@ -72,6 +72,7 @@ export type TelegramCallerReputationView = {
   originalityScore: number | null;
   timingScore: number | null;
   outcomeScore: number | null;
+  temporalOutcomeScore: number | null;
   coordinationRisk: number | null;
   reputationScore: number | null;
   outcomeWindows: Record<string, TelegramCallerOutcomeWindowView>;
@@ -205,6 +206,7 @@ export function telegramTokenIntelligence(
             originalityScore: score(camelOrSnake(item, "originalityScore", "originality_score")),
             timingScore: score(camelOrSnake(item, "timingScore", "timing_score")),
             outcomeScore: score(camelOrSnake(item, "outcomeScore", "outcome_score")),
+            temporalOutcomeScore: score(camelOrSnake(item, "temporalOutcomeScore", "temporal_outcome_score")),
             coordinationRisk: score(camelOrSnake(item, "coordinationRisk", "coordination_risk")),
             reputationScore: score(camelOrSnake(item, "reputationScore", "reputation_score")),
             outcomeWindows: parseOutcomeWindows(camelOrSnake(item, "outcomeWindows", "outcome_windows")),
