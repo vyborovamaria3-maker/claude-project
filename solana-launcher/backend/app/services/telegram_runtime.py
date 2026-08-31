@@ -7,17 +7,27 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.services.telegram_intelligence import TelegramIntelligenceService
+from app.services.telegram_public_web import TelegramPublicWebCollector
 
 
 class TelegramMonitorManager:
-    """Own one Telethon client per FastAPI process and recover cleanly from failed connects."""
+    """Own Telegram collectors for one FastAPI process and recover cleanly from failed connects."""
 
     def __init__(self, settings: Settings, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.service: TelegramIntelligenceService | None = None
+        self.public_web = TelegramPublicWebCollector(settings, sessionmaker)
         self._lock = asyncio.Lock()
         self._runtime_session_string: str | None = None
+
+    @property
+    def mtproto_configured(self) -> bool:
+        return bool(self.settings.telegram_api_id and self.settings.telegram_api_hash)
+
+    @property
+    def session_configured(self) -> bool:
+        return bool(self._runtime_session_string or self.settings.telegram_session_string)
 
     async def get_service(self) -> TelegramIntelligenceService:
         async with self._lock:
@@ -49,6 +59,14 @@ class TelegramMonitorManager:
                     raise
             return self.service
 
+    async def scan_public_web(
+        self,
+        channels: list[str] | None = None,
+        *,
+        history_limit: int | None = None,
+    ) -> dict[str, Any]:
+        return await self.public_web.scan_channels(channels, history_limit=history_limit)
+
     async def attach_session(self, session_string: str) -> dict[str, Any]:
         candidate = TelegramIntelligenceService(
             self.settings,
@@ -77,14 +95,48 @@ class TelegramMonitorManager:
             if self.service is not None:
                 await self.service.disconnect()
                 self.service = None
+        await self.public_web.close()
 
     def status(self) -> dict[str, Any]:
         if self.service is None:
-            return {
-                "configured": bool(self.settings.telegram_api_id and self.settings.telegram_api_hash),
-                "session_configured": bool(self._runtime_session_string or self.settings.telegram_session_string),
+            mtproto = {
                 "running": False,
                 "channels": [],
                 "connected": False,
             }
-        return {"configured": True, "session_configured": True, **self.service.monitor_status()}
+        else:
+            mtproto = self.service.monitor_status()
+
+        public_web = self.public_web.status()
+        mtproto_active = bool(mtproto.get("running") or mtproto.get("connected"))
+        public_web_active = bool(public_web.get("configured") and public_web.get("last_scan_at"))
+
+        if mtproto_active:
+            mode = "mtproto"
+        elif public_web_active:
+            mode = "public_web"
+        elif self.mtproto_configured:
+            mode = "mtproto"
+        elif public_web.get("configured"):
+            mode = "public_web"
+        else:
+            mode = "unavailable"
+
+        channels = mtproto.get("channels") if mode == "mtproto" else public_web.get("channels")
+        channels = channels if isinstance(channels, list) else []
+        return {
+            "mode": mode,
+            "configured": bool(self.mtproto_configured or public_web.get("configured")),
+            "mtproto_configured": self.mtproto_configured,
+            "session_configured": self.session_configured,
+            "running": bool(mtproto.get("running") or public_web.get("running")),
+            "channels": channels,
+            "connected": bool(mtproto.get("connected")),
+            "public_web_enabled": bool(public_web.get("enabled")),
+            "public_web_configured": bool(public_web.get("configured")),
+            "public_web_channels": len(public_web.get("channels") or []),
+            "last_scan_at": public_web.get("last_scan_at"),
+            "last_scan_messages": int(public_web.get("last_scan_messages") or 0),
+            "last_scan_matches": int(public_web.get("last_scan_matches") or 0),
+            "last_error": public_web.get("last_error"),
+        }
