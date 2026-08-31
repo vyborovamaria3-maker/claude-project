@@ -55,6 +55,25 @@ def test_outcome_windows_fall_back_to_price_when_market_cap_baseline_missing() -
     assert windows["15m"]["peak_multiple"] == 2.0
 
 
+def test_outcome_windows_use_price_when_close_market_cap_is_missing() -> None:
+    called = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    metrics = [
+        Metric(called + timedelta(minutes=4), price_usd=1.1, market_cap=110.0),
+        Metric(called + timedelta(minutes=5), price_usd=1.25, market_cap=None),
+    ]
+    windows = build_outcome_windows(
+        metrics,
+        called_at=called,
+        call_price_usd=1.0,
+        call_market_cap_usd=100.0,
+    )
+
+    assert windows["5m"]["complete"] is True
+    assert windows["5m"]["baseline_kind"] == "price"
+    assert windows["5m"]["close_multiple"] == 1.25
+    assert windows["5m"]["peak_multiple"] == 1.25
+
+
 def test_outcome_window_is_not_complete_when_target_sample_is_too_old() -> None:
     called = datetime(2026, 1, 1, tzinfo=timezone.utc)
     metrics = [
