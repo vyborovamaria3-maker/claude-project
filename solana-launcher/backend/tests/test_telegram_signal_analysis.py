@@ -141,6 +141,26 @@ def test_caller_reputation_rewards_early_original_caller_over_reposter() -> None
     assert copy["repost_rate"] == 1.0
 
 
+def test_caller_reputation_keeps_unobserved_outcome_rates_null() -> None:
+    rows = [
+        {
+            "username": "new_caller",
+            "mint_address": "mint-pending",
+            "called_at": NOW,
+            "outcome": "pending",
+            "roi_multiple": None,
+            "call_market_cap_usd": 30_000,
+            "forwarded_from": None,
+            "meta": {},
+        }
+    ]
+    caller = build_caller_reputation(rows)[0]
+    assert caller["evaluated"] == 0
+    assert caller["win_rate"] is None
+    assert caller["rug_rate"] is None
+    assert caller["avg_roi"] is None
+
+
 def test_caller_reputation_includes_complete_temporal_outcome_windows() -> None:
     def windows(close_1h: float, peak_1h: float, close_24h: float, peak_24h: float) -> dict:
         return {
