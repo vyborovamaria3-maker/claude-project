@@ -9,6 +9,29 @@ export IMAGE_TAG
 
 cd "$DEPLOY_DIR"
 
+env_value_from_file() {
+  local file="$1"
+  local key="$2"
+  local value
+  value="$(sed -n "s/^${key}=//p" "$file" | tail -n 1)"
+  printf '%s' "${value%$'\r'}"
+}
+
+# docker-compose.production.yml injects this server-only secret into the
+# frontend so Mini App API routes can authenticate to FastAPI. Resolve the
+# same value as the backend without exposing the rest of backend.env.
+if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+  BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
+fi
+if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+  BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
+fi
+if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+  echo "BACKEND_API_KEY is required in .env.server or backend.env" >&2
+  exit 1
+fi
+export BACKEND_API_KEY
+
 COMPOSE=(
   docker compose
   --env-file .env.server
@@ -40,7 +63,7 @@ telegram_bot_enabled() {
 
 env_value() {
   local key="$1"
-  sed -n "s/^${key}=//p" .env.server | tail -n 1
+  env_value_from_file .env.server "$key"
 }
 
 check_telegram_webhook() {
@@ -137,6 +160,7 @@ check_services() {
 for attempt in $(seq 1 45); do
   endpoints_ok=0
   build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
+  miniapp_config="$(curl -fsS http://127.0.0.1/api/miniapp/config 2>/dev/null || true)"
 
   admin_location="$(
     curl -fsSI http://127.0.0.1/admin/ 2>/dev/null \
@@ -156,6 +180,7 @@ for attempt in $(seq 1 45); do
     && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
     && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
+    && printf '%s' "$miniapp_config" | grep -Fq '"monthlyPriceSol"' \
     && [[ "$admin_location" == "https://potapoff.fun/admin/login" ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
     && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
@@ -165,7 +190,7 @@ for attempt in $(seq 1 45); do
   bad_services="$(check_services)"
 
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok frontend_build=verified"
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok frontend_build=verified"
     exit 0
   fi
 
@@ -175,6 +200,7 @@ done
 echo "HEALTHCHECK_FAILED image_tag=$IMAGE_TAG" >&2
 echo "Bad services: ${bad_services:-unknown}" >&2
 echo "Build info: ${build_info:-unavailable}" >&2
+echo "Mini App config: ${miniapp_config:-unavailable}" >&2
 
 "${COMPOSE[@]}" ps || true
 
