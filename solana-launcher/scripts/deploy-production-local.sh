@@ -5,6 +5,7 @@ SOURCE_ROOT="${POTAPOFF_SOURCE_ROOT:-/opt/claude-project}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/potapoff-deploy}"
 BRANCH="${POTAPOFF_DEPLOY_BRANCH:-main}"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
+LOCAL_BUILD_FILE="$DEPLOY_DIR/docker-compose.local-build.yml"
 HEALTH_SCRIPT="$DEPLOY_DIR/scripts/healthcheck-production.sh"
 BACKUP_SCRIPT="$DEPLOY_DIR/scripts/backup-production.sh"
 ADMIN_DIR="${ADMIN_DIR:-$SOURCE_ROOT/admin-site}"
@@ -73,6 +74,9 @@ install -m 0644 \
   "$SOURCE_ROOT/solana-launcher/docker-compose.production.yml" \
   "$COMPOSE_FILE"
 install -m 0644 \
+  "$SOURCE_ROOT/solana-launcher/docker-compose.local-build.yml" \
+  "$LOCAL_BUILD_FILE"
+install -m 0644 \
   "$SOURCE_ROOT/solana-launcher/nginx/nginx.conf" \
   "$DEPLOY_DIR/nginx/nginx.conf"
 install -m 0644 \
@@ -102,6 +106,7 @@ COMPOSE=(
   docker compose
   --env-file "$DEPLOY_DIR/.env.server"
   -f "$COMPOSE_FILE"
+  -f "$LOCAL_BUILD_FILE"
 )
 
 telegram_intelligence_enabled() {
