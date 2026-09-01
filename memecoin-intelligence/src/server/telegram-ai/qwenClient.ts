@@ -7,6 +7,7 @@ import { telegramAiResultSchema, type TelegramAiResult, type TelegramAnalysisCon
 import { groundMockFullIntelligence, validateTelegramAiResult } from './validation.js';
 
 export const FULL_INTELLIGENCE_MIN_OUTPUT_TOKENS = 3_200;
+const DEFAULT_CONTEXT: TelegramAnalysisContext = { analysisMode: 'telegram_only', analysisRole: 'analyst' };
 
 export type TelegramAiCompletion = {
   result: TelegramAiResult;
@@ -158,7 +159,11 @@ async function execute(messages: TelegramMessageInput[], context: TelegramAnalys
   return callOpenAiCompatible(messages, context);
 }
 
-export async function runTelegramAi(messages: TelegramMessageInput[], context: TelegramAnalysisContext = {}, options: { bypassCache?: boolean } = {}): Promise<TelegramAiCompletion> {
+export async function runTelegramAi(
+  messages: TelegramMessageInput[],
+  context: TelegramAnalysisContext = DEFAULT_CONTEXT,
+  options: { bypassCache?: boolean } = {},
+): Promise<TelegramAiCompletion> {
   if (!env.TELEGRAM_AI_ENABLED) throw new Error('Telegram AI is disabled');
   const hash = telegramAiInputHash(messages, context);
   const cacheKey = `telegram-ai:${TELEGRAM_PROMPT_VERSION}:${env.TELEGRAM_AI_MODEL}:${hash}`;

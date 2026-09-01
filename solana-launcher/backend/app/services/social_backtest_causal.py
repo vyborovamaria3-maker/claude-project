@@ -504,7 +504,7 @@ def build_historical_outcome(
         roi_multiple=multiple,
         final_to_peak=final_to_peak,
         observed_hours=observed_hours,
-        horizon_hours=float(horizon_hours),
+        maturity_hours=float(horizon_hours),
     )
     return HistoricalOutcome(
         baseline_price=baseline,

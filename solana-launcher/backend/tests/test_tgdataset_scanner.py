@@ -110,6 +110,18 @@ def test_streaming_json_classifies_crypto_without_loading_archive() -> None:
     assert by_username["eth_meme_gems"]["signals"]["unique_evm_contracts"] == 1
 
 
+def test_ca_only_solana_message_survives_fast_gate() -> None:
+    channel = TGDatasetChannelAccumulator(channel_id="1004", username="raw_mints")
+    channel.observe_message(ADDR_2)
+    result = channel.result()
+
+    assert result["signals"]["signal_messages"] == 1
+    assert result["signals"]["contract_messages"] == 1
+    assert result["signals"]["solana_messages"] == 1
+    assert result["signals"]["unique_solana_mints"] == 1
+    assert "solana" in result["classifications"]
+
+
 def test_tar_stream_emits_only_candidates() -> None:
     emitted = []
     stats = scan_tar_stream(
@@ -144,6 +156,28 @@ def test_seed_scoring_does_not_treat_stock_ticker_alone_as_crypto() -> None:
     channel.observe_message("$AAPL buy entry")
     result = channel.result()
     assert result["classifications"] == []
+
+
+def test_contract_bonus_requires_memecoin_context() -> None:
+    generic = TGDatasetChannelAccumulator(
+        channel_id="8",
+        username="contract_tracker",
+        title="Crypto Contract Tracker",
+    )
+    generic.observe_message(f"Contract {ADDR_1} entry")
+
+    memecoin = TGDatasetChannelAccumulator(
+        channel_id="9",
+        username="meme_calls",
+        title="Meme Coin Calls",
+    )
+    memecoin.observe_message(f"Contract {ADDR_1} entry")
+
+    generic_result = generic.result()
+    memecoin_result = memecoin.result()
+    assert "memecoin" not in generic_result["classifications"]
+    assert "memecoin" in memecoin_result["classifications"]
+    assert memecoin_result["scores"]["memecoin"] > generic_result["scores"]["memecoin"]
 
 
 def test_zenodo_url_targets_original_archive() -> None:

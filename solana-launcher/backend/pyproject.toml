@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=83", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -17,7 +17,7 @@ dependencies = [
   "alembic>=1.13",
   "pydantic>=2.8",
   "pydantic-settings>=2.4",
-  "python-jose[cryptography]>=3.3",
+  "PyJWT>=2.13,<3",
   "cryptography>=42",
   "bcrypt==4.0.1",
   "passlib[bcrypt]>=1.7.4",

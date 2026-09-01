@@ -10,6 +10,9 @@ export interface TelegramAuthUser {
   photoUrl?: string;
 }
 
+const TELEGRAM_AUTH_MAX_AGE_SECONDS = 60 * 60 * 24;
+const TELEGRAM_AUTH_MAX_FUTURE_SKEW_SECONDS = 60 * 5;
+
 function hmacHex(secret: crypto.BinaryLike | crypto.KeyObject, data: string) {
   return crypto.createHmac("sha256", secret).update(data).digest("hex");
 }
@@ -18,6 +21,27 @@ function safeEqualHex(a: string, b: string) {
   const left = Buffer.from(a, "hex");
   const right = Buffer.from(b, "hex");
   return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function assertFreshAuthDate(rawAuthDate: unknown) {
+  const authDate = Number(rawAuthDate ?? 0);
+  const now = Math.floor(Date.now() / 1000);
+  if (
+    !Number.isSafeInteger(authDate) ||
+    authDate <= 0 ||
+    authDate < now - TELEGRAM_AUTH_MAX_AGE_SECONDS ||
+    authDate > now + TELEGRAM_AUTH_MAX_FUTURE_SKEW_SECONDS
+  ) {
+    throw new AppError(401, "Telegram authentication payload expired", "TELEGRAM_AUTH_EXPIRED");
+  }
+}
+
+function assertTelegramUserId(rawId: unknown) {
+  const id = String(rawId ?? "").trim();
+  if (!/^\d+$/.test(id) || id === "0") {
+    throw new AppError(400, "Telegram user id is invalid", "TELEGRAM_USER_INVALID");
+  }
+  return id;
 }
 
 export function verifyTelegramLoginWidget(input: Record<string, unknown>): TelegramAuthUser {
@@ -38,13 +62,10 @@ export function verifyTelegramLoginWidget(input: Record<string, unknown>): Teleg
     throw new AppError(401, "Invalid Telegram login signature", "INVALID_TELEGRAM_SIGNATURE");
   }
 
-  const authDate = Number(input.auth_date ?? 0);
-  if (!authDate || Date.now() / 1000 - authDate > 60 * 60 * 24) {
-    throw new AppError(401, "Telegram login payload expired", "TELEGRAM_AUTH_EXPIRED");
-  }
+  assertFreshAuthDate(input.auth_date);
 
   return {
-    id: String(input.id),
+    id: assertTelegramUserId(input.id),
     username: input.username ? String(input.username) : undefined,
     firstName: input.first_name ? String(input.first_name) : undefined,
     lastName: input.last_name ? String(input.last_name) : undefined,
@@ -72,21 +93,28 @@ export function verifyTelegramMiniAppInitData(initData: string): TelegramAuthUse
     throw new AppError(401, "Invalid Telegram Mini App signature", "INVALID_TELEGRAM_SIGNATURE");
   }
 
+  assertFreshAuthDate(params.get("auth_date"));
+
   const userRaw = params.get("user");
   if (!userRaw) {
     throw new AppError(400, "Telegram Mini App user is missing", "TELEGRAM_USER_MISSING");
   }
 
-  const user = JSON.parse(userRaw) as {
-    id: number | string;
+  let user: {
+    id?: number | string;
     username?: string;
     first_name?: string;
     last_name?: string;
     photo_url?: string;
   };
+  try {
+    user = JSON.parse(userRaw) as typeof user;
+  } catch {
+    throw new AppError(400, "Telegram Mini App user is invalid", "TELEGRAM_USER_INVALID");
+  }
 
   return {
-    id: String(user.id),
+    id: assertTelegramUserId(user.id),
     username: user.username,
     firstName: user.first_name,
     lastName: user.last_name,

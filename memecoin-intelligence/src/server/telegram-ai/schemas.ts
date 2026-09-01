@@ -124,7 +124,10 @@ export const telegramContextSchema = z.object({
   analysisRole: z.enum(['analyst', 'critic']).optional().default('analyst'),
   priorConclusion: z.string().max(6_000).optional().nullable(),
   intelligenceSnapshot: intelligenceSnapshotSchema.optional(),
-}).strict().default({});
+}).strict().default({
+  analysisMode: 'telegram_only',
+  analysisRole: 'analyst',
+});
 
 const discoveredRelationshipSchema = z.object({
   source: z.string().min(1).max(512),

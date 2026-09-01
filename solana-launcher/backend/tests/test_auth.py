@@ -1,9 +1,12 @@
-import pytest
 import hashlib
 import hmac
 import json
 import time
 from urllib.parse import urlencode
+
+import base58
+import pytest
+from nacl.signing import SigningKey
 from sqlalchemy import select
 
 from app.models.user import User
@@ -62,6 +65,34 @@ async def test_phantom_nonce_creates_wallet_user(client, test_app):
 
     assert user is not None
     assert user.nonce == body["nonce"]
+
+
+@pytest.mark.asyncio
+async def test_phantom_signature_is_valid_once(client):
+    signing_key = SigningKey(b"\x01" * 32)
+    wallet_address = base58.b58encode(bytes(signing_key.verify_key)).decode("ascii")
+    nonce_response = await client.post(
+        "/api/v1/auth/phantom/nonce",
+        json={"wallet_address": wallet_address},
+    )
+    assert nonce_response.status_code == 200
+    nonce_body = nonce_response.json()
+    signature = base58.b58encode(
+        signing_key.sign(nonce_body["message"].encode("utf-8")).signature
+    ).decode("ascii")
+    payload = {
+        "wallet_address": wallet_address,
+        "nonce": nonce_body["nonce"],
+        "signature": signature,
+    }
+
+    verified = await client.post("/api/v1/auth/phantom/verify", json=payload)
+    assert verified.status_code == 200
+    assert verified.json()["access_token"]
+
+    replay = await client.post("/api/v1/auth/phantom/verify", json=payload)
+    assert replay.status_code == 401
+    assert replay.json()["detail"] == "Invalid credentials"
 
 
 @pytest.mark.asyncio

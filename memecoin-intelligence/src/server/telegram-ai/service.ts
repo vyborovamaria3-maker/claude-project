@@ -7,6 +7,8 @@ import { TELEGRAM_PROMPT_VERSION } from './prompts.js';
 import { telegramAnalyzeRequestV2Schema, telegramEnqueueRequestV2Schema } from './requestSchemas.js';
 import type { TelegramAnalysisContext, TelegramMessageInput } from './schemas.js';
 
+const DEFAULT_CONTEXT: TelegramAnalysisContext = { analysisMode: 'telegram_only', analysisRole: 'analyst' };
+
 function snapshotOnlyFullIntelligence(context: TelegramAnalysisContext) {
   return context.analysisMode === 'full_intelligence'
     && Boolean(context.intelligenceSnapshot?.features.some((feature) => !feature.missing));
@@ -54,7 +56,7 @@ export async function analyzeTelegram(input: unknown) {
   assertEnabled();
   const parsed = telegramAnalyzeRequestV2Schema.parse(input);
   const selected = selectMessages(parsed.messages);
-  const context = parsed.context ?? {};
+  const context = parsed.context ?? DEFAULT_CONTEXT;
   if (!selected.messages.length && !snapshotOnlyFullIntelligence(context)) {
     throw new Error('No message text remains after limits');
   }
@@ -86,7 +88,7 @@ export async function enqueueTelegramAi(input: unknown) {
   assertEnabled();
   const parsed = telegramEnqueueRequestV2Schema.parse(input);
   const selected = selectMessages(parsed.messages);
-  const context = parsed.context ?? {};
+  const context = parsed.context ?? DEFAULT_CONTEXT;
   if (!selected.messages.length && !snapshotOnlyFullIntelligence(context)) {
     throw new Error('No message text remains after limits');
   }

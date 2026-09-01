@@ -1,15 +1,22 @@
 const TelegramBot = require('node-telegram-bot-api');
 require('dotenv').config();
 
-const BOT_TOKEN = process.env.BOT_TOKEN || '8881301382:AAFoB52OPi5VredsbOE7F0mh_SBZubqabj8';
-const WEBAPP_URL = process.env.WEBAPP_URL || 'https://your-miniapp.vercel.app';
+function requireEnv(name) {
+  const value = process.env[name] && process.env[name].trim();
+  if (!value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+const BOT_TOKEN = requireEnv('BOT_TOKEN');
+const WEBAPP_URL = requireEnv('WEBAPP_URL');
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 console.log('🤖 Bot started');
 console.log('📱 WebApp URL:', WEBAPP_URL);
 
-// Handle /start command
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const username = msg.from?.username || msg.from?.first_name || 'User';
@@ -54,10 +61,9 @@ bot.onText(/\/start/, async (msg) => {
   await bot.sendMessage(chatId, welcomeMessage, keyboard);
 });
 
-// Handle /help command
 bot.onText(/\/help/, async (msg) => {
   const chatId = msg.chat.id;
-  
+
   const helpMessage = `
 ❓ <b>Как пользоваться:</b>
 
@@ -72,7 +78,6 @@ bot.onText(/\/help/, async (msg) => {
   await bot.sendMessage(chatId, helpMessage, { parse_mode: 'HTML' });
 });
 
-// Handle /status command
 bot.onText(/\/status/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from?.id;
@@ -84,32 +89,29 @@ bot.onText(/\/status/, async (msg) => {
   );
 });
 
-// Handle web_app_data (when user sends data from Mini App)
 bot.on('message', async (msg) => {
   if (msg.web_app_data) {
-    console.log('📩 WebApp data received:', msg.web_app_data);
-    
+    console.log('📩 WebApp data received');
+
     try {
       const data = JSON.parse(msg.web_app_data.data);
-      
+
       if (data.action === 'payment_initiated') {
         await bot.sendMessage(
           msg.chat.id,
-          `💳 Платёж создан!\n\nПожалуйста, завершите оплату в вашем кошельке.\nПосле подтверждения подписка активируется автоматически.`
+          '💳 Платёж создан!\n\nПожалуйста, завершите оплату в вашем кошельке.\nПосле подтверждения подписка активируется автоматически.'
         );
       }
-    } catch (e) {
+    } catch {
       console.log('Failed to parse WebApp data');
     }
   }
 });
 
-// Handle errors
 bot.on('polling_error', (error) => {
   console.error('Polling error:', error);
 });
 
-// Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Stopping bot...');
   bot.stopPolling();

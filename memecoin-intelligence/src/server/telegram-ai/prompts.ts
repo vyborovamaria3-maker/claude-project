@@ -1,6 +1,7 @@
 import type { TelegramAnalysisContext, TelegramMessageInput } from './schemas.js';
 
 export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v10-grounded-entry';
+const DEFAULT_CONTEXT: TelegramAnalysisContext = { analysisMode: 'telegram_only', analysisRole: 'analyst' };
 
 const systemPrompt = `You are the evidence-first intelligence analyst for a memecoin research platform.
 Use only supplied messages, structured features, deterministic graph and evidence. Never invent outside facts, identities, ownership, payments, wallet control or coordination.
@@ -134,7 +135,7 @@ function compactMessages(messages: TelegramMessageInput[], fullMode: boolean) {
   }));
 }
 
-export function buildTelegramPrompt(messages: TelegramMessageInput[], context: TelegramAnalysisContext = {}) {
+export function buildTelegramPrompt(messages: TelegramMessageInput[], context: TelegramAnalysisContext = DEFAULT_CONTEXT) {
   const fullMode = context.analysisMode === 'full_intelligence' && Boolean(context.intelligenceSnapshot);
   const compact = compactMessages(messages, fullMode);
   const analysisRole = context.analysisRole ?? 'analyst';

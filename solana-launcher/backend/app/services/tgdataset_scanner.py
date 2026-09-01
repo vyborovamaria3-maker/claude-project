@@ -25,10 +25,14 @@ _USER_AGENT = "POTAPoff-TGDataset-Scanner/1.0"
 _MAX_UNIQUE_CONTRACTS = 20_000
 
 _EVM_CONTRACT_RE = re.compile(r"(?<![0-9a-fA-F])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])")
+# Cheap pre-gate only. parse_telegram_message still performs the real Solana base58 validation.
+_SOLANA_CANDIDATE_RE = re.compile(
+    r"(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])"
+)
 _CRYPTO_RE = re.compile(
     r"\b(?:crypto(?:currency)?|bitcoin|btc|ethereum|ether|eth|blockchain|web3|defi|dex|cex|"
     r"binance|bnb|altcoin|airdrop|token|coin|metamask|uniswap|pancakeswap|nft|staking|"
-    r"liquidity|presale|ido|ico|solana|raydium|jupiter)\b",
+    r"liquidity|presale|ido|ico|solana|raydium|jupiter|dexscreener|birdeye|gmgn|photon|bullx)\b",
     re.IGNORECASE,
 )
 _MEME_RE = re.compile(
@@ -37,7 +41,8 @@ _MEME_RE = re.compile(
     re.IGNORECASE,
 )
 _SOLANA_RE = re.compile(
-    r"\b(?:solana|\$sol|raydium|jupiter|orca|serum|phantom|solscan|spl\s*token|pump\.fun|pumpfun)\b",
+    r"\b(?:solana|\$sol|raydium|jupiter|orca|serum|phantom|solscan|spl\s*token|pump\.fun|"
+    r"pumpfun|dexscreener|birdeye|gmgn|photon|bullx)\b",
     re.IGNORECASE,
 )
 _CALL_RE = re.compile(
@@ -49,8 +54,8 @@ _PUMPFUN_RE = re.compile(r"(?:pump\.fun|pumpfun)", re.IGNORECASE)
 _GATE_RE = re.compile(
     r"(?:crypto|bitcoin|\bbtc\b|ethereum|\beth\b|blockchain|web3|defi|dex|binance|\bbnb\b|"
     r"altcoin|airdrop|token|coin|meme|doge|shib|floki|safemoon|pepe|bonk|solana|raydium|"
-    r"jupiter|pump\.fun|pumpfun|0x[0-9a-fA-F]{40}|\$[A-Za-z][A-Za-z0-9_]{1,11}|"
-    r"\b(?:contract|ca|mcap|gem|presale|launch|100x|50x|20x|10x)\b)",
+    r"jupiter|pump\.fun|pumpfun|dexscreener|birdeye|gmgn|photon|bullx|0x[0-9a-fA-F]{40}|"
+    r"\$[A-Za-z][A-Za-z0-9_]{1,11}|\b(?:contract|ca|mcap|gem|presale|launch|100x|50x|20x|10x)\b)",
     re.IGNORECASE,
 )
 
@@ -137,7 +142,7 @@ class TGDatasetChannelAccumulator:
     def observe_message(self, text: str) -> None:
         self.messages_total += 1
         text = text or ""
-        if not text or not _GATE_RE.search(text):
+        if not text or not (_GATE_RE.search(text) or _SOLANA_CANDIDATE_RE.search(text)):
             return
 
         self.signal_messages += 1
@@ -196,7 +201,16 @@ class TGDatasetChannelAccumulator:
             (25.0 if self.metadata_memecoin else 0.0)
             + _scaled_count(self.memecoin_messages, 20, 35.0)
             + _density(self.memecoin_messages, total, 25.0)
-            + _scaled_count(self.explicit_call_messages if self.memecoin_messages else 0, 10, 15.0)
+            + _scaled_count(
+                self.explicit_call_messages if (self.memecoin_messages or self.metadata_memecoin) else 0,
+                10,
+                15.0,
+            )
+            + _scaled_count(
+                unique_contracts if (self.metadata_memecoin or self.memecoin_messages) else 0,
+                10,
+                10.0,
+            )
         )
         solana = (
             (20.0 if self.metadata_solana else 0.0)

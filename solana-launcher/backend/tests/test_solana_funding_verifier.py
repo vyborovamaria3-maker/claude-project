@@ -30,7 +30,7 @@ def test_spl_transfer_is_not_treated_as_sol_funding() -> None:
             },
         }
     )
-    assert _incoming_system_transfers(transaction, WALLET) == []
+    assert _incoming_system_transfers(transaction, WALLET, inspected_rank=1) == []
 
 
 def test_positive_system_lamport_transfer_is_funding_evidence() -> None:
@@ -48,12 +48,13 @@ def test_positive_system_lamport_transfer_is_funding_evidence() -> None:
             },
         }
     )
-    rows = _incoming_system_transfers(transaction, WALLET)
+    rows = _incoming_system_transfers(transaction, WALLET, inspected_rank=1)
     assert len(rows) == 1
     assert rows[0]["source"] == SOURCE
     assert rows[0]["lamports"] == 1_500_000_000
     assert rows[0]["sol"] == 1.5
     assert rows[0]["program"] == "system"
+    assert rows[0]["inspected_rank_from_oldest"] == 1
 
 
 def test_zero_or_missing_lamports_are_rejected() -> None:
@@ -79,5 +80,5 @@ def test_zero_or_missing_lamports_are_rejected() -> None:
             },
         }
     )
-    assert _incoming_system_transfers(zero, WALLET) == []
-    assert _incoming_system_transfers(missing, WALLET) == []
+    assert _incoming_system_transfers(zero, WALLET, inspected_rank=1) == []
+    assert _incoming_system_transfers(missing, WALLET, inspected_rank=1) == []

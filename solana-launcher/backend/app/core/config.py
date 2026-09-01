@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     telegram_public_web_relevance_min_score: float = Field(default=35.0, ge=0.0, le=100.0, alias="TG_PUBLIC_WEB_RELEVANCE_MIN_SCORE")
     telegram_public_web_seed_database: str = Field(default="data/tgdataset/telegram_seed_database.json", alias="TG_PUBLIC_WEB_SEED_DATABASE")
     telegram_public_web_seed_database_limit: int = Field(default=12, ge=0, le=100, alias="TG_PUBLIC_WEB_SEED_DATABASE_LIMIT")
+    telegram_public_web_refresh_enabled: bool = Field(default=True, alias="TG_PUBLIC_WEB_REFRESH_ENABLED")
+    telegram_public_web_refresh_tick_seconds: int = Field(default=60, ge=30, le=3600, alias="TG_PUBLIC_WEB_REFRESH_TICK_SECONDS")
+    telegram_public_web_refresh_batch_size: int = Field(default=25, ge=1, le=200, alias="TG_PUBLIC_WEB_REFRESH_BATCH_SIZE")
+    telegram_public_web_refresh_strong_seconds: int = Field(default=600, ge=60, alias="TG_PUBLIC_WEB_REFRESH_STRONG_SECONDS")
+    telegram_public_web_refresh_normal_seconds: int = Field(default=1800, ge=60, alias="TG_PUBLIC_WEB_REFRESH_NORMAL_SECONDS")
+    telegram_public_web_refresh_rejected_seconds: int = Field(default=21600, ge=300, alias="TG_PUBLIC_WEB_REFRESH_REJECTED_SECONDS")
+    telegram_public_web_refresh_unavailable_seconds: int = Field(default=3600, ge=300, alias="TG_PUBLIC_WEB_REFRESH_UNAVAILABLE_SECONDS")
     phantom_nonce_ttl_minutes: int = Field(default=5, alias="PHANTOM_NONCE_TTL_MINUTES")
     telegram_auth_max_age_hours: int = Field(default=24, alias="TELEGRAM_AUTH_MAX_AGE_HOURS")
     auth_rate_limit_window_seconds: int = Field(default=60, alias="AUTH_RATE_LIMIT_WINDOW_SECONDS")
@@ -108,17 +115,24 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def validate_production_secrets(self) -> "Settings":
+    def validate_production_security(self) -> "Settings":
         if self.environment.strip().lower() not in {"production", "prod"}:
             return self
 
         password = self.admin_password.strip()
         session_secret = self.admin_session_secret.strip()
+        backend_api_key = self.backend_api_key.strip()
         encryption_key = self.subscription_password_encryption_key.strip()
+        if self.debug:
+            raise ValueError("DEBUG must be false in production")
         if not password or password == "ChangeMe123!" or len(password) < 16:
             raise ValueError("ADMIN_PASSWORD must be explicitly configured with at least 16 characters in production")
         if not session_secret or session_secret == "admin-session-secret" or len(session_secret) < 32:
             raise ValueError("ADMIN_SESSION_SECRET must be explicitly configured with at least 32 characters in production")
+        if not backend_api_key or len(backend_api_key) < 32:
+            raise ValueError("BACKEND_API_KEY must be explicitly configured with at least 32 characters in production")
+        if "*" in self.cors_origins:
+            raise ValueError("Wildcard CORS origins are not allowed in production")
         if len(encryption_key) < 32:
             raise ValueError(
                 "SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY must be explicitly configured with at least 32 characters in production"

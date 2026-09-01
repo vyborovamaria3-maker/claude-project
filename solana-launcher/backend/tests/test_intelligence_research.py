@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.base import Base
-from app.models.analytics import Token, Wallet, WalletLink, WalletTrade
+from app.models.analytics import Token, TokenMetric, Wallet, WalletLink, WalletTrade
 from app.models.intelligence_memory import IntelligenceSnapshot, IntelligenceSnapshotEntity
 from app.models.social_intelligence import (
     SocialEvent,
@@ -35,6 +35,7 @@ async def session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     tables = [
         Token.__table__,
+        TokenMetric.__table__,
         Wallet.__table__,
         WalletTrade.__table__,
         WalletLink.__table__,

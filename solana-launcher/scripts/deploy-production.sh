@@ -8,6 +8,8 @@ COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
 BACKUP_SCRIPT="$DEPLOY_DIR/scripts/backup-production.sh"
 HEALTH_SCRIPT="$DEPLOY_DIR/scripts/healthcheck-production.sh"
 PROMETHEUS_CONFIG="$DEPLOY_DIR/prometheus/prometheus.yml"
+ADMIN_DIR="${ADMIN_DIR:-/opt/claude-project/admin-site}"
+ADMIN_COMPOSE_FILE="$ADMIN_DIR/docker-compose.yml"
 
 cd "$DEPLOY_DIR"
 
@@ -17,11 +19,22 @@ test -r "$COMPOSE_FILE"
 test -r "$BACKUP_SCRIPT"
 test -r "$HEALTH_SCRIPT"
 test -r "$PROMETHEUS_CONFIG"
+test -r "$ADMIN_COMPOSE_FILE"
+
+# The admin stack owns the same external network so the public ingress can
+# route admin.potapoff.fun directly to potapoff-admin:8080.
+docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
 
 COMPOSE=(
   docker compose
   --env-file .env.server
   -f "$COMPOSE_FILE"
+)
+
+ADMIN_COMPOSE=(
+  docker compose
+  --project-directory "$ADMIN_DIR"
+  -f "$ADMIN_COMPOSE_FILE"
 )
 
 PREVIOUS_TAG=""
@@ -81,6 +94,35 @@ restart_nginx() {
   "${COMPOSE[@]}" restart nginx
 }
 
+start_admin() {
+  echo "Starting admin Control Center"
+  docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
+  "${ADMIN_COMPOSE[@]}" config --quiet
+  "${ADMIN_COMPOSE[@]}" up -d --build admin-postgres admin
+  for _ in $(seq 1 60); do
+    if curl --fail --silent --max-time 3 http://127.0.0.1:18080/api/health >/dev/null 2>&1; then
+      echo "ADMIN_HEALTH_OK"
+      return 0
+    fi
+    sleep 2
+  done
+  "${ADMIN_COMPOSE[@]}" logs --tail=150 admin >&2 || true
+  echo "Admin Control Center did not become healthy" >&2
+  return 1
+}
+
+verify_admin_route() {
+  # The public ingress and the admin app share the host port. This request
+  # proves Nginx selected the admin virtual host instead of the main frontend.
+  local body
+  body="$(curl --fail --silent --show-error --max-time 10 -H 'Host: admin.potapoff.fun' http://127.0.0.1/api/health)"
+  grep -q '"service"' <<<"$body" || {
+    echo "Admin route returned an unexpected payload: $body" >&2
+    return 1
+  }
+  echo "ADMIN_ROUTE_OK $body"
+}
+
 rollback() {
   local exit_code=$?
 
@@ -110,12 +152,14 @@ rollback() {
 
   stop_telegram
 
+  start_admin
   "${COMPOSE[@]}" up -d --remove-orphans
   restart_nginx
   sync_telegram_bot
   sync_telegram_intelligence
 
   SKIP_TELEGRAM_BOT_HEALTH="$((1 - BOT_IMAGE_AVAILABLE))" "$HEALTH_SCRIPT"
+  verify_admin_route
 
   echo "ROLLBACK_OK tag=$PREVIOUS_TAG"
 
@@ -144,6 +188,7 @@ fi
 
 stop_telegram
 
+start_admin
 "${COMPOSE[@]}" up -d --remove-orphans
 restart_nginx
 sync_telegram_bot
@@ -152,6 +197,7 @@ sync_telegram_intelligence
 "${COMPOSE[@]}" exec -T backend alembic upgrade heads
 
 "$HEALTH_SCRIPT"
+verify_admin_route
 
 trap - ERR
 

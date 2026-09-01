@@ -6,7 +6,10 @@ function validateCoverage(
   ctx: z.RefinementCtx,
 ) {
   if (value.messages.length > 0) return;
-  const context = value.context ?? {};
+  const context: z.infer<typeof telegramContextSchema> = value.context ?? {
+    analysisMode: 'telegram_only',
+    analysisRole: 'analyst',
+  };
   const snapshot = context.intelligenceSnapshot;
   const hasUsableSnapshot = context.analysisMode === 'full_intelligence'
     && Boolean(snapshot?.features.some((feature) => !feature.missing));
