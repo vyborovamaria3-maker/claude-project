@@ -70,24 +70,20 @@ mkdir -p \
   "$DEPLOY_DIR/prometheus" \
   "$DEPLOY_DIR/data"
 
+log 'Validating Nginx configuration before touching production'
+docker run --rm \
+  --add-host backend:127.0.0.1 \
+  --add-host frontend:127.0.0.1 \
+  --add-host potapoff-admin:127.0.0.1 \
+  -v "$SOURCE_ROOT/solana-launcher/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+  nginx:1.27-alpine nginx -t >/dev/null
+
 install -m 0644 \
   "$SOURCE_ROOT/solana-launcher/docker-compose.production.yml" \
   "$COMPOSE_FILE"
 install -m 0644 \
   "$SOURCE_ROOT/solana-launcher/docker-compose.local-build.yml" \
   "$LOCAL_BUILD_FILE"
-install -m 0644 \
-  "$SOURCE_ROOT/solana-launcher/nginx/nginx.conf" \
-  "$DEPLOY_DIR/nginx/nginx.conf"
-install -m 0644 \
-  "$SOURCE_ROOT/solana-launcher/prometheus/prometheus.yml" \
-  "$DEPLOY_DIR/prometheus/prometheus.yml"
-install -m 0700 \
-  "$SOURCE_ROOT/solana-launcher/scripts/backup-production.sh" \
-  "$SOURCE_ROOT/solana-launcher/scripts/healthcheck-production.sh" \
-  "$SOURCE_ROOT/solana-launcher/scripts/deploy-production.sh" \
-  "$SOURCE_ROOT/solana-launcher/scripts/deploy-production-local.sh" \
-  "$DEPLOY_DIR/scripts/"
 
 BACKEND_API_KEY="${BACKEND_API_KEY:-}"
 if [[ -z "$BACKEND_API_KEY" ]]; then
@@ -173,19 +169,48 @@ rollback() {
   exit "$exit_code"
 }
 
-trap rollback ERR
-
 log 'Validating compose configuration'
 "${COMPOSE[@]}" config --quiet
 
 log 'Building production images on the server sequentially to limit memory usage'
 for service in backend frontend telegram-bot; do
   log "Building production image: $service"
-  "${COMPOSE[@]}" build "$service"
+  build_ok=0
+  for attempt in 1 2; do
+    if "${COMPOSE[@]}" build "$service"; then
+      build_ok=1
+      break
+    fi
+    if [[ "$attempt" -lt 2 ]]; then
+      log "Build failed for $service; retrying in 20 seconds (cached layers will be reused)"
+      sleep 20
+    fi
+  done
+  if [[ "$build_ok" -ne 1 ]]; then
+    fail "Build failed for $service after 2 attempts; running production was left untouched"
+  fi
 done
 
 log 'Creating backup before switching containers'
 "$BACKUP_SCRIPT"
+
+# Only arm rollback after every image has built and the pre-deploy backup is
+# complete. Build/download failures must never restart a healthy production
+# stack.
+trap rollback ERR
+
+install -m 0644 \
+  "$SOURCE_ROOT/solana-launcher/nginx/nginx.conf" \
+  "$DEPLOY_DIR/nginx/nginx.conf"
+install -m 0644 \
+  "$SOURCE_ROOT/solana-launcher/prometheus/prometheus.yml" \
+  "$DEPLOY_DIR/prometheus/prometheus.yml"
+install -m 0700 \
+  "$SOURCE_ROOT/solana-launcher/scripts/backup-production.sh" \
+  "$SOURCE_ROOT/solana-launcher/scripts/healthcheck-production.sh" \
+  "$SOURCE_ROOT/solana-launcher/scripts/deploy-production.sh" \
+  "$SOURCE_ROOT/solana-launcher/scripts/deploy-production-local.sh" \
+  "$DEPLOY_DIR/scripts/"
 
 printf '%s\n' "$PREVIOUS_TAG" > "$DEPLOY_DIR/.previous-image-tag"
 printf '%s\n' "$DEPLOY_SHA" > "$DEPLOY_DIR/.current-image-tag"
