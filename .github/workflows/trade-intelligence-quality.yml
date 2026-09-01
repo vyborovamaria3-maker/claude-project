@@ -22,7 +22,7 @@ jobs:
       run:
         working-directory: solana-launcher/backend
     env:
-      SECRET_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SECRET_KEY: 7c4f92a8d1e65b30f8a2c94e6d13b750a9e47c26f1b835d04e79a2c68f15d3b9
       DATABASE_URL: sqlite+aiosqlite:///./ci-trade-intelligence.db
     steps:
       - name: Checkout
