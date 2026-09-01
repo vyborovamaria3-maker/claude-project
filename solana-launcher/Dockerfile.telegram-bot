@@ -3,7 +3,11 @@ FROM node:20-bookworm-slim AS dependencies
 WORKDIR /app
 
 ENV PYTHON=/usr/bin/python3 \
-    npm_config_python=/usr/bin/python3
+    npm_config_python=/usr/bin/python3 \
+    npm_config_fetch_retries=5 \
+    npm_config_fetch_retry_mintimeout=20000 \
+    npm_config_fetch_retry_maxtimeout=120000 \
+    npm_config_maxsockets=5
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
@@ -11,8 +15,18 @@ RUN apt-get update \
 
 COPY package*.json ./
 
-RUN npm ci --legacy-peer-deps \
-    && npm rebuild better-sqlite3 --build-from-source
+RUN set -eux; \
+    for attempt in 1 2 3; do \
+      if npm ci --legacy-peer-deps; then \
+        break; \
+      fi; \
+      if [ "$attempt" -eq 3 ]; then \
+        exit 1; \
+      fi; \
+      echo "npm ci failed (attempt ${attempt}/3); retrying" >&2; \
+      sleep $((attempt * 20)); \
+    done; \
+    npm rebuild better-sqlite3 --build-from-source
 
 FROM dependencies AS runner
 
