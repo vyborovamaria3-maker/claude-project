@@ -178,8 +178,11 @@ trap rollback ERR
 log 'Validating compose configuration'
 "${COMPOSE[@]}" config --quiet
 
-log 'Building production images on the server'
-"${COMPOSE[@]}" build backend frontend telegram-bot
+log 'Building production images on the server sequentially to limit memory usage'
+for service in backend frontend telegram-bot; do
+  log "Building production image: $service"
+  "${COMPOSE[@]}" build "$service"
+done
 
 log 'Creating backup before switching containers'
 "$BACKUP_SCRIPT"
