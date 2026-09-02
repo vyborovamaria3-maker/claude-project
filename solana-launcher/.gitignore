@@ -19,6 +19,7 @@ backend/*.db
 .env
 .env.local
 .env.*.local
+subscription-admin.env
 
 # logs
 npm-debug.log*
