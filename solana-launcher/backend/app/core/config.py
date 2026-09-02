@@ -84,8 +84,12 @@ class Settings(BaseSettings):
     # The main admin gets its own key. It can update subscription settings but
     # is never injected into the public-facing Next.js application container.
     subscription_admin_key: str = Field(default="", alias="SUBSCRIPTION_ADMIN_KEY")
-    # Only the API process needs the admin credential. Backend worker processes
-    # can keep this false and start without receiving the high-privilege key.
+    # Only the API process needs the checkout/admin credentials. Worker
+    # processes can keep these false and start without receiving either key.
+    require_subscription_internal_key: bool = Field(
+        default=False,
+        alias="REQUIRE_SUBSCRIPTION_INTERNAL_KEY",
+    )
     require_subscription_admin_key: bool = Field(
         default=False,
         alias="REQUIRE_SUBSCRIPTION_ADMIN_KEY",
@@ -120,8 +124,12 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_SESSION_SECRET must be explicitly configured with at least 32 characters in production")
         if not backend_api_key or len(backend_api_key) < 32:
             raise ValueError("BACKEND_API_KEY must be explicitly configured with at least 32 characters in production")
-        if not subscription_internal_key or len(subscription_internal_key) < 32:
-            raise ValueError("SUBSCRIPTION_INTERNAL_KEY must be explicitly configured with at least 32 characters in production")
+        if self.require_subscription_internal_key and (
+            not subscription_internal_key or len(subscription_internal_key) < 32
+        ):
+            raise ValueError("SUBSCRIPTION_INTERNAL_KEY must be explicitly configured with at least 32 characters for the API service")
+        if subscription_internal_key and len(subscription_internal_key) < 32:
+            raise ValueError("SUBSCRIPTION_INTERNAL_KEY must be at least 32 characters when configured")
         if self.require_subscription_admin_key and (
             not subscription_admin_key or len(subscription_admin_key) < 32
         ):
@@ -129,7 +137,9 @@ class Settings(BaseSettings):
         if subscription_admin_key and len(subscription_admin_key) < 32:
             raise ValueError("SUBSCRIPTION_ADMIN_KEY must be at least 32 characters when configured")
 
-        internal_keys = [backend_api_key, subscription_internal_key]
+        internal_keys = [backend_api_key]
+        if subscription_internal_key:
+            internal_keys.append(subscription_internal_key)
         if subscription_admin_key:
             internal_keys.append(subscription_admin_key)
         if len(set(internal_keys)) != len(internal_keys):
