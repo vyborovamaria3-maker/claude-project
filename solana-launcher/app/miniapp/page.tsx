@@ -74,6 +74,11 @@ type CheckoutResponse = {
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 const SITE_URL = "https://potapoff.fun";
 
+function getTelegramWebApp(): MiniAppWebApp | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as Window & { Telegram?: { WebApp?: MiniAppWebApp } }).Telegram?.WebApp;
+}
+
 export default function MiniAppPage() {
   const [login, setLogin] = useState("");
   const [config, setConfig] = useState<SubscriptionConfig | null>(null);
@@ -85,11 +90,10 @@ export default function MiniAppPage() {
   const checkingRef = useRef(false);
   const [copied, setCopied] = useState<"login" | "password" | "payment" | null>(null);
   const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
+  const [webApp, setWebApp] = useState<MiniAppWebApp | null>(null);
+  const [initData, setInitData] = useState("");
   const [statusMessage, setStatusMessage] = useState("Подключаем настройки доступа…");
 
-  const webApp =
-    typeof window !== "undefined" ? (window.Telegram?.WebApp as MiniAppWebApp | undefined) : undefined;
-  const initData = webApp?.initData || "";
   const isTelegram = Boolean(initData);
   const canCheckout = isTelegram || process.env.NODE_ENV !== "production";
   const paid = order?.status === "paid" && Boolean(order.password);
@@ -104,14 +108,38 @@ export default function MiniAppPage() {
   const displayName = telegramUser?.first_name || telegramUser?.username || "Trader";
 
   useEffect(() => {
-    if (webApp) {
-      webApp.ready?.();
-      webApp.expand?.();
-      webApp.setHeaderColor?.("#05070b");
-      webApp.setBackgroundColor?.("#05070b");
-      setTelegramUser(webApp.initDataUnsafe?.user || null);
-    }
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
 
+    const attachTelegram = () => {
+      const candidate = getTelegramWebApp();
+      if (candidate) {
+        if (cancelled) return;
+        setWebApp(candidate);
+        setInitData(candidate.initData || "");
+        setTelegramUser(candidate.initDataUnsafe?.user || null);
+        candidate.ready?.();
+        candidate.expand?.();
+        candidate.setHeaderColor?.("#05070b");
+        candidate.setBackgroundColor?.("#05070b");
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < 30 && !cancelled) {
+        timer = window.setTimeout(attachTelegram, 100);
+      }
+    };
+
+    attachTelegram();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     void (async () => {
       try {
         const response = await fetch("/api/miniapp/config", { cache: "no-store" });
@@ -120,7 +148,7 @@ export default function MiniAppPage() {
         setConfig(data);
         setStatusMessage(
           data.freeDemoEnabled
-            ? `Демо-доступ активен на ${data.demoDays} дн.`
+            ? `Тестовый режим: бесплатный доступ на ${data.demoDays} дн. Введите логин и нажмите TEST.`
             : "Введите логин и выберите способ активации доступа.",
         );
       } catch (err) {
@@ -129,7 +157,7 @@ export default function MiniAppPage() {
         setStatusMessage("Сервис активации временно недоступен.");
       }
     })();
-  }, [webApp]);
+  }, []);
 
   useEffect(() => {
     if (!checkout || paid) return;
@@ -150,7 +178,7 @@ export default function MiniAppPage() {
       if (!canCheckout) throw new Error("Откройте Mini App из Telegram-бота для активации доступа.");
 
       webApp?.HapticFeedback?.impactOccurred?.("light");
-      setStatusMessage(method === "DEMO" ? "Запрашиваем персональный пароль…" : `Создаём платёж ${method}…`);
+      setStatusMessage(method === "DEMO" ? "Активируем бесплатный тест и создаём пароль…" : `Создаём платёж ${method}…`);
 
       const response = await fetch("/api/miniapp/create-invoice", {
         method: "POST",
@@ -162,7 +190,7 @@ export default function MiniAppPage() {
       if (!data.payload) throw new Error("Backend вернул неполный запрос доступа.");
 
       if (data.mode === "DEMO") {
-        if (!data.password || !data.login) throw new Error("Backend не выдал данные демо-доступа.");
+        if (!data.password || !data.login) throw new Error("Backend не выдал данные тестового доступа.");
         setOrder({
           payload: data.payload,
           login: data.login,
@@ -171,7 +199,7 @@ export default function MiniAppPage() {
           subscriptionExpiresAt: data.subscriptionExpiresAt,
         });
         setLogin(data.login);
-        setStatusMessage("ACCESS TOKEN RECEIVED · данные для входа готовы");
+        setStatusMessage("TEST ACCESS ACTIVE · данные для входа готовы");
         webApp?.HapticFeedback?.notificationOccurred?.("success");
         return;
       }
@@ -375,7 +403,7 @@ export default function MiniAppPage() {
 
             {loginError ? <div className={styles.warning}>{loginError}</div> : null}
             {!isTelegram && process.env.NODE_ENV === "production" ? (
-              <div className={styles.warning}>Активация доступна только внутри Telegram Mini App.</div>
+              <div className={styles.warning}>Telegram initData не получен. Откройте Mini App кнопкой бота.</div>
             ) : null}
             {error ? <div className={styles.error}>{error}</div> : null}
 
@@ -388,7 +416,7 @@ export default function MiniAppPage() {
                   disabled={loading || !login || Boolean(loginError) || !canCheckout}
                 >
                   {loading ? <span className={styles.spinner} aria-hidden="true" /> : null}
-                  {loading ? "Получаем пароль…" : "Получить пароль"}
+                  {loading ? "Активируем тест…" : `TEST — БЕСПЛАТНО НА ${config.demoDays} ДН.`}
                 </button>
               ) : (
                 <div className={styles.paymentGrid}>
