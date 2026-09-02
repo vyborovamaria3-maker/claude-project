@@ -1,7 +1,14 @@
-import { Telegraf, Context } from 'telegraf';
-import { createTask, getTasksByUserId, getActiveTasksByUserId, deleteTask, getUserSettings, upsertUserSettings } from '../../lib/telegram/db';
+import { Telegraf } from 'telegraf';
+import {
+  createTask,
+  deleteTask,
+  getActiveTasksByUserId,
+  getTaskById,
+  getTasksByUserId,
+  getUserSettings,
+  upsertUserSettings,
+} from '../../lib/telegram/db';
 import { agentManager } from '../../lib/telegram/agent-manager';
-import { TaskPriority, CreateTaskInput } from '../types';
 
 export function setupTaskHandlers(bot: Telegraf) {
   // /new command - create new task
@@ -195,21 +202,26 @@ export function setupTaskHandlers(bot: Telegraf) {
     await ctx.reply(message);
   });
 
-  // /cancel command - cancel a task
+  // /cancel command - cancel only a task owned by the current Telegram user.
   bot.command('cancel', async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
 
     const args = 'text' in ctx.message ? ctx.message.text.split(' ') : [];
-    const taskId = args?.[1] ? parseInt(args[1]) : null;
+    const taskId = args?.[1] ? parseInt(args[1], 10) : null;
 
     if (!taskId) {
       await ctx.reply('Использование: /cancel <task_id>');
       return;
     }
 
+    const task = getTaskById(taskId);
+    if (!task || task.telegram_user_id !== userId) {
+      await ctx.reply(`❌ Задача #${taskId} не найдена.`);
+      return;
+    }
+
     const deleted = deleteTask(taskId);
-    
     if (deleted) {
       await ctx.reply(`✅ Задача #${taskId} отменена.`);
     } else {
