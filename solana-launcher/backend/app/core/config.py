@@ -75,7 +75,12 @@ class Settings(BaseSettings):
     collector_refresh_seconds: int = Field(default=300, alias="COLLECTOR_REFRESH_SECONDS")
     collector_metric_refresh_seconds: int = Field(default=3600, alias="COLLECTOR_METRIC_REFRESH_SECONDS")
     collector_insider_refresh_seconds: int = Field(default=86400, alias="COLLECTOR_INSIDER_REFRESH_SECONDS")
+
+    # BACKEND_API_KEY is reserved for intelligence ingestion/research endpoints.
     backend_api_key: str = Field(default="", alias="BACKEND_API_KEY")
+    # Subscription order/settings access has a separate credential so the
+    # frontend/admin containers never receive the intelligence master key.
+    subscription_internal_key: str = Field(default="", alias="SUBSCRIPTION_INTERNAL_KEY")
 
     @field_validator("secret_key", mode="after")
     @classmethod
@@ -96,6 +101,7 @@ class Settings(BaseSettings):
         password = self.admin_password.strip()
         session_secret = self.admin_session_secret.strip()
         backend_api_key = self.backend_api_key.strip()
+        subscription_internal_key = self.subscription_internal_key.strip()
         if self.debug:
             raise ValueError("DEBUG must be false in production")
         if not password or password == "ChangeMe123!" or len(password) < 16:
@@ -104,6 +110,11 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_SESSION_SECRET must be explicitly configured with at least 32 characters in production")
         if not backend_api_key or len(backend_api_key) < 32:
             raise ValueError("BACKEND_API_KEY must be explicitly configured with at least 32 characters in production")
+        if not subscription_internal_key or len(subscription_internal_key) < 32:
+            raise ValueError("SUBSCRIPTION_INTERNAL_KEY must be explicitly configured with at least 32 characters in production")
+        if hmac_keys_equal := (backend_api_key == subscription_internal_key):
+            del hmac_keys_equal
+            raise ValueError("BACKEND_API_KEY and SUBSCRIPTION_INTERNAL_KEY must be different credentials")
         if "*" in self.cors_origins:
             raise ValueError("Wildcard CORS origins are not allowed in production")
         return self
