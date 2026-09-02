@@ -27,7 +27,7 @@ class SubscriptionSettingsBody(BaseModel):
 
 def _backend_config() -> tuple[str, str]:
     base_url = os.getenv("POTAPOFF_BACKEND_URL", "http://backend:8000").strip().rstrip("/")
-    api_key = os.getenv("POTAPOFF_SUBSCRIPTION_API_KEY", "").strip()
+    api_key = os.getenv("POTAPOFF_SUBSCRIPTION_ADMIN_KEY", "").strip()
     if not base_url:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
