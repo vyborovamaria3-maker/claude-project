@@ -102,11 +102,14 @@ function clientIp(request: NextRequest): string {
 }
 
 function checkHeavyRateLimit(request: NextRequest, pathname: string): NextResponse | null {
-  if (!matchesPrefix(pathname, HEAVY_ROUTE_PREFIXES)) return null;
+  const bucket = HEAVY_ROUTE_PREFIXES.find(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+  if (!bucket) return null;
 
   const now = Date.now();
   const ip = clientIp(request);
-  const key = `${ip}:${Math.floor(now / HEAVY_WINDOW_MS)}`;
+  const key = `${bucket}:${ip}:${Math.floor(now / HEAVY_WINDOW_MS)}`;
   const resetAt = (Math.floor(now / HEAVY_WINDOW_MS) + 1) * HEAVY_WINDOW_MS;
   const current = heavyRequests.get(key);
 
