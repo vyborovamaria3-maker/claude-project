@@ -45,7 +45,7 @@ function internalHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  const apiKey = process.env.BACKEND_API_KEY?.trim();
+  const apiKey = process.env.SUBSCRIPTION_INTERNAL_KEY?.trim();
   if (apiKey) {
     headers["X-API-Key"] = apiKey;
     return headers;
@@ -54,7 +54,7 @@ function internalHeaders(): Record<string, string> {
     headers["X-Dev-Internal"] = "miniapp-subscription";
     return headers;
   }
-  throw new Error("BACKEND_API_KEY is required for subscription order access");
+  throw new Error("SUBSCRIPTION_INTERNAL_KEY is required for subscription order access");
 }
 
 async function requestBackend<T>(path: string, init?: RequestInit): Promise<T> {
