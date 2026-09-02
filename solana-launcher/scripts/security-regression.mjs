@@ -22,6 +22,14 @@ function walkFiles(directory, result = []) {
   return result;
 }
 
+function serviceBlock(compose, service, nextService) {
+  const start = `\n  ${service}:\n`;
+  const end = `\n  ${nextService}:\n`;
+  assert(compose.includes(start), `compose service missing: ${service}`);
+  assert(compose.includes(end), `compose service missing: ${nextService}`);
+  return compose.split(start, 2)[1].split(end, 1)[0];
+}
+
 const landing = read("components/PublicLandingPage.tsx");
 assert(landing.includes('const AUTH_ENDPOINT = "/api/v1/auth/login-password"'), "landing auth must be same-origin");
 assert(!landing.includes("queryApi"), "landing must not accept query-controlled auth destination");
@@ -53,9 +61,50 @@ assert(tokenInfo.includes("ALLOWED_METADATA_HOSTS"), "metadata fetch must use a 
 assert(tokenInfo.includes("MAX_METADATA_BYTES"), "metadata response size must be bounded");
 
 const proxy = read("proxy.ts");
-assert(proxy.includes('"/api/trade/dev-twitter"'), "expensive X route must be behind the paid gateway");
+assert(proxy.includes('"/api/trade"'), "all trade routes must be behind the paid gateway");
+assert(proxy.includes('"/api/database"'), "database diagnostics must be private in production");
+assert(proxy.includes("HEAVY_ROUTE_PREFIXES"), "expensive API routes must be rate limited");
 assert(proxy.includes("strict-dynamic"), "production CSP must be nonce-aware");
 assert(proxy.includes('"https://gmgn.ai"'), "CSP must preserve the live browser GMGN fallback");
+
+const subscriptionStore = read("lib/telegram/subscription-store.ts");
+assert(
+  subscriptionStore.includes("process.env.SUBSCRIPTION_INTERNAL_KEY"),
+  "Mini App subscription calls must use the checkout-only key",
+);
+assert(
+  !subscriptionStore.includes("process.env.BACKEND_API_KEY"),
+  "Mini App must never receive the intelligence master key",
+);
+assert(
+  !subscriptionStore.includes("SUBSCRIPTION_ADMIN_KEY"),
+  "Mini App must never receive the subscription admin key",
+);
+
+const productionCompose = read("docker-compose.production.yml");
+const backendService = serviceBlock(productionCompose, "backend", "celery-worker");
+const frontendService = serviceBlock(productionCompose, "frontend", "telegram-bot");
+assert(backendService.includes("SUBSCRIPTION_ADMIN_KEY"), "backend API must receive the subscription admin key");
+assert(
+  backendService.includes('REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"'),
+  "backend API must fail closed when the subscription admin key is missing",
+);
+assert(frontendService.includes("SUBSCRIPTION_INTERNAL_KEY"), "frontend must receive the checkout-only key");
+assert(!frontendService.includes("SUBSCRIPTION_ADMIN_KEY"), "frontend must not receive the subscription admin key");
+assert(!frontendService.includes("BACKEND_API_KEY"), "frontend must not receive the backend master key");
+
+const devForensics = read("app/api/trade/dev-forensics/route.ts");
+assert(
+  !devForensics.includes("solana-mainnet.g.alchemy.com"),
+  "dev-forensics must not contain a hardcoded provider credential URL",
+);
+assert(devForensics.includes("forwardedAuthHeaders"), "authenticated internal trade calls must forward auth");
+
+const telegramTasks = read("telegram-bot/handlers/tasks.ts");
+assert(
+  telegramTasks.includes("task.telegram_user_id !== userId"),
+  "Telegram task cancellation must enforce task ownership",
+);
 
 const telegramApi = read("backend/app/api/v1/telegram_intelligence.py");
 assert(telegramApi.includes("get_current_subscriber"), "Telegram/social intelligence reads must require a subscriber");
