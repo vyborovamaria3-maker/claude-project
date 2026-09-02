@@ -74,6 +74,7 @@ services:
       FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
+      REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
       # Pass this from a backend-only environment source (for example a second
       # --env-file). Do not store it in .env.server because frontend reads values
       # from that deployment env during Compose interpolation.
