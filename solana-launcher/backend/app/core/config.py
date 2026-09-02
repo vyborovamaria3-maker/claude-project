@@ -112,8 +112,7 @@ class Settings(BaseSettings):
             raise ValueError("BACKEND_API_KEY must be explicitly configured with at least 32 characters in production")
         if not subscription_internal_key or len(subscription_internal_key) < 32:
             raise ValueError("SUBSCRIPTION_INTERNAL_KEY must be explicitly configured with at least 32 characters in production")
-        if hmac_keys_equal := (backend_api_key == subscription_internal_key):
-            del hmac_keys_equal
+        if backend_api_key == subscription_internal_key:
             raise ValueError("BACKEND_API_KEY and SUBSCRIPTION_INTERNAL_KEY must be different credentials")
         if "*" in self.cors_origins:
             raise ValueError("Wildcard CORS origins are not allowed in production")
