@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.middleware.sessions import SessionMiddleware
@@ -83,6 +84,15 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    if is_production:
+        legacy_register_password_path = f"{settings.api_v1_prefix.rstrip('/')}/auth/register-password"
+
+        @app.middleware("http")
+        async def block_legacy_password_provisioning(request: Request, call_next):
+            if request.url.path == legacy_register_password_path:
+                return JSONResponse(status_code=404, content={"detail": "Not found"})
+            return await call_next(request)
 
     # The production control plane is admin-site. Keep SQLAdmin available only
     # for local/development diagnostics so it cannot bypass MFA/re-auth controls.
