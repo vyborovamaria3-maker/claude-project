@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.db.session import get_db
 from app.models.subscription_order import SubscriptionOrder
+from app.models.subscription_settings import SubscriptionSettings
 from app.models.user import User
 from app.schemas.subscription import (
     SubscriptionOrderComplete,
     SubscriptionOrderCreate,
     SubscriptionOrderRead,
     SubscriptionSettingsRead,
+    SubscriptionSettingsUpdate,
 )
 from app.services.subscriptions import (
     SubscriptionConflictError,
@@ -43,6 +45,16 @@ def _require_internal_access(request: Request) -> Settings:
     if not expected_key or not hmac.compare_digest(api_key.encode(), expected_key.encode()):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
     return settings
+
+
+def _settings_response(settings: SubscriptionSettings) -> SubscriptionSettingsRead:
+    return SubscriptionSettingsRead(
+        monthly_price_sol=settings.monthly_price_sol,
+        monthly_price_usdt=settings.monthly_price_usdt,
+        free_demo_enabled=settings.free_demo_enabled,
+        demo_days=settings.demo_days,
+        solana_recipient_wallet=settings.solana_recipient_wallet,
+    )
 
 
 async def _subscription_expiry(session: AsyncSession, order: SubscriptionOrder):
@@ -93,13 +105,40 @@ async def read_settings(
 ) -> SubscriptionSettingsRead:
     _require_internal_access(request)
     settings = await get_subscription_settings(session)
-    return SubscriptionSettingsRead(
-        monthly_price_sol=settings.monthly_price_sol,
-        monthly_price_usdt=settings.monthly_price_usdt,
-        free_demo_enabled=settings.free_demo_enabled,
-        demo_days=settings.demo_days,
-        solana_recipient_wallet=settings.solana_recipient_wallet,
+    return _settings_response(settings)
+
+
+@router.put("/settings", response_model=SubscriptionSettingsRead)
+async def update_settings(
+    body: SubscriptionSettingsUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> SubscriptionSettingsRead:
+    _require_internal_access(request)
+
+    # Ensure the singleton row exists, then lock it so concurrent admin writes
+    # cannot silently interleave field-by-field updates.
+    await get_subscription_settings(session)
+    result = await session.execute(
+        select(SubscriptionSettings)
+        .where(SubscriptionSettings.id == 1)
+        .with_for_update()
     )
+    settings = result.scalar_one()
+
+    try:
+        settings.monthly_price_sol = body.monthly_price_sol
+        settings.monthly_price_usdt = body.monthly_price_usdt
+        settings.free_demo_enabled = body.free_demo_enabled
+        settings.demo_days = body.demo_days
+        settings.solana_recipient_wallet = body.solana_recipient_wallet
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    await session.refresh(settings)
+    return _settings_response(settings)
 
 
 @router.post("/orders", response_model=SubscriptionOrderRead, status_code=status.HTTP_201_CREATED)
