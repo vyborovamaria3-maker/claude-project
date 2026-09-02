@@ -34,7 +34,7 @@ router = APIRouter()
 def _require_internal_access(request: Request) -> Settings:
     settings: Settings = request.app.state.settings
     api_key = request.headers.get("X-API-Key", "")
-    expected_key = settings.backend_api_key
+    expected_key = settings.subscription_internal_key
     is_dev_internal = (
         settings.environment == "development"
         and not expected_key
