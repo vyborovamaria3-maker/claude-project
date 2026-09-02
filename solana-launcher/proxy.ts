@@ -3,6 +3,9 @@ import { requireProdAuth } from "@/lib/routeAuth";
 
 const PAID_ROUTE_PREFIXES = [
   "/api/trade",
+];
+
+const PRIVATE_PRODUCTION_PREFIXES = [
   "/api/database",
 ];
 
@@ -83,6 +86,10 @@ function applyCsp(response: NextResponse, csp: string): NextResponse {
   return response;
 }
 
+function matchesPrefix(pathname: string, prefixes: string[]): boolean {
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 function clientIp(request: NextRequest): string {
   const realIp = request.headers.get("x-real-ip")?.trim();
   if (realIp && realIp.length <= 64) return realIp;
@@ -95,9 +102,7 @@ function clientIp(request: NextRequest): string {
 }
 
 function checkHeavyRateLimit(request: NextRequest, pathname: string): NextResponse | null {
-  if (!HEAVY_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
-    return null;
-  }
+  if (!matchesPrefix(pathname, HEAVY_ROUTE_PREFIXES)) return null;
 
   const now = Date.now();
   const ip = clientIp(request);
@@ -142,10 +147,14 @@ export async function proxy(request: NextRequest) {
     return applyCsp(NextResponse.redirect(safeUrl), csp);
   }
 
+  if (process.env.NODE_ENV === "production" && matchesPrefix(pathname, PRIVATE_PRODUCTION_PREFIXES)) {
+    return applyCsp(NextResponse.json({ error: "Not found" }, { status: 404 }), csp);
+  }
+
   const heavyLimitError = checkHeavyRateLimit(request, pathname);
   if (heavyLimitError) return applyCsp(heavyLimitError, csp);
 
-  if (PAID_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+  if (matchesPrefix(pathname, PAID_ROUTE_PREFIXES)) {
     const authError = await requireProdAuth(request);
     if (authError) return applyCsp(authError, csp);
   }
@@ -157,7 +166,7 @@ export async function proxy(request: NextRequest) {
   const response = NextResponse.next({
     request: { headers: requestHeaders },
   });
-  if (PAID_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+  if (matchesPrefix(pathname, PAID_ROUTE_PREFIXES) || matchesPrefix(pathname, PRIVATE_PRODUCTION_PREFIXES)) {
     response.headers.set("Cache-Control", "private, no-store, max-age=0");
   }
   return applyCsp(response, csp);
