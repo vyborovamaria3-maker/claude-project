@@ -39,3 +39,12 @@ def test_subscription_proxy_is_mounted_in_main_admin():
     assert "POTAPOFF_BACKEND_API_KEY" not in proxy
     assert "BACKEND_API_KEY" not in proxy
     assert "Depends(require_admin)" in proxy
+
+
+def test_admin_compose_receives_only_subscription_admin_credential():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    admin_block = compose.split("\n  admin:\n", 1)[1].split("\n  intelligence-worker:\n", 1)[0]
+
+    assert "POTAPOFF_SUBSCRIPTION_ADMIN_KEY" in admin_block
+    assert "SUBSCRIPTION_INTERNAL_KEY" not in admin_block
+    assert "BACKEND_API_KEY" not in admin_block
