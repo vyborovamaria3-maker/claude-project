@@ -78,9 +78,12 @@ class Settings(BaseSettings):
 
     # BACKEND_API_KEY is reserved for intelligence ingestion/research endpoints.
     backend_api_key: str = Field(default="", alias="BACKEND_API_KEY")
-    # Subscription order/settings access has a separate credential so the
-    # frontend/admin containers never receive the intelligence master key.
+    # Mini App checkout/order operations use a credential that is not valid for
+    # intelligence APIs or privileged subscription administration.
     subscription_internal_key: str = Field(default="", alias="SUBSCRIPTION_INTERNAL_KEY")
+    # The main admin gets its own key. It can update subscription settings but
+    # is never injected into the public-facing Next.js application container.
+    subscription_admin_key: str = Field(default="", alias="SUBSCRIPTION_ADMIN_KEY")
 
     @field_validator("secret_key", mode="after")
     @classmethod
@@ -102,6 +105,7 @@ class Settings(BaseSettings):
         session_secret = self.admin_session_secret.strip()
         backend_api_key = self.backend_api_key.strip()
         subscription_internal_key = self.subscription_internal_key.strip()
+        subscription_admin_key = self.subscription_admin_key.strip()
         if self.debug:
             raise ValueError("DEBUG must be false in production")
         if not password or password == "ChangeMe123!" or len(password) < 16:
@@ -112,8 +116,11 @@ class Settings(BaseSettings):
             raise ValueError("BACKEND_API_KEY must be explicitly configured with at least 32 characters in production")
         if not subscription_internal_key or len(subscription_internal_key) < 32:
             raise ValueError("SUBSCRIPTION_INTERNAL_KEY must be explicitly configured with at least 32 characters in production")
-        if backend_api_key == subscription_internal_key:
-            raise ValueError("BACKEND_API_KEY and SUBSCRIPTION_INTERNAL_KEY must be different credentials")
+        if not subscription_admin_key or len(subscription_admin_key) < 32:
+            raise ValueError("SUBSCRIPTION_ADMIN_KEY must be explicitly configured with at least 32 characters in production")
+        internal_keys = {backend_api_key, subscription_internal_key, subscription_admin_key}
+        if len(internal_keys) != 3:
+            raise ValueError("BACKEND_API_KEY, SUBSCRIPTION_INTERNAL_KEY and SUBSCRIPTION_ADMIN_KEY must be different credentials")
         if "*" in self.cors_origins:
             raise ValueError("Wildcard CORS origins are not allowed in production")
         return self
