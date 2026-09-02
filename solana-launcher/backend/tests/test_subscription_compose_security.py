@@ -37,10 +37,19 @@ def test_telegram_bot_does_not_inherit_backend_env_files():
     assert "TELEGRAM_WEBHOOK_SECRET" in bot
 
 
-def test_backend_api_requires_separate_admin_key():
+def test_backend_api_requires_separate_subscription_keys():
     compose = (LAUNCHER_ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     backend = _service_block(compose, "backend", "celery-worker")
 
     assert "SUBSCRIPTION_INTERNAL_KEY" in backend
     assert "SUBSCRIPTION_ADMIN_KEY" in backend
+    assert 'REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"' in backend
     assert 'REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"' in backend
+
+
+def test_worker_does_not_receive_subscription_credentials():
+    compose = (LAUNCHER_ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    worker = _service_block(compose, "celery-worker", "telegram-intelligence")
+
+    assert "SUBSCRIPTION_INTERNAL_KEY" not in worker
+    assert "SUBSCRIPTION_ADMIN_KEY" not in worker
