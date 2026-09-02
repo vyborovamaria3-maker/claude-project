@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 from decimal import Decimal
 from typing import Any
@@ -26,10 +27,7 @@ class SubscriptionSettingsBody(BaseModel):
 
 def _backend_config() -> tuple[str, str]:
     base_url = os.getenv("POTAPOFF_BACKEND_URL", "http://backend:8000").strip().rstrip("/")
-    api_key = (
-        os.getenv("POTAPOFF_BACKEND_API_KEY", "").strip()
-        or os.getenv("BACKEND_API_KEY", "").strip()
-    )
+    api_key = os.getenv("POTAPOFF_SUBSCRIPTION_API_KEY", "").strip()
     if not base_url:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -98,7 +96,26 @@ async def _backend_request(method: str, payload: dict[str, Any] | None = None) -
 
 
 def _request_ip(request: Request) -> str | None:
-    return request.client.host if request.client else None
+    settings = request.app.state.settings
+    direct = request.client.host if request.client else None
+    if not direct or not settings.trust_proxy:
+        return direct
+    values = [
+        item.strip()
+        for item in request.headers.get("x-forwarded-for", "").split(",")
+        if item.strip()
+    ]
+    if not values:
+        return direct
+    index = len(values) - settings.trusted_proxy_hops - 1
+    if index < 0:
+        return direct
+    candidate = values[index]
+    try:
+        ipaddress.ip_address(candidate)
+        return candidate
+    except ValueError:
+        return direct
 
 
 def build_subscription_admin_router() -> APIRouter:
