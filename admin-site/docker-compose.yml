@@ -29,7 +29,7 @@ services:
       ADMIN_INTELLIGENCE_DB: /data/intelligence/intelligence.sqlite3
       ADMIN_STATE_POSTGRES_DSN: postgresql://potapoff_admin:${ADMIN_STATE_DB_PASSWORD:?Set ADMIN_STATE_DB_PASSWORD in admin-site/.env}@admin-postgres:5432/potapoff_admin
       POTAPOFF_BACKEND_URL: http://backend:8000
-      POTAPOFF_SUBSCRIPTION_API_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?Set SUBSCRIPTION_INTERNAL_KEY for subscription admin}
+      POTAPOFF_SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:?Set SUBSCRIPTION_ADMIN_KEY for subscription admin}
     depends_on:
       admin-postgres:
         condition: service_healthy
