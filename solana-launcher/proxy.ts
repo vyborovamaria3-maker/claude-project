@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireProdAuth } from "@/lib/routeAuth";
 
 const PAID_ROUTE_PREFIXES = [
-  "/api/trade/dev-twitter",
+  "/api/trade",
+  "/api/database",
 ];
 
 const BROWSER_CONNECT_ORIGINS = [
