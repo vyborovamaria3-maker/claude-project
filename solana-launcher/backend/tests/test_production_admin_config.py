@@ -40,9 +40,12 @@ def test_production_requires_internal_backend_api_key():
         production_settings(backend_api_key="")
 
 
-def test_production_requires_subscription_internal_key():
+def test_api_service_requires_subscription_internal_key():
     with pytest.raises(ValidationError):
-        production_settings(subscription_internal_key="")
+        production_settings(
+            subscription_internal_key="",
+            require_subscription_internal_key=True,
+        )
 
 
 def test_api_service_requires_subscription_admin_key():
@@ -53,9 +56,14 @@ def test_api_service_requires_subscription_admin_key():
         )
 
 
-def test_worker_process_can_omit_subscription_admin_key():
-    settings = production_settings(subscription_admin_key="")
+def test_worker_process_can_omit_subscription_keys():
+    settings = production_settings(
+        subscription_internal_key="",
+        subscription_admin_key="",
+    )
+    assert settings.require_subscription_internal_key is False
     assert settings.require_subscription_admin_key is False
+    assert settings.subscription_internal_key == ""
     assert settings.subscription_admin_key == ""
 
 
@@ -78,9 +86,13 @@ def test_production_rejects_wildcard_cors():
 
 
 def test_production_accepts_explicit_strong_security_settings():
-    settings = production_settings(require_subscription_admin_key=True)
+    settings = production_settings(
+        require_subscription_internal_key=True,
+        require_subscription_admin_key=True,
+    )
     assert settings.environment == "production"
     assert settings.debug is False
+    assert settings.require_subscription_internal_key is True
     assert settings.require_subscription_admin_key is True
     assert len(
         {
