@@ -74,6 +74,10 @@ services:
       FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
+      # Pass this from a backend-only environment source (for example a second
+      # --env-file). Do not store it in .env.server because frontend loads that file.
+      SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:-}
+      REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"
     depends_on:
       postgres:
         condition: service_healthy
