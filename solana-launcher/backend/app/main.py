@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.middleware.sessions import SessionMiddleware
 from redis.asyncio import Redis
 
-from app.api.v1 import analytics
 from app.api.v1.router import api_router
 from app.admin import setup_admin
 from app.core.config import Settings, get_settings
@@ -60,7 +59,15 @@ def create_app(
     if engine is None or sessionmaker is None:
         engine, sessionmaker = create_engine_and_sessionmaker(settings)
 
-    app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
+    is_production = settings.environment.strip().lower() in {"production", "prod"}
+    app = FastAPI(
+        title=settings.app_name,
+        debug=settings.debug,
+        lifespan=lifespan,
+        docs_url=None if is_production else "/docs",
+        redoc_url=None if is_production else "/redoc",
+        openapi_url=None if is_production else "/openapi.json",
+    )
     app.state.settings = settings
     app.state.engine = engine
     app.state.sessionmaker = sessionmaker
@@ -77,8 +84,11 @@ def create_app(
         allow_headers=["*"],
     )
 
-    setup_admin(app, engine, settings)
-    app.include_router(analytics.router, prefix="/api")
+    # The production control plane is admin-site. Keep SQLAdmin available only
+    # for local/development diagnostics so it cannot bypass MFA/re-auth controls.
+    if not is_production:
+        setup_admin(app, engine, settings)
+
     app.include_router(api_router, prefix=settings.api_v1_prefix)
 
     instrument_app(app)
