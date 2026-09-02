@@ -7,6 +7,7 @@ from app.core.config import Settings
 SECRET = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
 BACKEND_API_KEY = "b" * 64
 SUBSCRIPTION_INTERNAL_KEY = "s" * 64
+SUBSCRIPTION_ADMIN_KEY = "a" * 64
 
 
 def production_settings(**overrides):
@@ -18,6 +19,7 @@ def production_settings(**overrides):
         "admin_session_secret": "f" * 64,
         "backend_api_key": BACKEND_API_KEY,
         "subscription_internal_key": SUBSCRIPTION_INTERNAL_KEY,
+        "subscription_admin_key": SUBSCRIPTION_ADMIN_KEY,
     }
     values.update(overrides)
     return Settings(**values)
@@ -43,9 +45,22 @@ def test_production_requires_subscription_internal_key():
         production_settings(subscription_internal_key="")
 
 
-def test_production_requires_distinct_internal_keys():
+def test_production_requires_subscription_admin_key():
     with pytest.raises(ValidationError):
-        production_settings(subscription_internal_key=BACKEND_API_KEY)
+        production_settings(subscription_admin_key="")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("subscription_internal_key", BACKEND_API_KEY),
+        ("subscription_admin_key", BACKEND_API_KEY),
+        ("subscription_admin_key", SUBSCRIPTION_INTERNAL_KEY),
+    ],
+)
+def test_production_requires_distinct_internal_keys(field, value):
+    with pytest.raises(ValidationError):
+        production_settings(**{field: value})
 
 
 def test_production_rejects_wildcard_cors():
@@ -57,4 +72,10 @@ def test_production_accepts_explicit_strong_security_settings():
     settings = production_settings()
     assert settings.environment == "production"
     assert settings.debug is False
-    assert settings.backend_api_key != settings.subscription_internal_key
+    assert len(
+        {
+            settings.backend_api_key,
+            settings.subscription_internal_key,
+            settings.subscription_admin_key,
+        }
+    ) == 3
