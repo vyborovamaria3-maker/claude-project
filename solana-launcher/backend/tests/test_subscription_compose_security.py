@@ -17,6 +17,24 @@ def test_frontend_receives_checkout_key_only():
     assert "SUBSCRIPTION_INTERNAL_KEY" in frontend
     assert "SUBSCRIPTION_ADMIN_KEY" not in frontend
     assert "BACKEND_API_KEY" not in frontend
+    assert "env_file:" not in frontend
+    assert "POSTGRES_PASSWORD" not in frontend
+    assert "RABBITMQ_PASSWORD" not in frontend
+    assert "SECRET_KEY" not in frontend
+
+
+def test_telegram_bot_does_not_inherit_backend_env_files():
+    compose = (LAUNCHER_ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    bot = _service_block(compose, "telegram-bot", "nginx")
+
+    assert "env_file:" not in bot
+    assert "BACKEND_API_KEY" not in bot
+    assert "SUBSCRIPTION_INTERNAL_KEY" not in bot
+    assert "SUBSCRIPTION_ADMIN_KEY" not in bot
+    assert "POSTGRES_PASSWORD" not in bot
+    assert "SECRET_KEY" not in bot
+    assert "TELEGRAM_BOT_TOKEN" in bot
+    assert "TELEGRAM_WEBHOOK_SECRET" in bot
 
 
 def test_backend_api_requires_separate_admin_key():
