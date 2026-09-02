@@ -6,6 +6,20 @@ const PAID_ROUTE_PREFIXES = [
   "/api/database",
 ];
 
+const HEAVY_ROUTE_PREFIXES = [
+  "/api/trade/analyze",
+  "/api/trade/analyze-stream",
+  "/api/trade/dev-forensics",
+  "/api/trade/creator-fee",
+  "/api/miniapp/create-invoice",
+  "/api/miniapp/verify-payment",
+];
+
+const HEAVY_LIMIT = 30;
+const HEAVY_WINDOW_MS = 60_000;
+const MAX_HEAVY_KEYS = 20_000;
+const heavyRequests = new Map<string, { count: number; resetAt: number }>();
+
 const BROWSER_CONNECT_ORIGINS = [
   "https://gmgn.ai",
   "https://pumpportal.fun",
@@ -69,6 +83,54 @@ function applyCsp(response: NextResponse, csp: string): NextResponse {
   return response;
 }
 
+function clientIp(request: NextRequest): string {
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp && realIp.length <= 64) return realIp;
+  const forwarded = request.headers
+    .get("x-forwarded-for")
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return forwarded?.[0] || "unknown";
+}
+
+function checkHeavyRateLimit(request: NextRequest, pathname: string): NextResponse | null {
+  if (!HEAVY_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+    return null;
+  }
+
+  const now = Date.now();
+  const ip = clientIp(request);
+  const key = `${ip}:${Math.floor(now / HEAVY_WINDOW_MS)}`;
+  const resetAt = (Math.floor(now / HEAVY_WINDOW_MS) + 1) * HEAVY_WINDOW_MS;
+  const current = heavyRequests.get(key);
+
+  if (!current) {
+    if (heavyRequests.size >= MAX_HEAVY_KEYS) {
+      for (const [candidate, entry] of heavyRequests) {
+        if (entry.resetAt <= now) heavyRequests.delete(candidate);
+      }
+    }
+    if (heavyRequests.size >= MAX_HEAVY_KEYS) {
+      const oldest = heavyRequests.keys().next().value as string | undefined;
+      if (oldest) heavyRequests.delete(oldest);
+    }
+    heavyRequests.set(key, { count: 1, resetAt });
+    return null;
+  }
+
+  if (current.count >= HEAVY_LIMIT) {
+    const retryAfter = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+    return NextResponse.json(
+      { error: "Too many requests", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
+
+  current.count += 1;
+  return null;
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
   const nonce = crypto.randomUUID().replaceAll("-", "");
@@ -80,6 +142,9 @@ export async function proxy(request: NextRequest) {
     return applyCsp(NextResponse.redirect(safeUrl), csp);
   }
 
+  const heavyLimitError = checkHeavyRateLimit(request, pathname);
+  if (heavyLimitError) return applyCsp(heavyLimitError, csp);
+
   if (PAID_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
     const authError = await requireProdAuth(request);
     if (authError) return applyCsp(authError, csp);
@@ -89,12 +154,13 @@ export async function proxy(request: NextRequest) {
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", csp);
 
-  return applyCsp(
-    NextResponse.next({
-      request: { headers: requestHeaders },
-    }),
-    csp,
-  );
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+  if (PAID_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+    response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  }
+  return applyCsp(response, csp);
 }
 
 export const config = {
