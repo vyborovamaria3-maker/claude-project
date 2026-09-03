@@ -54,6 +54,9 @@ COMPOSE=(
   -f "$COMPOSE_FILE"
 )
 
+# Ensure SQLite busy_timeout is set for trade.db under concurrent access
+export DB_BUSY_TIMEOUT="${DB_BUSY_TIMEOUT:-5000}"
+
 ADMIN_COMPOSE=(
   docker compose
   --project-directory "$ADMIN_DIR"
