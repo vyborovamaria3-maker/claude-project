@@ -1,7 +1,6 @@
 import { loadEnvConfig } from '@next/env';
 import dotenv from 'dotenv';
 import { Telegraf } from 'telegraf';
-import { SocksProxyAgent } from 'socks-proxy-agent';
 import { setupAgentHandlers } from './handlers/agents';
 import { setupTaskHandlers } from './handlers/tasks';
 import { setupStatusHandlers } from './handlers/status';
@@ -25,18 +24,11 @@ function getBot(): Telegraf {
   }
 
   const proxyUrl = process.env.TELEGRAM_PROXY_URL?.trim();
-
-  const bot = proxyUrl
-    ? new Telegraf(token, {
-        telegram: {
-          agent: new SocksProxyAgent(proxyUrl),
-        },
-      })
-    : new Telegraf(token);
-
   if (proxyUrl) {
-    console.log('Telegram Bot API proxy enabled');
+    console.warn('TELEGRAM_PROXY_URL is set, but proxy transport is disabled in ts-node dev mode.');
   }
+
+  const bot = new Telegraf(token);
   bot.use(loggingMiddleware);
   bot.use(sessionMiddleware);
   setupAgentHandlers(bot);

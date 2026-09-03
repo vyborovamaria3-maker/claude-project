@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "security:test": "node scripts/security-regression.mjs",
     "landing:test": "node scripts/landing-regression.mjs",
-    "analysis:test": "node scripts/analysis-regression.mjs",
+    "analysis:test": "node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",

@@ -117,10 +117,18 @@ def test_outcome_requires_price_near_cutoff_without_saved_call_price() -> None:
     ) is None
 
 
-def test_saved_call_price_prevents_hourly_snapshot_baseline_bias() -> None:
+def test_observed_cutoff_price_prevents_legacy_baseline_bias() -> None:
     result = build_historical_outcome(
-        cutoff=NOW, metrics=[metric(1, 1.4), metric(6, 2.2), metric(24, 1.8)],
-        horizon_hours=72, baseline_price=1.0,
+        cutoff=NOW,
+        metrics=[
+            metric(0, 1.0),
+            metric(1, 1.4),
+            metric(6, 2.2),
+            metric(24, 1.8),
+            metric(72, 1.6),
+        ],
+        horizon_hours=72,
+        baseline_price=100.0,
     )
     assert result is not None
     assert result.baseline_price == 1.0
@@ -128,10 +136,16 @@ def test_saved_call_price_prevents_hourly_snapshot_baseline_bias() -> None:
     assert result.hit_2x is True
 
 
-def test_prices_before_cutoff_are_ignored() -> None:
+def test_prices_before_baseline_tolerance_are_ignored() -> None:
     result = build_historical_outcome(
         cutoff=NOW,
-        metrics=[metric(-1, 100.0), metric(0.05, 1.0), metric(6, 2.1)],
+        metrics=[
+            metric(-2, 100.0),
+            metric(0, 1.0),
+            metric(0.05, 1.0),
+            metric(6, 2.1),
+            metric(72, 1.4),
+        ],
         horizon_hours=72,
     )
     assert result is not None
@@ -173,7 +187,7 @@ def test_walk_forward_threshold_selected_on_train_then_applied_to_test() -> None
         for index, (value, hit) in enumerate(rows)
     ]
     report = evaluate_samples(samples, train_fraction=0.7)
-    assert report.feature_mode == "causal_core_v2"
+    assert report.feature_mode == "causal_core_v4_strict_cutoff"
     assert report.selected_threshold is not None
     assert report.train is not None
     assert report.test is not None

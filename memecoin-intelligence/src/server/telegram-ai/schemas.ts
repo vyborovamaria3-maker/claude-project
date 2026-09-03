@@ -5,6 +5,7 @@ const confidence = z.number().min(0).max(1);
 const severity = z.enum(['info', 'low', 'medium', 'high', 'critical']);
 const evidenceIds = z.array(z.string().min(1)).max(50);
 const requiredEvidenceIds = z.array(z.string().min(1)).min(1).max(50);
+const supportingFeatureKeys = z.array(z.string().min(1).max(160)).max(30);
 
 export const telegramMessageSchema = z.object({
   id: z.string().trim().min(1).max(128),
@@ -93,12 +94,23 @@ export const intelligenceSnapshotSchema = z.object({
   evidence: z.array(intelligenceEvidenceSchema).max(300),
   rawSummary: z.object({
     xPosts: z.number().int().min(0),
+    xRiskUniversePosts: z.number().int().min(0).optional(),
     telegramMessages: z.number().int().min(0),
+    telegramMatchedBeforeLimit: z.number().int().min(0).optional(),
     trades: z.number().int().min(0),
     wallets: z.number().int().min(0),
     bundles: z.number().int().min(0),
     chainTruncated: z.boolean(),
     marketAvailable: z.boolean(),
+    marketStale: z.boolean().optional(),
+    originalFeatures: z.number().int().min(0).optional(),
+    originalGraphNodes: z.number().int().min(0).optional(),
+    originalGraphEdges: z.number().int().min(0).optional(),
+    originalEvidence: z.number().int().min(0).optional(),
+    qwenGraphNodes: z.number().int().min(0).optional(),
+    qwenGraphEdges: z.number().int().min(0).optional(),
+    qwenEvidence: z.number().int().min(0).optional(),
+    qwenGraphCompacted: z.boolean().optional(),
   }).strict(),
 }).strict();
 
@@ -112,7 +124,10 @@ export const telegramContextSchema = z.object({
   analysisRole: z.enum(['analyst', 'critic']).optional().default('analyst'),
   priorConclusion: z.string().max(6_000).optional().nullable(),
   intelligenceSnapshot: intelligenceSnapshotSchema.optional(),
-}).strict().default({});
+}).strict().default({
+  analysisMode: 'telegram_only',
+  analysisRole: 'analyst',
+});
 
 const discoveredRelationshipSchema = z.object({
   source: z.string().min(1).max(512),
@@ -132,6 +147,27 @@ const discoveredRelationshipSchema = z.object({
     });
   }
 });
+
+const sourceAssessmentSchema = z.object({
+  currentSituation: z.string().min(1).max(2_000),
+  interpretation: z.string().min(1).max(2_000),
+  entryImpact: z.string().min(1).max(2_000),
+  supportingFeatureKeys,
+  confidence,
+}).strict();
+
+const entryAssessmentSchema = z.object({
+  priceState: z.enum(['discounted_vs_signal', 'reasonable_vs_signal', 'stretched_vs_signal', 'overheated_vs_signal', 'unstable_vs_signal', 'unknown']),
+  entryAction: z.enum(['strong_entry', 'consider', 'wait_confirmation', 'late_weak', 'avoid']),
+  oneLineVerdict: z.string().min(1).max(1_500),
+  whyNow: z.array(z.string().min(1).max(700)).max(12),
+  alreadyPricedIn: z.array(z.string().min(1).max(700)).max(12),
+  missingConfirmation: z.array(z.string().min(1).max(700)).max(12),
+  invalidation: z.array(z.string().min(1).max(700)).max(12),
+  supportingFeatureKeys: supportingFeatureKeys.optional(),
+  evidenceMessageIds: evidenceIds.optional(),
+  confidence,
+}).strict();
 
 export const telegramAiResultSchema = z.object({
   summary: z.string().min(1).max(4_000),
@@ -224,6 +260,12 @@ export const telegramAiResultSchema = z.object({
     unknowns: z.array(z.string().min(1).max(700)).max(30),
     confidence,
   }).strict().optional(),
+  sourceAssessments: z.object({
+    x: sourceAssessmentSchema,
+    telegram: sourceAssessmentSchema,
+    chain: sourceAssessmentSchema,
+  }).strict().optional(),
+  entryAssessment: entryAssessmentSchema.optional(),
   reasoningSummary: z.array(z.string().min(1).max(700)).min(1).max(20),
   overallConfidence: confidence,
 }).strict();

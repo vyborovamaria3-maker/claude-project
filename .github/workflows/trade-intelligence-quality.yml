@@ -1,0 +1,170 @@
+name: Trade Intelligence Quality 10/10
+
+on:
+  push:
+    branches:
+      - restore/trade-analysis-129-visible
+    paths:
+      - "solana-launcher/**"
+      - "memecoin-intelligence/**"
+      - ".github/workflows/trade-intelligence-quality.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend checks 1-4
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: solana-launcher/backend
+    env:
+      SECRET_KEY: 7c4f92a8d1e65b30f8a2c94e6d13b750a9e47c26f1b835d04e79a2c68f15d3b9
+      DATABASE_URL: sqlite+aiosqlite:///./ci-trade-intelligence.db
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: solana-launcher/backend/pyproject.toml
+      - name: Install backend
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: 1/10 Targeted intelligence regression tests
+        id: check1
+        continue-on-error: true
+        run: >-
+          python -m pytest -q
+          tests/test_telegram_outcomes.py
+          tests/test_telegram_signal_analysis.py
+          tests/test_tgdataset_resilient.py
+          tests/test_intelligence_backtest.py
+          tests/test_telegram_discovery_registry.py
+          tests/test_telegram_public_discovery.py
+      - name: 2/10 Full backend pytest
+        id: check2
+        continue-on-error: true
+        run: python -m pytest -q
+      - name: 3/10 Ruff changed intelligence modules
+        id: check3
+        continue-on-error: true
+        run: >-
+          python -m ruff check
+          app/services/intelligence_backtest.py
+          app/services/intelligence_backtest_v2.py
+          app/services/telegram_outcomes.py
+          app/services/telegram_signal_analysis.py
+          app/services/tgdataset_resilient.py
+          tests/test_intelligence_backtest.py
+          tests/test_telegram_outcomes.py
+          tests/test_telegram_signal_analysis.py
+          tests/test_tgdataset_resilient.py
+      - name: 4/10 Python compileall
+        id: check4
+        continue-on-error: true
+        run: python -m compileall -q app tests
+      - name: Backend quality gate
+        if: always()
+        shell: bash
+        run: |
+          echo "1=${{ steps.check1.outcome }}"
+          echo "2=${{ steps.check2.outcome }}"
+          echo "3=${{ steps.check3.outcome }}"
+          echo "4=${{ steps.check4.outcome }}"
+          test "${{ steps.check1.outcome }}" = success
+          test "${{ steps.check2.outcome }}" = success
+          test "${{ steps.check3.outcome }}" = success
+          test "${{ steps.check4.outcome }}" = success
+
+  frontend:
+    name: Frontend checks 5-7
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: solana-launcher
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+      - name: Install frontend
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: 5/10 Analysis regression suite
+        id: check5
+        continue-on-error: true
+        run: npm run analysis:test
+      - name: 6/10 TypeScript noEmit
+        id: check6
+        continue-on-error: true
+        run: npx tsc --noEmit
+      - name: 7/10 Production Next build
+        id: check7
+        continue-on-error: true
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+      - name: Frontend quality gate
+        if: always()
+        shell: bash
+        run: |
+          echo "5=${{ steps.check5.outcome }}"
+          echo "6=${{ steps.check6.outcome }}"
+          echo "7=${{ steps.check7.outcome }}"
+          test "${{ steps.check5.outcome }}" = success
+          test "${{ steps.check6.outcome }}" = success
+          test "${{ steps.check7.outcome }}" = success
+
+  qwen:
+    name: Qwen checks 8-10
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: memecoin-intelligence
+    env:
+      TELEGRAM_AI_ENABLED: "true"
+      TELEGRAM_AI_MODE: mock
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 20
+      - name: Install Qwen service
+        run: npm install --no-audit --no-fund
+
+      - name: 8/10 Qwen TypeScript typecheck
+        id: check8
+        continue-on-error: true
+        run: npm run typecheck
+      - name: 9/10 Qwen grounding regression
+        id: check9
+        continue-on-error: true
+        run: npm run test:telegram-grounding
+      - name: 10/10 Qwen boundary regression
+        id: check10
+        continue-on-error: true
+        run: npm run test:telegram-boundary
+      - name: Qwen quality gate
+        if: always()
+        shell: bash
+        run: |
+          echo "8=${{ steps.check8.outcome }}"
+          echo "9=${{ steps.check9.outcome }}"
+          echo "10=${{ steps.check10.outcome }}"
+          test "${{ steps.check8.outcome }}" = success
+          test "${{ steps.check9.outcome }}" = success
+          test "${{ steps.check10.outcome }}" = success

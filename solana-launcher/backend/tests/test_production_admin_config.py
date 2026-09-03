@@ -16,6 +16,7 @@ def production_settings(**overrides):
         "admin_password": "very-long-admin-password-2026",
         "admin_session_secret": "f" * 64,
         "backend_api_key": BACKEND_API_KEY,
+        "subscription_password_encryption_key": "e" * 64,
     }
     values.update(overrides)
     return Settings(**values)

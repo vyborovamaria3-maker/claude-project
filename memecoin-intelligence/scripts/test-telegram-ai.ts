@@ -9,6 +9,8 @@ const messages = raw.map((message) => telegramMessageSchema.parse(message));
 const result = telegramAiResultSchema.parse(mockTelegramAnalysis(messages, {
   tokenAddress: '3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump',
   symbol: 'TEST',
+  analysisMode: 'telegram_only',
+  analysisRole: 'analyst',
 }));
 
 assert.equal(result.campaignHypothesis.label, 'coordinated');

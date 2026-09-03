@@ -24,6 +24,7 @@ RULES = [
     Rule("api-key-sk-prefix", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
     Rule("telegram-bot-token", re.compile(r"\b\d{6,12}:[A-Za-z0-9_-]{30,}\b")),
     Rule("helius-api-key", re.compile(r"api-key=[A-Za-z0-9_-]{20,}", re.IGNORECASE)),
+    Rule("jwt-bearer", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
 ]
 
 PLACEHOLDERS = (

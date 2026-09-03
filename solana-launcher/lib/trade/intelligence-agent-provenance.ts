@@ -1,4 +1,5 @@
 import catalogJson from "./analysis-feature-provenance.json";
+import { crossSourceSnapshotFeatures } from "./cross-source-intelligence-safe";
 import {
   buildAnalysisSnapshot as buildBaseAnalysisSnapshot,
   type AnalysisSnapshot as BaseAnalysisSnapshot,
@@ -54,6 +55,32 @@ const fallbackRule: ProvenanceRule = {
   source: "derived",
   sources: ["derived"],
   role: "input",
+};
+
+// Extended deterministic groups are intentionally outside the frozen 129/core catalog. They stay
+// provenanceMapped=false so the core audit remains meaningful, but their real evidence sources must
+// still be preserved for Qwen grounding instead of silently falling back to "derived".
+const extendedGroupRules: Record<string, ProvenanceRule> = {
+  "Telegram source intelligence": {
+    source: "telegram",
+    sources: ["telegram"],
+    role: "input",
+  },
+  "Telegram caller temporal outcomes": {
+    source: "telegram",
+    sources: ["telegram"],
+    role: "input",
+  },
+  "Cross-source Independence": {
+    source: "derived",
+    sources: ["x", "telegram", "chain"],
+    role: "input",
+  },
+  "Cross-source Chronology": {
+    source: "derived",
+    sources: ["x", "telegram", "chain", "market"],
+    role: "input",
+  },
 };
 
 export type IntelligenceFeature = Omit<BaseIntelligenceFeature, "source"> & {
@@ -127,7 +154,7 @@ function featureRule(group: string, label: string) {
   const groupRule = catalog.groups[group];
   if (!groupRule) {
     return {
-      rule: fallbackRule,
+      rule: extendedGroupRules[group] || fallbackRule,
       mapped: false,
       core: false,
     };
@@ -169,10 +196,23 @@ export function buildAnalysisSnapshot(
   args: Parameters<typeof buildBaseAnalysisSnapshot>[0],
 ): AnalysisSnapshot {
   const snapshot = buildBaseAnalysisSnapshot(args);
-  const features = snapshot.features.map(enrichFeature);
+  const baseFeatures = snapshot.features.map(enrichFeature);
+  const extendedFeatures = crossSourceSnapshotFeatures(
+    {
+      x: args.x,
+      telegram: args.tg,
+      chain: args.chain,
+      market: args.market,
+      derived: args.derived,
+    },
+    snapshot.createdAt,
+  ).map((feature) => enrichFeature(feature as BaseIntelligenceFeature));
+  const features = [...baseFeatures, ...extendedFeatures];
 
   return {
     ...snapshot,
+    featureCount: features.length,
+    missingFeatureCount: features.filter((feature) => feature.missing).length,
     features,
     provenance: buildSnapshotProvenance(features),
   };
@@ -181,6 +221,8 @@ export function buildAnalysisSnapshot(
 export function rebuildProvenanceSnapshot(snapshot: AnalysisSnapshot): AnalysisSnapshot {
   return {
     ...snapshot,
+    featureCount: snapshot.features.length,
+    missingFeatureCount: snapshot.features.filter((feature) => feature.missing).length,
     provenance: buildSnapshotProvenance(snapshot.features),
   };
 }

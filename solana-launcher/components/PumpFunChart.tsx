@@ -1,17 +1,20 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import {
   createChart,
+  createSeriesMarkers,
   CandlestickSeries,
   HistogramSeries,
   CrosshairMode,
   ColorType,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type CandlestickData,
   type HistogramData,
+  type SeriesMarker,
   type Time,
 } from "lightweight-charts";
 import { useOHLCV } from "@/hooks/useOHLCV";
@@ -39,10 +42,19 @@ const ActivityPanel = dynamic(() => import("./chart/ActivityPanel"), {
   ),
 });
 
+export type PumpFunChartSignal = {
+  id: string;
+  time: number;
+  shortLabel: string;
+  impact: number;
+  tone: "positive" | "negative" | "social" | "warning";
+};
+
 interface Props {
   mint: string;
   symbol?: string;
   tokenName?: string;
+  intelligenceSignals?: PumpFunChartSignal[];
 }
 
 const TF_VIEWPORT: Record<Timeframe, { visibleBars: number; barSpacing: number; rightOffset: number }> = {
@@ -80,7 +92,30 @@ function applyViewport(chart: IChartApi | null, timeframe: Timeframe, candleCoun
   chart.timeScale().setVisibleLogicalRange({ from, to });
 }
 
-export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
+function nearestCandleTime(candles: Candle[], eventTime: number): Time | null {
+  if (!candles.length || !Number.isFinite(eventTime)) return null;
+  const target = eventTime >= 1e12 ? Math.floor(eventTime / 1000) : Math.floor(eventTime);
+  let low = 0;
+  let high = candles.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (candles[middle].time < target) low = middle + 1;
+    else high = middle;
+  }
+  const right = candles[low];
+  const left = candles[Math.max(0, low - 1)];
+  const closest = Math.abs(right.time - target) < Math.abs(left.time - target) ? right : left;
+  return closest.time as Time;
+}
+
+function markerColor(tone: PumpFunChartSignal["tone"]) {
+  if (tone === "positive") return CHART_COLORS.up;
+  if (tone === "negative") return CHART_COLORS.down;
+  if (tone === "warning") return "#f59e0b";
+  return "#a855f7";
+}
+
+export default function PumpFunChart({ mint, symbol, tokenName, intelligenceSignals = [] }: Props) {
   const [tf, setTf] = useState<Timeframe>("1m");
   const handleTfChange = useCallback((newTf: Timeframe) => {
     if (newTf === tf) return;
@@ -93,6 +128,7 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const markerPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   const {
     candles,
@@ -184,6 +220,8 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
       scaleMargins: CHART_DIMENSIONS.volumeScaleMargins,
     });
 
+    markerPluginRef.current = createSeriesMarkers(candleSeries, [], { autoScale: false });
+
     chart.subscribeCrosshairMove((param) => {
       if (!param.time || !param.point) {
         setHoveredCandle(null);
@@ -228,6 +266,8 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
       if (resizeTimeout) clearTimeout(resizeTimeout);
       ro.disconnect();
       window.removeEventListener("potapoff:theme-applied", onThemeApplied);
+      markerPluginRef.current?.detach();
+      markerPluginRef.current = null;
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -302,6 +342,32 @@ export default function PumpFunChart({ mint, symbol, tokenName }: Props) {
       }
     } catch {}
   }, [normalizedCandles, tf]);
+
+  useEffect(() => {
+    const plugin = markerPluginRef.current;
+    if (!plugin) return;
+    if (normalizedCandles.length === 0) {
+      plugin.setMarkers([]);
+      return;
+    }
+    const markers = intelligenceSignals
+      .map((signal): SeriesMarker<Time> | null => {
+        const time = nearestCandleTime(normalizedCandles, signal.time);
+        if (time == null) return null;
+        return {
+          id: signal.id,
+          time,
+          position: signal.impact >= 0 ? "belowBar" : "aboveBar",
+          color: markerColor(signal.tone),
+          shape: signal.tone === "social" ? "circle" : signal.impact >= 0 ? "arrowUp" : "arrowDown",
+          text: signal.shortLabel.slice(0, 28),
+          size: 1.1,
+        };
+      })
+      .filter((marker): marker is SeriesMarker<Time> => marker != null)
+      .sort((left, right) => Number(left.time) - Number(right.time));
+    plugin.setMarkers(markers);
+  }, [intelligenceSignals, normalizedCandles]);
 
   const handleResetZoom = useCallback(() => {
     applyViewport(chartRef.current, tf, normalizedCandles.length);
