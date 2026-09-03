@@ -21,6 +21,29 @@ test -r "$HEALTH_SCRIPT"
 test -r "$PROMETHEUS_CONFIG"
 test -r "$ADMIN_COMPOSE_FILE"
 
+env_value_from_file() {
+  local file="$1"
+  local key="$2"
+  local value
+  value="$(sed -n "s/^${key}=//p" "$file" | tail -n 1)"
+  printf '%s' "${value%$'\r'}"
+}
+
+# The frontend's Mini App routes make authenticated server-to-server requests
+# to the FastAPI subscription endpoints. Keep backend.env private, but export
+# only the shared API key so Docker Compose can inject it into the frontend.
+if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+  BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
+fi
+if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+  BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
+fi
+if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+  echo "BACKEND_API_KEY is required in .env.server or backend.env" >&2
+  exit 1
+fi
+export BACKEND_API_KEY
+
 # The admin stack owns the same external network so the public ingress can
 # route admin.potapoff.fun directly to potapoff-admin:8080.
 docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null

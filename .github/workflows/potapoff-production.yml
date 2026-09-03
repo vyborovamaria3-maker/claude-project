@@ -1,65 +1,23 @@
-name: POTAPoff production
+name: POTAPoff production (legacy)
 
+# Production is deployed directly on the server with
+# solana-launcher/scripts/deploy-production-local.sh.
+# Keep this workflow manual-only so pushes to main do not queue on an
+# unavailable self-hosted GitHub Actions runner.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "solana-launcher/**"
-      - "admin-site/**"
-      - ".github/workflows/potapoff-production.yml"
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
-  packages: write
-
-concurrency:
-  group: potapoff-production
-  cancel-in-progress: false
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/claude-project
 
 jobs:
-  build:
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: backend
-            context: solana-launcher/backend
-            dockerfile: solana-launcher/backend/Dockerfile
-          - service: frontend
-            context: solana-launcher
-            dockerfile: solana-launcher/Dockerfile.frontend.prod
-          - service: telegram-bot
-            context: solana-launcher
-            dockerfile: solana-launcher/Dockerfile.telegram-bot
-
+  server-deploy-notice:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Verify Docker build files
+      - name: Production deployment moved to server
         run: |
-          set -euo pipefail
-          test -f solana-launcher/backend/Dockerfile
-          test -f solana-launcher/Dockerfile.frontend.prod
-          test -f solana-launcher/Dockerfile.telegram-bot
-          test -f solana-launcher/components/PublicLandingPage.tsx
-          test -f solana-launcher/components/landing/landingContent.ts
-          grep -q 'PublicLandingPage' solana-launcher/app/page.tsx
-          grep -q 'pathname === "/"' solana-launcher/components/AppShell.tsx
-          grep -q 'window.location.href = "/dashboard"' solana-launcher/components/PasswordLoginForm.tsx
-          git diff --check
-          echo "SOURCES_OK"
-
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+          echo "Automatic GitHub Actions production deployment is disabled."
+          echo "Run /opt/claude-project/solana-launcher/scripts/deploy-production-local.sh on the production server."
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -287,7 +245,5 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
-            "/opt/potapoff-deploy/scripts/deploy-production.sh '${GITHUB_SHA}'"
-
-# manual production redeploy 2026-08-09T12:29:00Z
+          echo "Automatic GitHub Actions production deployment is disabled."
+          echo "Run /opt/claude-project/solana-launcher/scripts/deploy-production-local.sh on the production server."
