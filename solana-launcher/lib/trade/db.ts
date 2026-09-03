@@ -458,6 +458,7 @@ export function getDb(): Database.Database {
   if (!global.__TRADE_DB__) {
     const db = new Database(DB_PATH);
     db.pragma("journal_mode = WAL");
+    db.pragma("busy_timeout = 5000");
     db.pragma("synchronous = NORMAL");
     db.pragma("cache_size = -32000");   // 32 MB page cache
     db.pragma("foreign_keys = ON");
