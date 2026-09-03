@@ -36,6 +36,9 @@ jobs:
           AUDIT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           AUDIT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 security/audit/secret-scan.py --mode diff --base "$AUDIT_BASE_SHA" --head "$AUDIT_HEAD_SHA"
+      - name: Scan full git history for secrets (pre-merge safety net)
+        if: github.event_name == 'pull_request'
+        run: python3 security/audit/secret-scan.py --mode history
 
   frontend-security:
     runs-on: ubuntu-latest
