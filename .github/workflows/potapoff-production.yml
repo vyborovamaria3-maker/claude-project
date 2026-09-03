@@ -1,9 +1,5 @@
-name: POTAPoff production (legacy)
+name: POTAPoff production deploy
 
-# Production is deployed directly on the server with
-# solana-launcher/scripts/deploy-production-local.sh.
-# Keep this workflow manual-only so pushes to main do not queue on an
-# unavailable self-hosted GitHub Actions runner.
 on:
   workflow_dispatch:
 
@@ -11,38 +7,8 @@ permissions:
   contents: read
 
 jobs:
-  server-deploy-notice:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Production deployment moved to server
-        run: |
-          echo "Automatic GitHub Actions production deployment is disabled."
-          echo "Run /opt/claude-project/solana-launcher/scripts/deploy-production-local.sh on the production server."
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: ${{ github.workspace }}/${{ matrix.context }}
-          file: ${{ github.workspace }}/${{ matrix.dockerfile }}
-          push: true
-          tags: |
-            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
-            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-          build-args: |
-            NEXT_PUBLIC_APP_URL=https://potapoff.fun
-            NEXT_PUBLIC_FRONTEND_URL=https://potapoff.fun
-            NEXT_PUBLIC_BACKEND_URL=https://potapoff.fun/fastapi
-            NEXT_PUBLIC_TELEGRAM_BOT_URL=https://t.me/Soft777bot
-            NEXT_PUBLIC_BUILD_SHA=${{ github.sha }}
-
   deploy:
-    needs: build
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
 
@@ -69,71 +35,6 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
           ssh-keygen -F "$SERVER_HOST" -f ~/.ssh/known_hosts >/dev/null \
             || { echo "SERVER_SSH_KNOWN_HOSTS does not contain SERVER_HOST" >&2; exit 1; }
-
-      - name: Validate production environment
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" 'bash -se' <<'REMOTE'
-          set -euo pipefail
-          cd /opt/potapoff-deploy
-          test -r .env.server
-          test -r backend.env
-
-          configured() {
-            local key="$1"
-            grep -hsEq "^[[:space:]]*${key}=.+$" .env.server backend.env
-          }
-
-          report() {
-            local name="$1"
-            shift
-            if "$@"; then
-              printf "%s configured: True\n" "$name"
-            else
-              printf "%s configured: False\n" "$name"
-            fi
-          }
-
-          backend_url() {
-            grep -Fq "NEXT_PUBLIC_BACKEND_URL: https://potapoff.fun/fastapi" docker-compose.production.yml
-          }
-          database() { configured POSTGRES_PASSWORD; }
-          redis() { configured REDIS_PASSWORD; }
-          solana() { configured HELIUS_RPC_URL || configured SOLANA_RPC_URL; }
-          telegram_mtproto() {
-            configured TG_API_ID && configured TG_API_HASH && configured TG_SESSION_STRING
-          }
-          telegram_public_web() { configured TG_PUBLIC_WEB_ENABLED; }
-          qwen_provider_model() {
-            configured TELEGRAM_AI_MODE && configured TELEGRAM_AI_MODEL
-          }
-
-          report "BACKEND_URL" backend_url
-          report "DATABASE" database
-          report "REDIS" redis
-          report "SECRET_KEY" configured SECRET_KEY
-          report "BACKEND_API_KEY" configured BACKEND_API_KEY
-          report "SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY" configured SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY
-          report "SOLANA_HELIUS" solana
-          report "MEMECOIN_INTELLIGENCE_URL" configured MEMECOIN_INTELLIGENCE_URL
-          report "QWEN_PROVIDER_MODEL" qwen_provider_model
-          report "TELEGRAM_MTPROTO_COLLECTOR" telegram_mtproto
-          report "TELEGRAM_PUBLIC_WEB_FALLBACK" telegram_public_web
-
-          backend_url
-          database
-          redis
-          configured RABBITMQ_PASSWORD
-          configured SECRET_KEY
-          configured BACKEND_API_KEY
-          configured SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY
-          configured ADMIN_PASSWORD
-          configured ADMIN_SESSION_SECRET
-          REMOTE
 
       - name: Upload deployment configuration
         env:
@@ -245,5 +146,6 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           set -euo pipefail
-          echo "Automatic GitHub Actions production deployment is disabled."
-          echo "Run /opt/claude-project/solana-launcher/scripts/deploy-production-local.sh on the production server."
+          SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
+          "${SSH[@]}" \
+            "cd /opt/potapoff-deploy && bash scripts/deploy-production.sh '${GITHUB_SHA}'"
