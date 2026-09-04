@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -101,18 +101,35 @@ class TelegramIntelligenceService:
             participants = int(getattr(entity, "participants_count", 0) or 0)
             linked_chat_id = None
             linked_username = None
+        entity_username = getattr(entity, "username", None)
         row = (
             await session.execute(select(TelegramChannel).where(TelegramChannel.telegram_id == int(entity.id)))
         ).scalar_one_or_none()
+        if row is None and entity_username:
+            public_row = (
+                await session.execute(
+                    select(TelegramChannel)
+                    .where(func.lower(TelegramChannel.username) == entity_username.lower())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if (
+                public_row is not None
+                and public_row.telegram_id < 0
+                and bool((public_row.meta or {}).get("public_web"))
+            ):
+                public_row.telegram_id = int(entity.id)
+                row = public_row
         now = utcnow()
         values = {
-            "username": getattr(entity, "username", None),
-            "title": getattr(entity, "title", None) or getattr(entity, "username", None) or str(entity.id),
+            "username": entity_username,
+            "title": getattr(entity, "title", None) or entity_username or str(entity.id),
             "entity_type": "group" if bool(getattr(entity, "megagroup", False)) else "channel",
             "participants": participants,
             "about": about,
         }
         meta = {
+            "collector": "mtproto",
             "broadcast": bool(getattr(entity, "broadcast", False)),
             "linked_chat_id": linked_chat_id,
             "linked_username": linked_username,
@@ -204,7 +221,7 @@ class TelegramIntelligenceService:
             "forwards": int(getattr(message, "forwards", 0) or 0),
             "replies": message_replies(message),
             "reactions": message_reactions(message),
-            "raw": {"grouped_id": str(getattr(message, "grouped_id", "") or "") or None},
+            "raw": {"collector": "mtproto", "grouped_id": str(getattr(message, "grouped_id", "") or "") or None},
         }
         if stored is None:
             stored = TelegramMessage(channel_id=channel.id, telegram_message_id=int(message.id), **values)
@@ -288,17 +305,25 @@ class TelegramIntelligenceService:
                         call_price_usd=price,
                         call_market_cap_usd=market_cap,
                         outcome="pending",
+                        meta={"collector": "mtproto"},
                     )
                 )
+            elif call is not None:
+                call.caller_telegram_id = stored.sender_telegram_id or call.caller_telegram_id
+                call.caller_username = stored.sender_username or call.caller_username or source_handle
+                call.meta = {**(call.meta or {}), "collector": "mtproto"}
 
             external_id = f"{channel.telegram_id}:{stored.telegram_message_id}"
+            event_conditions = [SocialEvent.external_id == external_id]
+            if source_url:
+                event_conditions.append(SocialEvent.source_url == source_url)
             event = (
                 await session.execute(
                     select(SocialEvent).where(
                         SocialEvent.platform == "telegram",
                         SocialEvent.event_type == "token_mention",
-                        SocialEvent.external_id == external_id,
                         SocialEvent.mint_address == mint,
+                        or_(*event_conditions),
                     )
                 )
             ).scalar_one_or_none()
@@ -308,6 +333,12 @@ class TelegramIntelligenceService:
                 "replies": stored.replies,
                 "reactions": stored.reactions,
                 "explicit_call": parsed.explicit_call,
+                "collector": "mtproto",
+            }
+            payload = {
+                "collector": "mtproto",
+                "sender_username": stored.sender_username,
+                "sender_telegram_id": stored.sender_telegram_id,
             }
             if event is None:
                 session.add(
@@ -323,10 +354,7 @@ class TelegramIntelligenceService:
                         text=text,
                         occurred_at=published_at,
                         metrics=metrics,
-                        payload={
-                            "sender_username": stored.sender_username,
-                            "sender_telegram_id": stored.sender_telegram_id,
-                        },
+                        payload=payload,
                     )
                 )
             else:
@@ -336,7 +364,8 @@ class TelegramIntelligenceService:
                 event.symbol = ticker or event.symbol
                 event.text = text
                 event.occurred_at = published_at
-                event.metrics = metrics
+                event.metrics = {**(event.metrics or {}), **metrics}
+                event.payload = {**(event.payload or {}), **payload}
         await session.flush()
         if update_score and parsed.addresses:
             await upsert_channel_score(session, channel.id)

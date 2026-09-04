@@ -13,7 +13,12 @@ export async function fetchJson<T>(
   signal?: AbortSignal,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", signal, ...init });
+  const response = await fetch(url, {
+    cache: "no-store",
+    credentials: "include",
+    signal,
+    ...init,
+  });
   const data: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
     const errorData = data as { detail?: string; error?: string };

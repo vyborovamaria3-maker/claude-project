@@ -72,8 +72,11 @@ temp/
 
 # Nested repositories and temporary clones
 repo/
-work/free-test-deploy/
-work/logs/
+work/
+cockpit-tools/
+_tmp-vnc/
+.playwright-mcp/
+turbopack-*/
 
 # OS/editor noise
 .DS_Store

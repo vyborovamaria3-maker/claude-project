@@ -1,3 +1,7 @@
+import os
+
+os.environ["ENVIRONMENT"] = "test"
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -9,14 +13,17 @@ from app.main import create_app
 
 
 TEST_SECRET_KEY = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
+TEST_BACKEND_API_KEY = "test-backend-api-key-2026"
 
 
 @pytest_asyncio.fixture
 async def test_app():
     settings = Settings(
         database_url="sqlite+aiosqlite://",
+        environment="test",
         debug=True,
         secret_key=TEST_SECRET_KEY,
+        backend_api_key=TEST_BACKEND_API_KEY,
         admin_session_secret="test-admin-session-secret",
         admin_username="admin@example.com",
         admin_password="password123",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Lock } from "lucide-react";
+import { KeyRound, Loader2, Lock, UserRound } from "lucide-react";
 
 const LOGIN_RE = /^[A-Za-z0-9_]{4,32}$/;
 
@@ -51,25 +51,37 @@ export default function PasswordLoginForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <input
-        type="text"
-        value={login}
-        onChange={(e) => setLogin(e.target.value)}
-        placeholder="Введите логин"
-        maxLength={32}
-        aria-label="Логин доступа"
-        className="mt-1 w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3 text-white placeholder:text-white/30 focus:border-neon-green focus:outline-none"
-      />
+      <label className="block">
+        <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.12em] text-white/45">Логин</span>
+        <span className="relative block">
+          <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neon-green/75" />
+          <input
+            type="text"
+            value={login}
+            onChange={(e) => setLogin(e.target.value)}
+            placeholder="Введите логин"
+            maxLength={32}
+            aria-label="Логин доступа"
+            className="w-full rounded-2xl border border-white/10 bg-black/55 px-4 py-3 pl-10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] placeholder:text-white/30 focus:border-neon-green focus:outline-none focus:ring-2 focus:ring-neon-green/15"
+          />
+        </span>
+      </label>
 
-      <input
-        type="text"
-        value={password}
-        onChange={(e) => setPassword(e.target.value.toUpperCase())}
-        placeholder="Введите пароль"
-        maxLength={32}
-        aria-label="Пароль доступа"
-        className="mt-1 w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3 text-white placeholder:text-white/30 focus:border-neon-green focus:outline-none"
-      />
+      <label className="block">
+        <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.12em] text-white/45">32-символьный пароль</span>
+        <span className="relative block">
+          <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neon-green/75" />
+          <input
+            type="text"
+            value={password}
+            onChange={(e) => setPassword(e.target.value.toUpperCase())}
+            placeholder="Введите пароль"
+            maxLength={32}
+            aria-label="Пароль доступа"
+            className="w-full rounded-2xl border border-white/10 bg-black/55 px-4 py-3 pl-10 font-mono text-sm uppercase tracking-[0.08em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] placeholder:font-sans placeholder:normal-case placeholder:tracking-normal placeholder:text-white/30 focus:border-neon-green focus:outline-none focus:ring-2 focus:ring-neon-green/15"
+          />
+        </span>
+      </label>
 
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">
@@ -80,10 +92,10 @@ export default function PasswordLoginForm() {
       <button
         type="submit"
         disabled={isLoading}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-neon-green px-4 py-3 font-semibold text-black transition hover:scale-[1.02] disabled:opacity-50"
+        className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-neon-green px-4 py-3 font-black text-black shadow-[0_18px_50px_-32px_rgba(0,255,133,0.9)] transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-50"
       >
         {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-        Войти
+        Войти в платформу
       </button>
     </form>
   );

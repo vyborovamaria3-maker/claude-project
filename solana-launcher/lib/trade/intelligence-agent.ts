@@ -7,8 +7,13 @@ import type {
   Tweet,
   TwitterStats,
 } from "@/lib/trade/social-intelligence";
+import {
+  firstCallerReputation,
+  telegramCoverageConfidence,
+  telegramTokenIntelligence,
+} from "@/lib/trade/telegram-intelligence-view";
 
-export const INTELLIGENCE_SNAPSHOT_VERSION = "social-snapshot-v4";
+export const INTELLIGENCE_SNAPSHOT_VERSION = "social-snapshot-v5";
 export const INTELLIGENCE_GRAPH_VERSION = "entity-graph-v1.3";
 
 export type IntelligenceFeature = {
@@ -689,6 +694,143 @@ function derivedMetricMissing(derived: DerivedSocial, label: string) {
   );
 }
 
+function addTelegramIntelligenceFeatures(
+  features: IntelligenceFeature[],
+  tg: SocialTimeline | null,
+  observedAt: string,
+) {
+  const intelligence = telegramTokenIntelligence(tg);
+  const coordination = intelligence?.coordination;
+  const coverage = telegramCoverageConfidence(tg);
+  const firstCaller = firstCallerReputation(intelligence);
+  const add = (
+    key: string,
+    label: string,
+    value: number | string | null,
+    confidence: number,
+    note: string,
+  ) => {
+    if (value == null || (typeof value === "number" && !Number.isFinite(value))) return;
+    features.push({
+      key,
+      group: "Telegram source intelligence",
+      label,
+      value,
+      numericValue: typeof value === "number" ? value : null,
+      source: "telegram",
+      confidence,
+      observedAt,
+      missing: false,
+      note,
+    });
+  };
+
+  add(
+    "telegram.coverage_confidence",
+    "Telegram coverage confidence",
+    coverage,
+    0.66,
+    "Deterministic coverage-quality heuristic over collector mode, registry size/freshness and errors; not a bullish/bearish probability.",
+  );
+  if (coordination) {
+    add(
+      "telegram.sources",
+      "Telegram unique sources",
+      coordination.sources,
+      0.9,
+      "Unique observed Telegram sources for this mint.",
+    );
+    add(
+      "telegram.independent_sources",
+      "Telegram independent sources",
+      coordination.independentSources,
+      0.72,
+      "Deterministic estimate after forward metadata, timing and text-similarity clustering; not proof of independence.",
+    );
+    add(
+      "telegram.coordinated_sources",
+      "Telegram coordinated/repost sources",
+      coordination.coordinatedSources,
+      0.68,
+      "Possible repost/amplifier sources inferred from forward metadata, timing and text similarity; not proof of coordination.",
+    );
+    add(
+      "telegram.coordination_risk",
+      "Telegram coordination risk",
+      coordination.coordinationRisk,
+      0.68,
+      "0-100 deterministic heuristic; must not be described as probability of manipulation.",
+    );
+    add(
+      "telegram.source_independence",
+      "Telegram source independence",
+      coordination.sourceIndependenceScore,
+      0.68,
+      "100 means fewer observed dependencies between current Telegram sources.",
+    );
+    add(
+      "telegram.burst_sources_5m",
+      "Telegram sources in first 5m burst",
+      coordination.burstSources5m,
+      0.82,
+      "Number of unique Telegram sources appearing within five minutes of the earliest observed source.",
+    );
+    add(
+      "telegram.spread_minutes",
+      "Telegram source spread minutes",
+      coordination.spreadMinutes,
+      0.82,
+      "Elapsed minutes from earliest to latest first-source observation in the current mint sample.",
+    );
+  }
+  if (intelligence?.firstCall?.source) {
+    add(
+      "telegram.first_caller",
+      "Telegram first caller",
+      intelligence.firstCall.source,
+      0.9,
+      "Earliest observed explicit Telegram caller in the indexed dataset.",
+    );
+  }
+  if (firstCaller) {
+    add(
+      "telegram.first_caller_reputation",
+      "Telegram first caller reputation",
+      firstCaller.reputationScore,
+      0.66,
+      "Historical deterministic composite from timing, outcomes, originality and available call history; not an outcome probability.",
+    );
+    add(
+      "telegram.first_caller_timing",
+      "Telegram first caller timing score",
+      firstCaller.timingScore,
+      0.72,
+      "Historical first/top-3 placement score across observed token calls.",
+    );
+    add(
+      "telegram.first_caller_originality",
+      "Telegram first caller originality score",
+      firstCaller.originalityScore,
+      0.68,
+      "Historical first-call/repost-derived originality heuristic.",
+    );
+    add(
+      "telegram.first_caller_repost_rate",
+      "Telegram first caller repost rate",
+      firstCaller.repostRate,
+      0.76,
+      "Fraction of observed caller messages carrying forwarded-source metadata.",
+    );
+    add(
+      "telegram.first_caller_median_lead_minutes",
+      "Telegram first caller median lead minutes",
+      firstCaller.medianLeadMinutes,
+      0.72,
+      "Median time from this caller's first call to the next observed independent caller across historical mints when measurable.",
+    );
+  }
+}
+
 export function buildAnalysisSnapshot(args: {
   mint: string;
   symbol?: string | null;
@@ -747,6 +889,8 @@ export function buildAnalysisSnapshot(args: {
       note: "Deterministic heuristic composite; reliability is not an outcome probability.",
     });
   }
+
+  addTelegramIntelligenceFeatures(features, args.tg, createdAt);
 
   const graph = buildEntityGraph(args.mint, args.x, args.tg, args.chain);
   const evidence = buildEvidence(args.x, args.tg);

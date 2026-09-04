@@ -15,6 +15,9 @@ from app.schemas.auth import (
     LinkRequest,
     LoginPasswordRequest,
     LoginRequest,
+    PhantomNonceRequest,
+    PhantomNonceResponse,
+    PhantomVerifyRequest,
     RegisterPasswordRequest,
     TelegramCallbackRequest,
     TelegramCallbackResponse,
@@ -122,9 +125,106 @@ async def me(current_user=Depends(get_current_user)) -> UserRead:
     return UserRead.model_validate(current_user)
 
 
-# Phantom authentication endpoints removed for security
-# These endpoints previously exposed API structure even when disabled
-# If Phantom auth is needed in future, implement with proper security controls
+@router.post("/phantom/nonce", response_model=PhantomNonceResponse)
+async def phantom_nonce(
+    request: Request,
+    payload: PhantomNonceRequest,
+    session: AsyncSession = Depends(get_db),
+) -> PhantomNonceResponse:
+    settings: Settings = request.app.state.settings
+    ip_address = get_client_ip(request)
+    await _rate_limit(
+        request,
+        key=make_limit_key("phantom", "nonce", ip_address or "unknown"),
+        limit=settings.auth_nonce_rate_limit,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+
+    user = await get_user_by_wallet(session, payload.wallet_address)
+    if user is None:
+        from app.models.user import User
+
+        user = User(wallet_address=payload.wallet_address, is_active=True)
+        session.add(user)
+
+    nonce = generate_nonce()
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.phantom_nonce_ttl_minutes
+    )
+    user.nonce = nonce
+    user.nonce_expires_at = expires_at
+    session.add(user)
+    await session.commit()
+
+    return PhantomNonceResponse(
+        nonce=nonce,
+        message=build_phantom_message(
+            app_name=settings.app_name,
+            wallet_address=payload.wallet_address,
+            nonce=nonce,
+            expires_at=expires_at,
+        ),
+        expires_at=expires_at,
+    )
+
+
+@router.post("/phantom/verify", response_model=Token)
+async def phantom_verify(
+    request: Request,
+    payload: PhantomVerifyRequest,
+    session: AsyncSession = Depends(get_db),
+) -> Token:
+    settings: Settings = request.app.state.settings
+    ip_address = get_client_ip(request)
+    await _rate_limit(
+        request,
+        key=make_limit_key("phantom", "verify", ip_address or "unknown"),
+        limit=settings.auth_verify_rate_limit,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+
+    user = await get_user_by_wallet(session, payload.wallet_address)
+    valid_nonce = (
+        user is not None
+        and user.nonce == payload.nonce
+        and user.nonce_expires_at is not None
+        and _as_utc(user.nonce_expires_at) >= datetime.now(timezone.utc)
+    )
+    try:
+        if not valid_nonce:
+            raise ValueError("Invalid nonce")
+        message = build_phantom_message(
+            app_name=settings.app_name,
+            wallet_address=payload.wallet_address,
+            nonce=payload.nonce,
+            expires_at=user.nonce_expires_at,
+        )
+        verify_phantom_signature(
+            public_key=payload.wallet_address,
+            message=message,
+            signature=payload.signature,
+        )
+    except ValueError:
+        await create_auth_log(
+            session,
+            event_type="phantom_login",
+            provider="phantom",
+            success=False,
+            user_id=user.id if user else None,
+            wallet_address=payload.wallet_address,
+            ip_address=ip_address,
+            error_message="Invalid credentials",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
+    user.nonce = None
+    user.nonce_expires_at = None
+    user = await sync_login_metadata(session, user, ip_address=ip_address, source="phantom")
+    result = await issue_token_for_user(session, user, settings)
+    return _token_response(result)
 
 
 @router.post("/telegram/verify", response_model=Token)

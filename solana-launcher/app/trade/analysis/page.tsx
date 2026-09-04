@@ -320,7 +320,7 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
       if (filters.showSmart && !w.isSmart) return false;
       if (filters.showBundled && !w.bundleId) return false;
       if (filters.showWash && !w.isWashTrader) return false;
-      const balanceUsd = w.solBalance * 150 + w.tokenBalanceUsd; // rough SOL→USD
+      const balanceUsd = (w.solBalance ?? 0) * 150 + w.tokenBalanceUsd; // rough SOL→USD
       if (filters.minBalanceUsd > 0 && balanceUsd < filters.minBalanceUsd) return false;
       if (filters.search && !w.address.toLowerCase().includes(filters.search.toLowerCase()))
         return false;
@@ -367,7 +367,7 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
         w.volumeSol.toFixed(6),
         w.pnlSol.toFixed(6),
         w.pnlPercent.toFixed(2),
-        w.solBalance.toFixed(6),
+        w.solBalance == null ? "" : w.solBalance.toFixed(6),
         w.isFresh,
         w.isSmart,
         w.isWashTrader,
@@ -459,6 +459,17 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
       {/* DEV Analysis */}
       <DevAnalysis mint={data.mint} />
 
+      <details className="overflow-hidden rounded-xl border border-bg-border">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+          <span className="text-sm font-semibold text-white">
+            Таблицы кошельков ({filtered.length.toLocaleString()})
+          </span>
+          <span className="text-[10px] text-white/40">
+            открыть / закрыть
+          </span>
+        </summary>
+
+        <div className="space-y-4 border-t border-bg-border p-4">
       {/* Filters */}
       <FiltersPanel
         filters={filters}
@@ -516,6 +527,8 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
           )}
         </div>
       )}
+        </div>
+      </details>
     </div>
   );
 }

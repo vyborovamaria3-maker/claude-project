@@ -12,7 +12,7 @@ export interface WalletRowData {
   volumeSol: number;
   pnlSol: number;
   pnlPercent: number;
-  solBalance: number;
+  solBalance: number | null;
   tokenBalanceUsd: number;
   isFresh: boolean;
   isSmart: boolean;
@@ -100,7 +100,7 @@ export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrade
         <Metric label="Buys" value={w.buys.toString()} />
         <Metric label="Sells" value={w.sells.toString()} />
         <Metric label="Volume" value={`${w.volumeSol.toFixed(2)} SOL`} />
-        <Metric label="Balance" value={`${w.solBalance.toFixed(2)} SOL`} />
+        <Metric label="Balance" value={w.solBalance == null ? "—" : `${w.solBalance.toFixed(2)} SOL`} />
       </div>
 
       <div className="mt-2 flex items-center justify-center text-[10px] text-white/35">

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
@@ -10,6 +10,16 @@ const MIN_WINDOW_SPAN = 23 * HOUR;
 const MAX_MARKET_DATA_AGE = 6 * HOUR;
 const MAX_METRIC_SKEW = 30 * 60 * 1000;
 const MAX_CHART_POINTS = 120;
+const SOLANA_RANGE_START_2020 = Math.floor(Date.UTC(2020, 0, 1) / 1000);
+const PERIODS = {
+  "5m": { days: "1", windowMs: DAY, minPoints: 24 },
+  "1h": { days: "7", windowMs: 7 * DAY, minPoints: 24 },
+  "1d": { days: "1", windowMs: DAY, minPoints: 24 },
+  "1w": { days: "7", windowMs: 7 * DAY, minPoints: 24 },
+  all: { days: "max", windowMs: Number.POSITIVE_INFINITY, minPoints: 24 },
+} as const;
+
+type MarketPeriod = keyof typeof PERIODS;
 
 type PriceRow = [number, number];
 
@@ -40,11 +50,15 @@ type MarketPayload = {
   stale: boolean;
   staleReason: "delayed_source" | "upstream_error" | null;
   points: MarketPoint[];
-  source: "CoinGecko";
+  source: "CoinGecko" | "Coinbase";
   quote: "USD";
 };
 
-let lastGoodPayload: MarketPayload | null = null;
+const lastGoodPayloads = new Map<MarketPeriod, MarketPayload>();
+
+function parsePeriod(raw: string | null): MarketPeriod {
+  return raw && raw in PERIODS ? raw as MarketPeriod : "1d";
+}
 
 function isValidRow(row: unknown): row is PriceRow {
   return (
@@ -82,6 +96,54 @@ function latestMetricNearCutoff(rows: unknown, cutoff: number, now: number): Tim
     return { value, time };
   }
   return { value: null, time: null };
+}
+
+async function fetchCoinbaseSolHistory(fromSec: number, toSec: number, signal: AbortSignal): Promise<CoinGeckoChart | null> {
+  type CoinbaseCandle = [number, number, number, number, number, number];
+  const granularitySec = 86_400;
+  const maxCandles = 300;
+  const prices: PriceRow[] = [];
+  const volumes: PriceRow[] = [];
+  let cursorEndSec = toSec;
+
+  while (cursorEndSec > fromSec) {
+    const cursorStartSec = Math.max(fromSec, cursorEndSec - granularitySec * maxCandles);
+    const start = new Date(cursorStartSec * 1000).toISOString();
+    const end = new Date(cursorEndSec * 1000).toISOString();
+    const response = await fetch(
+      `https://api.exchange.coinbase.com/products/SOL-USD/candles?granularity=${granularitySec}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+      {
+        headers: { Accept: "application/json" },
+        signal,
+        cache: "no-store",
+      },
+    );
+
+    if (!response.ok) break;
+    const rows = await response.json() as CoinbaseCandle[];
+    if (!Array.isArray(rows) || rows.length === 0) {
+      cursorEndSec = cursorStartSec - granularitySec;
+      continue;
+    }
+
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 6) continue;
+      const [timeSec, , , , close, volume] = row;
+      if (!Number.isFinite(timeSec) || !Number.isFinite(close) || close <= 0) continue;
+      const timeMs = timeSec * 1000;
+      prices.push([timeMs, close]);
+      if (Number.isFinite(volume) && volume > 0) volumes.push([timeMs, volume * close]);
+    }
+
+    cursorEndSec = cursorStartSec - granularitySec;
+  }
+
+  const normalized = normalizeRows(prices, toSec * 1000);
+  if (normalized.length < 24) return null;
+  return {
+    prices: normalized,
+    total_volumes: normalizeRows(volumes, toSec * 1000),
+  };
 }
 
 /**
@@ -125,9 +187,11 @@ function marketHeaders(stale: boolean) {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const period = parsePeriod(request.nextUrl.searchParams.get("period"));
+  const periodConfig = PERIODS[period];
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6_000);
+  const timeout = setTimeout(() => controller.abort(), period === "all" ? 15_000 : 6_000);
   const servedAt = Date.now();
 
   try {
@@ -135,8 +199,12 @@ export async function GET() {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (apiKey) headers["x-cg-demo-api-key"] = apiKey;
 
+    const chartUrl = period === "all"
+      ? `https://api.coingecko.com/api/v3/coins/solana/market_chart/range?vs_currency=usd&from=${SOLANA_RANGE_START_2020}&to=${Math.floor(servedAt / 1000)}&precision=full`
+      : `https://api.coingecko.com/api/v3/coins/solana/market_chart?vs_currency=usd&days=${periodConfig.days}&precision=full`;
+
     const response = await fetch(
-      "https://api.coingecko.com/api/v3/coins/solana/market_chart?vs_currency=usd&days=1&precision=full",
+      chartUrl,
       {
         headers,
         signal: controller.signal,
@@ -144,20 +212,24 @@ export async function GET() {
       },
     );
 
-    if (!response.ok) {
-      throw new Error(`CoinGecko responded with ${response.status}`);
+    let data: CoinGeckoChart | null = null;
+    let source: MarketPayload["source"] = "CoinGecko";
+    if (response.ok) {
+      data = (await response.json()) as CoinGeckoChart;
+    } else if (period === "all") {
+      data = await fetchCoinbaseSolHistory(SOLANA_RANGE_START_2020, Math.floor(servedAt / 1000), controller.signal);
+      if (data) source = "Coinbase";
     }
 
-    const data = (await response.json()) as CoinGeckoChart;
+    if (!data) throw new Error(`Market source responded with ${response.status}`);
     const normalized = normalizeRows(data.prices, servedAt);
-    if (normalized.length < 24) throw new Error("Not enough valid Solana market points");
+    if (normalized.length < periodConfig.minPoints) throw new Error("Not enough valid Solana market points");
 
     const sourceEnd = normalized[normalized.length - 1][0];
-    const sourceStart = sourceEnd - DAY;
-    const prices = normalized.filter(([time]) => time >= sourceStart && time <= sourceEnd);
-
-    if (prices.length < 24) throw new Error("Incomplete Solana 24h market window");
-    if (prices[prices.length - 1][0] - prices[0][0] < MIN_WINDOW_SPAN) {
+    const sourceStart = Number.isFinite(periodConfig.windowMs) ? sourceEnd - periodConfig.windowMs : normalized[0][0];
+    let prices = normalized.filter(([time]) => time >= sourceStart && time <= sourceEnd);
+    if (prices.length < periodConfig.minPoints) throw new Error("Incomplete Solana market window");
+    if (period === "1d" && prices[prices.length - 1][0] - prices[0][0] < MIN_WINDOW_SPAN) {
       throw new Error("Solana market window is too short");
     }
 
@@ -166,7 +238,7 @@ export async function GET() {
     const values = prices.map((row) => row[1]);
     const plotted = sampleRealPoints(prices, MAX_CHART_POINTS);
     const dataAge = Math.max(0, servedAt - sourceEnd);
-    if (dataAge > MAX_MARKET_DATA_AGE) {
+    if (period !== "all" && dataAge > MAX_MARKET_DATA_AGE) {
       throw new Error("Solana market source is too old");
     }
     const stale = dataAge > LIVE_MAX_AGE;
@@ -191,16 +263,17 @@ export async function GET() {
       stale,
       staleReason: stale ? "delayed_source" : null,
       points: plotted.map(([time, price]) => ({ time, price })),
-      source: "CoinGecko",
+      source,
       quote: "USD",
     };
 
-    lastGoodPayload = payload;
+    lastGoodPayloads.set(period, payload);
 
     return NextResponse.json(payload, {
       headers: marketHeaders(stale),
     });
   } catch (error) {
+    const lastGoodPayload = lastGoodPayloads.get(period);
     const fallbackAge = lastGoodPayload
       ? Math.max(0, servedAt - lastGoodPayload.updatedAt)
       : Number.POSITIVE_INFINITY;
