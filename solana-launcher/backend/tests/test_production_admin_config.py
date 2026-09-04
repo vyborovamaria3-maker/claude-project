@@ -67,6 +67,11 @@ def test_worker_process_can_omit_subscription_keys():
     assert settings.subscription_admin_key == ""
 
 
+def test_blank_optional_telegram_api_id_is_treated_as_unset():
+    settings = production_settings(telegram_api_id="")
+    assert settings.telegram_api_id is None
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
