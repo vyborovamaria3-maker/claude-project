@@ -16,6 +16,19 @@ class SubscriptionSettingsRead(BaseModel):
     solana_recipient_wallet: str
 
 
+class SubscriptionSettingsUpdate(BaseModel):
+    monthly_price_sol: Decimal = Field(ge=0, max_digits=20, decimal_places=9)
+    monthly_price_usdt: Decimal = Field(ge=0, max_digits=20, decimal_places=6)
+    free_demo_enabled: bool
+    demo_days: int = Field(ge=1, le=3650)
+    solana_recipient_wallet: str = Field(default="", max_length=64)
+
+    @field_validator("solana_recipient_wallet")
+    @classmethod
+    def normalize_wallet(cls, value: str) -> str:
+        return (value or "").strip()
+
+
 class SubscriptionOrderCreate(BaseModel):
     payload: str = Field(min_length=16, max_length=128)
     telegram_user_id: int = Field(ge=1)

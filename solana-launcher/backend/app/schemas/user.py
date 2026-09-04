@@ -24,11 +24,7 @@ class UserRead(UserBase):
     id: UUID
     is_active: bool
     is_superuser: bool
-    nonce: int | None = None
-    nonce_expires_at: datetime | None = None
     last_login_at: datetime | None = None
-    last_ip: str | None = None
-    ip_addresses: list[str] | None = None
     created_at: datetime
     updated_at: datetime
 

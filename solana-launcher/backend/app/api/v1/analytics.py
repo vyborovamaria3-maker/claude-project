@@ -1,11 +1,7 @@
-from __future__ import annotations
-
-from collections.abc import AsyncIterator
-
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_superuser
+from app.api.deps import get_current_subscriber, get_current_superuser
 from app.db.session import get_db
 from app.schemas.analytics import (
     CollectorRunResponse,
@@ -37,13 +33,20 @@ async def read_tokens(
     order: str = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
+    current_user=Depends(get_current_subscriber),
 ) -> TokenListResponse:
+    del current_user
     items, total = await list_tokens(session, limit=limit, offset=offset, sort_by=sort_by, order=order)
     return TokenListResponse(items=items, meta={"limit": limit, "offset": offset, "total": total})
 
 
 @router.get("/tokens/{mint_address}/analysis", response_model=TokenAnalysisResponse)
-async def read_token_analysis(mint_address: str, session: AsyncSession = Depends(get_db)) -> TokenAnalysisResponse:
+async def read_token_analysis(
+    mint_address: str,
+    session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
+) -> TokenAnalysisResponse:
+    del current_user
     try:
         data = await get_token_analysis(session, mint_address)
     except ValueError as exc:
@@ -58,7 +61,9 @@ async def read_top_wallets(
     period: str = Query(default="all_time"),
     limit: int = Query(default=50, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
+    current_user=Depends(get_current_subscriber),
 ) -> WalletTopResponse:
+    del current_user
     if by != "profit" or period != "all_time":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -69,7 +74,12 @@ async def read_top_wallets(
 
 
 @router.get("/wallets/{wallet_address}/activity", response_model=WalletActivityResponse)
-async def read_wallet_activity(wallet_address: str, session: AsyncSession = Depends(get_db)) -> WalletActivityResponse:
+async def read_wallet_activity(
+    wallet_address: str,
+    session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
+) -> WalletActivityResponse:
+    del current_user
     try:
         data = await get_wallet_activity(session, wallet_address)
     except ValueError as exc:
@@ -78,13 +88,21 @@ async def read_wallet_activity(wallet_address: str, session: AsyncSession = Depe
 
 
 @router.get("/insider/clusters", response_model=InsiderClusterResponse)
-async def read_insider_clusters(session: AsyncSession = Depends(get_db)) -> InsiderClusterResponse:
+async def read_insider_clusters(
+    session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
+) -> InsiderClusterResponse:
+    del current_user
     items = await get_insider_clusters(session)
     return InsiderClusterResponse(items=items)
 
 
 @router.get("/collector/jobs", response_model=JobStatusResponse)
-async def read_collector_jobs(session: AsyncSession = Depends(get_db)) -> JobStatusResponse:
+async def read_collector_jobs(
+    session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
+) -> JobStatusResponse:
+    del current_user
     jobs = await list_jobs(session)
     return JobStatusResponse(jobs=jobs)
 
@@ -94,22 +112,7 @@ async def run_collector(
     session: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_superuser),
 ) -> CollectorRunResponse:
+    del current_user
     result = await run_full_collection(session)
     await get_or_create_jobs(session)
     return CollectorRunResponse(detail="collection queued", tasks=[f"tokens={result['tokens']}", f"metrics={result['metrics']}", f"links={result['links']}"])
-
-
-@router.websocket("/ws/token/{mint_address}")
-async def stream_token_updates(websocket: WebSocket, mint_address: str) -> None:
-    await websocket.accept()
-    try:
-        async for payload in _token_stream(mint_address):
-            await websocket.send_json(payload)
-    except WebSocketDisconnect:
-        return
-
-
-async def _token_stream(mint_address: str) -> AsyncIterator[dict]:
-    # Placeholder stream implementation: in production this can subscribe to PumpPortal or Helius WS.
-    for index in range(3):
-        yield {"mint_address": mint_address, "sequence": index, "price_usd": None, "volume_24h": None}

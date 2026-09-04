@@ -73,6 +73,13 @@ services:
       FRONTEND_URL: https://potapoff.fun
       FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
+      SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
+      REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
+      # Pass this from a backend-only environment source (for example a second
+      # --env-file). Do not store it in .env.server because frontend reads values
+      # from that deployment env during Compose interpolation.
+      SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:-}
+      REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -137,17 +144,19 @@ services:
   frontend:
     image: ghcr.io/vyborovamaria3-maker/claude-project/frontend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
-    env_file:
-      - .env.server
+    # Intentionally no env_file here: the public-facing Next.js container must
+    # not inherit database, JWT, RabbitMQ or backend master credentials.
     environment:
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
-      BACKEND_API_KEY: ${BACKEND_API_KEY:?BACKEND_API_KEY is required}
+      SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_BACKEND_URL: https://potapoff.fun/fastapi
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?TELEGRAM_WEBHOOK_SECRET is required}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
     volumes:
       - ./data:/app/data
     depends_on:
@@ -165,13 +174,13 @@ services:
     profiles: ["telegram"]
     image: ghcr.io/vyborovamaria3-maker/claude-project/telegram-bot:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
-    env_file:
-      - backend.env
-      - .env.server
+    # Keep the bot isolated from backend/database env files as well.
     environment:
       NODE_ENV: production
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:?TELEGRAM_WEBHOOK_URL is required}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?TELEGRAM_WEBHOOK_SECRET is required}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
       FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun

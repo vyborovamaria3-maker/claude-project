@@ -68,7 +68,7 @@ export function setupStatusHandlers(bot: Telegraf) {
         "Soft777 Bot",
         "",
         "/start - открыть Mini App подписки",
-        "/subscribe - оплатить подписку $1000",
+        "/subscribe - открыть активацию доступа",
         "/agents - список AI агентов",
         "/new - создать задачу",
         "/tasks - список задач",
@@ -82,16 +82,16 @@ export function setupStatusHandlers(bot: Telegraf) {
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
-      "Открой Mini App, задай логин, оплати подписку $1000 и получи 32-символьный пароль для входа в Solana Launcher.",
+      "Открой Mini App, задай логин и активируй доступ. Если администратор включил TEST, доступ будет бесплатным; иначе Mini App покажет актуальные способы и цены оплаты.",
       buildMiniAppKeyboard()
     );
   });
 
   bot.command("auth", async (ctx) => {
-    await ctx.reply("Для доступа к софту открой Mini App и оформи подписку.", buildMiniAppKeyboard());
+    await ctx.reply("Для доступа к софту открой Mini App и активируй подписку.", buildMiniAppKeyboard());
   });
 
   bot.command("login", async (ctx) => {
-    await ctx.reply("Войти на сайт можно после оплаты подписки в Mini App.", buildMiniAppKeyboard());
+    await ctx.reply("Войти на сайт можно после активации доступа в Mini App.", buildMiniAppKeyboard());
   });
 }

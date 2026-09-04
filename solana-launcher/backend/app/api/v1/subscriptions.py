@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.db.session import get_db
 from app.models.subscription_order import SubscriptionOrder
+from app.models.subscription_settings import SubscriptionSettings
 from app.models.user import User
 from app.schemas.subscription import (
     SubscriptionOrderComplete,
     SubscriptionOrderCreate,
     SubscriptionOrderRead,
     SubscriptionSettingsRead,
+    SubscriptionSettingsUpdate,
 )
 from app.services.subscriptions import (
     SubscriptionConflictError,
@@ -29,24 +31,64 @@ from app.services.subscriptions import (
 router = APIRouter()
 
 
-def _require_internal_access(request: Request) -> Settings:
-    settings: Settings = request.app.state.settings
-    api_key = request.headers.get("X-API-Key", "")
-    expected_key = settings.backend_api_key
-    is_dev_internal = (
+def _key_matches(supplied: str, expected: str) -> bool:
+    return bool(expected) and hmac.compare_digest(supplied.encode(), expected.encode())
+
+
+def _dev_internal(request: Request, settings: Settings) -> bool:
+    return (
         settings.environment == "development"
-        and not expected_key
         and request.headers.get("X-Dev-Internal") == "miniapp-subscription"
     )
-    if is_dev_internal:
+
+
+def _require_checkout_access(request: Request) -> Settings:
+    settings: Settings = request.app.state.settings
+    supplied = request.headers.get("X-API-Key", "")
+    if _dev_internal(request, settings) and not settings.subscription_internal_key:
         return settings
-    if not expected_key or not hmac.compare_digest(api_key.encode(), expected_key.encode()):
+    if not _key_matches(supplied, settings.subscription_internal_key):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
+    return settings
+
+
+def _require_settings_read_access(request: Request) -> Settings:
+    settings: Settings = request.app.state.settings
+    supplied = request.headers.get("X-API-Key", "")
+    if _dev_internal(request, settings) and not (
+        settings.subscription_internal_key or settings.subscription_admin_key
+    ):
+        return settings
+    if not (
+        _key_matches(supplied, settings.subscription_internal_key)
+        or _key_matches(supplied, settings.subscription_admin_key)
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
+    return settings
+
+
+def _require_admin_access(request: Request) -> Settings:
+    settings: Settings = request.app.state.settings
+    supplied = request.headers.get("X-API-Key", "")
+    if _dev_internal(request, settings) and not settings.subscription_admin_key:
+        return settings
+    if not _key_matches(supplied, settings.subscription_admin_key):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
     return settings
 
 
 def _password_encryption_key(settings: Settings) -> str:
     return settings.subscription_password_encryption_key.strip() or settings.secret_key
+
+
+def _settings_response(settings: SubscriptionSettings) -> SubscriptionSettingsRead:
+    return SubscriptionSettingsRead(
+        monthly_price_sol=settings.monthly_price_sol,
+        monthly_price_usdt=settings.monthly_price_usdt,
+        free_demo_enabled=settings.free_demo_enabled,
+        demo_days=settings.demo_days,
+        solana_recipient_wallet=settings.solana_recipient_wallet,
+    )
 
 
 async def _subscription_expiry(session: AsyncSession, order: SubscriptionOrder):
@@ -99,15 +141,42 @@ async def read_settings(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> SubscriptionSettingsRead:
-    _require_internal_access(request)
+    _require_settings_read_access(request)
     settings = await get_subscription_settings(session)
-    return SubscriptionSettingsRead(
-        monthly_price_sol=settings.monthly_price_sol,
-        monthly_price_usdt=settings.monthly_price_usdt,
-        free_demo_enabled=settings.free_demo_enabled,
-        demo_days=settings.demo_days,
-        solana_recipient_wallet=settings.solana_recipient_wallet,
+    return _settings_response(settings)
+
+
+@router.put("/settings", response_model=SubscriptionSettingsRead)
+async def update_settings(
+    body: SubscriptionSettingsUpdate,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> SubscriptionSettingsRead:
+    _require_admin_access(request)
+
+    # Ensure the singleton row exists, then lock it so concurrent admin writes
+    # cannot silently interleave field-by-field updates.
+    await get_subscription_settings(session)
+    result = await session.execute(
+        select(SubscriptionSettings)
+        .where(SubscriptionSettings.id == 1)
+        .with_for_update()
     )
+    settings = result.scalar_one()
+
+    try:
+        settings.monthly_price_sol = body.monthly_price_sol
+        settings.monthly_price_usdt = body.monthly_price_usdt
+        settings.free_demo_enabled = body.free_demo_enabled
+        settings.demo_days = body.demo_days
+        settings.solana_recipient_wallet = body.solana_recipient_wallet
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    await session.refresh(settings)
+    return _settings_response(settings)
 
 
 @router.post("/orders", response_model=SubscriptionOrderRead, status_code=status.HTTP_201_CREATED)
@@ -116,7 +185,7 @@ async def create_order(
     payload: SubscriptionOrderCreate,
     session: AsyncSession = Depends(get_db),
 ) -> SubscriptionOrderRead:
-    settings = _require_internal_access(request)
+    settings = _require_checkout_access(request)
     try:
         order = await create_subscription_order(session, payload)
     except SubscriptionConflictError as exc:
@@ -130,7 +199,7 @@ async def read_order(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> SubscriptionOrderRead:
-    settings = _require_internal_access(request)
+    settings = _require_checkout_access(request)
     order = await get_subscription_order(session, payload)
     if order is None:
         raise HTTPException(
@@ -153,7 +222,7 @@ async def complete_order(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> SubscriptionOrderRead:
-    settings = _require_internal_access(request)
+    settings = _require_checkout_access(request)
     try:
         order, password, _expires_at, already_paid = await complete_subscription_order(
             session,

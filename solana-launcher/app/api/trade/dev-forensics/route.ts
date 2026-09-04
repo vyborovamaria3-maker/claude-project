@@ -4,7 +4,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { analyzePumpFunCreatorFee } from "../../../../lib/trade/creator-fee-agent";
-import { fetchPumpTotalVolume } from "../../../../lib/trade/pumpfun";
 import { getCachedTokenVolume, upsertDevTokenVolume } from "../../../../lib/trade/db";
 
 export const runtime = "nodejs";
@@ -14,20 +13,23 @@ const CACHE: Map<string, { data: ForensicsResult; ts: number }> = new Map();
 const CACHE_TTL = 10 * 60 * 1000; // 10 min
 const ATH_CACHE_VERSION = "ath-v14";
 
-// QuickNode RPC for mainnet data
-const QUICKNODE_RPC = process.env.NEXT_PUBLIC_QUICKNODE_RPC_URL || "https://solana-mainnet.g.alchemy.com/v2/QN_4ae4c43cd2e143048868d499f5f77b98";
-
 // Solscan API token
 const SOLSCAN_API_TOKEN = process.env.SOLSCAN_API_TOKEN || "";
-
-// Migration threshold for pump.fun tokens
-const MIGRATION_THRESHOLD_USD = 35650; // $35.65k MCAP
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error("operation timed out")), ms)),
   ]);
+}
+
+function forwardedAuthHeaders(req: NextRequest): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const authorization = req.headers.get("authorization");
+  const cookie = req.headers.get("cookie");
+  if (authorization) headers.Authorization = authorization;
+  if (cookie) headers.Cookie = cookie;
+  return headers;
 }
 
 export interface TokenForensics {
@@ -299,27 +301,12 @@ async function resolveTokenMcapAth(
   return candidates.length > 0 ? Math.max(...candidates) : 0;
 }
 
-// QuickNode RPC helper
-async function quicknodeRpc<T>(method: string, params: unknown[]): Promise<T> {
-  const r = await fetch(QUICKNODE_RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(10000),
-  });
-
-  const data = await r.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.result as T;
-}
-
 // Solscan API helper
 async function solscanApi<T>(endpoint: string): Promise<T | null> {
   if (!SOLSCAN_API_TOKEN) return null;
   try {
     const r = await fetch(`https://api.solscan.io${endpoint}`, {
-      headers: { 
+      headers: {
         "Authorization": `Bearer ${SOLSCAN_API_TOKEN}`,
         "Accept": "application/json"
       },
@@ -368,26 +355,19 @@ async function getSolscanTokenInfo(mint: string): Promise<{
 // Get account transactions to find creator
 async function getSolscanCreatorFromTx(mint: string): Promise<string | null> {
   try {
-    // Get first transactions for this token
     const data = await solscanApi<SolscanTransactionListResponse>(`/account/transactions?address=${mint}&limit=20`);
     if (!data || !data.success || !data.data || data.data.length === 0) return null;
 
-    // Look for token creation transaction (usually first)
     for (const tx of data.data) {
       if (tx.txHash && tx.status === "Success" && tx.blockTime) {
-        // Get transaction details to find creator
         const txDetails = await solscanApi<SolscanTransactionResponse>(`/transaction?tx=${tx.txHash}`);
         if (txDetails?.success && txDetails.data?.parsedInstruction) {
-          // Look for create instruction with creator
           for (const inst of txDetails.data.parsedInstruction) {
-            // Check for initializeMint (token creation)
-            if (inst.programId === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" && 
+            if (inst.programId === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
                 (inst.type === "initializeMint" || inst.type === "createMint")) {
-              // This is token creation, find the signer (creator)
               if (inst.accounts?.[0]?.isSigner && inst.accounts[0].account) {
                 return inst.accounts[0].account;
               }
-              // Also check other accounts for signers
               for (const account of inst.accounts || []) {
                 if (account.isSigner && account.account && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(account.account)) {
                   return account.account;
@@ -395,13 +375,11 @@ async function getSolscanCreatorFromTx(mint: string): Promise<string | null> {
               }
             }
           }
-          
-          // Also check raw instructions if parsed didn't work
+
           if (txDetails.data?.instructions) {
             for (const inst of txDetails.data.instructions) {
-              if (inst.programId === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" && 
+              if (inst.programId === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" &&
                   inst.parsed?.type === "initializeMint") {
-                // Find signer in accounts
                 const signer = inst.accounts?.find((acc) => acc.isSigner);
                 if (signer?.account && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(signer.account)) {
                   return signer.account;
@@ -410,7 +388,7 @@ async function getSolscanCreatorFromTx(mint: string): Promise<string | null> {
             }
           }
         }
-        break; // Check only first few transactions
+        break;
       }
     }
   } catch {
@@ -419,7 +397,6 @@ async function getSolscanCreatorFromTx(mint: string): Promise<string | null> {
   return null;
 }
 
-// Get detailed token info from Solscan (primary) with DexScreener and pump.fun fallback
 async function getPumpFunTokenInfo(mint: string): Promise<{
   symbol: string;
   name: string;
@@ -432,11 +409,9 @@ async function getPumpFunTokenInfo(mint: string): Promise<{
   website?: string;
   creator?: string;
 } | null> {
-  // 1. Try Solscan API first (most reliable for creator and basic info)
   try {
     const solscanInfo = await getSolscanTokenInfo(mint);
     if (solscanInfo) {
-      // Check if migrated via DexScreener
       let isMigrated = false;
       try {
         const dexRes = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
@@ -457,7 +432,7 @@ async function getPumpFunTokenInfo(mint: string): Promise<{
         name: solscanInfo.name,
         createdAt: solscanInfo.createdAt,
         marketCap: solscanInfo.marketCap,
-        ath: undefined, // Solscan doesn't provide ATH
+        ath: undefined,
         complete: isMigrated,
         creator: solscanInfo.creator,
         twitter: undefined,
@@ -469,7 +444,6 @@ async function getPumpFunTokenInfo(mint: string): Promise<{
     // continue to DexScreener
   }
 
-  // 2. Try DexScreener
   try {
     const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
       cache: "no-store",
@@ -482,7 +456,7 @@ async function getPumpFunTokenInfo(mint: string): Promise<{
         return {
           symbol: pair.baseToken?.symbol || "",
           name: pair.baseToken?.name || "",
-          createdAt: pair.pairCreatedAt ? new Date(pair.pairCreatedAt).getTime() : Date.now() - 24*60*60*1000,
+          createdAt: pair.pairCreatedAt ? new Date(pair.pairCreatedAt).getTime() : Date.now() - 24 * 60 * 60 * 1000,
           marketCap: pair.fdv || undefined,
           ath: undefined,
           complete: pair.dexId !== "pumpfun",
@@ -496,10 +470,9 @@ async function getPumpFunTokenInfo(mint: string): Promise<{
     // continue to pump.fun
   }
 
-  // 3. Fallback to pump.fun API
   try {
     const res = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
-      headers: { 
+      headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
         "Origin": "https://pump.fun",
@@ -531,10 +504,8 @@ async function getPumpFunTokenInfo(mint: string): Promise<{
   }
 }
 
-// Get pump.fun volume for date (aggregated from all tokens)
 async function getPumpFunVolumeForDate(dateTs: number): Promise<number | null> {
   try {
-    // Use DefiLlama for pump.fun protocol volume
     const url = `https://api.llama.fi/overview/dexs/pump-fun?excludeTotalDataChart=false&excludeTotalDataChartBreakdown=true&dataType=dailyVolume`;
     const r = await fetch(url, { signal: AbortSignal.timeout(8000), cache: "no-store" });
     if (!r.ok) return null;
@@ -554,13 +525,12 @@ async function getPumpFunVolumeForDate(dateTs: number): Promise<number | null> {
       }
     }
 
-    return closest ? closest / 1_000_000 : null; // Convert to $M
+    return closest ? closest / 1_000_000 : null;
   } catch {
     return null;
   }
 }
 
-// Fetch Solana DEX volume for a date via DefiLlama
 async function fetchSolanaVolumeForDate(dateTs: number): Promise<number | null> {
   try {
     const url = `https://api.llama.fi/overview/dexs/solana?excludeTotalDataChart=false&excludeTotalDataChartBreakdown=true&dataType=dailyVolume`;
@@ -583,13 +553,12 @@ async function fetchSolanaVolumeForDate(dateTs: number): Promise<number | null> 
       }
     }
 
-    return closest ? closest / 1_000_000 : null; // Convert to $M
+    return closest ? closest / 1_000_000 : null;
   } catch {
     return null;
   }
 }
 
-// Get current Solana DEX volume
 async function fetchCurrentSolanaVolume(): Promise<number | null> {
   try {
     const r = await fetch(
@@ -607,20 +576,23 @@ async function fetchCurrentSolanaVolume(): Promise<number | null> {
   }
 }
 
-// Get comprehensive token forensics data
-async function analyzeToken(mint: string, options: { includeLaunchVolumes?: boolean; includeTwitter?: boolean } = {}): Promise<TokenForensics | null> {
+async function analyzeToken(
+  mint: string,
+  options: {
+    includeLaunchVolumes?: boolean;
+    includeTwitter?: boolean;
+    authHeaders?: Record<string, string>;
+  } = {},
+): Promise<TokenForensics | null> {
   try {
-    // Get basic token info from pump.fun
     const tokenInfo = await getPumpFunTokenInfo(mint);
     if (!tokenInfo) return null;
 
-    // Get current DexScreener data for market cap and migration status
     let currentMarketCap = tokenInfo.marketCap || null;
     let isMigrated = tokenInfo.complete || false;
-    let migrationMarketCap = null;
-    let migrationTimestamp = null;
+    const migrationMarketCap = null;
+    const migrationTimestamp = null;
     let historicalPeakMCAP = currentMarketCap || 0;
-    let dexPair: DexScreenerPair | null = null;
     let currentDexPrice = 0;
 
     try {
@@ -630,11 +602,10 @@ async function analyzeToken(mint: string, options: { includeLaunchVolumes?: bool
       });
       if (dexRes.ok) {
         const dexData = (await dexRes.json()) as DexScreenerResponse;
-        dexPair = dexData.pairs?.[0] || null;
+        const dexPair = dexData.pairs?.[0] || null;
         if (dexPair) {
           currentMarketCap = dexPair.fdv || currentMarketCap;
           currentDexPrice = parseFloat(dexPair.priceUsd || "0") || 0;
-          // Check if migrated to Raydium/Orca
           isMigrated = dexPair.dexId !== "pumpfun" || !!tokenInfo.complete;
         }
       }
@@ -644,34 +615,34 @@ async function analyzeToken(mint: string, options: { includeLaunchVolumes?: bool
 
     historicalPeakMCAP = await resolveTokenMcapAth(mint, tokenInfo, currentMarketCap, currentDexPrice);
 
-    // Calculate lifespan only if MCAP > $10,000
     const now = Date.now();
     const createdAt = tokenInfo.createdAt;
-    const lastActiveAt = now; // For now, use current time as last activity
-    
+    const lastActiveAt = now;
+
     let lifespanMs = null;
     let lifespanMinutes = null;
     let lifespanHours = null;
-    
-    // Only calculate lifespan if MCAP > $10,000
+
     if (historicalPeakMCAP > 10000) {
       if (isMigrated) {
-        // Migrated tokens typically have active trading for 3-4 hours
-        lifespanMs = 3.5 * 60 * 60 * 1000; // 3.5 hours
+        lifespanMs = 3.5 * 60 * 60 * 1000;
       } else if (createdAt) {
-        // For non-migrated tokens, use actual time but limit to reasonable range
         const actualTimeMs = now - createdAt;
-        lifespanMs = Math.min(actualTimeMs, 4 * 60 * 60 * 1000); // Max 4 hours
+        lifespanMs = Math.min(actualTimeMs, 4 * 60 * 60 * 1000);
       }
-      
+
       if (lifespanMs) {
         lifespanMinutes = lifespanMs / (1000 * 60);
         lifespanHours = lifespanMs / (1000 * 60 * 60);
       }
     }
 
-    const networkVolumeMAt_launch = options.includeLaunchVolumes && createdAt ? await fetchSolanaVolumeForDate(createdAt) : null;
-    const pumpFunVolumeMAt_launch = options.includeLaunchVolumes && createdAt ? await getPumpFunVolumeForDate(createdAt) : null;
+    const networkVolumeMAt_launch = options.includeLaunchVolumes && createdAt
+      ? await fetchSolanaVolumeForDate(createdAt)
+      : null;
+    const pumpFunVolumeMAt_launch = options.includeLaunchVolumes && createdAt
+      ? await getPumpFunVolumeForDate(createdAt)
+      : null;
 
     let creatorFeesUsd: number | null = null;
     let tokenVolumeSol: number | null = null;
@@ -698,14 +669,17 @@ async function analyzeToken(mint: string, options: { includeLaunchVolumes?: bool
       totalFeesUsd = null;
     }
 
-    // Fetch Twitter data if requested
     let twitterData: TokenForensics["twitter"] = undefined;
     if (options.includeTwitter && tokenInfo.twitter) {
       try {
-        const twitterRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/trade/dev-twitter?mint=${encodeURIComponent(mint)}`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(30000),
-        });
+        const twitterRes = await fetch(
+          `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/trade/dev-twitter?mint=${encodeURIComponent(mint)}`,
+          {
+            headers: options.authHeaders,
+            cache: "no-store",
+            signal: AbortSignal.timeout(30000),
+          },
+        );
         if (twitterRes.ok) {
           const twitterStats = await twitterRes.json();
           twitterData = {
@@ -738,7 +712,7 @@ async function analyzeToken(mint: string, options: { includeLaunchVolumes?: bool
       isMigrated,
       athUsd: historicalPeakMCAP || tokenInfo.ath || null,
       peakMarketCap: currentMarketCap,
-      historicalPeakMCAP: historicalPeakMCAP,
+      historicalPeakMCAP,
       creatorFeesUsd,
       totalFeesSol,
       totalFeesUsd,
@@ -763,7 +737,6 @@ async function analyzeTokenMetricsLite(
   mint: string,
   creator: string,
 ): Promise<Pick<TokenForensics, "tokenVolumeSol" | "tokenVolumeUsd"> | null> {
-  // Check cache first
   const cached = getCachedTokenVolume(mint);
   if (cached) {
     return {
@@ -774,7 +747,6 @@ async function analyzeTokenMetricsLite(
 
   let result: { tokenVolumeSol: number | null; tokenVolumeUsd: number | null } | null = null;
 
-  // Try Pump.fun candles with 15m interval (covers ~250 hours / ~10 days)
   try {
     const res = await fetch(`https://swap-api.pump.fun/v1/coins/${mint}/candles?interval=15m&limit=1000`, {
       headers: { Accept: "application/json" },
@@ -808,7 +780,6 @@ async function analyzeTokenMetricsLite(
     // Continue to fallback
   }
 
-  // Fallback to DexScreener 24h volume
   if (!result) {
     try {
       const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
@@ -831,7 +802,6 @@ async function analyzeTokenMetricsLite(
     }
   }
 
-  // Cache the result if we got one
   if (result && result.tokenVolumeUsd !== null) {
     upsertDevTokenVolume(mint, creator, result.tokenVolumeSol, result.tokenVolumeUsd);
   }
@@ -839,7 +809,6 @@ async function analyzeTokenMetricsLite(
   return result;
 }
 
-// Calculate lifetime distribution
 function calculateLifetimeDistribution(tokens: TokenForensics[]): {
   under5m: number;
   from5mTo30m: number;
@@ -857,7 +826,7 @@ function calculateLifetimeDistribution(tokens: TokenForensics[]): {
 
   for (const token of tokens) {
     if (!token.lifespanMinutes) continue;
-    
+
     if (token.lifespanMinutes < 5) distribution.under5m++;
     else if (token.lifespanMinutes < 30) distribution.from5mTo30m++;
     else if (token.lifespanMinutes < 120) distribution.from30mTo2h++;
@@ -868,21 +837,20 @@ function calculateLifetimeDistribution(tokens: TokenForensics[]): {
   return distribution;
 }
 
-// Generate summary text
 function generateSummary(result: ForensicsResult): string {
   const { totalCreatedTokens, totalMigratedTokens, migrationRate, avgLifespanMinutes, optimalVolumeRangeM } = result;
-  
-  const lifespanText = avgLifespanMinutes 
+
+  const lifespanText = avgLifespanMinutes
     ? `Среднее время жизни токена — ${Math.round(avgLifespanMinutes)} минут.`
-    : 'Недостаточно данных для анализа времени жизни.';
-    
-  const migrationText = totalMigratedTokens > 0 
+    : "Недостаточно данных для анализа времени жизни.";
+
+  const migrationText = totalMigratedTokens > 0
     ? `${totalMigratedTokens} из ${totalCreatedTokens} токенов мигрировали (${migrationRate.toFixed(1)}%).`
-    : 'Ни один токен не мигрировал.';
-    
+    : "Ни один токен не мигрировал.";
+
   const volumeText = optimalVolumeRangeM
     ? `Лучшие результаты наблюдаются при запуске токенов, когда дневной объем Solana находится в диапазоне $${optimalVolumeRangeM.min}M - $${optimalVolumeRangeM.max}M.`
-    : '';
+    : "";
 
   return `DEV создал ${totalCreatedTokens} токенов. ${migrationText} ${lifespanText} ${volumeText}`.trim();
 }
@@ -925,52 +893,51 @@ function computeVolumeCorrelation(tokens: TokenForensics[]): VolumeCorrelationBi
 }
 
 export async function GET(req: NextRequest) {
+  const authHeaders = forwardedAuthHeaders(req);
   const creator = req.nextUrl.searchParams.get("creator")?.trim();
   const mint = req.nextUrl.searchParams.get("mint")?.trim();
   const manualCreator = req.nextUrl.searchParams.get("manualCreator")?.trim();
   const includeTwitter = req.nextUrl.searchParams.get("includeTwitter") === "true";
   const fastMode = !!mint && !creator && !manualCreator;
-  
-  // Support both creator and mint parameters
+
   let targetCreator = creator || manualCreator || null;
   let singleTokenMint = mint || null;
-  
+
   if (mint && !creator && !manualCreator) {
-    targetCreator = await getCreatorForMint(mint);
+    targetCreator = await getCreatorForMint(mint, authHeaders);
     if (!targetCreator) {
       const { getDevTokenByMint } = await import("../../../../lib/trade/db");
       targetCreator = getDevTokenByMint(mint)?.creator || null;
     }
-    // If we can't find creator but have mint, analyze just this token
     if (!targetCreator) {
       singleTokenMint = mint;
       targetCreator = "unknown";
     }
   }
-  
+
   if (!targetCreator && !singleTokenMint) {
     return NextResponse.json({ error: "creator or mint required" }, { status: 400 });
   }
   const resolvedCreator = targetCreator ?? "unknown";
 
-  const cacheKey = fastMode && mint ? `${ATH_CACHE_VERSION}:${resolvedCreator}:${mint}:fast` : `${ATH_CACHE_VERSION}:${resolvedCreator}`;
+  const cacheKey = fastMode && mint
+    ? `${ATH_CACHE_VERSION}:${resolvedCreator}:${mint}:fast`
+    : `${ATH_CACHE_VERSION}:${resolvedCreator}`;
   const cached = CACHE.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.data);
   }
 
-  // Fetch token list - either from creator or single token
   let tokens: DevTokenListItem[] = [];
   let reportedTotalTokens: number | null = null;
   let reportedMigratedTokens: number | null = null;
-  
+
   if (singleTokenMint && targetCreator === "unknown") {
-    // Analyze single token when creator is unknown
     tokens = [{ mint: singleTokenMint, symbol: "UNKNOWN" }];
   } else {
-    // Fetch all tokens from creator
     try {
       const r = await fetch(`${req.nextUrl.origin}/api/trade/dev?creator=${encodeURIComponent(resolvedCreator)}`, {
+        headers: authHeaders,
         cache: "no-store",
         signal: AbortSignal.timeout(15000),
       });
@@ -1024,15 +991,13 @@ export async function GET(req: NextRequest) {
       }));
     }
 
-    // If we have a specific mint and creator, make sure it's included
     if (singleTokenMint && targetCreator !== "unknown") {
-      const hasToken = tokens.some(t => t.mint === singleTokenMint);
+      const hasToken = tokens.some((t) => t.mint === singleTokenMint);
       if (!hasToken) {
-        // Add the specific token to the list
         const tokenInfo = await getPumpFunTokenInfo(singleTokenMint);
-        tokens.push({ 
-          mint: singleTokenMint, 
-          symbol: tokenInfo?.symbol || "UNKNOWN" 
+        tokens.push({
+          mint: singleTokenMint,
+          symbol: tokenInfo?.symbol || "UNKNOWN",
         });
       }
     }
@@ -1043,14 +1008,17 @@ export async function GET(req: NextRequest) {
   const enrichedTokenLimit = fastMode ? 12 : 50;
   const tokensToAnalyze = tokens.slice(0, enrichedTokenLimit);
 
-  // Analyze tokens with comprehensive data (parallel, max 6 at a time to avoid rate limits)
   const enriched: TokenForensics[] = [];
   const BATCH = fastMode ? 4 : 2;
 
   for (let i = 0; i < tokensToAnalyze.length; i += BATCH) {
     const batch = tokensToAnalyze.slice(i, i + BATCH);
     const results = await Promise.allSettled(
-      batch.map(async (t) => await analyzeToken(t.mint, { includeLaunchVolumes: !fastMode, includeTwitter }))
+      batch.map(async (t) => await analyzeToken(t.mint, {
+        includeLaunchVolumes: !fastMode,
+        includeTwitter,
+        authHeaders,
+      })),
     );
 
     for (const result of results) {
@@ -1062,7 +1030,6 @@ export async function GET(req: NextRequest) {
 
   const enrichedByMint = new Map(enriched.map((token) => [token.mint, token]));
   const metricsLiteByMint = new Map();
-  // Find all tokens missing volume (including enriched tokens with null volume)
   const tokensMissingMetrics = tokens.filter((token) => {
     const enrichedToken = enrichedByMint.get(token.mint);
     return !enrichedToken || enrichedToken.tokenVolumeUsd === null;
@@ -1076,7 +1043,7 @@ export async function GET(req: NextRequest) {
         batch.map(async (token) => {
           const metrics = await analyzeTokenMetricsLite(token.mint, resolvedCreator);
           return metrics ? [token.mint, metrics] : null;
-        })
+        }),
       );
 
       for (const result of results) {
@@ -1092,7 +1059,7 @@ export async function GET(req: NextRequest) {
     if (enrichedToken) return enrichedToken;
 
     const lightweightMetrics = metricsLiteByMint.get(token.mint);
-    return ({
+    return {
       mint: token.mint,
       symbol: token.symbol || "UNKNOWN",
       name: token.name || token.symbol || "UNKNOWN",
@@ -1113,78 +1080,72 @@ export async function GET(req: NextRequest) {
       totalFeesUsd: null,
       migrationMarketCap: null,
       migrationTimestamp: null,
-    });
+    };
   });
 
   const statsTokens = fallbackTokens.length > 0 ? fallbackTokens : enriched;
   const displayTokens = fastMode ? statsTokens.slice(0, enrichedTokenLimit) : statsTokens;
 
-  // Calculate statistics
   const totalCreatedTokens = reportedTotalTokens ?? statsTokens.length;
-  const knownMigratedTokens = statsTokens.filter(t => t.isMigrated).length;
+  const knownMigratedTokens = statsTokens.filter((t) => t.isMigrated).length;
   const totalMigratedTokens = reportedMigratedTokens ?? knownMigratedTokens;
   const migrationRate = totalCreatedTokens > 0 ? (totalMigratedTokens / totalCreatedTokens) * 100 : 0;
 
-  // Calculate lifespans
   const lifespansHours = enriched
-    .map(t => t.lifespanHours)
+    .map((t) => t.lifespanHours)
     .filter((h): h is number => h !== null);
-    
+
   const lifespansMinutes = enriched
-    .map(t => t.lifespanMinutes)
+    .map((t) => t.lifespanMinutes)
     .filter((m): m is number => m !== null);
 
-  const avgLifespanHours = lifespansHours.length > 0 
-    ? lifespansHours.reduce((a, b) => a + b, 0) / lifespansHours.length 
+  const avgLifespanHours = lifespansHours.length > 0
+    ? lifespansHours.reduce((a, b) => a + b, 0) / lifespansHours.length
     : null;
-    
+
   const medianLifespanHours = lifespansHours.length > 0
     ? lifespansHours.sort((a, b) => a - b)[Math.floor(lifespansHours.length / 2)]
     : null;
-    
-  const avgLifespanMinutes = lifespansMinutes.length > 0 
-    ? lifespansMinutes.reduce((a, b) => a + b, 0) / lifespansMinutes.length 
+
+  const avgLifespanMinutes = lifespansMinutes.length > 0
+    ? lifespansMinutes.reduce((a, b) => a + b, 0) / lifespansMinutes.length
     : null;
-    
+
   const medianLifespanMinutes = lifespansMinutes.length > 0
     ? lifespansMinutes.sort((a, b) => a - b)[Math.floor(lifespansMinutes.length / 2)]
     : null;
 
-  const getMcapAth = (token: TokenForensics) => Math.max(token.historicalPeakMCAP || 0, token.peakMarketCap || 0, token.athUsd || 0);
+  const getMcapAth = (token: TokenForensics) => Math.max(
+    token.historicalPeakMCAP || 0,
+    token.peakMarketCap || 0,
+    token.athUsd || 0,
+  );
 
-  // Find best and worst tokens by MCAP ATH
   const sortedByAth = statsTokens
-    .filter(t => getMcapAth(t) > 0)
+    .filter((t) => getMcapAth(t) > 0)
     .sort((a, b) => getMcapAth(b) - getMcapAth(a));
-    
+
   const bestToken = sortedByAth[0] || null;
   const worstToken = sortedByAth[sortedByAth.length - 1] || null;
 
-  // Calculate success rate (tokens reaching $100k MC)
-  const successThreshold = 100000; // $100k
-  const successCount = statsTokens.filter(t => 
-    getMcapAth(t) >= successThreshold
-  ).length;
+  const successThreshold = 100000;
+  const successCount = statsTokens.filter((t) => getMcapAth(t) >= successThreshold).length;
   const successRate = totalCreatedTokens > 0 ? (successCount / totalCreatedTokens) * 100 : 0;
 
-  // Calculate lifetime distribution
   const lifetimeDistribution = calculateLifetimeDistribution(enriched);
-
-  // Calculate volume correlation
   const volumeCorrelation = computeVolumeCorrelation(enriched);
 
-  // Find optimal volume range
   const optimalVolumeRangeM = volumeCorrelation.length > 0
-    ? volumeCorrelation.reduce((best, current) => 
+    ? volumeCorrelation.reduce((best, current) =>
         current.migrationRate > best.migrationRate ? current : best
-      ).tokenCount > 2 
-      ? { 
-          min: volumeCorrelation.reduce((best, current) => 
+      ).tokenCount > 2
+      ? {
+          min: volumeCorrelation.reduce((best, current) =>
             current.migrationRate > best.migrationRate ? current : best
           ).minM,
-          max: volumeCorrelation.reduce((best, current) => 
+          max: volumeCorrelation.reduce((best, current) =>
             current.migrationRate > best.migrationRate ? current : best
-          ).maxM
+          ).maxM,
         }
       : null
     : null;
@@ -1193,14 +1154,27 @@ export async function GET(req: NextRequest) {
     ? currentVolumeM >= optimalVolumeRangeM.min && currentVolumeM <= optimalVolumeRangeM.max
     : false;
 
-  const resolvedTokenVolumeTokens = statsTokens.filter((token) => token.tokenVolumeUsd !== null && Number.isFinite(token.tokenVolumeUsd));
-  const resolvedCreatorFeeTokens = statsTokens.filter((token) => token.creatorFeesUsd !== null && Number.isFinite(token.creatorFeesUsd));
-  const resolvedTokenVolumeUsdTotal = resolvedTokenVolumeTokens.reduce((sum, token) => sum + (token.tokenVolumeUsd || 0), 0);
-  const resolvedCreatorFeesUsdTotal = resolvedCreatorFeeTokens.reduce((sum, token) => sum + (token.creatorFeesUsd || 0), 0);
-  const averageTokenVolumeUsd = totalCreatedTokens > 0 ? resolvedTokenVolumeUsdTotal / totalCreatedTokens : 0;
-  const averageCreatorFeesUsd = totalCreatedTokens > 0 ? resolvedCreatorFeesUsdTotal / totalCreatedTokens : 0;
+  const resolvedTokenVolumeTokens = statsTokens.filter(
+    (token) => token.tokenVolumeUsd !== null && Number.isFinite(token.tokenVolumeUsd),
+  );
+  const resolvedCreatorFeeTokens = statsTokens.filter(
+    (token) => token.creatorFeesUsd !== null && Number.isFinite(token.creatorFeesUsd),
+  );
+  const resolvedTokenVolumeUsdTotal = resolvedTokenVolumeTokens.reduce(
+    (sum, token) => sum + (token.tokenVolumeUsd || 0),
+    0,
+  );
+  const resolvedCreatorFeesUsdTotal = resolvedCreatorFeeTokens.reduce(
+    (sum, token) => sum + (token.creatorFeesUsd || 0),
+    0,
+  );
+  const averageTokenVolumeUsd = totalCreatedTokens > 0
+    ? resolvedTokenVolumeUsdTotal / totalCreatedTokens
+    : 0;
+  const averageCreatorFeesUsd = totalCreatedTokens > 0
+    ? resolvedCreatorFeesUsdTotal / totalCreatedTokens
+    : 0;
 
-  // Generate summary
   const summary = generateSummary({
     creator: resolvedCreator,
     totalCreatedTokens,
@@ -1225,7 +1199,7 @@ export async function GET(req: NextRequest) {
     worstToken,
     successRate,
     lifetimeDistribution,
-    summary: '', // Will be generated
+    summary: "",
     lastUpdated: Date.now(),
   });
 
@@ -1278,11 +1252,15 @@ export async function GET(req: NextRequest) {
       migratedCount: totalMigratedTokens,
       migrationRate,
       reached300kCount: enriched.filter((token) => getMcapAth(token) >= 300000).length,
-      rate300k: totalCreatedTokens > 0 ? enriched.filter((token) => getMcapAth(token) >= 300000).length / totalCreatedTokens : 0,
+      rate300k: totalCreatedTokens > 0
+        ? enriched.filter((token) => getMcapAth(token) >= 300000).length / totalCreatedTokens
+        : 0,
       bestLaunchHour: null,
       totalVolumeSol: 0,
       totalFeesSol: 0,
-      avgMcUsd: mcapAthValues.length > 0 ? mcapAthValues.reduce((sum, value) => sum + value, 0) / mcapAthValues.length : null,
+      avgMcUsd: mcapAthValues.length > 0
+        ? mcapAthValues.reduce((sum, value) => sum + value, 0) / mcapAthValues.length
+        : null,
       maxMcUsd: mcapAthValues.length > 0 ? Math.max(...mcapAthValues) : null,
       source: "dev-forensics",
       lastUpdatedAt: now,
@@ -1314,8 +1292,10 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(result);
 }
 
-// Helper function to get creator from mint with Solscan API as primary source
-async function getCreatorForMint(mint: string): Promise<string | null> {
+async function getCreatorForMint(
+  mint: string,
+  authHeaders: Record<string, string> = {},
+): Promise<string | null> {
   try {
     const { getDb } = await import("../../../../lib/trade/db");
     const row = getDb()
@@ -1328,7 +1308,6 @@ async function getCreatorForMint(mint: string): Promise<string | null> {
     // ignore
   }
 
-  // 1. Try Solscan API first (most reliable for creator)
   try {
     const solscanInfo = await getSolscanTokenInfo(mint);
     if (solscanInfo?.creator && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(solscanInfo.creator)) {
@@ -1338,7 +1317,6 @@ async function getCreatorForMint(mint: string): Promise<string | null> {
     // ignore
   }
 
-  // 2. Try Solscan transaction analysis
   try {
     const creatorFromTx = await getSolscanCreatorFromTx(mint);
     if (creatorFromTx && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(creatorFromTx)) {
@@ -1358,13 +1336,12 @@ async function getCreatorForMint(mint: string): Promise<string | null> {
     // ignore
   }
 
-  // 3. Try existing token-dev API (uses Helius DAS and other methods)
   try {
-    const baseUrl = process.env.NEXTAUTH_URL || process.env.VERCEL_URL ? 
-      `https://${process.env.VERCEL_URL}` : 
-      'http://localhost:3000';
-    
+    const baseUrl = process.env.NEXTAUTH_URL?.replace(/\/$/, "")
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
     const r = await fetch(`${baseUrl}/api/trade/dev?mint=${encodeURIComponent(mint)}`, {
+      headers: authHeaders,
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
     });
@@ -1378,10 +1355,9 @@ async function getCreatorForMint(mint: string): Promise<string | null> {
     // ignore
   }
 
-  // 4. Try pump.fun frontend API with proper headers
   try {
     const pumpRes = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
-      headers: { 
+      headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
         "Origin": "https://pump.fun",
@@ -1400,7 +1376,6 @@ async function getCreatorForMint(mint: string): Promise<string | null> {
     // ignore
   }
 
-  // 5. Try to get from first trade via swap-api (last resort)
   try {
     const tradeRes = await fetch(`https://swap-api.pump.fun/v2/coins/${mint}/trades?limit=1`, {
       headers: { Accept: "application/json" },
@@ -1418,12 +1393,10 @@ async function getCreatorForMint(mint: string): Promise<string | null> {
     // ignore
   }
 
-  // 6. Try Solscan account transfers to find first minter
   try {
     const transferData = await solscanApi<SolscanTransferResponse>(`/account/transfer?address=${mint}&limit=10`);
     const transfers = transferData?.data ?? [];
     if (transferData?.success && transfers.length > 0) {
-      // Look for mint transaction (first transfer from creator)
       for (const transfer of transfers) {
         if (transfer.src && transfer.src !== mint && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(transfer.src)) {
           console.log(`Found potential creator from transfer: ${transfer.src} for token ${mint}`);

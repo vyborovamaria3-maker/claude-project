@@ -101,7 +101,32 @@ class Settings(BaseSettings):
     collector_refresh_seconds: int = Field(default=300, alias="COLLECTOR_REFRESH_SECONDS")
     collector_metric_refresh_seconds: int = Field(default=3600, alias="COLLECTOR_METRIC_REFRESH_SECONDS")
     collector_insider_refresh_seconds: int = Field(default=86400, alias="COLLECTOR_INSIDER_REFRESH_SECONDS")
+
+    # BACKEND_API_KEY is reserved for intelligence ingestion/research endpoints.
     backend_api_key: str = Field(default="", alias="BACKEND_API_KEY")
+    # Mini App checkout/order operations use a credential that is not valid for
+    # intelligence APIs or privileged subscription administration.
+    subscription_internal_key: str = Field(default="", alias="SUBSCRIPTION_INTERNAL_KEY")
+    # The main admin gets its own key. It can update subscription settings but
+    # is never injected into the public-facing Next.js application container.
+    subscription_admin_key: str = Field(default="", alias="SUBSCRIPTION_ADMIN_KEY")
+    # Only the API process needs the checkout/admin credentials. Worker
+    # processes can keep these false and start without receiving either key.
+    require_subscription_internal_key: bool = Field(
+        default=False,
+        alias="REQUIRE_SUBSCRIPTION_INTERNAL_KEY",
+    )
+    require_subscription_admin_key: bool = Field(
+        default=False,
+        alias="REQUIRE_SUBSCRIPTION_ADMIN_KEY",
+    )
+
+    @field_validator("telegram_api_id", mode="before")
+    @classmethod
+    def normalize_optional_telegram_api_id(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
     @field_validator("secret_key", mode="after")
     @classmethod
@@ -122,6 +147,8 @@ class Settings(BaseSettings):
         password = self.admin_password.strip()
         session_secret = self.admin_session_secret.strip()
         backend_api_key = self.backend_api_key.strip()
+        subscription_internal_key = self.subscription_internal_key.strip()
+        subscription_admin_key = self.subscription_admin_key.strip()
         encryption_key = self.subscription_password_encryption_key.strip()
         if self.debug:
             raise ValueError("DEBUG must be false in production")
@@ -131,6 +158,26 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_SESSION_SECRET must be explicitly configured with at least 32 characters in production")
         if not backend_api_key or len(backend_api_key) < 32:
             raise ValueError("BACKEND_API_KEY must be explicitly configured with at least 32 characters in production")
+        if self.require_subscription_internal_key and (
+            not subscription_internal_key or len(subscription_internal_key) < 32
+        ):
+            raise ValueError("SUBSCRIPTION_INTERNAL_KEY must be explicitly configured with at least 32 characters for the API service")
+        if subscription_internal_key and len(subscription_internal_key) < 32:
+            raise ValueError("SUBSCRIPTION_INTERNAL_KEY must be at least 32 characters when configured")
+        if self.require_subscription_admin_key and (
+            not subscription_admin_key or len(subscription_admin_key) < 32
+        ):
+            raise ValueError("SUBSCRIPTION_ADMIN_KEY must be explicitly configured with at least 32 characters for the API service")
+        if subscription_admin_key and len(subscription_admin_key) < 32:
+            raise ValueError("SUBSCRIPTION_ADMIN_KEY must be at least 32 characters when configured")
+
+        internal_keys = [backend_api_key]
+        if subscription_internal_key:
+            internal_keys.append(subscription_internal_key)
+        if subscription_admin_key:
+            internal_keys.append(subscription_admin_key)
+        if len(set(internal_keys)) != len(internal_keys):
+            raise ValueError("BACKEND_API_KEY, SUBSCRIPTION_INTERNAL_KEY and SUBSCRIPTION_ADMIN_KEY must be different credentials")
         if "*" in self.cors_origins:
             raise ValueError("Wildcard CORS origins are not allowed in production")
         if len(encryption_key) < 32:
