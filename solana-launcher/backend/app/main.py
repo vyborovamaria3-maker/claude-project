@@ -34,15 +34,9 @@ async def lifespan(app: FastAPI):
     async with app.state.sessionmaker() as session:
         await get_or_create_jobs(session)
 
-    if settings.telegram_autostart and settings.telegram_monitor_channels.strip():
-        try:
-            service = await app.state.telegram_intelligence.get_service()
-            channels = [item.strip() for item in settings.telegram_monitor_channels.split(",") if item.strip()]
-            if channels:
-                await service.start_monitor(channels)
-        except Exception:
-            # Telegram intelligence is optional; a stale session must not prevent API startup.
-            pass
+    # Telegram discovery/MTProto backfill is intentionally detached from startup.
+    # Slow Telegram/network calls must never delay /health or the rest of the API.
+    app.state.telegram_intelligence.start_background()
 
     yield
     await app.state.telegram_intelligence.close()
