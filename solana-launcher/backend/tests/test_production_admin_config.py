@@ -8,6 +8,7 @@ SECRET = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
 BACKEND_API_KEY = "b" * 64
 SUBSCRIPTION_INTERNAL_KEY = "s" * 64
 SUBSCRIPTION_ADMIN_KEY = "a" * 64
+SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY = "e" * 64
 
 
 def production_settings(**overrides):
@@ -20,6 +21,7 @@ def production_settings(**overrides):
         "backend_api_key": BACKEND_API_KEY,
         "subscription_internal_key": SUBSCRIPTION_INTERNAL_KEY,
         "subscription_admin_key": SUBSCRIPTION_ADMIN_KEY,
+        "subscription_password_encryption_key": SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY,
     }
     values.update(overrides)
     return Settings(**values)
