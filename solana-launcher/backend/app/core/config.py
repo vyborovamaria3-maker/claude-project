@@ -95,6 +95,13 @@ class Settings(BaseSettings):
         alias="REQUIRE_SUBSCRIPTION_ADMIN_KEY",
     )
 
+    @field_validator("telegram_api_id", mode="before")
+    @classmethod
+    def normalize_optional_telegram_api_id(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     @field_validator("secret_key", mode="after")
     @classmethod
     def validate_secret_key(cls, v: str) -> str:
