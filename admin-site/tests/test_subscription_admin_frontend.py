@@ -48,3 +48,11 @@ def test_admin_compose_receives_only_subscription_admin_credential():
     assert "POTAPOFF_SUBSCRIPTION_ADMIN_KEY" in admin_block
     assert "SUBSCRIPTION_INTERNAL_KEY" not in admin_block
     assert "BACKEND_API_KEY" not in admin_block
+
+
+def test_admin_readiness_healthcheck_allows_slow_postgres_checks():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    admin_block = compose.split("\n  admin:\n", 1)[1].split("\n  intelligence-worker:\n", 1)[0]
+
+    assert "/api/ready" in admin_block
+    assert "timeout: 15s" in admin_block
