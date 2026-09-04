@@ -1,11 +1,21 @@
 import pytest
 
+from tests.conftest import (
+    TEST_SUBSCRIPTION_ADMIN_KEY,
+    TEST_SUBSCRIPTION_INTERNAL_KEY,
+)
+
+
+READ_HEADERS = {"X-API-Key": TEST_SUBSCRIPTION_INTERNAL_KEY}
+ADMIN_HEADERS = {"X-API-Key": TEST_SUBSCRIPTION_ADMIN_KEY}
+
 
 @pytest.mark.asyncio
 async def test_subscription_settings_can_be_read_and_updated_via_internal_admin_api(client):
-    headers = {"X-Dev-Internal": "miniapp-subscription"}
-
-    initial = await client.get("/api/v1/subscriptions/settings", headers=headers)
+    initial = await client.get(
+        "/api/v1/subscriptions/settings",
+        headers=READ_HEADERS,
+    )
     assert initial.status_code == 200
 
     payload = {
@@ -17,7 +27,7 @@ async def test_subscription_settings_can_be_read_and_updated_via_internal_admin_
     }
     updated = await client.put(
         "/api/v1/subscriptions/settings",
-        headers=headers,
+        headers=ADMIN_HEADERS,
         json=payload,
     )
     assert updated.status_code == 200
@@ -28,17 +38,19 @@ async def test_subscription_settings_can_be_read_and_updated_via_internal_admin_
     assert str(body["monthly_price_sol"]) == payload["monthly_price_sol"]
     assert str(body["monthly_price_usdt"]) == payload["monthly_price_usdt"]
 
-    reread = await client.get("/api/v1/subscriptions/settings", headers=headers)
+    reread = await client.get(
+        "/api/v1/subscriptions/settings",
+        headers=READ_HEADERS,
+    )
     assert reread.status_code == 200
     assert reread.json()["demo_days"] == 14
 
 
 @pytest.mark.asyncio
 async def test_subscription_settings_reject_invalid_wallet(client):
-    headers = {"X-Dev-Internal": "miniapp-subscription"}
     response = await client.put(
         "/api/v1/subscriptions/settings",
-        headers=headers,
+        headers=ADMIN_HEADERS,
         json={
             "monthly_price_sol": "0",
             "monthly_price_usdt": "0",
