@@ -1,13 +1,17 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_BACKEND_ENV = Path(__file__).resolve().parents[2] / ".env"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file="backend/.env",
-        env_file_encoding="utf-16",
+        env_file=str(_BACKEND_ENV),
+        env_file_encoding="utf-8-sig",
         extra="ignore",
         populate_by_name=True,
     )
@@ -16,6 +20,10 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", alias="ENVIRONMENT")
     debug: bool = Field(default=True, alias="DEBUG")
     secret_key: str = Field(alias="SECRET_KEY")
+    subscription_password_encryption_key: str = Field(
+        default="",
+        alias="SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY",
+    )
     access_token_expire_minutes: int = Field(default=1440, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     algorithm: str = Field(default="HS256", alias="ALGORITHM")
     api_v1_prefix: str = Field(default="/api/v1", alias="API_V1_PREFIX")
@@ -56,6 +64,24 @@ class Settings(BaseSettings):
     telegram_graph_depth: int = Field(default=1, ge=0, le=3, alias="TG_GRAPH_DEPTH")
     telegram_entity_limit: int = Field(default=100, ge=1, le=1000, alias="TG_ENTITY_LIMIT")
     telegram_evaluate_interval_seconds: int = Field(default=300, ge=60, alias="TG_EVALUATE_INTERVAL_SECONDS")
+    telegram_public_web_enabled: bool = Field(default=False, alias="TG_PUBLIC_WEB_ENABLED")
+    telegram_public_web_channels: str = Field(default="", alias="TG_PUBLIC_WEB_CHANNELS")
+    telegram_public_web_history_limit: int = Field(default=100, ge=1, le=500, alias="TG_PUBLIC_WEB_HISTORY_LIMIT")
+    telegram_public_web_timeout_seconds: float = Field(default=12.0, ge=2.0, le=60.0, alias="TG_PUBLIC_WEB_TIMEOUT_SECONDS")
+    telegram_public_web_discovery_enabled: bool = Field(default=True, alias="TG_PUBLIC_WEB_DISCOVERY_ENABLED")
+    telegram_public_web_discovery_depth: int = Field(default=2, ge=0, le=3, alias="TG_PUBLIC_WEB_DISCOVERY_DEPTH")
+    telegram_public_web_discovery_entity_limit: int = Field(default=25, ge=1, le=500, alias="TG_PUBLIC_WEB_DISCOVERY_ENTITY_LIMIT")
+    telegram_public_web_discovery_history_limit: int = Field(default=40, ge=10, le=200, alias="TG_PUBLIC_WEB_DISCOVERY_HISTORY_LIMIT")
+    telegram_public_web_relevance_min_score: float = Field(default=35.0, ge=0.0, le=100.0, alias="TG_PUBLIC_WEB_RELEVANCE_MIN_SCORE")
+    telegram_public_web_seed_database: str = Field(default="data/tgdataset/telegram_seed_database.json", alias="TG_PUBLIC_WEB_SEED_DATABASE")
+    telegram_public_web_seed_database_limit: int = Field(default=12, ge=0, le=100, alias="TG_PUBLIC_WEB_SEED_DATABASE_LIMIT")
+    telegram_public_web_refresh_enabled: bool = Field(default=True, alias="TG_PUBLIC_WEB_REFRESH_ENABLED")
+    telegram_public_web_refresh_tick_seconds: int = Field(default=60, ge=30, le=3600, alias="TG_PUBLIC_WEB_REFRESH_TICK_SECONDS")
+    telegram_public_web_refresh_batch_size: int = Field(default=25, ge=1, le=200, alias="TG_PUBLIC_WEB_REFRESH_BATCH_SIZE")
+    telegram_public_web_refresh_strong_seconds: int = Field(default=600, ge=60, alias="TG_PUBLIC_WEB_REFRESH_STRONG_SECONDS")
+    telegram_public_web_refresh_normal_seconds: int = Field(default=1800, ge=60, alias="TG_PUBLIC_WEB_REFRESH_NORMAL_SECONDS")
+    telegram_public_web_refresh_rejected_seconds: int = Field(default=21600, ge=300, alias="TG_PUBLIC_WEB_REFRESH_REJECTED_SECONDS")
+    telegram_public_web_refresh_unavailable_seconds: int = Field(default=3600, ge=300, alias="TG_PUBLIC_WEB_REFRESH_UNAVAILABLE_SECONDS")
     phantom_nonce_ttl_minutes: int = Field(default=5, alias="PHANTOM_NONCE_TTL_MINUTES")
     telegram_auth_max_age_hours: int = Field(default=24, alias="TELEGRAM_AUTH_MAX_AGE_HOURS")
     auth_rate_limit_window_seconds: int = Field(default=60, alias="AUTH_RATE_LIMIT_WINDOW_SECONDS")
@@ -123,6 +149,7 @@ class Settings(BaseSettings):
         backend_api_key = self.backend_api_key.strip()
         subscription_internal_key = self.subscription_internal_key.strip()
         subscription_admin_key = self.subscription_admin_key.strip()
+        encryption_key = self.subscription_password_encryption_key.strip()
         if self.debug:
             raise ValueError("DEBUG must be false in production")
         if not password or password == "ChangeMe123!" or len(password) < 16:
@@ -153,6 +180,12 @@ class Settings(BaseSettings):
             raise ValueError("BACKEND_API_KEY, SUBSCRIPTION_INTERNAL_KEY and SUBSCRIPTION_ADMIN_KEY must be different credentials")
         if "*" in self.cors_origins:
             raise ValueError("Wildcard CORS origins are not allowed in production")
+        if len(encryption_key) < 32:
+            raise ValueError(
+                "SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY must be explicitly configured with at least 32 characters in production"
+            )
+        if encryption_key == self.secret_key:
+            raise ValueError("SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY must be different from SECRET_KEY")
         return self
 
 
