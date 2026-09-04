@@ -77,6 +77,10 @@ def _require_admin_access(request: Request) -> Settings:
     return settings
 
 
+def _password_encryption_key(settings: Settings) -> str:
+    return settings.subscription_password_encryption_key.strip() or settings.secret_key
+
+
 def _settings_response(settings: SubscriptionSettings) -> SubscriptionSettingsRead:
     return SubscriptionSettingsRead(
         monthly_price_sol=settings.monthly_price_sol,
@@ -105,7 +109,11 @@ async def _as_response(
     password: str | None = None,
 ) -> SubscriptionOrderRead:
     if password is None and order.status == "paid":
-        password = decrypt_order_password(order.password_ciphertext, settings.secret_key)
+        password = decrypt_order_password(
+            order.password_ciphertext,
+            _password_encryption_key(settings),
+            legacy_encryption_key=settings.secret_key,
+        )
     return SubscriptionOrderRead(
         payload=order.payload,
         telegram_user_id=order.telegram_user_id,
@@ -220,7 +228,8 @@ async def complete_order(
             session,
             payload,
             body,
-            secret_key=settings.secret_key,
+            encryption_key=_password_encryption_key(settings),
+            legacy_encryption_key=settings.secret_key,
         )
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
