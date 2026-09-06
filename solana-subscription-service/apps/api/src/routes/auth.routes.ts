@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../utils/async-handler";
 import { clearAuthCookies, setAuthCookies } from "../security/cookies";
-import { isRefreshTokenActive, revokeRefreshToken, signAccessToken, signRefreshToken, verifyRefreshToken } from "../security/tokens";
+import { consumeRefreshToken, revokeRefreshToken, signAccessToken, signRefreshToken, verifyRefreshToken } from "../security/tokens";
 import { verifyTelegramLoginWidget, verifyTelegramMiniAppInitData } from "../security/telegram";
 import { requireAuth } from "../middleware/auth";
 
@@ -57,12 +57,12 @@ router.post(
     }
 
     const payload = verifyRefreshToken(refreshToken);
-    const active = await isRefreshTokenActive(payload.jti, payload.sub);
-    if (!active) {
+    const consumed = await consumeRefreshToken(payload.jti, payload.sub);
+    if (!consumed) {
+      clearAuthCookies(res);
       return res.status(401).json({ error: "REFRESH_TOKEN_REVOKED" });
     }
 
-    await revokeRefreshToken(payload.jti);
     const accessToken = signAccessToken(payload.sub, payload.telegramId);
     const nextRefreshToken = await signRefreshToken(payload.sub, payload.telegramId);
     const csrfToken = setAuthCookies(res, accessToken, nextRefreshToken);
