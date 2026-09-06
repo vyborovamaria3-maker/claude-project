@@ -3,6 +3,41 @@
 This directory contains the reproducible security-audit workflow for this repository.
 All active testing is restricted to systems owned by the project or explicitly authorized for testing.
 
+Latest full repository source audit: [`../FULL_REPO_SECURITY_AUDIT_2026-09-06.md`](../FULL_REPO_SECURITY_AUDIT_2026-09-06.md).
+
+## Local source gate — no GitHub Actions required
+
+Run from the repository root:
+
+```bash
+npm run security:audit:local
+```
+
+This command runs:
+
+1. `security/audit/secret-scan.py --mode current` against tracked source;
+2. `security/audit/full-repo-regression.py` for high-risk cross-project security invariants.
+
+It is intentionally dependency-light so it can run on a workstation/VPS even while GitHub-hosted runners are unavailable. A passing local source gate does **not** replace dependency audits, application tests or live DAST.
+
+For deeper local/VPS AI-assisted source testing, use the separately documented Strix runner:
+
+```bash
+npm run security:strix:deep
+```
+
+Treat a Strix run as evidence only if its `run.json` reports a completed run. Budget-stopped/incomplete scans are not clean results.
+
+## Repository-wide secret scanning
+
+`.github/workflows/secret-scan.yml` is intentionally separate from the heavier project-specific security workflow. When GitHub Actions runners are available, it runs on every PR/push to `main` and scans:
+
+- current tracked files;
+- newly introduced PR lines;
+- reachable Git history.
+
+Secret values are never intentionally printed by the scanner. Historical hits still require provider-side credential rotation; removing a value from the current tree is not sufficient closure.
+
 ## Profiles
 
 - `production`: conservative. Web-vuln-scanner runs passive checks only; ghostmap uses same-host scope, low concurrency and delay. XHunter is disabled.
@@ -110,12 +145,14 @@ Automated scanners do not replace the following checks:
 
 ## Completion criteria
 
-The audit is complete only when:
+The **source pass** is complete when confirmed source/configuration findings are remediated and documented.
 
-- security CI passes on the audit PR;
-- no P0/P1 finding remains open;
+Operational closure additionally requires:
+
+- security CI or equivalent local test suites actually execute and pass;
+- no P0/P1 finding remains open except a documented time-bounded/upstream-blocked exception;
 - dependency audits have no unresolved high/critical issue without an explicit exception;
-- secret-history scan passes or every hit has been rotated and documented;
-- production and authenticated staging DAST have been executed against reachable URLs;
+- every historical real secret has been provider-side rotated/revoked;
+- production and authenticated staging DAST have been executed against authorized reachable URLs;
 - confirmed DAST findings have regression tests where practical;
 - a final retest marks fixed findings `CLOSED`.
