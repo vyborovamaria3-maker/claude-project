@@ -334,7 +334,7 @@ async def evaluate_calls(
             else:
                 finalized += 1
 
-    # Make the updated outcomes visible to the aggregate score query in one flush.
+    # Flush once so the score aggregate sees all updated call outcomes.
     await session.flush()
     await _refresh_channel_scores(session, touched_channels)
     await session.commit()
