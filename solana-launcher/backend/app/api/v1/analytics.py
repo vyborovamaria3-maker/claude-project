@@ -12,14 +12,13 @@ from app.schemas.analytics import (
     WalletActivityResponse,
     WalletTopResponse,
 )
+from app.services.analytics_queries import get_wallet_activity, list_tokens
 from app.services.etl import (
     get_insider_clusters,
     get_or_create_jobs,
     get_token_analysis,
     get_top_wallets,
-    get_wallet_activity,
     list_jobs,
-    list_tokens,
     run_full_collection,
 )
 
@@ -36,8 +35,17 @@ async def read_tokens(
     current_user=Depends(get_current_subscriber),
 ) -> TokenListResponse:
     del current_user
-    items, total = await list_tokens(session, limit=limit, offset=offset, sort_by=sort_by, order=order)
-    return TokenListResponse(items=items, meta={"limit": limit, "offset": offset, "total": total})
+    items, total = await list_tokens(
+        session,
+        limit=limit,
+        offset=offset,
+        sort_by=sort_by,
+        order=order,
+    )
+    return TokenListResponse(
+        items=items,
+        meta={"limit": limit, "offset": offset, "total": total},
+    )
 
 
 @router.get("/tokens/{mint_address}/analysis", response_model=TokenAnalysisResponse)
@@ -70,18 +78,28 @@ async def read_top_wallets(
             detail="Only by=profit&period=all_time is supported for now",
         )
     items, total = await get_top_wallets(session, limit=limit, offset=offset)
-    return WalletTopResponse(items=items, meta={"limit": limit, "offset": offset, "total": total})
+    return WalletTopResponse(
+        items=items,
+        meta={"limit": limit, "offset": offset, "total": total},
+    )
 
 
 @router.get("/wallets/{wallet_address}/activity", response_model=WalletActivityResponse)
 async def read_wallet_activity(
     wallet_address: str,
+    limit: int = Query(default=100, ge=1, le=250),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_subscriber),
 ) -> WalletActivityResponse:
     del current_user
     try:
-        data = await get_wallet_activity(session, wallet_address)
+        data = await get_wallet_activity(
+            session,
+            wallet_address,
+            limit=limit,
+            offset=offset,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return WalletActivityResponse(**data)
@@ -115,4 +133,11 @@ async def run_collector(
     del current_user
     result = await run_full_collection(session)
     await get_or_create_jobs(session)
-    return CollectorRunResponse(detail="collection queued", tasks=[f"tokens={result['tokens']}", f"metrics={result['metrics']}", f"links={result['links']}"])
+    return CollectorRunResponse(
+        detail="collection queued",
+        tasks=[
+            f"tokens={result['tokens']}",
+            f"metrics={result['metrics']}",
+            f"links={result['links']}",
+        ],
+    )
