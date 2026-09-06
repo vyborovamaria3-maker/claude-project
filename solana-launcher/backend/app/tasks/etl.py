@@ -6,7 +6,10 @@ from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.services.collection import run_full_collection
 from app.services.etl import get_or_create_jobs
-from app.services.market_ingestion import sync_metrics_for_active_tokens, sync_pumpfun_tokens
+from app.services.market_ingestion import (
+    sync_metrics_for_active_tokens,
+    sync_pumpfun_tokens,
+)
 from app.services.wallet_clusters import rebuild_wallet_links
 from app.tasks.celery_app import celery_app
 
@@ -33,7 +36,9 @@ def collect_tokens() -> int:
 
 @celery_app.task(name="app.tasks.etl.refresh_metrics")
 def refresh_metrics() -> int:
-    return asyncio.run(_run_with_session(lambda session: sync_metrics_for_active_tokens(session)))
+    return asyncio.run(
+        _run_with_session(lambda session: sync_metrics_for_active_tokens(session))
+    )
 
 
 @celery_app.task(name="app.tasks.etl.refresh_links")
