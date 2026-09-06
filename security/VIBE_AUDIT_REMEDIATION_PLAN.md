@@ -8,14 +8,14 @@ Reference methodology: `haraldalder-vibemogger/vibe-audit` categories (secrets/e
 
 | Finding | Severity | Remediation | Status |
 | --- | --- | --- | --- |
-| Docker services exposed directly on 5432/6379/5672/15672/8000/3000/9090 | Critical/High | Remove host port publishing for internal services; leave nginx as the ingress | FIXED IN SOURCE |
-| Default Postgres/RabbitMQ credentials and unauthenticated Redis | High | Require runtime passwords; enable Redis `requirepass`; remove committed runtime defaults | FIXED IN SOURCE |
-| Compose loaded `backend/.env.example` as runtime configuration | Critical contributor | Require untracked `backend/.env`; example is intentionally non-runnable | FIXED IN SOURCE |
-| Development password-provisioning bypass using fixed `X-Dev-Internal: miniapp-subscription` | Critical/High | Remove fixed-header bypass; require configured `X-API-Key`; add middleware defense in depth | FIXED IN SOURCE |
+| Docker services exposed directly on database/cache/broker/backend/frontend/metrics ports | Critical/High | Remove host port publishing for internal services; leave nginx as the ingress | FIXED IN SOURCE |
+| Default infrastructure credentials and unauthenticated Redis | High | Require runtime passwords; enable Redis authentication; remove credential-bearing application defaults | FIXED IN SOURCE |
+| Compose loaded `backend/.env.example` as runtime configuration | Critical contributor | Require untracked `backend/.env`; examples contain no usable runtime secrets | FIXED IN SOURCE |
+| Development password-provisioning bypass using a fixed source-controlled internal header | Critical/High | Remove fixed-header bypass; require configured `X-API-Key`; add middleware defense in depth | FIXED IN SOURCE |
 | Predictable development admin automatically created/reset on startup | Critical contributor | Never auto-bootstrap dev/test admin; never silently promote an existing account or reset its password | FIXED IN SOURCE |
 | Telegram callback constructed bearer token in redirect query | Medium/Hardening | Stop constructing token-bearing URL; keep credentials out of redirect URL | FIXED IN SOURCE |
 | Historically committed Supabase service-role-style credential | High if credential was real | Rotate at provider and purge from Git history | EXTERNAL ACTION REQUIRED |
-| Dependency vulnerability freshness | Coverage gap | Run `npm audit` / `pip-audit` from a clean checkout and remediate actionable findings | VERIFY IN CI |
+| Dependency vulnerability freshness | Coverage gap | Run npm/pip dependency audits from a clean checkout and remediate actionable findings | VERIFY IN CI |
 | Live internet exposure of old service ports | Verification gap | Authorized owner-only external reachability check after deployment | OWNER VERIFICATION |
 
 ## Source changes applied
@@ -25,22 +25,36 @@ Reference methodology: `haraldalder-vibemogger/vibe-audit` categories (secrets/e
 `solana-launcher/docker-compose.yml` is now secure-by-default:
 
 - Postgres, Redis, RabbitMQ, backend, frontend, and Prometheus no longer publish their service ports to the host.
-- Only nginx remains a public host ingress on port 80.
+- Only nginx remains a normal public host ingress on port 80.
 - Postgres and RabbitMQ passwords are required via Compose environment interpolation; no known password is embedded in the Compose file.
 - Redis now requires a password and its health check authenticates.
 - Backend and Celery connect to internal service DNS names and authenticated URLs.
 - Backend/worker load `backend/.env`, not the committed `.env.example`.
-- Compose defaults the application services to `ENVIRONMENT=production` and `DEBUG=false`.
-- Public frontend URL must be explicitly configured.
+- Compose defaults application services to `ENVIRONMENT=production` and `DEBUG=false`.
+- Public frontend URLs must be explicitly configured.
+- The Compose `.env.example` leaves required secrets blank, so a copied template fails closed until real values are supplied.
 
 Deployment secrets are split intentionally:
 
 - `solana-launcher/.env`: Compose/infrastructure credentials and public deployment URLs.
 - `solana-launcher/backend/.env`: application/backend secrets.
 
-Both real files are ignored by git. Their committed `.env.example` files contain no usable secrets.
+Both real files are ignored by git.
 
-### 2. Legacy paid-password provisioning
+### 2. Application configuration defaults
+
+`Settings` no longer embeds usable database/broker/admin credentials:
+
+- development database fallback is a local SQLite file;
+- Redis/Celery development fallbacks point to loopback only;
+- default debug mode is disabled;
+- admin password and standalone admin-session secret have no committed usable value;
+- non-production may derive its local session signing value from the already-required application secret when no separate value is supplied;
+- production requires a distinct admin-session signing secret and JWT/application signing secret.
+
+Production Compose still injects explicit authenticated service URLs, so these local fallbacks are not used for normal deployment.
+
+### 3. Legacy paid-password provisioning
 
 `/api/v1/auth/register-password` no longer trusts any fixed source-controlled development header.
 
@@ -54,9 +68,9 @@ Rules after remediation:
 - constant-time comparison is used;
 - the endpoint repeats the check even though application middleware already enforces it.
 
-The old `X-Dev-Internal: miniapp-subscription` path must never be restored.
+The previous fixed-header authorization path must never be restored.
 
-### 3. Administrator bootstrap
+### 4. Administrator bootstrap
 
 Startup no longer creates a predictable administrator in development/test.
 
@@ -69,15 +83,19 @@ Production bootstrap behavior is fail-closed:
 
 Admin credential rotation should be performed through an explicit administrative procedure rather than implicit application startup behavior.
 
-### 4. Telegram redirect credential handling
+### 5. Telegram redirect credential handling
 
 The Telegram callback now returns the frontend URL without adding the access token to query parameters. The access token remains in the response body as required by the existing API contract. `TelegramCallbackResponse` also keeps its existing query/fragment stripping validator as a second layer of defense.
 
 A future session-hardening project can move browser authentication to Secure/HttpOnly/SameSite cookies or an explicit one-time authorization-code exchange, but the confirmed URL-token construction is removed by this remediation.
 
+### 6. Regression enforcement
+
+The repository `Security Gates` workflow now includes the new auth, admin-bootstrap, runtime-default and redirect security regression tests so future PRs cannot silently restore these paths.
+
 ## Required deployment preparation
 
-Before deploying this branch, create local secret files from the templates and fill every required value.
+Before deploying, create local secret files from the templates and fill every required value.
 
 ### `solana-launcher/.env`
 
@@ -103,7 +121,7 @@ Required production security values include:
 
 - `SECRET_KEY` (>= 32 strong characters; random hex recommended)
 - `ADMIN_PASSWORD` (>= 16 strong characters)
-- `ADMIN_SESSION_SECRET` (>= 32 strong characters)
+- `ADMIN_SESSION_SECRET` (>= 32 strong characters and different from `SECRET_KEY`)
 - `BACKEND_API_KEY` (>= 32 strong characters)
 - `SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY` (>= 32 strong characters and different from `SECRET_KEY`)
 - subscription internal/admin keys when the corresponding `REQUIRE_*` flags are enabled
@@ -117,18 +135,24 @@ Never copy generated secrets into issues, PR bodies, chat messages, logs, or com
 
 Acceptance criteria:
 
-- no `X-Dev-Internal` fixed authorization path;
-- no `?token=<bearer>` construction in Telegram redirect code;
-- no committed `ChangeMe123!`, `guest/guest`, or `potapoff:potapoff` runtime credential path;
+- no fixed source-controlled header can authorize paid-password provisioning;
+- no bearer token is constructed into the Telegram redirect URL;
+- no usable default service/admin credential is present in active runtime configuration;
 - no host publishing for database/cache/broker/backend/frontend/Prometheus services;
-- `.env.example` is never used as runtime `env_file`.
+- `.env.example` is never used as runtime `env_file`;
+- copying either example env file unchanged cannot produce a valid production deployment.
 
 ### Phase B — backend regression tests
 
 Run from `solana-launcher/backend`:
 
 ```bash
-pytest -q tests/test_auth.py tests/test_auth_response_security.py tests/test_admin_bootstrap_security.py tests/test_production_admin_config.py
+pytest -q \
+  tests/test_auth.py \
+  tests/test_auth_response_security.py \
+  tests/test_admin_bootstrap_security.py \
+  tests/test_runtime_security_defaults.py \
+  tests/test_production_admin_config.py
 ```
 
 Then run the complete backend suite:
@@ -139,11 +163,12 @@ pytest -q
 
 Acceptance criteria:
 
-- legacy fixed dev header receives 403;
+- legacy fixed development authorization is rejected;
 - configured backend API key is required for non-production provisioning;
 - Telegram redirect has no query or fragment and contains no access token;
 - existing normal user cannot be silently promoted to admin;
 - existing superuser password is not reset at startup;
+- runtime defaults contain no embedded service/admin credentials;
 - production security validation still passes.
 
 ### Phase C — Compose validation
@@ -169,24 +194,25 @@ Acceptance criteria:
 - Redis rejects unauthenticated requests;
 - health/readiness checks succeed.
 
-### Phase D — dependency scanning
+### Phase D — dependency and secret scanning
 
-Run the repository's existing security-gate workflows. From a clean checkout also run the package-manager audits appropriate to each lockfile, including backend `pip-audit` and the repository npm audit jobs.
+Run the repository `Security Gates` workflow. It already contains current-tree/diff/history secret scanning, npm security policies and backend `pip-audit`.
 
 Acceptance criteria:
 
 - no unresolved critical/high dependency issue with a supported fix;
-- exceptions, if unavoidable, are documented with package, advisory, exposure analysis, owner, and expiry date.
+- no newly introduced secret finding;
+- exceptions, if unavoidable, are documented with package/advisory, exposure analysis, owner and expiry date.
 
-### Phase E — Strix / independent retest
+### Phase E — independent retest
 
-Run the existing fail-closed Strix workflow after GitHub Actions runners are functioning. The Strix run must have `run.json.status == completed`; incomplete runs are not evidence of a clean result.
+Repeat the `vibe-audit` manual/deterministic review against the merged tree. If an independent scanner such as Strix is installed or reintroduced later, require its run to finish successfully before treating its output as evidence; an incomplete scan is not a clean result.
 
 Acceptance criteria:
 
-- confirmed findings are reproduced before patch when possible and no longer reproduce after patch;
+- confirmed findings no longer reproduce;
 - new findings are manually triaged before acceptance;
-- scan evidence/SARIF is retained.
+- evidence is retained with the release/security record.
 
 ## External/manual actions that source code cannot complete
 
@@ -206,7 +232,7 @@ Do not mark this item complete based only on deleting the file from `main`.
 
 ### GitHub Actions execution availability
 
-Previous security workflow attempts failed before runner allocation. Restore Actions runner/billing/availability, then rerun security gates and Strix. A workflow with zero executed steps is not a passing security test.
+Current PR workflow jobs are failing before any job steps execute. Restore GitHub Actions runner/billing/availability, then rerun the security gates. A job with no executed steps is not a passing security test.
 
 ### Authorized external exposure verification
 
@@ -219,8 +245,8 @@ This remediation is complete only when all of the following are true:
 - source fixes in this document are merged;
 - deployment uses newly generated runtime secrets, not examples;
 - backend and Compose regression checks pass;
-- dependency audits pass or have time-bounded documented exceptions;
-- Strix completes successfully and findings are triaged;
+- dependency/secret audits pass or have time-bounded documented exceptions;
+- an independent post-fix audit is completed and triaged;
 - any historical real credential has been rotated and purged;
 - owner-authorized external verification confirms internal service ports are not exposed.
 
