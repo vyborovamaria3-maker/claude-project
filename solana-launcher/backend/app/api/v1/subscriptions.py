@@ -35,18 +35,9 @@ def _key_matches(supplied: str, expected: str) -> bool:
     return bool(expected) and hmac.compare_digest(supplied.encode(), expected.encode())
 
 
-def _dev_internal(request: Request, settings: Settings) -> bool:
-    return (
-        settings.environment == "development"
-        and request.headers.get("X-Dev-Internal") == "miniapp-subscription"
-    )
-
-
 def _require_checkout_access(request: Request) -> Settings:
     settings: Settings = request.app.state.settings
     supplied = request.headers.get("X-API-Key", "")
-    if _dev_internal(request, settings) and not settings.subscription_internal_key:
-        return settings
     if not _key_matches(supplied, settings.subscription_internal_key):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
     return settings
@@ -55,10 +46,6 @@ def _require_checkout_access(request: Request) -> Settings:
 def _require_settings_read_access(request: Request) -> Settings:
     settings: Settings = request.app.state.settings
     supplied = request.headers.get("X-API-Key", "")
-    if _dev_internal(request, settings) and not (
-        settings.subscription_internal_key or settings.subscription_admin_key
-    ):
-        return settings
     if not (
         _key_matches(supplied, settings.subscription_internal_key)
         or _key_matches(supplied, settings.subscription_admin_key)
@@ -70,8 +57,6 @@ def _require_settings_read_access(request: Request) -> Settings:
 def _require_admin_access(request: Request) -> Settings:
     settings: Settings = request.app.state.settings
     supplied = request.headers.get("X-API-Key", "")
-    if _dev_internal(request, settings) and not settings.subscription_admin_key:
-        return settings
     if not _key_matches(supplied, settings.subscription_admin_key):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
     return settings
