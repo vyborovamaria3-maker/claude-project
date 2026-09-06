@@ -7,7 +7,16 @@ import urllib.error
 import urllib.request
 
 from intelligence.errors.exceptions import ProviderError
-from intelligence.security.urls import validate_public_http_url
+from intelligence.security.urls import validate_outbound_public_http_url, validate_public_http_url
+
+
+class _PublicOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        try:
+            validated = validate_outbound_public_http_url(newurl)
+        except ValueError as exc:
+            raise urllib.error.URLError("RSS redirect target is not public") from exc
+        return super().redirect_request(req, fp, code, msg, headers, validated)
 
 
 class RSSClient:
@@ -18,9 +27,12 @@ class RSSClient:
             raise ValueError("max_bytes must be > 0")
         self.timeout_seconds = timeout_seconds
         self.max_bytes = max_bytes
+        self._opener = urllib.request.build_opener(_PublicOnlyRedirectHandler())
 
     async def fetch(self, url: str) -> tuple[str, bytes]:
-        target = validate_public_http_url(url)
+        # Resolve immediately before the connection, not only when accepting the
+        # URL, so public-looking DNS names cannot resolve to internal services.
+        target = await asyncio.to_thread(validate_outbound_public_http_url, url)
         payload = await asyncio.wait_for(
             asyncio.to_thread(self._fetch_sync, target),
             timeout=self.timeout_seconds + 1,
@@ -44,7 +56,7 @@ class RSSClient:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
                 payload = response.read(self.max_bytes + 1)
                 if len(payload) > self.max_bytes:
                     raise ProviderError("RSS feed exceeds configured size limit")
