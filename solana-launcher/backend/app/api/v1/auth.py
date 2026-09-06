@@ -470,9 +470,10 @@ async def register_password(
 
     # This legacy provisioning route is also guarded by application middleware.
     # Keep an endpoint-level check so it remains fail-closed if the router is ever
-    # mounted by another app or test harness.
+    # mounted by another app or test harness. Provisioning is subscription-scoped,
+    # so it must not reuse the broader intelligence/backend credential.
     api_key = request.headers.get("X-API-Key", "")
-    expected_key = settings.backend_api_key.strip()
+    expected_key = settings.subscription_internal_key.strip()
     if not expected_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
