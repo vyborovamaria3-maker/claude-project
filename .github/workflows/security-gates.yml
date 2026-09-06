@@ -91,9 +91,14 @@ jobs:
       - name: Auth, entitlement and production-secret regression
         run: >-
           pytest -q
+          tests/test_auth.py
           tests/test_entitlement.py
           tests/test_production_admin_config.py
           tests/test_auth_response_security.py
+          tests/test_admin_bootstrap_security.py
+          tests/test_runtime_security_defaults.py
+          tests/test_subscription_internal_access.py
+          tests/test_subscription_compose_security.py
       - name: Python dependency audit
         run: pip-audit
 

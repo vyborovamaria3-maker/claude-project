@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import base58
 import pytest
@@ -116,7 +116,7 @@ async def test_telegram_callback_requires_signed_init_data(client, test_app):
 
 
 @pytest.mark.asyncio
-async def test_telegram_callback_accepts_signed_init_data(client, test_app):
+async def test_telegram_callback_accepts_signed_init_data_without_tokenized_redirect(client, test_app):
     test_app.state.settings.telegram_bot_token = "123456:test-token"
     init_data = signed_telegram_init_data(
         test_app.state.settings.telegram_bot_token,
@@ -126,4 +126,60 @@ async def test_telegram_callback_accepts_signed_init_data(client, test_app):
     response = await client.post("/api/v1/auth/telegram/callback", json={"init_data": init_data})
 
     assert response.status_code == 200
-    assert response.json()["access_token"]
+    body = response.json()
+    assert body["access_token"]
+    redirect = urlsplit(body["redirect_url"])
+    assert redirect.query == ""
+    assert redirect.fragment == ""
+    assert body["access_token"] not in body["redirect_url"]
+
+
+@pytest.mark.asyncio
+async def test_register_password_rejects_legacy_fixed_dev_header(client):
+    response = await client.post(
+        "/api/v1/auth/register-password",
+        headers={"X-Dev-Internal": "miniapp-subscription"},
+        json={
+            "telegram_id": 4242,
+            "login": "paid_user",
+            "password": "p" * 32,
+            "telegram_username": "paid_user",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Invalid API key"
+
+
+@pytest.mark.asyncio
+async def test_register_password_rejects_backend_intelligence_key(client, test_app):
+    response = await client.post(
+        "/api/v1/auth/register-password",
+        headers={"X-API-Key": test_app.state.settings.backend_api_key},
+        json={
+            "telegram_id": 4343,
+            "login": "paid_user_2",
+            "password": "q" * 32,
+            "telegram_username": "paid_user_2",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Invalid API key"
+
+
+@pytest.mark.asyncio
+async def test_register_password_accepts_only_subscription_internal_key(client, test_app):
+    response = await client.post(
+        "/api/v1/auth/register-password",
+        headers={"X-API-Key": test_app.state.settings.subscription_internal_key},
+        json={
+            "telegram_id": 4444,
+            "login": "paid_user_3",
+            "password": "r" * 32,
+            "telegram_username": "paid_user_3",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     app_name: str = Field(default="POTAPoff API", alias="APP_NAME")
     environment: str = Field(default="development", alias="ENVIRONMENT")
-    debug: bool = Field(default=True, alias="DEBUG")
+    debug: bool = Field(default=False, alias="DEBUG")
     secret_key: str = Field(alias="SECRET_KEY")
     subscription_password_encryption_key: str = Field(
         default="",
@@ -27,16 +27,21 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=1440, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     algorithm: str = Field(default="HS256", alias="ALGORITHM")
     api_v1_prefix: str = Field(default="/api/v1", alias="API_V1_PREFIX")
+    # Local-only fallbacks contain no network credentials. Production Compose
+    # explicitly injects authenticated service URLs.
     database_url: str = Field(
-        default="postgresql+asyncpg://potapoff:potapoff@postgres:5432/potapoff",
+        default="sqlite+aiosqlite:///./potapoff.db",
         alias="DATABASE_URL",
     )
-    redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")
+    redis_url: str = Field(default="redis://127.0.0.1:6379/0", alias="REDIS_URL")
     celery_broker_url: str = Field(
-        default="amqp://guest:guest@rabbitmq:5672//",
+        default="amqp://127.0.0.1:5672//",
         alias="CELERY_BROKER_URL",
     )
-    celery_result_backend: str = Field(default="redis://redis:6379/1", alias="CELERY_RESULT_BACKEND")
+    celery_result_backend: str = Field(
+        default="redis://127.0.0.1:6379/1",
+        alias="CELERY_RESULT_BACKEND",
+    )
     redis_cache_db: int = Field(default=2, alias="REDIS_CACHE_DB")
     cors_origins: list[str] = Field(
         default_factory=lambda: [
@@ -48,9 +53,11 @@ class Settings(BaseSettings):
         alias="CORS_ORIGINS",
     )
     admin_username: str = Field(default="admin@potapoff.local", alias="ADMIN_USERNAME")
-    admin_password: str = Field(default="ChangeMe123!", alias="ADMIN_PASSWORD")
+    # No source-controlled password/session credential is usable by default.
+    # Development does not auto-provision an administrator.
+    admin_password: str = Field(default="", alias="ADMIN_PASSWORD")
     admin_display_name: str = Field(default="POTAPoff Admin", alias="ADMIN_DISPLAY_NAME")
-    admin_session_secret: str = Field(default="admin-session-secret", alias="ADMIN_SESSION_SECRET")
+    admin_session_secret: str = Field(default="", alias="ADMIN_SESSION_SECRET")
     frontend_url: str = Field(default="http://localhost:3001", alias="FRONTEND_URL")
     frontend_internal_url: str = Field(default="http://frontend:3000", alias="FRONTEND_INTERNAL_URL")
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
@@ -140,8 +147,17 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def validate_production_security(self) -> "Settings":
-        if self.environment.strip().lower() not in {"production", "prod"}:
+    def validate_runtime_security(self) -> "Settings":
+        is_production = self.environment.strip().lower() in {"production", "prod"}
+
+        # Local/test sessions still need a non-empty signing secret, but there is
+        # no committed standalone session credential. Production must configure a
+        # distinct secret below.
+        if not is_production and not self.admin_session_secret.strip():
+            self.admin_session_secret = self.secret_key
+            return self
+
+        if not is_production:
             return self
 
         password = self.admin_password.strip()
@@ -152,10 +168,12 @@ class Settings(BaseSettings):
         encryption_key = self.subscription_password_encryption_key.strip()
         if self.debug:
             raise ValueError("DEBUG must be false in production")
-        if not password or password == "ChangeMe123!" or len(password) < 16:
+        if not password or len(password) < 16:
             raise ValueError("ADMIN_PASSWORD must be explicitly configured with at least 16 characters in production")
-        if not session_secret or session_secret == "admin-session-secret" or len(session_secret) < 32:
+        if not session_secret or len(session_secret) < 32:
             raise ValueError("ADMIN_SESSION_SECRET must be explicitly configured with at least 32 characters in production")
+        if session_secret == self.secret_key:
+            raise ValueError("ADMIN_SESSION_SECRET must be different from SECRET_KEY in production")
         if not backend_api_key or len(backend_api_key) < 32:
             raise ValueError("BACKEND_API_KEY must be explicitly configured with at least 32 characters in production")
         if self.require_subscription_internal_key and (

@@ -451,11 +451,11 @@ async def telegram_callback(
     user = await sync_login_metadata(session, user, ip_address=ip_address, source="telegram")
     result = await issue_token_for_user(session, user, settings)
 
-    redirect_url = f"{settings.frontend_url}/?token={result.access_token}"
+    # Bearer tokens stay in the response body and never enter browser-visible URLs.
     return TelegramCallbackResponse(
         access_token=result.access_token,
         expires_in=result.expires_in,
-        redirect_url=redirect_url,
+        redirect_url=settings.frontend_url,
     )
 
 
@@ -465,35 +465,31 @@ async def register_password(
     payload: RegisterPasswordRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Register password from Telegram bot after payment"""
+    """Register password from Telegram bot after payment."""
     settings: Settings = request.app.state.settings
-    
-    # Verify API key using constant-time comparison to prevent timing attacks
-    api_key = request.headers.get("X-API-Key", "")
-    expected_key = settings.backend_api_key
-    
-    is_dev_internal = (
-        settings.environment.strip().lower() in {"development", "test"}
-        and not expected_key
-        and request.headers.get("X-Dev-Internal") == "miniapp-subscription"
-    )
 
-    # Use compare_digest for constant-time comparison
-    if not is_dev_internal and (
-        not expected_key
-        or not hmac.compare_digest(api_key.encode('utf-8'), expected_key.encode('utf-8'))
-    ):
+    # This legacy provisioning route is also guarded by application middleware.
+    # Keep an endpoint-level check so it remains fail-closed if the router is ever
+    # mounted by another app or test harness. Provisioning is subscription-scoped,
+    # so it must not reuse the broader intelligence/backend credential.
+    api_key = request.headers.get("X-API-Key", "")
+    expected_key = settings.subscription_internal_key.strip()
+    if not expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password provisioning is not configured",
+        )
+    if not hmac.compare_digest(api_key.encode("utf-8"), expected_key.encode("utf-8")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
-    
+
     telegram_id = str(payload.telegram_id)
-    
+
     # Check if user exists
     user = await get_user_by_telegram_id(session, telegram_id)
-    
+
     password_hash = get_password_hash(payload.password)
-    from datetime import timedelta
     expires_at = datetime.now(timezone.utc) + timedelta(days=30)
-    
+
     if user:
         user.hashed_password = password_hash
         user.subscription_expires_at = expires_at
@@ -510,7 +506,7 @@ async def register_password(
             is_active=True,
         )
         session.add(user)
-    
+
     await session.commit()
     return {"status": "success", "message": "Password registered"}
 
@@ -524,7 +520,7 @@ async def login_password(
     """Login with 32-character password"""
     settings: Settings = request.app.state.settings
     ip_address = get_client_ip(request)
-    
+
     # Rate limiting
     await _rate_limit(
         request,
@@ -532,7 +528,7 @@ async def login_password(
         limit=5,
         window_seconds=60,
     )
-    
+
     from app.models.user import User
     from sqlalchemy import select
 
@@ -548,14 +544,14 @@ async def login_password(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid password"
         )
-    
+
     # Check subscription expiry
     if user.subscription_expires_at and _as_utc(user.subscription_expires_at) < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Subscription expired"
         )
-    
+
     user = await sync_login_metadata(session, user, ip_address=ip_address, source="password")
     result = await issue_token_for_user(session, user, settings)
     return _token_response(result)
