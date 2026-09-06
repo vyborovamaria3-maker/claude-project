@@ -1,0 +1,136 @@
+name: Strix PR Security Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: strix-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  strix-diff-scan:
+    name: Strix diff scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      LLM_API_KEY: ${{ secrets.STRIX_LLM_API_KEY }}
+      CONFIGURED_STRIX_LLM: ${{ vars.STRIX_LLM }}
+      STRIX_REASONING_EFFORT: high
+
+    steps:
+      - name: Checkout pull request revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate scan prerequisites
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -z "${LLM_API_KEY:-}" ]]; then
+            echo "::error::Repository secret STRIX_LLM_API_KEY is required for the Strix PR gate."
+            exit 1
+          fi
+
+          DIFF_BASE="origin/${{ github.base_ref }}"
+          if ! git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null; then
+            echo "::error::Cannot resolve PR diff base '$DIFF_BASE'."
+            exit 1
+          fi
+
+          docker version
+          echo "DIFF_BASE=$DIFF_BASE" >> "$GITHUB_ENV"
+
+      - name: Install Strix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL https://strix.ai/install | bash
+          echo "$HOME/.strix/bin" >> "$GITHUB_PATH"
+          "$HOME/.strix/bin/strix" --version
+
+      - name: Run diff-scoped Strix scan
+        id: strix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export STRIX_LLM="${CONFIGURED_STRIX_LLM:-openai/gpt-5.4}"
+
+          set +e
+          strix \
+            -n \
+            --target ./ \
+            --scan-mode quick \
+            --scope-mode diff \
+            --diff-base "$DIFF_BASE" \
+            --max-budget 10 \
+            2>&1 | tee strix-console.log
+          rc=${PIPESTATUS[0]}
+          set -e
+
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+
+          run_json="$(ls -t strix_runs/*/run.json 2>/dev/null | head -1 || true)"
+          if [[ -z "$run_json" || ! -f "$run_json" ]]; then
+            echo "::error::Strix did not produce run.json; refusing to fail open."
+            exit 1
+          fi
+
+          status="$(jq -r '.status // "unknown"' "$run_json")"
+          cost="$(jq -r '.llm_usage.cost // 0' "$run_json")"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "cost=$cost" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Strix PR security gate"
+            echo "- Diff base: $DIFF_BASE"
+            echo "- Run status: $status"
+            echo "- Reported LLM cost: $cost USD"
+            echo "- Exit code: $rc"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$status" != "completed" ]]; then
+            echo "::error::Strix run status is '$status'; the scan did not complete. Increase the budget instead of accepting a partial scan."
+            exit 1
+          fi
+
+          case "$rc" in
+            0)
+              echo "No validated vulnerabilities reported for the PR diff."
+              ;;
+            2)
+              echo "::error::Strix found validated vulnerabilities in the PR diff."
+              exit 2
+              ;;
+            *)
+              echo "::error::Strix execution failed with exit code $rc."
+              exit "$rc"
+              ;;
+          esac
+
+      - name: Upload SARIF to GitHub code scanning
+        if: always() && hashFiles('strix_runs/**/findings.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: strix_runs
+
+      - name: Upload Strix evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: strix-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: |
+            strix-console.log
+            strix_runs/
+          if-no-files-found: warn
+          retention-days: 30
+          include-hidden-files: false
