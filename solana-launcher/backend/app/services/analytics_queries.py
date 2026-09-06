@@ -2,67 +2,34 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
-from app.models.analytics import Token, TokenMetric, Wallet, WalletTrade
-
-
-def _latest_metric_subquery():
-    metric = TokenMetric
-    return (
-        select(
-            metric.id.label("metric_id"),
-            metric.token_id.label("metric_token_id"),
-            metric.timestamp.label("metric_timestamp"),
-            metric.price_usd.label("metric_price_usd"),
-            metric.ath_usd.label("metric_ath_usd"),
-            metric.ath_date.label("metric_ath_date"),
-            metric.market_cap.label("metric_market_cap"),
-            metric.fdv.label("metric_fdv"),
-            metric.liquidity_usd.label("metric_liquidity_usd"),
-            metric.volume_24h.label("metric_volume_24h"),
-            metric.tx_count_24h.label("metric_tx_count_24h"),
-            metric.holder_count.label("metric_holder_count"),
-            metric.twitter_url.label("metric_twitter_url"),
-            metric.telegram_url.label("metric_telegram_url"),
-            metric.discord_url.label("metric_discord_url"),
-            metric.website_url.label("metric_website_url"),
-            metric.social_engagements.label("metric_social_engagements"),
-            func.row_number()
-            .over(
-                partition_by=metric.token_id,
-                order_by=(metric.timestamp.desc(), metric.id.desc()),
-            )
-            .label("rn"),
-        )
-        .subquery("latest_metric")
-    )
+from app.models.analytics import Token, TokenLatestMetric, Wallet, WalletTrade
 
 
-def _metric_payload(row, latest_metric) -> dict[str, Any] | None:
-    mapping = row._mapping
-    metric_id = mapping[latest_metric.c.metric_id]
-    if metric_id is None:
+def _metric_payload(metric: TokenLatestMetric | None) -> dict[str, Any] | None:
+    if metric is None:
         return None
     return {
-        "id": metric_id,
-        "token_id": mapping[latest_metric.c.metric_token_id],
-        "timestamp": mapping[latest_metric.c.metric_timestamp],
-        "price_usd": mapping[latest_metric.c.metric_price_usd],
-        "ath_usd": mapping[latest_metric.c.metric_ath_usd],
-        "ath_date": mapping[latest_metric.c.metric_ath_date],
-        "market_cap": mapping[latest_metric.c.metric_market_cap],
-        "fdv": mapping[latest_metric.c.metric_fdv],
-        "liquidity_usd": mapping[latest_metric.c.metric_liquidity_usd],
-        "volume_24h": mapping[latest_metric.c.metric_volume_24h],
-        "tx_count_24h": mapping[latest_metric.c.metric_tx_count_24h],
-        "holder_count": mapping[latest_metric.c.metric_holder_count],
-        "twitter_url": mapping[latest_metric.c.metric_twitter_url],
-        "telegram_url": mapping[latest_metric.c.metric_telegram_url],
-        "discord_url": mapping[latest_metric.c.metric_discord_url],
-        "website_url": mapping[latest_metric.c.metric_website_url],
-        "social_engagements": mapping[latest_metric.c.metric_social_engagements],
+        "id": metric.metric_id,
+        "token_id": metric.token_id,
+        "timestamp": metric.timestamp,
+        "price_usd": metric.price_usd,
+        "ath_usd": metric.ath_usd,
+        "ath_date": metric.ath_date,
+        "market_cap": metric.market_cap,
+        "fdv": metric.fdv,
+        "liquidity_usd": metric.liquidity_usd,
+        "volume_24h": metric.volume_24h,
+        "tx_count_24h": metric.tx_count_24h,
+        "holder_count": metric.holder_count,
+        "twitter_url": metric.twitter_url,
+        "telegram_url": metric.telegram_url,
+        "discord_url": metric.discord_url,
+        "website_url": metric.website_url,
+        "social_engagements": metric.social_engagements,
     }
 
 
@@ -73,52 +40,43 @@ async def list_tokens(
     sort_by: str = "ath",
     order: str = "desc",
 ) -> tuple[list[dict[str, Any]], int]:
-    """Return only the requested token page, sorted inside the database.
+    """Read the requested page from the one-row-per-token hot state.
 
-    The previous implementation loaded every token and every latest metric into Python,
-    sorted the complete dataset, and only then sliced to ``limit``. That scales linearly
-    with the full token universe even when the API caller asks for 50 rows.
+    Historical ``token_metrics`` is no longer scanned or window-ranked on every
+    dashboard request. The latest row is maintained when a TokenMetric is inserted.
     """
-    latest_metric = _latest_metric_subquery()
-    metric_columns = [column for column in latest_metric.c if column.key != "rn"]
-
     total = int(await session.scalar(select(func.count()).select_from(Token)) or 0)
 
-    sort_key = sort_by.lower()
     sort_columns = {
-        "ath": latest_metric.c.metric_ath_usd,
-        "volume": latest_metric.c.metric_volume_24h,
-        "liquidity": latest_metric.c.metric_liquidity_usd,
-        "market_cap": latest_metric.c.metric_market_cap,
-        "holders": latest_metric.c.metric_holder_count,
+        "ath": TokenLatestMetric.ath_usd,
+        "volume": TokenLatestMetric.volume_24h,
+        "liquidity": TokenLatestMetric.liquidity_usd,
+        "market_cap": TokenLatestMetric.market_cap,
+        "holders": TokenLatestMetric.holder_count,
     }
     direction_desc = order.lower() != "asc"
+    sort_column = sort_columns.get(sort_by.lower())
 
-    statement = (
-        select(Token, *metric_columns)
-        .outerjoin(
-            latest_metric,
-            and_(
-                latest_metric.c.metric_token_id == Token.id,
-                latest_metric.c.rn == 1,
-            ),
-        )
-    )
-
-    sort_column = sort_columns.get(sort_key)
     if sort_column is None:
         primary_order = Token.id.desc() if direction_desc else Token.id.asc()
+    elif direction_desc:
+        primary_order = sort_column.desc().nulls_last()
     else:
-        normalized_sort = func.coalesce(sort_column, 0)
-        primary_order = normalized_sort.desc() if direction_desc else normalized_sort.asc()
+        primary_order = sort_column.asc().nulls_last()
 
     tie_breaker = Token.id.desc() if direction_desc else Token.id.asc()
-    statement = statement.order_by(primary_order, tie_breaker).offset(offset).limit(limit)
+    statement = (
+        select(Token, TokenLatestMetric)
+        .options(noload(Token.metrics), noload(Token.trades))
+        .outerjoin(TokenLatestMetric, TokenLatestMetric.token_id == Token.id)
+        .order_by(primary_order, tie_breaker)
+        .offset(offset)
+        .limit(limit)
+    )
 
     rows = (await session.execute(statement)).all()
     items: list[dict[str, Any]] = []
-    for row in rows:
-        token = row[0]
+    for token, latest_metric in rows:
         items.append(
             {
                 "id": token.id,
@@ -132,7 +90,7 @@ async def list_tokens(
                 "migration_date": token.migration_date,
                 "status": token.status,
                 "last_synced_at": token.last_synced_at,
-                "latest_metric": _metric_payload(row, latest_metric),
+                "latest_metric": _metric_payload(latest_metric),
             }
         )
     return items, total
@@ -147,7 +105,11 @@ async def get_wallet_activity(
 ) -> dict[str, Any]:
     """Return a bounded trade page while computing summary values in SQL."""
     wallet = (
-        await session.execute(select(Wallet).where(Wallet.wallet_address == wallet_address))
+        await session.execute(
+            select(Wallet)
+            .options(noload(Wallet.trades))
+            .where(Wallet.wallet_address == wallet_address)
+        )
     ).scalar_one_or_none()
     if wallet is None:
         raise ValueError("Wallet not found")
@@ -168,6 +130,7 @@ async def get_wallet_activity(
         (
             await session.execute(
                 select(WalletTrade)
+                .options(noload(WalletTrade.wallet), noload(WalletTrade.token))
                 .where(WalletTrade.wallet_id == wallet.id)
                 .order_by(WalletTrade.buy_timestamp.desc(), WalletTrade.id.desc())
                 .offset(offset)
