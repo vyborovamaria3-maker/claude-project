@@ -61,7 +61,10 @@ def _history_metric_payload(metric: TokenMetric) -> dict[str, Any]:
     }
 
 
-def _token_payload(token: Token, latest_metric: dict[str, Any] | None) -> dict[str, Any]:
+def _token_payload(
+    token: Token,
+    latest_metric: dict[str, Any] | None,
+) -> dict[str, Any]:
     return {
         "id": token.id,
         "mint_address": token.mint_address,
