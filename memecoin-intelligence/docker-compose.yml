@@ -37,7 +37,8 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       TELEGRAM_AI_BASE_URL: ${TELEGRAM_AI_DOCKER_BASE_URL:-http://qwen:8000/v1}
     volumes: [".:/app", "/app/node_modules"]
-    ports: ["3001:3001"]
+    # Development may intentionally run without RBAC; keep it local by default.
+    ports: ["127.0.0.1:3001:3001"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -61,7 +62,7 @@ services:
     environment:
       VITE_API_URL: http://localhost:3001
     volumes: [".:/app", "/app/node_modules"]
-    ports: ["5173:5173"]
+    ports: ["127.0.0.1:5173:5173"]
     depends_on: [api]
 
   qwen:
