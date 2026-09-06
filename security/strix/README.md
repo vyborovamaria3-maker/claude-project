@@ -1,55 +1,149 @@
 # Strix Security Audit Runbook
 
-This directory defines a controlled, repeatable Strix audit for `claude-project`.
+This project runs Strix locally or on a VPS. GitHub Actions is not required for Strix security scanning.
 
-## Automated PR security gate
+## What the local runner does
 
-Every pull request targeting `main` is scanned by `.github/workflows/strix-pr-security.yml`.
+`scripts/strix-scan.sh` provides a repeatable source-only security scan with the existing rules and profiles in this directory.
 
-The gate follows the current Strix CI guidance:
+The runner:
 
-- checks out full Git history so the PR base can be resolved safely;
-- scans only the pull-request diff in `quick` mode;
-- fails the PR when Strix returns validated findings (`exit 2`);
-- fails closed when `strix_runs/*/run.json` is missing or its status is not `completed`;
-- uploads `findings.sarif` to GitHub Code Scanning when that feature is available;
-- always retains the Strix console log and `strix_runs/**` as workflow artifacts.
+- validates Git, Node.js, Docker, Strix and `LLM_API_KEY` before spending tokens;
+- scans the exact committed `HEAD`, not uncommitted working-tree changes;
+- creates a full isolated temporary clone before scanning because local Strix code targets are mounted writable;
+- keeps git metadata inside that clone so `--scope diff` works without touching the real checkout;
+- combines `ROE_SOURCE_ONLY.md` with the selected project-specific profile;
+- always passes `--max-budget`;
+- captures the Strix console output and generated evidence locally;
+- requires `run.json.status == "completed"` before a run can be accepted;
+- warns when reported LLM cost is close to the configured cap;
+- exits `2` when Strix reports validated vulnerabilities;
+- stores local evidence under `security/strix/reports/`, which is ignored by git.
 
-Required repository configuration:
+The isolated clone is deleted after each scan. Reports are retained in the real project checkout.
 
-- Repository secret: `STRIX_LLM_API_KEY` — provider API key used by the self-hosted Strix runner.
-- Repository variable: `STRIX_LLM` — optional model id; defaults to `openai/gpt-5.4`.
+## Prerequisites
 
-Never commit API keys or other credentials.
+The machine running the scan needs:
 
-## Current cycle
+1. Git
+2. Node.js
+3. Docker with a running daemon
+4. Strix CLI
+5. an LLM provider API key
 
-Cycle 1 is **source-only**. It must not actively test production or third-party infrastructure.
+Check Strix:
 
-Rules of engagement:
+```bash
+strix --version
+```
 
-- `ROE_SOURCE_ONLY.md`
+If it is not installed:
+
+```bash
+curl -sSL https://strix.ai/install | bash
+```
+
+Do not commit provider API keys.
+
+## Local configuration
+
+Copy the template:
+
+```bash
+cp security/strix/.env.example security/strix/.env
+```
+
+Then edit `security/strix/.env`:
+
+```dotenv
+STRIX_LLM=openai/gpt-5.4
+LLM_API_KEY=your-provider-key
+STRIX_COMPONENT=repo
+STRIX_PROFILE=baseline
+STRIX_SCAN_MODE=standard
+STRIX_MAX_BUDGET=10
+STRIX_SCOPE_MODE=full
+STRIX_DIFF_BASE=main
+```
+
+`security/strix/.env` is covered by the repository `.gitignore`.
+
+You can also export the variables in the shell instead of using the file.
+
+## npm commands
+
+Default standard scan:
+
+```bash
+npm run security:strix
+```
+
+Quick scan:
+
+```bash
+npm run security:strix:quick
+```
+
+Standard scan:
+
+```bash
+npm run security:strix:standard
+```
+
+Deep scan:
+
+```bash
+npm run security:strix:deep
+```
+
+Fast diff scan against `main`:
+
+```bash
+npm run security:strix:diff
+```
+
+The npm commands use the root repository configuration and can be overridden with explicit runner flags.
+
+## Components and profiles
+
+Components:
+
+- `repo` — entire repository
+- `solana-launcher` — `solana-launcher/`
+- `backend` — `solana-launcher/backend/`
+- `admin-site` — `admin-site/`
+- `memecoin-intelligence` — `memecoin-intelligence/`
 
 Profiles:
 
-- `instructions/01-baseline-source.md` — complete attack-surface and baseline review
-- `instructions/02-authz-business.md` — auth, authorization, IDOR, payments and business logic
-- `instructions/03-external-llm-infra.md` — SSRF, external integrations, LLM, secrets, Docker/Nginx/CI
+- `baseline` — complete source attack-surface review
+- `authz-business` — auth, authorization, IDOR, payments and business logic
+- `external-llm-infra` — SSRF, external integrations, LLM, secrets, Docker and infrastructure
 
-## Manual GitHub Actions audit
+Examples:
 
-The manual workflow `.github/workflows/strix-security-audit.yml` uses the same dedicated secret and optional repository variable:
+```bash
+bash scripts/strix-scan.sh \
+  --component backend \
+  --profile authz-business \
+  --mode standard \
+  --budget 10
+```
 
-- Repository secret: `STRIX_LLM_API_KEY` — required
-- Repository variable: `STRIX_LLM` — optional; defaults to `openai/gpt-5.4`
+```bash
+bash scripts/strix-scan.sh \
+  --component repo \
+  --profile external-llm-infra \
+  --mode quick \
+  --scope diff \
+  --diff-base main \
+  --budget 10
+```
 
-The workflow validates `run.json.status == "completed"` before accepting a run and uploads SARIF when available.
+## Recommended source-audit cycle
 
-## How Cycle 1 is run
-
-Open GitHub Actions -> `Strix Security Audit - Source Only` -> `Run workflow`.
-
-Start with these runs in order:
+Run these in order after committing the code you want to audit:
 
 1. `repo` + `baseline` + `standard`
 2. `solana-launcher` + `authz-business` + `standard`
@@ -58,51 +152,87 @@ Start with these runs in order:
 5. `memecoin-intelligence` + `external-llm-infra` + `standard`
 6. `repo` + `external-llm-infra` + `standard`
 
-Use a conservative per-run budget first. Increase it whenever the run stops early or cost approaches the configured cap closely enough that coverage may have been truncated.
+Increase the budget if a scan stops early or coverage in the generated report is incomplete.
 
-## Exit-code handling
+## Exit handling
 
-Strix headless exit codes:
+The local wrapper preserves Strix's useful headless contract:
 
-- `0` — no validated vulnerabilities reported for what was analyzed
-- `1` — execution error
-- `2` — validated vulnerabilities found
+- `0` — completed and no validated vulnerabilities were reported for what was analyzed
+- `1` — configuration/execution/incomplete-run failure
+- `2` — completed and validated vulnerabilities were reported
 
-The automatic PR workflow treats `2` as a failed security gate. The manual source audit retains evidence for review while independently validating each finding.
+A Strix exit code of `0` by itself is not considered sufficient. The wrapper additionally requires a generated `run.json` with `status: "completed"`.
 
-A zero exit code is not enough by itself: `run.json` must exist and report `status: "completed"`.
+## Reports
 
-## Evidence handling
+Each run gets its own ignored directory:
 
-Every workflow run uploads:
+```text
+security/strix/reports/
+  20260906T180000Z-repo-baseline-standard-abc123def456/
+    local-run.txt
+    strix-console.log
+    penetration_test_report.md
+    run.json
+    findings.sarif
+    vulnerabilities.json
+    vulnerabilities.csv
+    vulnerabilities/
+```
 
-- `strix-console.log`
-- generated `strix_runs/**`
+`local-run.txt` records the commit, branch, profile, component, model, scope, budget and original Strix exit code. It never records `LLM_API_KEY`.
 
-When SARIF is generated, the workflows also attempt to upload it to GitHub Code Scanning.
+Reports may contain sensitive URLs, payloads or application context, so the directory is intentionally not committed.
 
-Do not accept a Strix result automatically. A final human/independent validation pass must classify each result as:
+## VPS / cron
+
+A VPS does not need GitHub Actions. Clone the repository normally, create `security/strix/.env`, ensure Docker is running, and execute the npm command.
+
+Example nightly cron entry at 03:15:
+
+```cron
+15 3 * * * cd /srv/claude-project && git fetch origin main && git checkout main && git reset --hard origin/main && /usr/bin/npm run security:strix:standard >> /var/log/claude-strix.log 2>&1
+```
+
+Use an absolute `npm` path from `command -v npm` on that server. Keep the repository and the Strix env file readable only by the service account.
+
+If you do not want the VPS to change its checkout automatically, remove the `git reset --hard origin/main` part and deploy/update the repository separately.
+
+## Rules of engagement
+
+The current cycle remains **source-only**. It must not actively test production or unrelated third-party infrastructure.
+
+Rules:
+
+- `ROE_SOURCE_ONLY.md`
+
+Profiles:
+
+- `instructions/01-baseline-source.md`
+- `instructions/02-authz-business.md`
+- `instructions/03-external-llm-infra.md`
+
+## Finding validation and remediation
+
+Do not accept a Strix result automatically. Classify each result as one of:
 
 - `CONFIRMED`
 - `NEEDS_PRODUCTION_VERIFICATION`
 - `HARDENING`
 - `FALSE_POSITIVE`
 
-A confirmed issue requires a reachable source/sink path, concrete impact and safe reproduction evidence.
-
-## Remediation workflow
-
 For every confirmed finding:
 
 1. reproduce the original PoC when feasible;
-2. patch the root cause using the framework's built-in security controls;
+2. patch the root cause using framework/platform security controls;
 3. add or update a regression test;
-4. re-run the focused PoC or a diff-scoped Strix scan;
-5. require a completed Strix run before classifying the finding as fixed.
+4. re-run the focused scan or `npm run security:strix:diff`;
+5. require another completed Strix run before marking the finding fixed.
 
-For leaked credentials, code changes are not sufficient: rotate the credential and purge it from repository history where applicable.
+For leaked credentials, source changes alone are not sufficient: rotate the credential and purge it from repository history where applicable.
 
-## Planned later cycles
+## Later cycles
 
 Cycle 2: targeted local dynamic reproduction of confirmed source findings.
 

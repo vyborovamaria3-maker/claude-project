@@ -12,6 +12,11 @@
     "subscription:test": "npm --prefix solana-subscription-service run test",
     "subscription:typecheck": "npm --prefix solana-subscription-service run typecheck",
     "subscription:compose": "docker compose -f solana-subscription-service/docker-compose.yml up --build",
-    "hygiene:check": "node scripts/repository-hygiene.mjs"
+    "hygiene:check": "node scripts/repository-hygiene.mjs",
+    "security:strix": "bash scripts/strix-scan.sh",
+    "security:strix:quick": "bash scripts/strix-scan.sh --mode quick --budget 5",
+    "security:strix:standard": "bash scripts/strix-scan.sh --mode standard --budget 10",
+    "security:strix:deep": "bash scripts/strix-scan.sh --mode deep --budget 25",
+    "security:strix:diff": "bash scripts/strix-scan.sh --mode quick --scope diff --diff-base main --budget 10"
   }
 }

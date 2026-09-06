@@ -54,6 +54,8 @@
 
 # Local security-scan evidence may contain URLs, headers, payloads or session context.
 security/audit/reports/
+security/strix/reports/
+strix_runs/
 
 # Generated deployment snapshots and temporary exports
 .deploy/
