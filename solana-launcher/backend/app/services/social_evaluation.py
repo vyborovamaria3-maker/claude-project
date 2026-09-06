@@ -232,7 +232,9 @@ async def evaluate_calls(
     mint_addresses = tuple(sorted({call.mint_address for call in calls}))
     token_rows = (
         await session.execute(
-            select(Token.id, Token.mint_address).where(Token.mint_address.in_(mint_addresses))
+            select(Token.id, Token.mint_address).where(
+                Token.mint_address.in_(mint_addresses)
+            )
         )
     ).all()
     token_by_mint = {mint: int(token_id) for token_id, mint in token_rows}
