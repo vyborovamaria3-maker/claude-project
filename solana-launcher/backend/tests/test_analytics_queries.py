@@ -65,7 +65,10 @@ async def test_list_tokens_sorts_latest_metrics_in_database(test_app):
             order="desc",
         )
 
-    assert hot_b.timestamp == now
+    hot_timestamp = hot_b.timestamp
+    if hot_timestamp.tzinfo is None:
+        hot_timestamp = hot_timestamp.replace(tzinfo=timezone.utc)
+    assert hot_timestamp == now
     assert hot_b.volume_24h == 50.0
     assert total == 3
     assert [item["symbol"] for item in items] == ["BBB", "CCC"]
