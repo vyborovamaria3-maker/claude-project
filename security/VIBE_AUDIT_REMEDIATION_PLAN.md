@@ -12,7 +12,7 @@ Reference methodology: `haraldalder-vibemogger/vibe-audit` categories (secrets/e
 | Default infrastructure credentials and unauthenticated Redis | High | Require runtime passwords; enable Redis authentication; remove credential-bearing application defaults | FIXED IN SOURCE |
 | Compose loaded `backend/.env.example` as runtime configuration | Critical contributor | Require untracked `backend/.env`; examples contain no usable runtime secrets | FIXED IN SOURCE |
 | Development password-provisioning bypass using a fixed source-controlled internal header | Critical/High | Remove fixed-header bypass; require configured `X-API-Key`; add middleware defense in depth | FIXED IN SOURCE |
-| Predictable development admin automatically created/reset on startup | Critical contributor | Never auto-bootstrap dev/test admin; never silently promote an existing account or reset its password | FIXED IN SOURCE |
+| Predictable development admin automatically created/reset on startup | Critical contributor | Never auto-bootstrap dev/test admin; never silently promote/reset an account; block startup if a deployed admin still uses the former known default password | FIXED IN SOURCE |
 | Telegram callback constructed bearer token in redirect query | Medium/Hardening | Stop constructing token-bearing URL; keep credentials out of redirect URL | FIXED IN SOURCE |
 | Historically committed Supabase service-role-style credential | High if credential was real | Rotate at provider and purge from Git history | EXTERNAL ACTION REQUIRED |
 | Dependency vulnerability freshness | Coverage gap | Run npm/pip dependency audits from a clean checkout and remediate actionable findings | VERIFY IN CI |
@@ -79,9 +79,10 @@ Production bootstrap behavior is fail-closed:
 - strong production settings are validated before startup;
 - a missing configured admin may be created once;
 - if the configured admin email already belongs to a non-superuser or inactive account, startup refuses automatic privilege escalation;
-- an existing superuser password is never reset from an environment variable on every restart.
+- an existing superuser password is never reset from an environment variable on every restart;
+- if an existing configured superuser still verifies against the former source-controlled default admin password, production startup is refused until the credential is explicitly rotated.
 
-Admin credential rotation should be performed through an explicit administrative procedure rather than implicit application startup behavior.
+This last check handles upgrades from an older deployment whose database may already contain the previously predictable administrator credential. Admin credential rotation should be performed through an explicit administrative procedure rather than implicit password resets on every application startup.
 
 ### 5. Telegram redirect credential handling
 
@@ -127,6 +128,8 @@ Required production security values include:
 - subscription internal/admin keys when the corresponding `REQUIRE_*` flags are enabled
 - Telegram/API provider credentials used by the deployment
 
+If production refuses startup because it detects the former default administrator credential in the database, rotate that account password through an explicit trusted administrative/database procedure before bringing the service online.
+
 Never copy generated secrets into issues, PR bodies, chat messages, logs, or committed example files.
 
 ## Validation plan
@@ -168,6 +171,7 @@ Acceptance criteria:
 - Telegram redirect has no query or fragment and contains no access token;
 - existing normal user cannot be silently promoted to admin;
 - existing superuser password is not reset at startup;
+- a pre-existing superuser carrying the former known default password blocks startup until rotation;
 - runtime defaults contain no embedded service/admin credentials;
 - production security validation still passes.
 
@@ -248,6 +252,7 @@ This remediation is complete only when all of the following are true:
 - dependency/secret audits pass or have time-bounded documented exceptions;
 - an independent post-fix audit is completed and triaged;
 - any historical real credential has been rotated and purged;
+- any legacy deployed default administrator credential has been rotated;
 - owner-authorized external verification confirms internal service ports are not exposed.
 
 Until the external/manual items are confirmed, report the project as **source-hardened with operational verification outstanding**, not as "fully secure".
