@@ -50,8 +50,20 @@ const heliusEndpoints: HeliusEndpointState[] = heliusApiKeys.map((apiKey) => ({
 
 let heliusCursor = 0;
 
+function redactHeliusSecrets(value: string): string {
+  let redacted = value;
+  for (const apiKey of heliusApiKeys) {
+    if (apiKey) redacted = redacted.split(apiKey).join("[REDACTED]");
+  }
+  return redacted;
+}
+
 function heliusErrorMessage(response: Response, body: string) {
-  return `Helius ${response.status} from ${response.url}: ${body || response.statusText}`;
+  // Helius credentials are sent in the request URL as `api-key`. Never include
+  // response.url in MCP errors/logs, and defensively redact a reflected key from
+  // the response body as well.
+  const detail = redactHeliusSecrets(body || response.statusText).slice(0, 500);
+  return `Helius HTTP ${response.status}: ${detail}`;
 }
 
 function chooseHeliusEndpoint() {
