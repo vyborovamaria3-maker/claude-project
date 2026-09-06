@@ -8,6 +8,7 @@ from app.models.advanced_intelligence import (
 from app.models.analytics import (
     CollectorJob,
     Token,
+    TokenLatestMetric,
     TokenMetric,
     TokenStatus,
     Wallet,
@@ -41,6 +42,7 @@ __all__ = [
     "CollectorJob",
     "AuthLog",
     "Token",
+    "TokenLatestMetric",
     "TokenMetric",
     "TokenStatus",
     "Wallet",
