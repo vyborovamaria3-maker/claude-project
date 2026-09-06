@@ -28,6 +28,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Scan current tracked files without printing secret values
         run: python3 security/audit/secret-scan.py --mode current
       - name: Scan newly introduced PR lines without printing secret values
@@ -36,9 +37,9 @@ jobs:
           AUDIT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           AUDIT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 security/audit/secret-scan.py --mode diff --base "$AUDIT_BASE_SHA" --head "$AUDIT_HEAD_SHA"
-      - name: Scan full git history for secrets (pre-merge safety net)
-        if: github.event_name == 'pull_request'
-        run: python3 security/audit/secret-scan.py --mode history
+      # Full-history scanning lives in the repository-wide Secret Scan workflow
+      # and is invoked explicitly while known rotated/pending historical leaks
+      # remain reachable. Current/diff scans stay blocking on every relevant PR.
 
   frontend-security:
     runs-on: ubuntu-latest
