@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -132,7 +133,7 @@ class TokenLatestMetric(Base):
     social_engagements: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
-def _latest_metric_values(metric: TokenMetric) -> dict:
+def _latest_metric_values(metric: TokenMetric) -> dict[str, Any]:
     return {
         "token_id": metric.token_id,
         "metric_id": metric.id,
@@ -154,61 +155,70 @@ def _latest_metric_values(metric: TokenMetric) -> dict:
     }
 
 
-def _upsert_latest_metric(connection, metric: TokenMetric) -> None:
+def _upsert_latest_metric(connection: Any, metric: TokenMetric) -> None:
     values = _latest_metric_values(metric)
     dialect_name = connection.dialect.name
 
-    if dialect_name in {"postgresql", "sqlite"}:
-        if dialect_name == "postgresql":
-            from sqlalchemy.dialects.postgresql import insert as dialect_insert
-        else:
-            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+    statement: Any
+    if dialect_name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        statement = dialect_insert(TokenLatestMetric).values(**values)
-        excluded = statement.excluded
-        newer = or_(
-            excluded.timestamp > TokenLatestMetric.timestamp,
-            and_(
-                excluded.timestamp == TokenLatestMetric.timestamp,
-                excluded.metric_id > TokenLatestMetric.metric_id,
-            ),
-        )
-        update_values = {
-            key: getattr(excluded, key)
-            for key in values
-            if key != "token_id"
-        }
-        connection.execute(
-            statement.on_conflict_do_update(
-                index_elements=[TokenLatestMetric.token_id],
-                set_=update_values,
-                where=newer,
+        statement = pg_insert(TokenLatestMetric).values(**values)
+    elif dialect_name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        statement = sqlite_insert(TokenLatestMetric).values(**values)
+    else:
+        current = connection.execute(
+            select(TokenLatestMetric.timestamp, TokenLatestMetric.metric_id).where(
+                TokenLatestMetric.token_id == metric.token_id
             )
-        )
+        ).first()
+        if current is None:
+            connection.execute(TokenLatestMetric.__table__.insert().values(**values))
+            return
+
+        current_timestamp, current_metric_id = current
+        if metric.timestamp > current_timestamp or (
+            metric.timestamp == current_timestamp and metric.id > current_metric_id
+        ):
+            connection.execute(
+                update(TokenLatestMetric)
+                .where(TokenLatestMetric.token_id == metric.token_id)
+                .values(
+                    **{
+                        key: value
+                        for key, value in values.items()
+                        if key != "token_id"
+                    }
+                )
+            )
         return
 
-    current = connection.execute(
-        select(TokenLatestMetric.timestamp, TokenLatestMetric.metric_id).where(
-            TokenLatestMetric.token_id == metric.token_id
+    excluded = statement.excluded
+    newer = or_(
+        excluded.timestamp > TokenLatestMetric.timestamp,
+        and_(
+            excluded.timestamp == TokenLatestMetric.timestamp,
+            excluded.metric_id > TokenLatestMetric.metric_id,
+        ),
+    )
+    update_values = {
+        key: getattr(excluded, key)
+        for key in values
+        if key != "token_id"
+    }
+    connection.execute(
+        statement.on_conflict_do_update(
+            index_elements=[TokenLatestMetric.token_id],
+            set_=update_values,
+            where=newer,
         )
-    ).first()
-    if current is None:
-        connection.execute(TokenLatestMetric.__table__.insert().values(**values))
-        return
-
-    current_timestamp, current_metric_id = current
-    if metric.timestamp > current_timestamp or (
-        metric.timestamp == current_timestamp and metric.id > current_metric_id
-    ):
-        connection.execute(
-            update(TokenLatestMetric)
-            .where(TokenLatestMetric.token_id == metric.token_id)
-            .values(**{key: value for key, value in values.items() if key != "token_id"})
-        )
+    )
 
 
 @event.listens_for(TokenMetric, "after_insert")
-def _sync_token_latest_metric(_mapper, connection, target: TokenMetric) -> None:
+def _sync_token_latest_metric(_mapper: Any, connection: Any, target: TokenMetric) -> None:
     _upsert_latest_metric(connection, target)
 
 
