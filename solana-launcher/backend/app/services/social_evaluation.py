@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +39,11 @@ async def _load_metrics_for_calls(
     for token_id, calls in calls_by_token.items():
         starts = [
             _aware(call.called_at)
-            - (CALL_BASELINE_LOOKBACK if call.call_price_usd is None or call.call_market_cap_usd is None else timedelta())
+            - (
+                CALL_BASELINE_LOOKBACK
+                if call.call_price_usd is None or call.call_market_cap_usd is None
+                else timedelta()
+            )
             for call in calls
         ]
         ends = [_aware(call.called_at) + timedelta(hours=window_hours) for call in calls]
@@ -64,7 +67,11 @@ async def _load_metrics_for_calls(
                 await session.execute(
                     select(TokenMetric)
                     .where(or_(*conditions))
-                    .order_by(TokenMetric.token_id.asc(), TokenMetric.timestamp.asc(), TokenMetric.id.asc())
+                    .order_by(
+                        TokenMetric.token_id.asc(),
+                        TokenMetric.timestamp.asc(),
+                        TokenMetric.id.asc(),
+                    )
                 )
             ).scalars().all()
         )
