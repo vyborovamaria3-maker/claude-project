@@ -82,16 +82,31 @@ async def test_bulk_call_evaluation_uses_bounded_queries_and_updates_score(test_
 
     statements: list[str] = []
 
-    def record_select(_conn, _cursor, statement, _parameters, _context, _executemany):
+    def record_select(
+        _conn,
+        _cursor,
+        statement,
+        _parameters,
+        _context,
+        _executemany,
+    ):
         if statement.lstrip().upper().startswith("SELECT"):
             statements.append(statement)
 
-    event.listen(test_app.state.engine.sync_engine, "before_cursor_execute", record_select)
+    event.listen(
+        test_app.state.engine.sync_engine,
+        "before_cursor_execute",
+        record_select,
+    )
     try:
         async with test_app.state.sessionmaker() as session:
             result = await evaluate_calls(session, limit=100, window_hours=6)
     finally:
-        event.remove(test_app.state.engine.sync_engine, "before_cursor_execute", record_select)
+        event.remove(
+            test_app.state.engine.sync_engine,
+            "before_cursor_execute",
+            record_select,
+        )
 
     async with test_app.state.sessionmaker() as session:
         calls = list(
