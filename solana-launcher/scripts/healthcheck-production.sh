@@ -44,6 +44,7 @@ REQUIRED_SERVICES=(
   rabbitmq
   backend
   celery-worker
+  celery-beat
   frontend
   nginx
   prometheus
@@ -211,6 +212,7 @@ echo "Mini App config: ${miniapp_config:-unavailable}" >&2
   rabbitmq \
   backend \
   celery-worker \
+  celery-beat \
   frontend \
   nginx \
   prometheus || true
