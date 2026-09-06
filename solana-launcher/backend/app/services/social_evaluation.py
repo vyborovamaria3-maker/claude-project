@@ -306,7 +306,11 @@ async def evaluate_calls(
                 0.0,
             )
             final_to_peak = None
-            if caps and call.peak_market_cap_usd and call.peak_market_cap_usd > 0:
+            if (
+                caps
+                and call.peak_market_cap_usd
+                and call.peak_market_cap_usd > 0
+            ):
                 final_to_peak = caps[-1] / call.peak_market_cap_usd
             elif prices and call.peak_price_usd and call.peak_price_usd > 0:
                 final_to_peak = prices[-1] / call.peak_price_usd
