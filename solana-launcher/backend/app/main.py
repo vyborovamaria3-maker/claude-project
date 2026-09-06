@@ -93,12 +93,13 @@ def create_app(
             return await call_next(request)
 
         # The legacy paid-password provisioning route is intentionally absent
-        # from production. Development/test use still requires a real secret;
-        # a fixed source-controlled header must never authorize it.
+        # from production. Development/test use still requires the dedicated
+        # subscription credential; a fixed source-controlled header must never
+        # authorize it and the broader backend/intelligence key is not accepted.
         if is_production:
             return JSONResponse(status_code=404, content={"detail": "Not found"})
 
-        expected_key = settings.backend_api_key.strip()
+        expected_key = settings.subscription_internal_key.strip()
         supplied_key = request.headers.get("X-API-Key", "")
         if not expected_key:
             return JSONResponse(
