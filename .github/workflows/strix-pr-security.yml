@@ -119,7 +119,7 @@ jobs:
       - name: Upload SARIF to GitHub code scanning
         if: always() && hashFiles('strix_runs/**/findings.sarif') != ''
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d # v3, 2026-08-26
         with:
           sarif_file: strix_runs
 
