@@ -204,7 +204,10 @@ async def evaluate_calls(
     limit: int = 1000,
     window_hours: int = 72,
 ) -> dict[str, int]:
-    """Evaluate Telegram calls with bulk token/metric reads instead of per-call N+1 queries."""
+    """Evaluate Telegram calls with bulk token and metric reads.
+
+    This replaces per-call Token/TokenMetric lookups and per-channel full-call loads.
+    """
     safe_window_hours = max(6, min(int(window_hours), 24 * 30))
     calls = list(
         (
