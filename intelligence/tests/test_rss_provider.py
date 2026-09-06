@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import socket
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from intelligence.core.models import IntelligenceDocument
 from intelligence.errors.exceptions import NormalizationError, ProviderError
 from intelligence.providers.rss.parser import parse_feed
 from intelligence.providers.rss.provider import RSSIntelligenceProvider
+from intelligence.security.urls import validate_outbound_public_http_url
 
 
 RSS_SAMPLE = b"""<?xml version='1.0' encoding='UTF-8'?>
@@ -57,6 +60,26 @@ class FakeRSSClient:
 class FailingRSSClient(FakeRSSClient):
     async def health(self) -> int:
         raise ProviderError("cookie=must-not-leak")
+
+
+class RSSOutboundSecurityTests(unittest.TestCase):
+    @patch("intelligence.security.urls.socket.getaddrinfo")
+    def test_rejects_hostname_resolving_to_private_ip(self, getaddrinfo) -> None:
+        getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 443))
+        ]
+        with self.assertRaisesRegex(ValueError, "non-public"):
+            validate_outbound_public_http_url("https://public-looking.example/feed.xml")
+
+    @patch("intelligence.security.urls.socket.getaddrinfo")
+    def test_accepts_hostname_when_all_resolved_addresses_are_public(self, getaddrinfo) -> None:
+        getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))
+        ]
+        self.assertEqual(
+            validate_outbound_public_http_url("https://example.com/feed.xml#fragment"),
+            "https://example.com/feed.xml",
+        )
 
 
 class RSSParserTests(unittest.TestCase):
