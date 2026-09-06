@@ -14,9 +14,9 @@ from app.schemas.social_intelligence import (
     TelegramScanRequest,
     XSocialIngestRequest,
 )
+from app.services.social_evaluation import evaluate_calls
 from app.services.social_filters import filter_timeline_payload, normalize_social_source
 from app.services.social_intelligence import (
-    evaluate_calls,
     ingest_x_events,
     list_calls,
     list_channels,
