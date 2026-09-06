@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
-from app.models.analytics import Token, TokenMetric, Wallet, WalletTrade
+from sqlalchemy import select
+
+from app.models.analytics import Token, TokenLatestMetric, TokenMetric, Wallet, WalletTrade
 from app.services.analytics_queries import get_wallet_activity, list_tokens
 
 
@@ -39,10 +41,22 @@ async def test_list_tokens_sorts_latest_metrics_in_database(test_app):
                     volume_24h=30.0,
                     ath_usd=30.0,
                 ),
+                # A stale observation arriving later must not replace the hot row.
+                TokenMetric(
+                    token_id=token_b.id,
+                    timestamp=now - timedelta(hours=2),
+                    volume_24h=5000.0,
+                    ath_usd=5000.0,
+                ),
             ]
         )
         await session.commit()
 
+        hot_b = (
+            await session.execute(
+                select(TokenLatestMetric).where(TokenLatestMetric.token_id == token_b.id)
+            )
+        ).scalar_one()
         items, total = await list_tokens(
             session,
             limit=2,
@@ -51,6 +65,8 @@ async def test_list_tokens_sorts_latest_metrics_in_database(test_app):
             order="desc",
         )
 
+    assert hot_b.timestamp == now
+    assert hot_b.volume_24h == 50.0
     assert total == 3
     assert [item["symbol"] for item in items] == ["BBB", "CCC"]
     assert items[0]["latest_metric"]["timestamp"] is not None
