@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.models.analytics import Token, TokenLatestMetric, TokenMetric, Wallet, WalletTrade
-from app.services.analytics_queries import get_wallet_activity, list_tokens
+from app.services.analytics_queries import get_token_analysis, get_wallet_activity, list_tokens
 
 
 async def test_list_tokens_sorts_latest_metrics_in_database(test_app):
@@ -74,6 +74,47 @@ async def test_list_tokens_sorts_latest_metrics_in_database(test_app):
     assert [item["symbol"] for item in items] == ["BBB", "CCC"]
     assert items[0]["latest_metric"]["timestamp"] is not None
     assert items[0]["latest_metric"]["volume_24h"] == 50.0
+
+
+async def test_token_analysis_query_count_stays_bounded_with_large_history(test_app):
+    now = datetime(2026, 9, 6, tzinfo=timezone.utc)
+    async with test_app.state.sessionmaker() as session:
+        token = Token(mint_address="analysis-mint", name="Analysis", symbol="ANL")
+        session.add(token)
+        await session.flush()
+        token_id = token.id
+        session.add_all(
+            [
+                TokenMetric(
+                    token_id=token.id,
+                    timestamp=now - timedelta(minutes=offset),
+                    price_usd=float(200 - offset),
+                    market_cap=float(1_000_000 - offset),
+                    volume_24h=float(offset),
+                )
+                for offset in range(150)
+            ]
+        )
+        await session.commit()
+
+    statements: list[str] = []
+
+    def record_select(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    event.listen(test_app.state.engine.sync_engine, "before_cursor_execute", record_select)
+    try:
+        async with test_app.state.sessionmaker() as session:
+            data = await get_token_analysis(session, "analysis-mint")
+    finally:
+        event.remove(test_app.state.engine.sync_engine, "before_cursor_execute", record_select)
+
+    assert data["token"]["id"] == token_id
+    assert len(data["metrics"]) == 100
+    assert data["token"]["latest_metric"]["price_usd"] == 200.0
+    # Token, hot metric, bounded metric history, top-wallet aggregate.
+    assert len(statements) == 4
 
 
 async def test_wallet_activity_is_paginated_but_summary_covers_all_trades(test_app):
