@@ -14,6 +14,11 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_,
+    event,
+    or_,
+    select,
+    update,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -91,6 +96,120 @@ class TokenMetric(Base):
     social_engagements: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     token: Mapped[Token] = relationship(back_populates="metrics")
+
+
+class TokenLatestMetric(Base):
+    """One hot row per token for dashboard sorting and list rendering."""
+
+    __tablename__ = "token_latest_metrics"
+    __table_args__ = (
+        Index("ix_token_latest_metrics_ath_usd", "ath_usd"),
+        Index("ix_token_latest_metrics_volume_24h", "volume_24h"),
+        Index("ix_token_latest_metrics_liquidity_usd", "liquidity_usd"),
+        Index("ix_token_latest_metrics_market_cap", "market_cap"),
+        Index("ix_token_latest_metrics_holder_count", "holder_count"),
+    )
+
+    token_id: Mapped[int] = mapped_column(
+        ForeignKey("tokens.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    metric_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    price_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ath_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ath_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    market_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fdv: Mapped[float | None] = mapped_column(Float, nullable=True)
+    liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_24h: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tx_count_24h: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    holder_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    twitter_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    telegram_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    discord_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    website_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    social_engagements: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+def _latest_metric_values(metric: TokenMetric) -> dict:
+    return {
+        "token_id": metric.token_id,
+        "metric_id": metric.id,
+        "timestamp": metric.timestamp,
+        "price_usd": metric.price_usd,
+        "ath_usd": metric.ath_usd,
+        "ath_date": metric.ath_date,
+        "market_cap": metric.market_cap,
+        "fdv": metric.fdv,
+        "liquidity_usd": metric.liquidity_usd,
+        "volume_24h": metric.volume_24h,
+        "tx_count_24h": metric.tx_count_24h,
+        "holder_count": metric.holder_count,
+        "twitter_url": metric.twitter_url,
+        "telegram_url": metric.telegram_url,
+        "discord_url": metric.discord_url,
+        "website_url": metric.website_url,
+        "social_engagements": metric.social_engagements,
+    }
+
+
+def _upsert_latest_metric(connection, metric: TokenMetric) -> None:
+    values = _latest_metric_values(metric)
+    dialect_name = connection.dialect.name
+
+    if dialect_name in {"postgresql", "sqlite"}:
+        if dialect_name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+
+        statement = dialect_insert(TokenLatestMetric).values(**values)
+        excluded = statement.excluded
+        newer = or_(
+            excluded.timestamp > TokenLatestMetric.timestamp,
+            and_(
+                excluded.timestamp == TokenLatestMetric.timestamp,
+                excluded.metric_id > TokenLatestMetric.metric_id,
+            ),
+        )
+        update_values = {
+            key: getattr(excluded, key)
+            for key in values
+            if key != "token_id"
+        }
+        connection.execute(
+            statement.on_conflict_do_update(
+                index_elements=[TokenLatestMetric.token_id],
+                set_=update_values,
+                where=newer,
+            )
+        )
+        return
+
+    current = connection.execute(
+        select(TokenLatestMetric.timestamp, TokenLatestMetric.metric_id).where(
+            TokenLatestMetric.token_id == metric.token_id
+        )
+    ).first()
+    if current is None:
+        connection.execute(TokenLatestMetric.__table__.insert().values(**values))
+        return
+
+    current_timestamp, current_metric_id = current
+    if metric.timestamp > current_timestamp or (
+        metric.timestamp == current_timestamp and metric.id > current_metric_id
+    ):
+        connection.execute(
+            update(TokenLatestMetric)
+            .where(TokenLatestMetric.token_id == metric.token_id)
+            .values(**{key: value for key, value in values.items() if key != "token_id"})
+        )
+
+
+@event.listens_for(TokenMetric, "after_insert")
+def _sync_token_latest_metric(_mapper, connection, target: TokenMetric) -> None:
+    _upsert_latest_metric(connection, target)
 
 
 class Wallet(Base):
