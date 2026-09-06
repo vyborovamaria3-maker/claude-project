@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.services.etl import sync_metrics_for_active_tokens, sync_pumpfun_tokens
+from app.services.market_ingestion import sync_metrics_for_active_tokens, sync_pumpfun_tokens
 from app.services.observability import ETL_ERRORS, ETL_RUNTIME
 from app.services.wallet_clusters import rebuild_wallet_links
 
@@ -12,7 +12,7 @@ async def run_full_collection(
     session: AsyncSession,
     settings: Settings | None = None,
 ) -> dict[str, int]:
-    """Run the collector with the optimized derived-data rebuild path."""
+    """Run the collector with optimized ingestion and derived-data rebuild paths."""
     settings = settings or get_settings()
     with ETL_RUNTIME.time():
         try:
