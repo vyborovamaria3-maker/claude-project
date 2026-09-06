@@ -13,7 +13,11 @@ from sqlalchemy.orm import noload
 from app.core.config import Settings, get_settings
 from app.models.analytics import Token, TokenMetric, TokenStatus
 from app.services.cache import cache_json, read_json_cache
-from app.services.etl import TokenSourcePayload, fetch_social_links_from_source, upsert_token
+from app.services.etl import (
+    TokenSourcePayload,
+    fetch_social_links_from_source,
+    upsert_token,
+)
 from app.services.observability import TOKENS_PROCESSED
 
 BIRDEYE_REQUEST_CONCURRENCY = 12
@@ -93,8 +97,12 @@ async def fetch_pumpfun_tokens(
                 symbol=item.get("symbol") or item.get("ticker"),
                 description=item.get("description"),
                 creator_wallet=item.get("creator") or item.get("creatorWallet"),
-                creation_date=_parse_datetime(item.get("createdAt") or item.get("creationDate")),
-                migrated_to_raydium=bool(item.get("migrated") or item.get("isMigrated")),
+                creation_date=_parse_datetime(
+                    item.get("createdAt") or item.get("creationDate")
+                ),
+                migrated_to_raydium=bool(
+                    item.get("migrated") or item.get("isMigrated")
+                ),
                 migration_date=_parse_datetime(item.get("migrationDate")),
                 status=(
                     TokenStatus.MIGRATED.value
@@ -104,7 +112,11 @@ async def fetch_pumpfun_tokens(
             )
         )
     # TokenSourcePayload is a slotted dataclass, so use asdict rather than __dict__.
-    await _safe_cache_write(cache_key, [asdict(item) for item in tokens], ttl_seconds=60)
+    await _safe_cache_write(
+        cache_key,
+        [asdict(item) for item in tokens],
+        ttl_seconds=60,
+    )
     return tokens
 
 
@@ -135,7 +147,11 @@ async def fetch_birdeye_metrics(
     if cached is not None:
         return dict(cached)
 
-    headers = {"X-API-KEY": settings.birdeye_api_key} if settings.birdeye_api_key else None
+    headers = (
+        {"X-API-KEY": settings.birdeye_api_key}
+        if settings.birdeye_api_key
+        else None
+    )
     base = settings.birdeye_api_base.rstrip("/")
     urls = {
         "price": f"{base}/defi/price?address={mint_address}",
@@ -216,12 +232,24 @@ def _metric_values(
         "price_usd": _to_float(price_value),
         "ath_usd": _to_float(price_value),
         "ath_date": now,
-        "market_cap": _to_float(_deep_find(metrics, {"marketCap", "market_cap"})),
-        "fdv": _to_float(_deep_find(metrics, {"fdv", "fullyDilutedValuation"})),
-        "liquidity_usd": _to_float(_deep_find(metrics, {"liquidity", "liquidityUsd"})),
-        "volume_24h": _to_float(_deep_find(metrics, {"volume24h", "volume_24h"})),
-        "tx_count_24h": _to_int(_deep_find(metrics, {"txCount24h", "tx_count_24h"})),
-        "holder_count": _to_int(_deep_find(metrics, {"holderCount", "holder_count"})),
+        "market_cap": _to_float(
+            _deep_find(metrics, {"marketCap", "market_cap"})
+        ),
+        "fdv": _to_float(
+            _deep_find(metrics, {"fdv", "fullyDilutedValuation"})
+        ),
+        "liquidity_usd": _to_float(
+            _deep_find(metrics, {"liquidity", "liquidityUsd"})
+        ),
+        "volume_24h": _to_float(
+            _deep_find(metrics, {"volume24h", "volume_24h"})
+        ),
+        "tx_count_24h": _to_int(
+            _deep_find(metrics, {"txCount24h", "tx_count_24h"})
+        ),
+        "holder_count": _to_int(
+            _deep_find(metrics, {"holderCount", "holder_count"})
+        ),
         "twitter_url": social_links.get("twitter_url"),
         "telegram_url": social_links.get("telegram_url"),
         "discord_url": social_links.get("discord_url"),
@@ -303,7 +331,10 @@ async def sync_metrics_for_active_tokens(
                 )
             )
             metric_rows = [
-                TokenMetric(token_id=token_id, **_metric_values(metrics, social_links))
+                TokenMetric(
+                    token_id=token_id,
+                    **_metric_values(metrics, social_links),
+                )
                 for token_id, metrics, social_links in observations
             ]
             session.add_all(metric_rows)
