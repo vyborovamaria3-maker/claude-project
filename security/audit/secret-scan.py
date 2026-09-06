@@ -7,6 +7,7 @@ import argparse
 import re
 import subprocess
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,7 +39,11 @@ PLACEHOLDERS = (
 TEXT_SUFFIXES = {
     ".env", ".example", ".ini", ".json", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
     ".py", ".yml", ".yaml", ".toml", ".md", ".txt", ".sh", ".conf", ".properties",
+    ".patch", ".diff", ".sql", ".html", ".css", ".xml",
 }
+ARCHIVE_SUFFIXES = {".zip"}
+MAX_ARCHIVE_ENTRY_BYTES = 2_000_000
+MAX_ARCHIVE_TOTAL_BYTES = 20_000_000
 
 
 def is_placeholder_match(value: str) -> bool:
@@ -56,6 +61,53 @@ def scan_line(path: str, line: str, findings: set[tuple[str, str]]) -> None:
                 break
 
 
+def should_scan_text_path(path: Path) -> bool:
+    return (
+        path.suffix.lower() in TEXT_SUFFIXES
+        or ".env" in path.name
+        or path.name == ".editorconfig"
+    )
+
+
+def scan_text_file(path: str, file_path: Path, findings: set[tuple[str, str]]) -> None:
+    try:
+        with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                scan_line(path, line, findings)
+    except OSError:
+        return
+
+
+def scan_zip_file(path: str, file_path: Path, findings: set[tuple[str, str]]) -> None:
+    total_uncompressed = 0
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                total_uncompressed += info.file_size
+                if total_uncompressed > MAX_ARCHIVE_TOTAL_BYTES:
+                    findings.add((path, "archive-too-large-to-scan-safely"))
+                    return
+                if info.file_size > MAX_ARCHIVE_ENTRY_BYTES:
+                    findings.add((f"{path}!/{info.filename}", "archive-entry-too-large-to-scan-safely"))
+                    continue
+                inner_path = Path(info.filename)
+                if not should_scan_text_path(inner_path):
+                    continue
+                try:
+                    payload = archive.read(info)
+                except (KeyError, RuntimeError, zipfile.BadZipFile):
+                    findings.add((f"{path}!/{info.filename}", "archive-entry-unreadable"))
+                    continue
+                text = payload.decode("utf-8", errors="ignore")
+                virtual_path = f"{path}!/{info.filename}"
+                for line in text.splitlines():
+                    scan_line(virtual_path, line, findings)
+    except (OSError, zipfile.BadZipFile, RuntimeError):
+        findings.add((path, "archive-unreadable"))
+
+
 def scan_current(findings: set[tuple[str, str]]) -> None:
     output = subprocess.check_output(["git", "ls-files", "-z"])
     for raw in output.split(b"\0"):
@@ -65,14 +117,11 @@ def scan_current(findings: set[tuple[str, str]]) -> None:
         file_path = Path(path)
         if not file_path.is_file():
             continue
-        if file_path.suffix.lower() not in TEXT_SUFFIXES and ".env" not in file_path.name and file_path.name != ".editorconfig":
+        if file_path.suffix.lower() in ARCHIVE_SUFFIXES:
+            scan_zip_file(path, file_path, findings)
             continue
-        try:
-            with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
-                for line in handle:
-                    scan_line(path, line, findings)
-        except OSError:
-            continue
+        if should_scan_text_path(file_path):
+            scan_text_file(path, file_path, findings)
 
 
 def scan_patch(lines: list[str], findings: set[tuple[str, str]]) -> None:
