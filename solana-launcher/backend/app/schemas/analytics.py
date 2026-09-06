@@ -135,6 +135,7 @@ class WalletActivityResponse(BaseModel):
     trades: list[WalletTradeRead]
     profit_total: float
     token_count: int
+    meta: PagingMeta
 
 
 class WalletTopResponse(BaseModel):
