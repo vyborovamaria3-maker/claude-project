@@ -6,6 +6,8 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,12 +28,23 @@ def check_secret_scan_behavior(failures: list[str]) -> None:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
+    fake_jwt = "eyJabcdefghij.abcdefghijk.abcdefghijk"
+
     findings: set[tuple[str, str]] = set()
     # A placeholder elsewhere on the line must not suppress a real JWT match.
-    fake_jwt = "eyJabcdefghij.abcdefghijk.abcdefghijk"
     module.scan_line("fixture.txt", f"YOUR_TOKEN example only; leaked={fake_jwt}", findings)
     if ("fixture.txt", "jwt-bearer") not in findings:
         failures.append("secret scanner can still be bypassed by placeholder text on the same line")
+
+    # Tracked source archives are part of the repository attack surface too.
+    with tempfile.TemporaryDirectory() as tmp:
+        archive_path = Path(tmp) / "fixture.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("src/config.ts", f"export const leaked = '{fake_jwt}';\n")
+        archive_findings: set[tuple[str, str]] = set()
+        module.scan_zip_file("fixture.zip", archive_path, archive_findings)
+        if ("fixture.zip!/src/config.ts", "jwt-bearer") not in archive_findings:
+            failures.append("secret scanner does not inspect text files inside tracked ZIP archives")
 
 
 def main() -> int:
