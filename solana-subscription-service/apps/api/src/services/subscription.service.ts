@@ -101,6 +101,11 @@ export async function confirmPayment(userId: string, paymentId: string, signatur
       throw new AppError(409, "Payment was already processed", "PAYMENT_ALREADY_PROCESSED");
     }
 
+    // Different valid payments for the same user may be confirmed concurrently.
+    // Serialize the entitlement read/extend/create section so a later payment sees
+    // the end date committed by the previous one instead of overwriting it.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 0))`;
+
     const activeSubscription = await tx.subscription.findFirst({
       where: {
         userId,
