@@ -39,6 +39,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-solsub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-solsub}?schema=public
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      PAYMENT_CONFIRMATION_COMMITMENT: finalized
     command: sh -c "npm run prisma:deploy -w @solsub/api && npm run prisma:seed -w @solsub/api && npm run start -w @solsub/api"
     depends_on:
       postgres:
