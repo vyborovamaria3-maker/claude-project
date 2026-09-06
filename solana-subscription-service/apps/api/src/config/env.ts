@@ -29,7 +29,7 @@ const envSchema = z
     TREASURY_WALLET: z.string().min(32),
     TREASURY_USDC_TOKEN_ACCOUNT: z.string().min(32),
     USDC_MINT: z.string().min(32),
-    PAYMENT_CONFIRMATION_COMMITMENT: z.enum(["confirmed", "finalized"]).default("confirmed"),
+    PAYMENT_CONFIRMATION_COMMITMENT: z.enum(["confirmed", "finalized"]).default("finalized"),
     HELIUS_WEBHOOK_AUTH_TOKEN: z.string().optional().default("")
   })
   .superRefine((value, ctx) => {
@@ -38,6 +38,13 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ["JWT_REFRESH_SECRET"],
         message: "JWT access and refresh secrets must be different"
+      });
+    }
+    if (value.NODE_ENV === "production" && value.PAYMENT_CONFIRMATION_COMMITMENT !== "finalized") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["PAYMENT_CONFIRMATION_COMMITMENT"],
+        message: "Production payment verification requires finalized Solana transactions"
       });
     }
   });
