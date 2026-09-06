@@ -7,6 +7,17 @@ if [[ -z "$ROOT" ]]; then
   exit 1
 fi
 
+ENV_FILE="${STRIX_ENV_FILE:-$ROOT/security/strix/.env}"
+
+# Optional local/VPS configuration. The real file is ignored by git.
+# Load it before CLI parsing so explicit command-line flags always win.
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
 COMPONENT="${STRIX_COMPONENT:-repo}"
 PROFILE="${STRIX_PROFILE:-baseline}"
 MODE="${STRIX_SCAN_MODE:-standard}"
@@ -14,7 +25,7 @@ BUDGET="${STRIX_MAX_BUDGET:-10}"
 SCOPE_MODE="${STRIX_SCOPE_MODE:-full}"
 DIFF_BASE="${STRIX_DIFF_BASE:-main}"
 REPORT_ROOT="${STRIX_REPORT_DIR:-$ROOT/security/strix/reports}"
-ENV_FILE="${STRIX_ENV_FILE:-$ROOT/security/strix/.env}"
+STRIX_LLM="${STRIX_LLM:-openai/gpt-5.4}"
 
 usage() {
   cat <<'EOF'
@@ -54,16 +65,6 @@ while (($#)); do
   esac
 done
 
-# Optional local/VPS configuration. The real file is ignored by git.
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-fi
-
-STRIX_LLM="${STRIX_LLM:-openai/gpt-5.4}"
-
 case "$COMPONENT" in
   repo) TARGET_REL="." ;;
   solana-launcher) TARGET_REL="solana-launcher" ;;
@@ -90,7 +91,7 @@ case "$SCOPE_MODE" in
   *) echo "[strix] ERROR: unsupported scope mode: $SCOPE_MODE" >&2; exit 1 ;;
 esac
 
-if ! [[ "$BUDGET" =~ ^[0-9]+([.][0-9]+)?$ ]] || [[ "$BUDGET" == "0" || "$BUDGET" == "0.0" ]]; then
+if ! [[ "$BUDGET" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   echo "[strix] ERROR: --budget must be a positive number." >&2
   exit 1
 fi
@@ -104,6 +105,11 @@ for command_name in git node docker strix; do
     exit 1
   fi
 done
+
+if ! node -e 'const n=Number(process.argv[1]); process.exit(Number.isFinite(n) && n > 0 ? 0 : 1)' "$BUDGET"; then
+  echo "[strix] ERROR: --budget must be greater than zero." >&2
+  exit 1
+fi
 
 if ! docker info >/dev/null 2>&1; then
   echo "[strix] ERROR: Docker is installed but the daemon is not available." >&2
@@ -125,6 +131,12 @@ for required_file in \
     exit 1
   fi
 done
+
+if [[ "$REPORT_ROOT" != /* ]]; then
+  REPORT_ROOT="$ROOT/$REPORT_ROOT"
+fi
+mkdir -p "$REPORT_ROOT"
+REPORT_ROOT="$(cd "$REPORT_ROOT" && pwd -P)"
 
 HEAD_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 SHORT_SHA="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
@@ -173,8 +185,13 @@ ARGS=(
 
 if [[ "$SCOPE_MODE" == "diff" ]]; then
   if ! git -C "$SCAN_REPO" rev-parse --verify --quiet "$DIFF_BASE^{commit}" >/dev/null; then
-    echo "[strix] ERROR: diff base cannot be resolved in isolated clone: $DIFF_BASE" >&2
-    exit 1
+    REMOTE_DIFF_BASE="origin/$DIFF_BASE"
+    if git -C "$SCAN_REPO" rev-parse --verify --quiet "$REMOTE_DIFF_BASE^{commit}" >/dev/null; then
+      DIFF_BASE="$REMOTE_DIFF_BASE"
+    else
+      echo "[strix] ERROR: diff base cannot be resolved in isolated clone: $DIFF_BASE" >&2
+      exit 1
+    fi
   fi
   ARGS+=(--diff-base "$DIFF_BASE")
 fi
