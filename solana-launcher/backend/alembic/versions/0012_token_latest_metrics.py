@@ -21,7 +21,7 @@ def upgrade() -> None:
             primary_key=True,
             nullable=False,
         ),
-        sa.Column("metric_id", sa.Integer(), nullable=False, unique=True),
+        sa.Column("metric_id", sa.Integer(), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("price_usd", sa.Float(), nullable=True),
         sa.Column("ath_usd", sa.Float(), nullable=True),
