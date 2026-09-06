@@ -14,6 +14,7 @@
     "subscription:compose": "docker compose -f solana-subscription-service/docker-compose.yml up --build",
     "hygiene:check": "node scripts/repository-hygiene.mjs",
     "security:audit:local": "python3 security/audit/secret-scan.py --mode current && python3 security/audit/full-repo-regression.py",
+    "security:audit:history": "python3 security/audit/secret-scan.py --mode history",
     "security:strix": "bash scripts/strix-scan.sh",
     "security:strix:quick": "bash scripts/strix-scan.sh --mode quick --budget 5",
     "security:strix:standard": "bash scripts/strix-scan.sh --mode standard --budget 10",
