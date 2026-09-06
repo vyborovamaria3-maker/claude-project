@@ -12,7 +12,11 @@ from app.schemas.analytics import (
     WalletActivityResponse,
     WalletTopResponse,
 )
-from app.services.analytics_queries import get_token_analysis, get_wallet_activity, list_tokens
+from app.services.analytics_queries import (
+    get_token_analysis,
+    get_wallet_activity,
+    list_tokens,
+)
 from app.services.collection import run_full_collection
 from app.services.etl import (
     get_insider_clusters,
