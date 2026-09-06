@@ -284,7 +284,9 @@ async def evaluate_calls(
                 if metric.market_cap is not None and metric.market_cap > 0
             ]
             call.peak_price_usd = max(prices) if prices else call.peak_price_usd
-            call.peak_market_cap_usd = max(caps) if caps else call.peak_market_cap_usd
+            call.peak_market_cap_usd = (
+                max(caps) if caps else call.peak_market_cap_usd
+            )
 
             roi = None
             if call.call_market_cap_usd and call.peak_market_cap_usd:
