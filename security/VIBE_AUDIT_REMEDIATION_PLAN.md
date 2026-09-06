@@ -11,11 +11,12 @@ Reference methodology: `haraldalder-vibemogger/vibe-audit` categories (secrets/e
 | Docker services exposed directly on database/cache/broker/backend/frontend/metrics ports | Critical/High | Remove host port publishing for internal services; leave nginx as the ingress | FIXED IN SOURCE |
 | Default infrastructure credentials and unauthenticated Redis | High | Require runtime passwords; enable Redis authentication; remove credential-bearing application defaults | FIXED IN SOURCE |
 | Compose loaded `backend/.env.example` as runtime configuration | Critical contributor | Require untracked `backend/.env`; examples contain no usable runtime secrets | FIXED IN SOURCE |
-| Development password-provisioning bypass using a fixed source-controlled internal header | Critical/High | Remove fixed-header bypass; require configured `X-API-Key`; add middleware defense in depth | FIXED IN SOURCE |
+| Development password-provisioning bypass using a fixed source-controlled internal header | Critical/High | Remove fixed-header bypass; require the dedicated subscription credential; add middleware defense in depth | FIXED IN SOURCE |
+| Fixed development-header bypass on subscription settings/order endpoints | Critical/High | Remove the header bypass and require scoped subscription/admin API keys | FIXED IN SOURCE |
 | Predictable development admin automatically created/reset on startup | Critical contributor | Never auto-bootstrap dev/test admin; never silently promote/reset an account; block startup if a deployed admin still uses the former known default password | FIXED IN SOURCE |
 | Telegram callback constructed bearer token in redirect query | Medium/Hardening | Stop constructing token-bearing URL; keep credentials out of redirect URL | FIXED IN SOURCE |
 | Historically committed Supabase service-role-style credential | High if credential was real | Rotate at provider and purge from Git history | EXTERNAL ACTION REQUIRED |
-| Dependency vulnerability freshness | Coverage gap | Run npm/pip dependency audits from a clean checkout and remediate actionable findings | VERIFY IN CI |
+| Dependency vulnerability freshness | Coverage gap | Run npm/pip dependency audits from a clean checkout and remediate actionable findings | VERIFY WHEN RUNNERS RETURN |
 | Live internet exposure of old service ports | Verification gap | Authorized owner-only external reachability check after deployment | OWNER VERIFICATION |
 
 ## Source changes applied
@@ -54,19 +55,22 @@ Both real files are ignored by git.
 
 Production Compose still injects explicit authenticated service URLs, so these local fallbacks are not used for normal deployment.
 
-### 3. Legacy paid-password provisioning
+### 3. Legacy paid-password provisioning and subscription authorization
 
 `/api/v1/auth/register-password` no longer trusts any fixed source-controlled development header.
 
 Rules after remediation:
 
 - production: endpoint remains hidden with 404;
-- development/test: `BACKEND_API_KEY` must be configured;
+- development/test: `SUBSCRIPTION_INTERNAL_KEY` must be configured;
 - caller must provide that secret as `X-API-Key`;
+- `BACKEND_API_KEY` is intentionally rejected because it is scoped to intelligence/backend operations, not subscription provisioning;
 - missing configuration fails closed;
 - invalid key fails closed;
 - constant-time comparison is used;
 - the endpoint repeats the check even though application middleware already enforces it.
+
+The same fixed `X-Dev-Internal: miniapp-subscription` bypass was also removed from the subscription settings/order API. Checkout/order operations now require `SUBSCRIPTION_INTERNAL_KEY`; settings administration requires `SUBSCRIPTION_ADMIN_KEY`; settings reads accept only the explicitly scoped internal/admin keys.
 
 The previous fixed-header authorization path must never be restored.
 
@@ -92,7 +96,7 @@ A future session-hardening project can move browser authentication to Secure/Htt
 
 ### 6. Regression enforcement
 
-The repository `Security Gates` workflow now includes the new auth, admin-bootstrap, runtime-default and redirect security regression tests so future PRs cannot silently restore these paths.
+The repository `Security Gates` workflow includes the auth, admin-bootstrap, runtime-default, redirect, subscription-key-separation, and Compose-isolation security regression tests so future PRs cannot silently restore these paths.
 
 ## Required deployment preparation
 
@@ -125,8 +129,11 @@ Required production security values include:
 - `ADMIN_SESSION_SECRET` (>= 32 strong characters and different from `SECRET_KEY`)
 - `BACKEND_API_KEY` (>= 32 strong characters)
 - `SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY` (>= 32 strong characters and different from `SECRET_KEY`)
-- subscription internal/admin keys when the corresponding `REQUIRE_*` flags are enabled
+- `SUBSCRIPTION_INTERNAL_KEY` when checkout/order/internal subscription access is enabled
+- `SUBSCRIPTION_ADMIN_KEY` when main-admin subscription settings access is enabled
 - Telegram/API provider credentials used by the deployment
+
+Use independent random values for `BACKEND_API_KEY`, `SUBSCRIPTION_INTERNAL_KEY`, and `SUBSCRIPTION_ADMIN_KEY`; they are separate trust domains and must not be reused.
 
 If production refuses startup because it detects the former default administrator credential in the database, rotate that account password through an explicit trusted administrative/database procedure before bringing the service online.
 
@@ -138,7 +145,8 @@ Never copy generated secrets into issues, PR bodies, chat messages, logs, or com
 
 Acceptance criteria:
 
-- no fixed source-controlled header can authorize paid-password provisioning;
+- no fixed source-controlled header can authorize password provisioning or subscription operations;
+- the broader backend/intelligence key cannot authorize subscription provisioning;
 - no bearer token is constructed into the Telegram redirect URL;
 - no usable default service/admin credential is present in active runtime configuration;
 - no host publishing for database/cache/broker/backend/frontend/Prometheus services;
@@ -155,7 +163,9 @@ pytest -q \
   tests/test_auth_response_security.py \
   tests/test_admin_bootstrap_security.py \
   tests/test_runtime_security_defaults.py \
-  tests/test_production_admin_config.py
+  tests/test_production_admin_config.py \
+  tests/test_subscription_internal_access.py \
+  tests/test_subscription_compose_security.py
 ```
 
 Then run the complete backend suite:
@@ -167,12 +177,15 @@ pytest -q
 Acceptance criteria:
 
 - legacy fixed development authorization is rejected;
-- configured backend API key is required for non-production provisioning;
+- configured `SUBSCRIPTION_INTERNAL_KEY` is required for non-production subscription provisioning;
+- `BACKEND_API_KEY` cannot authorize subscription provisioning;
+- checkout/admin subscription credentials remain privilege-separated;
 - Telegram redirect has no query or fragment and contains no access token;
 - existing normal user cannot be silently promoted to admin;
 - existing superuser password is not reset at startup;
 - a pre-existing superuser carrying the former known default password blocks startup until rotation;
 - runtime defaults contain no embedded service/admin credentials;
+- Compose templates preserve internal-service isolation and required-secret behavior;
 - production security validation still passes.
 
 ### Phase C — Compose validation
@@ -200,13 +213,16 @@ Acceptance criteria:
 
 ### Phase D — dependency and secret scanning
 
-Run the repository `Security Gates` workflow. It already contains current-tree/diff/history secret scanning, npm security policies and backend `pip-audit`.
+When GitHub-hosted runners are available again, rerun the repository `Security Gates` workflow. It contains current-tree/diff/history secret scanning, npm security policies, the backend security regression set above, and `pip-audit`.
 
 Acceptance criteria:
 
+- every job actually receives a runner and executes steps;
 - no unresolved critical/high dependency issue with a supported fix;
 - no newly introduced secret finding;
 - exceptions, if unavoidable, are documented with package/advisory, exposure analysis, owner and expiry date.
+
+A workflow record with `runner_id: 0` and zero executed steps is infrastructure evidence only; it is neither a pass nor a code/test failure.
 
 ### Phase E — independent retest
 
@@ -236,7 +252,7 @@ Do not mark this item complete based only on deleting the file from `main`.
 
 ### GitHub Actions execution availability
 
-Current PR workflow jobs are failing before any job steps execute. Restore GitHub Actions runner/billing/availability, then rerun the security gates. A job with no executed steps is not a passing security test.
+Current PR workflow jobs are failing before any job steps execute: GitHub reports no allocated runner and an empty step list. Restore GitHub Actions runner/billing/availability, then rerun the security gates. A job with no executed steps is not a passing security test and should not block source remediation when merge policy permits an explicitly documented manual review.
 
 ### Authorized external exposure verification
 
@@ -244,12 +260,11 @@ Only the repository/system owner should authorize live reachability testing. Aft
 
 ## Definition of done
 
-This remediation is complete only when all of the following are true:
+Source remediation is complete when the reviewed source fixes in this document are merged. Operational security closure additionally requires all of the following:
 
-- source fixes in this document are merged;
 - deployment uses newly generated runtime secrets, not examples;
-- backend and Compose regression checks pass;
-- dependency/secret audits pass or have time-bounded documented exceptions;
+- backend and Compose regression checks actually execute and pass once runners are restored;
+- dependency/secret audits actually execute and pass or have time-bounded documented exceptions;
 - an independent post-fix audit is completed and triaged;
 - any historical real credential has been rotated and purged;
 - any legacy deployed default administrator credential has been rotated;
