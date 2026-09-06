@@ -194,12 +194,8 @@ async def _refresh_channel_scores(
         score.successful_calls = win_count
         score.rug_calls = rug_count
         score.early_calls = early_count
-        score.win_rate = (
-            win_count / evaluated_count if evaluated_count else 0.0
-        )
-        score.rug_rate = (
-            rug_count / evaluated_count if evaluated_count else 0.0
-        )
+        score.win_rate = win_count / evaluated_count if evaluated_count else 0.0
+        score.rug_rate = rug_count / evaluated_count if evaluated_count else 0.0
         score.avg_roi = avg_roi
         score.score = score_value
         score.updated_at = _utcnow()
