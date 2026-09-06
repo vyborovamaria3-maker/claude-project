@@ -37,7 +37,7 @@ async def _load_metrics_for_calls(
     *,
     window_hours: int,
 ) -> dict[int, list[TokenMetric]]:
-    ranges: list[tuple[int, datetime, datetime]] = []
+    token_ranges: list[tuple[int, datetime, datetime]] = []
     for token_id, calls in calls_by_token.items():
         starts = [
             _aware(call.called_at)
@@ -49,11 +49,11 @@ async def _load_metrics_for_calls(
             for call in calls
         ]
         ends = [_aware(call.called_at) + timedelta(hours=window_hours) for call in calls]
-        ranges.append((token_id, min(starts), max(ends)))
+        token_ranges.append((token_id, min(starts), max(ends)))
 
     grouped: dict[int, list[TokenMetric]] = defaultdict(list)
-    for start in range(0, len(ranges), METRIC_TOKEN_CHUNK_SIZE):
-        chunk = ranges[start : start + METRIC_TOKEN_CHUNK_SIZE]
+    for start in range(0, len(token_ranges), METRIC_TOKEN_CHUNK_SIZE):
+        chunk = token_ranges[start : start + METRIC_TOKEN_CHUNK_SIZE]
         conditions = [
             and_(
                 TokenMetric.token_id == token_id,
