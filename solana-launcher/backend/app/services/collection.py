@@ -14,7 +14,7 @@ async def run_full_collection(
 ) -> dict[str, int]:
     """Run the collector with the optimized derived-data rebuild path."""
     settings = settings or get_settings()
-    async with ETL_RUNTIME.time():
+    with ETL_RUNTIME.time():
         try:
             tokens = await sync_pumpfun_tokens(session, settings)
             metrics = await sync_metrics_for_active_tokens(session, settings)
