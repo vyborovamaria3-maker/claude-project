@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
-from app.services.social_intelligence import evaluate_calls
+from app.services.social_evaluation import evaluate_calls
 from app.services.telegram_discovery_registry import (
     due_registry_channels,
     record_discovery_results,
