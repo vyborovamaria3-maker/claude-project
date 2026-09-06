@@ -33,10 +33,14 @@ async def test_birdeye_requests_share_one_bounded_semaphore(monkeypatch):
             try:
                 await asyncio.sleep(0.01)
                 if "/defi/price" in url:
-                    return FakeResponse({"data": {"value": 1.5, "marketCap": 123_000}})
+                    return FakeResponse(
+                        {"data": {"value": 1.5, "marketCap": 123_000}}
+                    )
                 if "/token/holder" in url:
                     return FakeResponse({"data": {"holderCount": 42}})
-                return FakeResponse({"data": {"volume24h": 10_000, "liquidity": 8_000}})
+                return FakeResponse(
+                    {"data": {"volume24h": 10_000, "liquidity": 8_000}}
+                )
             finally:
                 active -= 1
 
@@ -93,8 +97,18 @@ async def test_metric_sync_fetches_concurrently_but_flushes_hot_state_safely(
                 active -= 1
         index = int(mint_address.rsplit("-", 1)[-1])
         return {
-            "price": {"data": {"value": index + 1, "marketCap": 100_000 + index}},
-            "ohlcv": {"data": {"volume24h": 1_000 + index, "liquidity": 500 + index}},
+            "price": {
+                "data": {
+                    "value": index + 1,
+                    "marketCap": 100_000 + index,
+                }
+            },
+            "ohlcv": {
+                "data": {
+                    "volume24h": 1_000 + index,
+                    "liquidity": 500 + index,
+                }
+            },
             "holders": {"data": {"holderCount": 10 + index}},
         }
 
@@ -127,7 +141,9 @@ async def test_metric_sync_fetches_concurrently_but_flushes_hot_state_safely(
         )
         hottest = (
             await session.execute(
-                select(TokenLatestMetric).order_by(TokenLatestMetric.price_usd.desc()).limit(1)
+                select(TokenLatestMetric)
+                .order_by(TokenLatestMetric.price_usd.desc())
+                .limit(1)
             )
         ).scalar_one()
 
