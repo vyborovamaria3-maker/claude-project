@@ -99,16 +99,31 @@ async def test_token_analysis_query_count_stays_bounded_with_large_history(test_
 
     statements: list[str] = []
 
-    def record_select(_conn, _cursor, statement, _parameters, _context, _executemany):
+    def record_select(
+        _conn,
+        _cursor,
+        statement,
+        _parameters,
+        _context,
+        _executemany,
+    ):
         if statement.lstrip().upper().startswith("SELECT"):
             statements.append(statement)
 
-    event.listen(test_app.state.engine.sync_engine, "before_cursor_execute", record_select)
+    event.listen(
+        test_app.state.engine.sync_engine,
+        "before_cursor_execute",
+        record_select,
+    )
     try:
         async with test_app.state.sessionmaker() as session:
             data = await get_token_analysis(session, "analysis-mint")
     finally:
-        event.remove(test_app.state.engine.sync_engine, "before_cursor_execute", record_select)
+        event.remove(
+            test_app.state.engine.sync_engine,
+            "before_cursor_execute",
+            record_select,
+        )
 
     assert data["token"]["id"] == token_id
     assert len(data["metrics"]) == 100
