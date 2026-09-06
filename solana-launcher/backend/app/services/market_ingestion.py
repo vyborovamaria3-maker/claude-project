@@ -90,6 +90,7 @@ async def fetch_pumpfun_tokens(
         mint = item.get("mint") or item.get("mintAddress") or item.get("address")
         if not mint:
             continue
+        migrated = bool(item.get("migrated") or item.get("isMigrated"))
         tokens.append(
             TokenSourcePayload(
                 mint_address=mint,
@@ -100,13 +101,11 @@ async def fetch_pumpfun_tokens(
                 creation_date=_parse_datetime(
                     item.get("createdAt") or item.get("creationDate")
                 ),
-                migrated_to_raydium=bool(
-                    item.get("migrated") or item.get("isMigrated")
-                ),
+                migrated_to_raydium=migrated,
                 migration_date=_parse_datetime(item.get("migrationDate")),
                 status=(
                     TokenStatus.MIGRATED.value
-                    if item.get("migrated")
+                    if migrated
                     else TokenStatus.ACTIVE.value
                 ),
             )
