@@ -5,7 +5,8 @@ import asyncio
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.services.collection import run_full_collection
-from app.services.etl import get_or_create_jobs, sync_metrics_for_active_tokens, sync_pumpfun_tokens
+from app.services.etl import get_or_create_jobs
+from app.services.market_ingestion import sync_metrics_for_active_tokens, sync_pumpfun_tokens
 from app.services.wallet_clusters import rebuild_wallet_links
 from app.tasks.celery_app import celery_app
 
