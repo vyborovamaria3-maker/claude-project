@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
-from app.services.etl import get_or_create_jobs, run_full_collection, sync_metrics_for_active_tokens, sync_pumpfun_tokens, sync_wallet_links_and_top_wallets
+from app.services.collection import run_full_collection
+from app.services.etl import get_or_create_jobs, sync_metrics_for_active_tokens, sync_pumpfun_tokens
+from app.services.wallet_clusters import rebuild_wallet_links
 from app.tasks.celery_app import celery_app
 
 
@@ -26,18 +26,18 @@ async def _run_with_session(coro):
 
 
 @celery_app.task(name="app.tasks.etl.collect_tokens")
-def collect_tokens() -> dict[str, int]:
+def collect_tokens() -> int:
     return asyncio.run(_run_with_session(lambda session: sync_pumpfun_tokens(session)))
 
 
 @celery_app.task(name="app.tasks.etl.refresh_metrics")
-def refresh_metrics() -> dict[str, int]:
+def refresh_metrics() -> int:
     return asyncio.run(_run_with_session(lambda session: sync_metrics_for_active_tokens(session)))
 
 
 @celery_app.task(name="app.tasks.etl.refresh_links")
-def refresh_links() -> dict[str, int]:
-    return asyncio.run(_run_with_session(lambda session: sync_wallet_links_and_top_wallets(session)))
+def refresh_links() -> int:
+    return asyncio.run(_run_with_session(lambda session: rebuild_wallet_links(session)))
 
 
 @celery_app.task(name="app.tasks.etl.bootstrap_jobs")
