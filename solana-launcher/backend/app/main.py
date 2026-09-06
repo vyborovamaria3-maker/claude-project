@@ -1,3 +1,4 @@
+import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -30,7 +31,12 @@ async def lifespan(app: FastAPI):
     if settings.environment == "development" and settings.database_url.startswith("sqlite"):
         async with app.state.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    await ensure_admin_user(app.state.sessionmaker, settings)
+
+    # Never bootstrap a predictable development administrator. Production
+    # configuration is already validated for strong explicit credentials.
+    if settings.environment.strip().lower() in {"production", "prod"}:
+        await ensure_admin_user(app.state.sessionmaker, settings)
+
     async with app.state.sessionmaker() as session:
         await get_or_create_jobs(session)
 
@@ -79,14 +85,29 @@ def create_app(
         allow_headers=["*"],
     )
 
-    if is_production:
-        legacy_register_password_path = f"{settings.api_v1_prefix.rstrip('/')}/auth/register-password"
+    legacy_register_password_path = f"{settings.api_v1_prefix.rstrip('/')}/auth/register-password"
 
-        @app.middleware("http")
-        async def block_legacy_password_provisioning(request: Request, call_next):
-            if request.url.path == legacy_register_password_path:
-                return JSONResponse(status_code=404, content={"detail": "Not found"})
+    @app.middleware("http")
+    async def protect_legacy_password_provisioning(request: Request, call_next):
+        if request.url.path != legacy_register_password_path:
             return await call_next(request)
+
+        # The legacy paid-password provisioning route is intentionally absent
+        # from production. Development/test use still requires a real secret;
+        # a fixed source-controlled header must never authorize it.
+        if is_production:
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+
+        expected_key = settings.backend_api_key.strip()
+        supplied_key = request.headers.get("X-API-Key", "")
+        if not expected_key:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Password provisioning is not configured"},
+            )
+        if not hmac.compare_digest(supplied_key.encode("utf-8"), expected_key.encode("utf-8")):
+            return JSONResponse(status_code=403, content={"detail": "Invalid API key"})
+        return await call_next(request)
 
     # The production control plane is admin-site. Keep SQLAdmin available only
     # for local/development diagnostics so it cannot bypass MFA/re-auth controls.
