@@ -10,6 +10,13 @@ export interface JwtPayload {
 }
 
 const JWT_ALGORITHM = "HS256" as const;
+const CONSUME_REFRESH_TOKEN_SCRIPT = `
+local value = redis.call("GET", KEYS[1])
+if value == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
+`;
 
 export function signAccessToken(userId: string, telegramId: string) {
   const payload: JwtPayload = { sub: userId, telegramId, jti: nanoid(18) };
@@ -40,6 +47,20 @@ export function verifyRefreshToken(token: string) {
 
 export async function revokeRefreshToken(jti: string) {
   await redis.del(`refresh:${jti}`);
+}
+
+/**
+ * Atomically verifies ownership of a refresh-token JTI and deletes it.
+ * A refresh token is therefore single-use even when two refresh requests race.
+ */
+export async function consumeRefreshToken(jti: string, userId: string) {
+  const consumed = await redis.eval(
+    CONSUME_REFRESH_TOKEN_SCRIPT,
+    1,
+    `refresh:${jti}`,
+    userId
+  );
+  return Number(consumed) === 1;
 }
 
 export async function isRefreshTokenActive(jti: string, userId: string) {
