@@ -28,14 +28,11 @@ RULES = [
 ]
 
 PLACEHOLDERS = (
-    "YOUR_API_KEY",
-    "YOUR_TOKEN",
     "your_api_key",
     "your_token",
     "your_bot_token",
     "replace-with-",
-    "example.com",
-    "ChangeMe",
+    "changeme",
 )
 
 TEXT_SUFFIXES = {
@@ -44,16 +41,19 @@ TEXT_SUFFIXES = {
 }
 
 
-def is_placeholder(line: str) -> bool:
-    return any(marker in line for marker in PLACEHOLDERS)
+def is_placeholder_match(value: str) -> bool:
+    normalized = value.lower()
+    return any(marker in normalized for marker in PLACEHOLDERS)
 
 
 def scan_line(path: str, line: str, findings: set[tuple[str, str]]) -> None:
-    if is_placeholder(line):
-        return
+    # Placeholder text elsewhere on the line must never suppress a real match.
+    # Only the exact matched token may be treated as an example value.
     for rule in RULES:
-        if rule.pattern.search(line):
-            findings.add((path, rule.name))
+        for match in rule.pattern.finditer(line):
+            if not is_placeholder_match(match.group(0)):
+                findings.add((path, rule.name))
+                break
 
 
 def scan_current(findings: set[tuple[str, str]]) -> None:
