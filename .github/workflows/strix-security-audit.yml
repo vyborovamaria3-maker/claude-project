@@ -39,6 +39,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 concurrency:
   group: strix-source-audit-${{ github.ref }}-${{ inputs.component }}-${{ inputs.profile }}
@@ -111,7 +112,7 @@ jobs:
           curl -fsSL https://strix.ai/install | bash
           export PATH="$HOME/.strix/bin:$PATH"
           echo "$HOME/.strix/bin" >> "$GITHUB_PATH"
-          strix --version || true
+          strix --version
 
       - name: Run source-only Strix audit
         id: strix
@@ -126,6 +127,7 @@ jobs:
           echo "Profile: $PROFILE"
 
           COMBINED_INSTRUCTION="$(mktemp)"
+          trap 'rm -f "$COMBINED_INSTRUCTION"' EXIT
           cat security/strix/ROE_SOURCE_ONLY.md "$PROFILE" > "$COMBINED_INSTRUCTION"
 
           set +e
@@ -134,20 +136,35 @@ jobs:
             --target "$TARGET" \
             --scan-mode "${{ inputs.scan_mode }}" \
             --instruction-file "$COMBINED_INSTRUCTION" \
-            --max-budget-usd "${{ inputs.max_budget_usd }}" \
+            --max-budget "${{ inputs.max_budget_usd }}" \
             2>&1 | tee strix-console.log
           rc=${PIPESTATUS[0]}
           set -e
 
-          rm -f "$COMBINED_INSTRUCTION"
-
           echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
 
+          run_json="$(ls -t strix_runs/*/run.json 2>/dev/null | head -1 || true)"
+          if [[ -z "$run_json" || ! -f "$run_json" ]]; then
+            echo "::error::Strix did not produce run.json; refusing to treat the audit as complete."
+            exit 1
+          fi
+
+          status="$(jq -r '.status // "unknown"' "$run_json")"
+          cost="$(jq -r '.llm_usage.cost // 0' "$run_json")"
+          echo "run_json=$run_json" >> "$GITHUB_OUTPUT"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "cost=$cost" >> "$GITHUB_OUTPUT"
+
+          if [[ "$status" != "completed" ]]; then
+            echo "::error::Strix run status is '$status'; refusing to fail open. Increase the budget or fix the execution error."
+            exit 1
+          fi
+
           if [[ "$rc" -eq 0 ]]; then
-            echo "### Strix result: no vulnerabilities reported" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Strix result: no validated vulnerabilities reported" >> "$GITHUB_STEP_SUMMARY"
           elif [[ "$rc" -eq 2 ]]; then
-            echo "### Strix result: findings detected" >> "$GITHUB_STEP_SUMMARY"
-            echo "The audit completed. Findings require independent validation before remediation." >> "$GITHUB_STEP_SUMMARY"
+            echo "### Strix result: validated findings detected" >> "$GITHUB_STEP_SUMMARY"
+            echo "The audit completed and findings require remediation/re-test." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "### Strix result: execution error (exit $rc)" >> "$GITHUB_STEP_SUMMARY"
             exit "$rc"
@@ -160,8 +177,21 @@ jobs:
             echo "- Profile: ${{ inputs.profile }}"
             echo "- Scan mode: ${{ inputs.scan_mode }}"
             echo "- Budget cap: ${{ inputs.max_budget_usd }} USD"
+            echo "- Reported LLM cost: $cost USD"
+            echo "- Run status: $status"
             echo "- Strix exit code: $rc"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Manual source audits retain evidence even when findings are present.
+          # Findings are reviewed independently before remediation, so exit 2 is not
+          # treated as an infrastructure failure in this manual workflow.
+          exit 0
+
+      - name: Upload Strix SARIF to GitHub code scanning
+        if: always() && hashFiles('strix_runs/**/findings.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: strix_runs
 
       - name: Upload Strix evidence
         if: always()
