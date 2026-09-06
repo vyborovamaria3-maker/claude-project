@@ -15,6 +15,8 @@ from app.services.social_intelligence import (
 )
 
 METRIC_TOKEN_CHUNK_SIZE = 200
+WIN_OUTCOMES = ("win", "win_then_rug")
+RUG_OUTCOMES = ("rug", "win_then_rug")
 
 
 def _utcnow() -> datetime:
@@ -119,8 +121,8 @@ async def _refresh_channel_scores(
         return
 
     evaluated = case((TelegramCall.outcome != "pending", 1), else_=0)
-    wins = case((TelegramCall.outcome.in_({"win", "win_then_rug"}), 1), else_=0)
-    rugs = case((TelegramCall.outcome.in_({"rug", "win_then_rug"}), 1), else_=0)
+    wins = case((TelegramCall.outcome.in_(WIN_OUTCOMES), 1), else_=0)
+    rugs = case((TelegramCall.outcome.in_(RUG_OUTCOMES), 1), else_=0)
     early = case((TelegramCall.call_market_cap_usd <= 50_000, 1), else_=0)
     evaluated_roi = case(
         (
@@ -132,6 +134,7 @@ async def _refresh_channel_scores(
         ),
         else_=None,
     )
+    ordered_channel_ids = tuple(sorted(channel_ids))
 
     aggregate_rows = (
         await session.execute(
@@ -145,7 +148,7 @@ async def _refresh_channel_scores(
                 func.avg(evaluated_roi).label("avg_roi"),
             )
             .where(
-                TelegramCall.channel_id.in_(channel_ids),
+                TelegramCall.channel_id.in_(ordered_channel_ids),
                 TelegramCall.is_explicit_call.is_(True),
             )
             .group_by(TelegramCall.channel_id)
@@ -156,7 +159,7 @@ async def _refresh_channel_scores(
         (
             await session.execute(
                 select(TelegramChannelScore).where(
-                    TelegramChannelScore.channel_id.in_(channel_ids)
+                    TelegramChannelScore.channel_id.in_(ordered_channel_ids)
                 )
             )
         ).scalars().all()
@@ -223,7 +226,7 @@ async def evaluate_calls(
             "window_hours": safe_window_hours,
         }
 
-    mint_addresses = {call.mint_address for call in calls}
+    mint_addresses = tuple(sorted({call.mint_address for call in calls}))
     token_rows = (
         await session.execute(
             select(Token.id, Token.mint_address).where(Token.mint_address.in_(mint_addresses))
