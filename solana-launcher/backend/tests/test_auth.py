@@ -152,7 +152,7 @@ async def test_register_password_rejects_legacy_fixed_dev_header(client):
 
 
 @pytest.mark.asyncio
-async def test_register_password_accepts_only_configured_backend_api_key(client, test_app):
+async def test_register_password_rejects_backend_intelligence_key(client, test_app):
     response = await client.post(
         "/api/v1/auth/register-password",
         headers={"X-API-Key": test_app.state.settings.backend_api_key},
@@ -161,6 +161,23 @@ async def test_register_password_accepts_only_configured_backend_api_key(client,
             "login": "paid_user_2",
             "password": "q" * 32,
             "telegram_username": "paid_user_2",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Invalid API key"
+
+
+@pytest.mark.asyncio
+async def test_register_password_accepts_only_subscription_internal_key(client, test_app):
+    response = await client.post(
+        "/api/v1/auth/register-password",
+        headers={"X-API-Key": test_app.state.settings.subscription_internal_key},
+        json={
+            "telegram_id": 4444,
+            "login": "paid_user_3",
+            "password": "r" * 32,
+            "telegram_username": "paid_user_3",
         },
     )
 
