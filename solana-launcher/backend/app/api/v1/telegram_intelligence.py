@@ -15,6 +15,7 @@ from app.schemas.social_intelligence import (
     XSocialIngestRequest,
 )
 from app.services.cache import read_json_cache
+from app.services.caller_reputation_cache import cached_top_callers
 from app.services.social_evaluation import evaluate_calls
 from app.services.social_filters import normalize_social_source
 from app.services.social_hot_paths import filtered_token_timeline, ingest_x_events_bulk
@@ -29,7 +30,7 @@ from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
 from app.services.telegram_public_web import TelegramPublicWebError
 from app.services.telegram_runtime import TelegramMonitorManager
-from app.services.telegram_signal_analysis import caller_reputation, telegram_token_intelligence
+from app.services.telegram_signal_analysis import telegram_token_intelligence
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -316,7 +317,7 @@ async def callers(
     session: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_subscriber),
 ) -> dict:
-    return {"items": await caller_reputation(session, limit=limit)}
+    return {"items": await cached_top_callers(session, limit=limit)}
 
 
 @social_router.get("/relations")
