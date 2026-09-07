@@ -13,6 +13,7 @@ from app.models.intelligence_memory import (
     IntelligenceSnapshot,
     IntelligenceSnapshotEntity,
 )
+from app.services.outcome_evaluation_lock import acquire_entity_projection_write_lock
 
 PERFORMANCE_ENTITY_TYPES = ("x_account", "tg_channel", "wallet")
 
@@ -29,6 +30,15 @@ async def refresh_entity_outcome_projection_for_mint(
     snapshot has no usable outcome anymore, a stale projection is removed in the
     same transaction instead of silently influencing future reputation scores.
     """
+    # Different snapshot+horizon writers for the same mint can converge on the
+    # same entity projection row. Serialize only this mint+horizon reconciliation;
+    # unrelated tokens continue in parallel.
+    await acquire_entity_projection_write_lock(
+        session,
+        mint_address=mint_address,
+        horizon_hours=horizon_hours,
+    )
+
     ranked = (
         select(
             IntelligenceSnapshotEntity.entity_key.label("entity_key"),
