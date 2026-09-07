@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import case, func, literal, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.social_intelligence import SocialEvent
 from app.services.observability import ANALYSIS_STAGE_RUNTIME
@@ -15,8 +16,8 @@ def _filters(
     mint_address: str | None,
     platform: str | None,
     hours: int | None,
-):
-    filters = []
+) -> list[ColumnElement[bool]]:
+    filters: list[ColumnElement[bool]] = []
     if mint_address:
         filters.append(SocialEvent.mint_address == mint_address)
     if platform:
@@ -50,24 +51,23 @@ def postgres_social_search_statement(
         + case((substring_match, literal(0.10)), else_=literal(0.0))
     ).label("search_score")
 
-    statement = (
+    return (
         select(SocialEvent, score)
         .where(
-            * _filters(
+            *_filters(
                 mint_address=mint_address,
                 platform=platform,
                 hours=hours,
             ),
-            (
-                document.op("@@")(ts_query)
-                | substring_match
-                | (trigram >= 0.25)
-            ),
+            document.op("@@")(ts_query) | substring_match | (trigram >= 0.25),
         )
-        .order_by(score.desc(), SocialEvent.occurred_at.desc(), SocialEvent.id.desc())
+        .order_by(
+            score.desc(),
+            SocialEvent.occurred_at.desc(),
+            SocialEvent.id.desc(),
+        )
         .limit(max(1, min(int(limit), 100)))
     )
-    return statement
 
 
 async def search_social_events(
