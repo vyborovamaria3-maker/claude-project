@@ -13,6 +13,7 @@ from app.api.v1.router import api_router
 from app.admin import setup_admin
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import RateLimiter
+from app.core.runtime_flags import telegram_runtime_in_api
 from app.db.base import Base
 from app.db.session import create_engine_and_sessionmaker
 from app.metrics import instrument_app
@@ -40,9 +41,13 @@ async def lifespan(app: FastAPI):
     async with app.state.sessionmaker() as session:
         await get_or_create_jobs(session)
 
-    # Telegram discovery/MTProto backfill is intentionally detached from startup.
-    # Slow Telegram/network calls must never delay /health or the rest of the API.
-    app.state.telegram_intelligence.start_background()
+    # Production/container deployments run Telegram collection in the dedicated
+    # telegram-runtime process. This prevents every FastAPI replica from starting
+    # its own MTProto/public-web collector and outcome evaluator. Direct local
+    # development keeps the legacy in-process behavior unless explicitly disabled.
+    app.state.telegram_runtime_in_api = telegram_runtime_in_api()
+    if app.state.telegram_runtime_in_api:
+        app.state.telegram_intelligence.start_background()
 
     yield
     await app.state.telegram_intelligence.close()
@@ -75,6 +80,7 @@ def create_app(
     app.state.redis = None
     app.state.rate_limiter = RateLimiter(None)
     app.state.telegram_intelligence = TelegramMonitorManager(settings, sessionmaker)
+    app.state.telegram_runtime_in_api = False
 
     app.add_middleware(SessionMiddleware, secret_key=settings.admin_session_secret)
     app.add_middleware(
