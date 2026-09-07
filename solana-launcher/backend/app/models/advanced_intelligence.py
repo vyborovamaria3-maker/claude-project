@@ -66,6 +66,16 @@ class IntelligenceHypothesisState(Base):
             "mint_address",
             "updated_at",
         ),
+        Index(
+            "ix_intelligence_hypothesis_source_updated",
+            "source_key",
+            "updated_at",
+        ),
+        Index(
+            "ix_intelligence_hypothesis_target_updated",
+            "target_key",
+            "updated_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
