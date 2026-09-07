@@ -116,6 +116,24 @@ histogram_quantile(
 )
 ```
 
+`stage="campaign_similarity"` measures the exact SQL top-K lookup over the compact
+campaign projection. If this stage stays small while fingerprint history grows,
+do not add pgvector. If it becomes a persistent material share of preliminary
+latency, capture `EXPLAIN (ANALYZE, BUFFERS)` for the generated query and compare an
+ANN implementation against the same deterministic neighbor fixture before changing
+the production scoring path.
+
+Dedicated campaign-similarity p95:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le) (
+    rate(analysis_stage_runtime_seconds_bucket{stage="campaign_similarity"}[5m])
+  )
+)
+```
+
 ### Advanced-analysis end-to-end p95
 
 ```promql
@@ -166,9 +184,10 @@ Use the measurements in this order before adding another datastore:
 
 1. HTTP p95/p99 for SQL hot paths.
 2. Preliminary vs final advanced-analysis latency.
-3. Queue wait vs worker runtime for each isolated Celery queue.
-4. Helius/Solana RPC p95, errors and rate limits.
-5. Redis cache/single-flight hit rate.
-6. PostgreSQL query plans and database CPU/IO for the path that still dominates.
+3. `campaign_similarity`, funding RPC, semantic clustering and source-reliability stage p95.
+4. Queue wait vs worker runtime for each isolated Celery queue.
+5. Helius/Solana RPC p95, errors and rate limits.
+6. Redis cache/single-flight hit rate.
+7. PostgreSQL query plans and database CPU/IO for the path that still dominates.
 
 Only after measuring the above should POTAPoff introduce another storage engine. Use PostgreSQL projections/indexes first; pgvector/ANN for campaign/text similarity when measured; ClickHouse for append-heavy numeric/time-series analytics when measured; Elasticsearch/OpenSearch for global text search only when PostgreSQL FTS/pg_trgm is no longer sufficient.
