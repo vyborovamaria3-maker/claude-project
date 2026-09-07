@@ -47,13 +47,25 @@ def _cosine(left: Counter[str], right: Counter[str]) -> float:
     return dot / (norm_left * norm_right)
 
 
-def _semantic_similarity(left: str, right: str) -> float:
-    left_tokens = _tokens(left)
-    right_tokens = _tokens(right)
+def _prepared_semantic_similarity(
+    left_tokens: set[str],
+    left_ngrams: Counter[str],
+    right_tokens: set[str],
+    right_ngrams: Counter[str],
+) -> float:
     union = left_tokens | right_tokens
     token_score = len(left_tokens & right_tokens) / len(union) if union else 0.0
-    char_score = _cosine(_char_ngrams(left), _char_ngrams(right))
+    char_score = _cosine(left_ngrams, right_ngrams)
     return max(0.0, min(1.0, token_score * 0.55 + char_score * 0.45))
+
+
+def _semantic_similarity(left: str, right: str) -> float:
+    return _prepared_semantic_similarity(
+        _tokens(left),
+        _char_ngrams(left),
+        _tokens(right),
+        _char_ngrams(right),
+    )
 
 
 def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -62,7 +74,7 @@ def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
         for row in snapshot.get("evidence") or []
         if isinstance(row, dict)
     ][:160]
-    prepared = []
+    prepared: list[dict[str, Any]] = []
     for row in evidence:
         text = str(row.get("text") or "")
         normalized = _normalize(text)
@@ -74,6 +86,10 @@ def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "source": str(row.get("source") or "unknown"),
                 "text": text,
                 "normalized": normalized,
+                # Pairwise clustering is O(n^2), but these expensive features are
+                # O(n): compute them once per message instead of once per pair.
+                "tokens": {token for token in normalized.split() if len(token) >= 3},
+                "ngrams": _char_ngrams(normalized),
             }
         )
 
@@ -90,7 +106,12 @@ def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
             other = prepared[other_index]
             if row["source"] == other["source"]:
                 continue
-            similarity = _semantic_similarity(row["text"], other["text"])
+            similarity = _prepared_semantic_similarity(
+                row["tokens"],
+                row["ngrams"],
+                other["tokens"],
+                other["ngrams"],
+            )
             if similarity < 0.72:
                 continue
             members.append(other_index)
@@ -152,9 +173,6 @@ async def performance_aware_source_reliability(
     if not actor_ids:
         return base_rows
 
-    # One prepared row per entity + token + horizon. The outcome-learning worker
-    # maintains this projection when a 72h outcome matures, so the hot report
-    # path no longer rebuilds a cross-table earliest-snapshot join every time.
     projected = list(
         (
             await session.execute(
@@ -291,8 +309,6 @@ async def enrich_advanced_report(
         list(layers.get("source_reliability") or []),
     )
 
-    # The base engine owns campaign/evidence/contradiction/narrative semantics.
-    # Enrichment must never silently replace those deterministic contracts.
     critic = dict(layers.get("dedicated_critic") or {})
     targets = list(critic.get("targets") or [])
     if not initial_edges:
