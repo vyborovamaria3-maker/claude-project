@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -21,8 +22,14 @@ from app.services.advanced_intelligence_enrichment import enrich_advanced_report
 from app.services.advanced_intelligence_persistence import (
     persist_advanced_intelligence_state,
 )
+from app.services.analysis_jobs import (
+    create_analysis_job,
+    fail_analysis_job,
+    read_analysis_job,
+)
 from app.services.intelligence_outcomes import persist_outcome_values
 from app.services.telegram_parser import is_solana_address
+from app.tasks.advanced_intelligence import enrich_report
 
 router = APIRouter()
 
@@ -59,6 +66,13 @@ def _require_backend_key(request: Request, supplied: str | None) -> None:
         )
 
 
+def _validate_snapshot_mint(payload: AdvancedReportRequest) -> str:
+    mint = str(payload.snapshot.get("mint") or "")
+    if not is_solana_address(mint):
+        raise HTTPException(status_code=400, detail="Invalid snapshot mint")
+    return mint
+
+
 @router.post("/report")
 async def advanced_report(
     payload: AdvancedReportRequest,
@@ -69,10 +83,9 @@ async def advanced_report(
         alias="X-Backend-API-Key",
     ),
 ) -> dict:
+    """Compatibility path that performs the complete analysis synchronously."""
     _require_backend_key(request, x_backend_api_key)
-    mint = str(payload.snapshot.get("mint") or "")
-    if not is_solana_address(mint):
-        raise HTTPException(status_code=400, detail="Invalid snapshot mint")
+    _validate_snapshot_mint(payload)
 
     report = await build_advanced_intelligence_report(
         session,
@@ -95,6 +108,86 @@ async def advanced_report(
             role=payload.role,
         )
     return report
+
+
+@router.post("/report/async", status_code=status.HTTP_202_ACCEPTED)
+async def advanced_report_async(
+    payload: AdvancedReportRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+    x_backend_api_key: str | None = Header(
+        default=None,
+        alias="X-Backend-API-Key",
+    ),
+) -> dict:
+    """Return deterministic analysis immediately and move slow enrichment off-request."""
+    _require_backend_key(request, x_backend_api_key)
+    mint = _validate_snapshot_mint(payload)
+
+    preliminary = await build_advanced_intelligence_report(
+        session,
+        snapshot=payload.snapshot,
+        ai_result=payload.ai_result,
+    )
+    job_id = uuid4().hex
+    job_payload = {
+        "snapshot": payload.snapshot,
+        "ai_result": payload.ai_result,
+        "preliminary_report": preliminary,
+        "persist": payload.persist,
+        "enrich": payload.enrich,
+        "role": payload.role,
+    }
+    try:
+        await create_analysis_job(
+            job_id,
+            payload=job_payload,
+            preliminary_report=preliminary,
+        )
+        enrich_report.apply_async(
+            args=[job_id],
+            task_id=job_id,
+            queue="intelligence",
+        )
+    except Exception as exc:
+        await fail_analysis_job(job_id, str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Background analysis queue is unavailable",
+        ) from exc
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "snapshot_id": payload.snapshot.get("snapshotId"),
+        "mint": mint,
+        "preliminary_report": preliminary,
+        "poll": f"/api/v1/social/intelligence/advanced/report/jobs/{job_id}",
+    }
+
+
+@router.get("/report/jobs/{job_id}")
+async def advanced_report_job(
+    job_id: str,
+    request: Request,
+    x_backend_api_key: str | None = Header(
+        default=None,
+        alias="X-Backend-API-Key",
+    ),
+) -> dict:
+    _require_backend_key(request, x_backend_api_key)
+    if not job_id or len(job_id) > 128:
+        raise HTTPException(status_code=400, detail="Invalid analysis job id")
+    try:
+        result = await read_analysis_job(job_id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Analysis job state is unavailable",
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Analysis job not found or expired")
+    return result
 
 
 @router.post("/outcome")
