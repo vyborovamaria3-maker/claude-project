@@ -11,6 +11,7 @@ from app.models.advanced_intelligence import (
     CampaignFingerprintActor,
     CampaignFingerprintFeature,
 )
+from app.services.observability import ANALYSIS_STAGE_RUNTIME
 
 CAMPAIGN_VECTOR_SCHEMA_VERSION = 2
 CAMPAIGN_VECTOR_SCHEMA_KEY = "schema_v2"
@@ -158,11 +159,7 @@ async def find_campaign_neighbors(
         (vector_denominator > 0.0, dot / vector_denominator),
         else_=literal(0.0),
     )
-    actor_union = (
-        recent.c.actor_count
-        + len(actor_keys)
-        - actor_intersection
-    )
+    actor_union = recent.c.actor_count + len(actor_keys) - actor_intersection
     actor_similarity = case(
         (
             actor_union > 0,
@@ -201,25 +198,25 @@ async def find_campaign_neighbors(
         )
         .cte("ranked_campaign_neighbors")
     )
-    rows = (
-        await session.execute(
-            select(
-                ranked.c.snapshot_id,
-                ranked.c.mint_address,
-                ranked.c.created_at,
-                ranked.c.similarity,
-                ranked.c.vector_similarity,
-                ranked.c.actor_similarity,
-            )
-            .where(ranked.c.mint_rank == 1)
-            .order_by(
-                ranked.c.similarity.desc(),
-                ranked.c.created_at.desc(),
-                ranked.c.snapshot_id.desc(),
-            )
-            .limit(limit)
+    statement = (
+        select(
+            ranked.c.snapshot_id,
+            ranked.c.mint_address,
+            ranked.c.created_at,
+            ranked.c.similarity,
+            ranked.c.vector_similarity,
+            ranked.c.actor_similarity,
         )
-    ).all()
+        .where(ranked.c.mint_rank == 1)
+        .order_by(
+            ranked.c.similarity.desc(),
+            ranked.c.created_at.desc(),
+            ranked.c.snapshot_id.desc(),
+        )
+        .limit(limit)
+    )
+    with ANALYSIS_STAGE_RUNTIME.labels(stage="campaign_similarity").time():
+        rows = (await session.execute(statement)).all()
 
     neighbors: list[dict[str, Any]] = []
     for row in rows:
