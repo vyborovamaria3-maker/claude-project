@@ -215,14 +215,13 @@ install -m 0700 \
 printf '%s\n' "$PREVIOUS_TAG" > "$DEPLOY_DIR/.previous-image-tag"
 printf '%s\n' "$DEPLOY_SHA" > "$DEPLOY_DIR/.current-image-tag"
 
+"${COMPOSE[@]}" run --rm --no-deps backend alembic upgrade heads
 start_admin
 stop_telegram
 "${COMPOSE[@]}" up -d --remove-orphans
 "${COMPOSE[@]}" restart nginx
 sync_telegram_bot
 sync_telegram_intelligence
-
-"${COMPOSE[@]}" exec -T backend alembic upgrade heads
 
 log 'Running production healthcheck'
 "$HEALTH_SCRIPT"
