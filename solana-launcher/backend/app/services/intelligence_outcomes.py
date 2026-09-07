@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.advanced_intelligence import IntelligenceCalibrationStat, IntelligenceOutcome
@@ -13,7 +13,6 @@ from app.services.entity_performance import refresh_entity_outcome_projection_fo
 
 DEFAULT_HORIZONS = (6, 24, 72)
 MAX_SNAPSHOTS_PER_RUN = 250
-SCAN_MULTIPLIER = 4
 BASELINE_LOOKBACK = timedelta(minutes=90)
 FINAL_COVERAGE_TOLERANCE = timedelta(hours=1)
 
@@ -208,8 +207,6 @@ async def persist_outcome_values(
             new_confirmed=max_multiple >= 2,
         )
 
-    # Reconcile 72h reputation even when a revised outcome becomes unusable;
-    # the projection service will remove a stale entity/token vote if needed.
     if horizon_hours == 72:
         await session.flush()
         await refresh_entity_outcome_projection_for_mint(
@@ -392,6 +389,21 @@ async def evaluate_snapshot_horizon(
     )
 
 
+def _missing_matured_outcome_condition(
+    horizon_hours: int,
+    now: datetime,
+):
+    matured_cutoff = now - timedelta(hours=horizon_hours)
+    outcome_exists = exists().where(
+        IntelligenceOutcome.snapshot_id == IntelligenceSnapshot.snapshot_id,
+        IntelligenceOutcome.horizon_hours == horizon_hours,
+    )
+    return and_(
+        IntelligenceSnapshot.created_at <= matured_cutoff,
+        ~outcome_exists,
+    )
+
+
 async def evaluate_matured_outcomes(
     session: AsyncSession,
     *,
@@ -410,14 +422,23 @@ async def evaluate_matured_outcomes(
             "skipped": 0,
         }
 
-    matured_cutoff = now - timedelta(hours=min(horizons))
+    # Let PostgreSQL choose only actionable rows. The old fixed scan window could
+    # be permanently occupied by already-complete historical snapshots and starve
+    # newer work once the table grew beyond that window.
     candidates = list(
         (
             await session.execute(
                 select(IntelligenceSnapshot)
-                .where(IntelligenceSnapshot.created_at <= matured_cutoff)
+                .where(
+                    or_(
+                        *[
+                            _missing_matured_outcome_condition(horizon, now)
+                            for horizon in horizons
+                        ]
+                    )
+                )
                 .order_by(IntelligenceSnapshot.created_at.asc())
-                .limit(limit * SCAN_MULTIPLIER)
+                .limit(limit)
             )
         ).scalars().all()
     )
@@ -436,21 +457,10 @@ async def evaluate_matured_outcomes(
         )
     existing = {(row.snapshot_id, row.horizon_hours) for row in existing_rows}
 
-    selected: list[IntelligenceSnapshot] = []
-    for snapshot in candidates:
-        if any(
-            now >= snapshot.created_at + timedelta(hours=horizon)
-            and (snapshot.snapshot_id, horizon) not in existing
-            for horizon in horizons
-        ):
-            selected.append(snapshot)
-        if len(selected) >= limit:
-            break
-
     evaluated = 0
     censored = 0
     skipped = 0
-    for snapshot in selected:
+    for snapshot in candidates:
         pending_horizons = [
             horizon
             for horizon in horizons
@@ -476,7 +486,7 @@ async def evaluate_matured_outcomes(
 
     await session.commit()
     return {
-        "snapshots": len(selected),
+        "snapshots": len(candidates),
         "candidates_scanned": len(candidates),
         "evaluated": evaluated,
         "censored": censored,
