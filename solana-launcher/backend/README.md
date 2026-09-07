@@ -60,11 +60,11 @@ Pump.fun token discovery uses a PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` bu
 
 ### Ingestion observability
 
-`GET /metrics` now exposes low-cardinality provider metrics suitable for Prometheus dashboards and alerts:
+`GET /metrics` exposes low-cardinality provider metrics suitable for Prometheus dashboards and alerts:
 
 - `etl_provider_requests_total{provider,operation,result}` — HTTP attempts including status codes and transport errors.
 - `etl_provider_retries_total{provider,operation,reason}` — retry attempts by reason.
-- `etl_provider_rate_limits_total{provider,operation}` — Birdeye/Pump.fun 429 visibility.
+- `etl_provider_rate_limits_total{provider,operation}` — provider HTTP 429 visibility.
 - `etl_provider_request_latency_seconds{provider,operation}` — request-attempt histogram for p50/p95/p99 PromQL queries.
 - `etl_ingestion_batch_runtime_seconds{provider}` — end-to-end ingestion batch duration.
 
@@ -81,24 +81,38 @@ histogram_quantile(
 
 ## Hot-path load testing
 
-`scripts/load_hot_paths.py` is a small async HTTP load harness built on the backend's existing `httpx` dependency. It does not seed or delete data. Use a staging/load-test environment with a real subscriber/admin bearer token.
+`scripts/load_hot_paths.py` is a small async HTTP load harness built on the backend's existing `httpx` dependency. It does not seed or delete data. `--dataset-size` only controls the random offset range; the target database must actually contain roughly that amount of data for the result to represent that scale.
+
+For reproducible 10k/100k/1M tests, `scripts/seed_benchmark_data.py` can create synthetic token hot-state and optional wallet trades. It is intentionally guarded: it refuses `ENVIRONMENT=production|prod`, requires PostgreSQL, requires `--confirm-benchmark-db`, and expects the database name to look like a benchmark/staging/test/dev database unless an additional explicit override is supplied. Synthetic tokens use the `bench-token-` prefix and `status=benchmark`, so normal active-token Birdeye refreshes do not query their fake mint values.
+
+```bash
+# Point backend/.env at a disposable benchmark/staging PostgreSQL database first.
+python scripts/seed_benchmark_data.py --tokens 10000 --confirm-benchmark-db
+python scripts/seed_benchmark_data.py --tokens 100000 --wallet-trades 100000 --confirm-benchmark-db
+python scripts/seed_benchmark_data.py --tokens 1000000 --confirm-benchmark-db
+
+# Cleanup only benchmark-prefixed rows and the benchmark wallet.
+python scripts/seed_benchmark_data.py --cleanup --confirm-benchmark-db
+```
+
+Run the API against that same benchmark database, obtain a subscriber/admin bearer token, and then benchmark:
 
 ```bash
 export POTAPOFF_BENCH_URL=http://127.0.0.1:8000
 export POTAPOFF_BENCH_TOKEN='<staging bearer token>'
 
-# Compare the dashboard path with 10k / 100k / 1M dataset-size hints.
 python scripts/load_hot_paths.py tokens --dataset-size 10000 --requests 1000 --concurrency 25
 python scripts/load_hot_paths.py tokens --dataset-size 100000 --requests 1000 --concurrency 25 --random-offsets
 python scripts/load_hot_paths.py tokens --dataset-size 1000000 --requests 1000 --concurrency 25 --random-offsets
 
-# Wallet activity. dataset-size controls the random offset range when requested.
-python scripts/load_hot_paths.py wallet --wallet '<wallet>' --dataset-size 100000 --random-offsets
+python scripts/load_hot_paths.py wallet \
+  --wallet bench-wallet-hot-path \
+  --dataset-size 100000 \
+  --random-offsets
 
-# Read-only Telegram intelligence path.
-python scripts/load_hot_paths.py telegram-token --mint '<mint>' --requests 500 --concurrency 20
+python scripts/load_hot_paths.py telegram-token --mint '<real staging mint>' --requests 500 --concurrency 20
 ```
 
-The output is JSON with throughput, status-code counts and latency `min/avg/p50/p95/p99/max`. Use `--json-out result.json` to keep a benchmark result.
+The output is JSON with throughput, status-code counts, transport errors, successful/failed HTTP-response counts and latency `min/avg/p50/p95/p99/max`. Use `--json-out result.json` to keep a benchmark result.
 
 Write scenarios are blocked unless explicitly enabled. `telegram-evaluate` and `collector` require `--allow-write-scenarios`; `collector` is additionally restricted to one request at concurrency one. Do not enable these against production merely to obtain benchmark numbers.
