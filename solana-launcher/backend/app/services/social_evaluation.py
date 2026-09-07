@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import Token, TokenMetric
 from app.models.social_intelligence import TelegramCall, TelegramChannelScore
+from app.services.caller_reputation_cache import invalidate_top_callers_cache
 from app.services.social_intelligence import (
     CALL_BASELINE_LOOKBACK,
     classify_call_outcome,
@@ -349,6 +350,10 @@ async def evaluate_calls(
     await session.flush()
     await _refresh_channel_scores(session, touched_channels)
     await session.commit()
+    if processed:
+        # Invalidate only after the durable commit. A Redis failure must not roll
+        # back or mask the successfully persisted outcomes/channel scores.
+        await invalidate_top_callers_cache()
     return {
         "evaluated": processed,
         "processed": processed,
