@@ -5,6 +5,10 @@ from datetime import datetime, timedelta, timezone
 from app.models.analytics import Token, TokenLatestMetric, TokenMetric
 
 
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 async def test_latest_metric_preserves_last_known_fields_and_monotonic_ath(test_app) -> None:
     first_at = datetime(2026, 9, 7, 10, 0, tzinfo=timezone.utc)
     second_at = first_at + timedelta(minutes=5)
@@ -53,10 +57,11 @@ async def test_latest_metric_preserves_last_known_fields_and_monotonic_ath(test_
 
     assert latest is not None
     assert latest.metric_id == second.id
-    assert latest.timestamp == second_at
+    assert _utc(latest.timestamp) == second_at
     assert latest.price_usd == 8.0
     assert latest.ath_usd == 10.0
-    assert latest.ath_date == first_at
+    assert latest.ath_date is not None
+    assert _utc(latest.ath_date) == first_at
     assert latest.market_cap == 1000.0
     assert latest.liquidity_usd == 250.0
     assert latest.volume_24h == 55.0
