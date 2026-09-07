@@ -21,7 +21,10 @@ def _filters(
     if mint_address:
         filters.append(SocialEvent.mint_address == mint_address)
     if platform:
-        filters.append(func.lower(SocialEvent.platform) == platform.lower())
+        # SocialEvent.platform is persisted in normalized lowercase form. Avoid
+        # wrapping the indexed column in lower() so (mint, platform, time) remains
+        # usable for token-scoped evidence searches.
+        filters.append(SocialEvent.platform == platform.lower())
     if hours is not None:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=max(1, int(hours)))
         filters.append(SocialEvent.occurred_at >= cutoff)
@@ -42,12 +45,22 @@ def postgres_social_search_statement(
     document = func.to_tsvector(config, func.coalesce(SocialEvent.text, ""))
     ts_query = func.websearch_to_tsquery(config, query.strip())
     rank = func.ts_rank_cd(document, ts_query)
-    lowered_text = func.lower(func.coalesce(SocialEvent.text, ""))
+
+    # Keep this expression identical to ix_social_events_text_trgm. In particular,
+    # do not wrap text in coalesce(): PostgreSQL expression indexes match the exact
+    # indexed expression. The explicit IS NOT NULL branch also proves the partial
+    # index predicate to the planner.
+    lowered_text = func.lower(SocialEvent.text)
     trigram = func.similarity(lowered_text, normalized_query)
-    substring_match = lowered_text.contains(normalized_query)
+    # User-provided %/_ must be literals, not LIKE wildcards. Otherwise a query such
+    # as "%%" can match essentially the whole table and defeat the bounded search.
+    substring_match = lowered_text.contains(normalized_query, autoescape=True)
+    text_similarity_match = SocialEvent.text.is_not(None) & (
+        substring_match | (trigram >= 0.25)
+    )
     score = (
         rank
-        + trigram * 0.20
+        + func.coalesce(trigram, 0.0) * 0.20
         + case((substring_match, literal(0.10)), else_=literal(0.0))
     ).label("search_score")
 
@@ -59,7 +72,7 @@ def postgres_social_search_statement(
                 platform=platform,
                 hours=hours,
             ),
-            document.op("@@")(ts_query) | substring_match | (trigram >= 0.25),
+            document.op("@@")(ts_query) | text_similarity_match,
         )
         .order_by(
             score.desc(),
@@ -112,7 +125,10 @@ async def search_social_events(
                     platform=platform,
                     hours=hours,
                 ),
-                func.lower(func.coalesce(SocialEvent.text, "")).contains(lowered),
+                func.lower(func.coalesce(SocialEvent.text, "")).contains(
+                    lowered,
+                    autoescape=True,
+                ),
             )
             .order_by(SocialEvent.occurred_at.desc(), SocialEvent.id.desc())
             .limit(max_items)
