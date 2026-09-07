@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 // data-tag: api.token_ohlcv
 // Latest pair snapshot for analysis. This is not historical OHLCV.
@@ -9,11 +10,32 @@ export const maxDuration = 30;
 
 const cache = new Map<string, { data: unknown; timestamp: number }>();
 const CACHE_TTL = 3_000;
+const MAX_CACHE_ENTRIES = 256;
 const feesCache = new Map<
   string,
   { feeSol: number; uniqueTraders: number; timestamp: number }
 >();
 const FEES_CACHE_TTL = 60_000;
+const MAX_FEES_CACHE_ENTRIES = 512;
+const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const UPSTREAM_TIMEOUT_MS = 8_000;
+
+function setBoundedCache<V>(target: Map<string, V>, key: string, value: V, maxEntries: number) {
+  target.delete(key);
+  while (target.size >= maxEntries) {
+    const oldest = target.keys().next().value as string | undefined;
+    if (!oldest) break;
+    target.delete(oldest);
+  }
+  target.set(key, value);
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+  });
+}
 
 interface TradesResult {
   totalSol: number;
@@ -28,11 +50,12 @@ async function fetchTradesData(mint: string): Promise<TradesResult | null> {
       uniqueTraders: cached.uniqueTraders,
     };
   }
+  if (cached) feesCache.delete(mint);
 
   try {
     const pageSize = 100;
     const maxPages = 3;
-    const base = `https://swap-api.pump.fun/v2/coins/${mint}/trades`;
+    const base = `https://swap-api.pump.fun/v2/coins/${encodeURIComponent(mint)}/trades`;
     type Trade = {
       amountSol: string;
       walletAddress?: string;
@@ -43,7 +66,7 @@ async function fetchTradesData(mint: string): Promise<TradesResult | null> {
       pagination?: { hasMore?: boolean; nextCursor?: string };
     };
 
-    const first = await fetch(`${base}?limit=${pageSize}`, {
+    const first = await fetchWithTimeout(`${base}?limit=${pageSize}`, {
       headers: { Accept: "application/json" },
       cache: "no-store",
     });
@@ -55,7 +78,7 @@ async function fetchTradesData(mint: string): Promise<TradesResult | null> {
       : undefined;
 
     for (let index = 1; index < maxPages && nextCursor; index += 1) {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${base}?limit=${pageSize}&cursor=${encodeURIComponent(nextCursor)}`,
         { headers: { Accept: "application/json" }, cache: "no-store" },
       );
@@ -78,11 +101,16 @@ async function fetchTradesData(mint: string): Promise<TradesResult | null> {
     }
     if (totalSol <= 0) return null;
 
-    feesCache.set(mint, {
-      feeSol: totalSol * 0.01,
-      uniqueTraders: wallets.size,
-      timestamp: Date.now(),
-    });
+    setBoundedCache(
+      feesCache,
+      mint,
+      {
+        feeSol: totalSol * 0.01,
+        uniqueTraders: wallets.size,
+        timestamp: Date.now(),
+      },
+      MAX_FEES_CACHE_ENTRIES,
+    );
     return { totalSol, uniqueTraders: wallets.size };
   } catch {
     return null;
@@ -100,10 +128,10 @@ interface BondingCurveInfo {
 
 async function fetchPumpInfo(mint: string): Promise<BondingCurveInfo | null> {
   try {
-    const response = await fetch(`https://frontend-api.pump.fun/coins/${mint}`, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
+    const response = await fetchWithTimeout(
+      `https://frontend-api.pump.fun/coins/${encodeURIComponent(mint)}`,
+      { headers: { Accept: "application/json" }, cache: "no-store" },
+    );
     if (!response.ok) return null;
     const data = await response.json();
     const virtualSol = Number(data.virtual_sol_reserves) || 0;
@@ -151,14 +179,17 @@ type DexPair = {
 
 function response(data: unknown) {
   return NextResponse.json(data, {
-    headers: { "Cache-Control": "no-store" },
+    headers: { "Cache-Control": "private, no-store, max-age=0" },
   });
 }
 
 export async function GET(req: NextRequest) {
-  const mint = req.nextUrl.searchParams.get("mint")?.trim();
-  if (!mint) {
-    return NextResponse.json({ error: "mint required" }, { status: 400 });
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
+  const mint = req.nextUrl.searchParams.get("mint")?.trim() || "";
+  if (!SOLANA_ADDRESS_RE.test(mint)) {
+    return NextResponse.json({ error: "invalid mint" }, { status: 400 });
   }
 
   const cached = cache.get(mint);
@@ -174,19 +205,16 @@ export async function GET(req: NextRequest) {
       },
     });
   }
+  if (cached) cache.delete(mint);
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
-    const upstream = await fetch(
-      `https://api.dexscreener.com/latest/dex/tokens/${mint}`,
+    const upstream = await fetchWithTimeout(
+      `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(mint)}`,
       {
         headers: { Accept: "application/json" },
         cache: "no-store",
-        signal: controller.signal,
       },
     );
-    clearTimeout(timeout);
     if (!upstream.ok) {
       return NextResponse.json(
         { error: `DexScreener ${upstream.status}` },
@@ -202,10 +230,10 @@ export async function GET(req: NextRequest) {
 
     if (solPairs.length === 0) {
       try {
-        const pump = await fetch(`https://swap-api.pump.fun/v1/coins/${mint}`, {
-          headers: { Accept: "application/json" },
-          cache: "no-store",
-        });
+        const pump = await fetchWithTimeout(
+          `https://swap-api.pump.fun/v1/coins/${encodeURIComponent(mint)}`,
+          { headers: { Accept: "application/json" }, cache: "no-store" },
+        );
         if (pump.ok) {
           type PumpCoin = {
             symbol: string;
@@ -246,7 +274,7 @@ export async function GET(req: NextRequest) {
               servedAt: Date.now(),
             },
           };
-          cache.set(mint, { data: responseData, timestamp: Date.now() });
+          setBoundedCache(cache, mint, { data: responseData, timestamp: Date.now() }, MAX_CACHE_ENTRIES);
           return response(responseData);
         }
       } catch {
@@ -332,9 +360,9 @@ export async function GET(req: NextRequest) {
       },
     };
 
-    cache.set(mint, { data: responseData, timestamp: Date.now() });
+    setBoundedCache(cache, mint, { data: responseData, timestamp: Date.now() }, MAX_CACHE_ENTRIES);
     return response(responseData);
-  } catch (error: unknown) {
+  } catch {
     if (cached) {
       const value = cached.data as Record<string, unknown>;
       return response({
@@ -347,7 +375,6 @@ export async function GET(req: NextRequest) {
         },
       });
     }
-    const message = error instanceof Error ? error.message : "fetch_failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "token_snapshot_unavailable" }, { status: 502 });
   }
 }
