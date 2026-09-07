@@ -17,6 +17,16 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
+resolved_backend_env_value() {
+  local key="$1"
+  local value
+  value="$(env_value_from_file .env.server "$key")"
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file backend.env "$key")"
+  fi
+  printf '%s' "$value"
+}
+
 # docker-compose.production.yml injects this server-only secret into the
 # frontend so Mini App API routes can authenticate to FastAPI. Resolve the
 # same value as the backend without exposing the rest of backend.env.
@@ -54,6 +64,12 @@ REQUIRED_SERVICES=(
 )
 
 telegram_intelligence_enabled() {
+  local public_web
+  public_web="$(resolved_backend_env_value TG_PUBLIC_WEB_ENABLED | tr '[:upper:]' '[:lower:]')"
+  if [[ "$public_web" =~ ^(1|true|yes|on)$ ]]; then
+    return 0
+  fi
+
   grep -Eq '^TG_API_ID=.+$' .env.server \
     && grep -Eq '^TG_API_HASH=.+$' .env.server \
     && grep -Eq '^TG_SESSION_STRING=.+$' .env.server
