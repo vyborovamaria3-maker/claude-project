@@ -208,10 +208,6 @@ async def persist_outcome_values(
             new_confirmed=max_multiple >= 2,
         )
 
-    # Source-reliability consumes 72h outcomes. Keep its causal entity/token
-    # projection transactionally consistent with the durable outcome row. Flush
-    # first so a newly created earliest-snapshot outcome is visible to the
-    # projection query without committing the surrounding transaction.
     if horizon_hours == 72 and max_multiple is not None:
         await session.flush()
         await refresh_entity_outcome_projection_for_mint(
@@ -238,9 +234,6 @@ async def _metrics_for_window(
     start: datetime,
     end: datetime,
 ) -> list[TokenMetric]:
-    # Select only the scalar id. Token relationships use select-in loading, so
-    # loading the ORM Token here could otherwise fetch unrelated metric/trade
-    # history before the bounded time-window query even runs.
     token_id = (
         await session.execute(select(Token.id).where(Token.mint_address == mint))
     ).scalar_one_or_none()
@@ -276,6 +269,104 @@ def _select_causal_baseline(
     return before[-1] if before else None
 
 
+async def _evaluate_snapshot_horizons(
+    session: AsyncSession,
+    *,
+    snapshot: IntelligenceSnapshot,
+    horizons: Iterable[int],
+    now: datetime,
+) -> dict[int, dict[str, Any]]:
+    matured = sorted(
+        {
+            int(horizon)
+            for horizon in horizons
+            if int(horizon) > 0
+            and now >= snapshot.created_at + timedelta(hours=int(horizon))
+        }
+    )
+    if not matured:
+        return {}
+
+    cutoff = snapshot.created_at
+    max_end = cutoff + timedelta(hours=max(matured))
+    rows = await _metrics_for_window(
+        session,
+        mint=snapshot.mint_address,
+        start=cutoff - BASELINE_LOOKBACK,
+        end=max_end,
+    )
+    if not rows:
+        return {
+            horizon: {"status": "no_price_history", "snapshot_id": snapshot.snapshot_id}
+            for horizon in matured
+        }
+
+    baseline_row = _select_causal_baseline(rows, cutoff)
+    if baseline_row is None:
+        return {
+            horizon: {"status": "no_causal_baseline", "snapshot_id": snapshot.snapshot_id}
+            for horizon in matured
+        }
+
+    results: dict[int, dict[str, Any]] = {}
+    for horizon_hours in matured:
+        end = cutoff + timedelta(hours=horizon_hours)
+        outcome_rows = [
+            row
+            for row in rows
+            if row.price_usd is not None
+            and row.price_usd > 0
+            and cutoff <= row.timestamp <= end
+        ]
+        if not outcome_rows:
+            results[horizon_hours] = {
+                "status": "no_valid_prices",
+                "snapshot_id": snapshot.snapshot_id,
+            }
+            continue
+
+        final_candidates = [
+            row
+            for row in outcome_rows
+            if row.timestamp >= end - FINAL_COVERAGE_TOLERANCE
+        ]
+        if not final_candidates:
+            results[horizon_hours] = {
+                "status": "right_censored",
+                "snapshot_id": snapshot.snapshot_id,
+                "latest_metric_at": outcome_rows[-1].timestamp.isoformat(),
+            }
+            continue
+
+        peak_to_trough = _max_peak_to_trough_drawdown(outcome_rows)
+        result = await persist_outcome_values(
+            session,
+            snapshot=snapshot,
+            horizon_hours=horizon_hours,
+            baseline_price_usd=float(baseline_row.price_usd),
+            max_price_usd=max(float(row.price_usd) for row in outcome_rows),
+            min_price_usd=min(float(row.price_usd) for row in outcome_rows),
+            final_price_usd=float(final_candidates[-1].price_usd),
+            max_drawdown_pct=peak_to_trough,
+            payload={
+                "source": "token_metrics",
+                "snapshot_created_at": cutoff.isoformat(),
+                "horizon_end": end.isoformat(),
+                "baseline_metric_at": baseline_row.timestamp.isoformat(),
+                "final_metric_at": final_candidates[-1].timestamp.isoformat(),
+                "samples": len(outcome_rows),
+                "causal_baseline": True,
+                "baseline_rule": "latest_metric_at_or_before_snapshot_within_90m",
+                "strict_horizon_end": True,
+                "right_censoring_checked": True,
+                "peak_to_trough_drawdown": True,
+                "shared_price_window_read": True,
+            },
+        )
+        results[horizon_hours] = {"status": "evaluated", **result}
+    return results
+
+
 async def evaluate_snapshot_horizon(
     session: AsyncSession,
     *,
@@ -284,71 +375,19 @@ async def evaluate_snapshot_horizon(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
-    cutoff = snapshot.created_at
-    end = cutoff + timedelta(hours=horizon_hours)
+    end = snapshot.created_at + timedelta(hours=horizon_hours)
     if now < end:
         return {"status": "not_matured", "snapshot_id": snapshot.snapshot_id}
-
-    rows = await _metrics_for_window(
-        session,
-        mint=snapshot.mint_address,
-        start=cutoff - BASELINE_LOOKBACK,
-        end=end,
-    )
-    if not rows:
-        return {"status": "no_price_history", "snapshot_id": snapshot.snapshot_id}
-
-    baseline_row = _select_causal_baseline(rows, cutoff)
-    if baseline_row is None:
-        return {"status": "no_causal_baseline", "snapshot_id": snapshot.snapshot_id}
-
-    outcome_rows = [
-        row
-        for row in rows
-        if row.price_usd is not None
-        and row.price_usd > 0
-        and cutoff <= row.timestamp <= end
-    ]
-    if not outcome_rows:
-        return {"status": "no_valid_prices", "snapshot_id": snapshot.snapshot_id}
-
-    final_candidates = [
-        row
-        for row in outcome_rows
-        if row.timestamp >= end - FINAL_COVERAGE_TOLERANCE
-    ]
-    if not final_candidates:
-        return {
-            "status": "right_censored",
-            "snapshot_id": snapshot.snapshot_id,
-            "latest_metric_at": outcome_rows[-1].timestamp.isoformat(),
-        }
-
-    peak_to_trough = _max_peak_to_trough_drawdown(outcome_rows)
-    result = await persist_outcome_values(
+    results = await _evaluate_snapshot_horizons(
         session,
         snapshot=snapshot,
-        horizon_hours=horizon_hours,
-        baseline_price_usd=float(baseline_row.price_usd),
-        max_price_usd=max(float(row.price_usd) for row in outcome_rows),
-        min_price_usd=min(float(row.price_usd) for row in outcome_rows),
-        final_price_usd=float(final_candidates[-1].price_usd),
-        max_drawdown_pct=peak_to_trough,
-        payload={
-            "source": "token_metrics",
-            "snapshot_created_at": cutoff.isoformat(),
-            "horizon_end": end.isoformat(),
-            "baseline_metric_at": baseline_row.timestamp.isoformat(),
-            "final_metric_at": final_candidates[-1].timestamp.isoformat(),
-            "samples": len(outcome_rows),
-            "causal_baseline": True,
-            "baseline_rule": "latest_metric_at_or_before_snapshot_within_90m",
-            "strict_horizon_end": True,
-            "right_censoring_checked": True,
-            "peak_to_trough_drawdown": True,
-        },
+        horizons=(horizon_hours,),
+        now=now,
     )
-    return {"status": "evaluated", **result}
+    return results.get(
+        horizon_hours,
+        {"status": "not_matured", "snapshot_id": snapshot.snapshot_id},
+    )
 
 
 async def evaluate_matured_outcomes(
@@ -410,18 +449,22 @@ async def evaluate_matured_outcomes(
     censored = 0
     skipped = 0
     for snapshot in selected:
-        for horizon in horizons:
-            if (snapshot.snapshot_id, horizon) in existing:
-                continue
-            if now < snapshot.created_at + timedelta(hours=horizon):
-                continue
-            result = await evaluate_snapshot_horizon(
-                session,
-                snapshot=snapshot,
-                horizon_hours=horizon,
-                now=now,
-            )
-            status = result.get("status")
+        pending_horizons = [
+            horizon
+            for horizon in horizons
+            if now >= snapshot.created_at + timedelta(hours=horizon)
+            and (snapshot.snapshot_id, horizon) not in existing
+        ]
+        if not pending_horizons:
+            continue
+        results = await _evaluate_snapshot_horizons(
+            session,
+            snapshot=snapshot,
+            horizons=pending_horizons,
+            now=now,
+        )
+        for horizon in pending_horizons:
+            status = (results.get(horizon) or {}).get("status")
             if status == "evaluated":
                 evaluated += 1
             elif status == "right_censored":
