@@ -12,7 +12,10 @@ x-backend-worker: &backend-worker
     REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in solana-launcher/.env}@redis:6379/0
     CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-potapoff}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in solana-launcher/.env}@rabbitmq:5672//
     CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in solana-launcher/.env}@redis:6379/1
+    PROMETHEUS_MULTIPROC_DIR: /tmp/potapoff-prometheus
     TG_RUNTIME_IN_API: "false"
+  volumes:
+    - prometheus-multiproc:/tmp/potapoff-prometheus
   depends_on:
     backend:
       condition: service_started
@@ -87,9 +90,12 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in solana-launcher/.env}@redis:6379/0
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-potapoff}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in solana-launcher/.env}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in solana-launcher/.env}@redis:6379/1
+      PROMETHEUS_MULTIPROC_DIR: /tmp/potapoff-prometheus
       TG_RUNTIME_IN_API: "false"
       FRONTEND_URL: ${NEXT_PUBLIC_APP_URL:?NEXT_PUBLIC_APP_URL must be set in solana-launcher/.env}
       FRONTEND_INTERNAL_URL: http://frontend:3000
+    volumes:
+      - prometheus-multiproc:/tmp/potapoff-prometheus
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,7 +153,10 @@ services:
       DEBUG: ${DEBUG:-false}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-potapoff}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in solana-launcher/.env}@postgres:5432/${POSTGRES_DB:-potapoff}
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in solana-launcher/.env}@redis:6379/0
+      PROMETHEUS_MULTIPROC_DIR: /tmp/potapoff-prometheus
       TG_RUNTIME_IN_API: "false"
+    volumes:
+      - prometheus-multiproc:/tmp/potapoff-prometheus
     command: ["python", "-m", "app.cli.telegram_runtime"]
     depends_on:
       backend:
@@ -218,6 +227,7 @@ volumes:
   postgres-data:
   redis-data:
   frontend_node_modules:
+  prometheus-multiproc:
 
 networks:
   potapoff-shared:
