@@ -23,12 +23,11 @@ async def refresh_entity_outcome_projection_for_mint(
     mint_address: str,
     horizon_hours: int,
 ) -> int:
-    """Refresh prepared earliest-snapshot outcomes for one token/horizon.
+    """Reconcile prepared earliest-snapshot outcomes for one token/horizon.
 
-    The projection deliberately gives each entity one vote per token. It uses the
-    earliest retained snapshot containing that entity, matching the historical
-    source-reliability selection rule while moving the expensive join off the
-    user-facing report path.
+    Each entity receives at most one vote per token. If the causal earliest
+    snapshot has no usable outcome anymore, a stale projection is removed in the
+    same transaction instead of silently influencing future reputation scores.
     """
     ranked = (
         select(
@@ -67,7 +66,22 @@ async def refresh_entity_outcome_projection_for_mint(
             )
         ).all()
     )
+
+    existing_rows = list(
+        (
+            await session.execute(
+                select(IntelligenceEntityOutcomeProjection).where(
+                    IntelligenceEntityOutcomeProjection.mint_address == mint_address,
+                    IntelligenceEntityOutcomeProjection.horizon_hours == horizon_hours,
+                )
+            )
+        ).scalars().all()
+    )
+    existing = {row.entity_key: row for row in existing_rows}
+
     if not earliest:
+        for projection in existing_rows:
+            await session.delete(projection)
         return 0
 
     snapshot_ids = {str(row.snapshot_id) for row in earliest}
@@ -77,38 +91,24 @@ async def refresh_entity_outcome_projection_for_mint(
                 select(IntelligenceOutcome).where(
                     IntelligenceOutcome.snapshot_id.in_(snapshot_ids),
                     IntelligenceOutcome.horizon_hours == horizon_hours,
-                    IntelligenceOutcome.max_multiple.is_not(None),
                 )
             )
         ).scalars().all()
     )
     outcome_by_snapshot = {row.snapshot_id: row for row in outcomes}
-    prepared = [
-        (row, outcome_by_snapshot.get(str(row.snapshot_id)))
-        for row in earliest
-    ]
-    prepared = [(row, outcome) for row, outcome in prepared if outcome is not None]
-    if not prepared:
-        return 0
-
-    entity_keys = [str(row.entity_key) for row, _ in prepared]
-    existing_rows = list(
-        (
-            await session.execute(
-                select(IntelligenceEntityOutcomeProjection).where(
-                    IntelligenceEntityOutcomeProjection.entity_key.in_(entity_keys),
-                    IntelligenceEntityOutcomeProjection.mint_address == mint_address,
-                    IntelligenceEntityOutcomeProjection.horizon_hours == horizon_hours,
-                )
-            )
-        ).scalars().all()
-    )
-    existing = {row.entity_key: row for row in existing_rows}
+    desired_keys: set[str] = set()
     updated_at = datetime.now(timezone.utc)
 
-    for earliest_row, outcome in prepared:
-        assert outcome is not None
+    for earliest_row in earliest:
         entity_key = str(earliest_row.entity_key)
+        outcome = outcome_by_snapshot.get(str(earliest_row.snapshot_id))
+        if outcome is None or outcome.max_multiple is None:
+            projection = existing.get(entity_key)
+            if projection is not None:
+                await session.delete(projection)
+            continue
+
+        desired_keys.add(entity_key)
         values = {
             "entity_type": str(earliest_row.entity_type),
             "snapshot_id": str(earliest_row.snapshot_id),
@@ -132,4 +132,11 @@ async def refresh_entity_outcome_projection_for_mint(
             for key, value in values.items():
                 setattr(projection, key, value)
 
-    return len(prepared)
+    # Reconcile rows whose entity is no longer present in the causal earliest set.
+    earliest_keys = {str(row.entity_key) for row in earliest}
+    for entity_key, projection in existing.items():
+        if entity_key not in earliest_keys or entity_key not in desired_keys:
+            if projection not in session.deleted:
+                await session.delete(projection)
+
+    return len(desired_keys)
