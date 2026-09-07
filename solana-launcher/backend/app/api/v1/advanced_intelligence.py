@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,11 +23,16 @@ from app.services.advanced_intelligence_persistence import (
     persist_advanced_intelligence_state,
 )
 from app.services.analysis_jobs import (
+    analysis_request_fingerprint,
     create_analysis_job,
     fail_analysis_job,
     read_analysis_job,
+    read_cached_analysis,
+    release_analysis_reservation,
+    reserve_analysis_job,
 )
 from app.services.intelligence_outcomes import persist_outcome_values
+from app.services.observability import ANALYSIS_CACHE_REQUESTS, ANALYSIS_STAGE_RUNTIME
 from app.services.telegram_parser import is_solana_address
 from app.tasks.advanced_intelligence import enrich_report
 
@@ -87,60 +92,138 @@ async def advanced_report(
     _require_backend_key(request, x_backend_api_key)
     _validate_snapshot_mint(payload)
 
-    report = await build_advanced_intelligence_report(
-        session,
-        snapshot=payload.snapshot,
-        ai_result=payload.ai_result,
-    )
-    if payload.role == "analyst" and payload.enrich:
-        report = await enrich_advanced_report(
-            session,
-            get_settings(),
-            snapshot=payload.snapshot,
-            report=report,
-        )
-    if payload.persist:
-        await persist_advanced_intelligence_state(
+    with ANALYSIS_STAGE_RUNTIME.labels(stage="synchronous_report").time():
+        report = await build_advanced_intelligence_report(
             session,
             snapshot=payload.snapshot,
-            report=report,
             ai_result=payload.ai_result,
-            role=payload.role,
         )
+        if payload.role == "analyst" and payload.enrich:
+            report = await enrich_advanced_report(
+                session,
+                get_settings(),
+                snapshot=payload.snapshot,
+                report=report,
+            )
+        if payload.persist:
+            await persist_advanced_intelligence_state(
+                session,
+                snapshot=payload.snapshot,
+                report=report,
+                ai_result=payload.ai_result,
+                role=payload.role,
+            )
     return report
 
 
-@router.post("/report/async", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/report/async")
 async def advanced_report_async(
     payload: AdvancedReportRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db),
     x_backend_api_key: str | None = Header(
         default=None,
         alias="X-Backend-API-Key",
     ),
 ) -> dict:
-    """Return deterministic analysis immediately and move slow enrichment off-request."""
+    """Return deterministic analysis quickly and move slow enrichment off-request.
+
+    Identical requests are single-flighted through Redis: callers reuse an active
+    job, and recently completed reports are returned without repeating RPC or DB
+    enrichment work.
+    """
     _require_backend_key(request, x_backend_api_key)
     mint = _validate_snapshot_mint(payload)
-
-    preliminary = await build_advanced_intelligence_report(
-        session,
+    fingerprint = analysis_request_fingerprint(
         snapshot=payload.snapshot,
         ai_result=payload.ai_result,
+        role=payload.role,
+        enrich=payload.enrich,
+        persist=payload.persist,
     )
-    job_id = uuid4().hex
-    job_payload = {
-        "snapshot": payload.snapshot,
-        "ai_result": payload.ai_result,
-        "preliminary_report": preliminary,
-        "persist": payload.persist,
-        "enrich": payload.enrich,
-        "role": payload.role,
-    }
+
     try:
+        cached = await read_cached_analysis(fingerprint)
+        if cached is not None:
+            ANALYSIS_CACHE_REQUESTS.labels(
+                layer="advanced_report",
+                result="hit",
+            ).inc()
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "completed",
+                "cached": True,
+                "snapshot_id": payload.snapshot.get("snapshotId"),
+                "mint": mint,
+                "report": cached,
+            }
+        ANALYSIS_CACHE_REQUESTS.labels(
+            layer="advanced_report",
+            result="miss",
+        ).inc()
+
+        job_id = uuid4().hex
+        active_job_id = await reserve_analysis_job(fingerprint, job_id)
+        if active_job_id:
+            active_state = await read_analysis_job(active_job_id)
+            if active_state is not None:
+                ANALYSIS_CACHE_REQUESTS.labels(
+                    layer="advanced_report",
+                    result="singleflight",
+                ).inc()
+                response.status_code = status.HTTP_202_ACCEPTED
+                return {
+                    **active_state,
+                    "reused_job": True,
+                    "poll": (
+                        "/api/v1/social/intelligence/advanced/report/jobs/"
+                        f"{active_job_id}"
+                    ),
+                }
+
+            # A reservation can outlive its job state if Redis was partially
+            # evicted. Clear that exact stale owner and retry the reservation once.
+            await release_analysis_reservation(fingerprint, active_job_id)
+            active_job_id = await reserve_analysis_job(fingerprint, job_id)
+            if active_job_id:
+                response.status_code = status.HTTP_202_ACCEPTED
+                return {
+                    "job_id": active_job_id,
+                    "status": "queued",
+                    "reused_job": True,
+                    "snapshot_id": payload.snapshot.get("snapshotId"),
+                    "mint": mint,
+                    "poll": (
+                        "/api/v1/social/intelligence/advanced/report/jobs/"
+                        f"{active_job_id}"
+                    ),
+                }
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Background analysis state is unavailable",
+        ) from exc
+
+    try:
+        with ANALYSIS_STAGE_RUNTIME.labels(stage="preliminary").time():
+            preliminary = await build_advanced_intelligence_report(
+                session,
+                snapshot=payload.snapshot,
+                ai_result=payload.ai_result,
+            )
+        job_payload = {
+            "fingerprint": fingerprint,
+            "snapshot": payload.snapshot,
+            "ai_result": payload.ai_result,
+            "preliminary_report": preliminary,
+            "persist": payload.persist,
+            "enrich": payload.enrich,
+            "role": payload.role,
+        }
         await create_analysis_job(
             job_id,
+            fingerprint=fingerprint,
             payload=job_payload,
             preliminary_report=preliminary,
         )
@@ -150,15 +233,21 @@ async def advanced_report_async(
             queue="intelligence",
         )
     except Exception as exc:
-        await fail_analysis_job(job_id, str(exc))
+        await fail_analysis_job(
+            job_id,
+            str(exc),
+            fingerprint=fingerprint,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Background analysis queue is unavailable",
         ) from exc
 
+    response.status_code = status.HTTP_202_ACCEPTED
     return {
         "job_id": job_id,
         "status": "queued",
+        "cached": False,
         "snapshot_id": payload.snapshot.get("snapshotId"),
         "mint": mint,
         "preliminary_report": preliminary,
