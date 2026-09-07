@@ -73,7 +73,16 @@ async def acquire_outcome_write_lock(
     snapshot_id: str,
     horizon_hours: int,
 ) -> None:
-    """Serialize only writers targeting the same snapshot+horizon."""
+    """Enter the outcome-learning write order, then lock one outcome row key.
+
+    The scheduled evaluator intentionally keeps one transaction across a batch and
+    therefore accumulates per-outcome/calibration/projection locks. Manual writes
+    must not enter that graph from the middle or they can form a lock cycle. Every
+    outcome writer first acquires the same outer lease used by the scheduled job;
+    scheduled calls are re-entrant on that transaction lock. The narrower lock is
+    retained as a second line of defense and documents the row-level resource.
+    """
+    await _acquire_xact_lock(session, OUTCOME_EVALUATION_LOCK_KEY)
     await _acquire_xact_lock(
         session,
         outcome_write_lock_key(snapshot_id, horizon_hours),
