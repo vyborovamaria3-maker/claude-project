@@ -22,6 +22,14 @@ class FakeRedis:
         self.data.pop(key, None)
         return 1
 
+    async def eval(self, script: str, numkeys: int, key: str, token: str):
+        del script
+        assert numkeys == 1
+        if self.data.get(key) == token:
+            self.data.pop(key, None)
+            return 1
+        return 0
+
 
 async def test_snapshot_wallet_funding_reuses_one_client_and_one_rpc_semaphore(monkeypatch):
     created_clients = 0
@@ -151,6 +159,43 @@ async def test_funding_cache_singleflights_identical_wallet_requests(monkeypatch
 
     assert calls == 1
     assert first == second == third
+
+
+async def test_funding_lock_release_never_deletes_new_owners_lease() -> None:
+    redis = FakeRedis()
+    lock_key = "analysis:funding:test:wallet:lock"
+    redis.data[lock_key] = "new-owner"
+
+    await solana_funding_verifier._release_funding_lock(
+        redis,
+        lock_key,
+        "expired-old-owner",
+    )
+    assert redis.data[lock_key] == "new-owner"
+
+    await solana_funding_verifier._release_funding_lock(
+        redis,
+        lock_key,
+        "new-owner",
+    )
+    assert lock_key not in redis.data
+
+
+def test_funding_singleflight_wait_covers_bounded_wallet_rpc_worst_case() -> None:
+    transaction_waves = (
+        solana_funding_verifier.MAX_TRANSACTIONS_TO_INSPECT
+        + solana_funding_verifier.MAX_RPC_CONCURRENCY
+        - 1
+    ) // solana_funding_verifier.MAX_RPC_CONCURRENCY
+    bounded_seconds = solana_funding_verifier.RPC_TIMEOUT_SECONDS * (
+        solana_funding_verifier.MAX_SIGNATURE_PAGES + transaction_waves
+    )
+
+    assert solana_funding_verifier.FUNDING_CACHE_WAIT_SECONDS >= bounded_seconds
+    assert (
+        solana_funding_verifier.FUNDING_CACHE_LOCK_SECONDS
+        > solana_funding_verifier.FUNDING_CACHE_WAIT_SECONDS
+    )
 
 
 async def test_rpc_uses_global_concurrency_limit(monkeypatch):
