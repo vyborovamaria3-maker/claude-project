@@ -172,6 +172,12 @@ class SocialEvent(Base):
         Index("ix_social_events_mint_time", "mint_address", "occurred_at"),
         Index("ix_social_events_platform_time", "platform", "occurred_at"),
         Index("ix_social_events_source", "source_handle", "occurred_at"),
+        Index(
+            "ix_social_events_mint_platform_time",
+            "mint_address",
+            "platform",
+            "occurred_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
