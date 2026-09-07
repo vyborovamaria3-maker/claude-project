@@ -27,9 +27,6 @@ resolved_backend_env_value() {
   printf '%s' "$value"
 }
 
-# docker-compose.production.yml injects this server-only secret into the
-# frontend so Mini App API routes can authenticate to FastAPI. Resolve the
-# same value as the backend without exposing the rest of backend.env.
 if [[ -z "${BACKEND_API_KEY:-}" ]]; then
   BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
 fi
@@ -55,6 +52,7 @@ REQUIRED_SERVICES=(
   backend
   celery-worker
   celery-market
+  celery-social
   celery-intelligence
   celery-blockchain
   celery-beat
@@ -232,6 +230,7 @@ echo "Mini App config: ${miniapp_config:-unavailable}" >&2
   backend \
   celery-worker \
   celery-market \
+  celery-social \
   celery-intelligence \
   celery-blockchain \
   celery-beat \
