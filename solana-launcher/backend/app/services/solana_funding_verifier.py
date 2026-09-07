@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from time import monotonic
 from typing import Any
+from uuid import uuid4
 
 import httpx
+from redis.exceptions import RedisError
 
 from app.core.config import Settings
+from app.services.cache import get_redis_client
 from app.services.observability import (
+    ANALYSIS_CACHE_REQUESTS,
     PROVIDER_RATE_LIMITS,
     PROVIDER_REQUEST_LATENCY,
     PROVIDER_REQUESTS,
@@ -20,6 +26,9 @@ MAX_RPC_CONCURRENCY = 8
 MAX_WALLET_CONCURRENCY = 4
 INITIAL_TRANSACTION_RANK_LIMIT = 10
 RPC_TIMEOUT_SECONDS = 8.0
+FUNDING_CACHE_TTL_SECONDS = 90
+FUNDING_CACHE_LOCK_SECONDS = 30
+FUNDING_CACHE_WAIT_SECONDS = 3.0
 SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
 
 
@@ -33,6 +42,11 @@ def _observe_rpc(method: str, result: str, elapsed: float) -> None:
         provider="solana_rpc",
         operation=method,
     ).observe(elapsed)
+
+
+def _funding_cache_key(rpc_url: str, address: str) -> str:
+    provider = hashlib.sha256(rpc_url.encode("utf-8")).hexdigest()[:12]
+    return f"analysis:funding:{provider}:{address}"
 
 
 async def _rpc(
@@ -314,16 +328,114 @@ async def _verify_wallet_funding_with_client(
         }
 
 
+async def _cached_verify_wallet_funding_with_client(
+    settings: Settings,
+    address: str,
+    client: httpx.AsyncClient,
+    rpc_semaphore: asyncio.Semaphore,
+) -> dict[str, Any]:
+    rpc_url = (settings.helius_rpc_url or settings.solana_rpc_url or "").strip()
+    if not rpc_url:
+        return await _verify_wallet_funding_with_client(
+            settings,
+            address,
+            client,
+            rpc_semaphore,
+        )
+
+    redis = get_redis_client()
+    cache_key = _funding_cache_key(rpc_url, address)
+    lock_key = f"{cache_key}:lock"
+    try:
+        raw = await redis.get(cache_key)
+        if raw:
+            ANALYSIS_CACHE_REQUESTS.labels(layer="wallet_funding", result="hit").inc()
+            cached = json.loads(raw)
+            if isinstance(cached, dict):
+                return cached
+        ANALYSIS_CACHE_REQUESTS.labels(layer="wallet_funding", result="miss").inc()
+    except (RedisError, json.JSONDecodeError):
+        ANALYSIS_CACHE_REQUESTS.labels(layer="wallet_funding", result="bypass").inc()
+        return await _verify_wallet_funding_with_client(
+            settings,
+            address,
+            client,
+            rpc_semaphore,
+        )
+
+    token = uuid4().hex
+    try:
+        acquired = bool(
+            await redis.set(
+                lock_key,
+                token,
+                nx=True,
+                ex=FUNDING_CACHE_LOCK_SECONDS,
+            )
+        )
+    except RedisError:
+        acquired = False
+
+    if not acquired:
+        deadline = monotonic() + FUNDING_CACHE_WAIT_SECONDS
+        while monotonic() < deadline:
+            await asyncio.sleep(0.15)
+            try:
+                raw = await redis.get(cache_key)
+            except RedisError:
+                break
+            if raw:
+                try:
+                    cached = json.loads(raw)
+                except json.JSONDecodeError:
+                    break
+                if isinstance(cached, dict):
+                    ANALYSIS_CACHE_REQUESTS.labels(
+                        layer="wallet_funding",
+                        result="wait_hit",
+                    ).inc()
+                    return cached
+        ANALYSIS_CACHE_REQUESTS.labels(
+            layer="wallet_funding",
+            result="wait_timeout",
+        ).inc()
+        return await _verify_wallet_funding_with_client(
+            settings,
+            address,
+            client,
+            rpc_semaphore,
+        )
+
+    try:
+        result = await _verify_wallet_funding_with_client(
+            settings,
+            address,
+            client,
+            rpc_semaphore,
+        )
+        try:
+            await redis.set(
+                cache_key,
+                json.dumps(result, default=str),
+                ex=FUNDING_CACHE_TTL_SECONDS,
+            )
+        except RedisError:
+            pass
+        return result
+    finally:
+        try:
+            current = await redis.get(lock_key)
+            if current == token:
+                await redis.delete(lock_key)
+        except RedisError:
+            pass
+
+
 async def verify_wallet_funding(
     settings: Settings,
     address: str,
 ) -> dict[str, Any]:
-    """Verify one wallet using a bounded connection pool.
-
-    Snapshot-level analysis uses the internal shared-client path below, while this
-    standalone entry point preserves the previous public API for callers that inspect
-    just one wallet.
-    """
+    """Verify one wallet using a bounded connection pool and short-lived cache."""
     limits = httpx.Limits(
         max_connections=MAX_RPC_CONCURRENCY,
         max_keepalive_connections=MAX_RPC_CONCURRENCY,
@@ -332,7 +444,7 @@ async def verify_wallet_funding(
         timeout=httpx.Timeout(RPC_TIMEOUT_SECONDS),
         limits=limits,
     ) as client:
-        return await _verify_wallet_funding_with_client(
+        return await _cached_verify_wallet_funding_with_client(
             settings,
             address,
             client,
@@ -381,7 +493,7 @@ async def verify_snapshot_wallet_funding(
 
         async def inspect_wallet(address: str) -> dict[str, Any]:
             async with wallet_semaphore:
-                return await _verify_wallet_funding_with_client(
+                return await _cached_verify_wallet_funding_with_client(
                     settings,
                     address,
                     client,
