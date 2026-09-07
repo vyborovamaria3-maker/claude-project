@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.tasks.etl",
         "app.tasks.intelligence",
         "app.tasks.advanced_intelligence",
+        "app.tasks.social",
     ],
 )
 
@@ -29,6 +30,7 @@ celery_app.conf.update(
         "app.tasks.etl.refresh_links": {"queue": "blockchain"},
         "app.tasks.etl.run_full_collection": {"queue": "market"},
         "app.tasks.etl.bootstrap_jobs": {"queue": "maintenance"},
+        "app.tasks.social.refresh_x": {"queue": "social"},
         "app.tasks.intelligence.evaluate_matured_outcomes": {"queue": "intelligence"},
         "app.tasks.advanced_intelligence.enrich_report": {"queue": "intelligence"},
         "app.tasks.notifications.*": {"queue": "maintenance"},
