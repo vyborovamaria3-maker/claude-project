@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.advanced_intelligence import IntelligenceCalibrationStat, IntelligenceOutcome
 from app.models.analytics import Token, TokenMetric
 from app.models.intelligence_memory import IntelligenceSnapshot
+from app.services.entity_performance import refresh_entity_outcome_projection_for_mint
 
 DEFAULT_HORIZONS = (6, 24, 72)
 MAX_SNAPSHOTS_PER_RUN = 250
@@ -206,6 +207,19 @@ async def persist_outcome_values(
             old_confirmed=old_confirmed,
             new_confirmed=max_multiple >= 2,
         )
+
+    # Source-reliability consumes 72h outcomes. Keep its causal entity/token
+    # projection transactionally consistent with the durable outcome row. Flush
+    # first so a newly created earliest-snapshot outcome is visible to the
+    # projection query without committing the surrounding transaction.
+    if horizon_hours == 72 and max_multiple is not None:
+        await session.flush()
+        await refresh_entity_outcome_projection_for_mint(
+            session,
+            mint_address=snapshot.mint_address,
+            horizon_hours=72,
+        )
+
     return {
         "snapshot_id": snapshot.snapshot_id,
         "horizon_hours": horizon_hours,
@@ -224,17 +238,20 @@ async def _metrics_for_window(
     start: datetime,
     end: datetime,
 ) -> list[TokenMetric]:
-    token = (
-        await session.execute(select(Token).where(Token.mint_address == mint))
+    # Select only the scalar id. Token relationships use select-in loading, so
+    # loading the ORM Token here could otherwise fetch unrelated metric/trade
+    # history before the bounded time-window query even runs.
+    token_id = (
+        await session.execute(select(Token.id).where(Token.mint_address == mint))
     ).scalar_one_or_none()
-    if token is None:
+    if token_id is None:
         return []
     return list(
         (
             await session.execute(
                 select(TokenMetric)
                 .where(
-                    TokenMetric.token_id == token.id,
+                    TokenMetric.token_id == token_id,
                     TokenMetric.timestamp >= start,
                     TokenMetric.timestamp <= end,
                     TokenMetric.price_usd.is_not(None),
