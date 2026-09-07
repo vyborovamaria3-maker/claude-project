@@ -28,22 +28,34 @@ def _percentile(values: list[float], percentile: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, int(round((len(ordered) - 1) * percentile))))
+    index = max(
+        0,
+        min(len(ordered) - 1, int(round((len(ordered) - 1) * percentile))),
+    )
     return ordered[index]
 
 
 def _summary(samples: Iterable[Sample], elapsed_seconds: float) -> dict:
     rows = list(samples)
-    successful = [row for row in rows if row.error is None and row.status_code is not None]
-    latencies = [row.latency_ms for row in successful]
+    http_rows = [row for row in rows if row.error is None and row.status_code is not None]
+    successful = [
+        row
+        for row in http_rows
+        if row.status_code is not None and 200 <= row.status_code < 400
+    ]
+    latencies = [row.latency_ms for row in http_rows]
     statuses = Counter(str(row.status_code) for row in rows if row.status_code is not None)
     errors = Counter(row.error for row in rows if row.error)
     return {
         "requests": len(rows),
-        "successful_http_responses": len(successful),
-        "errors": sum(errors.values()),
+        "http_responses": len(http_rows),
+        "successful_2xx_3xx": len(successful),
+        "failed_http_responses": len(http_rows) - len(successful),
+        "transport_errors": sum(errors.values()),
         "elapsed_seconds": round(elapsed_seconds, 4),
-        "requests_per_second": round(len(rows) / elapsed_seconds, 2) if elapsed_seconds else 0.0,
+        "requests_per_second": (
+            round(len(rows) / elapsed_seconds, 2) if elapsed_seconds else 0.0
+        ),
         "latency_ms": {
             "min": round(min(latencies), 2) if latencies else 0.0,
             "p50": round(_percentile(latencies, 0.50), 2),
@@ -53,7 +65,7 @@ def _summary(samples: Iterable[Sample], elapsed_seconds: float) -> dict:
             "avg": round(sum(latencies) / len(latencies), 2) if latencies else 0.0,
         },
         "status_codes": dict(sorted(statuses.items())),
-        "error_types": dict(errors.most_common(10)),
+        "transport_error_types": dict(errors.most_common(10)),
     }
 
 
@@ -118,7 +130,9 @@ async def _run(args: argparse.Namespace) -> dict:
             "only against a staging/load-test environment."
         )
     if args.scenario == "collector" and (args.requests != 1 or args.concurrency != 1):
-        raise SystemExit("collector is intentionally restricted to --requests 1 --concurrency 1")
+        raise SystemExit(
+            "collector is intentionally restricted to --requests 1 --concurrency 1"
+        )
 
     token = args.token or os.getenv("POTAPOFF_BENCH_TOKEN", "")
     if not token:
@@ -161,7 +175,7 @@ async def _run(args: argparse.Namespace) -> dict:
         "scenario": args.scenario,
         "base_url": args.base_url,
         "concurrency": args.concurrency,
-        "dataset_size_hint": args.dataset_size,
+        "offset_range_hint": args.dataset_size,
         "random_offsets": args.random_offsets,
         "summary": _summary(samples, elapsed),
     }
@@ -175,16 +189,27 @@ def _parser() -> argparse.ArgumentParser:
         description="Small dependency-free HTTP load harness for POTAPoff hot paths.",
     )
     parser.add_argument("scenario", choices=sorted(ALL_SCENARIOS))
-    parser.add_argument("--base-url", default=os.getenv("POTAPOFF_BENCH_URL", "http://127.0.0.1:8000"))
+    parser.add_argument(
+        "--base-url",
+        default=os.getenv("POTAPOFF_BENCH_URL", "http://127.0.0.1:8000"),
+    )
     parser.add_argument("--api-prefix", default="/api/v1")
-    parser.add_argument("--token", default=None, help="Bearer token; prefer POTAPOFF_BENCH_TOKEN")
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="Bearer token; prefer POTAPOFF_BENCH_TOKEN",
+    )
     parser.add_argument("--requests", type=int, default=500)
     parser.add_argument("--concurrency", type=int, default=25)
     parser.add_argument("--warmup-requests", type=int, default=10)
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--dataset-size", type=int, default=10_000)
     parser.add_argument("--page-size", type=int, default=50)
-    parser.add_argument("--sort-by", choices=("ath", "volume", "liquidity", "market_cap", "holders"), default="volume")
+    parser.add_argument(
+        "--sort-by",
+        choices=("ath", "volume", "liquidity", "market_cap", "holders"),
+        default="volume",
+    )
     parser.add_argument("--random-offsets", action="store_true")
     parser.add_argument("--wallet", default=None)
     parser.add_argument("--mint", default=None)
