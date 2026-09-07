@@ -123,7 +123,8 @@ async def test_campaign_neighbors_use_one_exact_sql_query_and_dedupe_mints(
                 created_at=now - timedelta(minutes=30),
             )
         )
-        # History for the currently analysed mint must not compete with neighbors.
+        # History for the currently analysed mint must not consume the bounded
+        # comparison window or compete with other token neighbors.
         rows.extend(
             _fingerprint_rows(
                 snapshot_id="snap-current-old",
@@ -170,6 +171,47 @@ async def test_campaign_neighbors_use_one_exact_sql_query_and_dedupe_mints(
     assert neighbors[0]["actor_similarity"] == 1.0
     assert neighbors[0]["similarity"] == 1.0
     assert neighbors[1]["similarity"] == 0.75
+
+
+async def test_campaign_history_limit_applies_after_current_mint_exclusion(
+    test_app,
+) -> None:
+    now = datetime.now(timezone.utc)
+    vector = _vector(x_accounts=1.0)
+
+    async with test_app.state.sessionmaker() as session:
+        rows = []
+        for index in range(3):
+            rows.extend(
+                _fingerprint_rows(
+                    snapshot_id=f"current-{index}",
+                    mint="mint-current",
+                    vector=vector,
+                    actors=[],
+                    created_at=now - timedelta(minutes=index),
+                )
+            )
+        rows.extend(
+            _fingerprint_rows(
+                snapshot_id="other-match",
+                mint="mint-other",
+                vector=vector,
+                actors=[],
+                created_at=now - timedelta(hours=1),
+            )
+        )
+        session.add_all(rows)
+        await session.commit()
+
+        neighbors = await find_campaign_neighbors(
+            session,
+            current_mint="mint-current",
+            current_vector=vector,
+            current_actors=[],
+            history_limit=1,
+        )
+
+    assert [row["snapshot_id"] for row in neighbors] == ["other-match"]
 
 
 def test_campaign_projection_deduplicates_actor_membership() -> None:
