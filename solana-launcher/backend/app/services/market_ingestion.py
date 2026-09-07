@@ -4,6 +4,7 @@ import asyncio
 import random
 from dataclasses import asdict
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any, Iterable
 
 import httpx
@@ -20,7 +21,14 @@ from app.services.etl import (
     fetch_social_links_from_source,
     upsert_token,
 )
-from app.services.observability import TOKENS_PROCESSED
+from app.services.observability import (
+    INGESTION_BATCH_RUNTIME,
+    PROVIDER_RATE_LIMITS,
+    PROVIDER_REQUEST_LATENCY,
+    PROVIDER_REQUESTS,
+    PROVIDER_RETRIES,
+    TOKENS_PROCESSED,
+)
 
 PUMPFUN_TIMEOUT_SECONDS = 20.0
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
@@ -72,6 +80,26 @@ def _retry_delay(
     return min(bounded + jitter, settings.birdeye_backoff_max_seconds)
 
 
+def _observe_attempt(
+    *,
+    provider: str | None,
+    operation: str | None,
+    result: str,
+    elapsed: float,
+) -> None:
+    if not provider or not operation:
+        return
+    PROVIDER_REQUESTS.labels(
+        provider=provider,
+        operation=operation,
+        result=result,
+    ).inc()
+    PROVIDER_REQUEST_LATENCY.labels(
+        provider=provider,
+        operation=operation,
+    ).observe(elapsed)
+
+
 async def _request_json(
     client: httpx.AsyncClient,
     url: str,
@@ -79,11 +107,14 @@ async def _request_json(
     headers: dict[str, str] | None = None,
     semaphore: asyncio.Semaphore | None = None,
     retry_settings: Settings | None = None,
+    provider: str | None = None,
+    operation: str | None = None,
 ) -> Any:
     retries = retry_settings.birdeye_max_retries if retry_settings is not None else 0
 
     for attempt in range(retries + 1):
         response = None
+        started = monotonic()
         try:
             if semaphore is None:
                 response = await client.get(url, headers=headers)
@@ -93,17 +124,47 @@ async def _request_json(
                 async with semaphore:
                     response = await client.get(url, headers=headers)
         except httpx.RequestError:
+            _observe_attempt(
+                provider=provider,
+                operation=operation,
+                result="transport_error",
+                elapsed=monotonic() - started,
+            )
             if retry_settings is None or attempt >= retries:
                 raise
+            if provider and operation:
+                PROVIDER_RETRIES.labels(
+                    provider=provider,
+                    operation=operation,
+                    reason="transport_error",
+                ).inc()
             await asyncio.sleep(_retry_delay(retry_settings, attempt))
             continue
 
         status_code = int(getattr(response, "status_code", 200) or 200)
+        _observe_attempt(
+            provider=provider,
+            operation=operation,
+            result=str(status_code),
+            elapsed=monotonic() - started,
+        )
+        if status_code == 429 and provider and operation:
+            PROVIDER_RATE_LIMITS.labels(
+                provider=provider,
+                operation=operation,
+            ).inc()
+
         if (
             retry_settings is not None
             and status_code in RETRYABLE_STATUS_CODES
             and attempt < retries
         ):
+            if provider and operation:
+                PROVIDER_RETRIES.labels(
+                    provider=provider,
+                    operation=operation,
+                    reason=str(status_code),
+                ).inc()
             await asyncio.sleep(_retry_delay(retry_settings, attempt, response))
             continue
 
@@ -139,7 +200,12 @@ async def fetch_pumpfun_tokens(
         return [TokenSourcePayload(**item) for item in cached]
 
     url = f"{settings.pumpfun_api_base.rstrip('/')}/coins"
-    payload = await _request_json(client, url)
+    payload = await _request_json(
+        client,
+        url,
+        provider="pumpfun",
+        operation="tokens",
+    )
     rows = payload if isinstance(payload, list) else payload.get("coins", [])
     tokens: list[TokenSourcePayload] = []
     for item in rows:
@@ -253,10 +319,10 @@ async def sync_pumpfun_tokens(
     settings: Settings | None = None,
 ) -> int:
     settings = settings or get_settings()
-    async with httpx.AsyncClient(timeout=PUMPFUN_TIMEOUT_SECONDS) as client:
-        tokens = await fetch_pumpfun_tokens(client, settings)
-
-    count = await _bulk_upsert_pumpfun_tokens(session, tokens)
+    with INGESTION_BATCH_RUNTIME.labels(provider="pumpfun").time():
+        async with httpx.AsyncClient(timeout=PUMPFUN_TIMEOUT_SECONDS) as client:
+            tokens = await fetch_pumpfun_tokens(client, settings)
+        count = await _bulk_upsert_pumpfun_tokens(session, tokens)
     TOKENS_PROCESSED.inc(count)
     return count
 
@@ -292,6 +358,8 @@ async def fetch_birdeye_metrics(
                 headers=headers,
                 semaphore=semaphore,
                 retry_settings=settings,
+                provider="birdeye",
+                operation=key,
             )
         except Exception as exc:  # pragma: no cover - provider/network failure path
             payload = {"error": str(exc)}
@@ -458,22 +526,23 @@ async def sync_metrics_for_active_tokens(
     async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
         for start in range(0, len(tokens), batch_size):
             batch = tokens[start : start + batch_size]
-            observations = await asyncio.gather(
-                *(
-                    _fetch_token_observation(client, token, settings, semaphore)
-                    for token in batch
+            with INGESTION_BATCH_RUNTIME.labels(provider="birdeye").time():
+                observations = await asyncio.gather(
+                    *(
+                        _fetch_token_observation(client, token, settings, semaphore)
+                        for token in batch
+                    )
                 )
-            )
-            metric_rows = [
-                TokenMetric(
-                    token_id=token_id,
-                    **_metric_values(metrics, social_links),
-                )
-                for token_id, metrics, social_links in observations
-            ]
-            session.add_all(metric_rows)
-            # One flush per batch also updates token_latest_metrics via its ORM hook.
-            await session.flush()
+                metric_rows = [
+                    TokenMetric(
+                        token_id=token_id,
+                        **_metric_values(metrics, social_links),
+                    )
+                    for token_id, metrics, social_links in observations
+                ]
+                session.add_all(metric_rows)
+                # One flush per batch also updates token_latest_metrics via its ORM hook.
+                await session.flush()
             count += len(metric_rows)
 
     TOKENS_PROCESSED.inc(count)
