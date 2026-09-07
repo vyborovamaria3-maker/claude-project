@@ -92,3 +92,9 @@ jobs:
           SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
           TELEGRAM_BOT_TOKEN: test-token
         run: docker compose -f docker-compose.production.yml config >/dev/null
+      - name: Validate production deploy scripts
+        run: |
+          bash -n scripts/deploy-production.sh
+          bash -n scripts/healthcheck-production.sh
+          grep -Fq 'run --rm --no-deps backend alembic upgrade heads' scripts/deploy-production.sh
+          ! grep -Fq 'exec -T backend alembic upgrade heads' scripts/deploy-production.sh
