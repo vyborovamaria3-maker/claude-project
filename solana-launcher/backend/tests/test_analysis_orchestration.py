@@ -26,11 +26,15 @@ def test_celery_routes_isolate_heavy_workloads() -> None:
     assert routes["app.tasks.etl.collect_tokens"]["queue"] == "market"
     assert routes["app.tasks.etl.refresh_metrics"]["queue"] == "market"
     assert routes["app.tasks.etl.refresh_links"]["queue"] == "blockchain"
+    assert routes["app.tasks.social.refresh_x"]["queue"] == "social"
     assert (
         routes["app.tasks.advanced_intelligence.enrich_report"]["queue"]
         == "intelligence"
     )
-    assert routes["app.tasks.intelligence.evaluate_matured_outcomes"]["queue"] == "intelligence"
+    assert (
+        routes["app.tasks.intelligence.evaluate_matured_outcomes"]["queue"]
+        == "intelligence"
+    )
     assert celery_app.conf.worker_prefetch_multiplier == 1
     assert celery_app.conf.task_acks_late is True
 
@@ -51,7 +55,11 @@ def test_analysis_fingerprint_is_stable_and_contract_sensitive() -> None:
         persist=True,
     )
     reordered = analysis_request_fingerprint(
-        snapshot={"features": snapshot["features"], "mint": snapshot["mint"], "snapshotId": "snapshot-1"},
+        snapshot={
+            "features": snapshot["features"],
+            "mint": snapshot["mint"],
+            "snapshotId": "snapshot-1",
+        },
         ai_result=ai_result,
         role="analyst",
         enrich=True,
@@ -83,9 +91,11 @@ def test_production_compose_has_dedicated_analysis_workers() -> None:
     ).read_text(encoding="utf-8")
 
     assert "celery-market:" in compose
+    assert "celery-social:" in compose
     assert "celery-intelligence:" in compose
     assert "celery-blockchain:" in compose
     assert '"-Q", "market"' in compose
+    assert '"-Q", "social"' in compose
     assert '"-Q", "intelligence"' in compose
     assert '"-Q", "blockchain"' in compose
     assert 'TG_RUNTIME_IN_API: "false"' in compose
