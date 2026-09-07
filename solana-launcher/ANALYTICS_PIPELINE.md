@@ -74,13 +74,35 @@ Poll `GET /api/v1/social/intelligence/advanced/report/jobs/{job_id}` for the fin
 state. Job/payload/result entries currently live for 30 minutes and are not the
 durable analytical record; persisted snapshots remain in PostgreSQL.
 
+## Outcome and reputation projections
+
+Performance-aware X/TG/wallet reliability must not rebuild historical joins on
+every advanced report. `intelligence_entity_outcomes` stores one prepared row per
+`entity_key + mint_address + horizon_hours`, selected from the earliest retained
+snapshot where that entity appeared for the token.
+
+The 72h outcome writer reconciles this projection in the same database transaction.
+If an outcome is revised or becomes unusable, the corresponding projection row is
+updated or removed instead of leaving a stale reputation vote. Migration
+`0014_entity_outcome_projection` backfills existing matured 72h history.
+
+Production PostgreSQL calculates source performance with one grouped query per
+report, including exact median max multiple through `percentile_cont(0.5)`. The
+SQLite development/test fallback preserves the same output contract in Python.
+The semantic meaning does not change: historical performance is an association,
+not proof that an actor caused a token outcome.
+
+Matured 6h/24h/72h outcome evaluation also shares one bounded price-history read
+per snapshot up to the largest pending horizon. The worker slices that retained
+window in memory rather than issuing the same token/history queries three times.
+
 ## Provider caching and single-flight
 
 Wallet funding verification has a short (90 second) Redis cache keyed by both RPC
-provider and wallet address. Concurrent requests for the same wallet use a Redis
-lock and wait briefly for the first result instead of multiplying Helius/Solana
-`getTransaction` calls. Redis failure degrades to direct RPC rather than making
-blockchain evidence unavailable.
+provider and wallet address. Concurrent requests for the same wallet use an atomic
+owner-token lease and wait for the first result instead of multiplying
+Helius/Solana `getTransaction` calls. Redis failure degrades to direct RPC rather
+than making blockchain evidence unavailable.
 
 Completed identical advanced reports are also cached for 30 minutes. The request
 fingerprint includes snapshot data, AI result, role, enrichment and persistence
@@ -91,11 +113,19 @@ flags so materially different analysis contracts cannot share a cached result.
 In addition to provider/ingestion metrics, the architecture exposes:
 
 - `analysis_cache_requests_total{layer,result}`
-- `analysis_stage_runtime_seconds{stage}`
+- `analysis_stage_runtime_seconds{stage}` including `funding_rpc`,
+  `semantic_clustering` and `source_reliability`
+- `analysis_end_to_end_runtime_seconds{result}`
+- `celery_queue_wait_seconds{queue}`
+- `celery_task_runtime_seconds{queue,result}`
 
-Use these together with the existing provider latency/rate-limit metrics to decide
-whether a slowdown is API CPU, PostgreSQL, queueing, Redis cache efficiency or an
-external RPC/social provider.
+Celery and Telegram emit metrics from separate processes. API and workers share a
+Prometheus multiprocess directory so FastAPI `/metrics` aggregates those worker
+series instead of exposing only API-local values.
+
+Use the metrics together with provider latency/rate-limit series to decide whether
+a slowdown is API CPU, PostgreSQL, queueing, Redis cache efficiency or an external
+RPC/social provider.
 
 ## Scaling rules
 
