@@ -62,7 +62,7 @@ Pump.fun token discovery uses a PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` bu
 
 `GET /metrics` exposes low-cardinality provider metrics suitable for Prometheus dashboards and alerts:
 
-- `etl_provider_requests_total{provider,operation,result}` — HTTP attempts including status codes and transport errors.
+- `etl_provider_requests_total{provider,operation,result}` — HTTP/RPC attempts including status/result and transport errors.
 - `etl_provider_retries_total{provider,operation,reason}` — retry attempts by reason.
 - `etl_provider_rate_limits_total{provider,operation}` — provider HTTP 429 visibility.
 - `etl_provider_request_latency_seconds{provider,operation}` — request-attempt histogram for p50/p95/p99 PromQL queries.
@@ -78,6 +78,16 @@ histogram_quantile(
   )
 )
 ```
+
+## Social and blockchain analytics hot paths
+
+X/Twitter ingestion batches one refresh into a single lookup of existing tweet IDs instead of issuing one `SELECT` per tweet. Duplicate provider rows are deduplicated before persistence while preserving the existing insert/update response contract.
+
+Social timelines now push stable `mint + platform + occurred_at` filtering into PostgreSQL before source/engagement/call-specific Python filtering. Migration `0013_social_analytics_indexes` adds `ix_social_events_mint_platform_time` to support this path. Telegram channel-score filtering uses one narrow join against `telegram_channel_scores` instead of paging every complete channel row merely to build a score lookup.
+
+Solana funding analysis now reuses one `httpx.AsyncClient` and one connection pool for all wallets in a snapshot. Wallet work is bounded separately from a global RPC semaphore, preventing per-wallet `getTransaction` fan-out from multiplying total Solana/Helius request concurrency. Solana RPC attempts and latency are exported through the same provider Prometheus metrics using `provider="solana_rpc"` and the JSON-RPC method as `operation`.
+
+These changes optimize throughput without changing the evidence model: an incoming SOL transfer or common initial funder remains a graph clue, not proof of common ownership/control.
 
 ## Hot-path load testing
 
