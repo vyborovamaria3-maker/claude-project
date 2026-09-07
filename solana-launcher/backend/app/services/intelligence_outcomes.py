@@ -208,7 +208,9 @@ async def persist_outcome_values(
             new_confirmed=max_multiple >= 2,
         )
 
-    if horizon_hours == 72 and max_multiple is not None:
+    # Reconcile 72h reputation even when a revised outcome becomes unusable;
+    # the projection service will remove a stale entity/token vote if needed.
+    if horizon_hours == 72:
         await session.flush()
         await refresh_entity_outcome_projection_for_mint(
             session,
