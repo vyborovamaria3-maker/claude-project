@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 
 const tradeCache = new Map<string, { data: unknown[]; ts: number }>();
 const CACHE_TTL = 250; // 250ms — low-latency cache for realtime charting
+const MAX_TRADE_CACHE_ENTRIES = 2_000;
 
 type V2Trade = {
   tx: string;
@@ -29,6 +30,24 @@ type V2Trade = {
 };
 
 type V2Resp = { trades?: V2Trade[]; pagination?: { hasMore?: boolean; nextCursor?: string } };
+
+function cacheTrades(key: string, data: unknown[]) {
+  const now = Date.now();
+
+  if (tradeCache.size >= MAX_TRADE_CACHE_ENTRIES) {
+    for (const [candidate, entry] of tradeCache) {
+      if (now - entry.ts >= CACHE_TTL) tradeCache.delete(candidate);
+    }
+  }
+
+  while (tradeCache.size >= MAX_TRADE_CACHE_ENTRIES) {
+    const oldest = tradeCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    tradeCache.delete(oldest);
+  }
+
+  tradeCache.set(key, { data, ts: now });
+}
 
 export async function GET(req: NextRequest) {
   const mint = req.nextUrl.searchParams.get("mint")?.trim() || "";
@@ -46,11 +65,16 @@ export async function GET(req: NextRequest) {
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.data, { headers: { "Cache-Control": "no-store" } });
   }
+  if (cached) tradeCache.delete(cacheKey);
 
   try {
     const r = await fetch(
       `https://swap-api.pump.fun/v2/coins/${encodeURIComponent(mint)}/trades?limit=${limit}`,
-      { headers: { Accept: "application/json" }, cache: "no-store" }
+      {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(5_000),
+      },
     );
     if (!r.ok) return NextResponse.json([], { status: 200 });
     const data = (await r.json()) as V2Resp;
@@ -58,22 +82,22 @@ export async function GET(req: NextRequest) {
 
     // Normalize to legacy shape — useTradeStream expects sol_amount in lamports,
     // token_amount in micro-tokens, timestamp in unix seconds.
-    const normalized = trades.map(t => {
-      const timestampMs = Date.parse(t.timestamp);
+    const normalized = trades.map((trade) => {
+      const timestampMs = Date.parse(trade.timestamp);
       return {
-        signature: t.tx,
-        sol_amount: Math.round((Number(t.amountSol) || 0) * 1e9),
-        token_amount: Math.round((Number(t.baseAmount) || 0) * 1e6),
-        is_buy: t.type === "buy",
+        signature: trade.tx,
+        sol_amount: Math.round((Number(trade.amountSol) || 0) * 1e9),
+        token_amount: Math.round((Number(trade.baseAmount) || 0) * 1e6),
+        is_buy: trade.type === "buy",
         timestamp: Number.isFinite(timestampMs) ? Math.floor(timestampMs / 1000) : null,
-        user: t.userAddress,
-        priceUsd: Number(t.priceUsd) || 0,
-        amountUsd: Number(t.amountUsd) || 0,
-        program: t.program,
+        user: trade.userAddress,
+        priceUsd: Number(trade.priceUsd) || 0,
+        amountUsd: Number(trade.amountUsd) || 0,
+        program: trade.program,
       };
     });
 
-    tradeCache.set(cacheKey, { data: normalized, ts: Date.now() });
+    cacheTrades(cacheKey, normalized);
     return NextResponse.json(normalized, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json([], { status: 200 });
