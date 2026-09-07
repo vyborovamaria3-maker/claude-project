@@ -164,6 +164,32 @@ pull_backend_services() {
     celery-blockchain
 }
 
+migrate_before_rollout() {
+  echo "Ensuring PostgreSQL is available before application rollout"
+  "${COMPOSE[@]}" up -d postgres
+
+  local ready=0
+  for _ in $(seq 1 60); do
+    if "${COMPOSE[@]}" exec -T postgres pg_isready -U potapoff -d potapoff \
+      >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "$ready" -ne 1 ]]; then
+    "${COMPOSE[@]}" logs --tail=150 postgres >&2 || true
+    echo "PostgreSQL did not become ready for migrations" >&2
+    return 1
+  fi
+
+  # Run Alembic from the NEW backend image before replacing the currently
+  # serving API/workers. Additive migrations remain compatible with the old
+  # image, so rollback can still start the previous release if rollout fails.
+  echo "Applying database migrations before starting new application containers"
+  "${COMPOSE[@]}" run --rm --no-deps backend alembic upgrade heads
+}
+
 rollback() {
   local exit_code=$?
 
@@ -224,14 +250,13 @@ if telegram_bot_enabled; then
 fi
 
 stop_telegram
+migrate_before_rollout
 
 start_admin
 "${COMPOSE[@]}" up -d --remove-orphans
 restart_nginx
 sync_telegram_bot
 sync_telegram_intelligence
-
-"${COMPOSE[@]}" exec -T backend alembic upgrade heads
 
 "$HEALTH_SCRIPT"
 verify_admin_route
