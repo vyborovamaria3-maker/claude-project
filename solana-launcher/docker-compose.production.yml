@@ -95,9 +95,6 @@ services:
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
-      # Pass this from a backend-only environment source (for example a second
-      # --env-file). Do not store it in .env.server because frontend reads values
-      # from that deployment env during Compose interpolation.
       SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:-}
       REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"
     depends_on:
@@ -115,8 +112,6 @@ services:
       start_period: 60s
     logging: *default-logging
 
-  # Keep one small worker for maintenance/notification jobs. Heavy workloads use
-  # dedicated queues below so they cannot starve each other.
   celery-worker:
     <<: *backend-worker
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "maintenance", "--concurrency=2"]
@@ -124,6 +119,10 @@ services:
   celery-market:
     <<: *backend-worker
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "market", "--concurrency=2"]
+
+  celery-social:
+    <<: *backend-worker
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "social", "--concurrency=2"]
 
   celery-intelligence:
     <<: *backend-worker
@@ -174,8 +173,6 @@ services:
   frontend:
     image: ghcr.io/vyborovamaria3-maker/claude-project/frontend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
-    # Intentionally no env_file here: the public-facing Next.js container must
-    # not inherit database, JWT, RabbitMQ or backend master credentials.
     environment:
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
@@ -204,7 +201,6 @@ services:
     profiles: ["telegram"]
     image: ghcr.io/vyborovamaria3-maker/claude-project/telegram-bot:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
-    # Keep the bot isolated from backend/database env files as well.
     environment:
       NODE_ENV: production
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
