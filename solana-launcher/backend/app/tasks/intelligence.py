@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import asyncio
-
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.services.intelligence_outcomes import evaluate_matured_outcomes
 from app.services.outcome_evaluation_lock import try_acquire_outcome_evaluation_lock
+from app.tasks.async_runtime import run_async_task
 from app.tasks.celery_app import celery_app
-
 
 _EMPTY_RESULT = {
     "snapshots": 0,
@@ -39,4 +37,4 @@ async def _evaluate() -> dict[str, int]:
 
 @celery_app.task(name="app.tasks.intelligence.evaluate_matured_outcomes")
 def evaluate_intelligence_outcomes() -> dict[str, int]:
-    return asyncio.run(_evaluate())
+    return run_async_task(_evaluate())

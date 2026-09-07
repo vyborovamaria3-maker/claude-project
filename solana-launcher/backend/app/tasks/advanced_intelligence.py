@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.services.advanced_intelligence_enrichment import enrich_advanced_report
@@ -15,6 +13,7 @@ from app.services.analysis_jobs import (
     update_analysis_job,
 )
 from app.services.observability import ANALYSIS_STAGE_RUNTIME
+from app.tasks.async_runtime import run_async_task
 from app.tasks.celery_app import celery_app
 
 
@@ -81,4 +80,4 @@ async def _run(job_id: str) -> dict:
     acks_late=True,
 )
 def enrich_report(job_id: str) -> dict:
-    return asyncio.run(_run(job_id))
+    return run_async_task(_run(job_id))

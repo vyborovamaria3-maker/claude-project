@@ -61,7 +61,15 @@ async def test_retry_rate_limit_and_latency_metrics_are_recorded(monkeypatch):
     before_200 = request_200._value.get()
     before_retries = retries._value.get()
     before_rate_limits = rate_limits._value.get()
-    before_latency_count = latency._count.get()
+    def latency_count():
+        return next(
+            sample.value
+            for metric in latency.collect()
+            for sample in metric.samples
+            if sample.name.endswith("_count")
+        )
+
+    before_latency_count = latency_count()
 
     settings = Settings(
         secret_key="o" * 64,
@@ -83,4 +91,4 @@ async def test_retry_rate_limit_and_latency_metrics_are_recorded(monkeypatch):
     assert request_200._value.get() - before_200 == 1
     assert retries._value.get() - before_retries == 1
     assert rate_limits._value.get() - before_rate_limits == 1
-    assert latency._count.get() - before_latency_count == 2
+    assert latency_count() - before_latency_count == 2

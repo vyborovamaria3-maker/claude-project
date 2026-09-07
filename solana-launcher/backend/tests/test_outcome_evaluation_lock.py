@@ -24,6 +24,7 @@ class FakeSession:
         self.acquired = acquired
         self.scalar_calls = 0
         self.execute_calls = 0
+        self.executed_params = []
         self.params = None
 
     def get_bind(self):
@@ -39,6 +40,7 @@ class FakeSession:
         del statement
         self.execute_calls += 1
         self.params = params
+        self.executed_params.append(params)
         return None
 
 
@@ -79,5 +81,8 @@ async def test_postgres_per_outcome_lock_is_scoped_to_snapshot_and_horizon() -> 
         snapshot_id="snapshot-1",
         horizon_hours=72,
     )
-    assert session.execute_calls == 1
-    assert session.params == {"lock_key": first}
+    assert session.execute_calls == 2
+    assert session.executed_params == [
+        {"lock_key": OUTCOME_EVALUATION_LOCK_KEY},
+        {"lock_key": first},
+    ]

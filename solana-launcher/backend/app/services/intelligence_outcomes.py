@@ -98,6 +98,10 @@ async def _apply_calibration_delta(
             model_version=model_version,
             signal_type=signal_type,
             bucket=bucket,
+            sample_count=0,
+            confirmed_count=0,
+            contradicted_count=0,
+            predicted_confidence_sum=0.0,
         )
         session.add(row)
 
