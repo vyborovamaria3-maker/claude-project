@@ -4,7 +4,9 @@ from sqlalchemy import func, select
 
 from app.models.social_intelligence import SocialEvent, TelegramChannel, TelegramChannelScore
 from app.services.social_hot_paths import (
+    _postgres_timeline_cte,
     channel_score_lookup,
+    filtered_token_timeline,
     ingest_x_events_bulk,
     token_timeline_candidates,
 )
@@ -148,6 +150,118 @@ async def test_timeline_pushes_platform_and_time_filters_before_python_filtering
     assert payload["mentions"] == 1
     assert payload["platforms"] == {"x": 1}
     assert payload["timeline"][0]["text"] == "recent x"
+
+
+async def test_filtered_timeline_preserves_source_engagement_call_score_and_limit_contract(
+    test_app,
+):
+    now = datetime.now(timezone.utc)
+    mint = "mint-filtered-timeline"
+    async with test_app.state.sessionmaker() as session:
+        alpha = TelegramChannel(
+            telegram_id=9101,
+            username="@AlphaCalls",
+            title="Alpha Calls",
+        )
+        beta = TelegramChannel(
+            telegram_id=9102,
+            username="beta_calls",
+            title="Beta Calls",
+        )
+        session.add_all([alpha, beta])
+        await session.flush()
+        session.add_all(
+            [
+                TelegramChannelScore(channel_id=alpha.id, score=90.0),
+                TelegramChannelScore(channel_id=beta.id, score=20.0),
+                SocialEvent(
+                    platform="telegram",
+                    event_type="token_call",
+                    external_id="tg-a-old",
+                    source_handle="https://t.me/AlphaCalls",
+                    mint_address=mint,
+                    text="older qualifying call",
+                    occurred_at=now - timedelta(minutes=20),
+                    metrics={
+                        "reactions": 10,
+                        "forwards": 5,
+                        "replies": 2,
+                        "explicit_call": True,
+                    },
+                ),
+                SocialEvent(
+                    platform="telegram",
+                    event_type="token_call",
+                    external_id="tg-a-new",
+                    source_handle="@AlphaCalls",
+                    mint_address=mint,
+                    text="newer qualifying call",
+                    occurred_at=now - timedelta(minutes=10),
+                    metrics={
+                        "reactions": 20,
+                        "forwards": 10,
+                        "replies": 5,
+                        "explicit_call": True,
+                    },
+                ),
+                SocialEvent(
+                    platform="telegram",
+                    event_type="token_call",
+                    external_id="tg-low-score",
+                    source_handle="beta_calls",
+                    mint_address=mint,
+                    text="filtered by channel score",
+                    occurred_at=now - timedelta(minutes=5),
+                    metrics={
+                        "reactions": 100,
+                        "forwards": 20,
+                        "replies": 10,
+                        "explicit_call": True,
+                    },
+                ),
+                SocialEvent(
+                    platform="telegram",
+                    event_type="token_mention",
+                    external_id="tg-not-call",
+                    source_handle="@AlphaCalls",
+                    mint_address=mint,
+                    text="filtered because not an explicit call",
+                    occurred_at=now - timedelta(minutes=2),
+                    metrics={"reactions": 100},
+                ),
+            ]
+        )
+        await session.commit()
+
+        payload = await filtered_token_timeline(
+            session,
+            mint,
+            platform="telegram",
+            hours=1,
+            sources={"t.me/AlphaCalls"},
+            explicit_calls_only=True,
+            min_engagement=10,
+            min_channel_score=50.0,
+            limit=1,
+        )
+
+    assert payload["mentions"] == 1
+    assert payload["meta"]["matchedBeforeLimit"] == 2
+    assert payload["meta"]["truncated"] is True
+    assert payload["meta"]["uniqueSourcesBeforeLimit"] == 1
+    assert payload["meta"]["explicitTelegramCallsBeforeLimit"] == 2
+    assert payload["timeline"][0]["text"] == "newer qualifying call"
+    assert payload["filters"]["sources"] == ["alphacalls"]
+
+
+def test_postgres_timeline_query_contains_all_stable_filters_before_limit():
+    sql = " ".join(_postgres_timeline_cte().split())
+    assert "mint_address = :mint" in sql
+    assert ":has_sources = false OR source_key IN :sources" in sql
+    assert ":explicit_calls_only = false" in sql
+    assert "engagement >= :min_engagement" in sql
+    assert "score.score >= :min_channel_score" in sql
+    assert "telegram_channel_scores" in sql
 
 
 async def test_channel_score_lookup_reads_only_threshold_matches(test_app):
