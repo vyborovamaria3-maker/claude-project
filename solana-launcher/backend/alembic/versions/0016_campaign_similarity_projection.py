@@ -35,6 +35,8 @@ VECTOR_KEYS = (
 
 
 def _finite_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -66,16 +68,21 @@ def _backfill_non_postgres(bind) -> None:
     actor_rows: list[dict[str, str]] = []
     for row in rows:
         vector = _decode_json(row["vector"], {})
+        if not isinstance(vector, dict):
+            continue
         if _finite_float(vector.get("schema_v2")) != 1.0:
             continue
         values = {
             key: _finite_float(vector.get(key)) or 0.0
             for key in VECTOR_KEYS
         }
+        decoded_actors = _decode_json(row["actors"], [])
+        if not isinstance(decoded_actors, list):
+            decoded_actors = []
         actor_keys = sorted(
             {
                 str(actor).strip()
-                for actor in _decode_json(row["actors"], [])
+                for actor in decoded_actors
                 if str(actor).strip()
             }
         )
@@ -228,15 +235,20 @@ def upgrade() -> None:
                     (
                         SELECT count(DISTINCT actor.value)
                         FROM jsonb_array_elements_text(
-                            COALESCE(fingerprint.actors::jsonb, '[]'::jsonb)
+                            CASE
+                                WHEN jsonb_typeof(fingerprint.actors::jsonb) = 'array'
+                                THEN fingerprint.actors::jsonb
+                                ELSE '[]'::jsonb
+                            END
                         ) AS actor(value)
                         WHERE actor.value <> ''
                     ) AS actor_count
                 FROM campaign_fingerprints AS fingerprint
-                WHERE COALESCE(
+                WHERE jsonb_typeof(fingerprint.vector::jsonb) = 'object'
+                  AND COALESCE(
                     (fingerprint.vector ->> 'schema_v2')::double precision,
                     0
-                ) = 1.0
+                  ) = 1.0
             ) AS prepared
             """
         )
@@ -250,7 +262,11 @@ def upgrade() -> None:
             JOIN campaign_fingerprint_features AS feature
               ON feature.snapshot_id = fingerprint.snapshot_id
             CROSS JOIN LATERAL jsonb_array_elements_text(
-                COALESCE(fingerprint.actors::jsonb, '[]'::jsonb)
+                CASE
+                    WHEN jsonb_typeof(fingerprint.actors::jsonb) = 'array'
+                    THEN fingerprint.actors::jsonb
+                    ELSE '[]'::jsonb
+                END
             ) AS actor(value)
             WHERE actor.value <> ''
             """
