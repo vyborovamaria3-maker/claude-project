@@ -70,6 +70,33 @@ def _aggregate_observations(
     return support, contradictions, mean_confidence, aggregate_status
 
 
+def _prepare_discoveries(ai_result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
+    for discovery in (ai_result or {}).get("discoveredRelationships") or []:
+        if not isinstance(discovery, dict):
+            continue
+        source = str(discovery.get("source") or "") or None
+        target = str(discovery.get("target") or "") or None
+        discovery_type = str(discovery.get("type") or "other")
+        key = _sha(
+            {
+                "type": discovery_type,
+                "source": source,
+                "target": target,
+            }
+        )[:64]
+        prepared.append(
+            {
+                "key": key,
+                "source": source,
+                "target": target,
+                "discovery_type": discovery_type,
+                "discovery": discovery,
+            }
+        )
+    return prepared
+
+
 async def persist_advanced_intelligence_state(
     session: AsyncSession,
     *,
@@ -132,24 +159,30 @@ async def persist_advanced_intelligence_state(
             memory.actor_keys = actors
             memory.last_seen_at = datetime.now(timezone.utc)
 
-    for discovery in (ai_result or {}).get("discoveredRelationships") or []:
-        source = str(discovery.get("source") or "") or None
-        target = str(discovery.get("target") or "") or None
-        discovery_type = str(discovery.get("type") or "other")
-        key = _sha(
-            {
-                "type": discovery_type,
-                "source": source,
-                "target": target,
-            }
-        )[:64]
-        row = (
-            await session.execute(
-                select(IntelligenceHypothesisState).where(
-                    IntelligenceHypothesisState.hypothesis_key == key
+    # Previously every discovered relationship executed its own SELECT. Prepare
+    # all deterministic keys first and load the existing states in one round-trip.
+    prepared = _prepare_discoveries(ai_result)
+    hypothesis_keys = list(dict.fromkeys(str(row["key"]) for row in prepared))
+    existing_hypotheses: dict[str, IntelligenceHypothesisState] = {}
+    if hypothesis_keys:
+        existing_rows = list(
+            (
+                await session.execute(
+                    select(IntelligenceHypothesisState).where(
+                        IntelligenceHypothesisState.hypothesis_key.in_(hypothesis_keys)
+                    )
                 )
-            )
-        ).scalar_one_or_none()
+            ).scalars().all()
+        )
+        existing_hypotheses = {row.hypothesis_key: row for row in existing_rows}
+
+    for prepared_row in prepared:
+        key = str(prepared_row["key"])
+        source = prepared_row["source"]
+        target = prepared_row["target"]
+        discovery_type = str(prepared_row["discovery_type"])
+        discovery = prepared_row["discovery"]
+        row = existing_hypotheses.get(key)
         status = _observation_status(
             str(discovery.get("status") or "hypothesis")
         )
@@ -170,22 +203,22 @@ async def persist_advanced_intelligence_state(
             support, contradictions, mean, aggregate = _aggregate_observations(
                 observations
             )
-            session.add(
-                IntelligenceHypothesisState(
-                    hypothesis_key=key,
-                    mint_address=mint,
-                    hypothesis_type=discovery_type,
-                    source_key=source,
-                    target_key=target,
-                    status=aggregate,
-                    confidence=mean,
-                    support_count=support,
-                    contradiction_count=contradictions,
-                    evidence=evidence[:100],
-                    observations=observations,
-                    payload=discovery,
-                )
+            row = IntelligenceHypothesisState(
+                hypothesis_key=key,
+                mint_address=mint,
+                hypothesis_type=discovery_type,
+                source_key=source,
+                target_key=target,
+                status=aggregate,
+                confidence=mean,
+                support_count=support,
+                contradiction_count=contradictions,
+                evidence=evidence[:100],
+                observations=observations,
+                payload=discovery,
             )
+            session.add(row)
+            existing_hypotheses[key] = row
             continue
 
         observations = dict(row.observations or {})
