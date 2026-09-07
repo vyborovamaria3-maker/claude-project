@@ -93,6 +93,17 @@ def check_token_proxy_security(failures: list[str]) -> None:
         if "AbortSignal.timeout" not in source:
             failures.append(f"paid external-intelligence route lacks an upstream timeout: {path}")
 
+    for path in (
+        "solana-launcher/app/api/token-dca/route.ts",
+        "solana-launcher/app/api/token-meta/route.ts",
+        "solana-launcher/app/api/token-pool/route.ts",
+    ):
+        source = read(path)
+        if "AbortSignal.timeout" not in source and "AbortController" not in source:
+            failures.append(f"public token upstream route lacks an upstream timeout: {path}")
+        if "encodeURIComponent(mint)" not in source and "encodedMint" not in source:
+            failures.append(f"public token upstream route does not encode mint before URL interpolation: {path}")
+
     trades = read("solana-launcher/app/api/token-trades/route.ts")
     if "MAX_TRADE_CACHE_ENTRIES" not in trades:
         failures.append("token-trades in-memory cache has no explicit size bound")
