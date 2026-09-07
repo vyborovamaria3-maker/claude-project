@@ -33,6 +33,9 @@ def _caller_name(
 
 
 def _caller_sql_expression():
+    # Mirror `_caller_name`/normalize_caller_username in SQL. Empty strings fall
+    # through to the next identity source, while whitespace or "@" are truthy in
+    # Python but normalize to the explicit "unknown" identity.
     fallback = func.coalesce(
         func.nullif(TelegramCall.caller_username, ""),
         func.nullif(TelegramChannel.username, ""),
@@ -40,7 +43,8 @@ def _caller_sql_expression():
         func.nullif(TelegramChannel.title, ""),
         literal("channel-") + cast(TelegramChannel.id, String),
     )
-    return func.lower(func.ltrim(func.trim(fallback), "@"))
+    normalized = func.lower(func.ltrim(func.trim(fallback), "@"))
+    return func.coalesce(func.nullif(normalized, ""), literal("unknown"))
 
 
 async def relevant_caller_reputation(
@@ -137,7 +141,18 @@ async def _postgres_token_coordination(
                             btrim(
                                 regexp_replace(
                                     regexp_replace(
-                                        lower(ltrim(btrim(coalesce(source_handle, source_name, '')), '@')),
+                                        lower(
+                                            ltrim(
+                                                btrim(
+                                                    coalesce(
+                                                        nullif(source_handle, ''),
+                                                        source_name,
+                                                        ''
+                                                    )
+                                                ),
+                                                '@'
+                                            )
+                                        ),
                                         '^https?://t[.]me/',
                                         ''
                                     ),
