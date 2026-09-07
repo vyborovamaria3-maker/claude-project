@@ -1,5 +1,7 @@
 from app.models.advanced_intelligence import (
     CampaignFingerprint,
+    CampaignFingerprintActor,
+    CampaignFingerprintFeature,
     IntelligenceCalibrationStat,
     IntelligenceEntityOutcomeProjection,
     IntelligenceHypothesisState,
@@ -67,6 +69,8 @@ __all__ = [
     "IntelligenceSnapshotEdge",
     "IntelligenceDiscovery",
     "CampaignFingerprint",
+    "CampaignFingerprintFeature",
+    "CampaignFingerprintActor",
     "IntelligenceHypothesisState",
     "IntelligenceOutcome",
     "IntelligenceEntityOutcomeProjection",
