@@ -57,8 +57,6 @@ async def ingest_x_events_bulk(
         if occurred_at is None:
             skipped_missing_timestamp += 1
             continue
-        # A provider can repeat a tweet in the same payload. Last observation wins and
-        # the database never receives duplicate work for the same external id.
         prepared[external_id] = (tweet, occurred_at)
 
     if not prepared:
@@ -201,10 +199,6 @@ async def token_timeline_candidates(
 
 
 def _postgres_timeline_cte() -> str:
-    # This expression mirrors normalize_social_source for production source handles:
-    # trim/lower, strip a leading @ or t.me prefix, then keep the first path/query/hash
-    # component. Keeping normalization in SQL lets source and channel-score filters run
-    # before PostgreSQL sends timeline rows to FastAPI.
     source_key = """
         split_part(
             split_part(
@@ -232,8 +226,8 @@ def _postgres_timeline_cte() -> str:
     def metric(key: str) -> str:
         return f"""
             CASE
-                WHEN coalesce(metrics::jsonb ->> '{key}', '') ~ '^-?[0-9]+$'
-                THEN greatest((metrics::jsonb ->> '{key}')::bigint, 0)
+                WHEN coalesce(CAST(metrics AS jsonb) ->> '{key}', '') ~ '^-?[0-9]+$'
+                THEN greatest(CAST(CAST(metrics AS jsonb) ->> '{key}' AS bigint), 0)
                 ELSE 0
             END
         """
@@ -249,8 +243,8 @@ def _postgres_timeline_cte() -> str:
     explicit_call = """
         CASE
             WHEN lower(platform) <> 'telegram' THEN false
-            WHEN metrics::jsonb -> 'explicit_call' = 'true'::jsonb THEN true
-            WHEN metrics::jsonb -> 'is_explicit_call' = 'true'::jsonb THEN true
+            WHEN CAST(metrics AS jsonb) -> 'explicit_call' = CAST('true' AS jsonb) THEN true
+            WHEN CAST(metrics AS jsonb) -> 'is_explicit_call' = CAST('true' AS jsonb) THEN true
             WHEN lower(event_type) LIKE '%call%' THEN true
             ELSE false
         END
@@ -320,7 +314,7 @@ def _postgres_timeline_cte() -> str:
                         WHERE score.score >= :min_channel_score
                           AND (
                                 {channel_username} = prepared.source_key
-                                OR ch.telegram_id::text = prepared.source_key
+                                OR CAST(ch.telegram_id AS text) = prepared.source_key
                           )
                     )
               )
@@ -400,20 +394,24 @@ async def filtered_token_timeline(
         cte
         + """
         , platform_counts AS (
-            SELECT platform, count(*)::bigint AS count
+            SELECT platform, CAST(count(*) AS bigint) AS count
             FROM filtered
             GROUP BY platform
         )
         SELECT
-            count(*)::bigint AS matched_before_limit,
-            count(DISTINCT nullif(source_key, ''))::bigint AS unique_sources,
-            coalesce(sum(CASE WHEN platform = 'telegram' AND explicit_call THEN 1 ELSE 0 END), 0)::bigint
-                AS explicit_telegram_calls,
+            CAST(count(*) AS bigint) AS matched_before_limit,
+            CAST(count(DISTINCT nullif(source_key, '')) AS bigint) AS unique_sources,
+            CAST(
+                coalesce(
+                    sum(CASE WHEN platform = 'telegram' AND explicit_call THEN 1 ELSE 0 END),
+                    0
+                ) AS bigint
+            ) AS explicit_telegram_calls,
             min(occurred_at) AS first_matched_at,
             max(occurred_at) AS last_matched_at,
             coalesce(
                 (SELECT jsonb_object_agg(platform, count) FROM platform_counts),
-                '{}'::jsonb
+                CAST('{}' AS jsonb)
             ) AS matched_platforms
         FROM filtered
         """
@@ -441,13 +439,7 @@ async def filtered_token_timeline(
         retained_desc = list((await session.execute(rows_sql, params)).mappings().all())
 
     retained = [dict(row) for row in reversed(retained_desc)]
-    ranked = [
-        {
-            **row,
-            "rank": index + 1,
-        }
-        for index, row in enumerate(retained)
-    ]
+    ranked = [{**row, "rank": index + 1} for index, row in enumerate(retained)]
     returned_platforms = Counter(str(row.get("platform") or "unknown") for row in ranked)
     matched_before_limit = int(aggregate["matched_before_limit"] or 0)
     matched_platforms = dict(aggregate["matched_platforms"] or {})
