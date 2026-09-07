@@ -20,6 +20,9 @@ x-backend-worker: &backend-worker
     REDIS_URL: redis://redis:6379/0
     CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
     CELERY_RESULT_BACKEND: redis://redis:6379/1
+    PROMETHEUS_MULTIPROC_DIR: /tmp/potapoff-prometheus
+  volumes:
+    - prometheus-multiproc:/tmp/potapoff-prometheus
   depends_on:
     backend:
       condition: service_healthy
@@ -89,6 +92,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      PROMETHEUS_MULTIPROC_DIR: /tmp/potapoff-prometheus
       TG_RUNTIME_IN_API: "false"
       FRONTEND_URL: https://potapoff.fun
       FRONTEND_INTERNAL_URL: http://frontend:3000
@@ -97,6 +101,8 @@ services:
       REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
       SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:-}
       REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"
+    volumes:
+      - prometheus-multiproc:/tmp/potapoff-prometheus
     depends_on:
       postgres:
         condition: service_healthy
@@ -155,6 +161,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
       REDIS_URL: redis://redis:6379/0
+      PROMETHEUS_MULTIPROC_DIR: /tmp/potapoff-prometheus
       TG_RUNTIME_IN_API: "false"
       TG_API_ID: ${TG_API_ID:-}
       TG_API_HASH: ${TG_API_HASH:-}
@@ -164,6 +171,8 @@ services:
       TG_GRAPH_DEPTH: ${TG_GRAPH_DEPTH:-1}
       TG_ENTITY_LIMIT: ${TG_ENTITY_LIMIT:-100}
       TG_EVALUATE_INTERVAL_SECONDS: ${TG_EVALUATE_INTERVAL_SECONDS:-300}
+    volumes:
+      - prometheus-multiproc:/tmp/potapoff-prometheus
     command: ["python", "-m", "app.cli.telegram_runtime"]
     depends_on:
       backend:
@@ -252,6 +261,7 @@ volumes:
   postgres-data:
   redis-data:
   rabbitmq-data:
+  prometheus-multiproc:
 
 networks:
   potapoff-shared:
