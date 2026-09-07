@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 // data-tag: api.token_holders
 // Returns top holders via Helius RPC with Pump.fun fallback for bonding curve tokens
@@ -7,12 +8,23 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const HELIUS_URL =
+  process.env.HELIUS_RPC_URL ||
   process.env.NEXT_PUBLIC_HELIUS_RPC_URL ||
+  process.env.RPC_URL ||
   process.env.NEXT_PUBLIC_RPC_URL ||
   "https://api.mainnet-beta.solana.com";
 
 const SOLSCAN_API_KEY = process.env.SOLSCAN_API_KEY;
 const SOLSCAN_BASE = "https://api.solscan.io";
+const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const UPSTREAM_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+  });
+}
 
 interface Holder {
   address: string;     // owner wallet
@@ -27,14 +39,15 @@ interface PumpHolder {
 }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
-  const r = await fetch(HELIUS_URL, {
+  const r = await fetchWithTimeout(HELIUS_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     cache: "no-store",
   });
+  if (!r.ok) throw new Error("rpc_unavailable");
   const data = await r.json();
-  if (data.error) throw new Error(data.error.message);
+  if (data.error) throw new Error("rpc_error");
   return data.result as T;
 }
 
@@ -42,7 +55,7 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
 async function fetchGmgnHolders(mint: string): Promise<{ holders: Holder[]; totalSupply: number } | null> {
   try {
     // Try alternative endpoint format
-    const res = await fetch(`https://gmgn.ai/defi/quotation/v1/tokens/solana/${mint}`, {
+    const res = await fetchWithTimeout(`https://gmgn.ai/defi/quotation/v1/tokens/solana/${encodeURIComponent(mint)}`, {
       headers: {
         Accept: "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -51,25 +64,16 @@ async function fetchGmgnHolders(mint: string): Promise<{ holders: Holder[]; tota
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      return null;
-    }
-
+    if (!res.ok) return null;
     const raw = await res.json();
 
-    // Different GMGN endpoint formats
-    let data = raw.data || raw;
-    if (!data || typeof data !== 'object') {
-      return null;
-    }
-
+    const data = raw.data || raw;
+    if (!data || typeof data !== "object") return null;
 
     // Try to find holder data in various formats
     const holderCount = data.holder_count || data.holders || data.holderCount || 0;
     const topHolders = data.top_holders || data.topHolders || data.holders_list || [];
     const supply = data.total_supply || data.totalSupply || data.supply || "1000000000";
-
-
     const totalSupply = parseFloat(supply);
 
     // If no top_holders but have holder_count, return empty list with total
@@ -85,7 +89,7 @@ async function fetchGmgnHolders(mint: string): Promise<{ holders: Holder[]; tota
     }));
 
     return { holders, totalSupply };
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -96,24 +100,21 @@ async function fetchBirdeyeHolders(mint: string): Promise<{ holders: Holder[]; t
   if (!BIRDEYE_API_KEY) return null;
 
   try {
-    const res = await fetch(`https://public-api.birdeye.so/public/token_holders?address=${mint}&offset=0&limit=20`, {
-      headers: {
-        Accept: "application/json",
-        "X-API-KEY": BIRDEYE_API_KEY,
+    const res = await fetchWithTimeout(
+      `https://public-api.birdeye.so/public/token_holders?address=${encodeURIComponent(mint)}&offset=0&limit=20`,
+      {
+        headers: {
+          Accept: "application/json",
+          "X-API-KEY": BIRDEYE_API_KEY,
+        },
+        cache: "no-store",
       },
-      cache: "no-store",
-    });
+    );
 
-    if (!res.ok) {
-      return null;
-    }
-
+    if (!res.ok) return null;
     const raw = await res.json();
-
     const data = raw.data || raw;
-    if (!data?.items || data.items.length === 0) {
-      return null;
-    }
+    if (!data?.items || data.items.length === 0) return null;
 
     const totalSupply = parseFloat(data.totalSupply || "1000000000");
     const holders: Holder[] = data.items.map((h: any) => ({
@@ -124,7 +125,7 @@ async function fetchBirdeyeHolders(mint: string): Promise<{ holders: Holder[]; t
     }));
 
     return { holders, totalSupply };
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -132,18 +133,16 @@ async function fetchBirdeyeHolders(mint: string): Promise<{ holders: Holder[]; t
 // Fetch holders from Pump.fun API (for bonding curve tokens)
 async function fetchPumpHolders(mint: string): Promise<{ holders: Holder[]; totalSupply: number } | null> {
   try {
-    const res = await fetch(`https://frontend-api.pump.fun/coins/${mint}/holders?limit=20&offset=0`, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
+    const res = await fetchWithTimeout(
+      `https://frontend-api.pump.fun/coins/${encodeURIComponent(mint)}/holders?limit=20&offset=0`,
+      { headers: { Accept: "application/json" }, cache: "no-store" },
+    );
 
     if (!res.ok) return null;
-
     const data = await res.json() as { holders?: PumpHolder[]; total_supply?: string };
     if (!data.holders || data.holders.length === 0) return null;
 
     const totalSupply = parseFloat(data.total_supply || "1000000000");
-
     const holders: Holder[] = data.holders.map((h) => ({
       address: h.address,
       tokenAccount: h.address,
@@ -160,22 +159,22 @@ async function fetchPumpHolders(mint: string): Promise<{ holders: Holder[]; tota
 // Fetch holders from Solscan API (requires API key)
 async function fetchSolscanHolders(mint: string): Promise<{ holders: Holder[]; totalSupply: number } | null> {
   if (!SOLSCAN_API_KEY) return null;
+  const encodedMint = encodeURIComponent(mint);
 
   try {
     // Get token holders
-    const holdersRes = await fetch(
-      `${SOLSCAN_BASE}/token/holders?tokenAddress=${mint}&limit=20`,
+    const holdersRes = await fetchWithTimeout(
+      `${SOLSCAN_BASE}/token/holders?tokenAddress=${encodedMint}&limit=20`,
       {
         headers: {
           Accept: "application/json",
           Token: SOLSCAN_API_KEY,
         },
         cache: "no-store",
-      }
+      },
     );
 
     if (!holdersRes.ok) return null;
-
     const holdersData = await holdersRes.json() as {
       data?: Array<{
         address: string;
@@ -189,15 +188,15 @@ async function fetchSolscanHolders(mint: string): Promise<{ holders: Holder[]; t
     if (!holdersData.data || holdersData.data.length === 0) return null;
 
     // Get token supply for percentage calculation
-    const metaRes = await fetch(
-      `${SOLSCAN_BASE}/token/meta?tokenAddress=${mint}`,
+    const metaRes = await fetchWithTimeout(
+      `${SOLSCAN_BASE}/token/meta?tokenAddress=${encodedMint}`,
       {
         headers: {
           Accept: "application/json",
           Token: SOLSCAN_API_KEY,
         },
         cache: "no-store",
-      }
+      },
     );
 
     let totalSupply = 1_000_000_000; // Default for Pump.fun
@@ -222,62 +221,60 @@ async function fetchSolscanHolders(mint: string): Promise<{ holders: Holder[]; t
 }
 
 export async function GET(req: NextRequest) {
-  const mint = req.nextUrl.searchParams.get("mint");
-  if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
 
+  const mint = req.nextUrl.searchParams.get("mint")?.trim() || "";
+  if (!SOLANA_ADDRESS_RE.test(mint)) {
+    return NextResponse.json({ error: "invalid mint" }, { status: 400 });
+  }
 
   // 1. Try GMGN first (free, instant, works for all tokens including bonding curve)
   const gmgnData = await fetchGmgnHolders(mint);
-  if (gmgnData) {
-    return NextResponse.json(gmgnData);
-  }
+  if (gmgnData) return NextResponse.json(gmgnData);
 
   // 2. Try Pump.fun (bonding curve tokens)
   const pumpData = await fetchPumpHolders(mint);
-  if (pumpData) {
-    return NextResponse.json(pumpData);
-  }
+  if (pumpData) return NextResponse.json(pumpData);
 
   // 3. Try Birdeye API
   const birdeyeData = await fetchBirdeyeHolders(mint);
-  if (birdeyeData) {
-    return NextResponse.json(birdeyeData);
-  }
+  if (birdeyeData) return NextResponse.json(birdeyeData);
 
   // 4. Try Solscan API (requires API key)
   const solscanData = await fetchSolscanHolders(mint);
-  if (solscanData) {
-    return NextResponse.json(solscanData);
-  }
+  if (solscanData) return NextResponse.json(solscanData);
 
-  // 4. Try DexScreener (fast, no API key, but limited holder data)
+  // 5. Try DexScreener (fast, no API key, but limited holder data)
   try {
-    const dexRes = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
-      cache: "no-store",
-    });
+    const dexRes = await fetchWithTimeout(
+      `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(mint)}`,
+      { cache: "no-store" },
+    );
     if (dexRes.ok) {
       const dexData = await dexRes.json() as {
         pairs?: Array<{ holders?: number; liquidity?: { usd?: number } }>;
       };
       const pair = dexData.pairs?.[0];
       if (pair?.holders) {
-        // DexScreener doesn't give top holders list, just count
-        return {
-          holders: [], // No list available
+        // DexScreener doesn't give top holders list, just count.
+        return NextResponse.json({
+          holders: [],
           totalSupply: pair.holders,
           note: "holder_count_only",
-        } as any;
+        });
       }
     }
-  } catch (e) {
+  } catch {
+    // Fall through to RPC.
   }
 
-  // 5. Fallback to Helius RPC (migrated/DEX tokens)
+  // 6. Fallback to Helius RPC (migrated/DEX tokens)
   try {
     // 1) Largest token accounts (top 20)
     const largest = await rpc<{ value: { address: string; uiAmount: number }[] }>(
       "getTokenLargestAccounts",
-      [mint, { commitment: "confirmed" }]
+      [mint, { commitment: "confirmed" }],
     );
 
     if (!largest.value || largest.value.length === 0) {
@@ -287,7 +284,7 @@ export async function GET(req: NextRequest) {
     // 2) Total supply
     const supply = await rpc<{ value: { uiAmount: number } }>(
       "getTokenSupply",
-      [mint]
+      [mint],
     );
     const totalSupply = supply.value.uiAmount || 1;
 
@@ -298,13 +295,13 @@ export async function GET(req: NextRequest) {
         try {
           const info = await rpc<{ value: { data: { parsed?: { info?: { owner?: string } } } } | null }>(
             "getAccountInfo",
-            [acc.address, { encoding: "jsonParsed", commitment: "confirmed" }]
+            [acc.address, { encoding: "jsonParsed", commitment: "confirmed" }],
           );
           return info.value?.data?.parsed?.info?.owner ?? acc.address;
         } catch {
           return acc.address;
         }
-      })
+      }),
     );
 
     const holders: Holder[] = accounts.map((acc, i) => ({
@@ -315,18 +312,10 @@ export async function GET(req: NextRequest) {
     }));
 
     return NextResponse.json({ holders, totalSupply });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "fetch_failed";
-
-    // Handle specific "could not find mint" error gracefully
-    if (msg.includes("could not find mint") || msg.includes("Invalid param")) {
-      return NextResponse.json({
-        holders: [],
-        totalSupply: 0,
-        error: "Token not found on-chain. This may be a bonding curve token before migration.",
-      });
-    }
-
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch {
+    return NextResponse.json(
+      { error: "holder_sources_unavailable", holders: [], totalSupply: 0 },
+      { status: 502 },
+    );
   }
 }
