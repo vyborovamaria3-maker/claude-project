@@ -147,6 +147,53 @@ class IntelligenceOutcome(Base):
     )
 
 
+class IntelligenceEntityOutcomeProjection(Base):
+    """Prepared earliest-snapshot outcome per entity/token/horizon.
+
+    Advanced-analysis reads this projection instead of rebuilding the
+    entity -> earliest snapshot -> outcome join on every report.
+    """
+
+    __tablename__ = "intelligence_entity_outcomes"
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_key",
+            "mint_address",
+            "horizon_hours",
+            name="uq_intelligence_entity_outcome",
+        ),
+        Index(
+            "ix_intelligence_entity_outcomes_entity_horizon",
+            "entity_key",
+            "horizon_hours",
+        ),
+        Index(
+            "ix_intelligence_entity_outcomes_horizon_mint",
+            "horizon_hours",
+            "mint_address",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    mint_address: Mapped[str] = mapped_column(String(64), nullable=False)
+    horizon_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    max_multiple: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_drawdown_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    outcome_label: Mapped[str] = mapped_column(String(64), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+
 class IntelligenceCalibrationStat(Base):
     __tablename__ = "intelligence_calibration_stats"
     __table_args__ = (
