@@ -94,8 +94,13 @@ async function startBot() {
     // Telegram sends updates to the Next.js webhook route. Keep this service
     // alive so Compose can monitor configuration/auth failures and restart it.
     await new Promise<void>((resolve) => {
-      process.once('SIGINT', resolve);
-      process.once('SIGTERM', resolve);
+      const keepAlive = setInterval(() => undefined, 60_000);
+      const stop = () => {
+        clearInterval(keepAlive);
+        resolve();
+      };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
     });
   } else {
     console.log('Starting Telegram bot in polling mode...');
