@@ -199,14 +199,18 @@ async def token_timeline_candidates(
 
 
 def _postgres_timeline_cte() -> str:
-    source_key = """
+    # Match the legacy Python fallback exactly for an empty handle: "" is falsey,
+    # so source_name is used. Whitespace is intentionally not nullified because it
+    # was truthy in Python and normalizes to an empty source key there as well.
+    source_value = "coalesce(nullif(source_handle, ''), source_name, '')"
+    source_key = f"""
         split_part(
             split_part(
                 split_part(
                     btrim(
                         regexp_replace(
                             regexp_replace(
-                                lower(ltrim(btrim(coalesce(source_handle, source_name, '')), '@')),
+                                lower(ltrim(btrim({source_value}), '@')),
                                 '^https?://t[.]me/',
                                 ''
                             ),
@@ -234,7 +238,7 @@ def _postgres_timeline_cte() -> str:
 
     engagement = f"""
         CASE
-            WHEN lower(platform) = 'telegram' THEN
+            WHEN platform = 'telegram' THEN
                 {metric('reactions')} + {metric('forwards')} + {metric('replies')}
             ELSE
                 {metric('likes')} + {metric('retweets')} + {metric('replies')}
@@ -242,7 +246,7 @@ def _postgres_timeline_cte() -> str:
     """
     explicit_call = """
         CASE
-            WHEN lower(platform) <> 'telegram' THEN false
+            WHEN platform <> 'telegram' THEN false
             WHEN CAST(metrics AS jsonb) -> 'explicit_call' = CAST('true' AS jsonb) THEN true
             WHEN CAST(metrics AS jsonb) -> 'is_explicit_call' = CAST('true' AS jsonb) THEN true
             WHEN lower(event_type) LIKE '%call%' THEN true
@@ -276,7 +280,7 @@ def _postgres_timeline_cte() -> str:
         WITH prepared AS (
             SELECT
                 id,
-                lower(platform) AS platform,
+                platform,
                 event_type,
                 source_handle,
                 source_name,
@@ -290,7 +294,7 @@ def _postgres_timeline_cte() -> str:
                 {explicit_call} AS explicit_call
             FROM social_events
             WHERE mint_address = :mint
-              AND (:platform IS NULL OR lower(platform) = :platform)
+              AND (:platform IS NULL OR platform = :platform)
               AND (:cutoff IS NULL OR occurred_at >= :cutoff)
         ),
         filtered AS (
