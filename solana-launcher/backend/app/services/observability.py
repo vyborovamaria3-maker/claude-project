@@ -56,3 +56,22 @@ ANALYSIS_STAGE_RUNTIME = Histogram(
     ("stage",),
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
 )
+ANALYSIS_END_TO_END_RUNTIME = Histogram(
+    "analysis_end_to_end_runtime_seconds",
+    "Advanced-intelligence wall time from accepted request to final worker result",
+    ("result",),
+    buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0),
+)
+
+CELERY_QUEUE_WAIT = Histogram(
+    "celery_queue_wait_seconds",
+    "Time a POTAPoff task waits between broker publish and worker start",
+    ("queue",),
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0),
+)
+CELERY_TASK_RUNTIME = Histogram(
+    "celery_task_runtime_seconds",
+    "Worker execution time by isolated POTAPoff queue and result",
+    ("queue", "result"),
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
+)
