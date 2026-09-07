@@ -106,12 +106,24 @@ function rebucket(candles: Candle[], bucketSec: number): Candle[] {
   return result;
 }
 
-// In-memory server-side cache for Pump.fun candles (per process, resets on dev reload)
-// Key: `${mint}:${tf}` -> { candles, timestamp }
+// In-memory server-side caches are explicitly bounded because this route can be
+// queried for many valid mints over the lifetime of a long-running Node process.
+const MAX_PUMP_CACHE_ENTRIES = 96;
+const MAX_PUMP_RAW_CACHE_ENTRIES = 24;
 const pumpCache = new Map<string, { candles: Candle[]; timestamp: number }>();
-// Raw pump.fun rows cache (used for deep 1m history reused across sub-second requests)
 type PumpRowCached = { timestamp: number; open: string; high: string; low: string; close: string; volume: string };
 const pumpRawCache = new Map<string, { rows: PumpRowCached[]; timestamp: number }>();
+
+function setBoundedCache<K, V>(cache: Map<K, V>, key: K, value: V, maxEntries: number) {
+  // Refresh insertion order for existing keys, then evict oldest entries first.
+  cache.delete(key);
+  while (cache.size >= maxEntries) {
+    const oldest = cache.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  cache.set(key, value);
+}
 
 // Cache TTLs:
 //   sub-minute: 1s — near-realtime with better cache hit rate
@@ -143,6 +155,7 @@ async function fetchFromPumpFun(mint: string, tf: string, deep = false): Promise
   if (cached && Date.now() - cached.timestamp < ttl) {
     return cached.candles;
   }
+  if (cached) pumpCache.delete(cacheKey);
 
   try {
     type PumpRow = { timestamp: number; open: string; high: string; low: string; close: string; volume: string };
@@ -244,7 +257,9 @@ async function fetchFromPumpFun(mint: string, tf: string, deep = false): Promise
           const oneMinKey = `${mint}:1m-deep`;
           const cached1m = pumpRawCache.get(oneMinKey);
           // Long-TTL cache: 5 min — minute candles don't change after they close.
-          let rows1m: PumpRow[] = (cached1m && Date.now() - cached1m.timestamp < 300_000)
+          const rawCacheFresh = cached1m && Date.now() - cached1m.timestamp < 300_000;
+          if (cached1m && !rawCacheFresh) pumpRawCache.delete(oneMinKey);
+          let rows1m: PumpRow[] = rawCacheFresh
             ? cached1m.rows
             : (rows1mPreloaded ?? []);
           let earliest1m = rows1m.length ? rows1m[0].timestamp : Date.now();
@@ -274,7 +289,12 @@ async function fetchFromPumpFun(mint: string, tf: string, deep = false): Promise
           }
           // Persist deep 1m rows for fast reuse by later sub-second requests
           if (rows1m.length > 0) {
-            pumpRawCache.set(`${mint}:1m-deep`, { rows: rows1m, timestamp: Date.now() });
+            setBoundedCache(
+              pumpRawCache,
+              oneMinKey,
+              { rows: rows1m, timestamp: Date.now() },
+              MAX_PUMP_RAW_CACHE_ENTRIES,
+            );
           }
           if (rows1m.length > 0) {
             // Keep older 1m candles at their original minute timestamps — they render
@@ -322,7 +342,12 @@ async function fetchFromPumpFun(mint: string, tf: string, deep = false): Promise
     // Re-bucket if the requested tf isn't natively supported (5s, 1d)
     const bucketSec = PUMP_BUCKET[tf];
     const candles = bucketSec ? rebucket(deduped, bucketSec) : deduped;
-    pumpCache.set(cacheKey, { candles, timestamp: Date.now() });
+    setBoundedCache(
+      pumpCache,
+      cacheKey,
+      { candles, timestamp: Date.now() },
+      MAX_PUMP_CACHE_ENTRIES,
+    );
     return candles;
   } catch {
     return [];
