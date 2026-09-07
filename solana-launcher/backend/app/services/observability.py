@@ -44,3 +44,15 @@ INGESTION_BATCH_RUNTIME = Histogram(
     ("provider",),
     buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0),
 )
+
+ANALYSIS_CACHE_REQUESTS = Counter(
+    "analysis_cache_requests_total",
+    "Analysis cache lookups by layer and result",
+    ("layer", "result"),
+)
+ANALYSIS_STAGE_RUNTIME = Histogram(
+    "analysis_stage_runtime_seconds",
+    "Advanced-intelligence stage runtime",
+    ("stage",),
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+)
