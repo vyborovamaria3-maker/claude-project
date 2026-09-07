@@ -1,6 +1,7 @@
 from app.models.advanced_intelligence import (
     CampaignFingerprint,
     IntelligenceCalibrationStat,
+    IntelligenceEntityOutcomeProjection,
     IntelligenceHypothesisState,
     IntelligenceNarrativeMemory,
     IntelligenceOutcome,
@@ -68,6 +69,7 @@ __all__ = [
     "CampaignFingerprint",
     "IntelligenceHypothesisState",
     "IntelligenceOutcome",
+    "IntelligenceEntityOutcomeProjection",
     "IntelligenceCalibrationStat",
     "IntelligenceNarrativeMemory",
 ]
