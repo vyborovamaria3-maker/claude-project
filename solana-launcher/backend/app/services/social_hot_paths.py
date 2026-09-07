@@ -67,6 +67,7 @@ async def ingest_x_events_bulk(
             "skipped_missing_timestamp": skipped_missing_timestamp,
         }
 
+    external_ids = list(prepared)
     existing_rows = list(
         (
             await session.execute(
@@ -74,7 +75,7 @@ async def ingest_x_events_bulk(
                     SocialEvent.platform == "x",
                     SocialEvent.event_type == "token_mention",
                     SocialEvent.mint_address == mint,
-                    SocialEvent.external_id.in_(prepared),
+                    SocialEvent.external_id.in_(external_ids),
                 )
             )
         ).scalars().all()
