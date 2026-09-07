@@ -57,6 +57,7 @@ const MINT_VALIDATED_ROUTE_PREFIXES = [
 ] as const;
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const ALLOWED_TRENDS_LANGS = new Set(["en", "ru"]);
+const ALLOWED_HISTORY_TIMEFRAMES = new Set(["1s", "5s", "15s", "1m", "5m", "15m", "1h", "4h", "1d"]);
 
 const BROWSER_CONNECT_ORIGINS = [
   "https://gmgn.ai",
@@ -179,6 +180,13 @@ function validateExpensiveRouteInput(pathname: string, searchParams: URLSearchPa
     const mint = searchParams.get("mint")?.trim() || "";
     if (!SOLANA_ADDRESS_RE.test(mint)) {
       return NextResponse.json({ error: "invalid mint" }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/token-history") {
+    const timeframe = searchParams.get("tf") || "1m";
+    if (!ALLOWED_HISTORY_TIMEFRAMES.has(timeframe)) {
+      return NextResponse.json({ error: "unsupported timeframe" }, { status: 400 });
     }
   }
 
