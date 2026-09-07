@@ -1,12 +1,30 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 
-from sqlalchemy import Float, and_, case, cast, delete, func, insert, literal, select
+from sqlalchemy import Float, and_, case, cast, delete, func, insert, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import WalletLink, WalletTrade
 from app.services.observability import WALLET_LINKS_CREATED
+
+_WALLET_LINK_REBUILD_LOCK_KEY = int.from_bytes(
+    hashlib.sha256(b"potapoff:wallet-links:rebuild:v1").digest()[:8],
+    byteorder="big",
+    signed=True,
+)
+
+
+async def _acquire_rebuild_lock(session: AsyncSession) -> None:
+    """Serialize replace-all rebuilds without blocking unrelated DB work."""
+    bind = session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        {"lock_key": _WALLET_LINK_REBUILD_LOCK_KEY},
+    )
 
 
 async def rebuild_wallet_links(
@@ -23,6 +41,10 @@ async def rebuild_wallet_links(
     derived wallet_links table transactionally.
     """
     minimum = max(1, int(min_shared_tokens))
+    # DELETE + INSERT replaces one global derived projection. Manual collection and
+    # scheduled workers can overlap, so serialize only this rebuild for the lifetime
+    # of the caller's transaction. PostgreSQL releases the lock on commit/rollback.
+    await _acquire_rebuild_lock(session)
 
     participation = (
         select(
@@ -66,8 +88,6 @@ async def rebuild_wallet_links(
         .having(func.count() >= minimum)
     )
 
-    # wallet_links is a derived table. DELETE + INSERT ... SELECT is idempotent,
-    # executes in the caller's transaction, and avoids a round-trip per wallet pair.
     await session.execute(delete(WalletLink))
     await session.execute(
         insert(WalletLink).from_select(
