@@ -14,6 +14,7 @@ from app.schemas.social_intelligence import (
     TelegramScanRequest,
     XSocialIngestRequest,
 )
+from app.services.cache import read_json_cache
 from app.services.social_evaluation import evaluate_calls
 from app.services.social_filters import filter_timeline_payload, normalize_social_source
 from app.services.social_hot_paths import (
@@ -36,14 +37,51 @@ from app.services.telegram_signal_analysis import caller_reputation, telegram_to
 logger = logging.getLogger(__name__)
 router = APIRouter()
 social_router = APIRouter()
+TELEGRAM_RUNTIME_STATUS_KEY = "telegram:runtime:status"
 
 
 def _manager(request: Request) -> TelegramMonitorManager:
     return request.app.state.telegram_intelligence
 
 
-def _safe_collector_status(request: Request) -> dict:
-    runtime = _manager(request).status()
+def _runtime_is_local(request: Request) -> bool:
+    return bool(getattr(request.app.state, "telegram_runtime_in_api", False))
+
+
+def _require_local_runtime(request: Request) -> None:
+    if _runtime_is_local(request):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "Telegram collector runs in the dedicated runtime process. "
+            "Long-running session/monitor controls are disabled in the API process."
+        ),
+    )
+
+
+async def _runtime_status(request: Request) -> dict:
+    local = _manager(request).status()
+    if _runtime_is_local(request):
+        local["runtime_location"] = "api"
+        return local
+    try:
+        external = await read_json_cache(TELEGRAM_RUNTIME_STATUS_KEY)
+    except Exception:
+        external = None
+    if isinstance(external, dict):
+        external["runtime_location"] = "worker"
+        return external
+    local["runtime_location"] = "worker"
+    local["external_runtime"] = True
+    local["background_running"] = False
+    local["running"] = False
+    local["last_error"] = local.get("last_error") or "dedicated runtime heartbeat unavailable"
+    return local
+
+
+async def _safe_collector_status(request: Request) -> dict:
+    runtime = await _runtime_status(request)
     channels = runtime.get("channels") or []
     registry = runtime.get("registry") if isinstance(runtime.get("registry"), dict) else {}
     return {
@@ -54,6 +92,7 @@ def _safe_collector_status(request: Request) -> dict:
         "running": bool(runtime.get("running")),
         "background_running": bool(runtime.get("background_running")),
         "connected": bool(runtime.get("connected")),
+        "runtime_location": runtime.get("runtime_location"),
         "monitored_channels": len(channels) if isinstance(channels, list) else 0,
         "public_web_enabled": bool(runtime.get("public_web_enabled")),
         "public_web_configured": bool(runtime.get("public_web_configured")),
@@ -142,7 +181,7 @@ async def telegram_session_status(
     request: Request,
     current_user=Depends(get_current_superuser),
 ) -> dict:
-    return _manager(request).status()
+    return await _runtime_status(request)
 
 
 @router.post("/session/login")
@@ -151,6 +190,7 @@ async def telegram_attach_session(
     request: Request,
     current_user=Depends(get_current_superuser),
 ) -> dict:
+    _require_local_runtime(request)
     try:
         return await _manager(request).attach_session(payload.session_string)
     except (TelegramSessionError, ValueError) as exc:
@@ -196,6 +236,7 @@ async def start_monitor(
     request: Request,
     current_user=Depends(get_current_superuser),
 ) -> dict:
+    _require_local_runtime(request)
     try:
         service = await _manager(request).get_service()
         return await service.start_monitor(payload.channels)
@@ -205,6 +246,7 @@ async def start_monitor(
 
 @router.post("/monitor/stop")
 async def stop_monitor(request: Request, current_user=Depends(get_current_superuser)) -> dict:
+    _require_local_runtime(request)
     manager = _manager(request)
     if manager.service is None:
         return {"running": False, "channels": []}
@@ -216,7 +258,7 @@ async def monitor_status(
     request: Request,
     current_user=Depends(get_current_superuser),
 ) -> dict:
-    return _manager(request).status()
+    return await _runtime_status(request)
 
 
 @router.get("/channels")
@@ -287,7 +329,7 @@ async def telegram_token(
         min_channel_score=min_channel_score,
         limit=limit,
     )
-    payload.setdefault("meta", {})["telegramCollector"] = _safe_collector_status(request)
+    payload.setdefault("meta", {})["telegramCollector"] = await _safe_collector_status(request)
     payload["telegramIntelligence"] = await telegram_token_intelligence(session, mint)
     return payload
 
@@ -351,7 +393,7 @@ async def social_token(
         limit=limit,
     )
     if platform in {None, "telegram"}:
-        payload.setdefault("meta", {})["telegramCollector"] = _safe_collector_status(request)
+        payload.setdefault("meta", {})["telegramCollector"] = await _safe_collector_status(request)
         payload["telegramIntelligence"] = await telegram_token_intelligence(session, mint)
     return payload
 
