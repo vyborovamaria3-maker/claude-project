@@ -44,6 +44,9 @@ REQUIRED_SERVICES=(
   rabbitmq
   backend
   celery-worker
+  celery-market
+  celery-intelligence
+  celery-blockchain
   celery-beat
   frontend
   nginx
@@ -212,6 +215,9 @@ echo "Mini App config: ${miniapp_config:-unavailable}" >&2
   rabbitmq \
   backend \
   celery-worker \
+  celery-market \
+  celery-intelligence \
+  celery-blockchain \
   celery-beat \
   frontend \
   nginx \
