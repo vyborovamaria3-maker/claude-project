@@ -74,6 +74,44 @@ async def test_social_search_fallback_filters_mint_platform_and_bounds_results(
     assert rows[0]["search_mode"] == "bounded_substring_fallback"
 
 
+async def test_social_search_treats_like_wildcards_as_literals(test_app) -> None:
+    now = datetime.now(timezone.utc)
+    async with test_app.state.sessionmaker() as session:
+        session.add_all(
+            [
+                SocialEvent(
+                    platform="x",
+                    event_type="token_mention",
+                    external_id="literal-percent",
+                    source_handle="alpha",
+                    mint_address="mint-search-wildcard",
+                    text="token moved 25% today",
+                    occurred_at=now,
+                ),
+                SocialEvent(
+                    platform="x",
+                    event_type="token_mention",
+                    external_id="ordinary-row",
+                    source_handle="beta",
+                    mint_address="mint-search-wildcard",
+                    text="ordinary token update",
+                    occurred_at=now - timedelta(seconds=1),
+                ),
+            ]
+        )
+        await session.commit()
+
+        rows = await search_social_events(
+            session,
+            query="25%",
+            mint_address="mint-search-wildcard",
+            platform="x",
+            limit=10,
+        )
+
+    assert [row["external_id"] for row in rows] == ["literal-percent"]
+
+
 def test_postgres_social_search_compiles_to_fts_trigram_and_bounded_limit() -> None:
     statement = postgres_social_search_statement(
         query="smart money",
@@ -90,7 +128,9 @@ def test_postgres_social_search_compiles_to_fts_trigram_and_bounded_limit() -> N
     ).lower()
     assert "to_tsvector('simple'" in sql
     assert "websearch_to_tsquery('simple'" in sql
-    assert "similarity(" in sql
+    assert "similarity(lower(social_events.text)" in sql
+    assert "social_events.text is not null" in sql
     assert "social_events.mint_address = 'mint-a'" in sql
-    assert "lower(social_events.platform) = 'telegram'" in sql
+    assert "social_events.platform = 'telegram'" in sql
+    assert "lower(social_events.platform)" not in sql
     assert "limit 17" in sql
