@@ -13,11 +13,11 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.advanced_intelligence import (
-    CampaignFingerprint,
     IntelligenceCalibrationStat,
     IntelligenceHypothesisState,
 )
 from app.models.intelligence_memory import IntelligenceEntity
+from app.services.campaign_similarity import find_campaign_neighbors
 
 ADVANCED_INTELLIGENCE_VERSION = "advanced-intelligence-v2"
 CAMPAIGN_FINGERPRINT_VERSION = "campaign-fingerprint-v2"
@@ -91,23 +91,6 @@ def _normalize_text(text: str) -> str:
     value = re.sub(r"[1-9A-HJ-NP-Za-km-z]{32,44}", " ", value)
     value = re.sub(r"[^\w\s]+", " ", value, flags=re.UNICODE)
     return " ".join(value.split())[:500]
-
-
-def _jaccard(left: set[str], right: set[str]) -> float:
-    if not left or not right:
-        return 0.0
-    union = left | right
-    return len(left & right) / len(union) if union else 0.0
-
-
-def _cosine_dict(left: dict[str, float], right: dict[str, float]) -> float:
-    keys = (set(left) | set(right)) - {CAMPAIGN_VECTOR_SCHEMA_KEY}
-    dot = sum(left.get(key, 0.0) * right.get(key, 0.0) for key in keys)
-    norm_l = math.sqrt(sum(left.get(key, 0.0) ** 2 for key in keys))
-    norm_r = math.sqrt(sum(right.get(key, 0.0) ** 2 for key in keys))
-    if norm_l == 0 or norm_r == 0:
-        return 0.0
-    return dot / (norm_l * norm_r)
 
 
 def _actor_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -702,45 +685,12 @@ async def _historical_context(
     ]
 
     current_mint = str(snapshot.get("mint") or "")
-    current_vector = fingerprint["vector"]
-    actor_set = set(fingerprint["actors"])
-    prior = list(
-        (
-            await session.execute(
-                select(CampaignFingerprint)
-                .order_by(CampaignFingerprint.created_at.desc())
-                .limit(500)
-            )
-        ).scalars().all()
+    neighbors = await find_campaign_neighbors(
+        session,
+        current_mint=current_mint,
+        current_vector=dict(fingerprint.get("vector") or {}),
+        current_actors=list(fingerprint.get("actors") or []),
     )
-    best_by_mint: dict[str, dict[str, Any]] = {}
-    for row in prior:
-        if row.mint_address == current_mint:
-            continue
-        previous = {
-            str(key): float(value)
-            for key, value in (row.vector or {}).items()
-            if _number(value) is not None
-        }
-        if previous.get(CAMPAIGN_VECTOR_SCHEMA_KEY) != 1.0:
-            continue
-        vector_similarity = _cosine_dict(current_vector, previous)
-        actor_similarity = _jaccard(actor_set, set(row.actors or []))
-        similarity = vector_similarity * 0.75 + actor_similarity * 0.25
-        if similarity < 0.5:
-            continue
-        candidate = {
-            "snapshot_id": row.snapshot_id,
-            "mint": row.mint_address,
-            "similarity": round(similarity, 4),
-            "vector_similarity": round(vector_similarity, 4),
-            "actor_similarity": round(actor_similarity, 4),
-            "created_at": row.created_at.isoformat(),
-        }
-        previous_best = best_by_mint.get(row.mint_address)
-        if previous_best is None or candidate["similarity"] > previous_best["similarity"]:
-            best_by_mint[row.mint_address] = candidate
-    neighbors = sorted(best_by_mint.values(), key=lambda row: row["similarity"], reverse=True)[:10]
 
     hypothesis_filters = [IntelligenceHypothesisState.mint_address == current_mint]
     if node_ids:
