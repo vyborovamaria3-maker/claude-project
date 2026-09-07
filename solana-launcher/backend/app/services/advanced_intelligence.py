@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.advanced_intelligence import (
@@ -677,7 +677,6 @@ async def _historical_context(
 ) -> dict[str, Any]:
     nodes, _ = _graph(snapshot)
     node_ids = [str(row.get("id")) for row in nodes if row.get("id")][:300]
-    node_set = set(node_ids)
     entities: dict[str, IntelligenceEntity] = {}
     if node_ids:
         rows = list(
@@ -743,39 +742,38 @@ async def _historical_context(
             best_by_mint[row.mint_address] = candidate
     neighbors = sorted(best_by_mint.values(), key=lambda row: row["similarity"], reverse=True)[:10]
 
+    hypothesis_filters = [IntelligenceHypothesisState.mint_address == current_mint]
+    if node_ids:
+        hypothesis_filters.extend(
+            (
+                IntelligenceHypothesisState.source_key.in_(node_ids),
+                IntelligenceHypothesisState.target_key.in_(node_ids),
+            )
+        )
     hypothesis_rows = list(
         (
             await session.execute(
                 select(IntelligenceHypothesisState)
+                .where(or_(*hypothesis_filters))
                 .order_by(IntelligenceHypothesisState.updated_at.desc())
-                .limit(300)
+                .limit(80)
             )
         ).scalars().all()
     )
-    relevant_hypotheses = []
-    for row in hypothesis_rows:
-        endpoint_match = (
-            (row.source_key is not None and row.source_key in node_set)
-            or (row.target_key is not None and row.target_key in node_set)
-        )
-        mint_match = row.mint_address == current_mint
-        if not endpoint_match and not mint_match:
-            continue
-        relevant_hypotheses.append(
-            {
-                "hypothesis_key": row.hypothesis_key,
-                "type": row.hypothesis_type,
-                "source": row.source_key,
-                "target": row.target_key,
-                "status": row.status,
-                "confidence": row.confidence,
-                "support_count": row.support_count,
-                "contradiction_count": row.contradiction_count,
-                "updated_at": row.updated_at.isoformat(),
-            }
-        )
-        if len(relevant_hypotheses) >= 80:
-            break
+    relevant_hypotheses = [
+        {
+            "hypothesis_key": row.hypothesis_key,
+            "type": row.hypothesis_type,
+            "source": row.source_key,
+            "target": row.target_key,
+            "status": row.status,
+            "confidence": row.confidence,
+            "support_count": row.support_count,
+            "contradiction_count": row.contradiction_count,
+            "updated_at": row.updated_at.isoformat(),
+        }
+        for row in hypothesis_rows
+    ]
     negative_memory = [
         row
         for row in relevant_hypotheses
