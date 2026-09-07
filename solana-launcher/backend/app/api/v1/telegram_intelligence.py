@@ -30,7 +30,9 @@ from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
 from app.services.telegram_public_web import TelegramPublicWebError
 from app.services.telegram_runtime import TelegramMonitorManager
-from app.services.telegram_signal_analysis import telegram_token_intelligence
+from app.services.telegram_token_hot import (
+    telegram_token_intelligence_hot as telegram_token_intelligence,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
