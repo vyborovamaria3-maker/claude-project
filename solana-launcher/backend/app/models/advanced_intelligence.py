@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     DateTime,
     Float,
+    ForeignKey,
     Index,
     Integer,
     JSON,
@@ -47,6 +48,75 @@ class CampaignFingerprint(Base):
         default=utcnow,
         nullable=False,
     )
+
+
+class CampaignFingerprintFeature(Base):
+    """Compact numeric campaign vector used by exact SQL similarity search."""
+
+    __tablename__ = "campaign_fingerprint_features"
+    __table_args__ = (
+        Index(
+            "ix_campaign_fingerprint_features_schema_created",
+            "schema_version",
+            "created_at",
+        ),
+        Index(
+            "ix_campaign_fingerprint_features_mint_created",
+            "mint_address",
+            "created_at",
+        ),
+    )
+
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("campaign_fingerprints.snapshot_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    mint_address: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    x_accounts: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    tg_channels: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    wallets: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    bundles: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    shared_links: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    copies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    amplifies: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mentions_wallet: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    social_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    x_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    telegram_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    organic: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    manipulation: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    early: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    alpha: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    bot_risk: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    vector_norm: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    actor_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class CampaignFingerprintActor(Base):
+    """Normalized actor membership for exact campaign Jaccard similarity."""
+
+    __tablename__ = "campaign_fingerprint_actors"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id",
+            "actor_key",
+            name="uq_campaign_fingerprint_actor",
+        ),
+        Index(
+            "ix_campaign_fingerprint_actors_actor_snapshot",
+            "actor_key",
+            "snapshot_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("campaign_fingerprint_features.snapshot_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    actor_key: Mapped[str] = mapped_column(String(160), nullable=False)
 
 
 class IntelligenceHypothesisState(Base):
