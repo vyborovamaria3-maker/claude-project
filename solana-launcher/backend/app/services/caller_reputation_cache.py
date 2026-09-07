@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.cache import cache_json, get_redis_client, read_json_cache
+from app.services.cache import cache_json, delete_cache, get_redis_client, read_json_cache
 from app.services.observability import ANALYSIS_CACHE_REQUESTS, ANALYSIS_STAGE_RUNTIME
 from app.services.telegram_signal_analysis import caller_reputation
 
@@ -37,6 +37,17 @@ async def _safe_read() -> list[dict[str, Any]] | None:
         return _cached_rows(await read_json_cache(_CACHE_KEY))
     except Exception:
         return None
+
+
+async def invalidate_top_callers_cache() -> None:
+    """Drop stale leaderboard state without making Redis a write dependency."""
+    try:
+        await delete_cache(_CACHE_KEY)
+    except Exception:
+        # PostgreSQL is authoritative. If Redis is unavailable the next reader will
+        # naturally fall back to the durable calculation instead of failing a call
+        # evaluation transaction that has already committed successfully.
+        return
 
 
 async def cached_top_callers(
