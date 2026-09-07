@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from time import time
 from typing import Any
 
 from redis.exceptions import RedisError
 
 from app.services.cache import get_redis_client
+from app.services.observability import ANALYSIS_END_TO_END_RUNTIME
 
 ANALYSIS_JOB_TTL_SECONDS = 1800
 ANALYSIS_RESULT_TTL_SECONDS = 1800
@@ -119,10 +121,12 @@ async def create_analysis_job(
     preliminary_report: dict[str, Any],
 ) -> None:
     client = get_redis_client()
+    created_at_epoch = time()
     state = {
         "job_id": job_id,
         "fingerprint": fingerprint,
         "status": "queued",
+        "created_at_epoch": created_at_epoch,
         "preliminary_report": preliminary_report,
     }
     try:
@@ -173,6 +177,23 @@ async def update_analysis_job(job_id: str, **fields: Any) -> None:
         raise RuntimeError("analysis job state is unavailable") from exc
 
 
+async def _observe_job_end_to_end(job_id: str, result: str) -> None:
+    try:
+        raw = await get_redis_client().get(_job_key(job_id))
+    except RedisError:
+        return
+    state = _decode_dict(raw)
+    if state is None:
+        return
+    try:
+        created_at_epoch = float(state.get("created_at_epoch"))
+    except (TypeError, ValueError):
+        return
+    ANALYSIS_END_TO_END_RUNTIME.labels(result=result).observe(
+        max(0.0, time() - created_at_epoch)
+    )
+
+
 async def finish_analysis_job(
     job_id: str,
     *,
@@ -187,6 +208,7 @@ async def finish_analysis_job(
             report=report,
             error=None,
         )
+        await _observe_job_end_to_end(job_id, "completed")
         async with client.pipeline(transaction=True) as pipe:
             pipe.set(
                 _result_key(fingerprint),
@@ -213,6 +235,7 @@ async def fail_analysis_job(
             status="failed",
             error=error[:1000],
         )
+        await _observe_job_end_to_end(job_id, "failed")
     except RuntimeError:
         pass
     if fingerprint:
