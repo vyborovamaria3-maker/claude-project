@@ -16,11 +16,10 @@ from app.schemas.social_intelligence import (
 )
 from app.services.cache import read_json_cache
 from app.services.social_evaluation import evaluate_calls
-from app.services.social_filters import filter_timeline_payload, normalize_social_source
+from app.services.social_filters import normalize_social_source
 from app.services.social_hot_paths import (
-    channel_score_lookup,
+    filtered_token_timeline,
     ingest_x_events_bulk,
-    token_timeline_candidates,
 )
 from app.services.social_intelligence import (
     list_calls,
@@ -130,14 +129,6 @@ def _source_set(raw: str | None) -> set[str]:
     return {normalize_social_source(value) for value in raw.split(",") if value.strip()}
 
 
-async def _channel_scores(
-    session: AsyncSession,
-    *,
-    min_score: float = 0.0,
-) -> dict[str, float]:
-    return await channel_score_lookup(session, min_score=min_score)
-
-
 async def _filtered_timeline(
     session: AsyncSession,
     mint: str,
@@ -150,28 +141,15 @@ async def _filtered_timeline(
     min_channel_score: float,
     limit: int,
 ) -> dict:
-    # Platform and time filters are safe to push into SQL. Source normalization,
-    # engagement JSON and explicit-call semantics remain in the existing filter layer.
-    timeline = await token_timeline_candidates(
+    return await filtered_token_timeline(
         session,
         mint,
-        platform=platform,
-        hours=hours,
-    )
-    scores = (
-        await _channel_scores(session, min_score=min_channel_score)
-        if min_channel_score > 0
-        else {}
-    )
-    return filter_timeline_payload(
-        timeline,
         platform=platform,
         hours=hours,
         sources=_source_set(sources),
         explicit_calls_only=explicit_calls_only,
         min_engagement=min_engagement,
         min_channel_score=min_channel_score,
-        channel_scores=scores,
         limit=limit,
     )
 
