@@ -16,13 +16,16 @@ from app.schemas.social_intelligence import (
 )
 from app.services.social_evaluation import evaluate_calls
 from app.services.social_filters import filter_timeline_payload, normalize_social_source
+from app.services.social_hot_paths import (
+    channel_score_lookup,
+    ingest_x_events_bulk,
+    token_timeline_candidates,
+)
 from app.services.social_intelligence import (
-    ingest_x_events,
     list_calls,
     list_channels,
     list_social_relations,
     refresh_x_for_mint,
-    token_timeline,
 )
 from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
@@ -88,23 +91,12 @@ def _source_set(raw: str | None) -> set[str]:
     return {normalize_social_source(value) for value in raw.split(",") if value.strip()}
 
 
-async def _channel_scores(session: AsyncSession) -> dict[str, float]:
-    result: dict[str, float] = {}
-    offset = 0
-    while True:
-        channels, total = await list_channels(session, limit=500, offset=offset)
-        for item in channels:
-            score = float(item.get("score") or 0.0)
-            username = str(item.get("username") or "").strip()
-            telegram_id = str(item.get("telegram_id") or "").strip()
-            if username:
-                result[normalize_social_source(username)] = score
-            if telegram_id:
-                result[normalize_social_source(telegram_id)] = score
-        offset += len(channels)
-        if not channels or offset >= total:
-            break
-    return result
+async def _channel_scores(
+    session: AsyncSession,
+    *,
+    min_score: float = 0.0,
+) -> dict[str, float]:
+    return await channel_score_lookup(session, min_score=min_score)
 
 
 async def _filtered_timeline(
@@ -119,8 +111,19 @@ async def _filtered_timeline(
     min_channel_score: float,
     limit: int,
 ) -> dict:
-    timeline = await token_timeline(session, mint)
-    scores = await _channel_scores(session) if min_channel_score > 0 else {}
+    # Platform and time filters are safe to push into SQL. Source normalization,
+    # engagement JSON and explicit-call semantics remain in the existing filter layer.
+    timeline = await token_timeline_candidates(
+        session,
+        mint,
+        platform=platform,
+        hours=hours,
+    )
+    scores = (
+        await _channel_scores(session, min_score=min_channel_score)
+        if min_channel_score > 0
+        else {}
+    )
     return filter_timeline_payload(
         timeline,
         platform=platform,
@@ -367,7 +370,7 @@ async def refresh_x(
             backend_frontend_url=request.app.state.settings.frontend_internal_url,
             mint_address=mint,
         )
-        return await ingest_x_events(session, payload)
+        return await ingest_x_events_bulk(session, payload)
     except Exception as exc:
         logger.exception("X intelligence refresh failed for mint %s", mint)
         raise HTTPException(
@@ -393,4 +396,4 @@ async def x_ingest(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid backend API key")
     if not is_solana_address(payload.token_mint):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
-    return await ingest_x_events(session, payload.model_dump())
+    return await ingest_x_events_bulk(session, payload.model_dump())
