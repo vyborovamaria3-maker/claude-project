@@ -18,6 +18,11 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def const_array_block(source: str, name: str) -> str:
+    match = re.search(rf"const\s+{re.escape(name)}\s*=\s*\[(.*?)\]\s*as const;", source, re.DOTALL)
+    return match.group(1) if match else ""
+
+
 def check_secret_scan_behavior(failures: list[str]) -> None:
     scanner_path = ROOT / "security/audit/secret-scan.py"
     spec = importlib.util.spec_from_file_location("repo_secret_scan", scanner_path)
@@ -45,6 +50,54 @@ def check_secret_scan_behavior(failures: list[str]) -> None:
         module.scan_zip_file("fixture.zip", archive_path, archive_findings)
         if ("fixture.zip!/src/config.ts", "jwt-bearer") not in archive_findings:
             failures.append("secret scanner does not inspect text files inside tracked ZIP archives")
+
+
+def check_token_proxy_security(failures: list[str]) -> None:
+    proxy = read("solana-launcher/proxy.ts")
+    paid = const_array_block(proxy, "PAID_ROUTE_PREFIXES")
+    heavy = const_array_block(proxy, "HEAVY_ROUTE_LIMITS")
+    validated = const_array_block(proxy, "MINT_VALIDATED_ROUTE_PREFIXES")
+
+    for route in ("/api/token-bundles", "/api/token-dev", "/api/token-traders"):
+        if route not in paid:
+            failures.append(f"paid token intelligence route is not subscription-gated: {route}")
+        if route not in heavy:
+            failures.append(f"paid token intelligence route is not rate-limited: {route}")
+
+    for route in (
+        "/api/token-analytics",
+        "/api/token-bundles",
+        "/api/token-dca",
+        "/api/token-history",
+        "/api/token-holders",
+        "/api/token-meta",
+        "/api/token-ohlcv",
+        "/api/token-pool",
+        "/api/token-traders",
+        "/api/token-trades",
+    ):
+        if route not in validated:
+            failures.append(f"token route does not reject invalid mint input at the proxy: {route}")
+
+    if "pathname === \"/api/token-dev\"" not in proxy or "creator" not in proxy:
+        failures.append("token-dev proxy validation for mint/creator addresses is missing")
+
+    for path in (
+        "solana-launcher/app/api/token-bundles/route.ts",
+        "solana-launcher/app/api/token-dev/route.ts",
+        "solana-launcher/app/api/token-traders/route.ts",
+    ):
+        source = read(path)
+        if "requireProdAuth" not in source:
+            failures.append(f"paid external-intelligence route lacks route-level auth: {path}")
+        if "AbortSignal.timeout" not in source:
+            failures.append(f"paid external-intelligence route lacks an upstream timeout: {path}")
+
+    trades = read("solana-launcher/app/api/token-trades/route.ts")
+    if "MAX_TRADE_CACHE_ENTRIES" not in trades:
+        failures.append("token-trades in-memory cache has no explicit size bound")
+    if "AbortSignal.timeout" not in trades:
+        failures.append("token-trades upstream request has no timeout")
 
 
 def main() -> int:
@@ -90,6 +143,7 @@ def main() -> int:
     if "socket.getaddrinfo" not in url_security or "address.is_global" not in url_security:
         failures.append("outbound URL validation does not verify resolved IP addresses")
 
+    check_token_proxy_security(failures)
     check_secret_scan_behavior(failures)
 
     if failures:
