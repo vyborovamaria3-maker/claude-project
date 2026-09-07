@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from app.models.advanced_intelligence import (
+    CampaignFingerprint,
     CampaignFingerprintActor,
     CampaignFingerprintFeature,
 )
@@ -61,6 +62,13 @@ async def test_persisted_campaign_fingerprint_creates_similarity_projection(
             },
         )
 
+        fingerprint = (
+            await session.execute(
+                select(CampaignFingerprint).where(
+                    CampaignFingerprint.snapshot_id == snapshot_id
+                )
+            )
+        ).scalar_one()
         projection = await session.get(CampaignFingerprintFeature, snapshot_id)
         actor_rows = list(
             (
@@ -73,6 +81,7 @@ async def test_persisted_campaign_fingerprint_creates_similarity_projection(
         )
 
     assert projection is not None
+    assert fingerprint.created_at == projection.created_at
     assert projection.schema_version == 2
     assert projection.vector_norm == 1.0
     assert projection.actor_count == 2
