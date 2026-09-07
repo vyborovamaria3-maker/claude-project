@@ -10,9 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.advanced_intelligence import (
     CampaignFingerprint,
+    CampaignFingerprintActor,
+    CampaignFingerprintFeature,
     IntelligenceHypothesisState,
     IntelligenceNarrativeMemory,
 )
+from app.services.campaign_similarity import prepare_campaign_projection
 
 
 def _sha(value: Any) -> str:
@@ -116,16 +119,37 @@ async def persist_advanced_intelligence_state(
         )
     ).scalar_one_or_none()
     if existing is None:
+        created_at = datetime.now(timezone.utc)
+        vector = dict(fingerprint.get("vector") or {})
+        actors = list(fingerprint.get("actors") or [])
         session.add(
             CampaignFingerprint(
                 snapshot_id=snapshot_id,
                 mint_address=mint,
                 fingerprint_hash=fingerprint["hash"],
-                vector=fingerprint["vector"],
-                actors=fingerprint["actors"],
+                vector=vector,
+                actors=actors,
                 narratives=[report["layers"]["narrative_engine"]],
+                created_at=created_at,
             )
         )
+        projection, actor_keys = prepare_campaign_projection(vector, actors)
+        if projection is not None:
+            session.add(
+                CampaignFingerprintFeature(
+                    snapshot_id=snapshot_id,
+                    mint_address=mint,
+                    created_at=created_at,
+                    **projection,
+                )
+            )
+            session.add_all(
+                CampaignFingerprintActor(
+                    snapshot_id=snapshot_id,
+                    actor_key=actor_key,
+                )
+                for actor_key in actor_keys
+            )
 
     narrative = report["layers"]["narrative_engine"]
     if narrative.get("primary_key") and narrative.get("primary"):
