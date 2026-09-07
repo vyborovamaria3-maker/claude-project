@@ -1,19 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+from time import monotonic
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings
+from app.services.observability import (
+    PROVIDER_RATE_LIMITS,
+    PROVIDER_REQUEST_LATENCY,
+    PROVIDER_REQUESTS,
+)
 
 MAX_SIGNATURE_PAGES = 3
 SIGNATURE_PAGE_SIZE = 100
 MAX_TRANSACTIONS_TO_INSPECT = 40
-MAX_TRANSACTION_CONCURRENCY = 6
-MAX_WALLET_CONCURRENCY = 2
+MAX_RPC_CONCURRENCY = 8
+MAX_WALLET_CONCURRENCY = 4
 INITIAL_TRANSACTION_RANK_LIMIT = 10
+RPC_TIMEOUT_SECONDS = 8.0
 SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
+
+
+def _observe_rpc(method: str, result: str, elapsed: float) -> None:
+    PROVIDER_REQUESTS.labels(
+        provider="solana_rpc",
+        operation=method,
+        result=result,
+    ).inc()
+    PROVIDER_REQUEST_LATENCY.labels(
+        provider="solana_rpc",
+        operation=method,
+    ).observe(elapsed)
 
 
 async def _rpc(
@@ -22,20 +41,50 @@ async def _rpc(
     method: str,
     params: list[Any],
     request_id: int,
+    semaphore: asyncio.Semaphore | None = None,
 ) -> Any:
-    response = await client.post(
-        url,
-        json={
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": method,
-            "params": params,
-        },
-    )
-    response.raise_for_status()
+    started = monotonic()
+    try:
+        if semaphore is None:
+            response = await client.post(
+                url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                },
+            )
+        else:
+            async with semaphore:
+                response = await client.post(
+                    url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": method,
+                        "params": params,
+                    },
+                )
+    except httpx.HTTPError:
+        _observe_rpc(method, "transport_error", monotonic() - started)
+        raise
+
+    status_code = int(response.status_code)
+    if status_code == 429:
+        PROVIDER_RATE_LIMITS.labels(
+            provider="solana_rpc",
+            operation=method,
+        ).inc()
+    if status_code >= 400:
+        _observe_rpc(method, f"http_{status_code}", monotonic() - started)
+        response.raise_for_status()
+
     payload = response.json()
     if payload.get("error"):
+        _observe_rpc(method, "rpc_error", monotonic() - started)
         raise RuntimeError(str(payload["error"]))
+    _observe_rpc(method, "ok", monotonic() - started)
     return payload.get("result")
 
 
@@ -43,6 +92,7 @@ async def _signatures(
     client: httpx.AsyncClient,
     url: str,
     address: str,
+    semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     rows: list[dict[str, Any]] = []
     before: str | None = None
@@ -60,6 +110,7 @@ async def _signatures(
             "getSignaturesForAddress",
             [address, options],
             page + 1,
+            semaphore,
         )
         batch = result if isinstance(result, list) else []
         rows.extend(row for row in batch if isinstance(row, dict))
@@ -129,9 +180,11 @@ def _incoming_system_transfers(
     return transfers
 
 
-async def verify_wallet_funding(
+async def _verify_wallet_funding_with_client(
     settings: Settings,
     address: str,
+    client: httpx.AsyncClient,
+    rpc_semaphore: asyncio.Semaphore,
 ) -> dict[str, Any]:
     rpc_url = (settings.helius_rpc_url or settings.solana_rpc_url or "").strip()
     if not rpc_url:
@@ -143,47 +196,50 @@ async def verify_wallet_funding(
             "transfers": [],
         }
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as client:
-            signatures, history_exhausted = await _signatures(client, rpc_url, address)
-            valid = [
-                row
-                for row in signatures
-                if row.get("signature") and row.get("err") is None
+        signatures, history_exhausted = await _signatures(
+            client,
+            rpc_url,
+            address,
+            rpc_semaphore,
+        )
+        valid = [
+            row
+            for row in signatures
+            if row.get("signature") and row.get("err") is None
+        ]
+        oldest_scanned = list(reversed(valid))
+        inspect = oldest_scanned[:MAX_TRANSACTIONS_TO_INSPECT]
+
+        async def fetch_transaction(
+            index: int,
+            signature: str,
+        ) -> tuple[int, dict[str, Any] | None]:
+            try:
+                value = await _rpc(
+                    client,
+                    rpc_url,
+                    "getTransaction",
+                    [
+                        signature,
+                        {
+                            "encoding": "jsonParsed",
+                            "commitment": "confirmed",
+                            "maxSupportedTransactionVersion": 0,
+                        },
+                    ],
+                    10_000 + index,
+                    rpc_semaphore,
+                )
+                return index, value if isinstance(value, dict) else None
+            except (httpx.HTTPError, RuntimeError):
+                return index, None
+
+        fetched = await asyncio.gather(
+            *[
+                fetch_transaction(index, str(row["signature"]))
+                for index, row in enumerate(inspect)
             ]
-            oldest_scanned = list(reversed(valid))
-            inspect = oldest_scanned[:MAX_TRANSACTIONS_TO_INSPECT]
-            semaphore = asyncio.Semaphore(MAX_TRANSACTION_CONCURRENCY)
-
-            async def fetch_transaction(
-                index: int,
-                signature: str,
-            ) -> tuple[int, dict[str, Any] | None]:
-                async with semaphore:
-                    try:
-                        value = await _rpc(
-                            client,
-                            rpc_url,
-                            "getTransaction",
-                            [
-                                signature,
-                                {
-                                    "encoding": "jsonParsed",
-                                    "commitment": "confirmed",
-                                    "maxSupportedTransactionVersion": 0,
-                                },
-                            ],
-                            10_000 + index,
-                        )
-                        return index, value if isinstance(value, dict) else None
-                    except (httpx.HTTPError, RuntimeError):
-                        return index, None
-
-            fetched = await asyncio.gather(
-                *[
-                    fetch_transaction(index, str(row["signature"]))
-                    for index, row in enumerate(inspect)
-                ]
-            )
+        )
 
         transfers: list[dict[str, Any]] = []
         for index, transaction in sorted(fetched):
@@ -258,6 +314,32 @@ async def verify_wallet_funding(
         }
 
 
+async def verify_wallet_funding(
+    settings: Settings,
+    address: str,
+) -> dict[str, Any]:
+    """Verify one wallet using a bounded connection pool.
+
+    Snapshot-level analysis uses the internal shared-client path below, while this
+    standalone entry point preserves the previous public API for callers that inspect
+    just one wallet.
+    """
+    limits = httpx.Limits(
+        max_connections=MAX_RPC_CONCURRENCY,
+        max_keepalive_connections=MAX_RPC_CONCURRENCY,
+    )
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(RPC_TIMEOUT_SECONDS),
+        limits=limits,
+    ) as client:
+        return await _verify_wallet_funding_with_client(
+            settings,
+            address,
+            client,
+            asyncio.Semaphore(MAX_RPC_CONCURRENCY),
+        )
+
+
 async def verify_snapshot_wallet_funding(
     settings: Settings,
     snapshot: dict[str, Any],
@@ -286,12 +368,30 @@ async def verify_snapshot_wallet_funding(
         }
 
     wallet_semaphore = asyncio.Semaphore(MAX_WALLET_CONCURRENCY)
+    rpc_semaphore = asyncio.Semaphore(MAX_RPC_CONCURRENCY)
+    limits = httpx.Limits(
+        max_connections=MAX_RPC_CONCURRENCY,
+        max_keepalive_connections=MAX_RPC_CONCURRENCY,
+    )
 
-    async def inspect_wallet(address: str) -> dict[str, Any]:
-        async with wallet_semaphore:
-            return await verify_wallet_funding(settings, address)
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(RPC_TIMEOUT_SECONDS),
+        limits=limits,
+    ) as client:
 
-    results = await asyncio.gather(*[inspect_wallet(address) for address in wallets])
+        async def inspect_wallet(address: str) -> dict[str, Any]:
+            async with wallet_semaphore:
+                return await _verify_wallet_funding_with_client(
+                    settings,
+                    address,
+                    client,
+                    rpc_semaphore,
+                )
+
+        results = await asyncio.gather(
+            *[inspect_wallet(address) for address in wallets]
+        )
+
     initial_funders: dict[str, list[str]] = {}
     initial_edges: list[dict[str, Any]] = []
     observed_transfers: list[dict[str, Any]] = []
