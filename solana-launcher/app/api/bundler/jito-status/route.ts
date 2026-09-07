@@ -2,6 +2,7 @@
 // Check Jito bundle status
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,15 +12,19 @@ const JITO_ENDPOINTS: Record<string, string> = {
   ny: "https://ny.mainnet.block-engine.jito.wtf/api/v1/bundles",
   tokyo: "https://tokyo.mainnet.block-engine.jito.wtf/api/v1/bundles",
 };
+const BUNDLE_ID_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
 export async function GET(req: NextRequest) {
-  const bundleId = req.nextUrl.searchParams.get("bundleId");
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
+  const bundleId = req.nextUrl.searchParams.get("bundleId")?.trim() || "";
   const region = req.nextUrl.searchParams.get("region") || "frankfurt";
 
-  if (!bundleId) {
+  if (!BUNDLE_ID_RE.test(bundleId)) {
     return NextResponse.json(
-      { error: "bundleId required" },
-      { status: 400 }
+      { error: "Invalid bundleId" },
+      { status: 400 },
     );
   }
 
@@ -27,7 +32,7 @@ export async function GET(req: NextRequest) {
   if (!endpoint) {
     return NextResponse.json(
       { error: "Invalid region" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -41,12 +46,16 @@ export async function GET(req: NextRequest) {
         method: "getBundleStatuses",
         params: [[bundleId]],
       }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
     });
 
+    if (!response.ok) {
+      return NextResponse.json({ error: "Jito status service unavailable" }, { status: 502 });
+    }
     const data = await response.json();
-    return NextResponse.json(data);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to check status";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(data, { headers: { "Cache-Control": "private, no-store" } });
+  } catch {
+    return NextResponse.json({ error: "Failed to check status" }, { status: 502 });
   }
 }
