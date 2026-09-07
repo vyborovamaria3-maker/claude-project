@@ -97,6 +97,7 @@ async def refresh_entity_outcome_projection_for_mint(
     )
     outcome_by_snapshot = {row.snapshot_id: row for row in outcomes}
     desired_keys: set[str] = set()
+    deleted_keys: set[str] = set()
     updated_at = datetime.now(timezone.utc)
 
     for earliest_row in earliest:
@@ -106,6 +107,7 @@ async def refresh_entity_outcome_projection_for_mint(
             projection = existing.get(entity_key)
             if projection is not None:
                 await session.delete(projection)
+                deleted_keys.add(entity_key)
             continue
 
         desired_keys.add(entity_key)
@@ -132,11 +134,11 @@ async def refresh_entity_outcome_projection_for_mint(
             for key, value in values.items():
                 setattr(projection, key, value)
 
-    # Reconcile rows whose entity is no longer present in the causal earliest set.
     earliest_keys = {str(row.entity_key) for row in earliest}
     for entity_key, projection in existing.items():
+        if entity_key in deleted_keys:
+            continue
         if entity_key not in earliest_keys or entity_key not in desired_keys:
-            if projection not in session.deleted:
-                await session.delete(projection)
+            await session.delete(projection)
 
     return len(desired_keys)
