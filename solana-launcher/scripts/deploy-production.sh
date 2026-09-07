@@ -29,6 +29,16 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
+resolved_backend_env_value() {
+  local key="$1"
+  local value
+  value="$(env_value_from_file .env.server "$key")"
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file backend.env "$key")"
+  fi
+  printf '%s' "$value"
+}
+
 # The frontend's Mini App routes make authenticated server-to-server requests
 # to the FastAPI subscription endpoints. Keep backend.env private, but export
 # only the shared API key so Docker Compose can inject it into the frontend.
@@ -71,6 +81,12 @@ if [[ -f .current-image-tag ]]; then
 fi
 
 telegram_intelligence_enabled() {
+  local public_web
+  public_web="$(resolved_backend_env_value TG_PUBLIC_WEB_ENABLED | tr '[:upper:]' '[:lower:]')"
+  if [[ "$public_web" =~ ^(1|true|yes|on)$ ]]; then
+    return 0
+  fi
+
   grep -Eq '^TG_API_ID=.+$' .env.server \
     && grep -Eq '^TG_API_HASH=.+$' .env.server \
     && grep -Eq '^TG_SESSION_STRING=.+$' .env.server
@@ -102,10 +118,10 @@ sync_telegram_bot() {
 
 sync_telegram_intelligence() {
   if telegram_intelligence_enabled; then
-    echo "Starting Telegram Intelligence worker"
+    echo "Starting dedicated Telegram Intelligence runtime"
     "${COMPOSE[@]}" --profile telegram-intelligence up -d telegram-intelligence
   else
-    echo "Telegram Intelligence credentials are not configured; worker remains disabled"
+    echo "Telegram Intelligence sources are not configured; runtime remains disabled"
     "${COMPOSE[@]}" --profile telegram-intelligence stop telegram-intelligence \
       >/dev/null 2>&1 || true
     "${COMPOSE[@]}" --profile telegram-intelligence rm -f telegram-intelligence \
@@ -149,6 +165,15 @@ verify_admin_route() {
   echo "ADMIN_ROUTE_OK $body"
 }
 
+pull_backend_services() {
+  "${COMPOSE[@]}" pull \
+    backend \
+    celery-worker \
+    celery-market \
+    celery-intelligence \
+    celery-blockchain
+}
+
 rollback() {
   local exit_code=$?
 
@@ -164,10 +189,8 @@ rollback() {
   printf '%s\n' "$PREVIOUS_TAG" > .current-image-tag
   export IMAGE_TAG="$PREVIOUS_TAG"
 
-  "${COMPOSE[@]}" pull \
-    backend \
-    celery-worker \
-    frontend
+  pull_backend_services
+  "${COMPOSE[@]}" pull frontend
 
   if telegram_bot_enabled; then
     if ! "${COMPOSE[@]}" --profile telegram pull telegram-bot; then
@@ -203,10 +226,8 @@ export IMAGE_TAG="$NEW_TAG"
 
 "${COMPOSE[@]}" config >/dev/null
 
-"${COMPOSE[@]}" pull \
-  backend \
-  celery-worker \
-  frontend
+pull_backend_services
+"${COMPOSE[@]}" pull frontend
 
 if telegram_bot_enabled; then
   "${COMPOSE[@]}" --profile telegram pull telegram-bot
