@@ -27,9 +27,18 @@ MAX_WALLET_CONCURRENCY = 4
 INITIAL_TRANSACTION_RANK_LIMIT = 10
 RPC_TIMEOUT_SECONDS = 8.0
 FUNDING_CACHE_TTL_SECONDS = 90
-FUNDING_CACHE_LOCK_SECONDS = 30
-FUNDING_CACHE_WAIT_SECONDS = 3.0
+# One uncached wallet can require 3 sequential signature pages plus five
+# getTransaction waves at MAX_RPC_CONCURRENCY. Keep the ownership lease beyond
+# that bounded single-wallet worst case and let followers wait long enough for it.
+FUNDING_CACHE_LOCK_SECONDS = 90
+FUNDING_CACHE_WAIT_SECONDS = 70.0
 SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
+_RELEASE_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
 
 
 def _observe_rpc(method: str, result: str, elapsed: float) -> None:
@@ -47,6 +56,16 @@ def _observe_rpc(method: str, result: str, elapsed: float) -> None:
 def _funding_cache_key(rpc_url: str, address: str) -> str:
     provider = hashlib.sha256(rpc_url.encode("utf-8")).hexdigest()[:12]
     return f"analysis:funding:{provider}:{address}"
+
+
+async def _release_funding_lock(redis, lock_key: str, token: str) -> None:
+    """Release only the lease owned by token, atomically inside Redis."""
+    try:
+        await redis.eval(_RELEASE_LOCK_SCRIPT, 1, lock_key, token)
+    except RedisError:
+        # Cache coordination is best-effort; evidence collection must not fail
+        # solely because Redis became unavailable while releasing a lease.
+        return
 
 
 async def _rpc(
@@ -423,12 +442,7 @@ async def _cached_verify_wallet_funding_with_client(
             pass
         return result
     finally:
-        try:
-            current = await redis.get(lock_key)
-            if current == token:
-                await redis.delete(lock_key)
-        except RedisError:
-            pass
+        await _release_funding_lock(redis, lock_key, token)
 
 
 async def verify_wallet_funding(
