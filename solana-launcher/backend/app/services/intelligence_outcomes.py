@@ -10,6 +10,7 @@ from app.models.advanced_intelligence import IntelligenceCalibrationStat, Intell
 from app.models.analytics import Token, TokenMetric
 from app.models.intelligence_memory import IntelligenceSnapshot
 from app.services.entity_performance import refresh_entity_outcome_projection_for_mint
+from app.services.outcome_evaluation_lock import acquire_outcome_write_lock
 
 DEFAULT_HORIZONS = (6, 24, 72)
 MAX_SNAPSHOTS_PER_RUN = 250
@@ -44,8 +45,11 @@ async def _apply_calibration_delta(
     snapshot: IntelligenceSnapshot,
     horizon_hours: int,
     old_confirmed: bool | None,
-    new_confirmed: bool,
+    new_confirmed: bool | None,
 ) -> bool:
+    if old_confirmed is None and new_confirmed is None:
+        return False
+
     alpha = _snapshot_feature(
         snapshot,
         ("scores.alpha", "combined.alpha", "social.alpha"),
@@ -65,7 +69,10 @@ async def _apply_calibration_delta(
             )
         )
     ).scalar_one_or_none()
+
     if row is None:
+        if new_confirmed is None:
+            return False
         row = IntelligenceCalibrationStat(
             model_version=model_version,
             signal_type=signal_type,
@@ -73,21 +80,29 @@ async def _apply_calibration_delta(
         )
         session.add(row)
 
+    if old_confirmed == new_confirmed:
+        return False
+
     if old_confirmed is None:
         row.sample_count += 1
         row.predicted_confidence_sum += probability
-    elif old_confirmed == new_confirmed:
-        return False
-    else:
-        if old_confirmed:
-            row.confirmed_count = max(0, row.confirmed_count - 1)
-        else:
-            row.contradicted_count = max(0, row.contradicted_count - 1)
+    elif new_confirmed is None:
+        row.sample_count = max(0, row.sample_count - 1)
+        row.predicted_confidence_sum = max(
+            0.0,
+            row.predicted_confidence_sum - probability,
+        )
 
-    if new_confirmed:
+    if old_confirmed is True:
+        row.confirmed_count = max(0, row.confirmed_count - 1)
+    elif old_confirmed is False:
+        row.contradicted_count = max(0, row.contradicted_count - 1)
+
+    if new_confirmed is True:
         row.confirmed_count += 1
-    else:
+    elif new_confirmed is False:
         row.contradicted_count += 1
+
     row.updated_at = datetime.now(timezone.utc)
     return True
 
@@ -139,6 +154,15 @@ async def persist_outcome_values(
     max_drawdown_pct: float | None = None,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    # Manual writes, retries and the scheduled evaluator can converge on the same
+    # unique row. Serialize only this snapshot+horizon before read/check/update so
+    # calibration and entity projections are changed exactly once.
+    await acquire_outcome_write_lock(
+        session,
+        snapshot_id=snapshot.snapshot_id,
+        horizon_hours=horizon_hours,
+    )
+
     existing = (
         await session.execute(
             select(IntelligenceOutcome).where(
@@ -147,7 +171,7 @@ async def persist_outcome_values(
             )
         )
     ).scalar_one_or_none()
-    old_confirmed = None
+    old_confirmed: bool | None = None
     if existing is not None and existing.max_multiple is not None:
         old_confirmed = existing.max_multiple >= 2
 
@@ -157,6 +181,7 @@ async def persist_outcome_values(
         if baseline and baseline > 0 and max_price_usd is not None
         else None
     )
+    new_confirmed = max_multiple >= 2 if max_multiple is not None else None
     baseline_floor_change = (
         (min_price_usd - baseline) / baseline * 100
         if baseline and baseline > 0 and min_price_usd is not None
@@ -197,15 +222,13 @@ async def persist_outcome_values(
         for key, value in values.items():
             setattr(existing, key, value)
 
-    calibration_updated = False
-    if max_multiple is not None:
-        calibration_updated = await _apply_calibration_delta(
-            session,
-            snapshot=snapshot,
-            horizon_hours=horizon_hours,
-            old_confirmed=old_confirmed,
-            new_confirmed=max_multiple >= 2,
-        )
+    calibration_updated = await _apply_calibration_delta(
+        session,
+        snapshot=snapshot,
+        horizon_hours=horizon_hours,
+        old_confirmed=old_confirmed,
+        new_confirmed=new_confirmed,
+    )
 
     if horizon_hours == 72:
         await session.flush()
@@ -296,14 +319,20 @@ async def _evaluate_snapshot_horizons(
     )
     if not rows:
         return {
-            horizon: {"status": "no_price_history", "snapshot_id": snapshot.snapshot_id}
+            horizon: {
+                "status": "no_price_history",
+                "snapshot_id": snapshot.snapshot_id,
+            }
             for horizon in matured
         }
 
     baseline_row = _select_causal_baseline(rows, cutoff)
     if baseline_row is None:
         return {
-            horizon: {"status": "no_causal_baseline", "snapshot_id": snapshot.snapshot_id}
+            horizon: {
+                "status": "no_causal_baseline",
+                "snapshot_id": snapshot.snapshot_id,
+            }
             for horizon in matured
         }
 
@@ -422,9 +451,6 @@ async def evaluate_matured_outcomes(
             "skipped": 0,
         }
 
-    # Let PostgreSQL choose only actionable rows. The old fixed scan window could
-    # be permanently occupied by already-complete historical snapshots and starve
-    # newer work once the table grew beyond that window.
     candidates = list(
         (
             await session.execute(
