@@ -9,11 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.models.advanced_intelligence import IntelligenceOutcome
-from app.models.intelligence_memory import (
-    IntelligenceSnapshot,
-    IntelligenceSnapshotEntity,
-)
+from app.models.advanced_intelligence import IntelligenceEntityOutcomeProjection
 from app.services.solana_funding_verifier import verify_snapshot_wallet_funding
 
 
@@ -156,83 +152,54 @@ async def performance_aware_source_reliability(
     if not actor_ids:
         return base_rows
 
-    appearances = list(
+    # One prepared row per entity + token + horizon. The outcome-learning worker
+    # maintains this projection when a 72h outcome matures, so the hot report
+    # path no longer rebuilds a cross-table earliest-snapshot join every time.
+    projected = list(
         (
             await session.execute(
                 select(
-                    IntelligenceSnapshotEntity.entity_key,
-                    IntelligenceSnapshot.snapshot_id,
-                    IntelligenceSnapshot.mint_address,
-                    IntelligenceSnapshot.created_at,
-                )
-                .join(
-                    IntelligenceSnapshot,
-                    IntelligenceSnapshot.snapshot_id
-                    == IntelligenceSnapshotEntity.snapshot_id,
-                )
-                .where(IntelligenceSnapshotEntity.entity_key.in_(actor_ids))
-                .order_by(
-                    IntelligenceSnapshotEntity.entity_key.asc(),
-                    IntelligenceSnapshot.mint_address.asc(),
-                    IntelligenceSnapshot.created_at.asc(),
+                    IntelligenceEntityOutcomeProjection.entity_key,
+                    IntelligenceEntityOutcomeProjection.mint_address,
+                    IntelligenceEntityOutcomeProjection.max_multiple,
+                    IntelligenceEntityOutcomeProjection.max_drawdown_pct,
+                ).where(
+                    IntelligenceEntityOutcomeProjection.entity_key.in_(actor_ids),
+                    IntelligenceEntityOutcomeProjection.horizon_hours == 72,
+                    IntelligenceEntityOutcomeProjection.max_multiple.is_not(None),
                 )
             )
         ).all()
     )
 
-    earliest_by_entity_mint: dict[tuple[str, str], Any] = {}
-    for row in appearances:
-        earliest_by_entity_mint.setdefault(
-            (row.entity_key, row.mint_address),
-            row,
-        )
-    snapshot_ids = {
-        row.snapshot_id for row in earliest_by_entity_mint.values()
-    }
-    outcomes: list[IntelligenceOutcome] = []
-    if snapshot_ids:
-        outcomes = list(
-            (
-                await session.execute(
-                    select(IntelligenceOutcome).where(
-                        IntelligenceOutcome.snapshot_id.in_(snapshot_ids),
-                        IntelligenceOutcome.horizon_hours == 72,
-                    )
-                )
-            ).scalars().all()
-        )
-    outcome_by_snapshot = {row.snapshot_id: row for row in outcomes}
-
     per_entity: dict[str, dict[str, Any]] = {}
-    for (entity_key, mint), appearance in earliest_by_entity_mint.items():
+    for row in projected:
         bucket = per_entity.setdefault(
-            entity_key,
+            str(row.entity_key),
             {
-                "mints": set(),
                 "matured_mints": set(),
                 "wins": 0,
                 "collapses": 0,
                 "multiples": [],
             },
         )
-        bucket["mints"].add(mint)
-        outcome = outcome_by_snapshot.get(appearance.snapshot_id)
-        if outcome is None or outcome.max_multiple is None:
+        mint = str(row.mint_address)
+        if mint in bucket["matured_mints"]:
             continue
         bucket["matured_mints"].add(mint)
-        bucket["wins"] += int(outcome.max_multiple >= 2)
+        multiple = float(row.max_multiple)
+        bucket["wins"] += int(multiple >= 2)
         bucket["collapses"] += int(
-            outcome.max_drawdown_pct is not None
-            and outcome.max_drawdown_pct <= -80
+            row.max_drawdown_pct is not None
+            and float(row.max_drawdown_pct) <= -80
         )
-        bucket["multiples"].append(float(outcome.max_multiple))
+        bucket["multiples"].append(multiple)
 
     base_by_entity = {str(row.get("entity")): row for row in base_rows}
     enriched = []
     for entity in actor_ids:
         base = dict(base_by_entity.get(entity) or {"entity": entity})
         stats = per_entity.get(entity) or {}
-        mints = stats.get("mints") or set()
         matured_mints = stats.get("matured_mints") or set()
         matured = len(matured_mints)
         multiples = sorted(stats.get("multiples") or [])
@@ -246,10 +213,6 @@ async def performance_aware_source_reliability(
             )
         base.update(
             {
-                "distinct_token_occurrences": (
-                    len(mints)
-                    or int(base.get("distinct_token_occurrences") or 0)
-                ),
                 "matured_72h_samples": matured,
                 "historical_2x_rate_72h": (
                     round(stats.get("wins", 0) / matured, 4)
@@ -268,6 +231,7 @@ async def performance_aware_source_reliability(
                     else "limited_outcome_history"
                 ),
                 "selection_rule": "earliest_snapshot_per_entity_and_mint",
+                "performance_source": "intelligence_entity_outcomes_projection",
                 "causality_note": (
                     "Historical association only; actor presence is not proven "
                     "to cause the outcome."
