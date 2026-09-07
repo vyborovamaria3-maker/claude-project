@@ -108,6 +108,11 @@ services:
     container_name: potapoff-celery-market
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "market", "--concurrency=2"]
 
+  celery-social:
+    <<: *backend-worker
+    container_name: potapoff-celery-social
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "social", "--concurrency=2"]
+
   celery-intelligence:
     <<: *backend-worker
     container_name: potapoff-celery-intelligence
