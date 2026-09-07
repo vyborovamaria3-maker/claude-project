@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 // data-tag: api.token_traders
 // Top traders by volume/PnL via Bitquery GraphQL EAP (Solana DEX trades)
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 const BITQUERY_KEY = process.env.BITQUERY_API_KEY || "";
 const BITQUERY_URL = "https://streaming.bitquery.io/eap";
+const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 interface TraderRow {
   address: string;
@@ -19,8 +21,13 @@ interface TraderRow {
 }
 
 export async function GET(req: NextRequest) {
-  const mint = req.nextUrl.searchParams.get("mint");
-  if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
+  const mint = req.nextUrl.searchParams.get("mint")?.trim() || "";
+  if (!SOLANA_ADDRESS_RE.test(mint)) {
+    return NextResponse.json({ error: "invalid mint" }, { status: 400 });
+  }
   if (!BITQUERY_KEY) {
     return NextResponse.json({ error: "BITQUERY_API_KEY missing", traders: [] }, { status: 503 });
   }
@@ -58,13 +65,14 @@ export async function GET(req: NextRequest) {
       },
       body: JSON.stringify({ query, variables: { mint } }),
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
     if (!r.ok) {
       return NextResponse.json({ error: `bitquery_${r.status}`, traders: [] }, { status: 502 });
     }
     const data = await r.json();
     if (data.errors) {
-      return NextResponse.json({ error: data.errors[0]?.message ?? "bitquery_error", traders: [] }, { status: 502 });
+      return NextResponse.json({ error: "bitquery_error", traders: [] }, { status: 502 });
     }
 
     const rows = data.data?.Solana?.DEXTradeByTokens ?? [];
@@ -86,9 +94,11 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ traders });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "fetch_failed";
-    return NextResponse.json({ error: msg, traders: [] }, { status: 500 });
+    return NextResponse.json(
+      { traders },
+      { headers: { "Cache-Control": "private, no-store, max-age=0" } },
+    );
+  } catch {
+    return NextResponse.json({ error: "bitquery_unavailable", traders: [] }, { status: 502 });
   }
 }
