@@ -6,6 +6,7 @@ from app.api.v1 import (
     auth,
     health,
     intelligence_memory,
+    social_jobs,
     subscriptions,
     tasks,
     telegram_intelligence,
@@ -25,6 +26,11 @@ api_router.include_router(
 )
 api_router.include_router(
     telegram_intelligence.social_router,
+    prefix="/social",
+    tags=["social-intelligence"],
+)
+api_router.include_router(
+    social_jobs.router,
     prefix="/social",
     tags=["social-intelligence"],
 )
