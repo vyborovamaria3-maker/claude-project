@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
@@ -20,9 +22,8 @@ from app.services.etl import (
 )
 from app.services.observability import TOKENS_PROCESSED
 
-BIRDEYE_REQUEST_CONCURRENCY = 12
-BIRDEYE_TOKEN_BATCH_SIZE = 100
-BIRDEYE_TIMEOUT_SECONDS = 20.0
+PUMPFUN_TIMEOUT_SECONDS = 20.0
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 async def _safe_cache_read(key: str) -> Any | None:
@@ -41,20 +42,75 @@ async def _safe_cache_write(key: str, value: Any, ttl_seconds: int) -> None:
         return
 
 
+def _retry_after_seconds(response: Any) -> float | None:
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    raw = headers.get("Retry-After")
+    if raw in (None, ""):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, value)
+
+
+def _retry_delay(
+    settings: Settings,
+    attempt: int,
+    response: Any | None = None,
+) -> float:
+    retry_after = _retry_after_seconds(response) if response is not None else None
+    if retry_after is not None:
+        return min(retry_after, settings.birdeye_backoff_max_seconds)
+
+    exponential = settings.birdeye_backoff_base_seconds * (2**attempt)
+    bounded = min(exponential, settings.birdeye_backoff_max_seconds)
+    jitter_ceiling = min(settings.birdeye_backoff_base_seconds, bounded * 0.25)
+    jitter = random.uniform(0.0, jitter_ceiling) if jitter_ceiling > 0 else 0.0
+    return min(bounded + jitter, settings.birdeye_backoff_max_seconds)
+
+
 async def _request_json(
     client: httpx.AsyncClient,
     url: str,
     *,
     headers: dict[str, str] | None = None,
     semaphore: asyncio.Semaphore | None = None,
+    retry_settings: Settings | None = None,
 ) -> Any:
-    if semaphore is None:
-        response = await client.get(url, headers=headers)
-    else:
-        async with semaphore:
-            response = await client.get(url, headers=headers)
-    response.raise_for_status()
-    return response.json()
+    retries = retry_settings.birdeye_max_retries if retry_settings is not None else 0
+
+    for attempt in range(retries + 1):
+        response = None
+        try:
+            if semaphore is None:
+                response = await client.get(url, headers=headers)
+            else:
+                # Hold a concurrency slot only for the actual network request. A request
+                # sleeping in backoff must not block unrelated tokens from progressing.
+                async with semaphore:
+                    response = await client.get(url, headers=headers)
+        except httpx.RequestError:
+            if retry_settings is None or attempt >= retries:
+                raise
+            await asyncio.sleep(_retry_delay(retry_settings, attempt))
+            continue
+
+        status_code = int(getattr(response, "status_code", 200) or 200)
+        if (
+            retry_settings is not None
+            and status_code in RETRYABLE_STATUS_CODES
+            and attempt < retries
+        ):
+            await asyncio.sleep(_retry_delay(retry_settings, attempt, response))
+            continue
+
+        response.raise_for_status()
+        return response.json()
+
+    raise RuntimeError("provider request retry loop exhausted")
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -119,18 +175,88 @@ async def fetch_pumpfun_tokens(
     return tokens
 
 
+def _deduplicate_token_payloads(
+    payloads: Iterable[TokenSourcePayload],
+) -> list[TokenSourcePayload]:
+    by_mint: dict[str, TokenSourcePayload] = {}
+    for payload in payloads:
+        if payload.mint_address:
+            by_mint[payload.mint_address] = payload
+    return list(by_mint.values())
+
+
+async def _bulk_upsert_pumpfun_tokens(
+    session: AsyncSession,
+    payloads: Iterable[TokenSourcePayload],
+) -> int:
+    """Use one PostgreSQL INSERT..ON CONFLICT statement for a Pump.fun refresh.
+
+    Tests use SQLite, so a small compatibility fallback keeps the same behavior there.
+    Production PostgreSQL avoids the previous SELECT + INSERT/UPDATE round trip per token.
+    """
+    deduplicated = _deduplicate_token_payloads(payloads)
+    if not deduplicated:
+        return 0
+
+    if session.get_bind().dialect.name != "postgresql":
+        for payload in deduplicated:
+            await upsert_token(session, payload)
+        return len(deduplicated)
+
+    now = datetime.now(timezone.utc)
+    values = [
+        {
+            "mint_address": payload.mint_address,
+            "name": payload.name,
+            "symbol": payload.symbol,
+            "description": payload.description,
+            "creator_wallet": payload.creator_wallet,
+            "creation_date": payload.creation_date,
+            "migrated_to_raydium": payload.migrated_to_raydium,
+            "migration_date": payload.migration_date,
+            "status": payload.status,
+            "last_synced_at": now,
+        }
+        for payload in deduplicated
+    ]
+    statement = pg_insert(Token).values(values)
+    excluded = statement.excluded
+    statement = statement.on_conflict_do_update(
+        index_elements=[Token.mint_address],
+        set_={
+            # Preserve existing useful metadata when a provider omits it on a later scan.
+            "name": func.coalesce(func.nullif(excluded.name, ""), Token.name),
+            "symbol": func.coalesce(func.nullif(excluded.symbol, ""), Token.symbol),
+            "description": func.coalesce(
+                func.nullif(excluded.description, ""),
+                Token.description,
+            ),
+            "creator_wallet": func.coalesce(
+                func.nullif(excluded.creator_wallet, ""),
+                Token.creator_wallet,
+            ),
+            "creation_date": func.coalesce(excluded.creation_date, Token.creation_date),
+            "migrated_to_raydium": (
+                Token.migrated_to_raydium | excluded.migrated_to_raydium
+            ),
+            "migration_date": func.coalesce(excluded.migration_date, Token.migration_date),
+            "status": func.coalesce(func.nullif(excluded.status, ""), Token.status),
+            "last_synced_at": excluded.last_synced_at,
+        },
+    )
+    await session.execute(statement)
+    return len(deduplicated)
+
+
 async def sync_pumpfun_tokens(
     session: AsyncSession,
     settings: Settings | None = None,
 ) -> int:
     settings = settings or get_settings()
-    async with httpx.AsyncClient(timeout=BIRDEYE_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=PUMPFUN_TIMEOUT_SECONDS) as client:
         tokens = await fetch_pumpfun_tokens(client, settings)
 
-    count = 0
-    for payload in tokens:
-        await upsert_token(session, payload)
-        count += 1
+    count = await _bulk_upsert_pumpfun_tokens(session, tokens)
     TOKENS_PROCESSED.inc(count)
     return count
 
@@ -165,6 +291,7 @@ async def fetch_birdeye_metrics(
                 url,
                 headers=headers,
                 semaphore=semaphore,
+                retry_settings=settings,
             )
         except Exception as exc:  # pragma: no cover - provider/network failure path
             payload = {"error": str(exc)}
@@ -289,8 +416,8 @@ async def sync_metrics_for_active_tokens(
     session: AsyncSession,
     settings: Settings | None = None,
     *,
-    request_concurrency: int = BIRDEYE_REQUEST_CONCURRENCY,
-    token_batch_size: int = BIRDEYE_TOKEN_BATCH_SIZE,
+    request_concurrency: int | None = None,
+    token_batch_size: int | None = None,
 ) -> int:
     """Refresh token metrics with bounded provider concurrency and batched DB flushes.
 
@@ -299,8 +426,16 @@ async def sync_metrics_for_active_tokens(
     eliminating the old token-by-token/provider-by-provider request waterfall.
     """
     settings = settings or get_settings()
-    concurrency = max(1, min(int(request_concurrency), 64))
-    batch_size = max(1, min(int(token_batch_size), 1000))
+    concurrency = (
+        settings.birdeye_request_concurrency
+        if request_concurrency is None
+        else max(1, min(int(request_concurrency), 64))
+    )
+    batch_size = (
+        settings.birdeye_token_batch_size
+        if token_batch_size is None
+        else max(1, min(int(token_batch_size), 1000))
+    )
 
     result = await session.execute(
         select(Token)
@@ -317,7 +452,7 @@ async def sync_metrics_for_active_tokens(
         max_connections=concurrency,
         max_keepalive_connections=concurrency,
     )
-    timeout = httpx.Timeout(BIRDEYE_TIMEOUT_SECONDS)
+    timeout = httpx.Timeout(settings.birdeye_timeout_seconds)
     count = 0
 
     async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
