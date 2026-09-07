@@ -5,21 +5,31 @@ const PAID_ROUTE_PREFIXES = [
   "/api/trade",
   "/api/bundler",
   "/api/token-analytics",
+  "/api/token-bundles",
+  "/api/token-dev",
   "/api/token-history",
   "/api/token-holders",
   "/api/token-ohlcv",
-];
+  "/api/token-traders",
+] as const;
 
 const PRIVATE_PRODUCTION_PREFIXES = [
   "/api/database",
-];
+] as const;
 
 const HEAVY_ROUTE_LIMITS = [
   { prefix: "/api/bundler", limit: 10 },
   { prefix: "/api/token-analytics", limit: 6 },
+  { prefix: "/api/token-bundles", limit: 6 },
+  { prefix: "/api/token-dev", limit: 8 },
   { prefix: "/api/token-history", limit: 12 },
   { prefix: "/api/token-holders", limit: 15 },
+  { prefix: "/api/token-meta", limit: 30 },
   { prefix: "/api/token-ohlcv", limit: 20 },
+  { prefix: "/api/token-pool", limit: 30 },
+  { prefix: "/api/token-traders", limit: 6 },
+  { prefix: "/api/token-trades", limit: 120 },
+  { prefix: "/api/token-dca", limit: 20 },
   { prefix: "/api/x-analysis/trends", limit: 6 },
   { prefix: "/api/trade/analyze", limit: 15 },
   { prefix: "/api/trade/analyze-stream", limit: 10 },
@@ -35,9 +45,15 @@ const heavyRequests = new Map<string, { count: number; resetAt: number }>();
 
 const MINT_VALIDATED_ROUTE_PREFIXES = [
   "/api/token-analytics",
+  "/api/token-bundles",
+  "/api/token-dca",
   "/api/token-history",
   "/api/token-holders",
+  "/api/token-meta",
   "/api/token-ohlcv",
+  "/api/token-pool",
+  "/api/token-traders",
+  "/api/token-trades",
 ] as const;
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const ALLOWED_TRENDS_LANGS = new Set(["en", "ru"]);
@@ -163,6 +179,17 @@ function validateExpensiveRouteInput(pathname: string, searchParams: URLSearchPa
     const mint = searchParams.get("mint")?.trim() || "";
     if (!SOLANA_ADDRESS_RE.test(mint)) {
       return NextResponse.json({ error: "invalid mint" }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/token-dev") {
+    const mint = searchParams.get("mint")?.trim() || "";
+    const creator = searchParams.get("creator")?.trim() || "";
+    if (!mint && !creator) {
+      return NextResponse.json({ error: "mint or creator required" }, { status: 400 });
+    }
+    if ((mint && !SOLANA_ADDRESS_RE.test(mint)) || (creator && !SOLANA_ADDRESS_RE.test(creator))) {
+      return NextResponse.json({ error: "invalid Solana address" }, { status: 400 });
     }
   }
 
