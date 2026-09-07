@@ -119,3 +119,13 @@ def test_production_compose_has_dedicated_analysis_workers() -> None:
     assert '"-Q", "blockchain"' in compose
     assert 'TG_RUNTIME_IN_API: "false"' in compose
     assert 'command: ["python", "-m", "app.cli.telegram_runtime"]' in compose
+
+
+def test_production_compose_aggregates_worker_prometheus_metrics() -> None:
+    compose = (
+        Path(__file__).resolve().parents[2] / "docker-compose.production.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "PROMETHEUS_MULTIPROC_DIR: /tmp/potapoff-prometheus" in compose
+    assert "prometheus-multiproc:/tmp/potapoff-prometheus" in compose
+    assert "prometheus-multiproc:" in compose
