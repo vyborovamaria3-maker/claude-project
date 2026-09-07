@@ -3,25 +3,44 @@ import { requireProdAuth } from "@/lib/routeAuth";
 
 const PAID_ROUTE_PREFIXES = [
   "/api/trade",
+  "/api/bundler",
+  "/api/token-analytics",
+  "/api/token-history",
+  "/api/token-holders",
+  "/api/token-ohlcv",
 ];
 
 const PRIVATE_PRODUCTION_PREFIXES = [
   "/api/database",
 ];
 
-const HEAVY_ROUTE_PREFIXES = [
-  "/api/trade/analyze",
-  "/api/trade/analyze-stream",
-  "/api/trade/dev-forensics",
-  "/api/trade/creator-fee",
-  "/api/miniapp/create-invoice",
-  "/api/miniapp/verify-payment",
-];
+const HEAVY_ROUTE_LIMITS = [
+  { prefix: "/api/bundler", limit: 10 },
+  { prefix: "/api/token-analytics", limit: 6 },
+  { prefix: "/api/token-history", limit: 12 },
+  { prefix: "/api/token-holders", limit: 15 },
+  { prefix: "/api/token-ohlcv", limit: 20 },
+  { prefix: "/api/x-analysis/trends", limit: 6 },
+  { prefix: "/api/trade/analyze", limit: 15 },
+  { prefix: "/api/trade/analyze-stream", limit: 10 },
+  { prefix: "/api/trade/dev-forensics", limit: 10 },
+  { prefix: "/api/trade/creator-fee", limit: 15 },
+  { prefix: "/api/miniapp/create-invoice", limit: 30 },
+  { prefix: "/api/miniapp/verify-payment", limit: 30 },
+] as const;
 
-const HEAVY_LIMIT = 30;
 const HEAVY_WINDOW_MS = 60_000;
 const MAX_HEAVY_KEYS = 20_000;
 const heavyRequests = new Map<string, { count: number; resetAt: number }>();
+
+const MINT_VALIDATED_ROUTE_PREFIXES = [
+  "/api/token-analytics",
+  "/api/token-history",
+  "/api/token-holders",
+  "/api/token-ohlcv",
+] as const;
+const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const ALLOWED_TRENDS_LANGS = new Set(["en", "ru"]);
 
 const BROWSER_CONNECT_ORIGINS = [
   "https://gmgn.ai",
@@ -86,7 +105,7 @@ function applyCsp(response: NextResponse, csp: string): NextResponse {
   return response;
 }
 
-function matchesPrefix(pathname: string, prefixes: string[]): boolean {
+function matchesPrefix(pathname: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
@@ -102,14 +121,14 @@ function clientIp(request: NextRequest): string {
 }
 
 function checkHeavyRateLimit(request: NextRequest, pathname: string): NextResponse | null {
-  const bucket = HEAVY_ROUTE_PREFIXES.find(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  const policy = HEAVY_ROUTE_LIMITS.find(
+    ({ prefix }) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
-  if (!bucket) return null;
+  if (!policy) return null;
 
   const now = Date.now();
   const ip = clientIp(request);
-  const key = `${bucket}:${ip}:${Math.floor(now / HEAVY_WINDOW_MS)}`;
+  const key = `${policy.prefix}:${ip}:${Math.floor(now / HEAVY_WINDOW_MS)}`;
   const resetAt = (Math.floor(now / HEAVY_WINDOW_MS) + 1) * HEAVY_WINDOW_MS;
   const current = heavyRequests.get(key);
 
@@ -127,7 +146,7 @@ function checkHeavyRateLimit(request: NextRequest, pathname: string): NextRespon
     return null;
   }
 
-  if (current.count >= HEAVY_LIMIT) {
+  if (current.count >= policy.limit) {
     const retryAfter = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
     return NextResponse.json(
       { error: "Too many requests", retryAfter },
@@ -136,6 +155,24 @@ function checkHeavyRateLimit(request: NextRequest, pathname: string): NextRespon
   }
 
   current.count += 1;
+  return null;
+}
+
+function validateExpensiveRouteInput(pathname: string, searchParams: URLSearchParams): NextResponse | null {
+  if (matchesPrefix(pathname, MINT_VALIDATED_ROUTE_PREFIXES)) {
+    const mint = searchParams.get("mint")?.trim() || "";
+    if (!SOLANA_ADDRESS_RE.test(mint)) {
+      return NextResponse.json({ error: "invalid mint" }, { status: 400 });
+    }
+  }
+
+  if (pathname === "/api/x-analysis/trends") {
+    const lang = searchParams.get("lang") || "en";
+    if (!ALLOWED_TRENDS_LANGS.has(lang)) {
+      return NextResponse.json({ error: "unsupported language" }, { status: 400 });
+    }
+  }
+
   return null;
 }
 
@@ -153,6 +190,9 @@ export async function proxy(request: NextRequest) {
   if (process.env.NODE_ENV === "production" && matchesPrefix(pathname, PRIVATE_PRODUCTION_PREFIXES)) {
     return applyCsp(NextResponse.json({ error: "Not found" }, { status: 404 }), csp);
   }
+
+  const inputError = validateExpensiveRouteInput(pathname, searchParams);
+  if (inputError) return applyCsp(inputError, csp);
 
   const heavyLimitError = checkHeavyRateLimit(request, pathname);
   if (heavyLimitError) return applyCsp(heavyLimitError, csp);
