@@ -39,9 +39,6 @@ resolved_backend_env_value() {
   printf '%s' "$value"
 }
 
-# The frontend's Mini App routes make authenticated server-to-server requests
-# to the FastAPI subscription endpoints. Keep backend.env private, but export
-# only the shared API key so Docker Compose can inject it into the frontend.
 if [[ -z "${BACKEND_API_KEY:-}" ]]; then
   BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
 fi
@@ -54,8 +51,6 @@ if [[ -z "${BACKEND_API_KEY:-}" ]]; then
 fi
 export BACKEND_API_KEY
 
-# The admin stack owns the same external network so the public ingress can
-# route admin.potapoff.fun directly to potapoff-admin:8080.
 docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
 
 COMPOSE=(
@@ -64,7 +59,6 @@ COMPOSE=(
   -f "$COMPOSE_FILE"
 )
 
-# Ensure SQLite busy_timeout is set for trade.db under concurrent access
 export DB_BUSY_TIMEOUT="${DB_BUSY_TIMEOUT:-5000}"
 
 ADMIN_COMPOSE=(
@@ -130,9 +124,6 @@ sync_telegram_intelligence() {
 }
 
 restart_nginx() {
-  # nginx resolves Docker service names when its configuration is loaded.
-  # backend/frontend are recreated on each tagged deploy and may receive new
-  # container IPs, so a long-lived nginx process can keep proxying to stale IPs.
   "${COMPOSE[@]}" restart nginx
 }
 
@@ -154,8 +145,6 @@ start_admin() {
 }
 
 verify_admin_route() {
-  # The public ingress and the admin app share the host port. This request
-  # proves Nginx selected the admin virtual host instead of the main frontend.
   local body
   body="$(curl --fail --silent --show-error --max-time 10 -H 'Host: admin.potapoff.fun' http://127.0.0.1/api/health)"
   grep -q '"service"' <<<"$body" || {
@@ -170,6 +159,7 @@ pull_backend_services() {
     backend \
     celery-worker \
     celery-market \
+    celery-social \
     celery-intelligence \
     celery-blockchain
 }
