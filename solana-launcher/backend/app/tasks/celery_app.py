@@ -12,6 +12,7 @@ celery_app = Celery(
         "app.tasks.notifications",
         "app.tasks.etl",
         "app.tasks.intelligence",
+        "app.tasks.advanced_intelligence",
     ],
 )
 
@@ -21,6 +22,20 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    task_default_queue="maintenance",
+    task_routes={
+        "app.tasks.etl.collect_tokens": {"queue": "market"},
+        "app.tasks.etl.refresh_metrics": {"queue": "market"},
+        "app.tasks.etl.refresh_links": {"queue": "blockchain"},
+        "app.tasks.etl.run_full_collection": {"queue": "market"},
+        "app.tasks.etl.bootstrap_jobs": {"queue": "maintenance"},
+        "app.tasks.intelligence.evaluate_matured_outcomes": {"queue": "intelligence"},
+        "app.tasks.advanced_intelligence.enrich_report": {"queue": "intelligence"},
+        "app.tasks.notifications.*": {"queue": "maintenance"},
+    },
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    worker_prefetch_multiplier=1,
     beat_schedule={
         "collect-pumpfun-tokens-every-5-minutes": {
             "task": "app.tasks.etl.collect_tokens",
