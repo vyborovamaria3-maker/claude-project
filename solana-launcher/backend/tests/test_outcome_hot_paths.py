@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.models.advanced_intelligence import IntelligenceOutcome
 from app.models.intelligence_memory import IntelligenceSnapshot
 from app.services import intelligence_outcomes
 
@@ -70,3 +71,65 @@ async def test_multi_horizon_outcome_evaluation_reads_price_history_once(monkeyp
     assert persisted == [(6, 2.0), (24, 3.0), (72, 4.0)]
     assert set(results) == {6, 24, 72}
     assert all(result["status"] == "evaluated" for result in results.values())
+
+
+async def test_matured_selection_skips_fully_evaluated_old_history(
+    test_app,
+    monkeypatch,
+) -> None:
+    now = datetime.now(timezone.utc)
+    snapshots = [
+        IntelligenceSnapshot(
+            snapshot_id=f"snapshot-history-{index}",
+            mint_address=f"mint-history-{index}",
+            snapshot_version="snapshot-v1",
+            graph_version="graph-v1",
+            feature_count=0,
+            missing_feature_count=0,
+            payload={"features": []},
+            created_at=now - timedelta(days=10) + timedelta(hours=index),
+        )
+        for index in range(6)
+    ]
+
+    async with test_app.state.sessionmaker() as session:
+        session.add_all(snapshots)
+        for snapshot in snapshots[:5]:
+            for horizon in (6, 24, 72):
+                session.add(
+                    IntelligenceOutcome(
+                        snapshot_id=snapshot.snapshot_id,
+                        mint_address=snapshot.mint_address,
+                        horizon_hours=horizon,
+                        max_multiple=1.0,
+                        outcome_label="sub_2x",
+                    )
+                )
+        await session.commit()
+
+        selected: list[str] = []
+
+        async def fake_evaluate(session_arg, *, snapshot, horizons, now):
+            del session_arg, now
+            selected.append(snapshot.snapshot_id)
+            return {
+                int(horizon): {"status": "evaluated"}
+                for horizon in horizons
+            }
+
+        monkeypatch.setattr(
+            intelligence_outcomes,
+            "_evaluate_snapshot_horizons",
+            fake_evaluate,
+        )
+        result = await intelligence_outcomes.evaluate_matured_outcomes(
+            session,
+            horizons=(6, 24, 72),
+            now=now,
+            limit=1,
+        )
+
+        assert selected == [snapshots[5].snapshot_id]
+        assert result["snapshots"] == 1
+        assert result["candidates_scanned"] == 1
+        assert result["evaluated"] == 3
