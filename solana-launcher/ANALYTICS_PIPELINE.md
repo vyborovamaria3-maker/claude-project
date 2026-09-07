@@ -96,6 +96,31 @@ Matured 6h/24h/72h outcome evaluation also shares one bounded price-history read
 per snapshot up to the largest pending horizon. The worker slices that retained
 window in memory rather than issuing the same token/history queries three times.
 
+## Campaign similarity projection
+
+Historical campaign-neighbor lookup no longer loads up to 500 JSON fingerprints
+into the API process and calculates cosine/Jaccard/sorting in Python. Migration
+`0016_campaign_similarity_projection` backfills two prepared structures:
+
+- `campaign_fingerprint_features`: one compact typed numeric row per v2 campaign
+  fingerprint, including the 16 similarity dimensions, precomputed vector norm,
+  actor count, mint and creation time;
+- `campaign_fingerprint_actors`: deduplicated `snapshot_id + actor_key` membership
+  used to calculate exact actor-set intersection counts.
+
+New fingerprints maintain both structures in the same persistence transaction as
+the durable `campaign_fingerprints` row. Historical lookup then performs one SQL
+statement over the recent bounded projection: exact vector cosine, exact actor
+Jaccard, the existing `0.75 * cosine + 0.25 * Jaccard` score, the `>= 0.5`
+threshold, best-snapshot-per-mint deduplication and final top-10 ranking all happen
+inside PostgreSQL. Only the final neighbors cross the application boundary.
+
+The scoring contract therefore remains deterministic while JSON parsing, Python
+pair scoring and Python sorting leave the request path. The projection is also the
+explicit migration point for a future pgvector/ANN implementation: pgvector is not
+a required production dependency until `campaign_similarity` timing and database
+plans show that exact bounded SQL scoring has become material.
+
 ## Provider caching and single-flight
 
 Wallet funding verification has a short (90 second) Redis cache keyed by both RPC
@@ -113,8 +138,8 @@ flags so materially different analysis contracts cannot share a cached result.
 In addition to provider/ingestion metrics, the architecture exposes:
 
 - `analysis_cache_requests_total{layer,result}`
-- `analysis_stage_runtime_seconds{stage}` including `funding_rpc`,
-  `semantic_clustering` and `source_reliability`
+- `analysis_stage_runtime_seconds{stage}` including `campaign_similarity`,
+  `funding_rpc`, `semantic_clustering` and `source_reliability`
 - `analysis_end_to_end_runtime_seconds{result}`
 - `celery_queue_wait_seconds{queue}`
 - `celery_task_runtime_seconds{queue,result}`
@@ -135,6 +160,8 @@ latency and database plans.
 
 - Keep transactional/latest state and moderate historical analytics in PostgreSQL.
 - Add PostgreSQL FTS/`pg_trgm` before Elasticsearch/OpenSearch for social search.
-- Add pgvector/ANN when campaign/text similarity outgrows bounded in-process scans.
+- Keep campaign similarity on the typed exact-SQL projection while its measured
+  p95 and query plan remain healthy; add pgvector/ANN only when that stage becomes
+  material at larger fingerprint history sizes.
 - Move append-heavy raw trade/event analytics to ClickHouse only when measured
   PostgreSQL write/scan cost justifies another datastore.
