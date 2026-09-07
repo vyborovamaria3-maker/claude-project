@@ -5,11 +5,12 @@ import re
 from collections import Counter
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.models.advanced_intelligence import IntelligenceEntityOutcomeProjection
+from app.services.observability import ANALYSIS_STAGE_RUNTIME
 from app.services.solana_funding_verifier import verify_snapshot_wallet_funding
 
 
@@ -86,10 +87,8 @@ def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "source": str(row.get("source") or "unknown"),
                 "text": text,
                 "normalized": normalized,
-                # Pairwise clustering is O(n^2), but these expensive features are
-                # O(n): compute them once per message instead of once per pair.
                 "tokens": {token for token in normalized.split() if len(token) >= 3},
-                "ngrams": _char_ngrams(normalized),
+                "ngrams": _char_ngrams(text),
             }
         )
 
@@ -157,22 +156,68 @@ def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def performance_aware_source_reliability(
+async def _entity_performance_stats(
     session: AsyncSession,
-    snapshot: dict[str, Any],
-    base_rows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    graph = snapshot.get("graph") or {}
-    actor_ids = [
-        str(row.get("id"))
-        for row in graph.get("nodes") or []
-        if isinstance(row, dict)
-        and row.get("type") in {"x_account", "tg_channel", "wallet"}
-        and row.get("id")
-    ][:120]
-    if not actor_ids:
-        return base_rows
+    actor_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    bind = session.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        rows = list(
+            (
+                await session.execute(
+                    select(
+                        IntelligenceEntityOutcomeProjection.entity_key,
+                        func.count(IntelligenceEntityOutcomeProjection.id).label("matured"),
+                        func.sum(
+                            case(
+                                (
+                                    IntelligenceEntityOutcomeProjection.max_multiple >= 2,
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ).label("wins"),
+                        func.sum(
+                            case(
+                                (
+                                    IntelligenceEntityOutcomeProjection.max_drawdown_pct
+                                    <= -80,
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ).label("collapses"),
+                        func.percentile_cont(0.5)
+                        .within_group(
+                            IntelligenceEntityOutcomeProjection.max_multiple.asc()
+                        )
+                        .label("median_multiple"),
+                    )
+                    .where(
+                        IntelligenceEntityOutcomeProjection.entity_key.in_(actor_ids),
+                        IntelligenceEntityOutcomeProjection.horizon_hours == 72,
+                        IntelligenceEntityOutcomeProjection.max_multiple.is_not(None),
+                    )
+                    .group_by(IntelligenceEntityOutcomeProjection.entity_key)
+                )
+            ).all()
+        )
+        return {
+            str(row.entity_key): {
+                "matured": int(row.matured or 0),
+                "wins": int(row.wins or 0),
+                "collapses": int(row.collapses or 0),
+                "median_multiple": (
+                    float(row.median_multiple)
+                    if row.median_multiple is not None
+                    else None
+                ),
+            }
+            for row in rows
+        }
 
+    # SQLite/local fallback keeps the same contract without requiring a custom
+    # percentile aggregate. Production PostgreSQL returns one row per entity.
     projected = list(
         (
             await session.execute(
@@ -189,22 +234,21 @@ async def performance_aware_source_reliability(
             )
         ).all()
     )
-
     per_entity: dict[str, dict[str, Any]] = {}
     for row in projected:
         bucket = per_entity.setdefault(
             str(row.entity_key),
             {
-                "matured_mints": set(),
+                "mints": set(),
                 "wins": 0,
                 "collapses": 0,
                 "multiples": [],
             },
         )
         mint = str(row.mint_address)
-        if mint in bucket["matured_mints"]:
+        if mint in bucket["mints"]:
             continue
-        bucket["matured_mints"].add(mint)
+        bucket["mints"].add(mint)
         multiple = float(row.max_multiple)
         bucket["wins"] += int(multiple >= 2)
         bucket["collapses"] += int(
@@ -213,36 +257,61 @@ async def performance_aware_source_reliability(
         )
         bucket["multiples"].append(multiple)
 
+    result: dict[str, dict[str, Any]] = {}
+    for entity_key, bucket in per_entity.items():
+        multiples = sorted(bucket["multiples"])
+        middle = len(multiples) // 2
+        median_multiple = (
+            multiples[middle]
+            if len(multiples) % 2
+            else (multiples[middle - 1] + multiples[middle]) / 2
+        )
+        result[entity_key] = {
+            "matured": len(bucket["mints"]),
+            "wins": int(bucket["wins"]),
+            "collapses": int(bucket["collapses"]),
+            "median_multiple": median_multiple,
+        }
+    return result
+
+
+async def performance_aware_source_reliability(
+    session: AsyncSession,
+    snapshot: dict[str, Any],
+    base_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    graph = snapshot.get("graph") or {}
+    actor_ids = [
+        str(row.get("id"))
+        for row in graph.get("nodes") or []
+        if isinstance(row, dict)
+        and row.get("type") in {"x_account", "tg_channel", "wallet"}
+        and row.get("id")
+    ][:120]
+    if not actor_ids:
+        return base_rows
+
+    stats_by_entity = await _entity_performance_stats(session, actor_ids)
     base_by_entity = {str(row.get("entity")): row for row in base_rows}
     enriched = []
     for entity in actor_ids:
         base = dict(base_by_entity.get(entity) or {"entity": entity})
-        stats = per_entity.get(entity) or {}
-        matured_mints = stats.get("matured_mints") or set()
-        matured = len(matured_mints)
-        multiples = sorted(stats.get("multiples") or [])
-        median_multiple = None
-        if multiples:
-            middle = len(multiples) // 2
-            median_multiple = (
-                multiples[middle]
-                if len(multiples) % 2
-                else (multiples[middle - 1] + multiples[middle]) / 2
-            )
+        stats = stats_by_entity.get(entity) or {}
+        matured = int(stats.get("matured") or 0)
         base.update(
             {
                 "matured_72h_samples": matured,
                 "historical_2x_rate_72h": (
-                    round(stats.get("wins", 0) / matured, 4)
+                    round(int(stats.get("wins") or 0) / matured, 4)
                     if matured
                     else None
                 ),
                 "historical_collapse_rate_72h": (
-                    round(stats.get("collapses", 0) / matured, 4)
+                    round(int(stats.get("collapses") or 0) / matured, 4)
                     if matured
                     else None
                 ),
-                "median_max_multiple_72h": median_multiple,
+                "median_max_multiple_72h": stats.get("median_multiple"),
                 "performance_status": (
                     "calibrated_history"
                     if matured >= 10
@@ -276,11 +345,12 @@ async def enrich_advanced_report(
 ) -> dict[str, Any]:
     layers = report.get("layers") or {}
 
-    funding = await verify_snapshot_wallet_funding(
-        settings,
-        snapshot,
-        max_wallets=8,
-    )
+    with ANALYSIS_STAGE_RUNTIME.labels(stage="funding_rpc").time():
+        funding = await verify_snapshot_wallet_funding(
+            settings,
+            snapshot,
+            max_wallets=8,
+        )
     stored = dict(layers.get("funding_verification") or {})
     initial_edges = funding.get("initial_funding_edges") or []
     stored.update(
@@ -302,12 +372,14 @@ async def enrich_advanced_report(
     )
     layers["funding_verification"] = stored
 
-    layers["text_template_clustering"] = semantic_template_clusters(snapshot)
-    layers["source_reliability"] = await performance_aware_source_reliability(
-        session,
-        snapshot,
-        list(layers.get("source_reliability") or []),
-    )
+    with ANALYSIS_STAGE_RUNTIME.labels(stage="semantic_clustering").time():
+        layers["text_template_clustering"] = semantic_template_clusters(snapshot)
+    with ANALYSIS_STAGE_RUNTIME.labels(stage="source_reliability").time():
+        layers["source_reliability"] = await performance_aware_source_reliability(
+            session,
+            snapshot,
+            list(layers.get("source_reliability") or []),
+        )
 
     critic = dict(layers.get("dedicated_critic") or {})
     targets = list(critic.get("targets") or [])
