@@ -16,6 +16,7 @@ DEFAULT_HORIZONS = (6, 24, 72)
 MAX_SNAPSHOTS_PER_RUN = 250
 BASELINE_LOOKBACK = timedelta(minutes=90)
 FINAL_COVERAGE_TOLERANCE = timedelta(hours=1)
+OUTCOME_RETRY_INTERVAL = timedelta(hours=6)
 
 
 def _snapshot_feature(snapshot: IntelligenceSnapshot, keys: tuple[str, ...]) -> float | None:
@@ -37,6 +38,12 @@ def _calibration_bucket(probability: float) -> str:
     bounded = max(0.0, min(0.999999, probability))
     start = int(bounded * 10) / 10
     return f"{start:.1f}-{start + 0.1:.1f}"
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 async def _apply_calibration_delta(
@@ -142,6 +149,54 @@ def _max_peak_to_trough_drawdown(rows: list[TokenMetric]) -> float | None:
     return worst if seen else None
 
 
+async def _record_unresolved_outcome(
+    session: AsyncSession,
+    *,
+    snapshot: IntelligenceSnapshot,
+    horizon_hours: int,
+    status: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Record a retryable evaluation state without overwriting a completed result."""
+    await acquire_outcome_write_lock(
+        session,
+        snapshot_id=snapshot.snapshot_id,
+        horizon_hours=horizon_hours,
+    )
+    existing = (
+        await session.execute(
+            select(IntelligenceOutcome).where(
+                IntelligenceOutcome.snapshot_id == snapshot.snapshot_id,
+                IntelligenceOutcome.horizon_hours == horizon_hours,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None and existing.max_multiple is not None:
+        return
+
+    now = datetime.now(timezone.utc)
+    state_payload = {
+        **(payload or {}),
+        "evaluation_status": status,
+        "retry_after_seconds": int(OUTCOME_RETRY_INTERVAL.total_seconds()),
+    }
+    if existing is None:
+        session.add(
+            IntelligenceOutcome(
+                snapshot_id=snapshot.snapshot_id,
+                mint_address=snapshot.mint_address,
+                horizon_hours=horizon_hours,
+                outcome_label=status,
+                payload=state_payload,
+                evaluated_at=now,
+            )
+        )
+    else:
+        existing.outcome_label = status
+        existing.payload = state_payload
+        existing.evaluated_at = now
+
+
 async def persist_outcome_values(
     session: AsyncSession,
     *,
@@ -154,9 +209,6 @@ async def persist_outcome_values(
     max_drawdown_pct: float | None = None,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    # Manual writes, retries and the scheduled evaluator can converge on the same
-    # unique row. Serialize only this snapshot+horizon before read/check/update so
-    # calibration and entity projections are changed exactly once.
     await acquire_outcome_write_lock(
         session,
         snapshot_id=snapshot.snapshot_id,
@@ -291,6 +343,30 @@ def _select_causal_baseline(
     return before[-1] if before else None
 
 
+async def _record_many_unresolved(
+    session: AsyncSession,
+    *,
+    snapshot: IntelligenceSnapshot,
+    horizons: Iterable[int],
+    status: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[int, dict[str, Any]]:
+    results: dict[int, dict[str, Any]] = {}
+    for horizon in horizons:
+        await _record_unresolved_outcome(
+            session,
+            snapshot=snapshot,
+            horizon_hours=horizon,
+            status=status,
+            payload=payload,
+        )
+        results[horizon] = {
+            "status": status,
+            "snapshot_id": snapshot.snapshot_id,
+        }
+    return results
+
+
 async def _evaluate_snapshot_horizons(
     session: AsyncSession,
     *,
@@ -318,23 +394,21 @@ async def _evaluate_snapshot_horizons(
         end=max_end,
     )
     if not rows:
-        return {
-            horizon: {
-                "status": "no_price_history",
-                "snapshot_id": snapshot.snapshot_id,
-            }
-            for horizon in matured
-        }
+        return await _record_many_unresolved(
+            session,
+            snapshot=snapshot,
+            horizons=matured,
+            status="no_price_history",
+        )
 
     baseline_row = _select_causal_baseline(rows, cutoff)
     if baseline_row is None:
-        return {
-            horizon: {
-                "status": "no_causal_baseline",
-                "snapshot_id": snapshot.snapshot_id,
-            }
-            for horizon in matured
-        }
+        return await _record_many_unresolved(
+            session,
+            snapshot=snapshot,
+            horizons=matured,
+            status="no_causal_baseline",
+        )
 
     results: dict[int, dict[str, Any]] = {}
     for horizon_hours in matured:
@@ -347,6 +421,12 @@ async def _evaluate_snapshot_horizons(
             and cutoff <= row.timestamp <= end
         ]
         if not outcome_rows:
+            await _record_unresolved_outcome(
+                session,
+                snapshot=snapshot,
+                horizon_hours=horizon_hours,
+                status="no_valid_prices",
+            )
             results[horizon_hours] = {
                 "status": "no_valid_prices",
                 "snapshot_id": snapshot.snapshot_id,
@@ -359,10 +439,18 @@ async def _evaluate_snapshot_horizons(
             if row.timestamp >= end - FINAL_COVERAGE_TOLERANCE
         ]
         if not final_candidates:
+            latest_metric_at = outcome_rows[-1].timestamp.isoformat()
+            await _record_unresolved_outcome(
+                session,
+                snapshot=snapshot,
+                horizon_hours=horizon_hours,
+                status="right_censored",
+                payload={"latest_metric_at": latest_metric_at},
+            )
             results[horizon_hours] = {
                 "status": "right_censored",
                 "snapshot_id": snapshot.snapshot_id,
-                "latest_metric_at": outcome_rows[-1].timestamp.isoformat(),
+                "latest_metric_at": latest_metric_at,
             }
             continue
 
@@ -423,14 +511,29 @@ def _missing_matured_outcome_condition(
     now: datetime,
 ):
     matured_cutoff = now - timedelta(hours=horizon_hours)
-    outcome_exists = exists().where(
+    retry_cutoff = now - OUTCOME_RETRY_INTERVAL
+    completed_exists = exists().where(
         IntelligenceOutcome.snapshot_id == IntelligenceSnapshot.snapshot_id,
         IntelligenceOutcome.horizon_hours == horizon_hours,
+        IntelligenceOutcome.max_multiple.is_not(None),
+    )
+    recent_unresolved_exists = exists().where(
+        IntelligenceOutcome.snapshot_id == IntelligenceSnapshot.snapshot_id,
+        IntelligenceOutcome.horizon_hours == horizon_hours,
+        IntelligenceOutcome.max_multiple.is_(None),
+        IntelligenceOutcome.evaluated_at > retry_cutoff,
     )
     return and_(
         IntelligenceSnapshot.created_at <= matured_cutoff,
-        ~outcome_exists,
+        ~completed_exists,
+        ~recent_unresolved_exists,
     )
+
+
+def _outcome_blocks_retry(row: IntelligenceOutcome, now: datetime) -> bool:
+    if row.max_multiple is not None:
+        return True
+    return _utc(row.evaluated_at) > now - OUTCOME_RETRY_INTERVAL
 
 
 async def evaluate_matured_outcomes(
@@ -481,7 +584,11 @@ async def evaluate_matured_outcomes(
                 )
             ).scalars().all()
         )
-    existing = {(row.snapshot_id, row.horizon_hours) for row in existing_rows}
+    blocked = {
+        (row.snapshot_id, row.horizon_hours)
+        for row in existing_rows
+        if _outcome_blocks_retry(row, now)
+    }
 
     evaluated = 0
     censored = 0
@@ -491,7 +598,7 @@ async def evaluate_matured_outcomes(
             horizon
             for horizon in horizons
             if now >= snapshot.created_at + timedelta(hours=horizon)
-            and (snapshot.snapshot_id, horizon) not in existing
+            and (snapshot.snapshot_id, horizon) not in blocked
         ]
         if not pending_horizons:
             continue
