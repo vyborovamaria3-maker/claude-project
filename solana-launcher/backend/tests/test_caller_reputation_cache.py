@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import pytest
-
 from app.services import caller_reputation_cache as cache_service
 
 
-@pytest.mark.asyncio
 async def test_top_callers_cache_hit_skips_database_rebuild(monkeypatch) -> None:
     async def fake_read():
         return [
@@ -23,7 +20,6 @@ async def test_top_callers_cache_hit_skips_database_rebuild(monkeypatch) -> None
     assert rows == [{"username": "alpha", "reputation_score": 90.0}]
 
 
-@pytest.mark.asyncio
 async def test_top_callers_cache_failure_degrades_to_database(monkeypatch) -> None:
     async def fake_read():
         return None
