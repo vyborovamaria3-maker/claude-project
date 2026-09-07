@@ -17,16 +17,14 @@ from app.schemas.social_intelligence import (
 from app.services.cache import read_json_cache
 from app.services.social_evaluation import evaluate_calls
 from app.services.social_filters import normalize_social_source
-from app.services.social_hot_paths import (
-    filtered_token_timeline,
-    ingest_x_events_bulk,
-)
+from app.services.social_hot_paths import filtered_token_timeline, ingest_x_events_bulk
 from app.services.social_intelligence import (
     list_calls,
     list_channels,
     list_social_relations,
     refresh_x_for_mint,
 )
+from app.services.social_search import search_social_events
 from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
 from app.services.telegram_public_web import TelegramPublicWebError
@@ -338,6 +336,41 @@ async def social_relations(
             platform=platform,
             limit=limit,
         )
+    }
+
+
+@social_router.get("/search")
+async def social_search(
+    q: str = Query(min_length=2, max_length=200),
+    mint: str | None = Query(default=None),
+    platform: str | None = Query(default=None),
+    hours: int | None = Query(default=None, ge=1, le=8760),
+    limit: int = Query(default=50, ge=1, le=100),
+    session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_subscriber),
+) -> dict:
+    if mint and not is_solana_address(mint):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
+    if platform and platform not in {"telegram", "x"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x")
+    items = await search_social_events(
+        session,
+        query=q,
+        mint_address=mint,
+        platform=platform,
+        hours=hours,
+        limit=limit,
+    )
+    return {
+        "items": items,
+        "meta": {
+            "query": q,
+            "mint": mint,
+            "platform": platform,
+            "hours": hours,
+            "limit": limit,
+            "returned": len(items),
+        },
     }
 
 
