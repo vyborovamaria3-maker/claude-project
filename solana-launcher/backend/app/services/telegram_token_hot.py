@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import String, cast, func, select, text
+from sqlalchemy import String, cast, func, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.social_intelligence import TelegramCall, TelegramChannel, TelegramMessage
@@ -38,7 +38,7 @@ def _caller_sql_expression():
         func.nullif(TelegramChannel.username, ""),
         cast(TelegramChannel.telegram_id, String),
         func.nullif(TelegramChannel.title, ""),
-        func.concat("channel-", cast(TelegramChannel.id, String)),
+        literal("channel-") + cast(TelegramChannel.id, String),
     )
     return func.lower(func.ltrim(func.trim(fallback), "@"))
 
@@ -122,9 +122,6 @@ async def _postgres_token_coordination(
     session: AsyncSession,
     mint_address: str,
 ) -> dict[str, Any]:
-    # Coordination uses only the earliest retained event per normalized source.
-    # Select those rows in PostgreSQL instead of materializing every Telegram event
-    # for a busy token and throwing later rows away in Python.
     statement = text(
         """
         WITH normalized AS (
