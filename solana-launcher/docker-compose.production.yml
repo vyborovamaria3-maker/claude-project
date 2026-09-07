@@ -6,6 +6,25 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+x-backend-worker: &backend-worker
+  image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+  restart: unless-stopped
+  env_file:
+    - backend.env
+    - .env.server
+  environment:
+    ENVIRONMENT: production
+    DEBUG: "false"
+    SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+    DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
+    CELERY_RESULT_BACKEND: redis://redis:6379/1
+  depends_on:
+    backend:
+      condition: service_healthy
+  logging: *default-logging
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -70,6 +89,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      TG_RUNTIME_IN_API: "false"
       FRONTEND_URL: https://potapoff.fun
       FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
@@ -95,40 +115,26 @@ services:
       start_period: 60s
     logging: *default-logging
 
+  # Keep one small worker for maintenance/notification jobs. Heavy workloads use
+  # dedicated queues below so they cannot starve each other.
   celery-worker:
-    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
-    restart: unless-stopped
-    env_file:
-      - backend.env
-      - .env.server
-    environment:
-      ENVIRONMENT: production
-      DEBUG: "false"
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
-      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info"]
-    depends_on:
-      backend:
-        condition: service_healthy
-    logging: *default-logging
+    <<: *backend-worker
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "maintenance", "--concurrency=2"]
+
+  celery-market:
+    <<: *backend-worker
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "market", "--concurrency=2"]
+
+  celery-intelligence:
+    <<: *backend-worker
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "intelligence", "--concurrency=2"]
+
+  celery-blockchain:
+    <<: *backend-worker
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info", "-Q", "blockchain", "--concurrency=2"]
 
   celery-beat:
-    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
-    restart: unless-stopped
-    env_file:
-      - backend.env
-      - .env.server
-    environment:
-      ENVIRONMENT: production
-      DEBUG: "false"
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
-      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    <<: *backend-worker
     command:
       - celery
       - -A
@@ -136,10 +142,6 @@ services:
       - beat
       - --loglevel=info
       - --schedule=/tmp/celerybeat-schedule
-    depends_on:
-      backend:
-        condition: service_healthy
-    logging: *default-logging
 
   telegram-intelligence:
     profiles: ["telegram-intelligence"]
@@ -153,6 +155,8 @@ services:
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+      REDIS_URL: redis://redis:6379/0
+      TG_RUNTIME_IN_API: "false"
       TG_API_ID: ${TG_API_ID:-}
       TG_API_HASH: ${TG_API_HASH:-}
       TG_SESSION_STRING: ${TG_SESSION_STRING:-}
@@ -161,7 +165,7 @@ services:
       TG_GRAPH_DEPTH: ${TG_GRAPH_DEPTH:-1}
       TG_ENTITY_LIMIT: ${TG_ENTITY_LIMIT:-100}
       TG_EVALUATE_INTERVAL_SECONDS: ${TG_EVALUATE_INTERVAL_SECONDS:-300}
-    command: ["python", "-m", "app.cli.telegram_monitor"]
+    command: ["python", "-m", "app.cli.telegram_runtime"]
     depends_on:
       backend:
         condition: service_healthy
