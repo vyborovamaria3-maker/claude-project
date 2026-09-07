@@ -16,7 +16,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     and_,
+    case,
     event,
+    func,
     or_,
     select,
     update,
@@ -203,11 +205,51 @@ def _upsert_latest_metric(connection: Any, metric: TokenMetric) -> None:
             excluded.metric_id > TokenLatestMetric.metric_id,
         ),
     )
-    update_values = {
-        key: getattr(excluded, key)
-        for key in values
-        if key != "token_id"
+    ath_improved = and_(
+        excluded.ath_usd.is_not(None),
+        or_(
+            TokenLatestMetric.ath_usd.is_(None),
+            excluded.ath_usd > TokenLatestMetric.ath_usd,
+        ),
+    )
+    last_known_fields = (
+        "price_usd",
+        "market_cap",
+        "fdv",
+        "liquidity_usd",
+        "volume_24h",
+        "tx_count_24h",
+        "holder_count",
+        "twitter_url",
+        "telegram_url",
+        "discord_url",
+        "website_url",
+        "social_engagements",
+    )
+    update_values: dict[str, Any] = {
+        "metric_id": excluded.metric_id,
+        "timestamp": excluded.timestamp,
+        "ath_usd": case(
+            (ath_improved, excluded.ath_usd),
+            else_=TokenLatestMetric.ath_usd,
+        ),
+        "ath_date": case(
+            (
+                ath_improved,
+                func.coalesce(excluded.ath_date, excluded.timestamp),
+            ),
+            else_=TokenLatestMetric.ath_date,
+        ),
     }
+    update_values.update(
+        {
+            key: func.coalesce(
+                getattr(excluded, key),
+                getattr(TokenLatestMetric, key),
+            )
+            for key in last_known_fields
+        }
+    )
     connection.execute(
         statement.on_conflict_do_update(
             index_elements=[TokenLatestMetric.token_id],
