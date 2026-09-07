@@ -10,7 +10,10 @@ from app.models.advanced_intelligence import IntelligenceCalibrationStat, Intell
 from app.models.analytics import Token, TokenMetric
 from app.models.intelligence_memory import IntelligenceSnapshot
 from app.services.entity_performance import refresh_entity_outcome_projection_for_mint
-from app.services.outcome_evaluation_lock import acquire_outcome_write_lock
+from app.services.outcome_evaluation_lock import (
+    acquire_calibration_write_lock,
+    acquire_outcome_write_lock,
+)
 
 DEFAULT_HORIZONS = (6, 24, 72)
 MAX_SNAPSHOTS_PER_RUN = 250
@@ -67,6 +70,17 @@ async def _apply_calibration_delta(
     signal_type = f"alpha_2x_{horizon_hours}h"
     model_version = f"{snapshot.snapshot_version}:alpha-v1"
     bucket = _calibration_bucket(probability)
+
+    # Different snapshots can update the same calibration bucket concurrently.
+    # Lock before SELECT so both the absent-row INSERT race and stale
+    # read-modify-write counters are serialized. The key is bucket-scoped, so
+    # unrelated model/signal/bucket updates remain fully parallel.
+    await acquire_calibration_write_lock(
+        session,
+        model_version=model_version,
+        signal_type=signal_type,
+        bucket=bucket,
+    )
     row = (
         await session.execute(
             select(IntelligenceCalibrationStat).where(
