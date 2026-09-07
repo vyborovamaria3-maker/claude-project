@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 // data-tag: api.token_bundles
 // Sniper/JITO bundle detection via Bitquery — finds trades occurring in the same slot
@@ -8,10 +9,16 @@ export const dynamic = "force-dynamic";
 
 const BITQUERY_KEY = process.env.BITQUERY_API_KEY || "";
 const BITQUERY_URL = "https://streaming.bitquery.io/eap";
+const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 export async function GET(req: NextRequest) {
-  const mint = req.nextUrl.searchParams.get("mint");
-  if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
+  const mint = req.nextUrl.searchParams.get("mint")?.trim() || "";
+  if (!SOLANA_ADDRESS_RE.test(mint)) {
+    return NextResponse.json({ error: "invalid mint" }, { status: 400 });
+  }
   if (!BITQUERY_KEY) {
     return NextResponse.json({ error: "BITQUERY_API_KEY missing", bundles: [] }, { status: 503 });
   }
@@ -44,10 +51,11 @@ export async function GET(req: NextRequest) {
       headers: { "Content-Type": "application/json", "X-API-KEY": BITQUERY_KEY },
       body: JSON.stringify({ query, variables: { mint } }),
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
     if (!r.ok) return NextResponse.json({ error: `bitquery_${r.status}`, bundles: [] }, { status: 502 });
     const data = await r.json();
-    if (data.errors) return NextResponse.json({ error: data.errors[0]?.message, bundles: [] }, { status: 502 });
+    if (data.errors) return NextResponse.json({ error: "bitquery_error", bundles: [] }, { status: 502 });
 
     type Row = {
       Block: { Slot: number; Time: string };
@@ -72,8 +80,8 @@ export async function GET(req: NextRequest) {
     }
 
     const bundles = Array.from(bySlot.values())
-      .filter(b => b.wallets.size >= 2)
-      .map(b => ({
+      .filter((b) => b.wallets.size >= 2)
+      .map((b) => ({
         slot: b.slot,
         time: b.time,
         wallets: Array.from(b.wallets),
@@ -83,9 +91,11 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.slot - a.slot)
       .slice(0, 50);
 
-    return NextResponse.json({ bundles });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "fetch_failed";
-    return NextResponse.json({ error: msg, bundles: [] }, { status: 500 });
+    return NextResponse.json(
+      { bundles },
+      { headers: { "Cache-Control": "private, no-store, max-age=0" } },
+    );
+  } catch {
+    return NextResponse.json({ error: "bitquery_unavailable", bundles: [] }, { status: 502 });
   }
 }
