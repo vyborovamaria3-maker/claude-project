@@ -4,7 +4,13 @@ from pathlib import Path
 
 from app.core.runtime_flags import telegram_runtime_in_api
 from app.services.analysis_jobs import analysis_request_fingerprint
-from app.tasks.celery_app import celery_app
+from app.tasks.celery_app import (
+    _ENQUEUED_AT_HEADER,
+    _normalized_queue,
+    _normalized_result,
+    _stamp_published_task,
+    celery_app,
+)
 
 
 def test_telegram_runtime_is_external_by_default_in_production(monkeypatch) -> None:
@@ -37,6 +43,19 @@ def test_celery_routes_isolate_heavy_workloads() -> None:
     )
     assert celery_app.conf.worker_prefetch_multiplier == 1
     assert celery_app.conf.task_acks_late is True
+
+
+def test_celery_telemetry_uses_bounded_queue_and_result_labels() -> None:
+    assert _normalized_queue("market") == "market"
+    assert _normalized_queue("intelligence") == "intelligence"
+    assert _normalized_queue("arbitrary-user-value") == "unknown"
+    assert _normalized_result("SUCCESS") == "success"
+    assert _normalized_result("FAILURE") == "failure"
+    assert _normalized_result("unexpected") == "other"
+
+    headers: dict[str, object] = {}
+    _stamp_published_task(headers=headers)
+    assert isinstance(headers[_ENQUEUED_AT_HEADER], float)
 
 
 def test_analysis_fingerprint_is_stable_and_contract_sensitive() -> None:
