@@ -11,9 +11,6 @@ branch_labels = None
 depends_on = None
 
 
-ENTITY_TYPES = ("x_account", "tg_channel", "wallet")
-
-
 def upgrade() -> None:
     op.create_table(
         "intelligence_entity_outcomes",
@@ -45,6 +42,18 @@ def upgrade() -> None:
         "ix_intelligence_entity_outcomes_horizon_mint",
         "intelligence_entity_outcomes",
         ["horizon_hours", "mint_address"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_intelligence_hypothesis_source_updated",
+        "intelligence_hypothesis_states",
+        ["source_key", "updated_at"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_intelligence_hypothesis_target_updated",
+        "intelligence_hypothesis_states",
+        ["target_key", "updated_at"],
         unique=False,
     )
 
@@ -103,6 +112,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_intelligence_hypothesis_target_updated",
+        table_name="intelligence_hypothesis_states",
+    )
+    op.drop_index(
+        "ix_intelligence_hypothesis_source_updated",
+        table_name="intelligence_hypothesis_states",
+    )
     op.drop_index(
         "ix_intelligence_entity_outcomes_horizon_mint",
         table_name="intelligence_entity_outcomes",
