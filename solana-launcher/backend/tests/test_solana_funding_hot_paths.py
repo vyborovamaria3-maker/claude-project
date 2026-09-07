@@ -4,6 +4,25 @@ from app.core.config import Settings
 from app.services import solana_funding_verifier
 
 
+class FakeRedis:
+    def __init__(self):
+        self.data: dict[str, str] = {}
+
+    async def get(self, key: str):
+        return self.data.get(key)
+
+    async def set(self, key: str, value: str, *, nx: bool = False, ex=None):
+        del ex
+        if nx and key in self.data:
+            return False
+        self.data[key] = value
+        return True
+
+    async def delete(self, key: str):
+        self.data.pop(key, None)
+        return 1
+
+
 async def test_snapshot_wallet_funding_reuses_one_client_and_one_rpc_semaphore(monkeypatch):
     created_clients = 0
     client_ids: set[int] = set()
@@ -44,9 +63,11 @@ async def test_snapshot_wallet_funding_reuses_one_client_and_one_rpc_semaphore(m
             active_wallets -= 1
 
     monkeypatch.setattr(solana_funding_verifier.httpx, "AsyncClient", FakeClient)
+    # This test isolates connection/semaphore behavior; cache semantics are covered
+    # separately below.
     monkeypatch.setattr(
         solana_funding_verifier,
-        "_verify_wallet_funding_with_client",
+        "_cached_verify_wallet_funding_with_client",
         fake_verify,
     )
 
@@ -72,6 +93,64 @@ async def test_snapshot_wallet_funding_reuses_one_client_and_one_rpc_semaphore(m
     assert len(semaphore_ids) == 1
     assert max_active_wallets <= solana_funding_verifier.MAX_WALLET_CONCURRENCY
     assert len(result["wallets"]) == 8
+
+
+async def test_funding_cache_singleflights_identical_wallet_requests(monkeypatch):
+    redis = FakeRedis()
+    calls = 0
+
+    async def fake_verify(settings, address, client, rpc_semaphore):
+        nonlocal calls
+        del settings, client, rpc_semaphore
+        calls += 1
+        await asyncio.sleep(0.03)
+        return {
+            "status": "no_verified_funding_edges",
+            "wallet": address,
+            "incoming_transfer_observed": False,
+            "initial_funding_verified": False,
+            "transfers": [],
+        }
+
+    monkeypatch.setattr(solana_funding_verifier, "get_redis_client", lambda: redis)
+    monkeypatch.setattr(
+        solana_funding_verifier,
+        "_verify_wallet_funding_with_client",
+        fake_verify,
+    )
+
+    settings = Settings(
+        secret_key="b" * 64,
+        environment="test",
+        helius_rpc_url="https://rpc.example.invalid",
+    )
+    semaphore = asyncio.Semaphore(8)
+    client = object()
+    wallet = "A" * 32
+
+    first, second = await asyncio.gather(
+        solana_funding_verifier._cached_verify_wallet_funding_with_client(
+            settings,
+            wallet,
+            client,
+            semaphore,
+        ),
+        solana_funding_verifier._cached_verify_wallet_funding_with_client(
+            settings,
+            wallet,
+            client,
+            semaphore,
+        ),
+    )
+    third = await solana_funding_verifier._cached_verify_wallet_funding_with_client(
+        settings,
+        wallet,
+        client,
+        semaphore,
+    )
+
+    assert calls == 1
+    assert first == second == third
 
 
 async def test_rpc_uses_global_concurrency_limit(monkeypatch):
