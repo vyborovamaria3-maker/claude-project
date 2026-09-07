@@ -16,6 +16,9 @@ from app.models.advanced_intelligence import (
     IntelligenceNarrativeMemory,
 )
 from app.services.campaign_similarity import prepare_campaign_projection
+from app.services.intelligence_persistence_lock import (
+    acquire_intelligence_persistence_locks,
+)
 
 
 def _sha(value: Any) -> str:
@@ -111,6 +114,20 @@ async def persist_advanced_intelligence_state(
     snapshot_id = str(snapshot.get("snapshotId") or "")
     mint = str(snapshot.get("mint") or "")
     fingerprint = report["layers"]["campaign_fingerprint"]
+    narrative = report["layers"]["narrative_engine"]
+    prepared = _prepare_discoveries(ai_result)
+    hypothesis_keys = list(dict.fromkeys(str(row["key"]) for row in prepared))
+
+    # Redis single-flight only deduplicates byte-identical analysis requests. A
+    # synchronous report or a different AI result can still target the same DB
+    # snapshot/narrative/hypothesis rows. Acquire all shared logical keys in one
+    # deterministic order before the first read/check/write sequence.
+    lock_resources = [f"campaign:{snapshot_id}"]
+    if narrative.get("primary_key") and narrative.get("primary"):
+        lock_resources.append(f"narrative:{narrative['primary_key']}")
+    lock_resources.extend(f"hypothesis:{key}" for key in hypothesis_keys)
+    await acquire_intelligence_persistence_locks(session, lock_resources)
+
     existing = (
         await session.execute(
             select(CampaignFingerprint).where(
@@ -129,7 +146,7 @@ async def persist_advanced_intelligence_state(
                 fingerprint_hash=fingerprint["hash"],
                 vector=vector,
                 actors=actors,
-                narratives=[report["layers"]["narrative_engine"]],
+                narratives=[narrative],
                 created_at=created_at,
             )
         )
@@ -151,7 +168,6 @@ async def persist_advanced_intelligence_state(
                 for actor_key in actor_keys
             )
 
-    narrative = report["layers"]["narrative_engine"]
     if narrative.get("primary_key") and narrative.get("primary"):
         memory = (
             await session.execute(
@@ -183,10 +199,8 @@ async def persist_advanced_intelligence_state(
             memory.actor_keys = actors
             memory.last_seen_at = datetime.now(timezone.utc)
 
-    # Previously every discovered relationship executed its own SELECT. Prepare
-    # all deterministic keys first and load the existing states in one round-trip.
-    prepared = _prepare_discoveries(ai_result)
-    hypothesis_keys = list(dict.fromkeys(str(row["key"]) for row in prepared))
+    # Load all deterministic hypothesis keys in one round-trip after their locks
+    # are held, so concurrent reports cannot race the following JSON merge.
     existing_hypotheses: dict[str, IntelligenceHypothesisState] = {}
     if hypothesis_keys:
         existing_rows = list(
