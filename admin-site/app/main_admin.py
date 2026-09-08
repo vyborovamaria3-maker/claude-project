@@ -11,6 +11,8 @@ from .analysis_editor import LiveAnalysisProfileStore
 from .analysis_editor_api import build_analysis_editor_router
 from .auth import require_admin
 from .database_inventory import build_database_inventory
+from .integration_secrets import IntegrationSecretStore
+from .integrations_api import is_authorized_internal_request, router as integrations_router
 from .intelligence_view import build_intelligence_router
 from .intelligence_view_factory import build_intelligence_view_store
 from .main import create_app as create_base_app
@@ -45,6 +47,10 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 def create_app() -> FastAPI:
     app = create_base_app()
+    app.state.integrations = IntegrationSecretStore(
+        os.getenv("ADMIN_SECRETS_DB", "/var/lib/potapoff-admin/integrations.db"),
+        os.getenv("ADMIN_SECRETS_MASTER_KEY", ""),
+    )
     state_dsn = os.getenv("ADMIN_STATE_POSTGRES_DSN", "").strip()
     web_workers = _bounded_int("ADMIN_WEB_WORKERS", 1, 1, 8)
     if web_workers > 1 and not state_dsn:
@@ -125,6 +131,26 @@ def create_app() -> FastAPI:
             state_pool.close(timeout=5.0)
 
     @app.middleware("http")
+    async def authorize_scoped_internal_integrations(request, call_next):
+        # The base admin app protects every non-health route with an IP allowlist.
+        # Service-to-service integration reads use their own 32+ char scoped token;
+        # once that token is validated, present the request as an allowlisted peer
+        # for the duration of this request only. External/admin routes are unchanged.
+        original_client = request.scope.get("client")
+        if is_authorized_internal_request(request) and app.state.settings.allowed_networks:
+            network = app.state.settings.allowed_networks[0]
+            candidate = network.network_address
+            if network.num_addresses > 1:
+                candidate = network.network_address + 1
+            port = original_client[1] if original_client else 0
+            request.scope["client"] = (str(candidate), port)
+        try:
+            return await call_next(request)
+        finally:
+            if original_client is not None:
+                request.scope["client"] = original_client
+
+    @app.middleware("http")
     async def instrument_requests(request, call_next):
         started = monotonic()
         status_code = 500
@@ -166,6 +192,7 @@ def create_app() -> FastAPI:
             "task_backend": app.state.task_backend,
             "security_backend": app.state.security_backend,
             "mutable_state_backend": app.state.mutable_state_backend,
+            "integration_secret_storage": "configured" if app.state.integrations.configured else "unconfigured",
             "web_workers": web_workers,
         }
 
@@ -183,6 +210,7 @@ def create_app() -> FastAPI:
     app.include_router(build_analysis_editor_router())
     app.include_router(build_intelligence_router())
     app.include_router(build_subscription_admin_router())
+    app.include_router(integrations_router)
     if shared_security is None:
         security_v2.install_security(app)
     else:
