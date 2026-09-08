@@ -22,11 +22,23 @@ export interface WalletRowData {
   relatedCount: number;
 }
 
+function finiteNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrades?: CompactTrade[] }) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const short = `${w.address.slice(0, 4)}…${w.address.slice(-4)}`;
-  const pnlUp = w.pnlSol >= 0;
+  const pnlSol = finiteNumber(w.pnlSol);
+  const pnlPercent = finiteNumber(w.pnlPercent);
+  const volumeSol = finiteNumber(w.volumeSol);
+  const buys = finiteNumber(w.buys);
+  const sells = finiteNumber(w.sells);
+  const relatedCount = finiteNumber(w.relatedCount);
+  const solBalance = w.solBalance == null ? null : finiteNumber(w.solBalance);
+  const pnlUp = pnlSol >= 0;
 
   const copy = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -79,10 +91,10 @@ export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrade
               ⚠️ Wash
             </Badge>
           )}
-          {w.relatedCount > 0 && (
+          {relatedCount > 0 && (
             <Badge color="gray">
               <Users className="w-3 h-3 inline mr-0.5" />
-              {w.relatedCount}
+              {relatedCount}
             </Badge>
           )}
         </div>
@@ -91,16 +103,16 @@ export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrade
         <div className={"ml-auto flex items-center gap-1 text-sm font-semibold " + (pnlUp ? "text-success" : "text-[color:var(--theme-danger)]")}>
           {pnlUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
           {pnlUp ? "+" : ""}
-          {w.pnlPercent.toFixed(1)}% ({pnlUp ? "+" : ""}
-          {w.pnlSol.toFixed(3)} SOL)
+          {pnlPercent.toFixed(1)}% ({pnlUp ? "+" : ""}
+          {pnlSol.toFixed(3)} SOL)
         </div>
       </div>
 
       <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-xs">
-        <Metric label="Buys" value={w.buys.toString()} />
-        <Metric label="Sells" value={w.sells.toString()} />
-        <Metric label="Volume" value={`${w.volumeSol.toFixed(2)} SOL`} />
-        <Metric label="Balance" value={w.solBalance == null ? "—" : `${w.solBalance.toFixed(2)} SOL`} />
+        <Metric label="Buys" value={buys.toString()} />
+        <Metric label="Sells" value={sells.toString()} />
+        <Metric label="Volume" value={`${volumeSol.toFixed(2)} SOL`} />
+        <Metric label="Balance" value={solBalance == null ? "—" : `${solBalance.toFixed(2)} SOL`} />
       </div>
 
       <div className="mt-2 flex items-center justify-center text-[10px] text-white/35">
