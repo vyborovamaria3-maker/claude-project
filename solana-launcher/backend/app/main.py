@@ -19,7 +19,7 @@ from app.metrics import instrument_app
 from app import models  # noqa: F401
 from app.schemas.token import Message
 from app.services.etl import get_or_create_jobs
-from app.services.telegram_runtime import TelegramMonitorManager
+from app.services.telegram_runtime_admin import AdminManagedTelegramMonitorManager
 from app.services.users import ensure_admin_user
 
 
@@ -74,7 +74,7 @@ def create_app(
     app.state.sessionmaker = sessionmaker
     app.state.redis = None
     app.state.rate_limiter = RateLimiter(None)
-    app.state.telegram_intelligence = TelegramMonitorManager(settings, sessionmaker)
+    app.state.telegram_intelligence = AdminManagedTelegramMonitorManager(settings, sessionmaker)
 
     app.add_middleware(SessionMiddleware, secret_key=settings.admin_session_secret)
     app.add_middleware(
