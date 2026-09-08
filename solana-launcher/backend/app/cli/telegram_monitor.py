@@ -1,23 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
-from app.services.social_intelligence import evaluate_calls
-from app.services.telegram_intelligence import TelegramIntelligenceService
 from app.services.telegram_parser import normalize_telegram_target
-
-
-async def evaluate_loop(sessionmaker, interval_seconds: int) -> None:
-    while True:
-        await asyncio.sleep(max(60, interval_seconds))
-        try:
-            async with sessionmaker() as session:
-                await evaluate_calls(session, limit=5000)
-        except Exception as exc:
-            print(f"[telegram-intelligence] call evaluation failed: {exc}", flush=True)
+from app.services.telegram_runtime_admin import AdminManagedTelegramMonitorManager
 
 
 async def main() -> None:
@@ -30,38 +18,17 @@ async def main() -> None:
     if not channels:
         raise SystemExit("TG_MONITOR_CHANNELS must contain at least one channel or group")
 
+    # This CLI exists specifically to run the monitor, so autostart is implicit.
+    # Provider credentials may still come from env fallback or Admin -> Integrations.
+    settings.telegram_autostart = True
     engine, sessionmaker = create_engine_and_sessionmaker(settings)
-    service = TelegramIntelligenceService(settings, sessionmaker)
-    evaluator: asyncio.Task | None = None
+    manager = AdminManagedTelegramMonitorManager(settings, sessionmaker)
     try:
-        await service.connect()
-        graph = await service.scan_graph(
-            channels,
-            max_depth=settings.telegram_graph_depth,
-            post_limit=settings.telegram_history_limit,
-            entity_limit=settings.telegram_entity_limit,
-        )
-        discovered = [
-            str(row.get("username") or "").strip()
-            for row in graph.get("results", [])
-            if not row.get("error") and row.get("username")
-        ]
-        monitored = list(dict.fromkeys([*channels, *discovered]))
-        result = await service.start_monitor(monitored)
-        print(
-            f"[telegram-intelligence] monitoring {len(result['channels'])} channels/groups",
-            flush=True,
-        )
-        evaluator = asyncio.create_task(
-            evaluate_loop(sessionmaker, settings.telegram_evaluate_interval_seconds)
-        )
-        await service.client.run_until_disconnected()
+        manager.start_background()
+        while True:
+            await asyncio.sleep(3600)
     finally:
-        if evaluator is not None:
-            evaluator.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await evaluator
-        await service.disconnect()
+        await manager.close()
         await engine.dispose()
 
 
