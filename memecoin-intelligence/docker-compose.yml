@@ -77,7 +77,7 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       QWEN_SERVICE_API_KEY: ${TELEGRAM_AI_API_KEY:-}
       HF_HOME: /models/huggingface
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["127.0.0.1:${QWEN_HOST_PORT:-8002}:8000"]
     volumes: ["hf_cache:/models/huggingface"]
     gpus: all
     restart: unless-stopped
