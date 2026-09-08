@@ -14,10 +14,12 @@ import {
 import { generateMockCandles, calculate24hStats } from "@/utils/candles";
 
 // Helius WebSocket REMOVED — free-tier key spams console with failed connection errors.
-// We now use pure polling: 10s for minute+ TFs, 250ms for sub-second TFs.
+// Historical refreshes are deliberately slower than realtime trade ingestion:
+// 10s for minute+ TFs and 1s for sub-minute safety refreshes.
 const CACHE_TTL = 5 * 60_000; // 5 minutes — history rarely changes; live updates handled via polling
 const CACHE_FRESH = 1_000;   // <1s old = serve from cache, no background refetch
-const POLLING_INTERVAL = 1_500; // 1.5s polling for 1m+ TFs (live trades patch chart in between)
+const POLLING_INTERVAL = 10_000; // 10s polling for 1m+ TFs (live trades patch chart in between)
+const SUB_MINUTE_POLLING_INTERVAL = 1_000; // PumpPortal/live trades handle realtime movement between refreshes
 
 // Per-TF candle display caps — keeps the chart light & smooth
 const CANDLE_LIMIT: Record<string, number> = {
@@ -381,7 +383,7 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
   }, [mint, timeframe, fetchHistory, fetchSnapshot, scheduleUpdate, agg]);
 
   // Polling for minute+ TFs (10s interval per spec).
-  // Sub-second TFs use their own faster 250ms loop below.
+  // Sub-minute TFs use their own 1s safety loop below.
   useEffect(() => {
     if (!mint) return;
     const isSubSec = timeframe === "1s" || timeframe === "5s" || timeframe === "15s";
@@ -403,17 +405,16 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
     };
   }, []);
 
-  // Aggressive polling for sub-minute timeframes (1s/5s/15s):
-  // 500ms keeps the live candle within ~half-second of upstream truth.
-  // PumpPortal trade stream provides realtime ticks; this polling is the
-  // safety net when stream is delayed or upstream candle aggregation lags.
+  // Sub-minute history safety polling (1s/5s/15s).
+  // PumpPortal/live trade ingestion provides realtime ticks; this refresh only
+  // reconciles historical candles when the stream or upstream aggregation lags.
   useEffect(() => {
     if (!mint) return;
     const isSubMin = timeframe === "1s" || timeframe === "5s" || timeframe === "15s";
     if (!isSubMin) return;
     const interval = setInterval(() => {
       fetchHistory(timeframe, undefined, true); // force=true: bypass client cache
-    }, 250);
+    }, SUB_MINUTE_POLLING_INTERVAL);
     return () => clearInterval(interval);
   }, [mint, timeframe, fetchHistory]);
 
