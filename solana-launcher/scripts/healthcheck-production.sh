@@ -49,7 +49,20 @@ REQUIRED_SERVICES=(
   prometheus
 )
 
+env_value() {
+  local key="$1"
+  env_value_from_file .env.server "$key"
+}
+
 telegram_intelligence_enabled() {
+  local admin_token=""
+  if ! grep -Eq '^TG_MONITOR_CHANNELS=.+$' .env.server; then
+    return 1
+  fi
+  admin_token="$(env_value ADMIN_TELEGRAM_SERVICE_TOKEN)"
+  if [[ ${#admin_token} -ge 32 ]]; then
+    return 0
+  fi
   grep -Eq '^TG_API_ID=.+$' .env.server \
     && grep -Eq '^TG_API_HASH=.+$' .env.server \
     && grep -Eq '^TG_SESSION_STRING=.+$' .env.server
@@ -61,9 +74,25 @@ telegram_bot_enabled() {
     && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' .env.server
 }
 
-env_value() {
-  local key="$1"
-  env_value_from_file .env.server "$key"
+check_admin_integrations() {
+  local helius_token
+  local telegram_token
+  local helius_payload
+  local telegram_payload
+
+  helius_token="$(env_value ADMIN_HELIUS_SERVICE_TOKEN)"
+  telegram_token="$(env_value ADMIN_TELEGRAM_SERVICE_TOKEN)"
+  [[ ${#helius_token} -ge 32 && ${#telegram_token} -ge 32 ]] || return 1
+
+  helius_payload="$(curl -fsS --max-time 5 \
+    -H "X-Integration-Service-Key: $helius_token" \
+    http://127.0.0.1:18080/internal/integrations/helius)" || return 1
+  telegram_payload="$(curl -fsS --max-time 5 \
+    -H "X-Integration-Service-Key: $telegram_token" \
+    http://127.0.0.1:18080/internal/integrations/telegram)" || return 1
+
+  printf '%s' "$helius_payload" | grep -Fq '"count"' \
+    && printf '%s' "$telegram_payload" | grep -Fq '"credentials_configured"'
 }
 
 check_telegram_webhook() {
@@ -175,6 +204,11 @@ for attempt in $(seq 1 45); do
     telegram_ok=0
   fi
 
+  integrations_ok=1
+  if ! check_admin_integrations; then
+    integrations_ok=0
+  fi
+
   if curl -fsS http://127.0.0.1/ >/dev/null \
     && curl -fsS http://127.0.0.1/miniapp >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
@@ -183,6 +217,7 @@ for attempt in $(seq 1 45); do
     && printf '%s' "$miniapp_config" | grep -Fq '"monthlyPriceSol"' \
     && [[ "$admin_location" == "https://potapoff.fun/admin/login" ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
+    && [[ "$integrations_ok" -eq 1 ]] \
     && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
     endpoints_ok=1
   fi
@@ -190,7 +225,7 @@ for attempt in $(seq 1 45); do
   bad_services="$(check_services)"
 
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok frontend_build=verified"
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok integrations=ok frontend_build=verified"
     exit 0
   fi
 
@@ -201,6 +236,7 @@ echo "HEALTHCHECK_FAILED image_tag=$IMAGE_TAG" >&2
 echo "Bad services: ${bad_services:-unknown}" >&2
 echo "Build info: ${build_info:-unavailable}" >&2
 echo "Mini App config: ${miniapp_config:-unavailable}" >&2
+echo "Admin integrations: ${integrations_ok:-0}" >&2
 
 "${COMPOSE[@]}" ps || true
 
