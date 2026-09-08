@@ -40,18 +40,22 @@ interface AnalysisData {
     periodStart?: number | null;
     periodEnd?: number | null;
     totalRawTrades?: number;
+    historyTruncated?: boolean;
+    maxTradesRequested?: number;
   };
   wallets: WalletRowData[];
   dev: { address: string; userTag?: string | null } | null;
   bundles: { id: string; size: number; totalVolumeSol: number; wallets: string[] }[];
   timeline: { ts: number; buyVolSol: number; sellVolSol: number; price: number }[];
   trades: CompactTrade[];
+  truncated?: boolean;
   fetchedAt: number;
 }
 
 const ANALYSIS_SCHEMA_VERSION = 2;
 const ANALYSIS_PAGE_STATE_KEY = `trade.analysis.page.v${ANALYSIS_SCHEMA_VERSION}`;
 const ANALYSIS_RESULTS_STATE_PREFIX = `trade.analysis.results.v${ANALYSIS_SCHEMA_VERSION}:`;
+const ANALYSIS_TRADE_TARGET = 1500;
 
 interface TradeAnalysisPageState {
   mint: string;
@@ -79,14 +83,19 @@ function normalizeWallet(raw: any): WalletRowData {
     volumeSol: finiteNumber(raw?.volumeSol),
     pnlSol: finiteNumber(raw?.pnlSol),
     pnlPercent: finiteNumber(raw?.pnlPercent),
-    solBalance: finiteNumber(raw?.solBalance),
+    solBalance: raw?.solBalance == null ? null : finiteNumber(raw.solBalance),
     tokenBalanceUsd: finiteNumber(raw?.tokenBalanceUsd),
     isFresh: Boolean(raw?.isFresh),
     isSmart: Boolean(raw?.isSmart),
     isWashTrader: Boolean(raw?.isWashTrader),
     washReasons: Array.isArray(raw?.washReasons) ? raw.washReasons.map(String) : [],
     bundleId: raw?.bundleId == null ? undefined : String(raw.bundleId),
-    relatedCount: finiteNumber(raw?.relatedCount),
+    relatedCount: finiteNumber(raw?.relatedCount ?? raw?.coBuyProximityCount),
+    freshnessVerified: Boolean(raw?.freshnessVerified),
+    smartClassificationAvailable: Boolean(raw?.smartClassificationAvailable),
+    historyTruncated: Boolean(raw?.historyTruncated),
+    pnlComplete: raw?.pnlComplete == null ? undefined : Boolean(raw.pnlComplete),
+    balanceVerified: Boolean(raw?.balanceVerified),
   };
 }
 
@@ -104,6 +113,8 @@ function normalizeAnalysisData(raw: any): AnalysisData {
       periodStart: summary.periodStart == null ? null : finiteNumber(summary.periodStart),
       periodEnd: summary.periodEnd == null ? null : finiteNumber(summary.periodEnd),
       totalRawTrades: summary.totalRawTrades == null ? undefined : finiteNumber(summary.totalRawTrades),
+      historyTruncated: summary.historyTruncated == null ? undefined : Boolean(summary.historyTruncated),
+      maxTradesRequested: summary.maxTradesRequested == null ? undefined : finiteNumber(summary.maxTradesRequested),
     },
     wallets: Array.isArray(raw?.wallets) ? raw.wallets.map(normalizeWallet).filter((wallet: WalletRowData) => wallet.address) : [],
     dev: raw?.dev && typeof raw.dev.address === "string" ? raw.dev : null,
@@ -128,6 +139,9 @@ function normalizeAnalysisData(raw: any): AnalysisData {
           u: finiteNumber(trade?.u),
         }))
       : [],
+    truncated: raw?.truncated == null
+      ? summary.historyTruncated == null ? undefined : Boolean(summary.historyTruncated)
+      : Boolean(raw.truncated),
     fetchedAt: finiteNumber(raw?.fetchedAt, Date.now()),
   };
 }
@@ -166,7 +180,6 @@ export default function TradeAnalysisPage() {
     });
   }, [hasRestoredState, mint, data, error]);
 
-  // 1s tick while loading so ETA updates live
   useEffect(() => {
     if (!isLoading) return;
     const id = setInterval(() => setNowTick((n) => n + 1), 1000);
@@ -241,7 +254,6 @@ export default function TradeAnalysisPage() {
 
   return (
     <div className="space-y-5" data-tag="trade.analysis_page">
-      {/* Header */}
       <div className="flex items-center gap-2">
         <div className="w-9 h-9 rounded-lg bg-neon-purple/15 border border-neon-purple/30 flex items-center justify-center">
           <TrendingUp className="w-5 h-5 text-neon-purple" />
@@ -254,7 +266,6 @@ export default function TradeAnalysisPage() {
         </div>
       </div>
 
-      {/* Search */}
       <div className="flex gap-2 items-stretch">
         <div className="flex-1">
           <SearchBar onSearch={runAnalysis} isLoading={isLoading} initialValue={mint} />
@@ -273,7 +284,6 @@ export default function TradeAnalysisPage() {
         )}
       </div>
 
-      {/* Error */}
       {error && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-neon-red/10 border border-neon-red/30 text-sm">
           <AlertTriangle className="w-4 h-4 text-neon-red mt-0.5" />
@@ -284,7 +294,6 @@ export default function TradeAnalysisPage() {
         </div>
       )}
 
-      {/* Empty state — show live pump.fun feed */}
       {!data && !isLoading && !error && (
         <div className="space-y-4">
           <div className="flex items-center justify-center py-12 glass rounded-xl border border-bg-border">
@@ -295,7 +304,6 @@ export default function TradeAnalysisPage() {
         </div>
       )}
 
-      {/* Loading */}
       {isLoading && (
         <div className="flex flex-col items-center justify-center py-24 glass rounded-xl border border-bg-border gap-3">
           <Loader2 className="w-7 h-7 animate-spin text-neon-purple" />
@@ -306,16 +314,14 @@ export default function TradeAnalysisPage() {
               {progress?.phase === "enriching" && "Получаю балансы и статус кошельков…"}
               {!progress && "Подключаюсь к Pump.fun…"}
             </div>
-            {/* Elapsed time + ETA */}
             {startedAt && (() => {
-              void nowTick; // re-render every second
+              void nowTick;
               const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
               const fetched = progress?.fetched ?? 0;
-              const target = 3000;
               let etaText = "";
-              if (progress?.phase === "fetching" && fetched > 50 && fetched < target) {
-                const rate = fetched / Math.max(1, elapsedSec); // trades/sec
-                const etaSec = Math.ceil((target - fetched) / rate);
+              if (progress?.phase === "fetching" && fetched > 50 && fetched < ANALYSIS_TRADE_TARGET) {
+                const rate = fetched / Math.max(1, elapsedSec);
+                const etaSec = Math.ceil((ANALYSIS_TRADE_TARGET - fetched) / rate);
                 etaText = ` · осталось ~${etaSec}с`;
               }
               const mins = Math.floor(elapsedSec / 60);
@@ -331,7 +337,7 @@ export default function TradeAnalysisPage() {
               <div className="mt-2 w-64 h-1.5 bg-white/5 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-neon-purple transition-all"
-                  style={{ width: `${Math.min(100, (progress.fetched / 3000) * 100)}%` }}
+                  style={{ width: `${Math.min(100, (progress.fetched / ANALYSIS_TRADE_TARGET) * 100)}%` }}
                 />
               </div>
             )}
@@ -339,7 +345,6 @@ export default function TradeAnalysisPage() {
         </div>
       )}
 
-      {/* Results */}
       {data && !isLoading && <AnalysisResults data={data} />}
     </div>
   );
@@ -347,7 +352,6 @@ export default function TradeAnalysisPage() {
 
 type SortKey = "pnl" | "volume";
 type SortDir = "asc" | "desc";
-
 type DetailPanel = null | "trades" | "wallets" | "bundles";
 
 function AnalysisResults({ data }: { data: AnalysisData }) {
@@ -397,13 +401,11 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
       if (filters.showSmart && !w.isSmart) return false;
       if (filters.showBundled && !w.bundleId) return false;
       if (filters.showWash && !w.isWashTrader) return false;
-      const balanceUsd = finiteNumber(w.solBalance) * 150 + finiteNumber(w.tokenBalanceUsd); // rough SOL→USD
+      const balanceUsd = finiteNumber(w.solBalance) * 150 + finiteNumber(w.tokenBalanceUsd);
       if (filters.minBalanceUsd > 0 && balanceUsd < filters.minBalanceUsd) return false;
-      if (filters.search && !w.address.toLowerCase().includes(filters.search.toLowerCase()))
-        return false;
+      if (filters.search && !w.address.toLowerCase().includes(filters.search.toLowerCase())) return false;
       return true;
     });
-    // Sort
     list.sort((a, b) => {
       const av = sortKey === "pnl" ? finiteNumber(a.pnlSol) : finiteNumber(a.volumeSol);
       const bv = sortKey === "pnl" ? finiteNumber(b.pnlSol) : finiteNumber(b.volumeSol);
@@ -413,9 +415,8 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
   }, [wallets, filters, sortKey, sortDir]);
 
   const toggleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
       setSortKey(key);
       setSortDir("desc");
     }
@@ -423,35 +424,23 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
 
   const exportCsv = useCallback(() => {
     const headers = [
-      "address",
-      "buys",
-      "sells",
-      "volumeSol",
-      "pnlSol",
-      "pnlPercent",
-      "solBalance",
-      "isFresh",
-      "isSmart",
-      "isWashTrader",
-      "bundleId",
-      "relatedCount",
+      "address", "buys", "sells", "volumeSol", "pnlSol", "pnlPercent", "solBalance",
+      "isFresh", "isSmart", "isWashTrader", "bundleId", "relatedCount",
     ];
-    const rows = filtered.map((w) =>
-      [
-        w.address,
-        w.buys,
-        w.sells,
-        finiteNumber(w.volumeSol).toFixed(6),
-        finiteNumber(w.pnlSol).toFixed(6),
-        finiteNumber(w.pnlPercent).toFixed(2),
-        finiteNumber(w.solBalance).toFixed(6),
-        w.isFresh,
-        w.isSmart,
-        w.isWashTrader,
-        w.bundleId ?? "",
-        w.relatedCount,
-      ].join(",")
-    );
+    const rows = filtered.map((w) => [
+      w.address,
+      w.buys,
+      w.sells,
+      finiteNumber(w.volumeSol).toFixed(6),
+      finiteNumber(w.pnlSol).toFixed(6),
+      finiteNumber(w.pnlPercent).toFixed(2),
+      w.solBalance == null ? "" : finiteNumber(w.solBalance).toFixed(6),
+      w.isFresh,
+      w.isSmart,
+      w.isWashTrader,
+      w.bundleId ?? "",
+      w.relatedCount,
+    ].join(","));
     const blob = new Blob([headers.join(",") + "\n" + rows.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -464,14 +453,9 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
   return (
     <div className="space-y-4">
       <TradeVerdictSummary mint={data.mint} chain={data} />
-
-      {/* Token info card */}
       <TokenInfo mint={data.mint} />
-
-      {/* Live chart with DEV / Bundle markers */}
       <PumpFunChart mint={data.mint} />
 
-      {/* Summary — clickable cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Stat label="Volume" value={`${finiteNumber(data.summary.totalVolumeSol).toFixed(2)} SOL`} />
         <Stat
@@ -498,7 +482,6 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
         />
       </div>
 
-      {/* Detail panel */}
       {openPanel && (
         <DetailPanelView
           panel={openPanel}
@@ -509,17 +492,12 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
         />
       )}
 
-      {/* Period info */}
       {data.summary.periodStart && data.summary.periodEnd && (
         <div className="text-xs text-white/40 flex flex-wrap gap-x-3 gap-y-1">
           <span>
             <span className="text-white/30">Период:</span>{" "}
-            <span className="text-white/70">
-              {new Date(data.summary.periodStart * 1000).toLocaleString()}
-            </span>{" → "}
-            <span className="text-white/70">
-              {new Date(data.summary.periodEnd * 1000).toLocaleString()}
-            </span>
+            <span className="text-white/70">{new Date(data.summary.periodStart * 1000).toLocaleString()}</span>{" → "}
+            <span className="text-white/70">{new Date(data.summary.periodEnd * 1000).toLocaleString()}</span>
           </span>
           <span>
             <span className="text-white/30">Продолжительность:</span>{" "}
@@ -527,18 +505,19 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
               {formatDuration(finiteNumber(data.summary.periodEnd) - finiteNumber(data.summary.periodStart))}
             </span>
           </span>
-          {data.summary.totalRawTrades && data.summary.totalRawTrades !== data.summary.totalTrades && (
+          {data.summary.historyTruncated && (
             <span className="text-warning">
-              Сырых трейдов: {data.summary.totalRawTrades.toLocaleString()}
+              История ограничена последними {finiteNumber(data.summary.maxTradesRequested, data.summary.totalTrades).toLocaleString()} трейдами
             </span>
+          )}
+          {data.summary.totalRawTrades && data.summary.totalRawTrades !== data.summary.totalTrades && (
+            <span className="text-warning">Сырых трейдов: {data.summary.totalRawTrades.toLocaleString()}</span>
           )}
         </div>
       )}
 
-      {/* DEV Analysis */}
       <DevAnalysis mint={data.mint} />
 
-      {/* Filters */}
       <FiltersPanel
         filters={filters}
         onChange={setFilters}
@@ -546,28 +525,13 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
         filteredCount={filtered.length}
       />
 
-      {/* Wallets list */}
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold text-white">
-          Wallets ({filtered.length.toLocaleString()})
-        </h3>
-
+        <h3 className="text-sm font-semibold text-white">Wallets ({filtered.length.toLocaleString()})</h3>
         <div className="flex items-center gap-1 ml-2">
           <span className="text-[10px] uppercase tracking-wider text-white/40">Сортировка:</span>
-          <SortButton
-            label="PnL"
-            active={sortKey === "pnl"}
-            dir={sortKey === "pnl" ? sortDir : null}
-            onClick={() => toggleSort("pnl")}
-          />
-          <SortButton
-            label="Volume"
-            active={sortKey === "volume"}
-            dir={sortKey === "volume" ? sortDir : null}
-            onClick={() => toggleSort("volume")}
-          />
+          <SortButton label="PnL" active={sortKey === "pnl"} dir={sortKey === "pnl" ? sortDir : null} onClick={() => toggleSort("pnl")} />
+          <SortButton label="Volume" active={sortKey === "volume"} dir={sortKey === "volume" ? sortDir : null} onClick={() => toggleSort("volume")} />
         </div>
-
         <button
           type="button"
           onClick={exportCsv}
@@ -599,17 +563,7 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
   );
 }
 
-function SortButton({
-  label,
-  active,
-  dir,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  dir: SortDir | null;
-  onClick: () => void;
-}) {
+function SortButton({ label, active, dir, onClick }: { label: string; active: boolean; dir: SortDir | null; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -667,14 +621,11 @@ function Stat({
     >
       <div className="text-[10px] uppercase tracking-wider text-white/40">{label}</div>
       <div className="text-base font-semibold text-white mt-0.5">{value}</div>
-      {hint && clickable && (
-        <div className="text-[10px] text-neon-purple/70 mt-1">→ {hint}</div>
-      )}
+      {hint && clickable && <div className="text-[10px] text-neon-purple/70 mt-1">→ {hint}</div>}
     </button>
   );
 }
 
-// ── Detail panels for clickable summary cards ────────────────
 function DetailPanelView({
   panel,
   wallets,
@@ -688,23 +639,15 @@ function DetailPanelView({
   trades: CompactTrade[];
   onClose: () => void;
 }) {
-  const title =
-    panel === "trades" ? "Самые активные кошельки" :
-    panel === "wallets" ? "Топ прибыльных кошельков" :
-    "Группы (bundles)";
-
+  const title = panel === "trades" ? "Самые активные кошельки" : panel === "wallets" ? "Топ прибыльных кошельков" : "Группы (bundles)";
   return (
     <div className="glass rounded-xl border border-neon-purple/30 p-4 animate-in fade-in duration-200">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-white">{title}</h3>
-        <button
-          onClick={onClose}
-          className="text-white/40 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5"
-        >
+        <button onClick={onClose} className="text-white/40 hover:text-white text-xs px-2 py-1 rounded hover:bg-white/5">
           ✕ Закрыть
         </button>
       </div>
-
       {panel === "trades" && <TopActiveWallets wallets={wallets} />}
       {panel === "wallets" && <TopProfitableWallets wallets={wallets} />}
       {panel === "bundles" && <TopBundles bundles={bundles} wallets={wallets} trades={trades} />}
@@ -715,7 +658,7 @@ function DetailPanelView({
 function TopActiveWallets({ wallets }: { wallets: WalletRowData[] }) {
   const top = useMemo(() => {
     return [...wallets]
-      .map((w) => ({ ...w, totalTrades: w.buys + w.sells }))
+      .map((w) => ({ ...w, totalTrades: finiteNumber(w.buys) + finiteNumber(w.sells) }))
       .sort((a, b) => b.totalTrades - a.totalTrades)
       .slice(0, 20);
   }, [wallets]);
@@ -727,7 +670,7 @@ function TopActiveWallets({ wallets }: { wallets: WalletRowData[] }) {
           <span className="text-white/30 w-6">#{i + 1}</span>
           <span className="font-mono text-white/80 flex-1 truncate">{w.address.slice(0, 8)}…{w.address.slice(-6)}</span>
           <span className="text-white">{w.totalTrades} трейдов</span>
-          <span className="text-white/50">({w.buys}B / {w.sells}S)</span>
+          <span className="text-white/50">({finiteNumber(w.buys)}B / {finiteNumber(w.sells)}S)</span>
           <span className={finiteNumber(w.pnlSol) >= 0 ? "text-success" : "text-neon-red"}>
             {finiteNumber(w.pnlSol) >= 0 ? "+" : ""}{finiteNumber(w.pnlSol).toFixed(2)} SOL
           </span>
@@ -774,7 +717,6 @@ function TopBundles({
   trades: CompactTrade[];
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-
   const enriched = useMemo(() => {
     const walletMap = new Map(wallets.map((w) => [w.address, w]));
     return bundles
@@ -795,9 +737,7 @@ function TopBundles({
             <button
               type="button"
               onClick={() => setExpanded(isOpen ? null : b.id)}
-              className={`w-full text-left px-3 py-2 text-xs transition ${
-                isOpen ? "bg-neon-purple/10 border-b border-neon-purple/30" : "hover:bg-white/5"
-              }`}
+              className={`w-full text-left px-3 py-2 text-xs transition ${isOpen ? "bg-neon-purple/10 border-b border-neon-purple/30" : "hover:bg-white/5"}`}
             >
               <div className="flex items-center gap-3">
                 <span className="text-white/30 w-6">#{i + 1}</span>
@@ -815,12 +755,9 @@ function TopBundles({
                     {addr.slice(0, 6)}…{addr.slice(-4)}
                   </span>
                 ))}
-                {b.wallets.length > 8 && (
-                  <span className="px-1.5 py-0.5 text-[10px] text-white/40">+{b.wallets.length - 8}</span>
-                )}
+                {b.wallets.length > 8 && <span className="px-1.5 py-0.5 text-[10px] text-white/40">+{b.wallets.length - 8}</span>}
               </div>
             </button>
-
             {isOpen && (
               <div className="p-3 bg-bg/40">
                 <BundleChart trades={trades} bundleWallets={new Set(b.wallets)} />
@@ -833,14 +770,7 @@ function TopBundles({
   );
 }
 
-// ── Bundle chart: shows all token trades + highlights bundle members' trades ──
-function BundleChart({
-  trades,
-  bundleWallets,
-}: {
-  trades: CompactTrade[];
-  bundleWallets: Set<string>;
-}) {
+function BundleChart({ trades, bundleWallets }: { trades: CompactTrade[]; bundleWallets: Set<string> }) {
   const W = 800;
   const H = 220;
   const PAD = { top: 10, right: 8, bottom: 18, left: 56 };
@@ -852,36 +782,27 @@ function BundleChart({
     if (usd >= 1e3) return `$${(usd / 1e3).toFixed(1)}k`;
     return `$${usd.toFixed(0)}`;
   };
-  const fmtTime = (s: number) =>
-    new Date(s * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-
+  const fmtTime = (s: number) => new Date(s * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const [hover, setHover] = useState<{ trade: CompactTrade; x: number; y: number } | null>(null);
-
   const sorted = useMemo(() => [...trades].sort((a, b) => a.ts - b.ts), [trades]);
-  if (sorted.length < 2) {
-    return <div className="text-xs text-white/40 text-center py-6">Недостаточно данных для графика</div>;
-  }
+
+  if (sorted.length < 2) return <div className="text-xs text-white/40 text-center py-6">Недостаточно данных для графика</div>;
 
   const minTs = finiteNumber(sorted[0].ts);
   const maxTs = finiteNumber(sorted[sorted.length - 1].ts);
   const tsRange = Math.max(1, maxTs - minTs);
   const prices = sorted.map((t) => finiteNumber(t.p)).filter((value) => value > 0);
-  if (prices.length < 2) {
-    return <div className="text-xs text-white/40 text-center py-6">Недостаточно ценовых данных для графика</div>;
-  }
+  if (prices.length < 2) return <div className="text-xs text-white/40 text-center py-6">Недостаточно ценовых данных для графика</div>;
   const minP = Math.min(...prices);
   const maxP = Math.max(...prices);
   const pRange = Math.max(maxP - minP, maxP * 0.001 || 1e-12);
-
   const xOf = (ts: number) => PAD.left + ((ts - minTs) / tsRange) * (W - PAD.left - PAD.right);
   const yOf = (p: number) => PAD.top + (1 - (p - minP) / pRange) * (H - PAD.top - PAD.bottom);
-
   const pathD = sorted.map((t, i) => `${i === 0 ? "M" : "L"}${xOf(finiteNumber(t.ts)).toFixed(1)},${yOf(finiteNumber(t.p)).toFixed(1)}`).join(" ");
   const bundleTrades = sorted.filter((t) => bundleWallets.has(t.w));
   const bundleBuys = bundleTrades.filter((t) => t.t === 1).length;
   const bundleSells = bundleTrades.filter((t) => t.t === 0).length;
   const bundleSolVolume = bundleTrades.reduce((s, t) => s + finiteNumber(t.s), 0);
-
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const p = minP + f * pRange;
     return { y: yOf(p), label: fmtMC(p * SOL_USD * PUMP_SUPPLY) };
@@ -890,12 +811,8 @@ function BundleChart({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-3 text-[10px] text-white/60">
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-success" /> BUY
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-neon-red" /> SELL
-        </span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-success" /> BUY</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-neon-red" /> SELL</span>
         <span className="ml-2 text-white/80">
           {bundleTrades.length} трейдов · {bundleBuys}B / {bundleSells}S · {finiteNumber(bundleSolVolume).toFixed(2)} SOL
         </span>
@@ -905,13 +822,10 @@ function BundleChart({
           {ticks.map((t, i) => (
             <g key={i}>
               <line x1={PAD.left} x2={W - PAD.right} y1={t.y} y2={t.y} stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
-              <text x={PAD.left - 4} y={t.y + 3} textAnchor="end" fontSize={9} fill="rgba(255,255,255,0.4)">
-                {t.label}
-              </text>
+              <text x={PAD.left - 4} y={t.y + 3} textAnchor="end" fontSize={9} fill="rgba(255,255,255,0.4)">{t.label}</text>
             </g>
           ))}
           <path d={pathD} fill="none" stroke="rgba(168,85,247,0.4)" strokeWidth={1} />
-
           {bundleTrades.map((t) => {
             const cx = xOf(finiteNumber(t.ts));
             const cy = yOf(finiteNumber(t.p));
@@ -919,14 +833,11 @@ function BundleChart({
             const r = Math.max(4, Math.min(11, Math.sqrt(finiteNumber(t.s)) * 5));
             const isHover = hover?.trade.sig === t.sig;
             return (
-              <g
-                key={t.sig}
-                onMouseEnter={() => setHover({ trade: t, x: cx, y: cy })}
-                style={{ cursor: "pointer" }}
-              >
+              <g key={t.sig} onMouseEnter={() => setHover({ trade: t, x: cx, y: cy })} style={{ cursor: "pointer" }}>
                 <circle cx={cx} cy={cy} r={Math.max(r + 4, 12)} fill="transparent" />
                 <circle
-                  cx={cx} cy={cy}
+                  cx={cx}
+                  cy={cy}
                   r={isHover ? r + 2 : r}
                   fill={isBuy ? "rgba(34,197,94,0.4)" : "rgba(239,68,68,0.4)"}
                   stroke={isHover ? "#fff" : isBuy ? "#22c55e" : "#ef4444"}
@@ -936,22 +847,20 @@ function BundleChart({
               </g>
             );
           })}
-
           {hover && (
             <line
-              x1={hover.x} x2={hover.x}
-              y1={PAD.top} y2={H - PAD.bottom}
+              x1={hover.x}
+              x2={hover.x}
+              y1={PAD.top}
+              y2={H - PAD.bottom}
               stroke="rgba(255,255,255,0.15)"
               strokeDasharray="3 3"
               strokeWidth={1}
               pointerEvents="none"
             />
           )}
-
           <text x={PAD.left} y={H - 4} fontSize={9} fill="rgba(255,255,255,0.4)">{fmtTime(minTs)}</text>
-          <text x={W - PAD.right} y={H - 4} fontSize={9} fill="rgba(255,255,255,0.4)" textAnchor="end">
-            {fmtTime(maxTs)}
-          </text>
+          <text x={W - PAD.right} y={H - 4} fontSize={9} fill="rgba(255,255,255,0.4)" textAnchor="end">{fmtTime(maxTs)}</text>
         </svg>
 
         {hover && (
@@ -964,9 +873,7 @@ function BundleChart({
             }}
           >
             <div
-              className={`min-w-[180px] rounded-lg border backdrop-blur-md shadow-2xl px-3 py-2 text-xs ${
-                hover.trade.t === 1 ? "border-success/40" : "border-neon-red/40"
-              }`}
+              className={`min-w-[180px] rounded-lg border backdrop-blur-md shadow-2xl px-3 py-2 text-xs ${hover.trade.t === 1 ? "border-success/40" : "border-neon-red/40"}`}
               style={{ background: hover.trade.t === 1 ? "rgba(8,28,18,0.92)" : "rgba(36,12,15,0.92)" }}
             >
               <div className="flex items-center justify-between gap-2 pb-1 border-b border-white/10">
