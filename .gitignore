@@ -87,3 +87,5 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+admin-site/sources.json
+admin-site/logs.json

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if [[ "${POTAPOFF_DEPLOY_WRAPPER:-}" != "1" ]]; then
+  printf '[server-deploy] ERROR: direct execution disabled; use potapoff-deploy\n' >&2
+  exit 64
+fi
+
 SOURCE_ROOT="${POTAPOFF_SOURCE_ROOT:-/opt/claude-project}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/potapoff-deploy}"
 BRANCH="${POTAPOFF_DEPLOY_BRANCH:-main}"
