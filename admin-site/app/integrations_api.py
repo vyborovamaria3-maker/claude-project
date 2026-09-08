@@ -111,8 +111,11 @@ def add_helius_key(body: HeliusKeyBody, request: Request, admin=Depends(require_
 @router.patch("/api/integrations/helius/keys/{key_id}")
 def update_helius_key(key_id: str, body: IntegrationEnabledBody, request: Request, admin=Depends(require_admin)) -> dict[str, Any]:
     store = _store(request, require_configured=True)
+    existing = next((row for row in store.list("helius", "api_key") if row["id"] == key_id), None)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Helius key not found")
     row = store.set_enabled(key_id, body.enabled, admin["sub"])
-    if row is None or row.get("provider") != "helius" or row.get("kind") != "api_key":
+    if row is None:
         raise HTTPException(status_code=404, detail="Helius key not found")
     _audit(request, admin, "helius_key_enabled" if body.enabled else "helius_key_disabled", key_id)
     return row
@@ -131,9 +134,11 @@ def delete_helius_key(key_id: str, request: Request, admin=Depends(require_admin
 @router.post("/api/integrations/helius/keys/{key_id}/test")
 async def test_helius_key(key_id: str, request: Request, admin=Depends(require_admin)) -> dict[str, Any]:
     store = _store(request, require_configured=True)
-    key = store.get_plain(key_id)
     existing = next((row for row in store.list("helius", "api_key") if row["id"] == key_id), None)
-    if not key or existing is None:
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Helius key not found")
+    key = store.get_plain(key_id)
+    if not key:
         raise HTTPException(status_code=404, detail="Helius key not found")
 
     checked_at = datetime.now(timezone.utc).isoformat()
