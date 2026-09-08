@@ -5,6 +5,13 @@ import { AlertTriangle, CheckCircle2, HelpCircle, Loader2, ShieldAlert, TimerRes
 import type { TwitterStats } from "@/app/api/trade/dev-twitter/route";
 import { authHeaders } from "@/lib/clientAuth";
 import {
+  DEFAULT_SOCIAL_OPTIONS,
+  type Channel,
+  type Market,
+  type SocialTimeline,
+} from "@/lib/trade/social-intelligence";
+import { buildSocialSourceParams } from "@/lib/trade/social-intelligence-api";
+import {
   buildTradeAnalysisScore,
   type AnalysisChainInput,
   type TokenSocialMeta,
@@ -14,6 +21,8 @@ type Props = {
   mint: string;
   chain: AnalysisChainInput | null;
 };
+
+const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
 
 const TONE = {
   buy: {
@@ -45,12 +54,17 @@ const TONE = {
 async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, {
     cache: "no-store",
+    credentials: "include",
     headers: authHeaders(),
     signal,
   });
-  const json = await response.json().catch(() => null);
+  const json = await response.json().catch(() => null) as any;
   if (!response.ok) {
-    const message = typeof json?.error === "string" ? json.error : `HTTP ${response.status}`;
+    const message = typeof json?.error === "string"
+      ? json.error
+      : typeof json?.detail === "string"
+        ? json.detail
+        : `HTTP ${response.status}`;
     throw new Error(message);
   }
   return json as T;
@@ -73,14 +87,17 @@ function shortSourceList(score: ReturnType<typeof buildTradeAnalysisScore>) {
   return [
     score.sources.chain ? "on-chain" : null,
     score.sources.x ? "X" : null,
-    score.sources.provenance ? "provenance" : null,
     score.sources.telegramFirstCall ? "TG first-call" : null,
+    score.sources.provenance ? "provenance" : null,
   ].filter(Boolean).join(" · ");
 }
 
 export default function TradeVerdictSummary({ mint, chain }: Props) {
   const [x, setX] = useState<TwitterStats | null>(null);
   const [meta, setMeta] = useState<TokenSocialMeta | null>(null);
+  const [tg, setTg] = useState<SocialTimeline | null>(null);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [market, setMarket] = useState<Market | null>(null);
   const [loading, setLoading] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
 
@@ -91,42 +108,68 @@ export default function TradeVerdictSummary({ mint, chain }: Props) {
     setWarning(null);
     setX(null);
     setMeta(null);
+    setTg(null);
+    setChannels([]);
+    setMarket(null);
 
     void (async () => {
+      const warnings: string[] = [];
       let nextMeta: TokenSocialMeta | null = null;
       try {
         nextMeta = normalizeMeta(await fetchJson<any>(`/api/trade/token-info?mint=${encodeURIComponent(mint)}`, controller.signal));
-        setMeta(nextMeta);
+        if (!controller.signal.aborted) setMeta(nextMeta);
       } catch (error) {
-        if (!controller.signal.aborted) {
-          setWarning(`Metadata: ${error instanceof Error ? error.message : "недоступна"}`);
-        }
+        warnings.push(`Metadata: ${error instanceof Error ? error.message : "недоступна"}`);
       }
 
-      const symbol = nextMeta?.symbol || "";
-      try {
-        const params = new URLSearchParams({ mint });
-        if (symbol) params.set("symbol", symbol);
-        const nextX = await fetchJson<TwitterStats>(`/api/trade/dev-twitter?${params.toString()}`, controller.signal);
-        setX(nextX);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          setWarning((current) => {
-            const message = `X: ${error instanceof Error ? error.message : "недоступен"}`;
-            return current ? `${current} · ${message}` : message;
-          });
-        }
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
+      const options = {
+        ...DEFAULT_SOCIAL_OPTIONS,
+        symbol: nextMeta?.symbol || "",
+        lookback: "24" as const,
+        xLimit: 40,
+        tgLimit: 200,
+      };
+      const { x: xParams, tg: tgParams } = buildSocialSourceParams(mint, options);
+
+      const [xResult, tgResult, channelResult, marketResult] = await Promise.allSettled([
+        fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams.toString()}`, controller.signal),
+        fetchJson<SocialTimeline>(`${BACKEND}/api/v1/social/token/${encodeURIComponent(mint)}?${tgParams.toString()}`, controller.signal),
+        fetchJson<{ items: Channel[] }>(`${BACKEND}/api/v1/telegram/channels?limit=100`, controller.signal),
+        fetchJson<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(mint)}`, controller.signal),
+      ]);
+
+      if (controller.signal.aborted) return;
+
+      if (xResult.status === "fulfilled") setX(xResult.value);
+      else warnings.push(`X: ${xResult.reason instanceof Error ? xResult.reason.message : "недоступен"}`);
+
+      if (tgResult.status === "fulfilled") setTg(tgResult.value);
+      else warnings.push(`Telegram: ${tgResult.reason instanceof Error ? tgResult.reason.message : "недоступен"}`);
+
+      if (channelResult.status === "fulfilled") {
+        setChannels(Array.isArray(channelResult.value.items) ? channelResult.value.items : []);
+      } else {
+        warnings.push(`TG reputation: ${channelResult.reason instanceof Error ? channelResult.reason.message : "недоступна"}`);
       }
-    })();
+
+      if (marketResult.status === "fulfilled") setMarket(marketResult.value);
+      else warnings.push(`Market: ${marketResult.reason instanceof Error ? marketResult.reason.message : "недоступен"}`);
+
+      setWarning(warnings.length ? warnings.join(" · ") : null);
+      setLoading(false);
+    })().catch((error) => {
+      if (!controller.signal.aborted) {
+        setWarning(error instanceof Error ? error.message : "Источники вердикта недоступны");
+        setLoading(false);
+      }
+    });
 
     return () => controller.abort();
   }, [mint]);
 
   const unified = useMemo(
-    () => buildTradeAnalysisScore({ chain, x, meta }),
-    [chain, x, meta],
+    () => buildTradeAnalysisScore({ chain, x, meta, tg, channels, market }),
+    [chain, x, meta, tg, channels, market],
   );
   const tone = TONE[unified.action];
   const Icon = tone.icon;
@@ -165,8 +208,8 @@ export default function TradeVerdictSummary({ mint, chain }: Props) {
         <div className="rounded-lg border border-bg-border bg-bg-card p-3">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-content-faint">Provenance / TG first-call</div>
           <div className="mt-2 space-y-1.5 text-xs leading-5 text-content-muted">
-            {[...unified.provenance.notes, ...unified.firstCall.notes].map((note) => (
-              <div key={note} className="flex gap-2">
+            {[...unified.provenance.notes, ...unified.firstCall.notes].map((note, index) => (
+              <div key={`${note}-${index}`} className="flex gap-2">
                 <span className="text-content-faint">•</span>
                 <span>{note}</span>
               </div>
