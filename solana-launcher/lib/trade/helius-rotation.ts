@@ -15,6 +15,13 @@ const HELIUS_KEY_SOURCES = [
   process.env.NEXT_PUBLIC_RPC_URL,
 ].filter((value): value is string => Boolean(value));
 
+const ADMIN_INTEGRATIONS_BASE_URL = (process.env.ADMIN_INTEGRATIONS_BASE_URL || "").replace(/\/$/, "");
+const ADMIN_HELIUS_SERVICE_TOKEN = process.env.ADMIN_HELIUS_SERVICE_TOKEN || "";
+const ADMIN_KEY_CACHE_MS = 30_000;
+const ADMIN_FAILURE_CACHE_MS = 5_000;
+
+let runtimeKeyCache: { keys: string[]; expiresAt: number } | null = null;
+
 function normalizeKey(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -43,6 +50,56 @@ export function getHeliusApiKeys(): string[] {
     .filter(Boolean);
 
   return Array.from(new Set(keys));
+}
+
+async function loadAdminHeliusKeys(): Promise<string[] | null> {
+  if (!ADMIN_INTEGRATIONS_BASE_URL || ADMIN_HELIUS_SERVICE_TOKEN.length < 32) return null;
+  try {
+    const response = await fetch(`${ADMIN_INTEGRATIONS_BASE_URL}/internal/integrations/helius`, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "X-Integration-Service-Key": ADMIN_HELIUS_SERVICE_TOKEN,
+      },
+      signal: AbortSignal.timeout(2_500),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { keys?: unknown };
+    if (!Array.isArray(payload.keys)) return null;
+    return Array.from(
+      new Set(
+        payload.keys
+          .filter((value): value is string => typeof value === "string")
+          .map(normalizeKey)
+          .filter(Boolean)
+      )
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runtime keys managed by Admin -> Integrations. Environment keys remain a
+ * backwards-compatible fallback when the admin control plane is unavailable or
+ * has no active Helius keys.
+ */
+export async function getRuntimeHeliusApiKeys(): Promise<string[]> {
+  const now = Date.now();
+  if (runtimeKeyCache && runtimeKeyCache.expiresAt > now) return runtimeKeyCache.keys;
+
+  const envKeys = getHeliusApiKeys();
+  const adminKeys = await loadAdminHeliusKeys();
+  const keys = adminKeys && adminKeys.length > 0 ? adminKeys : envKeys;
+  runtimeKeyCache = {
+    keys,
+    expiresAt: now + (adminKeys === null ? ADMIN_FAILURE_CACHE_MS : ADMIN_KEY_CACHE_MS),
+  };
+  return keys;
+}
+
+export function clearRuntimeHeliusKeyCache(): void {
+  runtimeKeyCache = null;
 }
 
 export function getHeliusApiKey(index = 0): string {
