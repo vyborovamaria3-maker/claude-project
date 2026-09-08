@@ -1,13 +1,16 @@
 // data-tag: lib.trade.dev-helpers
 // Shared helpers for dev analysis (used by both dev.ts and dev-stream route)
 
-import { appendHeliusApiKey, getHeliusApiKey, getHeliusApiKeys, isHeliusRetryableStatus } from "./helius-rotation";
+import { appendHeliusApiKey, getHeliusApiKey, getHeliusApiKeys, getRuntimeHeliusApiKeys, isHeliusRetryableStatus } from "./helius-rotation";
 
+// Legacy exports retained for compatibility with callers that only need the
+// startup environment snapshot. Network helpers below always use runtime keys.
 export const HELIUS_API_KEY = getHeliusApiKey();
 export const HELIUS_API_KEYS = getHeliusApiKeys();
 
 async function fetchWithHeliusRotation<T>(urlBuilder: (apiKey: string) => string, init?: RequestInit): Promise<T> {
-  const keys = HELIUS_API_KEYS.length > 0 ? HELIUS_API_KEYS : [""];
+  const runtimeKeys = await getRuntimeHeliusApiKeys();
+  const keys = runtimeKeys.length > 0 ? runtimeKeys : [""];
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < keys.length; attempt += 1) {
