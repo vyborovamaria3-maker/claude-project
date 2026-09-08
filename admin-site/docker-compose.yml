@@ -22,6 +22,7 @@ services:
 
   admin:
     build: .
+    image: "admin-site-admin:${ADMIN_IMAGE_TAG:-latest}"
     container_name: potapoff-admin
     restart: unless-stopped
     env_file: .env

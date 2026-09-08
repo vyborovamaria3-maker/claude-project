@@ -102,6 +102,7 @@ fi
 export BACKEND_API_KEY
 export POTAPOFF_SOURCE_ROOT="$SOURCE_ROOT"
 export IMAGE_TAG="$DEPLOY_SHA"
+export ADMIN_IMAGE_TAG="$DEPLOY_SHA"
 
 COMPOSE=(
   docker compose
@@ -148,7 +149,7 @@ start_admin() {
   [[ -r "$ADMIN_COMPOSE_FILE" ]] || fail "$ADMIN_COMPOSE_FILE is missing"
   docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
   docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" config --quiet
-  docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" up -d --build admin-postgres admin
+  docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" up -d --no-build admin-postgres admin
 }
 
 rollback() {
@@ -162,7 +163,15 @@ rollback() {
 
   log "Deployment failed; rolling back to $PREVIOUS_TAG"
   export IMAGE_TAG="$PREVIOUS_TAG"
+  export ADMIN_IMAGE_TAG="$PREVIOUS_TAG"
   printf '%s\n' "$PREVIOUS_TAG" > "$DEPLOY_DIR/.current-image-tag"
+
+  if docker image inspect "admin-site-admin:$PREVIOUS_TAG" >/dev/null 2>&1; then
+    docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" up -d --no-build admin-postgres admin \
+      || log "WARNING: admin rollback to $PREVIOUS_TAG failed"
+  else
+    log "WARNING: admin rollback image admin-site-admin:$PREVIOUS_TAG is missing"
+  fi
 
   stop_telegram
   "${COMPOSE[@]}" up -d
@@ -176,6 +185,16 @@ rollback() {
 
 log 'Validating compose configuration'
 "${COMPOSE[@]}" config --quiet
+
+log 'Validating admin compose configuration'
+[[ -f "$ADMIN_DIR/.env" ]] || fail "$ADMIN_DIR/.env must be a regular file"
+[[ -f "$ADMIN_DIR/.env.intelligence" ]] || fail "$ADMIN_DIR/.env.intelligence must be a regular file"
+[[ -f "$ADMIN_DIR/sources.json" ]] || fail "$ADMIN_DIR/sources.json must be a regular file"
+[[ -f "$ADMIN_DIR/logs.json" ]] || fail "$ADMIN_DIR/logs.json must be a regular file"
+docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" config --quiet
+
+log "Building immutable admin image: admin-site-admin:$DEPLOY_SHA"
+docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE" build admin
 
 log 'Building production images on the server sequentially to limit memory usage'
 for service in backend frontend telegram-bot; do
