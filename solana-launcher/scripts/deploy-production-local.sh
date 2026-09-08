@@ -175,16 +175,18 @@ COMPOSE=(
 
 telegram_intelligence_enabled() {
   local admin_token=""
+  if ! grep -Eq '^TG_MONITOR_CHANNELS=.+$' "$DEPLOY_ENV_FILE"; then
+    return 1
+  fi
+
   admin_token="$(env_value_from_file "$DEPLOY_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN)"
-  grep -Eq '^TG_MONITOR_CHANNELS=.+$' "$DEPLOY_ENV_FILE" \
-    && {
-      [[ ${#admin_token} -ge 32 ]] \
-        || {
-          grep -Eq '^TG_API_ID=.+$' "$DEPLOY_ENV_FILE" \
-            && grep -Eq '^TG_API_HASH=.+$' "$DEPLOY_ENV_FILE" \
-            && grep -Eq '^TG_SESSION_STRING=.+$' "$DEPLOY_ENV_FILE"
-        ; }
-    ; }
+  if [[ ${#admin_token} -ge 32 ]]; then
+    return 0
+  fi
+
+  grep -Eq '^TG_API_ID=.+$' "$DEPLOY_ENV_FILE" \
+    && grep -Eq '^TG_API_HASH=.+$' "$DEPLOY_ENV_FILE" \
+    && grep -Eq '^TG_SESSION_STRING=.+$' "$DEPLOY_ENV_FILE"
 }
 
 telegram_bot_enabled() {
