@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeDev, getCreatorForMint } from "@/lib/trade/dev";
 import { getDevTag, getDevTokensByCreator, getDevWallet } from "@/lib/trade/db";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,6 +57,9 @@ function buildCachedDevResponse(creator: string, warning: string | null) {
 }
 
 export async function GET(req: NextRequest) {
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
   const mint = req.nextUrl.searchParams.get("mint")?.trim();
   let creator = req.nextUrl.searchParams.get("creator")?.trim() || null;
   const skipCache = req.nextUrl.searchParams.get("refresh") === "1";
