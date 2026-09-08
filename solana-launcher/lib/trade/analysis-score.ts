@@ -109,14 +109,26 @@ function deriveChain(chain: AnalysisChainInput | null) {
     .slice(0, 5)
     .reduce((sum, value) => sum + value, 0);
   const concentration = totalVolume > 0 && wallets.length >= 4 ? clamp((topVolume / totalVolume) * 100) : null;
-  const washRisk = wallets.length >= 3 ? clamp((wallets.filter((wallet) => wallet.isWashTrader).length / wallets.length) * 100) : null;
+  const washRisk = wallets.length >= 3
+    ? clamp((wallets.filter((wallet) => wallet.isWashTrader).length / wallets.length) * 100)
+    : null;
   const bundleVolume = bundles.reduce((sum, bundle) => sum + Math.max(0, num(bundle.totalVolumeSol)), 0);
   const bundleRisk = totalVolume > 0 ? clamp((bundleVolume / totalVolume) * 100) : null;
   const buys = wallets.reduce((sum, wallet) => sum + Math.max(0, num(wallet.buys)), 0);
   const sells = wallets.reduce((sum, wallet) => sum + Math.max(0, num(wallet.sells)), 0);
   const sellability = buys + sells >= 20 ? clamp((sells / (buys + sells)) * 250) : null;
-  const smartScore = wallets.length >= 3 ? clamp((wallets.filter((wallet) => wallet.isSmart).length / wallets.length) * 300) : null;
-  const freshRisk = wallets.length >= 3 ? clamp((wallets.filter((wallet) => wallet.isFresh).length / wallets.length) * 100) : null;
+
+  // Unknown classifier output must stay unknown. Current stream only verifies freshness
+  // for a bounded subset and does not provide a smart-wallet classifier yet.
+  const verifiedFreshness = wallets.filter((wallet) => wallet.freshnessVerified === true);
+  const freshRisk = verifiedFreshness.length >= 3
+    ? clamp((verifiedFreshness.filter((wallet) => wallet.isFresh === true).length / verifiedFreshness.length) * 100)
+    : null;
+  const verifiedSmart = wallets.filter((wallet) => wallet.smartClassificationAvailable === true);
+  const smartScore = verifiedSmart.length >= 3
+    ? clamp((verifiedSmart.filter((wallet) => wallet.isSmart === true).length / verifiedSmart.length) * 300)
+    : null;
+
   const risk = weighted([
     { value: concentration, weight: 0.3 },
     { value: washRisk, weight: 0.25 },
@@ -144,7 +156,9 @@ function deriveChain(chain: AnalysisChainInput | null) {
 }
 
 function deriveX(x: TwitterStats | null) {
-  if (!x || (x.totalTweets <= 0 && x.topTweets.length <= 0)) return { available: false, quality: null, risk: null };
+  if (!x || (x.totalTweets <= 0 && x.topTweets.length <= 0)) {
+    return { available: false, quality: null, risk: null };
+  }
   const botRisk = clamp(num(x.riskUniverse?.botRiskScore ?? x.botRiskScore));
   const authorDiffusion = x.totalTweets > 0 ? clamp((x.uniqueMentioners / x.totalTweets) * 100) : null;
   const engagement = x.totalViews > 0 ? clamp(((x.totalLikes + x.totalRetweets) / x.totalViews) * 1200) : null;
@@ -175,7 +189,11 @@ function deriveProvenance(meta: TokenSocialMeta | null) {
   return { available: true, risk: clamp(risk), notes };
 }
 
-function deriveTelegramFirstCall(tg: SocialTimeline | null, channels: Channel[], market: Market | null): TelegramFirstCallAssessment {
+function deriveTelegramFirstCall(
+  tg: SocialTimeline | null,
+  channels: Channel[],
+  market: Market | null,
+): TelegramFirstCallAssessment {
   const rows = (tg?.timeline || [])
     .filter((item) => !item.platform || item.platform.toLowerCase() === "telegram")
     .map((item) => ({ item, time: timestamp(item.occurred_at) }))
@@ -184,9 +202,14 @@ function deriveTelegramFirstCall(tg: SocialTimeline | null, channels: Channel[],
   const first = rows[0] || null;
   if (!first) {
     return {
-      available: false, score: null, risk: null,
+      available: false,
+      score: null,
+      risk: null,
       notes: [tg ? "Telegram найден, но нет сообщения с валидным временем" : "Telegram timeline недоступен"],
-      firstSource: null, firstAt: null, minutesAfterPairCreation: null, explicit: null,
+      firstSource: null,
+      firstAt: null,
+      minutesAfterPairCreation: null,
+      explicit: null,
     };
   }
 
@@ -208,13 +231,18 @@ function deriveTelegramFirstCall(tg: SocialTimeline | null, channels: Channel[],
   const winRate = matchedChannel ? normalizeRate(matchedChannel.win_rate) : null;
   const rugRate = matchedChannel ? normalizeRate(matchedChannel.rug_rate) : null;
   const explicit = isExplicitCall(first.item);
-  const mentions = num(tg?.meta?.matchedPlatforms?.telegram ?? tg?.meta?.matchedBeforeLimit ?? tg?.platforms?.telegram ?? rows.length);
+  const mentions = num(
+    tg?.meta?.matchedPlatforms?.telegram
+      ?? tg?.meta?.matchedBeforeLimit
+      ?? tg?.platforms?.telegram
+      ?? rows.length,
+  );
   const sourceCount = num(
     tg?.meta?.uniqueSourcesBeforeLimit,
     new Set(rows.map((row) => normalizeSource(row.item.source_handle || row.item.source_name)).filter(Boolean)).size,
   );
   const diffusion = mentions > 0 ? clamp((sourceCount / mentions) * 250) : null;
-  const quality = weighted([
+  const rawQuality = weighted([
     { value: earlyQuality, weight: 0.34 },
     { value: channelScore, weight: 0.24 },
     { value: winRate, weight: 0.14 },
@@ -222,6 +250,14 @@ function deriveTelegramFirstCall(tg: SocialTimeline | null, channels: Channel[],
     { value: explicit ? 100 : 45, weight: 0.09 },
     { value: diffusion, weight: 0.05 },
   ]);
+  // With a truncated result set, the earliest returned row may not be the true first call.
+  // Keep it usable as evidence, but cap how strongly it can improve the verdict.
+  const quality = rawQuality == null
+    ? null
+    : tg?.meta?.truncated
+      ? Math.min(75, rawQuality * 0.85)
+      : rawQuality;
+
   const notes: string[] = [
     `${explicit ? "первый явный call" : "первое упоминание"}: ${firstSource ? `@${String(firstSource).replace(/^@/, "")}` : "неизвестный канал"}`,
   ];
@@ -233,8 +269,13 @@ function deriveTelegramFirstCall(tg: SocialTimeline | null, channels: Channel[],
     if (winRate != null) reputation.push(`win ${Math.round(winRate)}%`);
     if (rugRate != null) reputation.push(`rug ${Math.round(rugRate)}%`);
     notes.push(`репутация канала: ${reputation.join(" · ")}`);
-  } else notes.push("для первого канала нет накопленной репутации");
-  if (tg?.meta?.truncated) notes.push("Telegram выборка усечена лимитом");
+  } else {
+    notes.push("для первого канала нет накопленной репутации");
+  }
+  if (tg?.meta?.truncated) {
+    notes.push("Telegram выборка усечена: источник считается первым только в возвращённой выборке, score понижен");
+  }
+
   return {
     available: true,
     score: quality,
@@ -250,8 +291,12 @@ function deriveTelegramFirstCall(tg: SocialTimeline | null, channels: Channel[],
 function buildSafeEntry(score: number | null, risk: number | null, confidence: number, missing: string[]) {
   if (score == null) return "Вход не подтверждён: сначала нужны данные хотя бы по on-chain или X/TG.";
   if ((risk ?? 0) >= 65) return "Безопасный вход отсутствует: риск выше допустимого, лучше ждать нового независимого подтверждения и снижения красных флагов.";
-  if (score >= 70 && (risk ?? 100) <= 35 && confidence >= 60) return "Допустим только малый тестовый вход: тезис держится, пока нет новых bundle/wash сигналов и цена не ушла резко выше первой зоны интереса.";
-  if (missing.length) return `Сейчас лучше ждать: не хватает ${missing.join(", ")}, поэтому текущий вход нельзя считать полностью подтверждённым.`;
+  if (score >= 70 && (risk ?? 100) <= 35 && confidence >= 60) {
+    return "Допустим только малый тестовый вход: тезис держится, пока нет новых bundle/wash сигналов и цена не ушла резко выше первой зоны интереса.";
+  }
+  if (missing.length) {
+    return `Сейчас лучше ждать: не хватает ${missing.join(", ")}, поэтому текущий вход нельзя считать полностью подтверждённым.`;
+  }
   return "Можно только наблюдать или заходить минимально: нужен новый независимый факт, который улучшит риск/доходность.";
 }
 
@@ -273,6 +318,7 @@ export function buildTradeAnalysisScore(args: {
     !firstCall.available ? "TG first-call" : null,
     !provenance.available ? "provenance" : null,
   ].filter((value): value is string => value != null);
+
   const score = weighted([
     { value: chain.quality, weight: 0.46 },
     { value: x.quality, weight: 0.22 },
@@ -287,8 +333,11 @@ export function buildTradeAnalysisScore(args: {
   ]);
   const activeSources = Number(chain.available) + Number(x.available) + Number(provenance.available) + Number(firstCall.available);
   const completenessBonus = chain.available && chain.truncationKnown && !chain.truncated ? 15 : 0;
+  const chainTruncationPenalty = chain.truncated ? -10 : 0;
   const xTruncationPenalty = args.x?.collectionTruncated || args.x?.meta?.truncated ? -5 : 0;
-  const confidence = clamp(activeSources * 20 + completenessBonus + xTruncationPenalty);
+  const tgTruncationPenalty = args.tg?.meta?.truncated ? -5 : 0;
+  const confidence = clamp(activeSources * 20 + completenessBonus + chainTruncationPenalty + xTruncationPenalty + tgTruncationPenalty);
+
   const blockers = [
     (chain.washRisk ?? 0) >= 75 ? "высокая доля wash-признаков в кошельках" : null,
     (chain.concentration ?? 0) >= 85 ? "оборот сконцентрирован у нескольких кошельков" : null,
@@ -302,7 +351,13 @@ export function buildTradeAnalysisScore(args: {
   else if (blockers.length > 0 || (risk ?? 0) >= 65) action = "avoid";
   else if ((score ?? 0) >= 70 && (risk ?? 100) <= 35 && confidence >= 60 && activeSources >= 2) action = "buy";
   else action = "wait";
-  const title = { buy: "Покупать", wait: "Ждать", avoid: "Не покупать", insufficient: "Недостаточно данных" }[action];
+
+  const title = {
+    buy: "Покупать",
+    wait: "Ждать",
+    avoid: "Не покупать",
+    insufficient: "Недостаточно данных",
+  }[action];
   const reasonsFor = [
     chain.quality != null && chain.quality >= 60 ? `on-chain качество ${scoreText(chain.quality)}` : null,
     x.quality != null && x.quality >= 60 ? `X-сигнал ${scoreText(x.quality)}` : null,
@@ -323,6 +378,7 @@ export function buildTradeAnalysisScore(args: {
       : action === "wait"
         ? `Пока ждать: оценка ${scoreText(score)}, риск ${scoreText(risk)}, уверенность ${Math.round(confidence)}/100.`
         : "Нельзя честно решить: ключевые источники не прочитались.";
+
   return {
     score,
     risk,
@@ -337,6 +393,11 @@ export function buildTradeAnalysisScore(args: {
     safeEntryThesis: buildSafeEntry(score, risk, confidence, missing),
     provenance,
     firstCall,
-    sources: { chain: chain.available, x: x.available, telegramFirstCall: firstCall.available, provenance: provenance.available },
+    sources: {
+      chain: chain.available,
+      x: x.available,
+      telegramFirstCall: firstCall.available,
+      provenance: provenance.available,
+    },
   };
 }
