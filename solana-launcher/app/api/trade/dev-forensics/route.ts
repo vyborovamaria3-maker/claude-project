@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { analyzePumpFunCreatorFee } from "../../../../lib/trade/creator-fee-agent";
 import { fetchPumpTotalVolume } from "../../../../lib/trade/pumpfun";
 import { getCachedTokenVolume, upsertDevTokenVolume } from "../../../../lib/trade/db";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -925,6 +926,9 @@ function computeVolumeCorrelation(tokens: TokenForensics[]): VolumeCorrelationBi
 }
 
 export async function GET(req: NextRequest) {
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
   const creator = req.nextUrl.searchParams.get("creator")?.trim();
   const mint = req.nextUrl.searchParams.get("mint")?.trim();
   const manualCreator = req.nextUrl.searchParams.get("manualCreator")?.trim();
@@ -936,7 +940,7 @@ export async function GET(req: NextRequest) {
   let singleTokenMint = mint || null;
   
   if (mint && !creator && !manualCreator) {
-    targetCreator = await getCreatorForMint(mint);
+    targetCreator = await getCreatorForMint(mint, req.headers.get("authorization"));
     if (!targetCreator) {
       const { getDevTokenByMint } = await import("../../../../lib/trade/db");
       targetCreator = getDevTokenByMint(mint)?.creator || null;
@@ -972,6 +976,9 @@ export async function GET(req: NextRequest) {
     try {
       const r = await fetch(`${req.nextUrl.origin}/api/trade/dev?creator=${encodeURIComponent(resolvedCreator)}`, {
         cache: "no-store",
+        headers: req.headers.get("authorization")
+          ? { authorization: req.headers.get("authorization")! }
+          : undefined,
         signal: AbortSignal.timeout(15000),
       });
       if (r.ok) {
@@ -1315,7 +1322,7 @@ export async function GET(req: NextRequest) {
 }
 
 // Helper function to get creator from mint with Solscan API as primary source
-async function getCreatorForMint(mint: string): Promise<string | null> {
+async function getCreatorForMint(mint: string, authorization: string | null = null): Promise<string | null> {
   try {
     const { getDb } = await import("../../../../lib/trade/db");
     const row = getDb()
@@ -1366,6 +1373,9 @@ async function getCreatorForMint(mint: string): Promise<string | null> {
     
     const r = await fetch(`${baseUrl}/api/trade/dev?mint=${encodeURIComponent(mint)}`, {
       cache: "no-store",
+      headers: authorization
+        ? { authorization }
+        : undefined,
       signal: AbortSignal.timeout(8000),
     });
     if (r.ok) {

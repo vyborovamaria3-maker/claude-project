@@ -45,23 +45,17 @@ async def test_register_login_and_me(client, test_app):
 
 
 @pytest.mark.asyncio
-async def test_phantom_nonce_creates_wallet_user(client, test_app):
+async def test_phantom_nonce_endpoint_is_not_exposed(client, test_app):
     wallet_address = "11111111111111111111111111111111"
 
     response = await client.post("/api/v1/auth/phantom/nonce", json={"wallet_address": wallet_address})
-    assert response.status_code == 200
-
-    body = response.json()
-    assert body["nonce"] >= 10_000_000
-    assert body["message"]
-    assert body["expires_at"]
+    assert response.status_code == 404
 
     async with test_app.state.sessionmaker() as session:
         result = await session.execute(select(User).where(User.wallet_address == wallet_address))
         user = result.scalar_one_or_none()
 
-    assert user is not None
-    assert user.nonce == body["nonce"]
+    assert user is None
 
 
 @pytest.mark.asyncio

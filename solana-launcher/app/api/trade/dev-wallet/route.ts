@@ -6,10 +6,14 @@
 // GET /api/trade/dev-wallet?top=tokens|migration|300k   (leaderboard, no address required)
 import { NextRequest, NextResponse } from "next/server";
 import { getDevWallet, getDevTokensByCreator, getPersistedCreatorForMint, listTopDevWallets } from "@/lib/trade/db";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
   const { searchParams } = req.nextUrl;
   const mint = searchParams.get("mint");
   let address = searchParams.get("address");

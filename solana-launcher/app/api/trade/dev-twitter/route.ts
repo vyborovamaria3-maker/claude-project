@@ -7,12 +7,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { scrapeTwitter, fetchTokenMeta, buildQuery, normalizeTwitterHandle, type CollectionStrategy } from "../../../../lib/trade/twitter-scraper";
 import { getDb } from "../../../../lib/trade/db";
 import { getTokenTwitterSocialStats } from "../../../../lib/twitterSocialStats";
+import { requireProdAuth } from "@/lib/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const CACHE: Map<string, { data: TwitterStats; ts: number }> = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 min
+const CACHE_SCHEMA_VERSION = 2;
 
 export interface TwitterStats {
   symbol: string;
@@ -65,6 +67,11 @@ export interface TwitterStats {
     memecoinAccounts: number;
     firstAccountCreatedAt: number | null;
     lastDiscoveredAt: number | null;
+  };
+  meta?: {
+    authenticated?: boolean;
+    sourceEmpty?: boolean;
+    errorCode?: string | null;
   };
 }
 
@@ -251,6 +258,9 @@ function persistTwitterStats(stats: TwitterStats, query: string, rawResult: Awai
 }
 
 export async function GET(req: NextRequest) {
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
   const mint = req.nextUrl.searchParams.get("mint") || "";
   const symbolParam = req.nextUrl.searchParams.get("symbol") || "";
   const strategyParam = req.nextUrl.searchParams.get("strategy") || "auto";
@@ -268,7 +278,7 @@ export async function GET(req: NextRequest) {
   const strategy = strategyParam as CollectionStrategy;
   const scope = scopeParam as "mentions" | "official";
 
-  const cacheKey = `${mint}:${symbolParam}:${strategy}:${scope}:${providedHandle || ""}`;
+  const cacheKey = `v${CACHE_SCHEMA_VERSION}:${mint}:${symbolParam}:${strategy}:${scope}:${providedHandle || ""}`;
   const cached = CACHE.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json({
@@ -298,7 +308,23 @@ export async function GET(req: NextRequest) {
     result = await scrapeTwitter(query, { limit: 20, headless: true, strategy });
   } catch (e) {
     console.error("Twitter scrape error:", e);
-    return NextResponse.json({ error: "failed to scrape twitter" }, { status: 500 });
+    const message = e instanceof Error ? e.message : "failed to scrape twitter";
+    const lower = message.toLowerCase();
+    const status = lower.includes("login required") || lower.includes("auth session")
+      ? 401
+      : lower.includes("forbidden") || lower.includes("403")
+        ? 403
+        : lower.includes("timeout") || lower.includes("timed out")
+          ? 504
+          : 502;
+    const code = status === 401
+      ? "x_auth_required"
+      : status === 403
+        ? "x_forbidden"
+        : status === 504
+          ? "x_timeout"
+          : "x_scrape_failed";
+    return NextResponse.json({ error: message, code }, { status });
   }
 
   // Convert scraper data to API format
@@ -387,9 +413,18 @@ export async function GET(req: NextRequest) {
     topByRetweets: byRetweets,
     topByEngagement: byEngagement,
     discovery: getTokenTwitterSocialStats(mint),
+    meta: {
+      authenticated: result.strategy !== "nitter",
+      sourceEmpty: result.tweets.length === 0,
+      errorCode: null,
+    },
   };
 
-  persistTwitterStats(stats, query, result);
+  try {
+    persistTwitterStats(stats, query, result);
+  } catch (error) {
+    console.warn("Twitter stats persistence failed:", error);
+  }
   CACHE.set(cacheKey, { data: stats, ts: Date.now() });
   return NextResponse.json(stats);
 }

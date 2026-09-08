@@ -150,7 +150,10 @@ function buildAnalysisFromWallet(payload: any, mint: string): DevAnalysisData | 
 }
 
 async function fetchWalletFallback(mint: string): Promise<DevAnalysisData | null> {
-  const walletRes = await fetch(`/api/trade/dev-wallet?mint=${encodeURIComponent(mint)}&tokens=1`, { cache: "no-store" });
+  const walletRes = await fetch(`/api/trade/dev-wallet?mint=${encodeURIComponent(mint)}&tokens=1`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
   const walletJson = await walletRes.json().catch(() => null);
   return buildAnalysisFromWallet(walletJson, mint);
 }
@@ -180,7 +183,11 @@ export default function DevAnalysis({ mint }: { mint: string }) {
 
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), 8_000);
-      const r = await fetch(`/api/trade/dev?mint=${encodeURIComponent(mint)}`, { cache: "no-store", signal: controller.signal });
+      const r = await fetch(`/api/trade/dev?mint=${encodeURIComponent(mint)}`, {
+        cache: "no-store",
+        headers: authHeaders(),
+        signal: controller.signal,
+      });
       window.clearTimeout(timeoutId);
       const json = await r.json().catch(() => null);
       if (r.ok && json?.address) {

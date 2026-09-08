@@ -1,7 +1,12 @@
+import os
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
+
+os.environ.setdefault("SECRET_KEY", "pytest-local-9f4d2a8c7b6e5d3c1a0f8e7d6c5b4a32")
+os.environ.setdefault("ADMIN_SESSION_SECRET", "pytest-admin-session-7e6d5c4b3a291807f6e5d4c3b2a1908f")
 
 from app.core.config import Settings
 from app.db.base import Base
@@ -13,8 +18,8 @@ async def test_app():
     settings = Settings(
         database_url="sqlite+aiosqlite://",
         debug=True,
-        secret_key="test-secret",
-        admin_session_secret="test-admin-session-secret",
+        secret_key="pytest-local-9f4d2a8c7b6e5d3c1a0f8e7d6c5b4a32",
+        admin_session_secret="pytest-admin-session-7e6d5c4b3a291807f6e5d4c3b2a1908f",
         admin_username="admin@example.com",
         admin_password="password123",
     )

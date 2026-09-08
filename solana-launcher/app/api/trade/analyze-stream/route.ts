@@ -6,6 +6,7 @@
 import { NextRequest } from "next/server";
 import { fetchSolBalances, getWalletFirstSeen } from "@/lib/trade/helius";
 import { loadTokenTrades } from "@/lib/trade/trade-cache";
+import { requireProdAuth } from "@/lib/routeAuth";
 import {
   aggregateByWallet,
   calcFifoPnL,
@@ -27,7 +28,10 @@ const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const MAX_TXS = 1500;            // balanced for faster token history loading
 const FRESH_CHECK_LIMIT = 20;    // top-20 by volume
 const BALANCE_CHECK_LIMIT = 60;  // top-60 by volume (one batched RPC)
-const RAW_TRADES_IN_RESPONSE = 5000;
+const ANALYSIS_SCHEMA_VERSION = 2;
+const ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60_000;
+const RAW_TRADES_IN_RESPONSE = 2000;
+const EARLY_TRADES_IN_RESPONSE = 400;
 
 const firstSeenMemo = new Map<string, { ts: number | null; cachedAt: number }>();
 const FIRST_SEEN_TTL_MS = 6 * 60 * 60 * 1000;
@@ -40,7 +44,23 @@ async function cachedFirstSeen(addr: string) {
   return ts;
 }
 
+function analysisCacheKey(mint: string) {
+  return `v${ANALYSIS_SCHEMA_VERSION}:${mint}`;
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function roundNumber(value: unknown, decimals: number) {
+  return Number(safeNumber(value).toFixed(decimals));
+}
+
 export async function GET(req: NextRequest) {
+  const authError = await requireProdAuth(req);
+  if (authError) return authError;
+
   const mint = req.nextUrl.searchParams.get("mint")?.trim();
   const skipCache = req.nextUrl.searchParams.get("refresh") === "1";
 
@@ -58,7 +78,7 @@ export async function GET(req: NextRequest) {
       try {
         // Cache hit вЂ” return immediately as a single "final" event
         if (!skipCache) {
-          const cached = getCache<unknown>("analysis_cache", mint);
+          const cached = getCache<unknown>("analysis_cache", analysisCacheKey(mint));
           if (cached) {
             send({ type: "final", ...(cached as object), fromCache: true });
             controller.close();
@@ -83,12 +103,14 @@ export async function GET(req: NextRequest) {
         if (trades.length === 0) {
           const payload = {
             mint,
-            summary: { totalVolumeSol: 0, totalVolumeUsd: 0, totalTrades: 0, uniqueWallets: 0 },
+            schemaVersion: ANALYSIS_SCHEMA_VERSION,
+            summary: { totalVolumeSol: 0, totalVolumeUsd: 0, totalTrades: 0, uniqueWallets: 0, historyTruncated: false },
             wallets: [], dev: null, bundles: [], timeline: [],
+            trades: [],
             fetchedAt: Date.now(),
             note: "No trades detected for this mint",
           };
-          setCache("analysis_cache", mint, payload, 24 * 60 * 60_000); // 24h
+          setCache("analysis_cache", analysisCacheKey(mint), payload, ANALYSIS_CACHE_TTL_MS);
           send({ type: "final", ...payload });
           controller.close();
           return;
@@ -126,7 +148,12 @@ export async function GET(req: NextRequest) {
             pnlSol: pnl.pnlSol, pnlPercent: pnl.pnlPercent,
             solBalance: solBalances.get(w.address) ?? 0, tokenBalanceUsd: 0,
             isFresh: firstSeenGlobal ? isFreshWallet(firstSeenGlobal, nowSec) : false,
+            freshnessVerified: firstSeenMap.has(w.address),
             isSmart: false, isWashTrader: wash.isSuspicious, washReasons: wash.reasons,
+            smartClassificationAvailable: false,
+            washConfidence: wash.isSuspicious ? 80 : 0,
+            historyTruncated: trades.length >= MAX_TXS,
+            pnlComplete: !Number.isNaN(pnl.pnlSol),
             bundleId: walletBundleId.get(w.address),
             relatedCount: relatedMap.get(w.address)?.size ?? 0,
             firstSeen: firstSeenGlobal,
@@ -137,13 +164,16 @@ export async function GET(req: NextRequest) {
         const sortedTrades = [...trades].sort((a, b) => a.timestamp - b.timestamp);
         let tradesForUi = sortedTrades;
         if (sortedTrades.length > RAW_TRADES_IN_RESPONSE) {
-          tradesForUi = [...sortedTrades.slice(0, 1000), ...sortedTrades.slice(-(RAW_TRADES_IN_RESPONSE - 1000))];
+          tradesForUi = [
+            ...sortedTrades.slice(0, EARLY_TRADES_IN_RESPONSE),
+            ...sortedTrades.slice(-(RAW_TRADES_IN_RESPONSE - EARLY_TRADES_IN_RESPONSE)),
+          ];
         }
         const compactTrades = tradesForUi.map((t) => ({
           ts: t.timestamp, w: t.trader, t: t.type === "buy" ? 1 : 0,
-          s: Number(t.amountSol.toFixed(6)), n: Number(t.amountTokens.toFixed(6)),
-          p: Number(t.priceSol.toFixed(12)), sig: t.signature,
-          u: Number((t.amountSol * 150).toFixed(2)),
+          s: roundNumber(t.amountSol, 6), n: roundNumber(t.amountTokens, 6),
+          p: roundNumber(t.priceSol, 12), sig: t.signature,
+          u: roundNumber(t.amountSol * 150, 2),
         }));
 
         const earliest = sortedTrades[0]?.timestamp ?? null;
@@ -152,17 +182,20 @@ export async function GET(req: NextRequest) {
           totalVolumeSol, totalVolumeUsd: 0, totalTrades: trades.length,
           uniqueWallets: walletsMap.size,
           periodStart: earliest, periodEnd: latest, totalRawTrades: trades.length,
+          maxTradesRequested: MAX_TXS,
+          historyTruncated: trades.length >= MAX_TXS || sortedTrades.length > RAW_TRADES_IN_RESPONSE,
         };
 
         const payload = {
+          schemaVersion: ANALYSIS_SCHEMA_VERSION,
           mint, summary, wallets: rows, dev: null,
           bundles: bundles.map((b) => ({ id: b.bundleId, size: b.wallets.length, totalVolumeSol: b.totalVolumeSol, wallets: b.wallets })),
           timeline: [], trades: compactTrades,
-          truncated: trades.length >= MAX_TXS,
+          truncated: summary.historyTruncated,
           fetchedAt: Date.now(),
         };
 
-        setCache("analysis_cache", mint, payload, 24 * 60 * 60_000); // 24h вЂ” explicit refresh button forces re-fetch
+        setCache("analysis_cache", analysisCacheKey(mint), payload, ANALYSIS_CACHE_TTL_MS);
 
         try {
           recordAnalyzedMint({

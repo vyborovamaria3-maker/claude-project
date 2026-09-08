@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { TwitterStats } from "@/app/api/trade/dev-twitter/route";
 import type { ForensicsResult, VolumeCorrelationBin } from "@/app/api/trade/dev-forensics/route";
+import { authHeaders } from "@/lib/clientAuth";
 
 interface Props {
   mint: string;
@@ -152,7 +153,10 @@ export default function DevForensicsPanel({ mint, symbol, devAddress }: Props) {
     setLoadingTw(true);
     setErrorTw(null);
     try {
-      const r = await fetch(`/api/trade/dev-twitter?mint=${encodeURIComponent(mint)}&symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+      const r = await fetch(`/api/trade/dev-twitter?mint=${encodeURIComponent(mint)}&symbol=${encodeURIComponent(symbol)}`, {
+        cache: "no-store",
+        headers: authHeaders(),
+      });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
       setTwitter(d);
@@ -168,7 +172,10 @@ export default function DevForensicsPanel({ mint, symbol, devAddress }: Props) {
     setLoadingFo(true);
     setErrorFo(null);
     try {
-      const r = await fetch(`/api/trade/dev-forensics?creator=${encodeURIComponent(devAddress)}`, { cache: "no-store" });
+      const r = await fetch(`/api/trade/dev-forensics?creator=${encodeURIComponent(devAddress)}`, {
+        cache: "no-store",
+        headers: authHeaders(),
+      });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
       setForensics(d);
