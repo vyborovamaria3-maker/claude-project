@@ -10,6 +10,8 @@ HEALTH_SCRIPT="$DEPLOY_DIR/scripts/healthcheck-production.sh"
 BACKUP_SCRIPT="$DEPLOY_DIR/scripts/backup-production.sh"
 ADMIN_DIR="${ADMIN_DIR:-$SOURCE_ROOT/admin-site}"
 ADMIN_COMPOSE_FILE="$ADMIN_DIR/docker-compose.yml"
+ADMIN_ENV_FILE="$ADMIN_DIR/.env"
+DEPLOY_ENV_FILE="$DEPLOY_DIR/.env.server"
 
 log() {
   printf '[server-deploy] %s\n' "$*"
@@ -33,16 +35,80 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
+set_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  [[ -f "$file" ]] || fail "$file is missing"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+ensure_admin_integration_bootstrap() {
+  [[ -r "$ADMIN_ENV_FILE" ]] || fail "$ADMIN_ENV_FILE is missing"
+  [[ -r "$DEPLOY_ENV_FILE" ]] || fail "$DEPLOY_ENV_FILE is missing"
+
+  local master helius_token telegram_token deploy_helius deploy_telegram
+  master="$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_SECRETS_MASTER_KEY)"
+  helius_token="$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN)"
+  telegram_token="$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN)"
+  deploy_helius="$(env_value_from_file "$DEPLOY_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN)"
+  deploy_telegram="$(env_value_from_file "$DEPLOY_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN)"
+
+  if [[ -z "$master" ]]; then
+    master="$(openssl rand -hex 32)"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_SECRETS_MASTER_KEY "$master"
+    log 'Generated ADMIN_SECRETS_MASTER_KEY in admin environment'
+  fi
+
+  if [[ -z "$helius_token" && -n "$deploy_helius" ]]; then
+    helius_token="$deploy_helius"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN "$helius_token"
+  elif [[ -z "$helius_token" ]]; then
+    helius_token="$(openssl rand -hex 32)"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN "$helius_token"
+    log 'Generated scoped Helius integration service token'
+  fi
+
+  if [[ -z "$telegram_token" && -n "$deploy_telegram" ]]; then
+    telegram_token="$deploy_telegram"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN "$telegram_token"
+  elif [[ -z "$telegram_token" ]]; then
+    telegram_token="$(openssl rand -hex 32)"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN "$telegram_token"
+    log 'Generated scoped Telegram integration service token'
+  fi
+
+  # Admin is the source of truth once initialized. Keep runtime consumers in
+  # sync without printing any secret value to stdout/stderr.
+  if [[ "$deploy_helius" != "$helius_token" ]]; then
+    set_env_value "$DEPLOY_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN "$helius_token"
+  fi
+  if [[ "$deploy_telegram" != "$telegram_token" ]]; then
+    set_env_value "$DEPLOY_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN "$telegram_token"
+  fi
+  if ! grep -q '^ADMIN_INTEGRATIONS_BASE_URL=' "$DEPLOY_ENV_FILE"; then
+    set_env_value "$DEPLOY_ENV_FILE" ADMIN_INTEGRATIONS_BASE_URL 'http://potapoff-admin:8080'
+  fi
+
+  chmod 600 "$ADMIN_ENV_FILE" "$DEPLOY_ENV_FILE" 2>/dev/null || true
+  log 'Admin integration bootstrap verified'
+}
+
 require_cmd git
 require_cmd docker
 require_cmd curl
 require_cmd install
+require_cmd openssl
 
 docker compose version >/dev/null 2>&1 || fail 'docker compose plugin is required'
 
 [[ -d "$SOURCE_ROOT/.git" ]] || fail "$SOURCE_ROOT is not a git checkout"
 [[ -d "$SOURCE_ROOT/solana-launcher" ]] || fail 'solana-launcher source directory is missing'
-[[ -r "$DEPLOY_DIR/.env.server" ]] || fail "$DEPLOY_DIR/.env.server is missing"
+[[ -r "$DEPLOY_ENV_FILE" ]] || fail "$DEPLOY_ENV_FILE is missing"
 [[ -r "$DEPLOY_DIR/backend.env" ]] || fail "$DEPLOY_DIR/backend.env is missing"
 
 cd "$SOURCE_ROOT"
@@ -85,9 +151,11 @@ install -m 0644 \
   "$SOURCE_ROOT/solana-launcher/docker-compose.local-build.yml" \
   "$LOCAL_BUILD_FILE"
 
+ensure_admin_integration_bootstrap
+
 BACKEND_API_KEY="${BACKEND_API_KEY:-}"
 if [[ -z "$BACKEND_API_KEY" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file "$DEPLOY_DIR/.env.server" BACKEND_API_KEY)"
+  BACKEND_API_KEY="$(env_value_from_file "$DEPLOY_ENV_FILE" BACKEND_API_KEY)"
 fi
 if [[ -z "$BACKEND_API_KEY" ]]; then
   BACKEND_API_KEY="$(env_value_from_file "$DEPLOY_DIR/backend.env" BACKEND_API_KEY)"
@@ -100,21 +168,29 @@ export IMAGE_TAG="$DEPLOY_SHA"
 
 COMPOSE=(
   docker compose
-  --env-file "$DEPLOY_DIR/.env.server"
+  --env-file "$DEPLOY_ENV_FILE"
   -f "$COMPOSE_FILE"
   -f "$LOCAL_BUILD_FILE"
 )
 
 telegram_intelligence_enabled() {
-  grep -Eq '^TG_API_ID=.+$' "$DEPLOY_DIR/.env.server" \
-    && grep -Eq '^TG_API_HASH=.+$' "$DEPLOY_DIR/.env.server" \
-    && grep -Eq '^TG_SESSION_STRING=.+$' "$DEPLOY_DIR/.env.server"
+  local admin_token=""
+  admin_token="$(env_value_from_file "$DEPLOY_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN)"
+  grep -Eq '^TG_MONITOR_CHANNELS=.+$' "$DEPLOY_ENV_FILE" \
+    && {
+      [[ ${#admin_token} -ge 32 ]] \
+        || {
+          grep -Eq '^TG_API_ID=.+$' "$DEPLOY_ENV_FILE" \
+            && grep -Eq '^TG_API_HASH=.+$' "$DEPLOY_ENV_FILE" \
+            && grep -Eq '^TG_SESSION_STRING=.+$' "$DEPLOY_ENV_FILE"
+        ; }
+    ; }
 }
 
 telegram_bot_enabled() {
-  grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' "$DEPLOY_DIR/.env.server" \
-    && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' "$DEPLOY_DIR/.env.server" \
-    && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' "$DEPLOY_DIR/.env.server"
+  grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' "$DEPLOY_ENV_FILE" \
+    && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' "$DEPLOY_ENV_FILE" \
+    && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' "$DEPLOY_ENV_FILE"
 }
 
 stop_telegram() {
