@@ -20,6 +20,11 @@ export interface WalletRowData {
   washReasons?: string[];
   bundleId?: string;
   relatedCount: number;
+  freshnessVerified?: boolean;
+  smartClassificationAvailable?: boolean;
+  historyTruncated?: boolean;
+  pnlComplete?: boolean;
+  balanceVerified?: boolean;
 }
 
 function finiteNumber(value: unknown, fallback = 0) {
@@ -63,7 +68,6 @@ export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrade
         data-tag="trade.wallet_row_header"
       >
       <div className="flex flex-wrap items-center gap-2">
-        {/* Address */}
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-mono text-white">{short}</span>
           <button onClick={copy} className="text-white/30 hover:text-white" title={copied ? "Copied!" : "Copy address"}>
@@ -81,7 +85,6 @@ export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrade
           </a>
         </div>
 
-        {/* Badges */}
         <div className="flex flex-wrap gap-1">
           {w.isFresh && <Badge color="info">🆕 Fresh</Badge>}
           {w.isSmart && <Badge color="purple">🧠 Smart</Badge>}
@@ -99,7 +102,6 @@ export default function WalletRow({ w, allTrades }: { w: WalletRowData; allTrade
           )}
         </div>
 
-        {/* PnL */}
         <div className={"ml-auto flex items-center gap-1 text-sm font-semibold " + (pnlUp ? "text-success" : "text-[color:var(--theme-danger)]")}>
           {pnlUp ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
           {pnlUp ? "+" : ""}
