@@ -2,8 +2,9 @@
 // Dev/creator analysis: list all tokens created, migration rate, ATH, optimal launch time.
 import { getCache, setCache, persistDevWallet, persistDevTokens, getDevWallet, getDevTokensByCreator, getPersistedCreatorForMint, type DevTokenRow } from "./db";
 import { heliusFetch, SOL_MINT } from "./dev-helpers";
+import { appendHeliusApiKey, getRuntimeHeliusApiKeys } from "./helius-rotation";
 
-const HELIUS_URL =
+const FALLBACK_RPC_URL =
   process.env.NEXT_PUBLIC_HELIUS_RPC_URL ||
   process.env.HELIUS_RPC_URL ||
   process.env.NEXT_PUBLIC_QUICKNODE_RPC_URL ||
@@ -14,15 +15,38 @@ const SOLSCAN_API_TOKEN = process.env.SOLSCAN_API_TOKEN || "";
 const PUMPFUN_JWT = process.env.PUMPFUN_JWT || "";
 
 async function rpc<T>(method: string, params: unknown): Promise<T> {
-  const r = await fetch(HELIUS_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    cache: "no-store",
-  });
-  const data = await r.json();
-  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-  return data.result as T;
+  const runtimeKeys = await getRuntimeHeliusApiKeys();
+  const urls = Array.from(new Set([
+    ...runtimeKeys.map((key) => appendHeliusApiKey("https://mainnet.helius-rpc.com/", key)),
+    FALLBACK_RPC_URL,
+  ].filter(Boolean)));
+  let lastError: Error | null = null;
+
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!r.ok) {
+        lastError = new Error(`RPC HTTP ${r.status}`);
+        continue;
+      }
+      const data = await r.json();
+      if (data.error) {
+        lastError = new Error(data.error.message || "RPC request failed");
+        continue;
+      }
+      return data.result as T;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("RPC request failed");
+    }
+  }
+
+  throw lastError || new Error("RPC request failed");
 }
 
 export interface DevToken {
