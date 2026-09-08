@@ -2,15 +2,13 @@
 // Helius integration: fetch enriched parsed transactions for a token mint
 // Docs: https://docs.helius.dev/solana-apis/enhanced-transactions-api
 
-import { appendHeliusApiKey, getHeliusApiKeys, isHeliusRetryableStatus } from "./helius-rotation";
+import { appendHeliusApiKey, getRuntimeHeliusApiKeys, isHeliusRetryableStatus } from "./helius-rotation";
 
 const HELIUS_RPC =
   process.env.NEXT_PUBLIC_HELIUS_RPC_URL ||
   process.env.HELIUS_RPC_URL ||
   process.env.NEXT_PUBLIC_RPC_URL ||
   "https://api.mainnet-beta.solana.com";
-
-const HELIUS_API_KEYS = getHeliusApiKeys();
 
 export interface RawTrade {
   signature: string;
@@ -62,9 +60,9 @@ export async function fetchEnrichedTxsForMint(
   mint: string,
   maxTxs: number = 1000
 ): Promise<HeliusEnrichedTx[]> {
-  const keys = HELIUS_API_KEYS.length > 0 ? HELIUS_API_KEYS : [];
+  const keys = await getRuntimeHeliusApiKeys();
   if (keys.length === 0) {
-    throw new Error("Helius API key not configured (set NEXT_PUBLIC_HELIUS_RPC_URL with ?api-key=...)");
+    throw new Error("Helius API key not configured (Admin -> Integrations or HELIUS_API_KEY)");
   }
 
   const all: HeliusEnrichedTx[] = [];
@@ -207,7 +205,7 @@ function extractTrade(tx: HeliusEnrichedTx, mint: string): RawTrade | null {
  * Used for Fresh Wallet detection (created < 1 hour ago).
  */
 export async function getWalletFirstSeen(address: string): Promise<number | null> {
-  const keys = HELIUS_API_KEYS.length > 0 ? HELIUS_API_KEYS : [];
+  const keys = await getRuntimeHeliusApiKeys();
   if (keys.length === 0) return null;
   for (let attempt = 0; attempt < keys.length; attempt += 1) {
     try {
@@ -238,33 +236,47 @@ export async function fetchSolBalances(addresses: string[]): Promise<Map<string,
   const result = new Map<string, number>();
   if (addresses.length === 0) return result;
 
+  const keys = await getRuntimeHeliusApiKeys();
+  const rpcCandidates = keys.map((key) => appendHeliusApiKey("https://mainnet.helius-rpc.com/", key));
+  if (!rpcCandidates.includes(HELIUS_RPC)) rpcCandidates.push(HELIUS_RPC);
+
   // RPC supports up to 100 accounts per call
   const chunks: string[][] = [];
   for (let i = 0; i < addresses.length; i += 100) chunks.push(addresses.slice(i, i + 100));
 
   for (const chunk of chunks) {
-    try {
-      const r = await fetch(HELIUS_RPC, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "getMultipleAccounts",
-          params: [chunk, { encoding: "base64" }],
-        }),
-      });
-      const json = await r.json();
-      const arr = json?.result?.value;
-      if (!Array.isArray(arr)) continue;
-      chunk.forEach((addr, i) => {
-        const lamports = arr[i]?.lamports;
-        if (typeof lamports === "number") {
-          result.set(addr, lamports / LAMPORTS_PER_SOL);
+    for (let attempt = 0; attempt < rpcCandidates.length; attempt += 1) {
+      try {
+        const r = await fetch(rpcCandidates[attempt], {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "getMultipleAccounts",
+            params: [chunk, { encoding: "base64" }],
+          }),
+        });
+        if (!r.ok) {
+          if (attempt < rpcCandidates.length - 1) continue;
+          break;
         }
-      });
-    } catch {
-      // skip chunk on error
+        const json = await r.json();
+        const arr = json?.result?.value;
+        if (!Array.isArray(arr)) {
+          if (attempt < rpcCandidates.length - 1) continue;
+          break;
+        }
+        chunk.forEach((addr, i) => {
+          const lamports = arr[i]?.lamports;
+          if (typeof lamports === "number") {
+            result.set(addr, lamports / LAMPORTS_PER_SOL);
+          }
+        });
+        break;
+      } catch {
+        if (attempt === rpcCandidates.length - 1) break;
+      }
     }
   }
   return result;
