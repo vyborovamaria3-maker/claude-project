@@ -8,6 +8,9 @@ $ErrorActionPreference = "Stop"
 # for the actual admin process. These process-only values exist solely so the
 # earlier static `import app.main_admin` syntax/dependency check has a valid
 # development configuration before that child process is started.
+$bootstrapDir = Join-Path ([System.IO.Path]::GetTempPath()) "potapoff-admin-smoke-bootstrap"
+New-Item -ItemType Directory -Path $bootstrapDir -Force | Out-Null
+
 $env:ADMIN_ENVIRONMENT = "development"
 $env:ADMIN_USERNAME = "admin"
 $env:ADMIN_PASSWORD = "local-smoke-only"
@@ -24,6 +27,10 @@ $env:ADMIN_ALLOWED_ORIGINS = "http://localhost:18080"
 $env:ADMIN_TRUST_PROXY = "false"
 $env:ADMIN_STATE_POSTGRES_DSN = ""
 $env:ADMIN_WEB_WORKERS = "1"
+$env:ADMIN_AUDIT_DB = Join-Path $bootstrapDir "audit.db"
+$env:ADMIN_SECRETS_DB = Join-Path $bootstrapDir "integrations.db"
+$env:ADMIN_INTELLIGENCE_BACKEND = "sqlite"
+$env:ADMIN_INTELLIGENCE_DB = Join-Path $bootstrapDir "intelligence.sqlite3"
 $env:ADMIN_SECRETS_MASTER_KEY = "local-smoke-master-key-0123456789abcdef0123456789abcdef"
 $env:ADMIN_HELIUS_SERVICE_TOKEN = "local-smoke-helius-token-0123456789abcdef0123456789abcdef"
 $env:ADMIN_TELEGRAM_SERVICE_TOKEN = "local-smoke-telegram-token-0123456789abcdef0123456789abcdef"
