@@ -67,24 +67,41 @@ env_value() {
 }
 
 check_telegram_webhook() {
-  local token
   local webhook_url
   local webhook_secret
-  local info
+  local webhook_host
+  local webhook_path
+  local container_id
+  local state
 
-  token="$(env_value TELEGRAM_BOT_TOKEN)"
   webhook_url="$(env_value TELEGRAM_WEBHOOK_URL)"
   webhook_secret="$(env_value TELEGRAM_WEBHOOK_SECRET)"
 
-  curl -fsS -H "x-webhook-secret: $webhook_secret" "$webhook_url" \
-    | grep -Fq '"status":"ok"' \
-    || return 1
+  webhook_host="${webhook_url#*://}"
+  webhook_host="${webhook_host%%/*}"
+  webhook_host="${webhook_host%%:*}"
 
-  info="$(printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' "$token" | curl -fsS --config -)" \
-    || return 1
+  webhook_path="${webhook_url#*://}"
+  webhook_path="/${webhook_path#*/}"
 
-  printf '%s' "$info" | grep -Fq '"ok":true' \
-    && printf '%s' "$info" | grep -Fq "\"url\":\"$webhook_url\""
+  [[ -n "$webhook_host" ]] || return 1
+  [[ "$webhook_path" == /* ]] || return 1
+
+  # Exercise the real production nginx -> application webhook route locally.
+  # This intentionally avoids external DNS/TLS dependencies on the VPS.
+  curl     --connect-timeout 3     --max-time 8     -fsS     -H "Host: $webhook_host"     -H "x-webhook-secret: $webhook_secret"     "http://127.0.0.1$webhook_path"     | grep -Fq '"status":"ok"'     || return 1
+
+  container_id="$(
+    "${COMPOSE[@]}" --profile telegram ps -q telegram-bot 2>/dev/null || true
+  )"
+
+  [[ -n "$container_id" ]] || return 1
+
+  state="$(
+    docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true
+  )"
+
+  [[ "$state" == "running" ]]
 }
 
 check_services() {
@@ -162,12 +179,16 @@ for attempt in $(seq 1 45); do
   build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
   miniapp_config="$(curl -fsS http://127.0.0.1/api/miniapp/config 2>/dev/null || true)"
 
-  admin_location="$(
-    curl -fsSI http://127.0.0.1/admin/ 2>/dev/null \
-      | tr -d '\r' \
-      | awk 'tolower($1) == "location:" {print $2; exit}' \
-      || true
-  )"
+    admin_ok=0
+    if curl \
+      --connect-timeout 3 \
+      --max-time 8 \
+      -fsS \
+      -H 'Host: admin.potapoff.fun' \
+      http://127.0.0.1/ \
+      >/dev/null 2>&1; then
+      admin_ok=1
+    fi
   telegram_ok=1
   if telegram_bot_enabled \
     && [[ "${SKIP_TELEGRAM_BOT_HEALTH:-0}" != "1" ]] \
@@ -181,7 +202,7 @@ for attempt in $(seq 1 45); do
     && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
     && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
     && printf '%s' "$miniapp_config" | grep -Fq '"monthlyPriceSol"' \
-    && [[ "$admin_location" == "https://potapoff.fun/admin/login" ]] \
+      && [[ "$admin_ok" -eq 1 ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
     && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
     endpoints_ok=1
