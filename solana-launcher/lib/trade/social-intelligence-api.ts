@@ -1,3 +1,4 @@
+import { authHeaders } from "@/lib/clientAuth";
 import type {
   AiEnvelope,
   ChainAnalysis,
@@ -18,6 +19,7 @@ export async function fetchJson<T>(
     credentials: "include",
     signal,
     ...init,
+    headers: authHeaders(init?.headers),
   });
   const data: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -38,7 +40,7 @@ export async function readChainStream(
 ): Promise<ChainAnalysis | null> {
   const response = await fetch(
     `/api/trade/analyze-stream?mint=${encodeURIComponent(mint)}`,
-    { cache: "no-store", signal },
+    { cache: "no-store", signal, headers: authHeaders() },
   );
   if (!response.ok || !response.body) {
     throw new Error(`analyze-stream HTTP ${response.status}`);
