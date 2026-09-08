@@ -21,7 +21,12 @@ const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY 
 const REQUEST_BUDGET_MS = 112_000;
 const MAX_DYNAMIC_RESEARCH_ROUNDS = 3;
 const INTELLIGENCE_PROMPT_VERSION = "intelligence-qwen-v10-grounded-entry";
-const SNAPSHOT_HARD_LIMITS = { features: 500, nodes: 4_000, edges: 8_000, evidence: 500 } as const;
+// Operational limits protect expensive memory/research/advanced layers. Snapshots
+// above these limits still reach Qwen through the dedicated compactor below.
+const SNAPSHOT_OPERATIONAL_LIMITS = { features: 500, nodes: 4_000, edges: 8_000, evidence: 500 } as const;
+// Absolute request-safety ceiling. This is deliberately much higher than the
+// Qwen payload limits so normal large analysis graphs are compacted, not rejected.
+const SNAPSHOT_HARD_LIMITS = { features: 5_000, nodes: 40_000, edges: 80_000, evidence: 5_000 } as const;
 const QWEN_SNAPSHOT_LIMITS = { features: 300, nodes: 240, edges: 600, evidence: 180 } as const;
 
 type TimelineItem = {
@@ -145,13 +150,21 @@ function snapshotSize(snapshot: AnalysisSnapshot): SnapshotSize {
   return { features: snapshot.features.length, nodes: snapshot.graph.nodes.length, edges: snapshot.graph.edges.length, evidence: snapshot.evidence.length };
 }
 
+function exceedsLimits(size: SnapshotSize, limits: SnapshotSize): boolean {
+  return size.features > limits.features || size.nodes > limits.nodes || size.edges > limits.edges || size.evidence > limits.evidence;
+}
+
+function withinOperationalLimits(snapshot: AnalysisSnapshot): boolean {
+  return !exceedsLimits(snapshotSize(snapshot), SNAPSHOT_OPERATIONAL_LIMITS);
+}
+
 function validateSnapshot(body: RequestBody, mint: string) {
   const snapshot = body.snapshot;
   if (!snapshot) return null;
   if (snapshot.mint !== mint) throw new Error("snapshot_mint_mismatch");
   if (!Array.isArray(snapshot.features) || !snapshot.graph || !Array.isArray(snapshot.graph.nodes) || !Array.isArray(snapshot.graph.edges) || !Array.isArray(snapshot.evidence)) throw new Error("invalid_snapshot");
   const size = snapshotSize(snapshot);
-  if (size.features > SNAPSHOT_HARD_LIMITS.features || size.nodes > SNAPSHOT_HARD_LIMITS.nodes || size.edges > SNAPSHOT_HARD_LIMITS.edges || size.evidence > SNAPSHOT_HARD_LIMITS.evidence) throw new SnapshotLimitError(size);
+  if (exceedsLimits(size, SNAPSHOT_HARD_LIMITS)) throw new SnapshotLimitError(size);
   return snapshot;
 }
 
@@ -412,8 +425,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const initialMemory = snapshot ? await loadMemoryContext(snapshot) : null;
-    let analysisSnapshot = snapshot ? enrichSnapshotWithMemory(snapshot, initialMemory) : null;
+    const operationalSnapshot = snapshot ? withinOperationalLimits(snapshot) : false;
+    const initialMemory = snapshot && operationalSnapshot ? await loadMemoryContext(snapshot) : null;
+    let analysisSnapshot = snapshot ? (initialMemory ? enrichSnapshotWithMemory(snapshot, initialMemory) : snapshot) : null;
     const firstPayload = aiPayload(analysisSnapshot, timeline, mint, body);
     if (!firstPayload) return NextResponse.json({ error: analysisSnapshot ? "no_usable_snapshot_for_ai" : "no_telegram_text_for_ai" }, { status: 400 });
 
@@ -422,7 +436,7 @@ export async function POST(req: NextRequest) {
     const researchRuns: ResearchRun[] = [];
     const researched = new Set<string>();
 
-    if (analysisSnapshot && remainingBudget(startedAt) > 26_000) {
+    if (analysisSnapshot && withinOperationalLimits(analysisSnapshot) && remainingBudget(startedAt) > 26_000) {
       const candidates = researchCandidates(analysisSnapshot, result);
       if (candidates.length) {
         const before = analysisSnapshot.features.length;
@@ -441,10 +455,10 @@ export async function POST(req: NextRequest) {
     }
 
     let planningReport: AdvancedReport | null = null;
-    if (analysisSnapshot && remainingBudget(startedAt) > 10_000) planningReport = await buildAdvancedReport(analysisSnapshot, result, { persist: false, enrich: false, role: "analyst", timeoutMs: 6_000 });
+    if (analysisSnapshot && withinOperationalLimits(analysisSnapshot) && remainingBudget(startedAt) > 10_000) planningReport = await buildAdvancedReport(analysisSnapshot, result, { persist: false, enrich: false, role: "analyst", timeoutMs: 6_000 });
     const recommendedRounds = Math.max(1, Math.min(MAX_DYNAMIC_RESEARCH_ROUNDS, Number(planningReport?.layers?.dynamic_research_budget?.recommended_research_rounds || 1)));
 
-    for (let round = researchRound + 1; analysisSnapshot && round <= recommendedRounds && round <= MAX_DYNAMIC_RESEARCH_ROUNDS; round++) {
+    for (let round = researchRound + 1; analysisSnapshot && withinOperationalLimits(analysisSnapshot) && round <= recommendedRounds && round <= MAX_DYNAMIC_RESEARCH_ROUNDS; round++) {
       if (remainingBudget(startedAt) < 25_000) break;
       const qwenCandidates = researchCandidates(analysisSnapshot, result);
       const deterministicCandidates = plannerCandidates(planningReport);
@@ -462,15 +476,19 @@ export async function POST(req: NextRequest) {
       researchRound = round;
     }
 
-    const memoryWrite = snapshot && analysisSnapshot && remainingBudget(startedAt) > 4_500 ? await persistMainMemory(snapshot, analysisSnapshot, result) : { status: "skipped_budget" };
+    const memoryWrite = snapshot && analysisSnapshot && withinOperationalLimits(snapshot) && withinOperationalLimits(analysisSnapshot) && remainingBudget(startedAt) > 4_500
+      ? await persistMainMemory(snapshot, analysisSnapshot, result)
+      : snapshot && !withinOperationalLimits(snapshot)
+        ? { status: "skipped_large_snapshot" }
+        : { status: "skipped_budget" };
     let advancedIntelligence: AdvancedReport | null = null;
     let critic: QwenEnvelope | null = null;
     let criticAudit: Record<string, unknown> = { status: "not_run" };
 
-    if (analysisSnapshot && remainingBudget(startedAt) > 12_000) {
+    if (analysisSnapshot && withinOperationalLimits(analysisSnapshot) && remainingBudget(startedAt) > 12_000) {
       advancedIntelligence = await buildAdvancedReport(analysisSnapshot, result, { persist: true, enrich: true, role: "analyst", timeoutMs: Math.min(18_000, Math.max(8_000, remainingBudget(startedAt) - 7_000)) });
       const criticSnapshot = snapshotWithAdvancedReport(analysisSnapshot, advancedIntelligence);
-      if (advancedIntelligence?.layers?.dedicated_critic?.required && remainingBudget(startedAt) > 14_000) {
+      if (advancedIntelligence?.layers?.dedicated_critic?.required && withinOperationalLimits(criticSnapshot) && remainingBudget(startedAt) > 14_000) {
         const priorConclusion = compactPriorConclusion(result);
         const criticPayload = aiPayload(criticSnapshot, timeline, mint, body, { role: "critic", priorConclusion });
         if (criticPayload) {
@@ -492,6 +510,8 @@ export async function POST(req: NextRequest) {
       snapshotId: snapshot?.snapshotId || null,
       snapshotDiagnostics: snapshot && diagnosticSnapshot ? {
         received: snapshotSize(snapshot),
+        operationalLimits: SNAPSHOT_OPERATIONAL_LIMITS,
+        operationallyLarge: !withinOperationalLimits(snapshot),
         qwen: { features: diagnosticSnapshot.features.length, nodes: diagnosticSnapshot.graph.nodes.length, edges: diagnosticSnapshot.graph.edges.length, evidence: diagnosticSnapshot.evidence.length },
         graphCompacted: diagnosticSnapshot.rawSummary.qwenGraphCompacted,
       } : null,
