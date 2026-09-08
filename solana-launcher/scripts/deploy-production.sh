@@ -10,16 +10,21 @@ HEALTH_SCRIPT="$DEPLOY_DIR/scripts/healthcheck-production.sh"
 PROMETHEUS_CONFIG="$DEPLOY_DIR/prometheus/prometheus.yml"
 ADMIN_DIR="${ADMIN_DIR:-/opt/claude-project/admin-site}"
 ADMIN_COMPOSE_FILE="$ADMIN_DIR/docker-compose.yml"
+ADMIN_ENV_FILE="$ADMIN_DIR/.env"
+DEPLOY_ENV_FILE="$DEPLOY_DIR/.env.server"
 
 cd "$DEPLOY_DIR"
 
-test -r .env.server
+test -r "$DEPLOY_ENV_FILE"
 test -r backend.env
 test -r "$COMPOSE_FILE"
 test -r "$BACKUP_SCRIPT"
 test -r "$HEALTH_SCRIPT"
 test -r "$PROMETHEUS_CONFIG"
 test -r "$ADMIN_COMPOSE_FILE"
+test -r "$ADMIN_ENV_FILE"
+
+command -v openssl >/dev/null 2>&1 || { echo "openssl is required" >&2; exit 1; }
 
 env_value_from_file() {
   local file="$1"
@@ -29,11 +34,68 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
+set_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+ensure_admin_integration_bootstrap() {
+  local master helius_token telegram_token deploy_helius deploy_telegram
+  master="$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_SECRETS_MASTER_KEY)"
+  helius_token="$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN)"
+  telegram_token="$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN)"
+  deploy_helius="$(env_value_from_file "$DEPLOY_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN)"
+  deploy_telegram="$(env_value_from_file "$DEPLOY_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN)"
+
+  if [[ -z "$master" ]]; then
+    master="$(openssl rand -hex 32)"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_SECRETS_MASTER_KEY "$master"
+    echo "Generated ADMIN_SECRETS_MASTER_KEY in admin environment"
+  fi
+
+  if [[ -z "$helius_token" && -n "$deploy_helius" ]]; then
+    helius_token="$deploy_helius"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN "$helius_token"
+  elif [[ -z "$helius_token" ]]; then
+    helius_token="$(openssl rand -hex 32)"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN "$helius_token"
+    echo "Generated scoped Helius integration service token"
+  fi
+
+  if [[ -z "$telegram_token" && -n "$deploy_telegram" ]]; then
+    telegram_token="$deploy_telegram"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN "$telegram_token"
+  elif [[ -z "$telegram_token" ]]; then
+    telegram_token="$(openssl rand -hex 32)"
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN "$telegram_token"
+    echo "Generated scoped Telegram integration service token"
+  fi
+
+  if [[ "$deploy_helius" != "$helius_token" ]]; then
+    set_env_value "$DEPLOY_ENV_FILE" ADMIN_HELIUS_SERVICE_TOKEN "$helius_token"
+  fi
+  if [[ "$deploy_telegram" != "$telegram_token" ]]; then
+    set_env_value "$DEPLOY_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN "$telegram_token"
+  fi
+  if ! grep -q '^ADMIN_INTEGRATIONS_BASE_URL=' "$DEPLOY_ENV_FILE"; then
+    set_env_value "$DEPLOY_ENV_FILE" ADMIN_INTEGRATIONS_BASE_URL 'http://potapoff-admin:8080'
+  fi
+  chmod 600 "$ADMIN_ENV_FILE" "$DEPLOY_ENV_FILE" 2>/dev/null || true
+}
+
+ensure_admin_integration_bootstrap
+
 # The frontend's Mini App routes make authenticated server-to-server requests
 # to the FastAPI subscription endpoints. Keep backend.env private, but export
 # only the shared API key so Docker Compose can inject it into the frontend.
 if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
+  BACKEND_API_KEY="$(env_value_from_file "$DEPLOY_ENV_FILE" BACKEND_API_KEY)"
 fi
 if [[ -z "${BACKEND_API_KEY:-}" ]]; then
   BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
@@ -50,7 +112,7 @@ docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create 
 
 COMPOSE=(
   docker compose
-  --env-file .env.server
+  --env-file "$DEPLOY_ENV_FILE"
   -f "$COMPOSE_FILE"
 )
 
@@ -71,15 +133,23 @@ if [[ -f .current-image-tag ]]; then
 fi
 
 telegram_intelligence_enabled() {
-  grep -Eq '^TG_API_ID=.+$' .env.server \
-    && grep -Eq '^TG_API_HASH=.+$' .env.server \
-    && grep -Eq '^TG_SESSION_STRING=.+$' .env.server
+  local admin_token=""
+  if ! grep -Eq '^TG_MONITOR_CHANNELS=.+$' "$DEPLOY_ENV_FILE"; then
+    return 1
+  fi
+  admin_token="$(env_value_from_file "$DEPLOY_ENV_FILE" ADMIN_TELEGRAM_SERVICE_TOKEN)"
+  if [[ ${#admin_token} -ge 32 ]]; then
+    return 0
+  fi
+  grep -Eq '^TG_API_ID=.+$' "$DEPLOY_ENV_FILE" \
+    && grep -Eq '^TG_API_HASH=.+$' "$DEPLOY_ENV_FILE" \
+    && grep -Eq '^TG_SESSION_STRING=.+$' "$DEPLOY_ENV_FILE"
 }
 
 telegram_bot_enabled() {
-  grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' .env.server \
-    && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' .env.server \
-    && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' .env.server
+  grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' "$DEPLOY_ENV_FILE" \
+    && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' "$DEPLOY_ENV_FILE" \
+    && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' "$DEPLOY_ENV_FILE"
 }
 
 stop_telegram() {
@@ -105,7 +175,7 @@ sync_telegram_intelligence() {
     echo "Starting Telegram Intelligence worker"
     "${COMPOSE[@]}" --profile telegram-intelligence up -d telegram-intelligence
   else
-    echo "Telegram Intelligence credentials are not configured; worker remains disabled"
+    echo "Telegram Intelligence monitor channels are not configured; worker remains disabled"
     "${COMPOSE[@]}" --profile telegram-intelligence stop telegram-intelligence \
       >/dev/null 2>&1 || true
     "${COMPOSE[@]}" --profile telegram-intelligence rm -f telegram-intelligence \
