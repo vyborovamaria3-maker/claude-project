@@ -1,15 +1,17 @@
 "use client";
 // data-tag: app.trade.analysis
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertTriangle, TrendingUp, Download, ArrowUp, ArrowDown, RefreshCw } from "lucide-react";
 import SearchBar from "@/components/trade/SearchBar";
 import TokenInfo from "@/components/trade/TokenInfo";
+import TradeVerdictSummary from "@/components/trade/TradeVerdictSummary";
 import { DEFAULT_FILTERS, type TradeFilters } from "@/components/trade/FiltersPanel";
 import type { WalletRowData } from "@/components/trade/WalletRow";
 import type { CompactTrade } from "@/components/trade/WalletTradeDetail";
+import { authHeaders } from "@/lib/clientAuth";
 import { loadPageState, savePageState } from "@/lib/pageState";
 
 const FiltersPanel = dynamic(() => import("@/components/trade/FiltersPanel"), {
@@ -47,8 +49,9 @@ interface AnalysisData {
   fetchedAt: number;
 }
 
-const ANALYSIS_PAGE_STATE_KEY = "trade.analysis.page.v1";
-const ANALYSIS_RESULTS_STATE_PREFIX = "trade.analysis.results.v1:";
+const ANALYSIS_SCHEMA_VERSION = 2;
+const ANALYSIS_PAGE_STATE_KEY = `trade.analysis.page.v${ANALYSIS_SCHEMA_VERSION}`;
+const ANALYSIS_RESULTS_STATE_PREFIX = `trade.analysis.results.v${ANALYSIS_SCHEMA_VERSION}:`;
 
 interface TradeAnalysisPageState {
   mint: string;
@@ -61,6 +64,72 @@ interface AnalysisResultsViewState {
   sortKey: SortKey;
   sortDir: SortDir;
   openPanel: DetailPanel;
+}
+
+function finiteNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeWallet(raw: any): WalletRowData {
+  return {
+    address: typeof raw?.address === "string" ? raw.address : "",
+    buys: finiteNumber(raw?.buys),
+    sells: finiteNumber(raw?.sells),
+    volumeSol: finiteNumber(raw?.volumeSol),
+    pnlSol: finiteNumber(raw?.pnlSol),
+    pnlPercent: finiteNumber(raw?.pnlPercent),
+    solBalance: finiteNumber(raw?.solBalance),
+    tokenBalanceUsd: finiteNumber(raw?.tokenBalanceUsd),
+    isFresh: Boolean(raw?.isFresh),
+    isSmart: Boolean(raw?.isSmart),
+    isWashTrader: Boolean(raw?.isWashTrader),
+    washReasons: Array.isArray(raw?.washReasons) ? raw.washReasons.map(String) : [],
+    bundleId: raw?.bundleId == null ? undefined : String(raw.bundleId),
+    relatedCount: finiteNumber(raw?.relatedCount),
+  };
+}
+
+function normalizeAnalysisData(raw: any): AnalysisData {
+  const summary = raw?.summary ?? {};
+  return {
+    mint: typeof raw?.mint === "string" ? raw.mint : "",
+    summary: {
+      totalVolumeSol: finiteNumber(summary.totalVolumeSol),
+      totalVolumeUsd: finiteNumber(summary.totalVolumeUsd),
+      totalTrades: finiteNumber(summary.totalTrades),
+      uniqueWallets: finiteNumber(summary.uniqueWallets),
+      biggestBuy: summary.biggestBuy,
+      biggestSell: summary.biggestSell,
+      periodStart: summary.periodStart == null ? null : finiteNumber(summary.periodStart),
+      periodEnd: summary.periodEnd == null ? null : finiteNumber(summary.periodEnd),
+      totalRawTrades: summary.totalRawTrades == null ? undefined : finiteNumber(summary.totalRawTrades),
+    },
+    wallets: Array.isArray(raw?.wallets) ? raw.wallets.map(normalizeWallet).filter((wallet: WalletRowData) => wallet.address) : [],
+    dev: raw?.dev && typeof raw.dev.address === "string" ? raw.dev : null,
+    bundles: Array.isArray(raw?.bundles)
+      ? raw.bundles.map((bundle: any) => ({
+          id: String(bundle?.id ?? ""),
+          size: finiteNumber(bundle?.size),
+          totalVolumeSol: finiteNumber(bundle?.totalVolumeSol),
+          wallets: Array.isArray(bundle?.wallets) ? bundle.wallets.map(String) : [],
+        })).filter((bundle: { id: string }) => bundle.id)
+      : [],
+    timeline: Array.isArray(raw?.timeline) ? raw.timeline : [],
+    trades: Array.isArray(raw?.trades)
+      ? raw.trades.map((trade: any) => ({
+          ts: finiteNumber(trade?.ts),
+          w: String(trade?.w ?? ""),
+          t: trade?.t === 1 ? 1 : 0,
+          s: finiteNumber(trade?.s),
+          n: finiteNumber(trade?.n),
+          p: finiteNumber(trade?.p),
+          sig: String(trade?.sig ?? ""),
+          u: finiteNumber(trade?.u),
+        }))
+      : [],
+    fetchedAt: finiteNumber(raw?.fetchedAt, Date.now()),
+  };
 }
 
 export default function TradeAnalysisPage() {
@@ -76,12 +145,13 @@ export default function TradeAnalysisPage() {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(0);
   const [hasRestoredState, setHasRestoredState] = useState(false);
+  const autoRunMint = useRef<string | null>(null);
 
   useEffect(() => {
     const restored = loadPageState<TradeAnalysisPageState | null>(ANALYSIS_PAGE_STATE_KEY, null);
     if (restored && (!initialMint || !restored.mint || restored.mint === initialMint)) {
       if (restored.mint) setMint(restored.mint);
-      if (restored.data) setData(restored.data);
+      if (restored.data) setData(normalizeAnalysisData(restored.data));
       if (restored.error) setError(restored.error);
     }
     setHasRestoredState(true);
@@ -113,7 +183,7 @@ export default function TradeAnalysisPage() {
     try {
       const r = await fetch(
         `/api/trade/analyze-stream?mint=${encodeURIComponent(m)}${refresh ? "&refresh=1" : ""}`,
-        { cache: "no-store" }
+        { cache: "no-store", headers: authHeaders() }
       );
       if (!r.ok || !r.body) {
         const txt = await r.text().catch(() => "");
@@ -137,7 +207,7 @@ export default function TradeAnalysisPage() {
           } else if (evt.type === "final") {
             const { type: _t, ...rest } = evt;
             void _t;
-            setData(rest as unknown as AnalysisData);
+            setData(normalizeAnalysisData(rest));
           } else if (evt.type === "error") {
             throw new Error(String(evt.message));
           }
@@ -155,12 +225,19 @@ export default function TradeAnalysisPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!initialMint) return;
+    if (!initialMint || autoRunMint.current === initialMint) return;
+    autoRunMint.current = initialMint;
     const restored = loadPageState<TradeAnalysisPageState | null>(ANALYSIS_PAGE_STATE_KEY, null);
     const canReuseRestored = !!restored?.data && restored.mint === initialMint;
-    if (!canReuseRestored) runAnalysis(initialMint);
+    if (canReuseRestored) {
+      setMint(initialMint);
+      setData(normalizeAnalysisData(restored.data));
+      setError(restored.error ?? null);
+    } else {
+      runAnalysis(initialMint);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initialMint]);
 
   return (
     <div className="space-y-5" data-tag="trade.analysis_page">
@@ -320,7 +397,7 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
       if (filters.showSmart && !w.isSmart) return false;
       if (filters.showBundled && !w.bundleId) return false;
       if (filters.showWash && !w.isWashTrader) return false;
-      const balanceUsd = (w.solBalance ?? 0) * 150 + w.tokenBalanceUsd; // rough SOL→USD
+      const balanceUsd = finiteNumber(w.solBalance) * 150 + finiteNumber(w.tokenBalanceUsd); // rough SOL→USD
       if (filters.minBalanceUsd > 0 && balanceUsd < filters.minBalanceUsd) return false;
       if (filters.search && !w.address.toLowerCase().includes(filters.search.toLowerCase()))
         return false;
@@ -328,8 +405,8 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
     });
     // Sort
     list.sort((a, b) => {
-      const av = sortKey === "pnl" ? a.pnlSol : a.volumeSol;
-      const bv = sortKey === "pnl" ? b.pnlSol : b.volumeSol;
+      const av = sortKey === "pnl" ? finiteNumber(a.pnlSol) : finiteNumber(a.volumeSol);
+      const bv = sortKey === "pnl" ? finiteNumber(b.pnlSol) : finiteNumber(b.volumeSol);
       return sortDir === "asc" ? av - bv : bv - av;
     });
     return list;
@@ -364,10 +441,10 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
         w.address,
         w.buys,
         w.sells,
-        w.volumeSol.toFixed(6),
-        w.pnlSol.toFixed(6),
-        w.pnlPercent.toFixed(2),
-        w.solBalance == null ? "" : w.solBalance.toFixed(6),
+        finiteNumber(w.volumeSol).toFixed(6),
+        finiteNumber(w.pnlSol).toFixed(6),
+        finiteNumber(w.pnlPercent).toFixed(2),
+        finiteNumber(w.solBalance).toFixed(6),
         w.isFresh,
         w.isSmart,
         w.isWashTrader,
@@ -386,6 +463,8 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
 
   return (
     <div className="space-y-4">
+      <TradeVerdictSummary mint={data.mint} chain={data} />
+
       {/* Token info card */}
       <TokenInfo mint={data.mint} />
 
@@ -394,7 +473,7 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
 
       {/* Summary — clickable cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Volume" value={`${data.summary.totalVolumeSol.toFixed(2)} SOL`} />
+        <Stat label="Volume" value={`${finiteNumber(data.summary.totalVolumeSol).toFixed(2)} SOL`} />
         <Stat
           label="Trades"
           value={data.summary.totalTrades.toLocaleString()}
@@ -445,7 +524,7 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
           <span>
             <span className="text-white/30">Продолжительность:</span>{" "}
             <span className="text-white/70">
-              {formatDuration(data.summary.periodEnd - data.summary.periodStart)}
+              {formatDuration(finiteNumber(data.summary.periodEnd) - finiteNumber(data.summary.periodStart))}
             </span>
           </span>
           {data.summary.totalRawTrades && data.summary.totalRawTrades !== data.summary.totalTrades && (
@@ -459,17 +538,6 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
       {/* DEV Analysis */}
       <DevAnalysis mint={data.mint} />
 
-      <details className="overflow-hidden rounded-xl border border-bg-border">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-          <span className="text-sm font-semibold text-white">
-            Таблицы кошельков ({filtered.length.toLocaleString()})
-          </span>
-          <span className="text-[10px] text-white/40">
-            открыть / закрыть
-          </span>
-        </summary>
-
-        <div className="space-y-4 border-t border-bg-border p-4">
       {/* Filters */}
       <FiltersPanel
         filters={filters}
@@ -527,8 +595,6 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
           )}
         </div>
       )}
-        </div>
-      </details>
     </div>
   );
 }
@@ -662,8 +728,8 @@ function TopActiveWallets({ wallets }: { wallets: WalletRowData[] }) {
           <span className="font-mono text-white/80 flex-1 truncate">{w.address.slice(0, 8)}…{w.address.slice(-6)}</span>
           <span className="text-white">{w.totalTrades} трейдов</span>
           <span className="text-white/50">({w.buys}B / {w.sells}S)</span>
-          <span className={w.pnlSol >= 0 ? "text-success" : "text-neon-red"}>
-            {w.pnlSol >= 0 ? "+" : ""}{w.pnlSol.toFixed(2)} SOL
+          <span className={finiteNumber(w.pnlSol) >= 0 ? "text-success" : "text-neon-red"}>
+            {finiteNumber(w.pnlSol) >= 0 ? "+" : ""}{finiteNumber(w.pnlSol).toFixed(2)} SOL
           </span>
         </div>
       ))}
@@ -674,8 +740,8 @@ function TopActiveWallets({ wallets }: { wallets: WalletRowData[] }) {
 function TopProfitableWallets({ wallets }: { wallets: WalletRowData[] }) {
   const top = useMemo(() => {
     return [...wallets]
-      .filter((w) => w.pnlSol > 0)
-      .sort((a, b) => b.pnlSol - a.pnlSol)
+      .filter((w) => finiteNumber(w.pnlSol) > 0)
+      .sort((a, b) => finiteNumber(b.pnlSol) - finiteNumber(a.pnlSol))
       .slice(0, 20);
   }, [wallets]);
 
@@ -688,9 +754,9 @@ function TopProfitableWallets({ wallets }: { wallets: WalletRowData[] }) {
         <div key={w.address} className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-white/5 text-xs">
           <span className="text-white/30 w-6">#{i + 1}</span>
           <span className="font-mono text-white/80 flex-1 truncate">{w.address.slice(0, 8)}…{w.address.slice(-6)}</span>
-          <span className="text-success font-semibold">+{w.pnlSol.toFixed(3)} SOL</span>
-          <span className="text-white/50">({w.pnlPercent >= 0 ? "+" : ""}{w.pnlPercent.toFixed(1)}%)</span>
-          <span className="text-white/60">{w.volumeSol.toFixed(1)} vol</span>
+          <span className="text-success font-semibold">+{finiteNumber(w.pnlSol).toFixed(3)} SOL</span>
+          <span className="text-white/50">({finiteNumber(w.pnlPercent) >= 0 ? "+" : ""}{finiteNumber(w.pnlPercent).toFixed(1)}%)</span>
+          <span className="text-white/60">{finiteNumber(w.volumeSol).toFixed(1)} vol</span>
           {w.bundleId && <span className="text-neon-purple text-[10px]">📦 {w.bundleId.slice(0, 6)}</span>}
         </div>
       ))}
@@ -713,10 +779,10 @@ function TopBundles({
     const walletMap = new Map(wallets.map((w) => [w.address, w]));
     return bundles
       .map((b) => {
-        const totalPnl = b.wallets.reduce((s, addr) => s + (walletMap.get(addr)?.pnlSol ?? 0), 0);
+        const totalPnl = b.wallets.reduce((s, addr) => s + finiteNumber(walletMap.get(addr)?.pnlSol), 0);
         return { ...b, totalPnl };
       })
-      .sort((a, b) => b.totalVolumeSol - a.totalVolumeSol)
+      .sort((a, b) => finiteNumber(b.totalVolumeSol) - finiteNumber(a.totalVolumeSol))
       .slice(0, 20);
   }, [bundles, wallets]);
 
@@ -737,9 +803,9 @@ function TopBundles({
                 <span className="text-white/30 w-6">#{i + 1}</span>
                 <span className="font-mono text-neon-purple">📦 {b.id}</span>
                 <span className="text-white/60">{b.size} кошельков</span>
-                <span className="text-white">{b.totalVolumeSol.toFixed(2)} SOL объём</span>
-                <span className={`ml-auto ${b.totalPnl >= 0 ? "text-success" : "text-neon-red"}`}>
-                  {b.totalPnl >= 0 ? "+" : ""}{b.totalPnl.toFixed(2)} SOL PnL
+                <span className="text-white">{finiteNumber(b.totalVolumeSol).toFixed(2)} SOL объём</span>
+                <span className={`ml-auto ${finiteNumber(b.totalPnl) >= 0 ? "text-success" : "text-neon-red"}`}>
+                  {finiteNumber(b.totalPnl) >= 0 ? "+" : ""}{finiteNumber(b.totalPnl).toFixed(2)} SOL PnL
                 </span>
                 <span className="text-white/30 text-[10px]">{isOpen ? "▲ скрыть" : "▼ график"}</span>
               </div>
@@ -796,10 +862,13 @@ function BundleChart({
     return <div className="text-xs text-white/40 text-center py-6">Недостаточно данных для графика</div>;
   }
 
-  const minTs = sorted[0].ts;
-  const maxTs = sorted[sorted.length - 1].ts;
+  const minTs = finiteNumber(sorted[0].ts);
+  const maxTs = finiteNumber(sorted[sorted.length - 1].ts);
   const tsRange = Math.max(1, maxTs - minTs);
-  const prices = sorted.map((t) => t.p);
+  const prices = sorted.map((t) => finiteNumber(t.p)).filter((value) => value > 0);
+  if (prices.length < 2) {
+    return <div className="text-xs text-white/40 text-center py-6">Недостаточно ценовых данных для графика</div>;
+  }
   const minP = Math.min(...prices);
   const maxP = Math.max(...prices);
   const pRange = Math.max(maxP - minP, maxP * 0.001 || 1e-12);
@@ -807,11 +876,11 @@ function BundleChart({
   const xOf = (ts: number) => PAD.left + ((ts - minTs) / tsRange) * (W - PAD.left - PAD.right);
   const yOf = (p: number) => PAD.top + (1 - (p - minP) / pRange) * (H - PAD.top - PAD.bottom);
 
-  const pathD = sorted.map((t, i) => `${i === 0 ? "M" : "L"}${xOf(t.ts).toFixed(1)},${yOf(t.p).toFixed(1)}`).join(" ");
+  const pathD = sorted.map((t, i) => `${i === 0 ? "M" : "L"}${xOf(finiteNumber(t.ts)).toFixed(1)},${yOf(finiteNumber(t.p)).toFixed(1)}`).join(" ");
   const bundleTrades = sorted.filter((t) => bundleWallets.has(t.w));
   const bundleBuys = bundleTrades.filter((t) => t.t === 1).length;
   const bundleSells = bundleTrades.filter((t) => t.t === 0).length;
-  const bundleSolVolume = bundleTrades.reduce((s, t) => s + t.s, 0);
+  const bundleSolVolume = bundleTrades.reduce((s, t) => s + finiteNumber(t.s), 0);
 
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const p = minP + f * pRange;
@@ -828,7 +897,7 @@ function BundleChart({
           <span className="w-2 h-2 rounded-full bg-neon-red" /> SELL
         </span>
         <span className="ml-2 text-white/80">
-          {bundleTrades.length} трейдов · {bundleBuys}B / {bundleSells}S · {bundleSolVolume.toFixed(2)} SOL
+          {bundleTrades.length} трейдов · {bundleBuys}B / {bundleSells}S · {finiteNumber(bundleSolVolume).toFixed(2)} SOL
         </span>
       </div>
       <div className="relative">
@@ -844,10 +913,10 @@ function BundleChart({
           <path d={pathD} fill="none" stroke="rgba(168,85,247,0.4)" strokeWidth={1} />
 
           {bundleTrades.map((t) => {
-            const cx = xOf(t.ts);
-            const cy = yOf(t.p);
+            const cx = xOf(finiteNumber(t.ts));
+            const cy = yOf(finiteNumber(t.p));
             const isBuy = t.t === 1;
-            const r = Math.max(4, Math.min(11, Math.sqrt(t.s) * 5));
+            const r = Math.max(4, Math.min(11, Math.sqrt(finiteNumber(t.s)) * 5));
             const isHover = hover?.trade.sig === t.sig;
             return (
               <g
@@ -909,12 +978,12 @@ function BundleChart({
               <div className="pt-1.5 space-y-1">
                 <div>
                   <div className="text-[9px] text-white/40 uppercase">Market Cap</div>
-                  <div className="text-sm font-bold text-white">{fmtMC(hover.trade.p * SOL_USD * PUMP_SUPPLY)}</div>
+                  <div className="text-sm font-bold text-white">{fmtMC(finiteNumber(hover.trade.p) * SOL_USD * PUMP_SUPPLY)}</div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
                   <div>
                     <div className="text-[9px] text-white/40">SOL</div>
-                    <div className="text-[11px] font-mono text-white">{hover.trade.s.toFixed(4)}</div>
+                    <div className="text-[11px] font-mono text-white">{finiteNumber(hover.trade.s).toFixed(4)}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-[9px] text-white/40">Wallet</div>
