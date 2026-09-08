@@ -72,6 +72,8 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       FRONTEND_URL: https://potapoff.fun
       FRONTEND_INTERNAL_URL: http://frontend:3000
+      ADMIN_INTEGRATIONS_BASE_URL: ${ADMIN_INTEGRATIONS_BASE_URL:-http://potapoff-admin:8080}
+      ADMIN_TELEGRAM_SERVICE_TOKEN: ${ADMIN_TELEGRAM_SERVICE_TOKEN:-}
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
@@ -127,6 +129,8 @@ services:
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+      ADMIN_INTEGRATIONS_BASE_URL: ${ADMIN_INTEGRATIONS_BASE_URL:-http://potapoff-admin:8080}
+      ADMIN_TELEGRAM_SERVICE_TOKEN: ${ADMIN_TELEGRAM_SERVICE_TOKEN:-}
       TG_API_ID: ${TG_API_ID:-}
       TG_API_HASH: ${TG_API_HASH:-}
       TG_SESSION_STRING: ${TG_SESSION_STRING:-}
@@ -149,6 +153,9 @@ services:
     environment:
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
+      ADMIN_INTEGRATIONS_BASE_URL: ${ADMIN_INTEGRATIONS_BASE_URL:-http://potapoff-admin:8080}
+      # Read-only and Helius-scoped: this token cannot read Telegram credentials.
+      ADMIN_HELIUS_SERVICE_TOKEN: ${ADMIN_HELIUS_SERVICE_TOKEN:-}
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
