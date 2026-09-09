@@ -230,12 +230,14 @@ def _resolved_signal_source(
     return requested
 
 
-def _create_signal_view(
+def _create_signal_table(
     connection: Any,
     columns: dict[str, set[str]],
     *,
     signal_source: str,
 ) -> None:
+    # Materialize the cheap pre-gate once. On full TeraGram, re-reading entity/content tables for
+    # candidate discovery and again for exact scoring would otherwise duplicate the most expensive scan.
     if signal_source == "content":
         content_columns = columns["tg_message_content"]
         text_parts: list[str] = []
@@ -248,7 +250,7 @@ def _create_signal_view(
         evidence = " || ' ' || ".join(text_parts)
         connection.execute(
             f"""
-            CREATE OR REPLACE TEMP VIEW tg_signal_rows AS
+            CREATE OR REPLACE TEMP TABLE tg_signal_rows AS
             SELECT q.chat_id, q.message_id, q.signal_text
             FROM (
                 SELECT
@@ -280,7 +282,7 @@ def _create_signal_view(
         entity_union = " UNION ALL ".join(parts)
         connection.execute(
             f"""
-            CREATE OR REPLACE TEMP VIEW tg_signal_rows AS
+            CREATE OR REPLACE TEMP TABLE tg_signal_rows AS
             WITH entity_parts AS (
                 {entity_union}
             ), grouped AS (
@@ -300,7 +302,7 @@ def _create_signal_view(
 
     connection.execute(
         """
-        CREATE OR REPLACE TEMP VIEW tg_signal_rows AS
+        CREATE OR REPLACE TEMP TABLE tg_signal_rows AS
         SELECT
             CAST(NULL AS BIGINT) AS chat_id,
             CAST(NULL AS BIGINT) AS message_id,
@@ -377,9 +379,15 @@ def _chat_select_expr(columns: set[str], name: str, alias: str, default: str, ca
 
 def _candidate_query(columns: dict[str, set[str]]) -> str:
     chats = columns["tg_chats"]
+    channel_id_expr = (
+        "COALESCE(TRY_CAST(c.telegram_id AS VARCHAR), TRY_CAST(c.id AS VARCHAR))"
+        if "telegram_id" in chats
+        else "TRY_CAST(c.id AS VARCHAR)"
+    )
     return f"""
         SELECT
-            TRY_CAST(c.id AS VARCHAR) AS channel_id,
+            TRY_CAST(c.id AS VARCHAR) AS teragram_chat_id,
+            {channel_id_expr} AS channel_id,
             {_chat_select_expr(chats, 'name', 'username', "''", 'VARCHAR')},
             {_chat_select_expr(chats, 'title', 'title', "''", 'VARCHAR')},
             {_chat_select_expr(chats, 'description', 'description', "''", 'VARCHAR')},
@@ -432,6 +440,7 @@ def _seed_payload(row: dict[str, Any]) -> dict[str, Any]:
         "classifications": row["classifications"],
         "n_subscribers": row["n_subscribers"],
         "channel_id": row["channel_id"],
+        "teragram_chat_id": row.get("teragram_chat_id", ""),
     }
 
 
@@ -496,7 +505,7 @@ def scan_teragram_dataset(
         )
         if progress:
             progress(f"TeraGram: signal source = {resolved_source}")
-        _create_signal_view(connection, columns, signal_source=resolved_source)
+        _create_signal_table(connection, columns, signal_source=resolved_source)
         if progress:
             progress("TeraGram: building disk-backed candidate and message indexes")
         _create_candidate_tables(connection, columns, max_chats=max_chats)
@@ -524,7 +533,7 @@ def scan_teragram_dataset(
         cursor = connection.execute(_candidate_query(columns))
 
         current: TGDatasetChannelAccumulator | None = None
-        current_id = ""
+        current_source_chat_id = ""
         actual_messages_total = 0
         actual_forwarded_messages = 0
 
@@ -539,6 +548,7 @@ def scan_teragram_dataset(
             current.messages_total = max(actual_messages_total, observed_signal_rows)
             current.forwarded_messages = max(actual_forwarded_messages, current.forwarded_messages)
             row = current.result()
+            row["teragram_chat_id"] = current_source_chat_id
             if not row["classifications"]:
                 return
 
@@ -579,6 +589,7 @@ def scan_teragram_dataset(
                 }
                 for values in _iter_query_rows(cursor, fetch_size=fetch_size):
                     (
+                        teragram_chat_id,
                         channel_id,
                         username,
                         title,
@@ -591,11 +602,13 @@ def scan_teragram_dataset(
                         _message_id,
                         signal_text,
                     ) = values
-                    channel_id = str(channel_id or "")
-                    if current is None or channel_id != current_id:
+                    source_chat_id = str(teragram_chat_id or "")
+                    if current is None or source_chat_id != current_source_chat_id:
                         finalize_current(candidate_handle, category_writers)
-                        current_id = channel_id
-                        current = TGDatasetChannelAccumulator(channel_id=channel_id)
+                        current_source_chat_id = source_chat_id
+                        current = TGDatasetChannelAccumulator(
+                            channel_id=str(channel_id or source_chat_id)
+                        )
                         current.observe_metadata("username", username or "")
                         current.observe_metadata("title", title or "")
                         current.observe_metadata("description", description or "")
