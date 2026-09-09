@@ -68,16 +68,45 @@ $env:GIT_CONFIG_KEY_0 = "status.showUntrackedFiles"
 $env:GIT_CONFIG_VALUE_0 = "no"
 
 # The backend is packaged by pyproject.toml and intentionally has no tracked
-# requirements.txt. The older smoke runner still consumes requirements.txt, so
-# create a temporary compatibility file that installs this exact backend in
-# editable mode. It is untracked, never committed, and removed in finally.
+# requirements.txt. The older smoke runner still consumes requirements.txt.
+# Use a relative editable requirement and run the child from $Launcher so pip
+# never receives the Cyrillic absolute worktree path on Windows.
 $backendRequirements = Join-Path $Backend "requirements.txt"
 $createdBackendRequirements = $false
 if (-not (Test-Path -LiteralPath $backendRequirements)) {
-  $backendInstallPath = $Backend.Replace("\", "/")
-  Set-Content -LiteralPath $backendRequirements -Value "-e $backendInstallPath" -Encoding ASCII
+  Set-Content -LiteralPath $backendRequirements -Value "-e ./backend" -Encoding ASCII
   $createdBackendRequirements = $true
 }
+
+# Docker CLI may be installed while Docker Desktop's Linux engine is stopped.
+# The smoke needs Docker for the admin image plus PostgreSQL/Redis (and bundled
+# Qwen when used), so start Docker Desktop when possible and wait for the daemon.
+function Test-DockerReady {
+  if (-not (Get-Command docker.exe -ErrorAction SilentlyContinue)) { return $false }
+  & docker info *> $null
+  return ($LASTEXITCODE -eq 0)
+}
+
+if (-not (Test-DockerReady)) {
+  $dockerDesktop = @(
+    (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+
+  if ($dockerDesktop) {
+    Write-Host "Docker engine is not ready. Starting Docker Desktop..." -ForegroundColor Yellow
+    Start-Process -FilePath $dockerDesktop | Out-Null
+    for ($i = 0; $i -lt 90; $i++) {
+      Start-Sleep -Seconds 2
+      if (Test-DockerReady) { break }
+    }
+  }
+}
+
+if (-not (Test-DockerReady)) {
+  throw "Docker Desktop engine is not available. Start Docker Desktop and rerun the smoke."
+}
+Write-Host "Docker engine: READY" -ForegroundColor Green
 
 # The main smoke runner builds a dedicated ignored .env.smoke file and uses it
 # for the actual admin process. These process-only values exist solely so the
@@ -113,8 +142,11 @@ $env:SUBSCRIPTION_ADMIN_KEY = "local-smoke-subscription-key-0123456789abcdef0123
 
 $exitCode = 1
 try {
-  & (Join-Path $PSScriptRoot "local-trade-analysis-smoke.ps1") -Mint $Mint
-  $exitCode = $LASTEXITCODE
+  Push-Location $Launcher
+  try {
+    & (Join-Path $PSScriptRoot "local-trade-analysis-smoke.ps1") -Mint $Mint
+    $exitCode = $LASTEXITCODE
+  } finally { Pop-Location }
 } finally {
   if ($createdBackendRequirements -and (Test-Path -LiteralPath $backendRequirements)) {
     Remove-Item -LiteralPath $backendRequirements -Force -ErrorAction SilentlyContinue
