@@ -212,6 +212,13 @@ $env:COMPOSE_PROJECT_NAME = $smokeProjectName
 # PostgreSQL applies POSTGRES_PASSWORD only when initializing a new data volume.
 $mainSmokeSource = Join-Path $PSScriptRoot "local-trade-analysis-smoke.ps1"
 $mainSmokeContent = Get-Content -LiteralPath $mainSmokeSource -Raw
+$backendAnchor = 'Set-EnvValue $BackendEnv "ADMIN_TELEGRAM_SERVICE_TOKEN" $AdminTelegramToken'
+$backendSmokeConfig = @'
+Set-EnvValue $BackendEnv "DATABASE_URL" "postgresql+asyncpg://memecoin:local-smoke-postgres-only@localhost:5432/memecoin"
+Set-EnvValue $BackendEnv "REDIS_URL" "redis://:local-smoke-redis-only@localhost:6379"
+Set-EnvValue $BackendEnv "SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY" "local-smoke-subscription-password-key-0123456789abcdef"
+'@
+$mainSmokeContent = $mainSmokeContent.Replace($backendAnchor, $backendAnchor + "`r`n" + $backendSmokeConfig.Trim())
 $mainSmokeContent = $mainSmokeContent.Replace('@localhost:5432/', "@localhost:${postgresHostPort}/")
 $mainSmokeContent = $mainSmokeContent.Replace('@localhost:6379', "@localhost:${redisHostPort}")
 $mainSmokeContent = $mainSmokeContent.Replace('if (-not (Get-EnvValue $MemecoinEnv "POSTGRES_PASSWORD")) { Set-EnvValue $MemecoinEnv "POSTGRES_PASSWORD" (New-HexSecret 16) }', 'Set-EnvValue $MemecoinEnv "POSTGRES_PASSWORD" "local-smoke-postgres-only"')
