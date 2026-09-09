@@ -30,10 +30,12 @@ if ($unexpected.Count -gt 0) {
 # A stale `next dev` process can keep @next/swc native DLLs open on Windows,
 # making npm ci fail with EPERM/unlink. Stop only node.exe processes whose
 # command line points at this isolated TEST worktree. Other repos/processes are
-# intentionally untouched.
+# intentionally untouched. Use PowerShell wildcard matching for Windows
+# PowerShell 5.1 compatibility instead of String.Contains(StringComparison).
+$repoPattern = "*$RepoRoot*"
 $staleNodes = @(
   Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase) }
+    Where-Object { $_.CommandLine -and ([string]$_.CommandLine -like $repoPattern) }
 )
 if ($staleNodes.Count -gt 0) {
   Write-Host "Stopping $($staleNodes.Count) stale Node process(es) from TEST worktree before npm ci..." -ForegroundColor Yellow
