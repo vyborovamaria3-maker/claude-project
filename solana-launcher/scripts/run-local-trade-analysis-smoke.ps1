@@ -79,12 +79,35 @@ if (-not (Test-Path -LiteralPath $backendRequirements)) {
 }
 
 # Docker CLI may be installed while Docker Desktop's Linux engine is stopped.
-# The smoke needs Docker for the admin image plus PostgreSQL/Redis (and bundled
-# Qwen when used), so start Docker Desktop when possible and wait for the daemon.
+# Probe it via System.Diagnostics.Process so docker stderr never becomes a
+# terminating NativeCommandError under Windows PowerShell 5.1 + Stop policy.
 function Test-DockerReady {
-  if (-not (Get-Command docker.exe -ErrorAction SilentlyContinue)) { return $false }
-  & docker info *> $null
-  return ($LASTEXITCODE -eq 0)
+  $dockerCommand = Get-Command docker.exe -ErrorAction SilentlyContinue
+  if (-not $dockerCommand) { return $false }
+
+  $process = $null
+  try {
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $dockerCommand.Source
+    $startInfo.Arguments = "info"
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) { return $false }
+    if (-not $process.WaitForExit(10000)) {
+      try { $process.Kill() } catch {}
+      return $false
+    }
+    return ($process.ExitCode -eq 0)
+  } catch {
+    return $false
+  } finally {
+    if ($process) { $process.Dispose() }
+  }
 }
 
 if (-not (Test-DockerReady)) {
