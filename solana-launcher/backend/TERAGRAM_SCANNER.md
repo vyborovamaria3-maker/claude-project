@@ -117,6 +117,54 @@ large intermediate joins can spill to the temp directory instead of exhausting R
 The generated seed database is historical. Live Telegram discovery must still revalidate that a channel
 exists and is currently relevant before using it in analysis.
 
+## TG Invite integration
+
+TeraGram is an input source for TG Invite, not an invitation engine. A TeraGram result represents a
+Telegram channel that is likely to contain a relevant audience. Do not put those channel usernames into
+the final user-invite queue directly.
+
+The intended flow is:
+
+```text
+TeraGram
+  -> filtered crypto / Solana / memecoin source channels
+  -> TG Invite source-channel list
+  -> existing MTProto member collection
+  -> deduplicated user queue
+  -> existing TG Invite rate limits / checks / invite workflow
+```
+
+The backend exposes the already-generated lightweight TeraGram result files through authenticated read
+endpoints:
+
+```text
+GET /api/v1/telegram/teragram/status
+GET /api/v1/telegram/teragram/channels?classification=solana&limit=250
+```
+
+The frontend reusable card is exported from:
+
+```tsx
+import { TeraGramInviteSource } from "@/components/tginvite";
+```
+
+The real TG Invite screen should pass its existing source-list merger as the callback:
+
+```tsx
+<TeraGramInviteSource
+  onImportSources={(usernames) => addSourceChannels(usernames)}
+/>
+```
+
+`addSourceChannels` above is intentionally illustrative: use the existing TG Invite source-channel state
+or service instead of creating a parallel queue. The component disables import when no callback is
+provided, so it cannot pretend that channels were imported before the actual TG Invite integration is
+wired.
+
+Do not start a full TeraGram scan from a browser request. The card only reads scan status/results. Heavy
+scans remain CLI/job operations so request timeouts or duplicate button clicks cannot launch competing
+multi-terabyte jobs.
+
 ## Promote TeraGram seeds to live discovery
 
 The current application default intentionally remains the legacy seed file until a TeraGram scan has
