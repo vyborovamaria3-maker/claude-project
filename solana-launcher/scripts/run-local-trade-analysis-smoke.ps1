@@ -180,11 +180,13 @@ if ($qwenHealthy) {
 
 # Isolate PostgreSQL and Redis from every other local project. Fixed fallback
 # ports can also already be occupied, so ask Windows for currently free loopback
-# ports and use those for this smoke run. The dedicated Compose project keeps
-# its containers/volumes separate from normal memecoin-intelligence state.
+# ports and use those for this smoke run. A per-run Compose project name gives
+# every run a fresh data volume, so a stale Postgres password from an interrupted
+# earlier smoke can never be reused.
 $postgresHostPort = Get-FreeTcpPort
 $redisHostPort = Get-FreeTcpPort
 while ($redisHostPort -eq $postgresHostPort) { $redisHostPort = Get-FreeTcpPort }
+$smokeProjectName = "potapoff-trade-analysis-smoke-$postgresHostPort"
 
 $composeSource = Join-Path $Memecoin "docker-compose.yml"
 $composeContent = Get-Content -LiteralPath $composeSource -Raw
@@ -192,13 +194,11 @@ $composeContent = $composeContent.Replace('127.0.0.1:5432:5432', "127.0.0.1:${po
 $composeContent = $composeContent.Replace('127.0.0.1:6379:6379', "127.0.0.1:${redisHostPort}:6379")
 Set-Content -LiteralPath $generatedCompose -Value $composeContent -Encoding UTF8
 $env:COMPOSE_FILE = $generatedCompose
-$env:COMPOSE_PROJECT_NAME = "potapoff-trade-analysis-smoke"
+$env:COMPOSE_PROJECT_NAME = $smokeProjectName
 
 # Build a same-directory main-smoke copy that uses the isolated host ports and
 # deterministic local-only credentials. Stable smoke credentials are important:
-# PostgreSQL applies POSTGRES_PASSWORD only when initializing a new data volume,
-# so changing a generated password between runs would make migrations fail with
-# SQLSTATE 28P01 against the persistent smoke volume.
+# PostgreSQL applies POSTGRES_PASSWORD only when initializing a new data volume.
 $mainSmokeSource = Join-Path $PSScriptRoot "local-trade-analysis-smoke.ps1"
 $mainSmokeContent = Get-Content -LiteralPath $mainSmokeSource -Raw
 $mainSmokeContent = $mainSmokeContent.Replace('@localhost:5432/', "@localhost:${postgresHostPort}/")
@@ -206,7 +206,7 @@ $mainSmokeContent = $mainSmokeContent.Replace('@localhost:6379', "@localhost:${r
 $mainSmokeContent = $mainSmokeContent.Replace('if (-not (Get-EnvValue $MemecoinEnv "POSTGRES_PASSWORD")) { Set-EnvValue $MemecoinEnv "POSTGRES_PASSWORD" (New-HexSecret 16) }', 'Set-EnvValue $MemecoinEnv "POSTGRES_PASSWORD" "local-smoke-postgres-only"')
 $mainSmokeContent = $mainSmokeContent.Replace('if (-not (Get-EnvValue $MemecoinEnv "REDIS_PASSWORD")) { Set-EnvValue $MemecoinEnv "REDIS_PASSWORD" (New-HexSecret 16) }', 'Set-EnvValue $MemecoinEnv "REDIS_PASSWORD" "local-smoke-redis-only"')
 Set-Content -LiteralPath $generatedMainSmoke -Value $mainSmokeContent -Encoding UTF8
-Write-Host "Smoke infrastructure: project=potapoff-trade-analysis-smoke PostgreSQL=$postgresHostPort Redis=$redisHostPort" -ForegroundColor Green
+Write-Host "Smoke infrastructure: project=$smokeProjectName PostgreSQL=$postgresHostPort Redis=$redisHostPort" -ForegroundColor Green
 
 # The backend is packaged by pyproject.toml and intentionally has no tracked
 # requirements.txt. The older main smoke runner still consumes requirements.txt.
