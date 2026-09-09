@@ -116,3 +116,23 @@ large intermediate joins can spill to the temp directory instead of exhausting R
 
 The generated seed database is historical. Live Telegram discovery must still revalidate that a channel
 exists and is currently relevant before using it in analysis.
+
+## Promote TeraGram seeds to live discovery
+
+The current application default intentionally remains the legacy seed file until a TeraGram scan has
+completed successfully. This prevents a deployment from switching to a path that does not exist yet.
+
+After a successful scan, point live public discovery at the new file:
+
+```env
+TG_PUBLIC_WEB_SEED_DATABASE=data/teragram/telegram_seed_database.json
+```
+
+Then restart the backend service. To roll back the seed source without reverting code, restore:
+
+```env
+TG_PUBLIC_WEB_SEED_DATABASE=data/tgdataset/telegram_seed_database.json
+```
+
+This staged switch makes TeraGram the primary historical source while keeping the existing TGDataset
+output as an operational fallback until the new dataset has actually been processed.
