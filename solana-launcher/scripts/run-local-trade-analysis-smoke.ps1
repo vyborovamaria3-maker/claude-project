@@ -8,6 +8,20 @@ $Launcher = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RepoRoot = (Resolve-Path (Join-Path $Launcher "..")).Path
 $Backend = Join-Path $Launcher "backend"
 $Memecoin = Join-Path $RepoRoot "memecoin-intelligence"
+$backendRequirements = Join-Path $Backend "requirements.txt"
+$createdBackendRequirements = $false
+
+# Older smoke revisions created this exact temporary compatibility file before
+# Docker preflight. If such a previous run was interrupted, remove only that
+# known generated file before the strict worktree check. Any other requirements
+# content is treated as user/project work and is never touched.
+if (Test-Path -LiteralPath $backendRequirements) {
+  $existingBackendRequirements = (Get-Content -LiteralPath $backendRequirements -Raw).Trim()
+  if ($existingBackendRequirements -eq "-e ./backend") {
+    Remove-Item -LiteralPath $backendRequirements -Force
+    Write-Host "Removed stale generated backend requirements.txt from previous smoke run." -ForegroundColor Yellow
+  }
+}
 
 # Next.js rewrites next-env.d.ts during local builds and memecoin-intelligence
 # intentionally may generate a local package-lock during smoke preparation.
@@ -67,17 +81,6 @@ $env:GIT_CONFIG_COUNT = "1"
 $env:GIT_CONFIG_KEY_0 = "status.showUntrackedFiles"
 $env:GIT_CONFIG_VALUE_0 = "no"
 
-# The backend is packaged by pyproject.toml and intentionally has no tracked
-# requirements.txt. The older smoke runner still consumes requirements.txt.
-# Use a relative editable requirement and run the child from $Launcher so pip
-# never receives the Cyrillic absolute worktree path on Windows.
-$backendRequirements = Join-Path $Backend "requirements.txt"
-$createdBackendRequirements = $false
-if (-not (Test-Path -LiteralPath $backendRequirements)) {
-  Set-Content -LiteralPath $backendRequirements -Value "-e ./backend" -Encoding ASCII
-  $createdBackendRequirements = $true
-}
-
 # Docker CLI may be installed while Docker Desktop's Linux engine is stopped.
 # Probe it via System.Diagnostics.Process so docker stderr never becomes a
 # terminating NativeCommandError under Windows PowerShell 5.1 + Stop policy.
@@ -130,6 +133,15 @@ if (-not (Test-DockerReady)) {
   throw "Docker Desktop engine is not available. Start Docker Desktop and rerun the smoke."
 }
 Write-Host "Docker engine: READY" -ForegroundColor Green
+
+# The backend is packaged by pyproject.toml and intentionally has no tracked
+# requirements.txt. The older main smoke runner still consumes requirements.txt.
+# Create the compatibility file only after Docker preflight has succeeded so a
+# stopped Docker engine cannot leave it behind before cleanup is active.
+if (-not (Test-Path -LiteralPath $backendRequirements)) {
+  Set-Content -LiteralPath $backendRequirements -Value "-e ./backend" -Encoding ASCII
+  $createdBackendRequirements = $true
+}
 
 # The main smoke runner builds a dedicated ignored .env.smoke file and uses it
 # for the actual admin process. These process-only values exist solely so the
