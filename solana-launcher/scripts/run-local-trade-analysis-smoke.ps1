@@ -10,6 +10,8 @@ $Backend = Join-Path $Launcher "backend"
 $Memecoin = Join-Path $RepoRoot "memecoin-intelligence"
 $backendRequirements = Join-Path $Backend "requirements.txt"
 $createdBackendRequirements = $false
+$originalPath = $env:PATH
+$nvidiaShimDir = $null
 
 # Older smoke revisions created this exact temporary compatibility file before
 # Docker preflight. If such a previous run was interrupted, remove only that
@@ -134,6 +136,29 @@ if (-not (Test-DockerReady)) {
 }
 Write-Host "Docker engine: READY" -ForegroundColor Green
 
+# A GPU being present does not mean a Qwen service is already usable. The older
+# main smoke runner treated nvidia-smi success as permission to build the bundled
+# multi-gigabyte Qwen image. That made a normal smoke unexpectedly spend an hour
+# downloading torch/CUDA. For the main smoke, only an already-running Qwen
+# endpoint counts as REAL. Otherwise temporarily shadow nvidia-smi so the child
+# selects its deterministic MOCK path. The dedicated Qwen image is validated
+# separately and never auto-built by this wrapper.
+$qwenHealthy = $false
+try {
+  $response = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8002/health" -TimeoutSec 3
+  $qwenHealthy = ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300)
+} catch {}
+
+if ($qwenHealthy) {
+  Write-Host "Existing Qwen endpoint: READY (real-model smoke enabled)" -ForegroundColor Green
+} else {
+  $nvidiaShimDir = Join-Path ([System.IO.Path]::GetTempPath()) "potapoff-smoke-no-auto-qwen"
+  New-Item -ItemType Directory -Path $nvidiaShimDir -Force | Out-Null
+  Set-Content -LiteralPath (Join-Path $nvidiaShimDir "nvidia-smi.cmd") -Value "@echo off`r`nexit /b 1" -Encoding ASCII
+  $env:PATH = "$nvidiaShimDir;$originalPath"
+  Write-Host "Existing Qwen endpoint: NOT RUNNING; bundled Qwen auto-build skipped for main smoke." -ForegroundColor Yellow
+}
+
 # The backend is packaged by pyproject.toml and intentionally has no tracked
 # requirements.txt. The older main smoke runner still consumes requirements.txt.
 # Create the compatibility file only after Docker preflight has succeeded so a
@@ -183,6 +208,10 @@ try {
     $exitCode = $LASTEXITCODE
   } finally { Pop-Location }
 } finally {
+  $env:PATH = $originalPath
+  if ($nvidiaShimDir -and (Test-Path -LiteralPath $nvidiaShimDir)) {
+    Remove-Item -LiteralPath $nvidiaShimDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
   if ($createdBackendRequirements -and (Test-Path -LiteralPath $backendRequirements)) {
     Remove-Item -LiteralPath $backendRequirements -Force -ErrorAction SilentlyContinue
   }
