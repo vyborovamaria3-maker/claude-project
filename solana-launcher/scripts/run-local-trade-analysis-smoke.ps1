@@ -11,7 +11,10 @@ $Memecoin = Join-Path $RepoRoot "memecoin-intelligence"
 $backendRequirements = Join-Path $Backend "requirements.txt"
 $createdBackendRequirements = $false
 $originalPath = $env:PATH
+$originalComposeFile = $env:COMPOSE_FILE
 $nvidiaShimDir = $null
+$generatedMainSmoke = Join-Path $PSScriptRoot ".local-trade-analysis-smoke.generated.ps1"
+$generatedCompose = Join-Path $Memecoin ".docker-compose.smoke.generated.yml"
 
 # Older smoke revisions created this exact temporary compatibility file before
 # Docker preflight. If such a previous run was interrupted, remove only that
@@ -22,6 +25,11 @@ if (Test-Path -LiteralPath $backendRequirements) {
   if ($existingBackendRequirements -eq "-e ./backend") {
     Remove-Item -LiteralPath $backendRequirements -Force
     Write-Host "Removed stale generated backend requirements.txt from previous smoke run." -ForegroundColor Yellow
+  }
+}
+foreach ($staleGenerated in @($generatedMainSmoke, $generatedCompose)) {
+  if (Test-Path -LiteralPath $staleGenerated) {
+    Remove-Item -LiteralPath $staleGenerated -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -159,6 +167,25 @@ if ($qwenHealthy) {
   Write-Host "Existing Qwen endpoint: NOT RUNNING; bundled Qwen auto-build skipped for main smoke." -ForegroundColor Yellow
 }
 
+# Isolate PostgreSQL and Redis from other local projects. The checked-in compose
+# publishes standard ports 5432/6379, which may already be occupied. Generate a
+# same-directory compose copy with smoke-only host ports so relative paths/build
+# contexts remain unchanged. Also generate a same-directory main smoke copy that
+# points its host-side DB/Redis URLs at those isolated ports.
+$composeSource = Join-Path $Memecoin "docker-compose.yml"
+$composeContent = Get-Content -LiteralPath $composeSource -Raw
+$composeContent = $composeContent.Replace('127.0.0.1:5432:5432', '127.0.0.1:15432:5432')
+$composeContent = $composeContent.Replace('127.0.0.1:6379:6379', '127.0.0.1:16379:6379')
+Set-Content -LiteralPath $generatedCompose -Value $composeContent -Encoding UTF8
+$env:COMPOSE_FILE = $generatedCompose
+
+$mainSmokeSource = Join-Path $PSScriptRoot "local-trade-analysis-smoke.ps1"
+$mainSmokeContent = Get-Content -LiteralPath $mainSmokeSource -Raw
+$mainSmokeContent = $mainSmokeContent.Replace('@localhost:5432/', '@localhost:15432/')
+$mainSmokeContent = $mainSmokeContent.Replace('@localhost:6379', '@localhost:16379')
+Set-Content -LiteralPath $generatedMainSmoke -Value $mainSmokeContent -Encoding UTF8
+Write-Host "Smoke infrastructure ports: PostgreSQL=15432 Redis=16379" -ForegroundColor Green
+
 # The backend is packaged by pyproject.toml and intentionally has no tracked
 # requirements.txt. The older main smoke runner still consumes requirements.txt.
 # Create the compatibility file only after Docker preflight has succeeded so a
@@ -204,11 +231,18 @@ $exitCode = 1
 try {
   Push-Location $Launcher
   try {
-    & (Join-Path $PSScriptRoot "local-trade-analysis-smoke.ps1") -Mint $Mint
+    & $generatedMainSmoke -Mint $Mint
     $exitCode = $LASTEXITCODE
   } finally { Pop-Location }
 } finally {
   $env:PATH = $originalPath
+  if ($null -eq $originalComposeFile) { Remove-Item Env:COMPOSE_FILE -ErrorAction SilentlyContinue }
+  else { $env:COMPOSE_FILE = $originalComposeFile }
+  foreach ($generated in @($generatedMainSmoke, $generatedCompose)) {
+    if (Test-Path -LiteralPath $generated) {
+      Remove-Item -LiteralPath $generated -Force -ErrorAction SilentlyContinue
+    }
+  }
   if ($nvidiaShimDir -and (Test-Path -LiteralPath $nvidiaShimDir)) {
     Remove-Item -LiteralPath $nvidiaShimDir -Recurse -Force -ErrorAction SilentlyContinue
   }
