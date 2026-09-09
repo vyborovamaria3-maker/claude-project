@@ -17,6 +17,16 @@ $nvidiaShimDir = $null
 $generatedMainSmoke = Join-Path $PSScriptRoot ".local-trade-analysis-smoke.generated.ps1"
 $generatedCompose = Join-Path $Memecoin ".docker-compose.smoke.generated.yml"
 
+function Get-FreeTcpPort {
+  $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+  try {
+    $listener.Start()
+    return ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+  } finally {
+    $listener.Stop()
+  }
+}
+
 # Older smoke revisions created this exact temporary compatibility file before
 # Docker preflight. If such a previous run was interrupted, remove only that
 # known generated file before the strict worktree check. Any other requirements
@@ -168,15 +178,18 @@ if ($qwenHealthy) {
   Write-Host "Existing Qwen endpoint: NOT RUNNING; bundled Qwen auto-build skipped for main smoke." -ForegroundColor Yellow
 }
 
-# Isolate PostgreSQL and Redis from other local projects. The checked-in compose
-# publishes standard ports 5432/6379, which may already be occupied. Generate a
-# same-directory compose copy with smoke-only host ports so relative paths/build
-# contexts remain unchanged. Also use a dedicated Compose project name so smoke
-# containers/volumes never reuse the ordinary memecoin-intelligence state.
+# Isolate PostgreSQL and Redis from every other local project. Fixed fallback
+# ports can also already be occupied, so ask Windows for currently free loopback
+# ports and use those for this smoke run. The dedicated Compose project keeps
+# its containers/volumes separate from normal memecoin-intelligence state.
+$postgresHostPort = Get-FreeTcpPort
+$redisHostPort = Get-FreeTcpPort
+while ($redisHostPort -eq $postgresHostPort) { $redisHostPort = Get-FreeTcpPort }
+
 $composeSource = Join-Path $Memecoin "docker-compose.yml"
 $composeContent = Get-Content -LiteralPath $composeSource -Raw
-$composeContent = $composeContent.Replace('127.0.0.1:5432:5432', '127.0.0.1:15432:5432')
-$composeContent = $composeContent.Replace('127.0.0.1:6379:6379', '127.0.0.1:16379:6379')
+$composeContent = $composeContent.Replace('127.0.0.1:5432:5432', "127.0.0.1:${postgresHostPort}:5432")
+$composeContent = $composeContent.Replace('127.0.0.1:6379:6379', "127.0.0.1:${redisHostPort}:6379")
 Set-Content -LiteralPath $generatedCompose -Value $composeContent -Encoding UTF8
 $env:COMPOSE_FILE = $generatedCompose
 $env:COMPOSE_PROJECT_NAME = "potapoff-trade-analysis-smoke"
@@ -188,12 +201,12 @@ $env:COMPOSE_PROJECT_NAME = "potapoff-trade-analysis-smoke"
 # SQLSTATE 28P01 against the persistent smoke volume.
 $mainSmokeSource = Join-Path $PSScriptRoot "local-trade-analysis-smoke.ps1"
 $mainSmokeContent = Get-Content -LiteralPath $mainSmokeSource -Raw
-$mainSmokeContent = $mainSmokeContent.Replace('@localhost:5432/', '@localhost:15432/')
-$mainSmokeContent = $mainSmokeContent.Replace('@localhost:6379', '@localhost:16379')
+$mainSmokeContent = $mainSmokeContent.Replace('@localhost:5432/', "@localhost:${postgresHostPort}/")
+$mainSmokeContent = $mainSmokeContent.Replace('@localhost:6379', "@localhost:${redisHostPort}")
 $mainSmokeContent = $mainSmokeContent.Replace('if (-not (Get-EnvValue $MemecoinEnv "POSTGRES_PASSWORD")) { Set-EnvValue $MemecoinEnv "POSTGRES_PASSWORD" (New-HexSecret 16) }', 'Set-EnvValue $MemecoinEnv "POSTGRES_PASSWORD" "local-smoke-postgres-only"')
 $mainSmokeContent = $mainSmokeContent.Replace('if (-not (Get-EnvValue $MemecoinEnv "REDIS_PASSWORD")) { Set-EnvValue $MemecoinEnv "REDIS_PASSWORD" (New-HexSecret 16) }', 'Set-EnvValue $MemecoinEnv "REDIS_PASSWORD" "local-smoke-redis-only"')
 Set-Content -LiteralPath $generatedMainSmoke -Value $mainSmokeContent -Encoding UTF8
-Write-Host "Smoke infrastructure: project=potapoff-trade-analysis-smoke PostgreSQL=15432 Redis=16379" -ForegroundColor Green
+Write-Host "Smoke infrastructure: project=potapoff-trade-analysis-smoke PostgreSQL=$postgresHostPort Redis=$redisHostPort" -ForegroundColor Green
 
 # The backend is packaged by pyproject.toml and intentionally has no tracked
 # requirements.txt. The older main smoke runner still consumes requirements.txt.
