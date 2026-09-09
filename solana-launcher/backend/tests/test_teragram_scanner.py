@@ -128,6 +128,8 @@ def test_content_scan_reuses_exact_existing_scoring(tmp_path: Path) -> None:
     assert len(candidates) == 1
     row = candidates[0]
     assert row["username"] == "solana_calls"
+    assert row["channel_id"] == "-1001"
+    assert row["teragram_chat_id"] == "1"
     assert "crypto" in row["classifications"]
     assert "memecoin" in row["classifications"]
     assert "solana" in row["classifications"]
@@ -139,6 +141,8 @@ def test_content_scan_reuses_exact_existing_scoring(tmp_path: Path) -> None:
     seed = json.loads((output / "telegram_seed_database.json").read_text(encoding="utf-8"))
     assert seed["source"] == "teragram"
     assert seed["channels"][0]["username"] == "solana_calls"
+    assert seed["channels"][0]["channel_id"] == "-1001"
+    assert seed["channels"][0]["teragram_chat_id"] == "1"
 
 
 def test_auto_falls_back_to_entities_when_text_is_unavailable(tmp_path: Path) -> None:
