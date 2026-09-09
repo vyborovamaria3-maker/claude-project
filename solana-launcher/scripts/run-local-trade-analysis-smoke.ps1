@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 
 $Launcher = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RepoRoot = (Resolve-Path (Join-Path $Launcher "..")).Path
+$Backend = Join-Path $Launcher "backend"
 $Memecoin = Join-Path $RepoRoot "memecoin-intelligence"
 
 # Next.js rewrites next-env.d.ts during local builds and memecoin-intelligence
@@ -66,6 +67,18 @@ $env:GIT_CONFIG_COUNT = "1"
 $env:GIT_CONFIG_KEY_0 = "status.showUntrackedFiles"
 $env:GIT_CONFIG_VALUE_0 = "no"
 
+# The backend is packaged by pyproject.toml and intentionally has no tracked
+# requirements.txt. The older smoke runner still consumes requirements.txt, so
+# create a temporary compatibility file that installs this exact backend in
+# editable mode. It is untracked, never committed, and removed in finally.
+$backendRequirements = Join-Path $Backend "requirements.txt"
+$createdBackendRequirements = $false
+if (-not (Test-Path -LiteralPath $backendRequirements)) {
+  $backendInstallPath = $Backend.Replace("\", "/")
+  Set-Content -LiteralPath $backendRequirements -Value "-e $backendInstallPath" -Encoding ASCII
+  $createdBackendRequirements = $true
+}
+
 # The main smoke runner builds a dedicated ignored .env.smoke file and uses it
 # for the actual admin process. These process-only values exist solely so the
 # earlier static `import app.main_admin` syntax/dependency check has a valid
@@ -103,6 +116,9 @@ try {
   & (Join-Path $PSScriptRoot "local-trade-analysis-smoke.ps1") -Mint $Mint
   $exitCode = $LASTEXITCODE
 } finally {
+  if ($createdBackendRequirements -and (Test-Path -LiteralPath $backendRequirements)) {
+    Remove-Item -LiteralPath $backendRequirements -Force -ErrorAction SilentlyContinue
+  }
   git -C $RepoRoot update-index --no-assume-unchanged -- "solana-launcher/next-env.d.ts" 2>$null
 }
 exit $exitCode
