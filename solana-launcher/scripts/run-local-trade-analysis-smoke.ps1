@@ -13,6 +13,12 @@ $createdBackendRequirements = $false
 $originalPath = $env:PATH
 $originalComposeFile = $env:COMPOSE_FILE
 $originalComposeProjectName = $env:COMPOSE_PROJECT_NAME
+$originalPostgresPassword = $env:POSTGRES_PASSWORD
+$originalRedisPassword = $env:REDIS_PASSWORD
+$originalDatabaseUrl = $env:DATABASE_URL
+$originalRedisUrl = $env:REDIS_URL
+$originalPostgresUser = $env:POSTGRES_USER
+$originalPostgresDb = $env:POSTGRES_DB
 $nvidiaShimDir = $null
 $generatedMainSmoke = Join-Path $PSScriptRoot ".local-trade-analysis-smoke.generated.ps1"
 $generatedCompose = Join-Path $Memecoin ".docker-compose.smoke.generated.yml"
@@ -25,6 +31,11 @@ function Get-FreeTcpPort {
   } finally {
     $listener.Stop()
   }
+}
+
+function Restore-ProcessEnv([string]$Name, [string]$Value) {
+  if ($null -eq $Value) { Remove-Item "Env:$Name" -ErrorAction SilentlyContinue }
+  else { [Environment]::SetEnvironmentVariable($Name, $Value, 'Process') }
 }
 
 # Older smoke revisions created this exact temporary compatibility file before
@@ -206,6 +217,16 @@ $mainSmokeContent = $mainSmokeContent.Replace('@localhost:6379', "@localhost:${r
 $mainSmokeContent = $mainSmokeContent.Replace('if (-not (Get-EnvValue $MemecoinEnv "POSTGRES_PASSWORD")) { Set-EnvValue $MemecoinEnv "POSTGRES_PASSWORD" (New-HexSecret 16) }', 'Set-EnvValue $MemecoinEnv "POSTGRES_PASSWORD" "local-smoke-postgres-only"')
 $mainSmokeContent = $mainSmokeContent.Replace('if (-not (Get-EnvValue $MemecoinEnv "REDIS_PASSWORD")) { Set-EnvValue $MemecoinEnv "REDIS_PASSWORD" (New-HexSecret 16) }', 'Set-EnvValue $MemecoinEnv "REDIS_PASSWORD" "local-smoke-redis-only"')
 Set-Content -LiteralPath $generatedMainSmoke -Value $mainSmokeContent -Encoding UTF8
+
+# Compose interpolation and npm/tsx both inherit process environment. Keep that
+# environment synchronized with the generated .env values so a caller's existing
+# POSTGRES_PASSWORD/DATABASE_URL cannot override one side of the smoke test.
+$env:POSTGRES_USER = "memecoin"
+$env:POSTGRES_DB = "memecoin"
+$env:POSTGRES_PASSWORD = "local-smoke-postgres-only"
+$env:REDIS_PASSWORD = "local-smoke-redis-only"
+$env:DATABASE_URL = "postgresql://memecoin:local-smoke-postgres-only@localhost:${postgresHostPort}/memecoin"
+$env:REDIS_URL = "redis://:local-smoke-redis-only@localhost:${redisHostPort}"
 Write-Host "Smoke infrastructure: project=$smokeProjectName PostgreSQL=$postgresHostPort Redis=$redisHostPort" -ForegroundColor Green
 
 # The backend is packaged by pyproject.toml and intentionally has no tracked
@@ -262,6 +283,12 @@ try {
   else { $env:COMPOSE_FILE = $originalComposeFile }
   if ($null -eq $originalComposeProjectName) { Remove-Item Env:COMPOSE_PROJECT_NAME -ErrorAction SilentlyContinue }
   else { $env:COMPOSE_PROJECT_NAME = $originalComposeProjectName }
+  Restore-ProcessEnv "POSTGRES_PASSWORD" $originalPostgresPassword
+  Restore-ProcessEnv "REDIS_PASSWORD" $originalRedisPassword
+  Restore-ProcessEnv "DATABASE_URL" $originalDatabaseUrl
+  Restore-ProcessEnv "REDIS_URL" $originalRedisUrl
+  Restore-ProcessEnv "POSTGRES_USER" $originalPostgresUser
+  Restore-ProcessEnv "POSTGRES_DB" $originalPostgresDb
   foreach ($generated in @($generatedMainSmoke, $generatedCompose)) {
     if (Test-Path -LiteralPath $generated) {
       Remove-Item -LiteralPath $generated -Force -ErrorAction SilentlyContinue
