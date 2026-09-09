@@ -14,11 +14,19 @@ from app.services.teragram_scanner import (
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_OUTPUT_DIR = "data/teragram"
-_ALLOWED_CLASSIFICATIONS = {"crypto", "memecoin", "solana", "caller", "memecoin_calls", "solana_memecoin"}
+_ALLOWED_CLASSIFICATIONS = {
+    "crypto",
+    "memecoin",
+    "solana",
+    "caller",
+    "memecoin_calls",
+    "solana_memecoin",
+}
 
 
 def _configured_output_label() -> str:
-    return (os.getenv("TG_TERAGRAM_OUTPUT_DIR") or _DEFAULT_OUTPUT_DIR).strip() or _DEFAULT_OUTPUT_DIR
+    configured = (os.getenv("TG_TERAGRAM_OUTPUT_DIR") or _DEFAULT_OUTPUT_DIR).strip()
+    return configured or _DEFAULT_OUTPUT_DIR
 
 
 def teragram_output_dir() -> Path:
@@ -46,7 +54,8 @@ def _seed_rows(output: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     payload = _read_json(output / "telegram_seed_database.json")
     if isinstance(payload, dict):
         rows = payload.get("channels")
-        return ([row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []), payload
+        result = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+        return result, payload
     if isinstance(payload, list):
         return [row for row in payload if isinstance(row, dict)], {}
     return [], {}
@@ -59,7 +68,8 @@ def get_teragram_invite_status(*, active_seed_database: str = "") -> dict[str, A
     rows, seed_document = _seed_rows(output)
     generated_at = summary.get("generated_at") or seed_document.get("generated_at")
     categories = summary.get("categories") if isinstance(summary.get("categories"), dict) else {}
-    expected_seed = f"{_configured_output_label().rstrip('/')}/telegram_seed_database.json"
+    output_label = _configured_output_label().rstrip("/\\")
+    expected_seed = f"{output_label}/telegram_seed_database.json"
     normalized_active = (active_seed_database or "").replace("\\", "/").strip()
     normalized_expected = expected_seed.replace("\\", "/").strip()
     ready = bool(rows)
@@ -77,7 +87,9 @@ def get_teragram_invite_status(*, active_seed_database: str = "") -> dict[str, A
         "categories": {str(key): _safe_int(value) for key, value in categories.items()},
         "output_dir": _configured_output_label(),
         "seed_database": expected_seed,
-        "active_for_public_discovery": bool(normalized_active and normalized_active == normalized_expected),
+        "active_for_public_discovery": bool(
+            normalized_active and normalized_active == normalized_expected
+        ),
         "source": {
             "name": "TeraGram",
             "preview_record_id": TERAGRAM_PREVIEW_RECORD_ID,
