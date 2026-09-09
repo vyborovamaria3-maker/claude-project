@@ -322,6 +322,7 @@ $processes.admin = (Start-Process powershell.exe -ArgumentList @("-ExecutionPoli
 if (-not (Wait-Http "http://localhost:18080/api/ready" 45)) { throw "Admin did not become ready. Check $LogsDir / admin window." }
 
 $adminSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$adminSession.Headers.Add("Origin", "http://localhost:18080")
 $loginBody = @{ username = "admin"; password = "local-smoke-only" } | ConvertTo-Json
 Invoke-RestMethod -Uri "http://localhost:18080/api/login" -Method Post -ContentType "application/json" -Body $loginBody -WebSession $adminSession | Out-Null
 $summary = Invoke-RestMethod -Uri "http://localhost:18080/api/integrations" -WebSession $adminSession
