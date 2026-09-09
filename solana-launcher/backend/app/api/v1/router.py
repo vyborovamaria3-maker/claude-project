@@ -9,6 +9,7 @@ from app.api.v1 import (
     subscriptions,
     tasks,
     telegram_intelligence,
+    teragram_invite,
     users,
 )
 
@@ -22,6 +23,11 @@ api_router.include_router(
     telegram_intelligence.router,
     prefix="/telegram",
     tags=["telegram-intelligence"],
+)
+api_router.include_router(
+    teragram_invite.router,
+    prefix="/telegram/teragram",
+    tags=["telegram-teragram"],
 )
 api_router.include_router(
     telegram_intelligence.social_router,
