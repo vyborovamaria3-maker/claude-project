@@ -27,6 +27,22 @@ if ($unexpected.Count -gt 0) {
   throw "Smoke worktree has unexpected changes. Nothing was reset or deleted.`n$($unexpected -join "`n")"
 }
 
+# A stale `next dev` process can keep @next/swc native DLLs open on Windows,
+# making npm ci fail with EPERM/unlink. Stop only node.exe processes whose
+# command line points at this isolated TEST worktree. Other repos/processes are
+# intentionally untouched.
+$staleNodes = @(
+  Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase) }
+)
+if ($staleNodes.Count -gt 0) {
+  Write-Host "Stopping $($staleNodes.Count) stale Node process(es) from TEST worktree before npm ci..." -ForegroundColor Yellow
+  foreach ($process in $staleNodes) {
+    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
+  }
+  Start-Sleep -Seconds 2
+}
+
 # npm ci requires a lockfile. Generate it locally if this package does not track
 # one; it stays untracked and is ignored only inside this child smoke process.
 $memecoinLock = Join-Path $Memecoin "package-lock.json"
