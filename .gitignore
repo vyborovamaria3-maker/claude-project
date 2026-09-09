@@ -53,6 +53,10 @@
 **/__pycache__/
 **/*.pyc
 
+# Local smoke-test runtime state
+.smoke-trade-analysis/
+**/.smoke-trade-analysis/
+
 # Local security-scan evidence may contain URLs, headers, payloads or session context.
 security/audit/reports/
 security/strix/reports/
