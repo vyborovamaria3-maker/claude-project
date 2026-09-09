@@ -93,7 +93,7 @@ export function fetchTeraGramInviteChannels(
   );
 }
 
-export function uniqueInviteTargets(channels: TeraGramInviteChannel[]): string[] {
+export function uniqueInviteSources(channels: TeraGramInviteChannel[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const channel of channels) {
