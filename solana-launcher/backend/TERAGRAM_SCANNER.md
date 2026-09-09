@@ -148,7 +148,10 @@ The frontend reusable card is exported from:
 import { TeraGramInviteSource } from "@/components/tginvite";
 ```
 
-The real TG Invite screen should pass its existing source-list merger as the callback:
+The actual TG Invite implementation is not present in the current remote repository revision, so the
+component is deliberately not mounted into an unrelated Settings/Launch/Trade screen. Once the TG Invite
+screen/source-list code is pushed, mount the card inside that screen and pass the existing source-list
+merger as the callback:
 
 ```tsx
 <TeraGramInviteSource
