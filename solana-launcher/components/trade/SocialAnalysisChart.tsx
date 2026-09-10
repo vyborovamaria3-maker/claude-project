@@ -28,7 +28,7 @@ const TIMEFRAMES: Array<{ value: Timeframe; label: string }> = [
 ];
 
 const MAX_RENDERED_CANDLES = 700;
-const CHART_HEIGHT = 400;
+const FALLBACK_CHART_HEIGHT = 400;
 
 function formatPrice(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) return "—";
@@ -71,9 +71,10 @@ export default function SocialAnalysisChart({
     const container = containerRef.current;
     if (!container || chartRef.current) return;
 
+    const measuredHeight = Math.max(container.clientHeight || FALLBACK_CHART_HEIGHT, 220);
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: CHART_HEIGHT,
+      height: measuredHeight,
       layout: {
         background: { type: ColorType.Solid, color: CHART_COLORS.background },
         textColor: CHART_COLORS.text,
@@ -125,8 +126,14 @@ export default function SocialAnalysisChart({
     applyChartTheme(chart);
 
     const resizeObserver = new ResizeObserver(() => {
-      if (!containerRef.current || !chartRef.current) return;
-      chartRef.current.applyOptions({ width: containerRef.current.clientWidth, height: CHART_HEIGHT });
+      const currentContainer = containerRef.current;
+      const currentChart = chartRef.current;
+      if (!currentContainer || !currentChart) return;
+      const nextHeight = Math.max(currentContainer.clientHeight || FALLBACK_CHART_HEIGHT, 220);
+      currentChart.applyOptions({
+        width: currentContainer.clientWidth,
+        height: nextHeight,
+      });
     });
     resizeObserver.observe(container);
 
@@ -182,11 +189,11 @@ export default function SocialAnalysisChart({
   return (
     <section
       className="surface-panel col-span-full overflow-hidden rounded-2xl border border-bg-border [&+section]:hidden"
-      data-tag="trade.social_analysis_chart.v2"
+      data-tag="trade.social_analysis_chart.v3"
     >
-      <div className="grid min-h-[480px] md:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_350px]">
-        <div className="min-w-0 border-b border-bg-border bg-bg-card md:border-b-0 md:border-r">
-          <div className="flex min-h-[79px] flex-col gap-3 border-b border-bg-border px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="grid md:h-[520px] md:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_350px]">
+        <div className="flex min-h-[479px] min-w-0 flex-col border-b border-bg-border bg-bg-card md:h-full md:min-h-0 md:border-b-0 md:border-r">
+          <div className="flex min-h-[79px] shrink-0 flex-col gap-3 border-b border-bg-border px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-content-faint">Price chart</span>
@@ -222,8 +229,8 @@ export default function SocialAnalysisChart({
             </div>
           </div>
 
-          <div className="relative h-[400px] bg-bg-card">
-            <div ref={containerRef} className="h-full w-full" />
+          <div className="relative h-[400px] shrink-0 bg-bg-card md:h-auto md:min-h-0 md:flex-1 md:shrink">
+            <div ref={containerRef} className="absolute inset-0" />
             {isLoading ? (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-bg-overlay/50">
                 <div className="h-7 w-7 animate-spin rounded-full border-2 border-bg-border border-t-primary" />
@@ -244,7 +251,7 @@ export default function SocialAnalysisChart({
           </div>
         </div>
 
-        <div className="min-h-[480px] bg-bg-card">
+        <div className="h-[400px] min-h-0 overflow-hidden bg-bg-card md:h-full">
           <ActivityPanel mint={mint} />
         </div>
       </div>
