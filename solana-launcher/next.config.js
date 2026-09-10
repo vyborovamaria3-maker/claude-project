@@ -2,7 +2,11 @@
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
-  allowedDevOrigins: ['expansive-shelve-vitally.ngrok-free.dev'],
+  allowedDevOrigins: [
+    'localhost',
+    '127.0.0.1',
+    'expansive-shelve-vitally.ngrok-free.dev',
+  ],
   // CSP is generated per request in proxy.ts so production scripts can use a
   // nonce instead of unsafe-inline / unsafe-eval. Keep static headers here for
   // controls that do not require per-request state.
