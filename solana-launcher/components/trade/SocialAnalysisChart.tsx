@@ -15,10 +15,18 @@ import {
 } from "lightweight-charts";
 import ActivityPanel from "@/components/chart/ActivityPanel";
 import { useOHLCV } from "@/hooks/useOHLCV";
-import { applyChartTheme, CHART_COLORS, CHART_FONTS } from "@/lib/chart/config";
+import {
+  applyChartTheme,
+  CHART_COLORS,
+  CHART_FONTS,
+  formatMcap,
+} from "@/lib/chart/config";
 import type { Timeframe } from "@/lib/chart/types";
 
 const TIMEFRAMES: Array<{ value: Timeframe; label: string }> = [
+  { value: "1s", label: "1s" },
+  { value: "5s", label: "5s" },
+  { value: "15s", label: "15s" },
   { value: "1m", label: "1m" },
   { value: "5m", label: "5m" },
   { value: "15m", label: "15m" },
@@ -27,15 +35,32 @@ const TIMEFRAMES: Array<{ value: Timeframe; label: string }> = [
   { value: "1d", label: "1D" },
 ];
 
+const PUMP_SUPPLY = 1_000_000_000;
 const MAX_RENDERED_CANDLES = 700;
 const FALLBACK_CHART_HEIGHT = 400;
 
-function formatPrice(value: number | null | undefined): string {
+type MetricMode = "mcap" | "price";
+
+function formatTokenPrice(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) return "—";
-  if (value >= 1) return `$${value.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+  if (value >= 1000) return `$${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  if (value >= 1) return `$${value.toFixed(4)}`;
   if (value >= 0.01) return `$${value.toFixed(5)}`;
-  if (value >= 0.0001) return `$${value.toFixed(7)}`;
-  return `$${value.toExponential(3)}`;
+  if (value >= 0.0001) return `$${value.toFixed(6)}`;
+  if (value >= 0.000001) return `$${value.toFixed(8)}`;
+  return `$${value.toFixed(10)}`;
+}
+
+function formatMcapAxis(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "$0";
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(value >= 10_000_000_000 ? 1 : 2)}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(value >= 10_000_000 ? 1 : 2)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
+function isSecondTimeframe(timeframe: Timeframe): boolean {
+  return timeframe === "1s" || timeframe === "5s" || timeframe === "15s";
 }
 
 export default function SocialAnalysisChart({
@@ -45,7 +70,8 @@ export default function SocialAnalysisChart({
   mint: string;
   symbol?: string | null;
 }) {
-  const [timeframe, setTimeframe] = useState<Timeframe>("5m");
+  const [timeframe, setTimeframe] = useState<Timeframe>("5s");
+  const [metricMode, setMetricMode] = useState<MetricMode>("mcap");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -91,13 +117,16 @@ export default function SocialAnalysisChart({
         horzLine: { color: CHART_COLORS.crosshair, labelBackgroundColor: CHART_COLORS.crosshairLabel },
       },
       rightPriceScale: {
+        visible: true,
+        borderVisible: true,
         borderColor: CHART_COLORS.border,
+        entireTextOnly: true,
         scaleMargins: { top: 0.06, bottom: 0.22 },
       },
       timeScale: {
         borderColor: CHART_COLORS.border,
         timeVisible: true,
-        secondsVisible: false,
+        secondsVisible: true,
         rightOffset: 6,
         barSpacing: 7,
       },
@@ -113,6 +142,11 @@ export default function SocialAnalysisChart({
       borderDownColor: CHART_COLORS.down,
       priceLineVisible: true,
       lastValueVisible: true,
+      priceFormat: {
+        type: "custom",
+        minMove: 1,
+        formatter: formatMcapAxis,
+      },
     });
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
@@ -151,17 +185,43 @@ export default function SocialAnalysisChart({
   }, []);
 
   useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.timeScale().applyOptions({
+      timeVisible: true,
+      secondsVisible: isSecondTimeframe(timeframe),
+    });
+  }, [timeframe]);
+
+  useEffect(() => {
     const candleSeries = candlesRef.current;
     const volumeSeries = volumeRef.current;
     const chart = chartRef.current;
     if (!candleSeries || !volumeSeries || !chart) return;
 
+    const multiplier = metricMode === "mcap" ? PUMP_SUPPLY : 1;
+    candleSeries.applyOptions({
+      priceFormat: metricMode === "mcap"
+        ? {
+            type: "custom",
+            minMove: 1,
+            formatter: formatMcapAxis,
+          }
+        : {
+            type: "custom",
+            minMove: 0.0000000001,
+            formatter: formatTokenPrice,
+          },
+      priceLineVisible: true,
+      lastValueVisible: true,
+    });
+
     const candleData: CandlestickData[] = visibleCandles.map((candle) => ({
       time: candle.time as Time,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
+      open: candle.open * multiplier,
+      high: candle.high * multiplier,
+      low: candle.low * multiplier,
+      close: candle.close * multiplier,
     }));
     const volumeData: HistogramData[] = visibleCandles.map((candle) => ({
       time: candle.time as Time,
@@ -177,28 +237,31 @@ export default function SocialAnalysisChart({
     } else if (visibleCandles.length > 0) {
       const count = visibleCandles.length;
       chart.timeScale().setVisibleLogicalRange({
-        from: Math.max(0, count - 110),
+        from: Math.max(0, count - (isSecondTimeframe(timeframe) ? 150 : 110)),
         to: count + 6,
       });
     }
     previousTimeframeRef.current = timeframe;
-  }, [timeframe, visibleCandles]);
+  }, [timeframe, metricMode, visibleCandles]);
 
   const changeTone = change24h > 0 ? "text-success" : change24h < 0 ? "text-danger" : "text-content-muted";
+  const displayedValue = metricMode === "mcap" ? formatMcap(lastPrice) : formatTokenPrice(lastPrice);
 
   return (
     <section
       className="surface-panel col-span-full overflow-hidden rounded-2xl border border-bg-border [&+section]:hidden"
-      data-tag="trade.social_analysis_chart.v3"
+      data-tag="trade.social_analysis_chart.v4"
     >
       <div className="grid md:h-[520px] md:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_350px]">
         <div className="flex min-h-[479px] min-w-0 flex-col border-b border-bg-border bg-bg-card md:h-full md:min-h-0 md:border-b-0 md:border-r">
-          <div className="flex min-h-[79px] shrink-0 flex-col gap-3 border-b border-bg-border px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-h-[79px] shrink-0 flex-col gap-2 border-b border-bg-border px-3 py-2.5 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-content-faint">Price chart</span>
+                <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-content-faint">
+                  {metricMode === "mcap" ? "Market Cap" : "Token Price"}
+                </span>
                 <h2 className="text-sm font-semibold text-content">{symbol ? `$${symbol.replace(/^\$/, "")}` : "TOKEN"}</h2>
-                <span className="font-mono text-lg font-bold text-content">{formatPrice(lastPrice)}</span>
+                <span className="font-mono text-lg font-bold text-content">{displayedValue}</span>
                 <span className={`font-mono text-xs font-semibold ${changeTone}`}>
                   {Number.isFinite(change24h) ? `${change24h >= 0 ? "+" : ""}${change24h.toFixed(2)}%` : "—"}
                 </span>
@@ -207,25 +270,48 @@ export default function SocialAnalysisChart({
                 <span className="h-1.5 w-1.5 rounded-full bg-success" />
                 <span className="uppercase tracking-[0.12em]">{dataSource || "market"}</span>
                 <span>·</span>
-                <span>live OHLCV + volume</span>
+                <span>{metricMode === "mcap" ? "MC = token price × 1B supply" : "USD price per token"}</span>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-1">
-              {TIMEFRAMES.map((item) => (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <div className="flex shrink-0 rounded-md border border-bg-border bg-bg-elevated/45 p-0.5">
                 <button
-                  key={item.value}
                   type="button"
-                  onClick={() => setTimeframe(item.value)}
-                  className={`rounded-md border px-2.5 py-1.5 text-[10px] font-semibold transition ${
-                    timeframe === item.value
-                      ? "border-primary-border bg-primary-soft text-primary"
-                      : "border-bg-border bg-bg-elevated/45 text-content-muted hover:bg-bg-elevated hover:text-content"
+                  onClick={() => setMetricMode("mcap")}
+                  className={`rounded px-2 py-1 text-[9px] font-bold transition ${
+                    metricMode === "mcap" ? "bg-primary-soft text-primary" : "text-content-faint hover:text-content"
                   }`}
                 >
-                  {item.label}
+                  MC
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setMetricMode("price")}
+                  className={`rounded px-2 py-1 text-[9px] font-bold transition ${
+                    metricMode === "price" ? "bg-primary-soft text-primary" : "text-content-faint hover:text-content"
+                  }`}
+                >
+                  PRICE
+                </button>
+              </div>
+
+              <div className="custom-scrollbar flex min-w-0 max-w-full gap-1 overflow-x-auto pb-0.5">
+                {TIMEFRAMES.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => setTimeframe(item.value)}
+                    className={`shrink-0 rounded-md border px-2 py-1.5 text-[9px] font-semibold transition ${
+                      timeframe === item.value
+                        ? "border-primary-border bg-primary-soft text-primary"
+                        : "border-bg-border bg-bg-elevated/45 text-content-muted hover:bg-bg-elevated hover:text-content"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
