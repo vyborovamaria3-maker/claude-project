@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $LauncherRoot = Split-Path $PSScriptRoot -Parent
 $RepoRoot = Split-Path $LauncherRoot -Parent
 $IntelligenceRoot = Join-Path $RepoRoot "memecoin-intelligence"
+$IntelligenceManagedByCompose = $false
 
 function Test-LocalPort([int]$Port) {
     try {
@@ -43,19 +44,20 @@ if (-not (Test-Path (Join-Path $LauncherRoot "backend\.env"))) {
     Write-Warning "backend/.env is missing. Telegram MTProto credentials/session will not be available until it is configured."
 }
 if (-not (Test-Path (Join-Path $IntelligenceRoot ".env"))) {
-    Write-Warning "memecoin-intelligence/.env is missing. Copy .env.example to .env and configure Telegram AI before expecting Qwen."
+    Write-Warning "memecoin-intelligence/.env is missing. Compose requires it for a configured AI runtime."
 }
 
 if (-not $SkipInfrastructure) {
     Push-Location $IntelligenceRoot
     try {
         if ($RealQwen) {
-            Write-Host "Starting Postgres, Redis and real Qwen infrastructure..." -ForegroundColor Cyan
-            docker compose --profile ai up -d postgres redis qwen
+            Write-Host "Starting Postgres, Redis, Intelligence API and real Qwen..." -ForegroundColor Cyan
+            docker compose --profile ai up -d postgres redis qwen api
         } else {
-            Write-Host "Starting Postgres and Redis infrastructure..." -ForegroundColor Cyan
-            docker compose up -d postgres redis
+            Write-Host "Starting Postgres, Redis and Intelligence API..." -ForegroundColor Cyan
+            docker compose up -d postgres redis api
         }
+        $IntelligenceManagedByCompose = $true
     } finally {
         Pop-Location
     }
@@ -68,11 +70,12 @@ if (Test-LocalPort 8000) {
     Start-DevWindow "POTAPoff FastAPI :8000" $LauncherRoot "npm run backend:dev"
 }
 
-if (Test-LocalPort 3001) {
+if ($IntelligenceManagedByCompose) {
+    Write-Host "Memecoin Intelligence 3001 is managed by Docker Compose." -ForegroundColor Green
+} elseif (Test-LocalPort 3001) {
     Write-Host "Memecoin Intelligence 3001 already listening; leaving it untouched." -ForegroundColor Yellow
 } else {
-    Write-Host "Starting Memecoin Intelligence API on 3001..." -ForegroundColor Green
-    Start-DevWindow "POTAPoff Intelligence :3001" $IntelligenceRoot "npm run dev:api"
+    Write-Warning "3001 is not listening and -SkipInfrastructure was used. Start the configured Intelligence API manually or rerun without -SkipInfrastructure."
 }
 
 if (Test-LocalPort $FrontendPort) {
