@@ -11,33 +11,34 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  Activity,
   AlertTriangle,
   BrainCircuit,
-  Gauge,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
+  ExternalLink,
   Loader2,
-  Network,
   Radar,
   RefreshCw,
   Search,
   Send,
   ShieldAlert,
+  SlidersHorizontal,
   Sparkles,
-  TrendingUp,
   Twitter,
-  Zap,
+  WalletCards,
 } from "lucide-react";
+import SocialAnalysisChart from "@/components/trade/SocialAnalysisChart";
 import { siteDesign } from "@/lib/siteDesign";
 import {
   DEFAULT_SOCIAL_OPTIONS,
-  IMPULSE_THRESHOLD_PCT,
   MINT_RE,
   clamp,
   deriveSocialMetrics,
   numberOr,
-  pct,
   score,
   signedPct,
-  toTimestamp,
   upsertWarning,
   type AiEnvelope,
   type ChainAnalysis,
@@ -45,10 +46,8 @@ import {
   type Lookback,
   type Market,
   type Metric,
-  type PriceSocial,
   type SocialOptions,
   type SocialTimeline,
-  type TimelineItem,
   type TwitterStats,
 } from "@/lib/trade/social-intelligence";
 import {
@@ -62,6 +61,63 @@ import {
 } from "@/lib/trade/intelligence-agent";
 
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
+
+type TelegramCollectorStatus = {
+  mode?: string;
+  configured?: boolean;
+  mtproto_configured?: boolean;
+  session_configured?: boolean;
+  running?: boolean;
+  background_running?: boolean;
+  connected?: boolean;
+  monitored_channels?: number;
+  public_web_enabled?: boolean;
+  public_web_configured?: boolean;
+  public_web_channels?: number;
+  last_scan_at?: string | null;
+  last_scan_messages?: number;
+  last_scan_matches?: number;
+  last_error?: string | null;
+};
+
+type SourceErrors = {
+  x: string | null;
+  tg: string | null;
+  market: string | null;
+  chain: string | null;
+};
+
+const EMPTY_SOURCE_ERRORS: SourceErrors = { x: null, tg: null, market: null, chain: null };
+
+function settledError(result: PromiseSettledResult<unknown>): string | null {
+  if (result.status === "fulfilled") return null;
+  return result.reason instanceof Error ? result.reason.message : String(result.reason || "недоступен");
+}
+
+function telegramCollector(tg: SocialTimeline | null): TelegramCollectorStatus | null {
+  const meta = tg?.meta as (SocialTimeline["meta"] & { telegramCollector?: TelegramCollectorStatus }) | undefined;
+  return meta?.telegramCollector || null;
+}
+
+function formatPrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return "—";
+  if (value >= 1) return `$${value.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+  if (value >= 0.01) return `$${value.toFixed(5)}`;
+  if (value >= 0.0001) return `$${value.toFixed(7)}`;
+  return `$${value.toExponential(3)}`;
+}
+
+function shortAddress(value: string | null | undefined, left = 5, right = 4): string {
+  if (!value) return "—";
+  if (value.length <= left + right + 2) return value;
+  return `${value.slice(0, left)}…${value.slice(-right)}`;
+}
+
+function formatTradeTime(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const ms = value > 1e12 ? value : value * 1000;
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
 
 export default function SocialIntelligencePanel() {
   const router = useRouter();
@@ -81,15 +137,13 @@ export default function SocialIntelligencePanel() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(false);
   const [chainLoading, setChainLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [sourceErrors, setSourceErrors] = useState<SourceErrors>(EMPTY_SOURCE_ERRORS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [technicalOpen, setTechnicalOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    void fetchJson<{ items: Channel[] }>(`${BACKEND}/api/v1/telegram/channels?limit=100`)
-      .then((value) => setChannels(Array.isArray(value.items) ? value.items : []))
-      .catch(() => {});
-  }, []);
 
   const run = useCallback(
     async (next: string) => {
@@ -107,8 +161,10 @@ export default function SocialIntelligencePanel() {
       setQuery(contract);
       setLoading(true);
       setChainLoading(true);
+      setAiLoading(false);
       setError(null);
       setWarnings([]);
+      setSourceErrors(EMPTY_SOURCE_ERRORS);
       setX(null);
       setTg(null);
       setMarket(null);
@@ -118,6 +174,7 @@ export default function SocialIntelligencePanel() {
       router.replace(`/trade/analysis/social?mint=${encodeURIComponent(contract)}`, { scroll: false });
 
       const { x: xParams, tg: tgParams } = buildSocialSourceParams(contract, options);
+      let chainFailure: string | null = null;
 
       const chainPromise = readChainStream(contract, controller.signal)
         .then((value) => {
@@ -126,8 +183,7 @@ export default function SocialIntelligencePanel() {
         })
         .catch((chainError: unknown) => {
           if (controller.signal.aborted) return null;
-          const message = chainError instanceof Error ? chainError.message : "недоступна";
-          setWarnings((value) => upsertWarning(value, `Trade history: ${message}`));
+          chainFailure = chainError instanceof Error ? chainError.message : "недоступна";
           return null;
         })
         .finally(() => {
@@ -150,29 +206,41 @@ export default function SocialIntelligencePanel() {
       const nextMarket = marketResult.status === "fulfilled" ? marketResult.value : null;
       const nextChannels = channelResult.status === "fulfilled" && Array.isArray(channelResult.value.items)
         ? channelResult.value.items
-        : channels;
+        : [];
+
       setX(nextX);
       setTg(nextTg);
       setMarket(nextMarket);
-      if (channelResult.status === "fulfilled") setChannels(nextChannels);
+      setChannels(nextChannels);
+      setLoading(false);
 
-      const sourceWarnings = [
-        !nextX ? "X: недоступен" : null,
-        !nextTg ? "Telegram: недоступен" : null,
-        !nextMarket ? "Market: недоступен" : null,
-        channelResult.status !== "fulfilled" ? "TG reputation: недоступна" : null,
-      ].filter((value): value is string => value != null);
-      setWarnings((value) => sourceWarnings.reduce(upsertWarning, value));
-
-      if (!nextX && !nextTg) {
-        setError("Нет данных X и Telegram");
-        setLoading(false);
-        return;
+      const xFailure = settledError(xResult);
+      const tgFailure = settledError(tgResult);
+      const marketFailure = settledError(marketResult);
+      const reputationFailure = settledError(channelResult);
+      if (reputationFailure) {
+        setWarnings((value) => upsertWarning(value, `TG reputation: ${reputationFailure}`));
       }
 
       const nextChain = await chainPromise;
       if (controller.signal.aborted) return;
-      const deterministic = deriveSocialMetrics(nextX, nextTg, nextMarket, nextChain, null, nextChannels, options);
+
+      setSourceErrors({ x: xFailure, tg: tgFailure, market: marketFailure, chain: chainFailure });
+
+      if (!nextX && !nextTg && !nextMarket && !nextChain) {
+        setError("Источники анализа не ответили. Проверь backend, авторизацию и локальные integration credentials.");
+        return;
+      }
+
+      const deterministic = deriveSocialMetrics(
+        nextX,
+        nextTg,
+        nextMarket,
+        nextChain,
+        null,
+        nextChannels,
+        options,
+      );
       const nextSnapshot = buildAnalysisSnapshot({
         mint: contract,
         symbol: nextX?.symbol || options.symbol || null,
@@ -185,32 +253,36 @@ export default function SocialIntelligencePanel() {
       });
       setSnapshot(nextSnapshot);
 
-      if (nextSnapshot.evidence.length) {
-        try {
-          const qwen = await fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              mint: contract,
-              symbol: nextX?.symbol || options.symbol,
-              tokenName: nextMarket?.pair?.name,
-              timeline: (nextTg?.timeline || []).filter((item) => !item.platform || item.platform.toLowerCase() === "telegram"),
-              snapshot: nextSnapshot,
-            }),
-          });
-          if (!controller.signal.aborted) setAi(qwen);
-        } catch (aiError: unknown) {
-          if (!controller.signal.aborted) {
-            const message = aiError instanceof Error ? aiError.message : "AI недоступен";
-            setWarnings((value) => upsertWarning(value, `Qwen: ${message}`));
-            setAi({ agent: "qwen", available: false, error: message });
-          }
-        }
-      }
+      if (!nextSnapshot.evidence.length) return;
 
-      if (!controller.signal.aborted) setLoading(false);
+      setAiLoading(true);
+      void fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mint: contract,
+          symbol: nextX?.symbol || options.symbol,
+          tokenName: nextMarket?.pair?.name,
+          timeline: (nextTg?.timeline || []).filter(
+            (item) => !item.platform || item.platform.toLowerCase() === "telegram",
+          ),
+          snapshot: nextSnapshot,
+        }),
+      })
+        .then((value) => {
+          if (!controller.signal.aborted) setAi(value);
+        })
+        .catch((aiError: unknown) => {
+          if (controller.signal.aborted) return;
+          const message = aiError instanceof Error ? aiError.message : "AI недоступен";
+          setAi({ agent: "qwen", available: false, error: message });
+          setWarnings((value) => upsertWarning(value, `Qwen: ${message}`));
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setAiLoading(false);
+        });
     },
-    [channels, options, router],
+    [options, router],
   );
 
   useEffect(() => {
@@ -225,240 +297,623 @@ export default function SocialIntelligencePanel() {
     [x, tg, market, chain, ai, channels, options],
   );
 
+  const recentTrades = useMemo(
+    () => [...(chain?.trades || [])].sort((left, right) => right.ts - left.ts).slice(0, 12),
+    [chain],
+  );
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(query);
   };
 
-  return (
-    <div className="space-y-5" data-tag="trade.social_intelligence.v7">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Network className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold text-content">Social Intelligence · X + Telegram + Graph + Qwen</h1>
-          </div>
-          <p className="mt-1 text-xs text-content-muted">Все deterministic-параметры, entity graph, cross-platform evidence и AI-гипотезы в одном snapshot.</p>
-        </div>
-        {mint && <div className="font-mono text-[10px] text-content-faint">{mint.slice(0, 8)}…{mint.slice(-7)}</div>}
-      </header>
+  const symbol = x?.symbol || options.symbol || null;
+  const priceChange = market?.pair?.changeH1 ?? market?.pair?.change24h ?? null;
 
-      <form onSubmit={submit} className="surface-panel rounded-2xl border border-bg-border p-4">
-        <div className="grid gap-3 lg:grid-cols-[1.5fr_.55fr_.55fr_.45fr]">
-          <Field label="Solana mint / CA">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-faint" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} className={`${siteDesign.controls.inputClassName} pl-9 font-mono`} placeholder="Вставь contract" />
+  return (
+    <div className="space-y-4" data-tag="trade.social_intelligence.terminal.v1">
+      <section className="surface-panel rounded-2xl border border-bg-border p-4">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Radar className="h-5 w-5 text-primary" />
+              <h1 className="text-lg font-semibold text-content">Token Intelligence</h1>
+              {aiLoading ? (
+                <span className="rounded-full border border-primary-border bg-primary-soft px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary">
+                  Qwen thinking
+                </span>
+              ) : null}
             </div>
-          </Field>
-          <Field label="Ticker"><input value={options.symbol} onChange={(event) => setOptions((value) => ({ ...value, symbol: event.target.value }))} className={siteDesign.controls.inputClassName} placeholder="BONK" /></Field>
-          <Field label="Период"><select value={options.lookback} onChange={(event) => setOptions((value) => ({ ...value, lookback: event.target.value as Lookback }))} className={siteDesign.controls.inputClassName}>{[["1", "1 час"], ["6", "6 часов"], ["24", "24 часа"], ["72", "3 дня"], ["168", "7 дней"], ["720", "30 дней"], ["all", "Всё"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-          <div className="flex items-end"><button disabled={loading} className={`${siteDesign.controls.primaryActionClassName} w-full`}>{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />} Анализ</button></div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-content-faint">
+              <span>Price · Trades · Telegram · X · Blockchain</span>
+              {mint ? <span className="font-mono">{shortAddress(mint, 8, 7)}</span> : null}
+              {market?.pair?.name ? <span className="text-content-muted">{market.pair.name}</span> : null}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <CompactMetric label="SOCIAL" value={score(derived.socialScore)} />
+            <CompactMetric label="X" value={x ? score(derived.xScore) : "—"} />
+            <CompactMetric label="TG" value={tg ? score(derived.tgScore) : "—"} />
+            <CompactMetric label="RISK" value={score(derived.socialRisk)} />
+            <CompactMetric label="PRICE" value={signedPct(priceChange)} />
+          </div>
         </div>
-        <details className="mt-3">
-          <summary className="cursor-pointer text-[11px] font-semibold text-content-muted">Фильтры источников</summary>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-            <Field label="X posts"><input type="number" min={10} max={100} value={options.xLimit} onChange={(event) => setOptions((value) => ({ ...value, xLimit: Math.max(10, Math.min(100, numberOr(event.target.value))) }))} className={siteDesign.controls.inputClassName} /></Field>
-            <Field label="TG signals"><input type="number" min={20} max={500} value={options.tgLimit} onChange={(event) => setOptions((value) => ({ ...value, tgLimit: Math.max(20, Math.min(500, numberOr(event.target.value))) }))} className={siteDesign.controls.inputClassName} /></Field>
-            <Field label="Min TG score"><input type="number" min={0} max={100} value={options.tgMinChannelScore} onChange={(event) => setOptions((value) => ({ ...value, tgMinChannelScore: clamp(numberOr(event.target.value)) }))} className={siteDesign.controls.inputClassName} /></Field>
+
+        <form onSubmit={submit} className="mt-4 flex flex-col gap-2 lg:flex-row">
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-faint" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className={`${siteDesign.controls.inputClassName} pl-9 font-mono`}
+              placeholder="Solana mint / CA"
+            />
+          </div>
+          <input
+            value={options.symbol}
+            onChange={(event) => setOptions((value) => ({ ...value, symbol: event.target.value }))}
+            className={`${siteDesign.controls.inputClassName} lg:w-28`}
+            placeholder="Ticker"
+          />
+          <select
+            value={options.lookback}
+            onChange={(event) => setOptions((value) => ({ ...value, lookback: event.target.value as Lookback }))}
+            className={`${siteDesign.controls.inputClassName} lg:w-32`}
+          >
+            <option value="1">1 час</option>
+            <option value="6">6 часов</option>
+            <option value="24">24 часа</option>
+            <option value="72">3 дня</option>
+            <option value="168">7 дней</option>
+            <option value="720">30 дней</option>
+            <option value="all">Всё</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((value) => !value)}
+            className={siteDesign.controls.actionButtonClassName}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            Источники
+          </button>
+          <button disabled={loading} className={siteDesign.controls.primaryActionClassName}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
+            Анализ
+          </button>
+        </form>
+
+        {filtersOpen ? (
+          <div className="mt-3 grid gap-2 border-t border-bg-border pt-3 sm:grid-cols-2 xl:grid-cols-6">
+            <Field label="X posts">
+              <input
+                type="number"
+                min={10}
+                max={100}
+                value={options.xLimit}
+                onChange={(event) => setOptions((value) => ({ ...value, xLimit: Math.max(10, Math.min(100, numberOr(event.target.value))) }))}
+                className={siteDesign.controls.inputClassName}
+              />
+            </Field>
+            <Field label="TG signals">
+              <input
+                type="number"
+                min={20}
+                max={500}
+                value={options.tgLimit}
+                onChange={(event) => setOptions((value) => ({ ...value, tgLimit: Math.max(20, Math.min(500, numberOr(event.target.value))) }))}
+                className={siteDesign.controls.inputClassName}
+              />
+            </Field>
+            <Field label="Min TG score">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={options.tgMinChannelScore}
+                onChange={(event) => setOptions((value) => ({ ...value, tgMinChannelScore: clamp(numberOr(event.target.value)) }))}
+                className={siteDesign.controls.inputClassName}
+              />
+            </Field>
             <Check label="Verified X only" value={options.xVerifiedOnly} set={(checked) => setOptions((value) => ({ ...value, xVerifiedOnly: checked }))} />
             <Check label="Exclude suspicious X" value={options.xExcludeSuspicious} set={(checked) => setOptions((value) => ({ ...value, xExcludeSuspicious: checked }))} />
             <Check label="Explicit TG calls" value={options.tgExplicitCallsOnly} set={(checked) => setOptions((value) => ({ ...value, tgExplicitCallsOnly: checked }))} />
           </div>
-        </details>
-      </form>
+        ) : null}
+      </section>
 
-      {error && <Notice tone="danger" text={error} />}
-      {warnings.length > 0 && <Notice tone="warning" text={warnings.join(" · ")} />}
+      {error ? <Notice text={error} /> : null}
 
-      {(x || tg) && <>
-        <MainFindings derived={derived} x={x} tg={tg} chain={chain} market={market} snapshot={snapshot} />
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-9">
-          <Kpi label="Social score" value={score(derived.socialScore)} icon={<Gauge />} />
-          <Kpi label="X score" value={score(derived.xScore)} icon={<Twitter />} />
-          <Kpi label="TG score" value={score(derived.tgScore)} icon={<Send />} />
-          <Kpi label="Organic" value={score(derived.organic)} icon={<Sparkles />} />
-          <Kpi label="Manipulation" value={score(derived.manipulation)} icon={<ShieldAlert />} />
-          <Kpi label="Social risk" value={score(derived.socialRisk)} icon={<ShieldAlert />} />
-          <Kpi label="Early" value={score(derived.early)} icon={<Zap />} />
-          <Kpi label="Alpha" value={score(derived.alpha)} icon={<Radar />} />
-          <Kpi label="AI confidence" value={ai?.result?.overallConfidence != null ? pct(ai.result.overallConfidence * 100) : "—"} icon={<BrainCircuit />} />
+      {mint ? (
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,2.15fr)_minmax(300px,.85fr)]">
+          <SocialAnalysisChart mint={mint} symbol={symbol} />
+          <RecentTradesCard trades={recentTrades} loading={chainLoading} error={sourceErrors.chain} />
+        </div>
+      ) : null}
+
+      {mint ? (
+        <CoreInsights
+          x={x}
+          tg={tg}
+          chain={chain}
+          market={market}
+          derived={derived}
+          sourceErrors={sourceErrors}
+          loading={loading}
+          chainLoading={chainLoading}
+        />
+      ) : null}
+
+      {mint ? <QwenStrip ai={ai} loading={aiLoading} snapshot={snapshot} /> : null}
+
+      {mint ? (
+        <section className="surface-panel rounded-2xl border border-bg-border">
+          <button
+            type="button"
+            onClick={() => setTechnicalOpen((value) => !value)}
+            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+          >
+            <div>
+              <div className="text-xs font-semibold text-content">Технические детали</div>
+              <div className="mt-0.5 text-[10px] text-content-faint">
+                По умолчанию не рендерятся: все метрики, graph snapshot и reasoning Qwen.
+              </div>
+            </div>
+            {technicalOpen ? <ChevronUp className="h-4 w-4 text-content-muted" /> : <ChevronDown className="h-4 w-4 text-content-muted" />}
+          </button>
+
+          {technicalOpen ? (
+            <div className="space-y-4 border-t border-bg-border p-4">
+              <div className="grid gap-4 xl:grid-cols-2">
+                {derived.groups.map((group) => (
+                  <MetricTable key={group.title} title={group.title} rows={group.rows} />
+                ))}
+              </div>
+              <TechnicalIntelligence ai={ai} snapshot={snapshot} warnings={warnings} />
+            </div>
+          ) : null}
         </section>
-        {snapshot && <GraphStats snapshot={snapshot} />}
-        <PricePanel price={derived.price} loading={chainLoading} />
-        <section className="surface-panel rounded-2xl border border-bg-border p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <div><h2 className="text-sm font-semibold text-content">Все параметры</h2><p className="text-[10px] text-content-faint">Snapshot передаёт агенту все отображаемые поля; отсутствующие данные остаются «—».</p></div>
-            <button type="button" onClick={() => void run(mint)} disabled={loading || !mint} className={siteDesign.controls.actionButtonClassName}><RefreshCw className="h-4 w-4" />Обновить</button>
-          </div>
-          <div className="grid gap-4 xl:grid-cols-2">{derived.groups.map((group) => <MetricTable key={group.title} title={group.title} rows={group.rows} />)}</div>
-        </section>
-        <AiPanel ai={ai} snapshot={snapshot} />
-        <TimelinePanel x={x} tg={tg} impulseAt={derived.price.impulseTime} impulseChange={derived.price.impulseChange} />
-      </>}
+      ) : null}
     </div>
   );
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-content-faint">{label}</span>{children}</label>;
-}
-function Check({ label, value, set }: { label: string; value: boolean; set: (value: boolean) => void }) {
-  return <label className="flex min-h-10 items-center gap-2 rounded-xl border border-bg-border bg-bg-card px-3 text-xs text-content-muted"><input type="checkbox" checked={value} onChange={(event) => set(event.target.checked)} />{label}</label>;
-}
-function Notice({ tone, text }: { tone: "danger" | "warning"; text: string }) {
-  return <div className={`flex gap-2 rounded-xl border p-3 text-xs ${tone === "danger" ? "border-danger/30 bg-danger/10 text-danger" : "border-warning/30 bg-warning/10 text-content-muted"}`}><AlertTriangle className="h-4 w-4 shrink-0" />{text}</div>;
-}
-function Kpi({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
-  return <div className="surface-panel rounded-xl border border-bg-border p-3"><div className="flex items-center justify-between text-content-faint"><span className="text-[9px] uppercase tracking-wider">{label}</span><span className="[&>svg]:h-3.5 [&>svg]:w-3.5">{icon}</span></div><div className="mt-2 font-mono text-lg font-bold text-content">{value}</div></div>;
-}
-function MainFindings({
-  derived,
-  x,
-  tg,
-  chain,
-  market,
-  snapshot,
-}: {
-  derived: ReturnType<typeof deriveSocialMetrics>;
-  x: TwitterStats | null;
-  tg: SocialTimeline | null;
-  chain: ChainAnalysis | null;
-  market: Market | null;
-  snapshot: AnalysisSnapshot | null;
-}) {
-  const xPosts = snapshot?.rawSummary.xPosts ?? x?.topTweets?.length ?? 0;
-  const xRiskPosts = snapshot?.rawSummary.xRiskUniversePosts ?? x?.riskUniverse?.totalTweets ?? x?.totalTweets ?? 0;
-  const tgMessages = snapshot?.rawSummary.telegramMessages ?? tg?.timeline?.length ?? 0;
-  const tgMatched = snapshot?.rawSummary.telegramMatchedBeforeLimit ?? tg?.mentions ?? 0;
-  const trades = snapshot?.rawSummary.trades ?? chain?.trades?.length ?? chain?.summary?.totalTrades ?? 0;
-  const wallets = snapshot?.rawSummary.wallets ?? chain?.wallets?.length ?? chain?.summary?.uniqueWallets ?? 0;
-  const bundles = snapshot?.rawSummary.bundles ?? chain?.bundles?.length ?? 0;
-  const chainWallets = chain?.wallets || [];
-  const washWallets = chainWallets.filter((wallet) => wallet.isWashTrader === true).length;
-  const verifiedFreshWallets = chainWallets.filter((wallet) => wallet.freshnessVerified && wallet.isFresh === true).length;
-  const verifiedSmartWallets = chainWallets.filter((wallet) => wallet.smartClassificationAvailable && wallet.isSmart === true).length;
-  const pricePeriod = market?.pair?.changeH1 != null
-    ? "1h"
-    : market?.pair?.change24h != null
-      ? "24h"
-      : null;
-  const priceChange = pricePeriod === "1h"
-    ? market?.pair?.changeH1
-    : pricePeriod === "24h"
-      ? market?.pair?.change24h
-      : null;
-  const strongest = [
-    { label: "X", score: derived.xScore },
-    { label: "Telegram", score: derived.tgScore },
-    { label: "Alpha composite", score: derived.alpha },
-  ].sort((left, right) => right.score - left.score)[0]?.label || "—";
-  const organicText = derived.organic >= 70
-    ? "выглядит органично"
-    : derived.manipulation >= 55
-      ? "похоже на разгон"
-      : "сигнал смешанный";
-  const onChainBase = washWallets > 0
-    ? `обнаружены wash-признаки у ${washWallets} кошельков`
-    : bundles > 0
-      ? `есть ${bundles} синхронных buy-кластеров — стоит перепроверить`
-      : verifiedSmartWallets > 0
-        ? `есть ${verifiedSmartWallets} верифицированных smart-wallet сигналов`
-        : trades > 0
-          ? "явных on-chain аномалий в доступной выборке не видно"
-          : "on-chain данных пока мало";
-  const onChainVerdict = chain
-    ? `${onChainBase}${chain.truncated || chain.summary?.historyTruncated ? "; история обрезана" : ""}`
-    : "trade history ещё не загрузилась";
   return (
-    <section className="surface-panel rounded-2xl border border-bg-border p-4">
-      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold text-content">Главные выводы</h2>
+    <label className="block">
+      <span className="mb-1.5 block text-[9px] font-semibold uppercase tracking-wider text-content-faint">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Check({ label, value, set }: { label: string; value: boolean; set: (value: boolean) => void }) {
+  return (
+    <label className="flex min-h-10 items-center gap-2 rounded-xl border border-bg-border bg-bg-card px-3 text-[11px] text-content-muted">
+      <input type="checkbox" checked={value} onChange={(event) => set(event.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
+function CompactMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-bg-border bg-bg-card px-2.5 py-1.5">
+      <span className="text-[8px] font-semibold uppercase tracking-wider text-content-faint">{label}</span>
+      <span className="ml-2 font-mono text-[11px] font-bold text-content">{value}</span>
+    </div>
+  );
+}
+
+function Notice({ text }: { text: string }) {
+  return (
+    <div className="flex gap-2 rounded-xl border border-danger-border bg-danger-soft p-3 text-xs text-danger">
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      {text}
+    </div>
+  );
+}
+
+function RecentTradesCard({
+  trades,
+  loading,
+  error,
+}: {
+  trades: NonNullable<ChainAnalysis["trades"]>;
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <section className="surface-panel min-h-[390px] overflow-hidden rounded-2xl border border-bg-border">
+      <div className="flex items-center justify-between border-b border-bg-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-primary" />
+          <div>
+            <h2 className="text-sm font-semibold text-content">Последние трейды</h2>
+            <p className="mt-0.5 text-[9px] text-content-faint">Последние 12 из on-chain выборки</p>
           </div>
-          <p className="mt-1 text-[10px] text-content-faint">Короткая сводка перед таблицей: что видно по соцсетям и блокчейну.</p>
         </div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-content-faint">Сильнее всего: {strongest}</div>
+        {loading ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : null}
       </div>
-      <div className="grid gap-3 lg:grid-cols-3">
-        <FindingCard
-          icon={<Twitter />}
-          title="Twitter / X"
-          verdict={x ? `${organicText}; X score ${score(derived.xScore)}` : "данные X не пришли"}
-          facts={[
-            `${xPosts} постов в отображаемой выборке`,
-            `${xRiskPosts || xPosts} постов в risk-universe`,
-            `бот-риск ${score(x?.riskUniverse?.botRiskScore ?? x?.botRiskScore ?? 0)}`,
-          ]}
-        />
-        <FindingCard
-          icon={<Send />}
-          title="Telegram"
-          verdict={tg ? `TG score ${score(derived.tgScore)}; ${tgMessages ? "есть сигналы" : "сигналов мало"}` : "Telegram сейчас недоступен"}
-          facts={[
-            `${tgMessages} сообщений в timeline`,
-            `${tgMatched} совпадений до лимита`,
-            `первый сигнал: ${tg?.origin?.source_handle || tg?.origin?.source_name || "—"}`,
-          ]}
-        />
-        <FindingCard
-          icon={<Network />}
-          title="Blockchain"
-          verdict={onChainVerdict}
-          facts={[
-            `${trades} трейдов · ${wallets} кошельков`,
-            `${washWallets} wash · ${verifiedSmartWallets} smart · ${verifiedFreshWallets} fresh`,
-            `${bundles} синхронных buy-кластеров`,
-            `цена${pricePeriod ? ` ${pricePeriod}` : ""}: ${signedPct(priceChange)}`,
-          ]}
-        />
+
+      <div className="grid grid-cols-[74px_minmax(86px,1fr)_80px_46px] gap-2 border-b border-bg-border bg-bg-elevated/40 px-3 py-2 text-[8px] font-semibold uppercase tracking-wider text-content-faint">
+        <span>Время</span>
+        <span>Цена</span>
+        <span>Wallet</span>
+        <span className="text-right">TX</span>
+      </div>
+
+      <div className="divide-y divide-bg-border">
+        {trades.length ? (
+          trades.map((trade, index) => (
+            <div
+              key={`${trade.sig || "trade"}-${trade.ts}-${index}`}
+              className="grid grid-cols-[74px_minmax(86px,1fr)_80px_46px] gap-2 px-3 py-2.5 text-[10px]"
+            >
+              <span className="font-mono text-content-faint">{formatTradeTime(trade.ts)}</span>
+              <span className="truncate font-mono font-semibold text-content">{formatPrice(trade.p)}</span>
+              <span className="truncate font-mono text-content-muted">{shortAddress(trade.w)}</span>
+              <span className="text-right">
+                {trade.sig ? (
+                  <a
+                    href={`https://solscan.io/tx/${encodeURIComponent(trade.sig)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                  >
+                    {shortAddress(trade.sig, 3, 2)}
+                    <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                ) : (
+                  <span className="text-content-faint">—</span>
+                )}
+              </span>
+            </div>
+          ))
+        ) : (
+          <div className="flex min-h-64 items-center justify-center px-4 text-center text-xs text-content-faint">
+            {loading ? "Загружаем trade history…" : error ? `Trade history: ${error}` : "В доступной выборке трейдов пока нет."}
+          </div>
+        )}
       </div>
     </section>
   );
 }
-function FindingCard({ icon, title, verdict, facts }: { icon: ReactNode; title: string; verdict: string; facts: string[] }) {
-  return <div className="rounded-xl border border-bg-border bg-bg-card p-3"><div className="flex items-center gap-2 text-content"><span className="text-primary [&>svg]:h-4 [&>svg]:w-4">{icon}</span><h3 className="text-xs font-semibold">{title}</h3></div><p className="mt-2 min-h-10 text-sm leading-5 text-content-soft">{verdict}</p><div className="mt-3 space-y-1.5">{facts.map((fact) => <div key={fact} className="flex items-start gap-2 text-[10px] leading-4 text-content-muted"><span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-primary" />{fact}</div>)}</div></div>;
-}
-function GraphStats({ snapshot }: { snapshot: AnalysisSnapshot }) {
-  const graph = snapshot.graph.stats;
-  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><Network className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Entity Graph v1</h2><p className="text-[10px] text-content-faint">Deterministic candidate links; AI может подтверждать, опровергать и открывать новые гипотезы.</p></div></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><Kpi label="Features" value={`${snapshot.featureCount - snapshot.missingFeatureCount}/${snapshot.featureCount}`} icon={<Gauge />} /><Kpi label="Nodes" value={String(graph.nodes)} icon={<Network />} /><Kpi label="Edges" value={String(graph.edges)} icon={<Network />} /><Kpi label="X accounts" value={String(graph.xAccounts)} icon={<Twitter />} /><Kpi label="TG channels" value={String(graph.tgChannels)} icon={<Send />} /><Kpi label="Links" value={String(graph.sharedLinks)} icon={<Network />} /><Kpi label="Copy edges" value={String(graph.copyEdges)} icon={<ShieldAlert />} /><Kpi label="Amplify edges" value={String(graph.amplificationEdges)} icon={<Zap />} /></div></section>;
-}
-function MetricTable({ title, rows }: { title: string; rows: Metric[] }) {
-  return <div className="overflow-hidden rounded-xl border border-bg-border"><div className="border-b border-bg-border bg-bg-elevated/60 px-3 py-2 text-xs font-semibold text-content">{title}</div><div className="divide-y divide-bg-border">{rows.map((row) => <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_minmax(90px,.8fr)] gap-3 px-3 py-2 text-[11px]"><div><div className="text-content-muted">{row.label}</div>{row.note && <div className="mt-0.5 text-[9px] text-content-faint">{row.note}</div>}</div><div className="break-words text-right font-mono font-semibold text-content">{row.value}</div></div>)}</div></div>;
-}
-function PricePanel({ price, loading }: { price: PriceSocial; loading: boolean }) {
-  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><TrendingUp className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Price ↔ Social lead/lag</h2><p className="text-[10px] text-content-faint">{loading ? "Trade history загружается параллельно — social уже доступен." : `Ближайший price impulse ≥ ${IMPULSE_THRESHOLD_PCT}% за 5 минут.`}</p></div></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><Kpi label="Direction" value={price.leadDirection} icon={<Zap />} /><Kpi label="Lead / lag" value={price.leadLagMinutes == null ? "—" : `${Math.abs(price.leadLagMinutes).toFixed(1)}m`} icon={<Gauge />} /><Kpi label="Confidence" value={score(price.leadLagConfidence)} icon={<Radar />} /><Kpi label="+5m" value={signedPct(price.reaction5)} icon={<TrendingUp />} /><Kpi label="+15m" value={signedPct(price.reaction15)} icon={<TrendingUp />} /><Kpi label="+1h" value={signedPct(price.reaction60)} icon={<TrendingUp />} /><Kpi label="Max up 1h" value={signedPct(price.maxUpside)} icon={<TrendingUp />} /><Kpi label="Max DD 1h" value={signedPct(price.maxDrawdown)} icon={<ShieldAlert />} /></div></section>;
-}
-function AiPanel({ ai, snapshot }: { ai: AiEnvelope | null; snapshot: AnalysisSnapshot | null }) {
-  const result = ai?.result;
-  const advanced = result as (typeof result & {
-    discoveredRelationships?: Array<{ source?: string; target?: string; type?: string; confidence?: number; status?: string; rationale?: string }>;
-    anomalies?: Array<{ type?: string; severity?: string; confidence?: number; explanation?: string }>;
-    contradictions?: Array<{ statement?: string; confidence?: number }>;
-    whatWouldChangeConclusion?: string[];
-    finalIntelligence?: { marketState?: string; socialState?: string; manipulationAssessment?: string; bullCase?: string; bearCase?: string; unknowns?: string[]; confidence?: number };
-  }) | undefined;
-  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><div className="mb-3 flex items-center gap-2"><BrainCircuit className="h-4 w-4 text-primary" /><div><h2 className="text-sm font-semibold text-content">Qwen AI · Full Intelligence Analyst</h2><p className="text-[10px] text-content-faint">{snapshot ? `${snapshot.featureCount} features · ${snapshot.graph.stats.nodes} nodes · ${snapshot.graph.stats.edges} deterministic edges` : "Ожидается unified snapshot"}</p></div></div>{!ai ? <div className="text-xs text-content-faint">AI запускается после сборки unified snapshot.</div> : !result ? <div className="text-xs text-warning">Qwen недоступен: {ai.error || "нет результата"}</div> : <div className="space-y-4"><div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]"><div><p className="text-sm leading-6 text-content-soft">{result.summary || "—"}</p><div className="mt-3 rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] uppercase tracking-wider text-content-faint">Campaign narrative</div><div className="mt-1 text-xs leading-5 text-content-muted">{result.campaignHypothesis?.narrative || "—"}</div></div></div><div className="space-y-2">{(result.reasoningSummary || []).map((value, index) => <div key={`${index}-${value.slice(0, 24)}`} className="rounded-lg border border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs text-content-muted">{value}</div>)}</div></div>{advanced?.finalIntelligence && <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"><Insight label="Market state" text={advanced.finalIntelligence.marketState} /><Insight label="Social state" text={advanced.finalIntelligence.socialState} /><Insight label="Manipulation" text={advanced.finalIntelligence.manipulationAssessment} /><Insight label="Bull case" text={advanced.finalIntelligence.bullCase} /><Insight label="Bear case" text={advanced.finalIntelligence.bearCase} /><Insight label="Unknowns" text={(advanced.finalIntelligence.unknowns || []).join(" · ")} /></div>}{Boolean(advanced?.discoveredRelationships?.length) && <AdvancedList title="New graph relationships" rows={(advanced?.discoveredRelationships || []).slice(0, 20).map((item) => `${item.type || "link"}: ${item.source || "?"} → ${item.target || "?"} · ${item.status || "hypothesis"} · ${item.confidence == null ? "—" : pct(item.confidence * 100)} · ${item.rationale || ""}`)} />}{Boolean(advanced?.anomalies?.length) && <AdvancedList title="Anomalies" rows={(advanced?.anomalies || []).slice(0, 20).map((item) => `${item.severity || "info"} · ${item.type || "anomaly"} · ${item.explanation || ""}`)} />}{Boolean(advanced?.contradictions?.length) && <AdvancedList title="Contradictions" rows={(advanced?.contradictions || []).slice(0, 15).map((item) => item.statement || "—")} />}{Boolean(advanced?.whatWouldChangeConclusion?.length) && <AdvancedList title="What would change the conclusion" rows={(advanced?.whatWouldChangeConclusion || []).slice(0, 15)} />}</div>}</section>;
-}
-function Insight({ label, text }: { label: string; text?: string }) {
-  return <div className="rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[9px] uppercase tracking-wider text-content-faint">{label}</div><div className="mt-1 text-xs leading-5 text-content-muted">{text || "—"}</div></div>;
-}
-function AdvancedList({ title, rows }: { title: string; rows: string[] }) {
-  return <div className="rounded-xl border border-bg-border bg-bg-card p-3"><div className="text-[10px] font-semibold uppercase tracking-wider text-content-faint">{title}</div><div className="mt-2 space-y-1.5">{rows.map((row, index) => <div key={`${title}-${index}-${row.slice(0, 24)}`} className="text-xs leading-5 text-content-muted">• {row}</div>)}</div></div>;
-}
-function TimelinePanel({ x, tg, impulseAt, impulseChange }: { x: TwitterStats | null; tg: SocialTimeline | null; impulseAt: number | null; impulseChange: number | null }) {
-  const items = useMemo(() => {
-    const next: TimelineItem[] = [...(tg?.timeline || [])].filter((item) => toTimestamp(item.occurred_at) != null);
-    for (const tweet of x?.topTweets || []) {
-      const time = toTimestamp(tweet.timestamp);
-      if (time == null) continue;
-      next.push({ platform: "x", source_handle: tweet.author, source_name: null, source_url: null, text: tweet.text, occurred_at: new Date(time).toISOString(), metrics: { likes: tweet.likes, retweets: tweet.retweets, views: tweet.views } });
-    }
-    if (impulseAt != null) next.push({ platform: "price", source_handle: "on-chain", source_name: "price impulse", source_url: null, text: `Nearest 5m impulse: ${signedPct(impulseChange)}`, occurred_at: new Date(impulseAt).toISOString(), metrics: null });
-    return next.sort((a, b) => numberOr(toTimestamp(a.occurred_at)) - numberOr(toTimestamp(b.occurred_at))).slice(-100);
-  }, [x, tg, impulseAt, impulseChange]);
 
-  return <section className="surface-panel rounded-2xl border border-bg-border p-4"><h2 className="text-sm font-semibold text-content">Signal timeline · TG → X → Price → Hype</h2><div className="mt-3 space-y-2">{items.length ? items.map((item) => <div key={`${item.platform}-${item.source_handle || item.source_name}-${item.occurred_at}-${item.text.slice(0, 32)}`} className="grid grid-cols-[70px_120px_1fr] gap-2 rounded-xl border border-bg-border bg-bg-card/50 p-2 text-[10px]"><div className="font-mono text-content-faint">{new Date(item.occurred_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div><div className="font-semibold text-content">{item.platform.toUpperCase()} · {item.source_handle || item.source_name || "source"}</div><div className="line-clamp-2 text-content-muted">{item.text}</div></div>) : <div className="text-xs text-content-faint">Нет timestamped сигналов.</div>}</div></section>;
+function CoreInsights({
+  x,
+  tg,
+  chain,
+  market,
+  derived,
+  sourceErrors,
+  loading,
+  chainLoading,
+}: {
+  x: TwitterStats | null;
+  tg: SocialTimeline | null;
+  chain: ChainAnalysis | null;
+  market: Market | null;
+  derived: ReturnType<typeof deriveSocialMetrics>;
+  sourceErrors: SourceErrors;
+  loading: boolean;
+  chainLoading: boolean;
+}) {
+  const collector = telegramCollector(tg);
+  const tgMessages = tg?.timeline?.length ?? 0;
+  const tgMatches = tg?.meta?.matchedBeforeLimit ?? tg?.mentions ?? 0;
+  const xPosts = x?.topTweets?.length ?? 0;
+  const xUniverse = x?.riskUniverse?.totalTweets ?? x?.totalTweets ?? 0;
+  const chainWallets = chain?.wallets || [];
+  const washWallets = chainWallets.filter((wallet) => wallet.isWashTrader === true).length;
+  const smartWallets = chainWallets.filter((wallet) => wallet.smartClassificationAvailable && wallet.isSmart === true).length;
+  const freshWallets = chainWallets.filter((wallet) => wallet.freshnessVerified && wallet.isFresh === true).length;
+  const bundles = chain?.bundles?.length ?? 0;
+  const trades = chain?.summary?.totalTrades ?? chain?.trades?.length ?? 0;
+  const wallets = chain?.summary?.uniqueWallets ?? chainWallets.length;
+
+  const tgVerdict = sourceErrors.tg
+    ? `Backend Telegram не ответил: ${sourceErrors.tg}`
+    : !tg
+      ? loading
+        ? "Загружаем Telegram timeline…"
+        : "Telegram payload пока не получен."
+      : tgMatches > 0
+        ? derived.tgScore >= 70
+          ? "В Telegram сильный сигнал: много релевантных упоминаний и заметная активность каналов."
+          : derived.tgScore >= 45
+            ? "В Telegram есть рабочий сигнал, но сила и качество источников смешанные."
+            : "Упоминания есть, но Telegram-сигнал пока слабый и требует подтверждения."
+        : collector?.configured
+          ? "Фидер доступен, но по этому mint в выбранном окне релевантных совпадений не найдено."
+          : "Telegram collector не настроен: это проблема фидера, а не доказательство отсутствия сообщений.";
+
+  const tgTone: InsightTone = sourceErrors.tg
+    ? "danger"
+    : tgMatches > 0 && derived.tgScore >= 60
+      ? "positive"
+      : tgMatches > 0
+        ? "warning"
+        : "neutral";
+
+  const xVerdict = sourceErrors.x
+    ? `X источник не ответил: ${sourceErrors.x}`
+    : !x
+      ? loading
+        ? "Загружаем X mentions…"
+        : "X payload пока не получен."
+      : xUniverse === 0
+        ? "По выбранному периоду X не дал релевантных упоминаний."
+        : derived.manipulation >= 55
+          ? "В X есть активность, но структура выглядит подозрительно: повышен manipulation/bot risk."
+          : derived.xScore >= 65
+            ? "В X заметный органический импульс: интерес и вовлечённость подтверждают социальный спрос."
+            : "X активен умеренно: сигнал есть, но пока без сильного подтверждения импульса.";
+
+  const xTone: InsightTone = sourceErrors.x
+    ? "danger"
+    : derived.manipulation >= 55
+      ? "warning"
+      : x && derived.xScore >= 60
+        ? "positive"
+        : "neutral";
+
+  const chainVerdict = sourceErrors.chain
+    ? `On-chain анализ не ответил: ${sourceErrors.chain}`
+    : !chain
+      ? chainLoading
+        ? "Собираем Helius trade history и кошельки…"
+        : "On-chain payload пока не получен."
+      : washWallets > 0
+        ? `Найдены wash-признаки у ${washWallets} кошельков — on-chain риск повышен.`
+        : bundles > 0
+          ? `Обнаружено ${bundles} синхронных buy-кластеров. Это не доказательство манипуляции, но требует проверки.`
+          : smartWallets > 0
+            ? `Есть ${smartWallets} верифицированных smart-wallet сигналов без явных wash-признаков в выборке.`
+            : trades > 0
+              ? "Торговая активность подтверждена; явных on-chain аномалий в доступной выборке не видно."
+              : "On-chain данных для уверенного вывода пока мало.";
+
+  const chainTone: InsightTone = sourceErrors.chain
+    ? "danger"
+    : washWallets > 0 || bundles > 0
+      ? "warning"
+      : trades > 0
+        ? "positive"
+        : "neutral";
+
+  const collectorStatus = collector
+    ? `${collector.mode || "unknown"} · ${collector.connected ? "connected" : collector.running ? "running" : collector.configured ? "configured" : "offline"}`
+    : "status недоступен";
+
+  return (
+    <section className="grid gap-4 lg:grid-cols-3" data-tag="trade.social_core_insights.v1">
+      <InsightCard
+        icon={<Send />}
+        title="Telegram"
+        badge={tg ? score(derived.tgScore) : "—"}
+        verdict={tgVerdict}
+        tone={tgTone}
+        facts={[
+          `${tgMessages} сообщений · ${tgMatches} совпадений`,
+          `Фидер: ${collectorStatus}`,
+          `Каналов: ${collector?.monitored_channels ?? collector?.public_web_channels ?? "—"}`,
+          `Первый сигнал: ${tg?.origin?.source_handle || tg?.origin?.source_name || "—"}`,
+          collector?.last_error ? `Feeder error: ${collector.last_error}` : null,
+        ]}
+      />
+
+      <InsightCard
+        icon={<Twitter />}
+        title="Twitter / X"
+        badge={x ? score(derived.xScore) : "—"}
+        verdict={xVerdict}
+        tone={xTone}
+        facts={[
+          `${xPosts} отображаемых постов · ${xUniverse} в risk-universe`,
+          `${x?.uniqueMentioners ?? 0} уникальных авторов`,
+          `Engagement: ${x?.aggregated?.totalEngagement ?? 0}`,
+          `Bot risk: ${score(x?.riskUniverse?.botRiskScore ?? x?.botRiskScore ?? 0)}`,
+        ]}
+      />
+
+      <InsightCard
+        icon={<WalletCards />}
+        title="Blockchain"
+        badge={`${trades} trades`}
+        verdict={chainVerdict}
+        tone={chainTone}
+        facts={[
+          `${trades} трейдов · ${wallets} кошельков`,
+          `${washWallets} wash · ${smartWallets} smart · ${freshWallets} fresh`,
+          `${bundles} синхронных buy-кластеров`,
+          `Цена: ${signedPct(market?.pair?.changeH1 ?? market?.pair?.change24h ?? null)}`,
+          chain?.truncated || chain?.summary?.historyTruncated ? "История обрезана — вывод ограничен выборкой" : null,
+        ]}
+      />
+    </section>
+  );
+}
+
+type InsightTone = "positive" | "warning" | "danger" | "neutral";
+
+function toneClasses(tone: InsightTone): { border: string; badge: string; dot: string } {
+  if (tone === "positive") {
+    return {
+      border: "border-success-border",
+      badge: "border-success-border bg-success-soft text-success",
+      dot: "bg-success",
+    };
+  }
+  if (tone === "warning") {
+    return {
+      border: "border-warning-border",
+      badge: "border-warning-border bg-warning-soft text-warning",
+      dot: "bg-warning",
+    };
+  }
+  if (tone === "danger") {
+    return {
+      border: "border-danger-border",
+      badge: "border-danger-border bg-danger-soft text-danger",
+      dot: "bg-danger",
+    };
+  }
+  return {
+    border: "border-bg-border",
+    badge: "border-bg-border bg-bg-elevated text-content-muted",
+    dot: "bg-content-faint",
+  };
+}
+
+function InsightCard({
+  icon,
+  title,
+  badge,
+  verdict,
+  facts,
+  tone,
+}: {
+  icon: ReactNode;
+  title: string;
+  badge: string;
+  verdict: string;
+  facts: Array<string | null>;
+  tone: InsightTone;
+}) {
+  const classes = toneClasses(tone);
+  return (
+    <article className={`surface-panel rounded-2xl border p-4 ${classes.border}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-content">
+          <span className="text-primary [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
+          <h2 className="text-sm font-semibold">{title}</h2>
+        </div>
+        <span className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold ${classes.badge}`}>{badge}</span>
+      </div>
+      <p className="mt-3 min-h-[64px] text-sm leading-6 text-content-soft">{verdict}</p>
+      <div className="mt-3 space-y-1.5 border-t border-bg-border pt-3">
+        {facts.filter((value): value is string => Boolean(value)).map((fact) => (
+          <div key={fact} className="flex items-start gap-2 text-[10px] leading-4 text-content-muted">
+            <span className={`mt-1.5 h-1 w-1 shrink-0 rounded-full ${classes.dot}`} />
+            <span>{fact}</span>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function QwenStrip({
+  ai,
+  loading,
+  snapshot,
+}: {
+  ai: AiEnvelope | null;
+  loading: boolean;
+  snapshot: AnalysisSnapshot | null;
+}) {
+  const summary = ai?.result?.summary;
+  const confidence = ai?.result?.overallConfidence;
+  return (
+    <section className="surface-panel rounded-2xl border border-bg-border px-4 py-3">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 gap-3">
+          <BrainCircuit className={`mt-0.5 h-4 w-4 shrink-0 ${loading ? "animate-pulse text-primary" : "text-primary"}`} />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xs font-semibold text-content">Qwen verdict</h2>
+              {confidence != null ? (
+                <span className="font-mono text-[9px] text-content-faint">confidence {Math.round(confidence * 100)}%</span>
+              ) : null}
+            </div>
+            <p className="mt-1 text-xs leading-5 text-content-muted">
+              {loading
+                ? "Core-data уже показаны. Qwen анализирует unified snapshot в фоне интерфейса."
+                : summary
+                  ? summary
+                  : ai?.error
+                    ? `Qwen недоступен: ${ai.error}`
+                    : snapshot
+                      ? "Snapshot собран; AI-вывод появится при наличии evidence."
+                      : "Ожидается unified snapshot."}
+            </p>
+          </div>
+        </div>
+        {snapshot ? (
+          <div className="shrink-0 font-mono text-[9px] text-content-faint">
+            {snapshot.featureCount - snapshot.missingFeatureCount}/{snapshot.featureCount} features
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function MetricTable({ title, rows }: { title: string; rows: Metric[] }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-bg-border">
+      <div className="border-b border-bg-border bg-bg-elevated/50 px-3 py-2 text-xs font-semibold text-content">{title}</div>
+      <div className="divide-y divide-bg-border">
+        {rows.map((row) => (
+          <div key={row.label} className="grid grid-cols-[minmax(0,1fr)_minmax(90px,.8fr)] gap-3 px-3 py-2 text-[11px]">
+            <div>
+              <div className="text-content-muted">{row.label}</div>
+              {row.note ? <div className="mt-0.5 text-[9px] text-content-faint">{row.note}</div> : null}
+            </div>
+            <div className="break-words text-right font-mono font-semibold text-content">{row.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TechnicalIntelligence({
+  ai,
+  snapshot,
+  warnings,
+}: {
+  ai: AiEnvelope | null;
+  snapshot: AnalysisSnapshot | null;
+  warnings: string[];
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="rounded-xl border border-bg-border bg-bg-card p-3">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <h3 className="text-xs font-semibold text-content">Qwen reasoning</h3>
+        </div>
+        <div className="mt-2 space-y-2">
+          {(ai?.result?.reasoningSummary || []).length ? (
+            (ai?.result?.reasoningSummary || []).slice(0, 8).map((item, index) => (
+              <div key={`${index}-${item.slice(0, 24)}`} className="text-[11px] leading-5 text-content-muted">• {item}</div>
+            ))
+          ) : (
+            <div className="text-[11px] text-content-faint">Нет reasoning summary.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-bg-border bg-bg-card p-3">
+        <div className="flex items-center gap-2">
+          <Clock3 className="h-4 w-4 text-primary" />
+          <h3 className="text-xs font-semibold text-content">Snapshot / diagnostics</h3>
+        </div>
+        <div className="mt-2 space-y-1.5 text-[11px] text-content-muted">
+          <div>Features: <span className="font-mono text-content">{snapshot ? `${snapshot.featureCount - snapshot.missingFeatureCount}/${snapshot.featureCount}` : "—"}</span></div>
+          <div>Graph nodes: <span className="font-mono text-content">{snapshot?.graph.stats.nodes ?? "—"}</span></div>
+          <div>Graph edges: <span className="font-mono text-content">{snapshot?.graph.stats.edges ?? "—"}</span></div>
+          <div>Qwen provider: <span className="font-mono text-content">{ai?.provider || ai?.agent || "—"}</span></div>
+          <div>Qwen latency: <span className="font-mono text-content">{ai?.latencyMs != null ? `${ai.latencyMs} ms` : "—"}</span></div>
+          {warnings.length ? (
+            <div className="mt-2 rounded-lg border border-warning-border bg-warning-soft p-2 text-warning">
+              {warnings.join(" · ")}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }
