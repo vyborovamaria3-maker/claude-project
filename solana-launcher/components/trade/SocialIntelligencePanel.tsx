@@ -20,10 +20,8 @@ import {
   ExternalLink,
   Loader2,
   Radar,
-  RefreshCw,
   Search,
   Send,
-  ShieldAlert,
   SlidersHorizontal,
   Sparkles,
   Twitter,
@@ -59,8 +57,6 @@ import {
   buildAnalysisSnapshot,
   type AnalysisSnapshot,
 } from "@/lib/trade/intelligence-agent";
-
-const BACKEND = (process.env.NEXT_PUBLIC_BACKEND_URL || "/fastapi").replace(/\/$/, "");
 
 type TelegramCollectorStatus = {
   mode?: string;
@@ -117,6 +113,21 @@ function formatTradeTime(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
   const ms = value > 1e12 ? value : value * 1000;
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function friendlySourceError(source: "Telegram" | "X" | "Market" | "Blockchain", message: string | null): string | null {
+  if (!message) return null;
+  const normalized = message.toLowerCase();
+  if (normalized.includes("could not validate credentials") || normalized.includes("401")) {
+    return `${source}: backend-авторизация не пройдена. Войди в аккаунт на этом localhost.`;
+  }
+  if (normalized.includes("active subscription required") || normalized.includes("403")) {
+    return `${source}: backend доступен, но текущему аккаунту не хватает entitlement/subscription.`;
+  }
+  if (normalized.includes("failed to fetch") || normalized.includes("networkerror")) {
+    return `${source}: frontend не смог связаться с backend.`;
+  }
+  return `${source}: ${message}`;
 }
 
 export default function SocialIntelligencePanel() {
@@ -190,14 +201,13 @@ export default function SocialIntelligencePanel() {
           if (!controller.signal.aborted) setChainLoading(false);
         });
 
+      const tgUrl = `/api/trade/social-source?kind=token&mint=${encodeURIComponent(contract)}&${tgParams.toString()}`;
+      const channelsUrl = "/api/trade/social-source?kind=channels&limit=100";
       const [xResult, tgResult, marketResult, channelResult] = await Promise.allSettled([
         fetchJson<TwitterStats>(`/api/trade/dev-twitter?${xParams}`, controller.signal),
-        fetchJson<SocialTimeline>(
-          `${BACKEND}/api/v1/social/token/${encodeURIComponent(contract)}?${tgParams}`,
-          controller.signal,
-        ),
+        fetchJson<SocialTimeline>(tgUrl, controller.signal),
         fetchJson<Market>(`/api/token-ohlcv?mint=${encodeURIComponent(contract)}`, controller.signal),
-        fetchJson<{ items: Channel[] }>(`${BACKEND}/api/v1/telegram/channels?limit=100`, controller.signal),
+        fetchJson<{ items: Channel[] }>(channelsUrl, controller.signal),
       ]);
       if (controller.signal.aborted) return;
 
@@ -253,7 +263,7 @@ export default function SocialIntelligencePanel() {
       });
       setSnapshot(nextSnapshot);
 
-      if (!nextSnapshot.evidence.length) return;
+      if (!nextSnapshot.features.some((feature) => !feature.missing)) return;
 
       setAiLoading(true);
       void fetchJson<AiEnvelope>("/api/trade/social-ai", controller.signal, {
@@ -311,7 +321,7 @@ export default function SocialIntelligencePanel() {
   const priceChange = market?.pair?.changeH1 ?? market?.pair?.change24h ?? null;
 
   return (
-    <div className="space-y-4" data-tag="trade.social_intelligence.terminal.v1">
+    <div className="space-y-4" data-tag="trade.social_intelligence.v7">
       <section className="surface-panel rounded-2xl border border-bg-border p-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="min-w-0">
@@ -454,9 +464,9 @@ export default function SocialIntelligencePanel() {
             className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
           >
             <div>
-              <div className="text-xs font-semibold text-content">Технические детали</div>
+              <h2 className="text-xs font-semibold text-content">Все параметры</h2>
               <div className="mt-0.5 text-[10px] text-content-faint">
-                По умолчанию не рендерятся: все метрики, graph snapshot и reasoning Qwen.
+                Технические детали не монтируются, пока блок закрыт: 129+ метрик, graph snapshot и reasoning Qwen.
               </div>
             </div>
             {technicalOpen ? <ChevronUp className="h-4 w-4 text-content-muted" /> : <ChevronDown className="h-4 w-4 text-content-muted" />}
@@ -469,7 +479,7 @@ export default function SocialIntelligencePanel() {
                   <MetricTable key={group.title} title={group.title} rows={group.rows} />
                 ))}
               </div>
-              <TechnicalIntelligence ai={ai} snapshot={snapshot} warnings={warnings} />
+              <TechnicalIntelligence ai={ai} snapshot={snapshot} warnings={warnings} sourceErrors={sourceErrors} />
             </div>
           ) : null}
         </section>
@@ -611,9 +621,12 @@ function CoreInsights({
   const bundles = chain?.bundles?.length ?? 0;
   const trades = chain?.summary?.totalTrades ?? chain?.trades?.length ?? 0;
   const wallets = chain?.summary?.uniqueWallets ?? chainWallets.length;
+  const tgFailure = friendlySourceError("Telegram", sourceErrors.tg);
+  const xFailure = friendlySourceError("X", sourceErrors.x);
+  const chainFailure = friendlySourceError("Blockchain", sourceErrors.chain);
 
-  const tgVerdict = sourceErrors.tg
-    ? `Backend Telegram не ответил: ${sourceErrors.tg}`
+  const tgVerdict = tgFailure
+    ? tgFailure
     : !tg
       ? loading
         ? "Загружаем Telegram timeline…"
@@ -628,7 +641,7 @@ function CoreInsights({
           ? "Фидер доступен, но по этому mint в выбранном окне релевантных совпадений не найдено."
           : "Telegram collector не настроен: это проблема фидера, а не доказательство отсутствия сообщений.";
 
-  const tgTone: InsightTone = sourceErrors.tg
+  const tgTone: InsightTone = tgFailure
     ? "danger"
     : tgMatches > 0 && derived.tgScore >= 60
       ? "positive"
@@ -636,8 +649,8 @@ function CoreInsights({
         ? "warning"
         : "neutral";
 
-  const xVerdict = sourceErrors.x
-    ? `X источник не ответил: ${sourceErrors.x}`
+  const xVerdict = xFailure
+    ? xFailure
     : !x
       ? loading
         ? "Загружаем X mentions…"
@@ -650,7 +663,7 @@ function CoreInsights({
             ? "В X заметный органический импульс: интерес и вовлечённость подтверждают социальный спрос."
             : "X активен умеренно: сигнал есть, но пока без сильного подтверждения импульса.";
 
-  const xTone: InsightTone = sourceErrors.x
+  const xTone: InsightTone = xFailure
     ? "danger"
     : derived.manipulation >= 55
       ? "warning"
@@ -658,8 +671,8 @@ function CoreInsights({
         ? "positive"
         : "neutral";
 
-  const chainVerdict = sourceErrors.chain
-    ? `On-chain анализ не ответил: ${sourceErrors.chain}`
+  const chainVerdict = chainFailure
+    ? chainFailure
     : !chain
       ? chainLoading
         ? "Собираем Helius trade history и кошельки…"
@@ -674,7 +687,7 @@ function CoreInsights({
               ? "Торговая активность подтверждена; явных on-chain аномалий в доступной выборке не видно."
               : "On-chain данных для уверенного вывода пока мало.";
 
-  const chainTone: InsightTone = sourceErrors.chain
+  const chainTone: InsightTone = chainFailure
     ? "danger"
     : washWallets > 0 || bundles > 0
       ? "warning"
@@ -835,7 +848,7 @@ function QwenStrip({
                   : ai?.error
                     ? `Qwen недоступен: ${ai.error}`
                     : snapshot
-                      ? "Snapshot собран; AI-вывод появится при наличии evidence."
+                      ? "Snapshot собран; AI-вывод появится при наличии аналитических features."
                       : "Ожидается unified snapshot."}
             </p>
           </div>
@@ -873,11 +886,21 @@ function TechnicalIntelligence({
   ai,
   snapshot,
   warnings,
+  sourceErrors,
 }: {
   ai: AiEnvelope | null;
   snapshot: AnalysisSnapshot | null;
   warnings: string[];
+  sourceErrors: SourceErrors;
 }) {
+  const diagnostics = [
+    friendlySourceError("Telegram", sourceErrors.tg),
+    friendlySourceError("X", sourceErrors.x),
+    friendlySourceError("Market", sourceErrors.market),
+    friendlySourceError("Blockchain", sourceErrors.chain),
+    ...warnings,
+  ].filter((value): value is string => Boolean(value));
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="rounded-xl border border-bg-border bg-bg-card p-3">
@@ -907,9 +930,9 @@ function TechnicalIntelligence({
           <div>Graph edges: <span className="font-mono text-content">{snapshot?.graph.stats.edges ?? "—"}</span></div>
           <div>Qwen provider: <span className="font-mono text-content">{ai?.provider || ai?.agent || "—"}</span></div>
           <div>Qwen latency: <span className="font-mono text-content">{ai?.latencyMs != null ? `${ai.latencyMs} ms` : "—"}</span></div>
-          {warnings.length ? (
+          {diagnostics.length ? (
             <div className="mt-2 rounded-lg border border-warning-border bg-warning-soft p-2 text-warning">
-              {warnings.join(" · ")}
+              {diagnostics.join(" · ")}
             </div>
           ) : null}
         </div>
