@@ -151,8 +151,13 @@ export default function SocialAnalysisChart({
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
+      priceLineVisible: false,
+      lastValueVisible: false,
     });
-    chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.83, bottom: 0 } });
+    chart.priceScale("volume").applyOptions({
+      visible: false,
+      scaleMargins: { top: 0.83, bottom: 0 },
+    });
 
     chartRef.current = chart;
     candlesRef.current = candleSeries;
