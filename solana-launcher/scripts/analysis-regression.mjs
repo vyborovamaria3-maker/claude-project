@@ -32,8 +32,10 @@ assert(
   "the visible 129-parameter Analysis tab must remain present",
 );
 assert(
-  panelSource.includes('>Все параметры</h2>'),
-  "the full parameter table must remain visible in Social Intelligence",
+  panelSource.includes("Технические детали")
+    && panelSource.includes("technicalOpen")
+    && panelSource.includes("derived.groups.map"),
+  "the full parameter table must remain available behind the lazy technical-details control",
 );
 assert(
   panelSource.includes('from "@/lib/trade/intelligence-agent"'),
