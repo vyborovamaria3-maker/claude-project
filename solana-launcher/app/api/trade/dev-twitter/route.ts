@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 
 const CACHE = new Map<string, { data: TwitterStats; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 export interface TwitterRiskUniverse {
   totalTweets: number;
@@ -54,6 +55,8 @@ export interface TwitterStats {
     queryMode: "top";
     suspiciousExcluded: boolean;
     verifiedOnly: boolean;
+    authenticatedBrowser: boolean;
+    coverageConfirmed: boolean;
   };
   topTweets: TweetData[];
   shillers: ShillerEntry[];
@@ -385,6 +388,7 @@ export async function GET(req: NextRequest) {
   }
 
   const requestedStrategy = strategyParam as CollectionStrategy;
+  const authenticatedBrowser = hasTwitterAuth();
   if (verifiedOnly && requestedStrategy === "nitter") {
     return NextResponse.json(
       {
@@ -393,7 +397,7 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
-  if (verifiedOnly && !hasTwitterAuth()) {
+  if (verifiedOnly && !authenticatedBrowser) {
     return NextResponse.json(
       { error: "verifiedOnly requires an authenticated X browser session" },
       { status: 409 },
@@ -464,7 +468,20 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     console.error("Twitter scrape error:", error);
-    return NextResponse.json({ error: "failed to scrape twitter" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "failed to scrape twitter";
+    return NextResponse.json({ error: message }, { status: 503 });
+  }
+
+  // An empty unauthenticated Nitter result is not evidence of zero X mentions:
+  // public mirrors can be down or blocked. Require an authenticated browser
+  // session before treating an empty sample as confirmed coverage.
+  if (result.tweets.length === 0 && result.strategy === "nitter" && !authenticatedBrowser) {
+    return NextResponse.json(
+      {
+        error: "X collector unavailable: public mirror returned no data and no authenticated browser session exists. Run npm run x:login.",
+      },
+      { status: 503 },
+    );
   }
 
   const cutoff = lookbackHours == null
@@ -664,6 +681,8 @@ export async function GET(req: NextRequest) {
       queryMode: "top",
       suspiciousExcluded: excludeSuspicious,
       verifiedOnly,
+      authenticatedBrowser,
+      coverageConfirmed: result.strategy === "playwright" || result.tweets.length > 0,
     },
     topTweets,
     shillers,
@@ -697,22 +716,38 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.retweets - a.retweets)
       .slice(0, 5),
     topByEngagement: [...topTweets]
-      .sort(
-        (a, b) => (b.likes + b.retweets) - (a.likes + a.retweets),
-      )
+      .sort((a, b) => (b.likes + b.retweets) - (a.likes + a.retweets))
       .slice(0, 5),
-    discovery: getTokenTwitterSocialStats(mint),
+    discovery: {
+      mentions: filteredTweets.length,
+      accounts: authorAggregates.size,
+      memecoinAccounts: shillers.length,
+      firstAccountCreatedAt: null,
+      lastDiscoveredAt: filteredTweets.reduce<number | null>((latest, tweet) => {
+        if (tweet.postedAt == null) return latest;
+        return latest == null ? tweet.postedAt : Math.max(latest, tweet.postedAt);
+      }, null),
+    },
   };
 
-  // Persist the risk-universe tweets/accounts for later audit, not only the cleaned UI sample.
-  const riskAccountMap: TwitterScrapeResult["accounts"] = new Map();
-  for (const handle of riskHandles) {
-    const account = result.accounts.get(handle);
-    if (account) riskAccountMap.set(handle, account);
+  try {
+    persistTwitterStats(stats, query, filteredTweets, filteredAccounts, excludedHandles);
+  } catch (error) {
+    console.warn("Twitter persistence error:", error);
   }
-  persistTwitterStats(stats, query, riskTweets, riskAccountMap, excludedHandles);
+
+  // Existing local social stats enrich discovery metadata without changing the
+  // live scrape sample contract.
+  try {
+    const localStats = getTokenTwitterSocialStats(mint);
+    if (localStats) {
+      stats.discovery.mentions = Math.max(stats.discovery.mentions, Number(localStats.mentions || 0));
+      stats.discovery.accounts = Math.max(stats.discovery.accounts, Number(localStats.accounts || 0));
+    }
+  } catch {
+    // Optional local enrichment must never fail the live endpoint.
+  }
+
   CACHE.set(cacheKey, { data: stats, ts: Date.now() });
   return NextResponse.json(stats);
 }
-
-const HOUR_MS = 60 * 60 * 1000;
