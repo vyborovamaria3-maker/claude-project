@@ -52,6 +52,10 @@ assert(
   "production Qwen must preserve the full-intelligence output budget",
 );
 assert(
+  intelligenceCompose.includes("QWEN_LAZY_LOAD: ${QWEN_LAZY_LOAD:-false}"),
+  "production Qwen must validate model/GPU loading at startup instead of failing on the first user request",
+);
+assert(
   socialAiRoute.includes('"x-api-key": API_KEY'),
   "social-ai bridge must authenticate to memecoin-intelligence with x-api-key",
 );
@@ -70,4 +74,4 @@ assert(
   "Telegram login must remain independent from unrelated application Settings and persist its MTProto session directly",
 );
 
-console.log("[social-production-regression] OK: private Qwen transport, scoped RBAC key, real-inference default and auth guards are wired");
+console.log("[social-production-regression] OK: private Qwen transport, scoped RBAC key, real-inference default, eager GPU validation and auth guards are wired");
