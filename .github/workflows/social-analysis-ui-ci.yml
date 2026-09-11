@@ -21,7 +21,19 @@ on:
       - "solana-launcher/components/providers/AppProviders.tsx"
       - "solana-launcher/components/providers/EncodingRepair.tsx"
       - "solana-launcher/scripts/analysis-regression.mjs"
+      - "solana-launcher/scripts/live-intelligence-regression.mjs"
+      - "solana-launcher/scripts/social-production-regression.mjs"
       - "solana-launcher/scripts/social-local-preflight.mjs"
+      - "solana-launcher/scripts/x-login.mjs"
+      - "solana-launcher/backend/app/cli/telegram_login.py"
+      - "solana-launcher/backend/tests/test_telegram_login_cli.py"
+      - "solana-launcher/docker-compose.production.yml"
+      - "solana-launcher/.env.local.example"
+      - "memecoin-intelligence/docker-compose.production.yml"
+      - "memecoin-intelligence/.env.example"
+      - "memecoin-intelligence/src/server/api/routes.ts"
+      - "memecoin-intelligence/src/server/security/**"
+      - "memecoin-intelligence/src/server/telegram-ai/**"
       - "solana-launcher/public/sw.js"
       - "solana-launcher/scripts/healthcheck-production.sh"
       - "solana-launcher/Dockerfile.frontend.prod"
@@ -31,6 +43,7 @@ on:
     branches:
       - agent/social-analysis-integration
       - agent/fix-social-deploy-cache-encoding
+      - fix/trade-analysis-verdict-complete
   workflow_dispatch:
 
 permissions:
@@ -57,6 +70,8 @@ jobs:
         run: npm ci --legacy-peer-deps
       - name: Social analytics regression
         run: npm run analysis:test
+      - name: X login script syntax
+        run: node --check scripts/x-login.mjs
       - name: ESLint
         run: npm run lint
       - name: TypeScript check
