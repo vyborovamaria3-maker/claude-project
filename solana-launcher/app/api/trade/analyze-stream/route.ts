@@ -47,7 +47,10 @@ async function cachedFirstSeen(addr: string) {
 }
 
 function analysisCacheKey(mint: string) {
-  return `v${ANALYSIS_SCHEMA_VERSION}:${mint}`;
+  // NDJSON and legacy JSON analysis routes expose slightly different payload
+  // shapes. Isolate their caches so whichever route runs first cannot mutate the
+  // other route's response contract for the next 24 hours.
+  return `analysis-stream:v${ANALYSIS_SCHEMA_VERSION}:${mint}`;
 }
 
 function safeNumber(value: unknown, fallback = 0) {
