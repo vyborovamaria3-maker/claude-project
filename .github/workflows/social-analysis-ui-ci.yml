@@ -6,9 +6,22 @@ on:
       - "solana-launcher/app/trade/analysis/**"
       - "solana-launcher/app/x-analysis/**"
       - "solana-launcher/app/api/build-info/**"
+      - "solana-launcher/app/api/trade/social-ai/**"
+      - "solana-launcher/app/api/trade/social-source/**"
+      - "solana-launcher/app/api/trade/dev-twitter/**"
+      - "solana-launcher/app/api/token-history/**"
       - "solana-launcher/components/trade/SocialIntelligencePanel.tsx"
+      - "solana-launcher/components/trade/SocialAnalysisChart.tsx"
+      - "solana-launcher/components/chart/ActivityPanel.tsx"
+      - "solana-launcher/hooks/useOHLCV.ts"
+      - "solana-launcher/hooks/useTradeStream.ts"
+      - "solana-launcher/lib/chart/**"
+      - "solana-launcher/lib/trade/social-intelligence*.ts"
+      - "solana-launcher/lib/trade/intelligence-agent*.ts"
       - "solana-launcher/components/providers/AppProviders.tsx"
       - "solana-launcher/components/providers/EncodingRepair.tsx"
+      - "solana-launcher/scripts/analysis-regression.mjs"
+      - "solana-launcher/scripts/social-local-preflight.mjs"
       - "solana-launcher/public/sw.js"
       - "solana-launcher/scripts/healthcheck-production.sh"
       - "solana-launcher/Dockerfile.frontend.prod"
@@ -42,6 +55,8 @@ jobs:
           cache-dependency-path: solana-launcher/package-lock.json
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
+      - name: Social analytics regression
+        run: npm run analysis:test
       - name: ESLint
         run: npm run lint
       - name: TypeScript check
