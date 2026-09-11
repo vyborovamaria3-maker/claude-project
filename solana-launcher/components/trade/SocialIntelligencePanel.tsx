@@ -105,6 +105,19 @@ function twitterCollectionMeta(x: TwitterStats | null): TwitterCollectionMeta | 
   return (x?.meta as TwitterCollectionMeta | undefined) || null;
 }
 
+function isRealQwen(ai: AiEnvelope | null): boolean {
+  return Boolean(ai?.result && ai.provider === "openai-compatible");
+}
+
+function telegramCoverageDegraded(collector: TelegramCollectorStatus | null): boolean {
+  if (!collector) return true;
+  if (collector.configured === false) return true;
+  if (collector.mtproto_configured && !collector.session_configured) return true;
+  if (collector.last_error && !collector.connected && !collector.running && !collector.background_running) return true;
+  if (collector.configured && !collector.connected && !collector.running && !collector.background_running) return true;
+  return false;
+}
+
 function shortAddress(value: string | null | undefined, left = 5, right = 4): string {
   if (!value) return "—";
   if (value.length <= left + right + 2) return value;
@@ -156,9 +169,9 @@ function friendlySourceError(source: "Telegram" | "X" | "Market" | "Blockchain",
 function telegramCollectorLabel(collector: TelegramCollectorStatus | null): string {
   if (!collector) return "status недоступен";
   if (collector.connected) return `${collector.mode || "mtproto"} · connected`;
-  if (collector.running) return `${collector.mode || "collector"} · running`;
+  if (collector.running || collector.background_running) return `${collector.mode || "collector"} · running`;
   if (collector.mtproto_configured && !collector.session_configured) return "MTProto API настроен · session отсутствует";
-  if (collector.configured) return `${collector.mode || "collector"} · configured`;
+  if (collector.configured) return `${collector.mode || "collector"} · configured, not running`;
   if (collector.public_web_enabled) return "public web · без активного покрытия";
   return "не настроен";
 }
@@ -352,11 +365,10 @@ export default function SocialIntelligencePanel() {
 
   const symbol = x?.symbol || options.symbol || null;
   const priceChange = market?.pair?.changeH1 ?? market?.pair?.change24h ?? null;
-  const coreSourceCount = [x, tg, market, chain].filter(Boolean).length;
-  const hasCoreData = coreSourceCount > 0;
+  const hasSocialData = Boolean(x || tg);
 
   return (
-    <div className="space-y-4" data-tag="trade.social_intelligence.v8">
+    <div className="space-y-4" data-tag="trade.social_intelligence.v9">
       <section className="surface-panel rounded-2xl border border-bg-border p-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="min-w-0">
@@ -377,10 +389,10 @@ export default function SocialIntelligencePanel() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <CompactMetric label="SOCIAL" value={hasCoreData ? score(derived.socialScore) : "—"} />
+            <CompactMetric label="SOCIAL" value={hasSocialData ? score(derived.socialScore) : "—"} />
             <CompactMetric label="X" value={x ? score(derived.xScore) : "—"} />
             <CompactMetric label="TG" value={tg ? score(derived.tgScore) : "—"} />
-            <CompactMetric label="RISK" value={hasCoreData ? score(derived.socialRisk) : "—"} />
+            <CompactMetric label="RISK" value={hasSocialData ? score(derived.socialRisk) : "—"} />
             <CompactMetric label="PRICE" value={market ? signedPct(priceChange) : "—"} />
           </div>
         </div>
@@ -603,15 +615,19 @@ function SourceHealthBar({
 }) {
   const collector = telegramCollector(tg);
   const xMeta = twitterCollectionMeta(x);
-  const xState: SourceState = loading ? "loading" : sourceErrors.x ? "error" : x ? "ready" : "idle";
+  const xState: SourceState = loading
+    ? "loading"
+    : sourceErrors.x
+      ? "error"
+      : x
+        ? xMeta?.coverageConfirmed === false ? "degraded" : "ready"
+        : "idle";
   const tgState: SourceState = loading
     ? "loading"
     : sourceErrors.tg
       ? "error"
       : tg
-        ? collector?.configured === false
-          ? "degraded"
-          : "ready"
+        ? telegramCoverageDegraded(collector) ? "degraded" : "ready"
         : "idle";
   const marketState: SourceState = loading
     ? "loading"
@@ -623,15 +639,23 @@ function SourceHealthBar({
           : "ready"
         : "idle";
   const chainState: SourceState = chainLoading ? "loading" : sourceErrors.chain ? "error" : chain ? "ready" : "idle";
-  const aiState: SourceState = aiLoading ? "loading" : ai?.error || ai?.available === false ? "degraded" : ai?.result ? "ready" : "idle";
+  const aiState: SourceState = aiLoading
+    ? "loading"
+    : ai?.error || ai?.available === false || ai?.provider === "mock"
+      ? "degraded"
+      : isRealQwen(ai)
+        ? "ready"
+        : ai?.result
+          ? "degraded"
+          : "idle";
 
   return (
-    <div className="mt-3 flex flex-wrap gap-1.5 border-t border-bg-border pt-3" data-tag="trade.social_source_health.v1">
+    <div className="mt-3 flex flex-wrap gap-1.5 border-t border-bg-border pt-3" data-tag="trade.social_source_health.v2">
       <SourcePill
         label="X"
         state={xState}
         detail={x
-          ? `${x.collectionStrategy || "collector"}${xMeta?.authenticatedBrowser ? " · auth" : ""}`
+          ? `${x.collectionStrategy || "collector"}${xMeta?.authenticatedBrowser ? " · auth" : ""}${xMeta?.coverageConfirmed === false ? " · limited" : ""}`
           : sourceErrors.x ? "ошибка" : "нет данных"}
       />
       <SourcePill label="Telegram" state={tgState} detail={telegramCollectorLabel(collector)} />
@@ -648,7 +672,9 @@ function SourceHealthBar({
       <SourcePill
         label="Qwen"
         state={aiState}
-        detail={ai?.model || ai?.provider || ai?.agent || (aiLoading ? "analysis" : "ожидание")}
+        detail={ai?.provider === "mock"
+          ? "MOCK · не Qwen"
+          : ai?.model || ai?.provider || ai?.agent || (aiLoading ? "analysis" : "ожидание")}
       />
     </div>
   );
@@ -700,40 +726,68 @@ function OverallVerdict({
   ai: AiEnvelope | null;
   loading: boolean;
 }) {
-  const sourceCount = [x, tg, market, chain].filter(Boolean).length;
+  const coreSourceCount = [x, tg, market, chain].filter(Boolean).length;
+  const socialSourceCount = Number(Boolean(x)) + Number(Boolean(tg));
+  const hasSocialData = socialSourceCount > 0;
+  const xLimited = twitterCollectionMeta(x)?.coverageConfirmed === false;
+  const tgLimited = tg ? telegramCoverageDegraded(telegramCollector(tg)) : false;
+  const socialCoverageLimited = xLimited || tgLimited;
   const marketUsable = Boolean(market && market.meta?.stale !== true);
-  const highRisk = derived.socialRisk >= 68 || derived.manipulation >= 65;
-  const strongSignal = sourceCount >= 2 && derived.socialScore >= 65 && derived.socialRisk < 50;
+  const highRisk = hasSocialData && (derived.socialRisk >= 68 || derived.manipulation >= 65);
+  const strongSignal = socialSourceCount >= 2
+    && !socialCoverageLimited
+    && derived.socialScore >= 65
+    && derived.socialRisk < 50;
 
   let tone: InsightTone = "neutral";
-  let title = "Недостаточно данных";
+  let title = "Недостаточно social-данных";
   let text = loading
     ? "Источники ещё собираются. Итог появится после детерминированного расчёта Telegram, X, рынка и on-chain данных."
-    : "Недостаточно независимых источников, чтобы считать итоговый social score надёжным.";
+    : coreSourceCount > 0
+      ? "Market/on-chain данные есть, но без Telegram или X нельзя честно показывать social score и social risk."
+      : "Недостаточно независимых источников для аналитического вывода.";
 
-  if (!loading && sourceCount > 0 && highRisk) {
+  if (!loading && highRisk) {
     tone = "danger";
-    title = "Повышенный риск";
-    text = "Детерминированные метрики показывают повышенный social/manipulation risk. Сильная активность здесь не равна качественному сигналу.";
+    title = socialCoverageLimited ? "Повышенный риск при ограниченном покрытии" : "Повышенный social-риск";
+    text = socialCoverageLimited
+      ? "Доступная social-выборка содержит риск-сигналы, но покрытие ограничено. Не интерпретируй score как полный срез рынка."
+      : "Детерминированные метрики показывают повышенный social/manipulation risk. Сильная активность здесь не равна качественному сигналу.";
   } else if (!loading && strongSignal) {
     tone = "positive";
-    title = "Сигнал подтверждается несколькими источниками";
-    text = "Social activity поддерживается несколькими доступными источниками, а текущий risk score не перекрывает этот сигнал. Проверяй тайминг и on-chain структуру перед выводом.";
-  } else if (!loading && sourceCount >= 2) {
+    title = "Telegram и X подтверждают сигнал";
+    text = "Оба social-источника доступны и согласованно поддерживают сигнал, а текущий risk score не перекрывает его. Market/on-chain используй как дополнительное подтверждение.";
+  } else if (!loading && hasSocialData && socialCoverageLimited) {
     tone = "warning";
-    title = "Смешанная картина";
-    text = "Источников достаточно для анализа, но сила social signal и риск не дают однозначного подтверждения. Смотри Telegram/X/Blockchain выводы ниже.";
+    title = "Social coverage ограничено";
+    text = "Часть Telegram/X покрытия неполная или collector не подтверждён как активный. Score можно использовать только как оценку доступной выборки.";
+  } else if (!loading && socialSourceCount === 1) {
+    tone = "warning";
+    title = "Есть только один social-источник";
+    text = "Social score рассчитан по одному доступному источнику. Для уверенного вывода нужен второй независимый social-канал и on-chain подтверждение.";
+  } else if (!loading && socialSourceCount >= 2) {
+    tone = "warning";
+    title = "Смешанная social-картина";
+    text = "Telegram и X доступны, но сила сигнала и риск не дают однозначного подтверждения. Смотри evidence по каждому источнику ниже.";
   }
 
   const classes = toneClasses(tone);
+  const qwenState = ai?.provider === "mock"
+    ? "mock"
+    : isRealQwen(ai)
+      ? "ready"
+      : ai?.error || ai?.available === false
+        ? "degraded"
+        : "—";
+
   return (
-    <section className={`surface-panel rounded-2xl border p-4 ${classes.border}`} data-tag="trade.social_overall_verdict.v1">
+    <section className={`surface-panel rounded-2xl border p-4 ${classes.border}`} data-tag="trade.social_overall_verdict.v2">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${classes.dot}`} />
             <h2 className="text-sm font-semibold text-content">{title}</h2>
-            {sourceCount > 0 ? (
+            {hasSocialData ? (
               <span className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold ${classes.badge}`}>
                 SOCIAL {score(derived.socialScore)} · RISK {score(derived.socialRisk)}
               </span>
@@ -742,10 +796,11 @@ function OverallVerdict({
           <p className="mt-2 max-w-4xl text-sm leading-6 text-content-soft">{text}</p>
         </div>
         <div className="grid shrink-0 grid-cols-2 gap-x-4 gap-y-1 text-[10px] text-content-muted sm:grid-cols-4 lg:grid-cols-2">
-          <span>Coverage</span><span className="text-right font-mono text-content">{sourceCount}/4</span>
-          <span>Manipulation</span><span className="text-right font-mono text-content">{sourceCount ? score(derived.manipulation) : "—"}</span>
+          <span>Social coverage</span><span className="text-right font-mono text-content">{socialSourceCount}/2</span>
+          <span>Core coverage</span><span className="text-right font-mono text-content">{coreSourceCount}/4</span>
+          <span>Manipulation</span><span className="text-right font-mono text-content">{hasSocialData ? score(derived.manipulation) : "—"}</span>
           <span>Market</span><span className="text-right font-mono text-content">{marketUsable ? "fresh" : market ? "stale" : "—"}</span>
-          <span>Qwen</span><span className="text-right font-mono text-content">{ai?.result ? "ready" : ai?.error ? "degraded" : "—"}</span>
+          <span>Qwen</span><span className="text-right font-mono text-content">{qwenState}</span>
         </div>
       </div>
     </section>
@@ -787,6 +842,8 @@ function CoreInsights({
   const tgFailure = friendlySourceError("Telegram", sourceErrors.tg);
   const xFailure = friendlySourceError("X", sourceErrors.x);
   const chainFailure = friendlySourceError("Blockchain", sourceErrors.chain);
+  const tgCoverageLimited = tg ? telegramCoverageDegraded(collector) : false;
+  const xCoverageLimited = xMeta?.coverageConfirmed === false;
 
   const tgVerdict = tgFailure
     ? tgFailure
@@ -794,21 +851,23 @@ function CoreInsights({
       ? loading
         ? "Загружаем Telegram timeline…"
         : "Telegram payload пока не получен."
-      : tgMatches > 0
-        ? derived.tgScore >= 70
-          ? "В Telegram сильный сигнал: релевантные упоминания поддержаны заметной активностью источников."
-          : derived.tgScore >= 45
-            ? "В Telegram есть рабочий сигнал, но сила и качество источников смешанные."
-            : "Упоминания есть, но Telegram-сигнал пока слабый и требует подтверждения."
-        : collector?.mtproto_configured && !collector?.session_configured
-          ? "Telegram API настроен, но MTProto user session ещё не авторизована — покрытие приватных/обычных каналов неполное."
-          : collector?.configured
-            ? "Фидер доступен, но по этому mint в выбранном окне релевантных совпадений не найдено."
-            : "Telegram collector не настроен: это проблема покрытия, а не доказательство отсутствия сообщений.";
+      : tgCoverageLimited
+        ? tgMatches > 0
+          ? "Telegram вернул совпадения, но collector/session coverage не подтверждено полностью. Score относится только к доступной выборке."
+          : collector?.mtproto_configured && !collector?.session_configured
+            ? "Telegram API настроен, но MTProto user session ещё не авторизована — покрытие приватных/обычных каналов неполное."
+            : "Telegram collector не подтверждён как активный: отсутствие совпадений не означает отсутствие сообщений."
+        : tgMatches > 0
+          ? derived.tgScore >= 70
+            ? "В Telegram сильный сигнал: релевантные упоминания поддержаны заметной активностью источников."
+            : derived.tgScore >= 45
+              ? "В Telegram есть рабочий сигнал, но сила и качество источников смешанные."
+              : "Упоминания есть, но Telegram-сигнал пока слабый и требует подтверждения."
+          : "Активный фидер не нашёл релевантных совпадений по этому mint в выбранном окне.";
 
   const tgTone: InsightTone = tgFailure
     ? "danger"
-    : collector?.mtproto_configured && !collector?.session_configured
+    : tgCoverageLimited
       ? "warning"
       : tgMatches > 0 && derived.tgScore >= 60
         ? "positive"
@@ -822,21 +881,27 @@ function CoreInsights({
       ? loading
         ? "Загружаем X mentions…"
         : "X payload пока не получен."
-      : xUniverse === 0
-        ? "По выбранному периоду X не дал релевантных упоминаний."
-        : derived.manipulation >= 55
-          ? "В X есть активность, но структура выглядит подозрительно: повышен manipulation/bot risk."
-          : derived.xScore >= 65
-            ? "В X заметный органический импульс: интерес и вовлечённость подтверждают социальный спрос."
-            : "X активен умеренно: сигнал есть, но пока без сильного подтверждения импульса.";
+      : xCoverageLimited
+        ? xUniverse > 0
+          ? "X вернул ограниченную выборку. Метрики относятся к найденному sample и не подтверждают полное покрытие упоминаний."
+          : "X coverage не подтверждено; нулевая выборка не считается доказательством отсутствия упоминаний."
+        : xUniverse === 0
+          ? "По подтверждённому выбранному периоду X не дал релевантных упоминаний."
+          : derived.manipulation >= 55
+            ? "В X есть активность, но структура выглядит подозрительно: повышен manipulation/bot risk."
+            : derived.xScore >= 65
+              ? "В X заметный органический импульс: интерес и вовлечённость подтверждают социальный спрос."
+              : "X активен умеренно: сигнал есть, но пока без сильного подтверждения импульса.";
 
   const xTone: InsightTone = xFailure
     ? "danger"
-    : derived.manipulation >= 55
+    : xCoverageLimited
       ? "warning"
-      : x && derived.xScore >= 60
-        ? "positive"
-        : "neutral";
+      : derived.manipulation >= 55
+        ? "warning"
+        : x && derived.xScore >= 60
+          ? "positive"
+          : "neutral";
 
   const chainVerdict = chainFailure
     ? chainFailure
@@ -863,7 +928,7 @@ function CoreInsights({
         : "neutral";
 
   return (
-    <section className="grid gap-4 lg:grid-cols-3" data-tag="trade.social_core_insights.v2">
+    <section className="grid gap-4 lg:grid-cols-3" data-tag="trade.social_core_insights.v3">
       <InsightCard
         icon={<Send />}
         title="Telegram"
@@ -890,9 +955,9 @@ function CoreInsights({
           `${xPosts} отображаемых постов · ${xUniverse} в risk-universe`,
           `${x?.uniqueMentioners ?? 0} уникальных авторов`,
           `Engagement: ${x?.aggregated?.totalEngagement ?? 0}`,
-          `Bot risk: ${score(x?.riskUniverse?.botRiskScore ?? x?.botRiskScore ?? 0)}`,
+          `Bot risk: ${x ? score(x.riskUniverse?.botRiskScore ?? x.botRiskScore) : "—"}`,
           x ? `Collector: ${x.collectionStrategy || "auto"} · browser ${xMeta?.authenticatedBrowser ? "auth" : "public"}` : null,
-          xMeta?.coverageConfirmed === false ? "Coverage: ограниченная выборка" : null,
+          xCoverageLimited ? "Coverage: ограниченная выборка" : null,
         ]}
       />
 
@@ -990,18 +1055,22 @@ function QwenStrip({
   loading: boolean;
   snapshot: AnalysisSnapshot | null;
 }) {
+  const mock = ai?.provider === "mock";
   const summary = ai?.result?.summary;
   const confidence = confidencePercent(ai?.result?.overallConfidence);
   const risks = ai?.result?.risks?.length ?? 0;
   const coordination = ai?.result?.coordinationSignals?.length ?? 0;
   return (
-    <section className="surface-panel rounded-2xl border border-bg-border px-4 py-3" data-tag="trade.social_qwen_verdict.v2">
+    <section className={`surface-panel rounded-2xl border px-4 py-3 ${mock ? "border-warning-border" : "border-bg-border"}`} data-tag="trade.social_qwen_verdict.v3">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex min-w-0 gap-3">
-          <BrainCircuit className={`mt-0.5 h-4 w-4 shrink-0 ${loading ? "animate-pulse text-primary" : "text-primary"}`} />
+          <BrainCircuit className={`mt-0.5 h-4 w-4 shrink-0 ${loading ? "animate-pulse text-primary" : mock ? "text-warning" : "text-primary"}`} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-xs font-semibold text-content">Qwen verdict</h2>
+              <h2 className="text-xs font-semibold text-content">{mock ? "AI test verdict" : "Qwen verdict"}</h2>
+              {mock ? (
+                <span className="rounded-full border border-warning-border bg-warning-soft px-2 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-warning">MOCK · NOT QWEN</span>
+              ) : null}
               {confidence != null ? (
                 <span className="font-mono text-[9px] text-content-faint">confidence {confidence}%</span>
               ) : null}
@@ -1010,13 +1079,15 @@ function QwenStrip({
             <p className="mt-1 text-xs leading-5 text-content-muted">
               {loading
                 ? "Core-data уже показаны. Qwen анализирует unified snapshot в фоне интерфейса."
-                : summary
-                  ? summary
-                  : ai?.error
-                    ? `Qwen недоступен: ${ai.error}`
-                    : snapshot
-                      ? "Snapshot собран; AI-вывод появится при наличии аналитических features."
-                      : "Ожидается unified snapshot."}
+                : mock
+                  ? `Детерминированный test/mock provider. Это не вывод реальной модели Qwen.${summary ? ` ${summary}` : ""}`
+                  : summary
+                    ? summary
+                    : ai?.error
+                      ? `Qwen недоступен: ${ai.error}`
+                      : snapshot
+                        ? "Snapshot собран; AI-вывод появится при наличии аналитических features."
+                        : "Ожидается unified snapshot."}
             </p>
           </div>
         </div>
@@ -1065,6 +1136,7 @@ function TechnicalIntelligence({
     friendlySourceError("X", sourceErrors.x),
     friendlySourceError("Market", sourceErrors.market),
     friendlySourceError("Blockchain", sourceErrors.chain),
+    ai?.provider === "mock" ? "Qwen: active provider is MOCK; result is deterministic test output." : null,
     ...warnings,
   ].filter((value): value is string => Boolean(value)))];
 
