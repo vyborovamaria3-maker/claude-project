@@ -38,15 +38,27 @@ services:
       SECURITY_HEADERS_STRICT: "true"
       SECURITY_RBAC_ENABLED: "true"
       INTERNAL_ADMIN_API_KEY: ${INTERNAL_ADMIN_API_KEY:?set INTERNAL_ADMIN_API_KEY}
+      # Scoped server-to-server credential used by the POTAPoff frontend only for
+      # non-admin analysis endpoints such as /api/telegram-ai/analyze.
+      INTERNAL_USER_API_KEY: ${MEMECOIN_INTELLIGENCE_API_KEY:?set MEMECOIN_INTELLIGENCE_API_KEY}
       DATABASE_URL: postgresql://${POSTGRES_USER:-memecoin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
       TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-mock}
       TELEGRAM_AI_BASE_URL: ${TELEGRAM_AI_BASE_URL:-http://qwen:8000/v1}
       TELEGRAM_AI_API_KEY: ${TELEGRAM_AI_API_KEY:-}
+      TELEGRAM_AI_MODEL: ${TELEGRAM_AI_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      TELEGRAM_AI_MAX_TOKENS: ${TELEGRAM_AI_MAX_TOKENS:-3200}
     command: ["npm", "start"]
+    # Host binding is loopback-only for local operations. Cross-stack traffic
+    # uses the private potapoff-shared Docker network below.
     ports:
       - "127.0.0.1:3001:3001"
+    networks:
+      default:
+      potapoff-shared:
+        aliases:
+          - memecoin-intelligence-api
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,12 +75,15 @@ services:
       SECURITY_HEADERS_STRICT: "true"
       SECURITY_RBAC_ENABLED: "true"
       INTERNAL_ADMIN_API_KEY: ${INTERNAL_ADMIN_API_KEY:?set INTERNAL_ADMIN_API_KEY}
+      INTERNAL_USER_API_KEY: ${MEMECOIN_INTELLIGENCE_API_KEY:?set MEMECOIN_INTELLIGENCE_API_KEY}
       DATABASE_URL: postgresql://${POSTGRES_USER:-memecoin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
       TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-mock}
       TELEGRAM_AI_BASE_URL: ${TELEGRAM_AI_BASE_URL:-http://qwen:8000/v1}
       TELEGRAM_AI_API_KEY: ${TELEGRAM_AI_API_KEY:-}
+      TELEGRAM_AI_MODEL: ${TELEGRAM_AI_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      TELEGRAM_AI_MAX_TOKENS: ${TELEGRAM_AI_MAX_TOKENS:-3200}
     command: ["npm", "run", "start:worker"]
     depends_on:
       postgres:
@@ -79,3 +94,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  potapoff-shared:
+    external: true
