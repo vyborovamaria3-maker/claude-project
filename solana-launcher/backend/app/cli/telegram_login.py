@@ -56,23 +56,38 @@ def _write_env_value(path: Path, key: str, value: str) -> None:
     path.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
 
 
+def _valid_api_hash(value: str) -> bool:
+    return len(value) == 32 and all(ch in "0123456789abcdefABCDEF" for ch in value)
+
+
 def _resolve_api_credentials() -> tuple[int, str, bool]:
     file_env = _read_env_file(_BACKEND_ENV)
     raw_api_id = (os.getenv("TG_API_ID") or file_env.get("TG_API_ID") or "").strip()
     api_hash = (os.getenv("TG_API_HASH") or file_env.get("TG_API_HASH") or "").strip()
     prompted = False
 
-    if not raw_api_id:
-        raw_api_id = input("Telegram API ID: ").strip()
-        prompted = True
-    if not api_hash:
-        api_hash = getpass.getpass("Telegram API HASH: ").strip()
+    if raw_api_id and not raw_api_id.isdigit():
+        print("Existing TG_API_ID is malformed; it will be replaced if --write-env is used.")
+        raw_api_id = ""
+    if api_hash and not _valid_api_hash(api_hash):
+        print("Existing TG_API_HASH is malformed; it will be replaced if --write-env is used.")
+        api_hash = ""
+
+    while not raw_api_id:
+        candidate = input("Telegram API ID: ").strip()
+        if candidate.isdigit():
+            raw_api_id = candidate
+        else:
+            print("API ID must contain digits only.")
         prompted = True
 
-    if not raw_api_id.isdigit():
-        raise SystemExit("TG_API_ID must be a plain integer. Check backend/.env for accidentally concatenated lines.")
-    if len(api_hash) != 32 or any(ch not in "0123456789abcdefABCDEF" for ch in api_hash):
-        raise SystemExit("TG_API_HASH must be a 32-character hexadecimal Telegram API hash")
+    while not api_hash:
+        candidate = getpass.getpass("Telegram API HASH: ").strip()
+        if _valid_api_hash(candidate):
+            api_hash = candidate
+        else:
+            print("API HASH must be a 32-character hexadecimal value.")
+        prompted = True
 
     return int(raw_api_id), api_hash, prompted
 
