@@ -11,13 +11,11 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Activity,
   AlertTriangle,
   BrainCircuit,
   ChevronDown,
   ChevronUp,
   Clock3,
-  ExternalLink,
   Loader2,
   Radar,
   Search,
@@ -76,12 +74,20 @@ type TelegramCollectorStatus = {
   last_error?: string | null;
 };
 
+type TwitterCollectionMeta = NonNullable<TwitterStats["meta"]> & {
+  authenticatedBrowser?: boolean;
+  coverageConfirmed?: boolean;
+};
+
 type SourceErrors = {
   x: string | null;
   tg: string | null;
   market: string | null;
   chain: string | null;
 };
+
+type SourceState = "loading" | "ready" | "degraded" | "error" | "idle";
+type InsightTone = "positive" | "warning" | "danger" | "neutral";
 
 const EMPTY_SOURCE_ERRORS: SourceErrors = { x: null, tg: null, market: null, chain: null };
 
@@ -95,12 +101,8 @@ function telegramCollector(tg: SocialTimeline | null): TelegramCollectorStatus |
   return meta?.telegramCollector || null;
 }
 
-function formatPrice(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value) || value <= 0) return "—";
-  if (value >= 1) return `$${value.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
-  if (value >= 0.01) return `$${value.toFixed(5)}`;
-  if (value >= 0.0001) return `$${value.toFixed(7)}`;
-  return `$${value.toExponential(3)}`;
+function twitterCollectionMeta(x: TwitterStats | null): TwitterCollectionMeta | null {
+  return (x?.meta as TwitterCollectionMeta | undefined) || null;
 }
 
 function shortAddress(value: string | null | undefined, left = 5, right = 4): string {
@@ -109,15 +111,36 @@ function shortAddress(value: string | null | undefined, left = 5, right = 4): st
   return `${value.slice(0, left)}…${value.slice(-right)}`;
 }
 
-function formatTradeTime(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "—";
-  const ms = value > 1e12 ? value : value * 1000;
-  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function formatAgo(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "—";
+  const parsed = typeof value === "number" ? value : Date.parse(value);
+  if (!Number.isFinite(parsed)) return "—";
+  const ms = parsed < 1e12 ? parsed * 1000 : parsed;
+  const minutes = Math.max(0, Math.round((Date.now() - ms) / 60_000));
+  if (minutes < 1) return "сейчас";
+  if (minutes < 60) return `${minutes}м назад`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)}ч назад`;
+  return `${Math.round(minutes / 1440)}д назад`;
 }
 
 function friendlySourceError(source: "Telegram" | "X" | "Market" | "Blockchain", message: string | null): string | null {
   if (!message) return null;
   const normalized = message.toLowerCase();
+  if (source === "X" && (
+    normalized.includes("x login required")
+    || normalized.includes("authenticated x browser session")
+    || normalized.includes("session expired")
+    || normalized.includes("login required")
+  )) {
+    return "X: нужна авторизованная браузерная сессия. Запусти `npm run x:login` в solana-launcher.";
+  }
+  if (source === "Telegram" && (
+    normalized.includes("tg_api_id")
+    || normalized.includes("tg_api_hash")
+    || normalized.includes("telegram session")
+  )) {
+    return "Telegram: MTProto не авторизован. Проверь TG_API_ID/TG_API_HASH и создай TG_SESSION_STRING.";
+  }
   if (normalized.includes("could not validate credentials") || normalized.includes("401")) {
     return `${source}: backend-авторизация не пройдена. Войди в аккаунт на этом localhost.`;
   }
@@ -128,6 +151,21 @@ function friendlySourceError(source: "Telegram" | "X" | "Market" | "Blockchain",
     return `${source}: frontend не смог связаться с backend.`;
   }
   return `${source}: ${message}`;
+}
+
+function telegramCollectorLabel(collector: TelegramCollectorStatus | null): string {
+  if (!collector) return "status недоступен";
+  if (collector.connected) return `${collector.mode || "mtproto"} · connected`;
+  if (collector.running) return `${collector.mode || "collector"} · running`;
+  if (collector.mtproto_configured && !collector.session_configured) return "MTProto API настроен · session отсутствует";
+  if (collector.configured) return `${collector.mode || "collector"} · configured`;
+  if (collector.public_web_enabled) return "public web · без активного покрытия";
+  return "не настроен";
+}
+
+function confidencePercent(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.round(clamp(value <= 1 ? value * 100 : value));
 }
 
 export default function SocialIntelligencePanel() {
@@ -307,11 +345,6 @@ export default function SocialIntelligencePanel() {
     [x, tg, market, chain, ai, channels, options],
   );
 
-  const recentTrades = useMemo(
-    () => [...(chain?.trades || [])].sort((left, right) => right.ts - left.ts).slice(0, 12),
-    [chain],
-  );
-
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(query);
@@ -319,9 +352,11 @@ export default function SocialIntelligencePanel() {
 
   const symbol = x?.symbol || options.symbol || null;
   const priceChange = market?.pair?.changeH1 ?? market?.pair?.change24h ?? null;
+  const coreSourceCount = [x, tg, market, chain].filter(Boolean).length;
+  const hasCoreData = coreSourceCount > 0;
 
   return (
-    <div className="space-y-4" data-tag="trade.social_intelligence.v7">
+    <div className="space-y-4" data-tag="trade.social_intelligence.v8">
       <section className="surface-panel rounded-2xl border border-bg-border p-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="min-w-0">
@@ -335,18 +370,18 @@ export default function SocialIntelligencePanel() {
               ) : null}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-content-faint">
-              <span>Price · Trades · Telegram · X · Blockchain</span>
+              <span>Price · Trades · Telegram · X · Blockchain · Qwen</span>
               {mint ? <span className="font-mono">{shortAddress(mint, 8, 7)}</span> : null}
               {market?.pair?.name ? <span className="text-content-muted">{market.pair.name}</span> : null}
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <CompactMetric label="SOCIAL" value={score(derived.socialScore)} />
+            <CompactMetric label="SOCIAL" value={hasCoreData ? score(derived.socialScore) : "—"} />
             <CompactMetric label="X" value={x ? score(derived.xScore) : "—"} />
             <CompactMetric label="TG" value={tg ? score(derived.tgScore) : "—"} />
-            <CompactMetric label="RISK" value={score(derived.socialRisk)} />
-            <CompactMetric label="PRICE" value={signedPct(priceChange)} />
+            <CompactMetric label="RISK" value={hasCoreData ? score(derived.socialRisk) : "—"} />
+            <CompactMetric label="PRICE" value={market ? signedPct(priceChange) : "—"} />
           </div>
         </div>
 
@@ -387,8 +422,8 @@ export default function SocialIntelligencePanel() {
             <SlidersHorizontal className="h-4 w-4" />
             Источники
           </button>
-          <button disabled={loading} className={siteDesign.controls.primaryActionClassName}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
+          <button disabled={loading || chainLoading} className={siteDesign.controls.primaryActionClassName}>
+            {loading || chainLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
             Анализ
           </button>
         </form>
@@ -430,15 +465,36 @@ export default function SocialIntelligencePanel() {
             <Check label="Explicit TG calls" value={options.tgExplicitCallsOnly} set={(checked) => setOptions((value) => ({ ...value, tgExplicitCallsOnly: checked }))} />
           </div>
         ) : null}
+
+        {mint ? (
+          <SourceHealthBar
+            x={x}
+            tg={tg}
+            market={market}
+            chain={chain}
+            ai={ai}
+            loading={loading}
+            chainLoading={chainLoading}
+            aiLoading={aiLoading}
+            sourceErrors={sourceErrors}
+          />
+        ) : null}
       </section>
 
       {error ? <Notice text={error} /> : null}
 
+      {mint ? <SocialAnalysisChart mint={mint} symbol={symbol} /> : null}
+
       {mint ? (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,2.15fr)_minmax(300px,.85fr)]">
-          <SocialAnalysisChart mint={mint} symbol={symbol} />
-          <RecentTradesCard trades={recentTrades} loading={chainLoading} error={sourceErrors.chain} />
-        </div>
+        <OverallVerdict
+          derived={derived}
+          x={x}
+          tg={tg}
+          market={market}
+          chain={chain}
+          ai={ai}
+          loading={loading || chainLoading}
+        />
       ) : null}
 
       {mint ? (
@@ -524,67 +580,173 @@ function Notice({ text }: { text: string }) {
   );
 }
 
-function RecentTradesCard({
-  trades,
+function SourceHealthBar({
+  x,
+  tg,
+  market,
+  chain,
+  ai,
   loading,
-  error,
+  chainLoading,
+  aiLoading,
+  sourceErrors,
 }: {
-  trades: NonNullable<ChainAnalysis["trades"]>;
+  x: TwitterStats | null;
+  tg: SocialTimeline | null;
+  market: Market | null;
+  chain: ChainAnalysis | null;
+  ai: AiEnvelope | null;
   loading: boolean;
-  error: string | null;
+  chainLoading: boolean;
+  aiLoading: boolean;
+  sourceErrors: SourceErrors;
 }) {
+  const collector = telegramCollector(tg);
+  const xMeta = twitterCollectionMeta(x);
+  const xState: SourceState = loading ? "loading" : sourceErrors.x ? "error" : x ? "ready" : "idle";
+  const tgState: SourceState = loading
+    ? "loading"
+    : sourceErrors.tg
+      ? "error"
+      : tg
+        ? collector?.configured === false
+          ? "degraded"
+          : "ready"
+        : "idle";
+  const marketState: SourceState = loading
+    ? "loading"
+    : sourceErrors.market
+      ? "error"
+      : market
+        ? market.meta?.stale === true
+          ? "degraded"
+          : "ready"
+        : "idle";
+  const chainState: SourceState = chainLoading ? "loading" : sourceErrors.chain ? "error" : chain ? "ready" : "idle";
+  const aiState: SourceState = aiLoading ? "loading" : ai?.error || ai?.available === false ? "degraded" : ai?.result ? "ready" : "idle";
+
   return (
-    <section className="surface-panel min-h-[390px] overflow-hidden rounded-2xl border border-bg-border">
-      <div className="flex items-center justify-between border-b border-bg-border px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-primary" />
-          <div>
-            <h2 className="text-sm font-semibold text-content">Последние трейды</h2>
-            <p className="mt-0.5 text-[9px] text-content-faint">Последние 12 из on-chain выборки</p>
-          </div>
-        </div>
-        {loading ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : null}
-      </div>
+    <div className="mt-3 flex flex-wrap gap-1.5 border-t border-bg-border pt-3" data-tag="trade.social_source_health.v1">
+      <SourcePill
+        label="X"
+        state={xState}
+        detail={x
+          ? `${x.collectionStrategy || "collector"}${xMeta?.authenticatedBrowser ? " · auth" : ""}`
+          : sourceErrors.x ? "ошибка" : "нет данных"}
+      />
+      <SourcePill label="Telegram" state={tgState} detail={telegramCollectorLabel(collector)} />
+      <SourcePill
+        label="Market"
+        state={marketState}
+        detail={market?.meta?.source ? `${market.meta.source}${market.meta.stale ? " · stale" : ""}` : sourceErrors.market ? "ошибка" : "нет данных"}
+      />
+      <SourcePill
+        label="Chain"
+        state={chainState}
+        detail={chain ? `${chain.summary?.totalTrades ?? chain.trades?.length ?? 0} trades` : sourceErrors.chain ? "ошибка" : "нет данных"}
+      />
+      <SourcePill
+        label="Qwen"
+        state={aiState}
+        detail={ai?.model || ai?.provider || ai?.agent || (aiLoading ? "analysis" : "ожидание")}
+      />
+    </div>
+  );
+}
 
-      <div className="grid grid-cols-[74px_minmax(86px,1fr)_80px_46px] gap-2 border-b border-bg-border bg-bg-elevated/40 px-3 py-2 text-[8px] font-semibold uppercase tracking-wider text-content-faint">
-        <span>Время</span>
-        <span>Цена</span>
-        <span>Wallet</span>
-        <span className="text-right">TX</span>
-      </div>
+function SourcePill({ label, state, detail }: { label: string; state: SourceState; detail: string }) {
+  const stateClass = state === "ready"
+    ? "border-success-border bg-success-soft text-success"
+    : state === "error"
+      ? "border-danger-border bg-danger-soft text-danger"
+      : state === "degraded"
+        ? "border-warning-border bg-warning-soft text-warning"
+        : state === "loading"
+          ? "border-primary-border bg-primary-soft text-primary"
+          : "border-bg-border bg-bg-card text-content-faint";
+  const dotClass = state === "ready"
+    ? "bg-success"
+    : state === "error"
+      ? "bg-danger"
+      : state === "degraded"
+        ? "bg-warning"
+        : state === "loading"
+          ? "animate-pulse bg-primary"
+          : "bg-content-faint";
 
-      <div className="divide-y divide-bg-border">
-        {trades.length ? (
-          trades.map((trade, index) => (
-            <div
-              key={`${trade.sig || "trade"}-${trade.ts}-${index}`}
-              className="grid grid-cols-[74px_minmax(86px,1fr)_80px_46px] gap-2 px-3 py-2.5 text-[10px]"
-            >
-              <span className="font-mono text-content-faint">{formatTradeTime(trade.ts)}</span>
-              <span className="truncate font-mono font-semibold text-content">{formatPrice(trade.p)}</span>
-              <span className="truncate font-mono text-content-muted">{shortAddress(trade.w)}</span>
-              <span className="text-right">
-                {trade.sig ? (
-                  <a
-                    href={`https://solscan.io/tx/${encodeURIComponent(trade.sig)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-primary hover:underline"
-                  >
-                    {shortAddress(trade.sig, 3, 2)}
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                ) : (
-                  <span className="text-content-faint">—</span>
-                )}
+  return (
+    <div className={`inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] ${stateClass}`}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+      <span className="font-semibold uppercase tracking-wider">{label}</span>
+      <span className="max-w-48 truncate opacity-80">{detail}</span>
+    </div>
+  );
+}
+
+function OverallVerdict({
+  derived,
+  x,
+  tg,
+  market,
+  chain,
+  ai,
+  loading,
+}: {
+  derived: ReturnType<typeof deriveSocialMetrics>;
+  x: TwitterStats | null;
+  tg: SocialTimeline | null;
+  market: Market | null;
+  chain: ChainAnalysis | null;
+  ai: AiEnvelope | null;
+  loading: boolean;
+}) {
+  const sourceCount = [x, tg, market, chain].filter(Boolean).length;
+  const marketUsable = Boolean(market && market.meta?.stale !== true);
+  const highRisk = derived.socialRisk >= 68 || derived.manipulation >= 65;
+  const strongSignal = sourceCount >= 2 && derived.socialScore >= 65 && derived.socialRisk < 50;
+
+  let tone: InsightTone = "neutral";
+  let title = "Недостаточно данных";
+  let text = loading
+    ? "Источники ещё собираются. Итог появится после детерминированного расчёта Telegram, X, рынка и on-chain данных."
+    : "Недостаточно независимых источников, чтобы считать итоговый social score надёжным.";
+
+  if (!loading && sourceCount > 0 && highRisk) {
+    tone = "danger";
+    title = "Повышенный риск";
+    text = "Детерминированные метрики показывают повышенный social/manipulation risk. Сильная активность здесь не равна качественному сигналу.";
+  } else if (!loading && strongSignal) {
+    tone = "positive";
+    title = "Сигнал подтверждается несколькими источниками";
+    text = "Social activity поддерживается несколькими доступными источниками, а текущий risk score не перекрывает этот сигнал. Проверяй тайминг и on-chain структуру перед выводом.";
+  } else if (!loading && sourceCount >= 2) {
+    tone = "warning";
+    title = "Смешанная картина";
+    text = "Источников достаточно для анализа, но сила social signal и риск не дают однозначного подтверждения. Смотри Telegram/X/Blockchain выводы ниже.";
+  }
+
+  const classes = toneClasses(tone);
+  return (
+    <section className={`surface-panel rounded-2xl border p-4 ${classes.border}`} data-tag="trade.social_overall_verdict.v1">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${classes.dot}`} />
+            <h2 className="text-sm font-semibold text-content">{title}</h2>
+            {sourceCount > 0 ? (
+              <span className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold ${classes.badge}`}>
+                SOCIAL {score(derived.socialScore)} · RISK {score(derived.socialRisk)}
               </span>
-            </div>
-          ))
-        ) : (
-          <div className="flex min-h-64 items-center justify-center px-4 text-center text-xs text-content-faint">
-            {loading ? "Загружаем trade history…" : error ? `Trade history: ${error}` : "В доступной выборке трейдов пока нет."}
+            ) : null}
           </div>
-        )}
+          <p className="mt-2 max-w-4xl text-sm leading-6 text-content-soft">{text}</p>
+        </div>
+        <div className="grid shrink-0 grid-cols-2 gap-x-4 gap-y-1 text-[10px] text-content-muted sm:grid-cols-4 lg:grid-cols-2">
+          <span>Coverage</span><span className="text-right font-mono text-content">{sourceCount}/4</span>
+          <span>Manipulation</span><span className="text-right font-mono text-content">{sourceCount ? score(derived.manipulation) : "—"}</span>
+          <span>Market</span><span className="text-right font-mono text-content">{marketUsable ? "fresh" : market ? "stale" : "—"}</span>
+          <span>Qwen</span><span className="text-right font-mono text-content">{ai?.result ? "ready" : ai?.error ? "degraded" : "—"}</span>
+        </div>
       </div>
     </section>
   );
@@ -610,8 +772,9 @@ function CoreInsights({
   chainLoading: boolean;
 }) {
   const collector = telegramCollector(tg);
-  const tgMessages = tg?.timeline?.length ?? 0;
-  const tgMatches = tg?.meta?.matchedBeforeLimit ?? tg?.mentions ?? 0;
+  const xMeta = twitterCollectionMeta(x);
+  const tgMessages = (tg?.timeline || []).filter((item) => !item.platform || item.platform.toLowerCase() === "telegram").length;
+  const tgMatches = Number(tg?.meta?.matchedPlatforms?.telegram ?? tg?.meta?.matchedBeforeLimit ?? tg?.mentions ?? 0) || 0;
   const xPosts = x?.topTweets?.length ?? 0;
   const xUniverse = x?.riskUniverse?.totalTweets ?? x?.totalTweets ?? 0;
   const chainWallets = chain?.wallets || [];
@@ -633,21 +796,25 @@ function CoreInsights({
         : "Telegram payload пока не получен."
       : tgMatches > 0
         ? derived.tgScore >= 70
-          ? "В Telegram сильный сигнал: много релевантных упоминаний и заметная активность каналов."
+          ? "В Telegram сильный сигнал: релевантные упоминания поддержаны заметной активностью источников."
           : derived.tgScore >= 45
             ? "В Telegram есть рабочий сигнал, но сила и качество источников смешанные."
             : "Упоминания есть, но Telegram-сигнал пока слабый и требует подтверждения."
-        : collector?.configured
-          ? "Фидер доступен, но по этому mint в выбранном окне релевантных совпадений не найдено."
-          : "Telegram collector не настроен: это проблема фидера, а не доказательство отсутствия сообщений.";
+        : collector?.mtproto_configured && !collector?.session_configured
+          ? "Telegram API настроен, но MTProto user session ещё не авторизована — покрытие приватных/обычных каналов неполное."
+          : collector?.configured
+            ? "Фидер доступен, но по этому mint в выбранном окне релевантных совпадений не найдено."
+            : "Telegram collector не настроен: это проблема покрытия, а не доказательство отсутствия сообщений.";
 
   const tgTone: InsightTone = tgFailure
     ? "danger"
-    : tgMatches > 0 && derived.tgScore >= 60
-      ? "positive"
-      : tgMatches > 0
-        ? "warning"
-        : "neutral";
+    : collector?.mtproto_configured && !collector?.session_configured
+      ? "warning"
+      : tgMatches > 0 && derived.tgScore >= 60
+        ? "positive"
+        : tgMatches > 0
+          ? "warning"
+          : "neutral";
 
   const xVerdict = xFailure
     ? xFailure
@@ -695,12 +862,8 @@ function CoreInsights({
         ? "positive"
         : "neutral";
 
-  const collectorStatus = collector
-    ? `${collector.mode || "unknown"} · ${collector.connected ? "connected" : collector.running ? "running" : collector.configured ? "configured" : "offline"}`
-    : "status недоступен";
-
   return (
-    <section className="grid gap-4 lg:grid-cols-3" data-tag="trade.social_core_insights.v1">
+    <section className="grid gap-4 lg:grid-cols-3" data-tag="trade.social_core_insights.v2">
       <InsightCard
         icon={<Send />}
         title="Telegram"
@@ -708,10 +871,11 @@ function CoreInsights({
         verdict={tgVerdict}
         tone={tgTone}
         facts={[
-          `${tgMessages} сообщений · ${tgMatches} совпадений`,
-          `Фидер: ${collectorStatus}`,
+          `${tgMessages} сообщений в UI · ${tgMatches} совпадений до лимита`,
+          `Фидер: ${telegramCollectorLabel(collector)}`,
           `Каналов: ${collector?.monitored_channels ?? collector?.public_web_channels ?? "—"}`,
           `Первый сигнал: ${tg?.origin?.source_handle || tg?.origin?.source_name || "—"}`,
+          collector?.last_scan_at ? `Последний scan: ${formatAgo(collector.last_scan_at)}` : null,
           collector?.last_error ? `Feeder error: ${collector.last_error}` : null,
         ]}
       />
@@ -727,13 +891,15 @@ function CoreInsights({
           `${x?.uniqueMentioners ?? 0} уникальных авторов`,
           `Engagement: ${x?.aggregated?.totalEngagement ?? 0}`,
           `Bot risk: ${score(x?.riskUniverse?.botRiskScore ?? x?.botRiskScore ?? 0)}`,
+          x ? `Collector: ${x.collectionStrategy || "auto"} · browser ${xMeta?.authenticatedBrowser ? "auth" : "public"}` : null,
+          xMeta?.coverageConfirmed === false ? "Coverage: ограниченная выборка" : null,
         ]}
       />
 
       <InsightCard
         icon={<WalletCards />}
         title="Blockchain"
-        badge={`${trades} trades`}
+        badge={chain ? `${trades} trades` : "—"}
         verdict={chainVerdict}
         tone={chainTone}
         facts={[
@@ -747,8 +913,6 @@ function CoreInsights({
     </section>
   );
 }
-
-type InsightTone = "positive" | "warning" | "danger" | "neutral";
 
 function toneClasses(tone: InsightTone): { border: string; badge: string; dot: string } {
   if (tone === "positive") {
@@ -806,8 +970,8 @@ function InsightCard({
       </div>
       <p className="mt-3 min-h-[64px] text-sm leading-6 text-content-soft">{verdict}</p>
       <div className="mt-3 space-y-1.5 border-t border-bg-border pt-3">
-        {facts.filter((value): value is string => Boolean(value)).map((fact) => (
-          <div key={fact} className="flex items-start gap-2 text-[10px] leading-4 text-content-muted">
+        {facts.filter((value): value is string => Boolean(value)).map((fact, index) => (
+          <div key={`${index}-${fact}`} className="flex items-start gap-2 text-[10px] leading-4 text-content-muted">
             <span className={`mt-1.5 h-1 w-1 shrink-0 rounded-full ${classes.dot}`} />
             <span>{fact}</span>
           </div>
@@ -827,9 +991,11 @@ function QwenStrip({
   snapshot: AnalysisSnapshot | null;
 }) {
   const summary = ai?.result?.summary;
-  const confidence = ai?.result?.overallConfidence;
+  const confidence = confidencePercent(ai?.result?.overallConfidence);
+  const risks = ai?.result?.risks?.length ?? 0;
+  const coordination = ai?.result?.coordinationSignals?.length ?? 0;
   return (
-    <section className="surface-panel rounded-2xl border border-bg-border px-4 py-3">
+    <section className="surface-panel rounded-2xl border border-bg-border px-4 py-3" data-tag="trade.social_qwen_verdict.v2">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex min-w-0 gap-3">
           <BrainCircuit className={`mt-0.5 h-4 w-4 shrink-0 ${loading ? "animate-pulse text-primary" : "text-primary"}`} />
@@ -837,8 +1003,9 @@ function QwenStrip({
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xs font-semibold text-content">Qwen verdict</h2>
               {confidence != null ? (
-                <span className="font-mono text-[9px] text-content-faint">confidence {Math.round(confidence * 100)}%</span>
+                <span className="font-mono text-[9px] text-content-faint">confidence {confidence}%</span>
               ) : null}
+              {ai?.model ? <span className="font-mono text-[9px] text-content-faint">{ai.model}</span> : null}
             </div>
             <p className="mt-1 text-xs leading-5 text-content-muted">
               {loading
@@ -853,11 +1020,11 @@ function QwenStrip({
             </p>
           </div>
         </div>
-        {snapshot ? (
-          <div className="shrink-0 font-mono text-[9px] text-content-faint">
-            {snapshot.featureCount - snapshot.missingFeatureCount}/{snapshot.featureCount} features
-          </div>
-        ) : null}
+        <div className="flex shrink-0 flex-wrap gap-3 font-mono text-[9px] text-content-faint">
+          {snapshot ? <span>{snapshot.featureCount - snapshot.missingFeatureCount}/{snapshot.featureCount} features</span> : null}
+          {ai?.result ? <span>{risks} risks · {coordination} coordination</span> : null}
+          {ai?.latencyMs != null ? <span>{ai.latencyMs} ms</span> : null}
+        </div>
       </div>
     </section>
   );
@@ -893,13 +1060,13 @@ function TechnicalIntelligence({
   warnings: string[];
   sourceErrors: SourceErrors;
 }) {
-  const diagnostics = [
+  const diagnostics = [...new Set([
     friendlySourceError("Telegram", sourceErrors.tg),
     friendlySourceError("X", sourceErrors.x),
     friendlySourceError("Market", sourceErrors.market),
     friendlySourceError("Blockchain", sourceErrors.chain),
     ...warnings,
-  ].filter((value): value is string => Boolean(value));
+  ].filter((value): value is string => Boolean(value)))];
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
