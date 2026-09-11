@@ -25,7 +25,6 @@ const TF_SECONDS: Record<string, number> = {
 };
 const VALID_TIMEFRAMES = new Set(Object.keys(TF_SECONDS));
 
-// Map our Timeframe → GeckoTerminal `timeframe` + `aggregate`.
 const TF_MAP: Record<string, { tf: "minute" | "hour" | "day"; agg: number }> = {
   "1s": { tf: "minute", agg: 1 },
   "5s": { tf: "minute", agg: 1 },
@@ -187,7 +186,6 @@ async function fetchFromPumpFun(mint: string, tf: string, deep = false): Promise
 
     const isSubMinute = tf === "1s" || tf === "5s" || tf === "15s";
     if (deep && isSubMinute && allRows.length > 0) {
-      // Pump v2 may provide a little more native second history. Stop on duplicate pages.
       let earliestTs = allRows[0].timestamp;
       for (const row of allRows) if (row.timestamp < earliestTs) earliestTs = row.timestamp;
       const existingTs = new Set(allRows.map((row) => row.timestamp));
@@ -439,8 +437,10 @@ async function findPool(mint: string): Promise<string | null> {
 
 function generateMockCandles(mint: string, timeframe: string, count: number): Candle[] {
   const candles: Candle[] = [];
-  const now = Math.floor(Date.now() / 1000);
   const tfSec = TF_SECONDS[timeframe] ?? 60;
+  // Align deterministic mock timestamps to the same candle bucket boundaries
+  // that real OHLC sources use (e.g. 5s candles always start on :00/:05/:10...).
+  const now = Math.floor(Date.now() / 1000 / tfSec) * tfSec;
 
   let seed = mint.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
   const random = () => {
