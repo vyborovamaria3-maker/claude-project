@@ -6,6 +6,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const metricsPath = join(root, "lib", "trade", "social-intelligence.ts");
 const layoutPath = join(root, "app", "trade", "analysis", "layout.tsx");
 const panelPath = join(root, "components", "trade", "SocialIntelligencePanel.tsx");
+const chartPath = join(root, "components", "trade", "SocialAnalysisChart.tsx");
+const activityPath = join(root, "components", "chart", "ActivityPanel.tsx");
 const routePath = join(root, "app", "api", "trade", "social-ai", "route.ts");
 const wrapperPath = join(root, "lib", "trade", "intelligence-agent-provenance.ts");
 const provenancePath = join(root, "lib", "trade", "analysis-feature-provenance.json");
@@ -14,6 +16,8 @@ const tsconfigPath = join(root, "tsconfig.json");
 const metricsSource = readFileSync(metricsPath, "utf8");
 const layoutSource = readFileSync(layoutPath, "utf8");
 const panelSource = readFileSync(panelPath, "utf8");
+const chartSource = readFileSync(chartPath, "utf8");
+const activitySource = readFileSync(activityPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");
 const wrapperSource = readFileSync(wrapperPath, "utf8");
 const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
@@ -44,6 +48,50 @@ assert(
 assert(
   routeSource.includes('from "@/lib/trade/intelligence-agent"'),
   "social-ai route must consume the same intelligence snapshot contract",
+);
+assert(
+  panelSource.includes("<SourceHealthBar")
+    && panelSource.includes('data-tag="trade.social_source_health.v1"'),
+  "Social Intelligence must expose per-source runtime health instead of collapsing missing coverage into scores",
+);
+assert(
+  panelSource.includes("<OverallVerdict")
+    && panelSource.includes('data-tag="trade.social_overall_verdict.v1"'),
+  "Social Intelligence must keep a readable unified verdict above source details",
+);
+assert(
+  !panelSource.includes("RecentTradesCard"),
+  "Social Intelligence must not render the removed duplicate recent-trades table",
+);
+assert(
+  chartSource.includes('from "@/components/chart/ActivityPanel"')
+    && chartSource.includes("<ActivityPanel mint={mint} />"),
+  "the social terminal must reuse the shared live transaction stream on the right side",
+);
+assert(
+  activitySource.includes("useTradeStream(mint, 100)"),
+  "the shared transaction panel must remain backed by the live trade stream",
+);
+assert(
+  chartSource.includes('{ value: "1s", label: "1s" }')
+    && chartSource.includes('{ value: "5s", label: "5s" }')
+    && chartSource.includes('{ value: "15s", label: "15s" }'),
+  "the social terminal must preserve second-level timeframes",
+);
+assert(
+  chartSource.includes('useState<MetricMode>("mcap")')
+    && chartSource.includes('metricMode === "mcap" ? PUMP_SUPPLY : 1'),
+  "the social terminal must default to market-cap candles while retaining price mode",
+);
+assert(
+  chartSource.includes('chart.priceScale("volume").applyOptions({')
+    && chartSource.includes("lastValueVisible: false")
+    && chartSource.includes("visible: false"),
+  "volume must stay visually separated from the right MC/price scale",
+);
+assert(
+  !chartSource.includes("[&+section]:hidden"),
+  "the terminal must not rely on a sibling-hiding CSS hack for duplicate trades",
 );
 
 const intelligenceAlias = tsconfig?.compilerOptions?.paths?.["@/lib/trade/intelligence-agent"];
@@ -173,5 +221,5 @@ assert(
 const extendedCount = totalCount - coreCount;
 console.log(
   `[analysis-regression] OK: ${coreCount}/129 core mapped; ${totalCount}/${totalCount} displayed rows covered; `
-  + `${inputCount} agent-input features + ${aiOutputCount} AI-output placeholders; ${extendedCount} extended rows`,
+  + `${inputCount} agent-input features + ${aiOutputCount} AI-output placeholders; ${extendedCount} extended rows; social terminal guards OK`,
 );
