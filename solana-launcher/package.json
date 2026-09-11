@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "security:test": "node scripts/security-regression.mjs",
     "landing:test": "node scripts/landing-regression.mjs",
-    "analysis:test": "node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/social-production-regression.mjs",
+    "analysis:test": "node scripts/analysis-regression.mjs && node scripts/trade-analysis-contract-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/social-production-regression.mjs",
     "social:preflight": "node scripts/social-local-preflight.mjs",
     "social:real-smoke": "node scripts/social-real-token-smoke.mjs",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
