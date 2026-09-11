@@ -1,4 +1,4 @@
-﻿// data-tag: api.trade.analyze-stream
+// data-tag: api.trade.analyze-stream
 // Streaming variant of /api/trade/analyze. Sends NDJSON events:
 //   {type:"progress", fetched, page}
 //   {type:"final", ...payload}
@@ -27,13 +27,13 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const MAX_TXS = 1500;
-const FRESH_CHECK_LIMIT = 20;
-const BALANCE_CHECK_LIMIT = 60;
-const ANALYSIS_SCHEMA_VERSION = 2;
+const MAX_TXS = 5000;
+const FRESH_CHECK_LIMIT = 30;
+const BALANCE_CHECK_LIMIT = 100;
+const ANALYSIS_SCHEMA_VERSION = 3;
 const ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60_000;
-const RAW_TRADES_IN_RESPONSE = 1500;
-const EARLY_TRADES_IN_RESPONSE = 300;
+const RAW_TRADES_IN_RESPONSE = 2000;
+const EARLY_TRADES_IN_RESPONSE = 400;
 
 const firstSeenMemo = new Map<string, { ts: number | null; cachedAt: number }>();
 const FIRST_SEEN_TTL_MS = 6 * 60 * 60 * 1000;
@@ -113,6 +113,7 @@ export async function GET(req: NextRequest) {
               totalRawTrades: 0,
               uniqueWallets: 0,
               historyTruncated: false,
+              responseTradesTruncated: false,
               maxTradesRequested: MAX_TXS,
             },
             wallets: [],
@@ -145,7 +146,7 @@ export async function GET(req: NextRequest) {
 
         const { bundles, walletBundleId } = detectBundles(trades);
         const coBuyMap = findRelatedWallets(trades);
-        const allWallets = Array.from(walletsMap.values()).sort((a, b) => b.volumeSol - a.volumeSol);
+        const allWallets = Array.from(walletsMap.values()).sort((left, right) => right.volumeSol - left.volumeSol);
         const topAddrs = allWallets.slice(0, BALANCE_CHECK_LIMIT).map((wallet) => wallet.address);
         const freshCheckAddrs = allWallets.slice(0, FRESH_CHECK_LIMIT).map((wallet) => wallet.address);
 
@@ -181,9 +182,11 @@ export async function GET(req: NextRequest) {
             solBalance: solBalances.get(wallet.address) ?? null,
             balanceVerified: index < BALANCE_CHECK_LIMIT && solBalances.has(wallet.address),
             tokenBalanceUsd: null,
-            isFresh: freshnessVerified ? isFreshWallet(globalFirstSeen, nowSec) : null,
+            isFresh: freshnessVerified && globalFirstSeen != null
+              ? isFreshWallet(globalFirstSeen, nowSec)
+              : null,
             freshnessVerified,
-            firstSeenGlobal: freshnessVerified ? globalFirstSeen : null,
+            firstSeenGlobal: freshnessVerified ? globalFirstSeen ?? null : null,
             firstSeenOnToken: wallet.firstSeen,
             isSmart: false,
             smartClassificationAvailable: false,
@@ -201,15 +204,17 @@ export async function GET(req: NextRequest) {
         });
 
         const totalVolumeSol = trades.reduce((sum, trade) => sum + safeNumber(trade.amountSol), 0);
-        const sortedTrades = [...trades].sort((a, b) => a.timestamp - b.timestamp);
+        const sortedTrades = [...trades].sort((left, right) => left.timestamp - right.timestamp);
+        const responseTradesTruncated = sortedTrades.length > RAW_TRADES_IN_RESPONSE;
         let tradesForUi = sortedTrades;
-        if (sortedTrades.length > RAW_TRADES_IN_RESPONSE) {
+        if (responseTradesTruncated) {
           const earlyCount = Math.min(EARLY_TRADES_IN_RESPONSE, RAW_TRADES_IN_RESPONSE);
           tradesForUi = [
             ...sortedTrades.slice(0, earlyCount),
             ...sortedTrades.slice(-(RAW_TRADES_IN_RESPONSE - earlyCount)),
           ];
         }
+
         const compactTrades = tradesForUi.map((trade) => ({
           ts: safeNumber(trade.timestamp),
           w: trade.trader,
@@ -218,7 +223,8 @@ export async function GET(req: NextRequest) {
           n: roundNumber(trade.amountTokens, 6),
           p: roundNumber(trade.priceSol, 12),
           sig: trade.signature,
-          u: roundNumber(safeNumber(trade.amountSol) * 150, 2),
+          // RawTrade has no USD notional. Keep it unknown instead of assuming a SOL/USD rate.
+          u: null,
         }));
 
         const earliest = sortedTrades[0]?.timestamp ?? null;
@@ -232,6 +238,7 @@ export async function GET(req: NextRequest) {
           periodStart: earliest,
           periodEnd: latest,
           historyTruncated,
+          responseTradesTruncated,
           maxTradesRequested: MAX_TXS,
         };
 
@@ -251,7 +258,7 @@ export async function GET(req: NextRequest) {
           })),
           timeline: [],
           trades: compactTrades,
-          truncated: historyTruncated,
+          truncated: historyTruncated || responseTradesTruncated,
           fetchedAt: Date.now(),
         };
 
@@ -288,8 +295,8 @@ export async function GET(req: NextRequest) {
 
         send({ type: "final", ...payload });
         controller.close();
-      } catch (err) {
-        send({ type: "error", message: (err as Error).message });
+      } catch (error) {
+        send({ type: "error", message: error instanceof Error ? error.message : String(error) });
         controller.close();
       }
     },
