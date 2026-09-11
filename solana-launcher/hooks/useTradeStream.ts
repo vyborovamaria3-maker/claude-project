@@ -2,7 +2,7 @@
 // data-tag: hooks.use_trade_stream
 // Polls Pump.fun public trades API for real-time trade activity.
 // PumpPortal WS requires a paid API key (≥0.02 SOL) — not used here.
-// Pump.fun frontend-api is public and returns real block timestamps.
+// Pump.fun swap API is public and returns real block timestamps.
 
 import { useEffect, useRef, useState } from "react";
 
@@ -32,7 +32,6 @@ interface SharedPoll {
   isOnline: boolean;
   timer: ReturnType<typeof setInterval> | null;
   seenSigs: Set<string>;
-  lastSolPrice: number;
   inFlight: boolean;
 }
 
@@ -41,7 +40,7 @@ const polls = new Map<string, SharedPoll>();
 function setOnline(p: SharedPoll, online: boolean) {
   if (p.isOnline === online) return;
   p.isOnline = online;
-  p.statusListeners.forEach(l => l(online));
+  p.statusListeners.forEach((listener) => listener(online));
 }
 
 type PumpTrade = {
@@ -62,52 +61,67 @@ async function fetchTrades(p: SharedPoll): Promise<void> {
   if (p.inFlight) return;
   p.inFlight = true;
   try {
-    const r = await fetch(
-      `/api/token-trades?mint=${p.mint}&limit=25&_=${Date.now()}`,
-      { cache: "no-store" }
+    const response = await fetch(
+      `/api/token-trades?mint=${encodeURIComponent(p.mint)}&limit=25&_=${Date.now()}`,
+      { cache: "no-store" },
     );
-    if (!r.ok) { setOnline(p, false); return; }
-    const rows = (await r.json()) as PumpTrade[];
-    if (!Array.isArray(rows)) { setOnline(p, false); return; }
+    if (!response.ok) {
+      setOnline(p, false);
+      return;
+    }
+    const rows = (await response.json()) as PumpTrade[];
+    if (!Array.isArray(rows)) {
+      setOnline(p, false);
+      return;
+    }
     setOnline(p, true);
 
     // Process newest-first, emit only unseen.
     // Walk in reverse so callbacks see oldest-first within the new batch.
     const fresh: TradeItem[] = [];
     for (const row of rows) {
-      if (p.seenSigs.has(row.signature)) continue;
+      if (!row.signature || p.seenSigs.has(row.signature)) continue;
+      if (row.timestamp == null || !Number.isFinite(row.timestamp) || row.timestamp <= 0) continue;
+
+      const solAmount = Number(row.sol_amount) / 1e9;
+      const tokenAmount = Number(row.token_amount) / 1e6;
+      if (!Number.isFinite(solAmount) || solAmount <= 0 || !Number.isFinite(tokenAmount) || tokenAmount <= 0) continue;
+
+      const upstreamPriceUsd = Number(row.priceUsd);
+      const upstreamAmountUsd = Number(row.amountUsd);
+      const priceUsd = Number.isFinite(upstreamPriceUsd) && upstreamPriceUsd > 0
+        ? upstreamPriceUsd
+        : Number.isFinite(upstreamAmountUsd) && upstreamAmountUsd > 0
+          ? upstreamAmountUsd / tokenAmount
+          : 0;
+      const ts = row.timestamp * 1000;
+
+      // Mark a signature as seen only after the row is usable. If an upstream
+      // partial row is repaired on a later poll, we must still be able to emit it.
       p.seenSigs.add(row.signature);
       if (p.seenSigs.size > 2000) {
-        const iter = p.seenSigs.values();
-        p.seenSigs.delete(iter.next().value!);
+        const iterator = p.seenSigs.values();
+        const oldest = iterator.next().value as string | undefined;
+        if (oldest) p.seenSigs.delete(oldest);
       }
-
-      if (row.timestamp == null || !Number.isFinite(row.timestamp) || row.timestamp <= 0) continue;
-      const solAmount = row.sol_amount / 1e9;
-      const tokenAmount = row.token_amount / 1e6;
-      if (!solAmount || !tokenAmount) continue;
-
-      // Prefer real on-chain priceUsd from server; fall back to derived.
-      const priceUsd = row.priceUsd && isFinite(row.priceUsd) && row.priceUsd > 0
-        ? row.priceUsd
-        : (solAmount / tokenAmount) * (p.lastSolPrice || 150);
-      const ts = row.timestamp * 1000;
 
       fresh.push({
         signature: row.signature,
         ts,
-        isBuy: row.is_buy,
+        isBuy: Boolean(row.is_buy),
         solAmount,
         tokenAmount,
         priceUsd,
-        marketCap: row.usd_market_cap ?? null,
+        marketCap: Number.isFinite(Number(row.usd_market_cap)) ? Number(row.usd_market_cap) : null,
         signer: row.user ?? "",
       });
     }
-    // Emit oldest-first so trade list animates in chronological order
-    for (let i = fresh.length - 1; i >= 0; i--) {
-      const t = fresh[i];
-      p.subscribers.forEach(s => { try { s(t); } catch { /* ignore */ } });
+    // Emit oldest-first so trade list animates in chronological order.
+    for (let index = fresh.length - 1; index >= 0; index -= 1) {
+      const trade = fresh[index];
+      p.subscribers.forEach((subscriber) => {
+        try { subscriber(trade); } catch { /* isolate subscribers */ }
+      });
     }
   } catch {
     setOnline(p, false);
@@ -118,19 +132,30 @@ async function fetchTrades(p: SharedPoll): Promise<void> {
 
 function startPoll(p: SharedPoll) {
   if (p.timer) return;
-  fetchTrades(p); // immediate first fetch
-  p.timer = setInterval(() => fetchTrades(p), POLL_INTERVAL);
+  void fetchTrades(p); // immediate first fetch
+  p.timer = setInterval(() => { void fetchTrades(p); }, POLL_INTERVAL);
 }
 
 function stopPoll(p: SharedPoll) {
-  if (p.timer) { clearInterval(p.timer); p.timer = null; }
+  if (p.timer) {
+    clearInterval(p.timer);
+    p.timer = null;
+  }
   setOnline(p, false);
 }
 
 function subscribe(mint: string, onTrade: Subscriber, onStatus: StatusListener): () => void {
   let p = polls.get(mint);
   if (!p) {
-    p = { mint, subscribers: new Set(), statusListeners: new Set(), isOnline: false, timer: null, seenSigs: new Set(), lastSolPrice: 0, inFlight: false };
+    p = {
+      mint,
+      subscribers: new Set(),
+      statusListeners: new Set(),
+      isOnline: false,
+      timer: null,
+      seenSigs: new Set(),
+      inFlight: false,
+    };
     polls.set(mint, p);
   }
   p.subscribers.add(onTrade);
@@ -154,8 +179,8 @@ function subscribe(mint: string, onTrade: Subscriber, onStatus: StatusListener):
 export function useTradeStream(
   mint: string,
   max = 100,
-  onTradeCallback?: (t: TradeItem) => void,
-  options?: { headless?: boolean }
+  onTradeCallback?: (trade: TradeItem) => void,
+  options?: { headless?: boolean },
 ) {
   const [trades, setTrades] = useState<TradeItem[]>([]);
   const [isOnline, setIsOnline] = useState(false);
@@ -165,25 +190,19 @@ export function useTradeStream(
   const maxRef = useRef(max);
   maxRef.current = max;
 
-  // Reset trades when mint changes (separate effect to avoid re-subscribe loop)
-  const prevMintRef = useRef(mint);
-  if (prevMintRef.current !== mint) {
-    prevMintRef.current = mint;
-    // Will be picked up on next render; avoid setState during render by using ref flag
-  }
-
   useEffect(() => {
     setTrades([]);
+    setIsOnline(false);
   }, [mint]);
 
   useEffect(() => {
-    if (!mint) return;
-    const onTrade = (t: TradeItem) => {
-      if (onTradeCallbackRef.current) onTradeCallbackRef.current(t);
+    if (!mint) return undefined;
+    const onTrade = (trade: TradeItem) => {
+      if (onTradeCallbackRef.current) onTradeCallbackRef.current(trade);
       if (headless) return;
-      setTrades(prev => {
-        if (prev.some(x => x.signature === t.signature)) return prev;
-        const next = [t, ...prev];
+      setTrades((previous) => {
+        if (previous.some((item) => item.signature === trade.signature)) return previous;
+        const next = [trade, ...previous];
         return next.length > maxRef.current ? next.slice(0, maxRef.current) : next;
       });
     };
