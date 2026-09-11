@@ -3,10 +3,17 @@ import path from "node:path";
 
 const root = process.cwd();
 const repoRoot = path.dirname(root);
-const mint = process.argv[2] || "";
-const frontend = process.env.SOCIAL_FRONTEND_URL || "http://localhost:3002";
-const backend = process.env.BACKEND_URL || "http://localhost:8000";
-const intelligence = process.env.MEMECOIN_INTELLIGENCE_URL || "http://localhost:3001";
+const args = process.argv.slice(2);
+const mint = args.find((value) => !value.startsWith("--")) || "";
+
+function cliValue(name) {
+  const prefix = `--${name}=`;
+  return args.find((value) => value.startsWith(prefix))?.slice(prefix.length) || "";
+}
+
+const frontend = cliValue("frontend") || process.env.SOCIAL_FRONTEND_URL || "http://localhost:3002";
+const backend = cliValue("backend") || process.env.BACKEND_URL || "http://localhost:8000";
+const intelligence = cliValue("intelligence") || process.env.MEMECOIN_INTELLIGENCE_URL || "http://localhost:3001";
 
 function parseEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return {};
@@ -34,6 +41,14 @@ function bool(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
+function validTelegramApiId(value) {
+  return /^\d+$/.test(String(value || "").trim());
+}
+
+function validTelegramApiHash(value) {
+  return /^[0-9a-f]{32}$/i.test(String(value || "").trim());
+}
+
 async function checkJson(label, url) {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(5000), cache: "no-store" });
@@ -52,6 +67,9 @@ console.log("POTAPoff Social Intelligence local preflight");
 console.log(`frontend=${frontend}`);
 console.log(`backend=${backend}`);
 console.log(`intelligence=${intelligence}`);
+if (!cliValue("frontend") && !process.env.SOCIAL_FRONTEND_URL) {
+  console.log("note: frontend uses default 3002; for another worktree pass --frontend=http://localhost:<port>");
+}
 console.log("");
 
 const backendEnv = parseEnvFile(path.join(root, "backend", ".env"));
@@ -63,13 +81,29 @@ const frontendEnv = {
   ...parseEnvFile(path.join(root, ".env.development.local")),
 };
 
+const tgApiIdValid = validTelegramApiId(backendEnv.TG_API_ID);
+const tgApiHashValid = validTelegramApiHash(backendEnv.TG_API_HASH);
+const tgSessionReady = yes(backendEnv.TG_SESSION_STRING);
+const telegramAuthReady = tgApiIdValid && tgApiHashValid && tgSessionReady;
+const telegramAutoMonitorReady = telegramAuthReady
+  && yes(backendEnv.TG_MONITOR_CHANNELS)
+  && bool(backendEnv.TG_AUTOSTART);
+const telegramPublicWebReady = bool(backendEnv.TG_PUBLIC_WEB_ENABLED)
+  && (yes(backendEnv.TG_PUBLIC_WEB_CHANNELS) || yes(backendEnv.TG_PUBLIC_WEB_SEED_DATABASE));
+const backendSecretReady = String(backendEnv.SECRET_KEY || "").trim().length >= 32;
+
 console.log("Local configuration (values are never printed):");
-console.log(`  TG_API_ID=${yes(backendEnv.TG_API_ID)}`);
-console.log(`  TG_API_HASH=${yes(backendEnv.TG_API_HASH)}`);
-console.log(`  TG_SESSION_STRING=${yes(backendEnv.TG_SESSION_STRING)}`);
+console.log(`  SECRET_KEY_VALID=${backendSecretReady}`);
+console.log(`  ENVIRONMENT=${backendEnv.ENVIRONMENT || "default"}`);
+console.log(`  TG_API_ID_VALID=${tgApiIdValid}`);
+console.log(`  TG_API_HASH_VALID=${tgApiHashValid}`);
+console.log(`  TG_SESSION_STRING=${tgSessionReady}`);
+console.log(`  TG_AUTH_READY=${telegramAuthReady}`);
 console.log(`  TG_MONITOR_CHANNELS=${yes(backendEnv.TG_MONITOR_CHANNELS)}`);
 console.log(`  TG_AUTOSTART=${bool(backendEnv.TG_AUTOSTART)}`);
+console.log(`  TG_AUTO_MONITOR_READY=${telegramAutoMonitorReady}`);
 console.log(`  TG_PUBLIC_WEB_ENABLED=${bool(backendEnv.TG_PUBLIC_WEB_ENABLED)}`);
+console.log(`  TG_PUBLIC_WEB_READY=${telegramPublicWebReady}`);
 console.log(`  X_BROWSER_SESSION=${fs.existsSync(xAuthPath)}`);
 console.log(`  HELIUS_KEYS=${yes(frontendEnv.HELIUS_API_KEYS) || yes(frontendEnv.HELIUS_API_KEY)}`);
 console.log(`  MEMECOIN_INTELLIGENCE_URL=${yes(frontendEnv.MEMECOIN_INTELLIGENCE_URL)}`);
@@ -78,6 +112,22 @@ console.log(`  TELEGRAM_AI_MODE=${intelligenceEnv.TELEGRAM_AI_MODE || "default"}
 console.log(`  QWEN_LOAD_MODE=${intelligenceEnv.QWEN_LOAD_MODE || "default"}`);
 console.log(`  QWEN_MAX_OUTPUT_TOKENS=${intelligenceEnv.QWEN_MAX_OUTPUT_TOKENS || "default"}`);
 console.log("");
+
+if (!backendSecretReady) {
+  console.log("WARN  backend SECRET_KEY is missing/too short; FastAPI Settings can fail before Telegram login starts");
+}
+if (yes(backendEnv.TG_API_ID) && !tgApiIdValid) {
+  console.log("WARN  TG_API_ID is present but is not a plain integer; check for accidentally concatenated .env lines");
+}
+if (yes(backendEnv.TG_API_HASH) && !tgApiHashValid) {
+  console.log("WARN  TG_API_HASH is present but does not look like a 32-character Telegram API hash");
+}
+if (tgApiIdValid && tgApiHashValid && !tgSessionReady) {
+  console.log("INFO  Telegram API credentials are configured; run `python -m app.cli.telegram_login --write-env` to create the user session");
+}
+if (telegramAuthReady && !telegramAutoMonitorReady) {
+  console.log("INFO  Telegram user auth is ready. Auto-monitor is optional; TG_MONITOR_CHANNELS is not required for login/auth.");
+}
 
 const frontendHealth = await checkJson("Next frontend", `${frontend}/api/i18n/status`);
 const backendHealth = await checkJson("FastAPI", `${backend}/health`);
@@ -103,18 +153,13 @@ if (mint) {
   console.log("");
   const x = await checkJson("X collector", `${frontend}/api/trade/dev-twitter?mint=${encodeURIComponent(mint)}&strategy=auto&scope=mentions&limit=10&excludeSuspicious=true&verifiedOnly=false`);
   if (x.data?.collectionStrategy) {
-    console.log(`  X strategy=${x.data.collectionStrategy} posts=${x.data.totalTweets ?? "?"} coverage=${x.data.meta?.coverageConfirmed ?? "?"}`);
+    console.log(`  X strategy=${x.data.collectionStrategy} posts=${x.data.totalTweets ?? "?"} browserAuth=${x.data.meta?.authenticatedBrowser ?? "?"} coverage=${x.data.meta?.coverageConfirmed ?? "?"}`);
   } else if (x.data?.error || x.data?.detail) {
     console.log(`  X detail=${x.data.error || x.data.detail}`);
   }
 }
 
 console.log("");
-const tgReady = yes(backendEnv.TG_API_ID)
-  && yes(backendEnv.TG_API_HASH)
-  && yes(backendEnv.TG_SESSION_STRING)
-  && yes(backendEnv.TG_MONITOR_CHANNELS)
-  && bool(backendEnv.TG_AUTOSTART);
 const inference = qwen.data?.inference || {};
 const directQwenCompatible = inference.mode !== "openai-compatible"
   || Boolean(
@@ -129,5 +174,12 @@ const qwenReady = Boolean(
   && directQwenCompatible,
 );
 const processReady = frontendHealth.ok && backendHealth.ok && intelligenceHealth.ok;
-console.log(`SUMMARY processes=${processReady ? "READY" : "CHECK"} telegramConfig=${tgReady ? "READY" : "CHECK"} qwen=${qwenReady ? "READY" : "CHECK"}`);
+console.log(
+  `SUMMARY processes=${processReady ? "READY" : "CHECK"}`
+  + ` telegramAuth=${telegramAuthReady ? "READY" : "CHECK"}`
+  + ` telegramAutoMonitor=${telegramAutoMonitorReady ? "READY" : "OFF"}`
+  + ` telegramPublicWeb=${telegramPublicWebReady ? "READY" : "OFF"}`
+  + ` xAuth=${fs.existsSync(xAuthPath) ? "READY" : "CHECK"}`
+  + ` qwen=${qwenReady ? "READY" : "CHECK"}`,
+);
 console.log("Telegram token data itself is protected by subscriber auth and is verified in the logged-in localhost UI.");
