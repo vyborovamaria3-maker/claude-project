@@ -127,12 +127,7 @@ export interface ShillerEntry {
   isVerified: boolean;
 }
 
-function parseInteger(
-  value: string | null,
-  fallback: number,
-  min: number,
-  max: number,
-) {
+function parseInteger(value: string | null, fallback: number, min: number, max: number) {
   if (value == null || value.trim() === "") return fallback;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -140,9 +135,7 @@ function parseInteger(
 }
 
 function parseOptionalHours(value: string | null): number | null {
-  if (value == null || value.trim() === "" || value === "all" || value === "0") {
-    return null;
-  }
+  if (value == null || value.trim() === "" || value === "all" || value === "0") return null;
   return parseInteger(value, 24, 1, 8760);
 }
 
@@ -275,10 +268,7 @@ function persistTwitterStats(
          last_seen_at = excluded.last_seen_at,
          bot_score = MAX(excluded.bot_score, twitter_accounts.bot_score),
          is_bot = MAX(excluded.is_bot, twitter_accounts.is_bot),
-         is_subscription_promoter = MAX(
-           excluded.is_subscription_promoter,
-           twitter_accounts.is_subscription_promoter
-         ),
+         is_subscription_promoter = MAX(excluded.is_subscription_promoter, twitter_accounts.is_subscription_promoter),
          bot_reasons = excluded.bot_reasons`,
     );
     const shillerStmt = db.prepare(
@@ -340,48 +330,26 @@ function persistTwitterStats(
 
 export async function GET(req: NextRequest) {
   const mint = req.nextUrl.searchParams.get("mint") || "";
-  const symbolParam = (req.nextUrl.searchParams.get("symbol") || "")
-    .trim()
-    .replace(/^\$/, "");
+  const symbolParam = (req.nextUrl.searchParams.get("symbol") || "").trim().replace(/^\$/, "");
   const strategyParam = req.nextUrl.searchParams.get("strategy") || "auto";
-  const providedHandle = normalizeTwitterHandle(
-    req.nextUrl.searchParams.get("twitter"),
-  );
+  const providedHandle = normalizeTwitterHandle(req.nextUrl.searchParams.get("twitter"));
   const scopeParam = req.nextUrl.searchParams.get("scope") || "mentions";
   const limit = parseInteger(req.nextUrl.searchParams.get("limit"), 20, 5, 100);
   const lookbackHours = parseOptionalHours(req.nextUrl.searchParams.get("hours"));
-  const minEngagement = parseInteger(
-    req.nextUrl.searchParams.get("minEngagement"),
-    0,
-    0,
-    1_000_000_000,
-  );
+  const minEngagement = parseInteger(req.nextUrl.searchParams.get("minEngagement"), 0, 0, 1_000_000_000);
   const verifiedOnly = parseBoolean(req.nextUrl.searchParams.get("verifiedOnly"));
-  const excludeSuspicious = parseBoolean(
-    req.nextUrl.searchParams.get("excludeSuspicious"),
-  );
+  const excludeSuspicious = parseBoolean(req.nextUrl.searchParams.get("excludeSuspicious"));
 
   if (!mint) return NextResponse.json({ error: "mint required" }, { status: 400 });
-  if (!isSolanaMint(mint)) {
-    return NextResponse.json({ error: "invalid Solana mint" }, { status: 400 });
-  }
+  if (!isSolanaMint(mint)) return NextResponse.json({ error: "invalid Solana mint" }, { status: 400 });
   if (!["nitter", "playwright", "auto"].includes(strategyParam)) {
-    return NextResponse.json(
-      { error: "strategy must be one of: nitter, playwright, auto" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "strategy must be one of: nitter, playwright, auto" }, { status: 400 });
   }
   if (!["mentions", "official"].includes(scopeParam)) {
-    return NextResponse.json(
-      { error: "scope must be one of: mentions, official" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "scope must be one of: mentions, official" }, { status: 400 });
   }
   if (symbolParam && !/^[A-Za-z0-9_]{1,32}$/.test(symbolParam)) {
-    return NextResponse.json(
-      { error: "symbol contains unsupported characters" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "symbol contains unsupported characters" }, { status: 400 });
   }
   if (providedHandle && !/^[A-Za-z0-9_]{1,30}$/.test(providedHandle)) {
     return NextResponse.json({ error: "invalid X handle" }, { status: 400 });
@@ -391,9 +359,7 @@ export async function GET(req: NextRequest) {
   const authenticatedBrowser = hasTwitterAuth();
   if (verifiedOnly && requestedStrategy === "nitter") {
     return NextResponse.json(
-      {
-        error: "verifiedOnly requires Playwright/X browser session; Nitter does not expose verification reliably",
-      },
+      { error: "verifiedOnly requires Playwright/X browser session; Nitter does not expose verification reliably" },
       { status: 400 },
     );
   }
@@ -403,9 +369,7 @@ export async function GET(req: NextRequest) {
       { status: 409 },
     );
   }
-  const strategy: CollectionStrategy = verifiedOnly && requestedStrategy === "auto"
-    ? "playwright"
-    : requestedStrategy;
+  const strategy: CollectionStrategy = verifiedOnly && requestedStrategy === "auto" ? "playwright" : requestedStrategy;
   const scope = scopeParam as "mentions" | "official";
   const cacheKey = [
     mint,
@@ -418,87 +382,54 @@ export async function GET(req: NextRequest) {
     minEngagement,
     verifiedOnly ? 1 : 0,
     excludeSuspicious ? 1 : 0,
+    authenticatedBrowser ? "auth" : "public",
   ].join(":");
   const cached = CACHE.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json({
       ...cached.data,
-      performance: {
-        ...cached.data.performance,
-        responseTimeMs: 0,
-        cached: true,
-      },
+      performance: { ...cached.data.performance, responseTimeMs: 0, cached: true },
     });
   }
 
   const meta = providedHandle && symbolParam ? null : await fetchTokenMeta(mint);
   const symbol = symbolParam || meta?.symbol || mint.slice(0, 6);
   const twitterHandle = providedHandle || normalizeTwitterHandle(meta?.twitter);
-  const query = buildQuery({
-    mint,
-    symbol,
-    tokenTwitterHandle: twitterHandle,
-    scope,
-  });
+  const query = buildQuery({ mint, symbol, tokenTwitterHandle: twitterHandle, scope });
   if (!query) {
     return NextResponse.json(
-      {
-        error: scope === "official"
-          ? "official twitter handle not found"
-          : "could not build search query",
-      },
+      { error: scope === "official" ? "official twitter handle not found" : "could not build search query" },
       { status: 400 },
     );
   }
 
   let result: TwitterScrapeResult;
-  const needsOverscan = verifiedOnly
-    || excludeSuspicious
-    || minEngagement > 0
-    || lookbackHours != null;
-  const scrapeLimit = Math.min(
-    100,
-    needsOverscan ? Math.max(limit * 2, 20) : limit,
-  );
+  const needsOverscan = verifiedOnly || excludeSuspicious || minEngagement > 0 || lookbackHours != null;
+  const scrapeLimit = Math.min(100, needsOverscan ? Math.max(limit * 2, 20) : limit);
   try {
-    result = await scrapeTwitter(query, {
-      limit: scrapeLimit,
-      headless: true,
-      strategy,
-    });
+    result = await scrapeTwitter(query, { limit: scrapeLimit, headless: true, strategy });
   } catch (error) {
     console.error("Twitter scrape error:", error);
     const message = error instanceof Error ? error.message : "failed to scrape twitter";
     return NextResponse.json({ error: message }, { status: 503 });
   }
 
-  // An empty unauthenticated Nitter result is not evidence of zero X mentions:
-  // public mirrors can be down or blocked. Require an authenticated browser
-  // session before treating an empty sample as confirmed coverage.
   if (result.tweets.length === 0 && result.strategy === "nitter" && !authenticatedBrowser) {
     return NextResponse.json(
-      {
-        error: "X collector unavailable: public mirror returned no data and no authenticated browser session exists. Run npm run x:login.",
-      },
+      { error: "X collector unavailable: public mirror returned no data and no authenticated browser session exists. Run npm run x:login." },
       { status: 503 },
     );
   }
 
-  const cutoff = lookbackHours == null
-    ? null
-    : Date.now() - lookbackHours * HOUR_MS;
+  const cutoff = lookbackHours == null ? null : Date.now() - lookbackHours * HOUR_MS;
   const riskTweets = result.tweets.filter((tweet) => {
-    if (cutoff != null && (tweet.postedAt == null || tweet.postedAt < cutoff)) {
-      return false;
-    }
+    if (cutoff != null && (tweet.postedAt == null || tweet.postedAt < cutoff)) return false;
     if (tweetEngagement(tweet) < minEngagement) return false;
     if (verifiedOnly && !tweet.isVerified) return false;
     return true;
   });
   const riskHandles = new Set(riskTweets.map((tweet) => tweet.authorHandle));
-  const suspiciousRiskTweets = riskTweets.filter(
-    (tweet) => Boolean((tweet as AnalyzedTweet).isSuspicious),
-  );
+  const suspiciousRiskTweets = riskTweets.filter((tweet) => Boolean((tweet as AnalyzedTweet).isSuspicious));
   const botRiskHandles = new Set(
     [...riskHandles].filter((handle) => {
       const account = result.accounts.get(handle) as AnalyzedAccount | undefined;
@@ -511,11 +442,7 @@ export async function GET(req: NextRequest) {
         + (botRiskHandles.size / Math.max(riskHandles.size, 1)) * 50,
       )
     : 0;
-  const botRisk: "low" | "medium" | "high" = botRiskScore >= 65
-    ? "high"
-    : botRiskScore >= 35
-      ? "medium"
-      : "low";
+  const botRisk: "low" | "medium" | "high" = botRiskScore >= 65 ? "high" : botRiskScore >= 35 ? "medium" : "low";
   const riskUniverse: TwitterRiskUniverse = {
     totalTweets: riskTweets.length,
     uniqueAuthors: riskHandles.size,
@@ -532,25 +459,23 @@ export async function GET(req: NextRequest) {
     const account = result.accounts.get(tweet.authorHandle) as AnalyzedAccount | undefined;
     return !analyzed.isSuspicious && !account?.isBot;
   });
-  const filteredTweets = displayEligible.slice(0, limit);
+  const displayEligibleHandles = new Set(displayEligible.map((tweet) => tweet.authorHandle));
+  // Persist exclusion only when filtering actually removed every eligible row for
+  // an author. The display limit must never turn normal authors into "excluded".
   const excludedHandles = new Set(
-    [...riskHandles].filter((handle) => !filteredTweets.some(
-      (tweet) => tweet.authorHandle === handle,
-    )),
+    [...riskHandles].filter((handle) => !displayEligibleHandles.has(handle)),
   );
+  const filteredTweets = displayEligible.slice(0, limit);
 
-  const authorAggregates = new Map<
-    string,
-    {
-      tweets: number;
-      engagement: number;
-      views: number;
-      likes: number;
-      retweets: number;
-      firstTweetedAt: number | null;
-      lastTweetedAt: number | null;
-    }
-  >();
+  const authorAggregates = new Map<string, {
+    tweets: number;
+    engagement: number;
+    views: number;
+    likes: number;
+    retweets: number;
+    firstTweetedAt: number | null;
+    lastTweetedAt: number | null;
+  }>();
   for (const tweet of filteredTweets) {
     const current = authorAggregates.get(tweet.authorHandle) || {
       tweets: 0,
@@ -567,14 +492,8 @@ export async function GET(req: NextRequest) {
     current.likes += tweet.likes || 0;
     current.retweets += tweet.retweets || 0;
     if (tweet.postedAt != null) {
-      current.firstTweetedAt = Math.min(
-        current.firstTweetedAt ?? Infinity,
-        tweet.postedAt,
-      );
-      current.lastTweetedAt = Math.max(
-        current.lastTweetedAt ?? 0,
-        tweet.postedAt,
-      );
+      current.firstTweetedAt = Math.min(current.firstTweetedAt ?? Infinity, tweet.postedAt);
+      current.lastTweetedAt = Math.max(current.lastTweetedAt ?? 0, tweet.postedAt);
     }
     authorAggregates.set(tweet.authorHandle, current);
   }
@@ -634,29 +553,17 @@ export async function GET(req: NextRequest) {
   const totalViews = filteredTweets.reduce((sum, tweet) => sum + tweet.views, 0);
   const totalLikes = filteredTweets.reduce((sum, tweet) => sum + tweet.likes, 0);
   const totalRetweets = filteredTweets.reduce((sum, tweet) => sum + tweet.retweets, 0);
-  const totalEngagement = filteredTweets.reduce(
-    (sum, tweet) => sum + tweetEngagement(tweet),
-    0,
-  );
-  const verifiedAuthors = [...authorAggregates.keys()].filter(
-    (handle) => Boolean(filteredAccounts.get(handle)?.isVerified),
-  ).length;
+  const totalEngagement = filteredTweets.reduce((sum, tweet) => sum + tweetEngagement(tweet), 0);
+  const verifiedAuthors = [...authorAggregates.keys()].filter((handle) => Boolean(filteredAccounts.get(handle)?.isVerified)).length;
   const displayBotAuthors = [...authorAggregates.keys()].filter((handle) => {
     const account = filteredAccounts.get(handle) as AnalyzedAccount | undefined;
     return Boolean(account?.isBot);
   }).length;
   const engagementRate = totalViews > 0 ? totalEngagement / totalViews : 0;
-  const avgViews = filteredTweets.length
-    ? Math.round(totalViews / filteredTweets.length)
-    : 0;
-  const avgLikes = filteredTweets.length
-    ? Math.round(totalLikes / filteredTweets.length)
-    : 0;
-  const avgRetweets = filteredTweets.length
-    ? Math.round(totalRetweets / filteredTweets.length)
-    : 0;
-  const collectionTruncated = result.tweets.length >= scrapeLimit
-    || displayEligible.length > limit;
+  const avgViews = filteredTweets.length ? Math.round(totalViews / filteredTweets.length) : 0;
+  const avgLikes = filteredTweets.length ? Math.round(totalLikes / filteredTweets.length) : 0;
+  const avgRetweets = filteredTweets.length ? Math.round(totalRetweets / filteredTweets.length) : 0;
+  const collectionTruncated = result.tweets.length >= scrapeLimit || displayEligible.length > limit;
 
   const stats: TwitterStats = {
     symbol,
@@ -706,17 +613,13 @@ export async function GET(req: NextRequest) {
       uniqueAuthors: authorAggregates.size,
       verifiedAuthors,
       botSuspectedCount: displayBotAuthors,
-      botRatio: authorAggregates.size
-        ? displayBotAuthors / authorAggregates.size
-        : 0,
+      botRatio: authorAggregates.size ? displayBotAuthors / authorAggregates.size : 0,
     },
-    topByViews: [...topTweets].sort((a, b) => b.views - a.views).slice(0, 5),
-    topByLikes: [...topTweets].sort((a, b) => b.likes - a.likes).slice(0, 5),
-    topByRetweets: [...topTweets]
-      .sort((a, b) => b.retweets - a.retweets)
-      .slice(0, 5),
+    topByViews: [...topTweets].sort((left, right) => right.views - left.views).slice(0, 5),
+    topByLikes: [...topTweets].sort((left, right) => right.likes - left.likes).slice(0, 5),
+    topByRetweets: [...topTweets].sort((left, right) => right.retweets - left.retweets).slice(0, 5),
     topByEngagement: [...topTweets]
-      .sort((a, b) => (b.likes + b.retweets) - (a.likes + a.retweets))
+      .sort((left, right) => (right.likes + right.retweets) - (left.likes + left.retweets))
       .slice(0, 5),
     discovery: {
       mentions: filteredTweets.length,
@@ -724,8 +627,8 @@ export async function GET(req: NextRequest) {
       memecoinAccounts: shillers.length,
       firstAccountCreatedAt: null,
       lastDiscoveredAt: filteredTweets.reduce<number | null>((latest, tweet) => {
-        if (tweet.postedAt == null) return latest;
-        return latest == null ? tweet.postedAt : Math.max(latest, tweet.postedAt);
+        if (tweet.timestamp == null) return latest;
+        return latest == null ? tweet.timestamp : Math.max(latest, tweet.timestamp);
       }, null),
     },
   };
@@ -736,8 +639,6 @@ export async function GET(req: NextRequest) {
     console.warn("Twitter persistence error:", error);
   }
 
-  // Existing local social stats enrich discovery metadata without changing the
-  // live scrape sample contract.
   try {
     const localStats = getTokenTwitterSocialStats(mint);
     if (localStats) {
