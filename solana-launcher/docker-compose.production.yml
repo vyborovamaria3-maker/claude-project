@@ -157,6 +157,11 @@ services:
       # Read-only and Helius-scoped: this token cannot read Telegram credentials.
       ADMIN_HELIUS_SERVICE_TOKEN: ${ADMIN_HELIUS_SERVICE_TOKEN:-}
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
+      # Qwen/Intelligence is reached over the private shared Docker network. The
+      # scoped API key maps to INTERNAL_USER_API_KEY in memecoin-intelligence and
+      # therefore cannot call its admin-only routes.
+      MEMECOIN_INTELLIGENCE_URL: ${MEMECOIN_INTELLIGENCE_URL:-http://memecoin-intelligence-api:3001}
+      MEMECOIN_INTELLIGENCE_API_KEY: ${MEMECOIN_INTELLIGENCE_API_KEY:-}
       FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
@@ -166,6 +171,9 @@ services:
       TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
     volumes:
       - ./data:/app/data
+    networks:
+      - default
+      - potapoff-shared
     depends_on:
       backend:
         condition: service_healthy
