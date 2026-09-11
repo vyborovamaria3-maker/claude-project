@@ -70,7 +70,10 @@ interface WalletRow {
 }
 
 function analysisCacheKey(mint: string) {
-  return `v${ANALYSIS_SCHEMA_VERSION}:${mint}`;
+  // Legacy JSON and NDJSON routes intentionally expose slightly different
+  // payload shapes. Keep their 24h caches isolated so call order cannot alter
+  // another endpoint's response contract.
+  return `analysis:v${ANALYSIS_SCHEMA_VERSION}:${mint}`;
 }
 
 function roundNumber(value: unknown, decimals: number) {
