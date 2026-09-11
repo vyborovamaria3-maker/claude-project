@@ -11,6 +11,8 @@ const activityPath = join(root, "components", "chart", "ActivityPanel.tsx");
 const routePath = join(root, "app", "api", "trade", "social-ai", "route.ts");
 const tokenHistoryPath = join(root, "app", "api", "token-history", "route.ts");
 const tokenTradesPath = join(root, "app", "api", "token-trades", "route.ts");
+const analyzePath = join(root, "app", "api", "trade", "analyze", "route.ts");
+const analyzeStreamPath = join(root, "app", "api", "trade", "analyze-stream", "route.ts");
 const socialApiPath = join(root, "lib", "trade", "social-intelligence-api.ts");
 const ohlcvHookPath = join(root, "hooks", "useOHLCV.ts");
 const tradeStreamPath = join(root, "hooks", "useTradeStream.ts");
@@ -27,6 +29,8 @@ const activitySource = readFileSync(activityPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");
 const tokenHistorySource = readFileSync(tokenHistoryPath, "utf8");
 const tokenTradesSource = readFileSync(tokenTradesPath, "utf8");
+const analyzeSource = readFileSync(analyzePath, "utf8");
+const analyzeStreamSource = readFileSync(analyzeStreamPath, "utf8");
 const socialApiSource = readFileSync(socialApiPath, "utf8");
 const ohlcvHookSource = readFileSync(ohlcvHookPath, "utf8");
 const tradeStreamSource = readFileSync(tradeStreamPath, "utf8");
@@ -178,6 +182,38 @@ assert(
   proxySource.includes('"/api/trade/dev-twitter"')
     && proxySource.includes('"/api/trade/social-ai"'),
   "expensive X and Qwen routes must remain under the heavy-route rate limiter",
+);
+
+for (const [label, source] of [["analyze", analyzeSource], ["analyze-stream", analyzeStreamSource]]) {
+  assert(
+    source.includes("const ANALYSIS_SCHEMA_VERSION = 3")
+      && source.includes("const MAX_TXS = 5000")
+      && source.includes("const FRESH_CHECK_LIMIT = 30")
+      && source.includes("const BALANCE_CHECK_LIMIT = 100")
+      && source.includes("const RAW_TRADES_IN_RESPONSE = 2000")
+      && source.includes("const EARLY_TRADES_IN_RESPONSE = 400"),
+    `${label} must use the same canonical v3 analysis limits so the shared cache cannot change semantics by endpoint order`,
+  );
+  assert(
+    !source.includes("amountSol * 150")
+      && !source.includes("amountSol) * 150")
+      && !source.includes("totalVolumeUsd: 0")
+      && source.includes("u: null"),
+    `${label} must keep USD unknown unless backed by a real price oracle`,
+  );
+  assert(
+    source.includes("tokenBalanceUsd: null")
+      && source.includes("solBalances.get(")
+      && source.includes("?? null")
+      && source.includes("washConfidence: wash.confidence")
+      && source.includes("responseTradesTruncated"),
+    `${label} must distinguish unknown balances, classifier confidence, input truncation and response truncation`,
+  );
+}
+assert(
+  analyzeSource.includes("isFresh: freshnessVerified")
+    && analyzeStreamSource.includes("isFresh: freshnessVerified"),
+  "wallet freshness must remain unknown until global first-seen enrichment actually verifies it",
 );
 
 const intelligenceAlias = tsconfig?.compilerOptions?.paths?.["@/lib/trade/intelligence-agent"];
