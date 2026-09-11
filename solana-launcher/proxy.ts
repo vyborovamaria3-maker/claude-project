@@ -14,6 +14,8 @@ const HEAVY_ROUTE_PREFIXES = [
   "/api/trade/analyze-stream",
   "/api/trade/dev-forensics",
   "/api/trade/creator-fee",
+  "/api/trade/dev-twitter",
+  "/api/trade/social-ai",
   "/api/miniapp/create-invoice",
   "/api/miniapp/verify-payment",
 ];
