@@ -27,9 +27,9 @@ function fmtUsd(value: number | null | undefined): string {
   return `$${value.toFixed(2)}`;
 }
 
-function timeAgo(timestamp: number): string {
+function timeAgo(timestamp: number, now: number): string {
   const normalized = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-  const diff = Math.max(0, Math.floor((Date.now() - normalized) / 1000));
+  const diff = Math.max(0, Math.floor((now - normalized) / 1000));
   if (diff < 60) return `${diff}s`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
@@ -71,14 +71,16 @@ function useVirtualization<T>(items: T[], itemHeight: number, containerHeight: n
 const TradeRow = React.memo(function TradeRow({
   trade,
   maxSol,
+  now,
   style,
 }: {
   trade: TradeItem;
   maxSol: number;
+  now: number;
   style: React.CSSProperties;
 }) {
   const width = Math.min(100, Math.max(3, (trade.solAmount / maxSol) * 100));
-  const notional = trade.priceUsd && trade.tokenAmount
+  const notional = trade.priceUsd > 0 && trade.tokenAmount > 0
     ? trade.priceUsd * trade.tokenAmount
     : null;
 
@@ -115,7 +117,7 @@ const TradeRow = React.memo(function TradeRow({
         >
           {shortAddr(trade.signer)}
         </a>
-        <span className="text-right font-mono tabular-nums text-content-faint">{timeAgo(trade.ts)}</span>
+        <span className="text-right font-mono tabular-nums text-content-faint">{timeAgo(trade.ts, now)}</span>
         <a
           href={`https://solscan.io/tx/${encodeURIComponent(trade.signature)}`}
           target="_blank"
@@ -134,6 +136,7 @@ const ActivityPanel = React.memo(function ActivityPanel({ mint }: Props) {
   const { trades, isOnline } = useTradeStream(mint, 100);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerHeight, setContainerHeight] = React.useState(380);
+  const [now, setNow] = React.useState(() => Date.now());
 
   React.useEffect(() => {
     const container = containerRef.current;
@@ -143,6 +146,11 @@ const ActivityPanel = React.memo(function ActivityPanel({ mint }: Props) {
     const observer = new ResizeObserver(updateHeight);
     observer.observe(container);
     return () => observer.disconnect();
+  }, []);
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const maxSol = React.useMemo(
@@ -158,7 +166,7 @@ const ActivityPanel = React.memo(function ActivityPanel({ mint }: Props) {
   );
 
   return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-col bg-bg-card" data-tag="components.chart.activity_panel.v2">
+    <aside className="flex h-full min-h-0 min-w-0 flex-col bg-bg-card" data-tag="components.chart.activity_panel.v3">
       <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-bg-border px-3">
         <div>
           <div className="flex items-center gap-2">
@@ -189,15 +197,18 @@ const ActivityPanel = React.memo(function ActivityPanel({ mint }: Props) {
           <div className="flex h-full min-h-56 flex-col items-center justify-center gap-2 px-4 text-center">
             <span className={`h-2 w-2 rounded-full ${isOnline ? "animate-pulse bg-success" : "bg-content-faint"}`} />
             <div className="text-[11px] text-content-muted">Ожидание live-сделок…</div>
-            <div className="text-[9px] text-content-faint">Новые транзакции появятся здесь без перерисовки всей страницы.</div>
+            <div className="text-[9px] text-content-faint">
+              {isOnline ? "Новые транзакции появятся здесь без перерисовки всей страницы." : "Источник live-сделок сейчас недоступен."}
+            </div>
           </div>
         ) : (
           <ul className="relative w-full" style={{ height: totalHeight }}>
-            {virtualItems.map(({ item: tradeItem, index, style }) => (
+            {virtualItems.map(({ item: tradeItem, style }) => (
               <TradeRow
-                key={`${tradeItem.signature}-${index}`}
+                key={tradeItem.signature}
                 trade={tradeItem}
                 maxSol={maxSol}
+                now={now}
                 style={style}
               />
             ))}
