@@ -18,8 +18,8 @@ import { generateMockCandles, calculate24hStats } from "@/utils/candles";
 // 10s for minute+ TFs and 1s for sub-minute safety refreshes.
 const CACHE_TTL = 5 * 60_000; // 5 minutes — history rarely changes; live updates handled via polling
 const CACHE_FRESH = 1_000;   // <1s old = serve from cache, no background refetch
-const POLLING_INTERVAL = 10_000; // 10s polling for 1m+ TFs (live trades patch chart in between)
-const SUB_MINUTE_POLLING_INTERVAL = 1_000; // PumpPortal/live trades handle realtime movement between refreshes
+const POLLING_INTERVAL = 10_000; // 10s polling for 1m+ TFs
+const SUB_MINUTE_POLLING_INTERVAL = 1_000; // 1s safety refresh for sub-minute history
 
 // Per-TF candle display caps — keeps the chart light & smooth
 const CANDLE_LIMIT: Record<string, number> = {
@@ -76,7 +76,7 @@ function getCached(mint: string, tf: Timeframe): CacheEntry | null {
   return entry;
 }
 
-function setCached(mint: string, tf: Timeframe, candles: Candle[], stats: CacheEntry['stats']): void {
+function setCached(mint: string, tf: Timeframe, candles: Candle[], stats: CacheEntry["stats"]): void {
   const key = getCacheKey(mint, tf);
   globalCache.set(key, { candles, stats, timestamp: Date.now() });
 }
@@ -96,20 +96,19 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
   const rafRef = useRef<number>(0);
   const pendingUpdate = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const candlesLoadedRef = useRef(false);
 
   const agg = useMemo(() => getAggregator(mint), [mint]);
 
-  // Reset state when mint changes
+  // Reset only local view state when mint changes. The per-mint aggregator is
+  // intentionally shared: deleting the freshly resolved current mint here made
+  // later consumers create a second aggregator and broke live/history sharing.
   useEffect(() => {
     setCandles([]);
     setStats({ change: 0, volume: 0, high: 0, low: 0, lastPrice: 0 });
     setIsLoading(true);
     setError(null);
     candlesLoadedRef.current = false;
-    // Clear aggregator for this mint
-    aggregators.delete(mint);
   }, [mint]);
 
   // RAF-throttled candle push with client-side aggregation
@@ -118,10 +117,10 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
     pendingUpdate.current = true;
     rafRef.current = requestAnimationFrame(() => {
       pendingUpdate.current = false;
-      
+
       let c: Candle[];
       const isSubSec = timeframe === "1s" || timeframe === "5s" || timeframe === "15s";
-      
+
       if (isSubSec) {
         c = agg.getCandles(timeframe);
       } else if (timeframe === "1m") {
@@ -143,7 +142,7 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
       // 24h window in candle space (use capped for stats too)
       const nowSec = Math.floor(Date.now() / 1000);
       const since = nowSec - 86_400;
-      const last24 = capped.filter(x => x.time >= since);
+      const last24 = capped.filter((x) => x.time >= since);
       const window = last24.length > 0 ? last24 : capped;
       if (window.length === 0) return;
 
@@ -161,10 +160,10 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
   // Fetch full historical OHLCV from API with AbortController support
   const fetchHistory = useCallback(async (tf: Timeframe, abortSignal?: AbortSignal, force?: boolean) => {
     if (!mint) return false;
-    
+
     // Mock mode: OFF by default. Enable via ?mock=true in URL.
     const isMockMode = isMockEnabled();
-    
+
     // Check cache first (skip when force=true, e.g. live polling)
     const cached = !force ? getCached(mint, tf) : null;
     if (cached && !abortSignal?.aborted) {
@@ -177,13 +176,8 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
         return true; // Cache is fresh, skip background fetch
       }
     }
-    
-    // Determine if this is a sub-second timeframe
-    const isSubSec = tf === "1s" || tf === "5s" || tf === "15s";
-    
+
     // Mock mode: generate AT THE TARGET TF directly and store under that key.
-    // Previously we always seeded 1m base and let scheduleUpdate aggregate;
-    // that broke higher TFs (200 × 1m = 3.3h → 0 daily / ~1 hourly bars).
     if (isMockMode) {
       const mockCandles = generateMockCandles(mint, tf, 200);
       const mockStats = calculate24hStats(mockCandles);
@@ -194,28 +188,24 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
       setIsLoading(false);
       return true;
     }
-    
-    // Fetch the target TF directly from API (pump.fun supports 1m/5m/15m/1h/4h natively).
-    // Only sub-second TFs need special handling.
-    const apiTf = tf;
-    
+
     try {
-      const r = await fetch(
-        `/api/token-history?mint=${encodeURIComponent(mint)}&tf=${apiTf}`,
-        { 
+      const response = await fetch(
+        `/api/token-history?mint=${encodeURIComponent(mint)}&tf=${encodeURIComponent(tf)}`,
+        {
           cache: "no-store",
           signal: abortSignal,
-        }
+        },
       );
-      
+
       if (abortSignal?.aborted) return false;
-      
-      const data = await r.json();
-      if (!r.ok || !Array.isArray(data.candles) || data.candles.length === 0) {
+
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.candles) || data.candles.length === 0) {
         // No silent mock fallback — surface failure so user knows real data isn't available.
         return false;
       }
-      
+
       // Set data source based on API response
       if (data.mock) {
         setDataSource("mock");
@@ -225,28 +215,34 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
         setDataSource("bitquery");
       } else if (data.source === "geckoterminal") {
         setDataSource("geckoterminal");
+      } else {
+        setDataSource("unknown");
       }
 
-      const fetchedCandles: Candle[] = data.candles.map((c: Candle) => {
-        // If close > 1, it's Market Cap (price × 1B), convert back to price
-        const needsConversion = c.close > 1;
-        return {
-          time: c.time,
-          open: needsConversion ? c.open / 1_000_000_000 : c.open,
-          high: needsConversion ? c.high / 1_000_000_000 : c.high,
-          low: needsConversion ? c.low / 1_000_000_000 : c.low,
-          close: needsConversion ? c.close / 1_000_000_000 : c.close,
-          volume: c.volume,
-        };
-      });
-      
-      
+      // API contract: all candle OHLC values are per-token USD prices. Do not
+      // infer units from magnitude here; a legitimate token can trade above $1.
+      const fetchedCandles: Candle[] = data.candles
+        .map((c: Candle) => ({
+          time: Number(c.time),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+          volume: Number(c.volume) || 0,
+        }))
+        .filter((c: Candle) => Number.isFinite(c.time)
+          && Number.isFinite(c.open)
+          && Number.isFinite(c.high)
+          && Number.isFinite(c.low)
+          && Number.isFinite(c.close)
+          && c.open > 0
+          && c.high > 0
+          && c.low > 0
+          && c.close > 0);
+      if (fetchedCandles.length === 0) return false;
+
       // MERGE strategy: when polling for live updates (force=true), the server's
-      // last candle may be older/staler than what PumpPortal trade stream gave us.
-      // Three cases:
-      //  1. ourLast.time > theirLast.time: we have a NEWER bucket (PumpPortal advanced first) → append ours
-      //  2. ourLast.time === theirLast.time: same bucket → keep version with HIGHER volume (more trades baked in)
-      //  3. ourLast.time < theirLast.time: server is ahead → take theirs (default)
+      // last candle may be older/staler than a locally ingested trade candle.
       const baseTf = tf;
       const existing = agg.getCandles(baseTf);
       let merged = fetchedCandles;
@@ -254,10 +250,8 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
         const ourLast = existing[existing.length - 1];
         const theirLast = fetchedCandles[fetchedCandles.length - 1];
         if (ourLast.time > theirLast.time) {
-          // We have a newer bucket — append it
           merged = [...fetchedCandles, ourLast];
         } else if (ourLast.time === theirLast.time && ourLast.volume > theirLast.volume) {
-          // Same bucket, ours has more accumulated trades — preserve it
           merged = [...fetchedCandles.slice(0, -1), ourLast];
         }
       }
@@ -265,7 +259,7 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
       const newStats = calculate24hStats(merged);
       const lastPrice = merged[merged.length - 1]?.close ?? 0;
       setCached(mint, baseTf, merged, { ...newStats, lastPrice });
-      
+
       if (!abortSignal?.aborted) {
         scheduleUpdate();
       }
@@ -280,9 +274,9 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
   const fetchSnapshot = useCallback(async () => {
     if (!mint) return;
     try {
-      const r = await fetch(`/api/token-ohlcv?mint=${encodeURIComponent(mint)}`, { cache: "no-store" });
-      const data = await r.json();
-      if (!r.ok || data.error === "no_pairs") {
+      const response = await fetch(`/api/token-ohlcv?mint=${encodeURIComponent(mint)}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || data.error === "no_pairs") {
         // Token may be very new — not on DexScreener yet, keep solToUsd=0
         setIsLoading(false);
         return;
@@ -293,8 +287,6 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
         solToUsdRef.current = solUsd;
         solUsdCache.set(mint, solUsd);
         // Seed a single candle ONLY if no candles AND no trades exist (first load).
-        // If historical candles already loaded via setHistoricalCandles, skip — addTrade would clear cache.
-        // Check only 1m base candles (all other timeframes are aggregated from 1m)
         const hasAnyCandles = agg.getCandles("1m").length > 0;
         if (p.priceUsd && agg.tradeCount === 0 && !hasAnyCandles) {
           const now = Date.now();
@@ -317,8 +309,7 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
     }
   }, [mint, agg, scheduleUpdate]);
 
-  // No WebSocket — chart runs in pure polling mode.
-  // wsStatus is initialized to "polling" and stays there.
+  // No WebSocket — chart runs in polling mode unless a consumer feeds ingestTrade.
   useEffect(() => {
     setWsStatus("polling");
   }, []);
@@ -328,19 +319,16 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
     if (!mint) return;
     setIsLoading(true);
     setError(null);
-    
-    // Cancel any pending requests
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
     abortControllerRef.current = new AbortController();
     const { signal } = abortControllerRef.current;
 
-    // Always clear candles immediately so previous tf data doesn't linger
     setCandles([]);
     candlesLoadedRef.current = false;
 
-    // Check cache for instant display
     const cached = getCached(mint, timeframe);
     if (cached) {
       setCandles(cached.candles);
@@ -353,8 +341,6 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
       scheduleUpdate();
     }
 
-    // Kick off both requests in PARALLEL — they're independent.
-    // Whichever finishes first updates the chart; we wait for history to clear loading state.
     fetchSnapshot().catch(() => {});
     (async () => {
       const ok = await fetchHistory(timeframe, signal);
@@ -363,14 +349,12 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
       if (!signal.aborted && (ok || cached)) setIsLoading(false);
     })();
 
-    // 12-second safety net: if neither history nor live trades arrived, show user-visible error
-    // (mock fallback removed - was overwriting real data on slow networks)
     const fallbackTimer = setTimeout(() => {
       if (signal.aborted) return;
       if (candlesLoadedRef.current) return;
       setIsLoading(false);
       setError("Не удалось загрузить историю свечей");
-    }, 12000);
+    }, 12_000);
 
     return () => {
       abortControllerRef.current?.abort();
@@ -383,57 +367,43 @@ export function useOHLCV(mint: string, timeframe: Timeframe): OHLCVState {
   }, [mint, timeframe, fetchHistory, fetchSnapshot, scheduleUpdate, agg]);
 
   // Polling for minute+ TFs (10s interval per spec).
-  // Sub-minute TFs use their own 1s safety loop below.
   useEffect(() => {
     if (!mint) return;
     const isSubSec = timeframe === "1s" || timeframe === "5s" || timeframe === "15s";
     if (isSubSec) return;
     const interval = setInterval(() => {
-      fetchHistory(timeframe, undefined, true);
+      void fetchHistory(timeframe, undefined, true);
     }, POLLING_INTERVAL);
     return () => clearInterval(interval);
   }, [mint, timeframe, fetchHistory]);
 
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingTimerRef.current) {
-        clearInterval(pollingTimerRef.current);
-        pollingTimerRef.current = null;
-      }
-      abortControllerRef.current?.abort();
-    };
-  }, []);
-
   // Sub-minute history safety polling (1s/5s/15s).
-  // PumpPortal/live trade ingestion provides realtime ticks; this refresh only
-  // reconciles historical candles when the stream or upstream aggregation lags.
   useEffect(() => {
     if (!mint) return;
     const isSubMin = timeframe === "1s" || timeframe === "5s" || timeframe === "15s";
     if (!isSubMin) return;
     const interval = setInterval(() => {
-      fetchHistory(timeframe, undefined, true); // force=true: bypass client cache
+      void fetchHistory(timeframe, undefined, true);
     }, SUB_MINUTE_POLLING_INTERVAL);
     return () => clearInterval(interval);
   }, [mint, timeframe, fetchHistory]);
 
+  useEffect(() => () => {
+    abortControllerRef.current?.abort();
+  }, []);
+
   const retry = useCallback(() => {
     setError(null);
     globalCache.delete(getCacheKey(mint, timeframe));
-    if (pollingTimerRef.current) {
-      clearInterval(pollingTimerRef.current);
-      pollingTimerRef.current = null;
-    }
-    fetchHistory(timeframe);
-    fetchSnapshot();
+    void fetchHistory(timeframe);
+    void fetchSnapshot();
   }, [fetchHistory, fetchSnapshot, mint, timeframe]);
 
   const ingestTrade = useCallback((trade: Trade) => {
+    if (!Number.isFinite(trade.priceUsd) || trade.priceUsd <= 0) return;
     agg.addTrade(trade);
     scheduleUpdate();
-    // Also update lastPrice immediately for the header
-    setStats(prev => ({ ...prev, lastPrice: trade.priceUsd || prev.lastPrice }));
+    setStats((previous) => ({ ...previous, lastPrice: trade.priceUsd || previous.lastPrice }));
   }, [agg, scheduleUpdate]);
 
   return {
