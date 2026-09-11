@@ -7,13 +7,14 @@ import { PublicKey } from "@solana/web3.js";
 //
 // Returns trades normalized to the legacy shape consumed by useTradeStream:
 //   { signature, sol_amount (lamports), token_amount (micro-tokens), is_buy,
-//     timestamp (unix seconds), user, usd_market_cap?, slot? }
+//     timestamp (unix seconds), user, priceUsd?, amountUsd?, slot? }
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const tradeCache = new Map<string, { data: unknown[]; ts: number }>();
 const CACHE_TTL = 250; // 250ms — low-latency cache for realtime charting
+const UPSTREAM_TIMEOUT_MS = 5_000;
 
 type V2Trade = {
   tx: string;
@@ -50,15 +51,31 @@ export async function GET(req: NextRequest) {
   try {
     const r = await fetch(
       `https://swap-api.pump.fun/v2/coins/${encodeURIComponent(mint)}/trades?limit=${limit}`,
-      { headers: { Accept: "application/json" }, cache: "no-store" }
+      {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      },
     );
-    if (!r.ok) return NextResponse.json([], { status: 200 });
+    if (!r.ok) {
+      return NextResponse.json(
+        { error: "pumpfun trades upstream unavailable", upstreamStatus: r.status },
+        { status: 502, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
     const data = (await r.json()) as V2Resp;
+    if (!data || (data.trades != null && !Array.isArray(data.trades))) {
+      return NextResponse.json(
+        { error: "pumpfun trades upstream returned invalid payload" },
+        { status: 502, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     const trades = data.trades || [];
 
     // Normalize to legacy shape — useTradeStream expects sol_amount in lamports,
     // token_amount in micro-tokens, timestamp in unix seconds.
-    const normalized = trades.map(t => {
+    const normalized = trades.map((t) => {
       const timestampMs = Date.parse(t.timestamp);
       return {
         signature: t.tx,
@@ -75,7 +92,11 @@ export async function GET(req: NextRequest) {
 
     tradeCache.set(cacheKey, { data: normalized, ts: Date.now() });
     return NextResponse.json(normalized, { headers: { "Cache-Control": "no-store" } });
-  } catch {
-    return NextResponse.json([], { status: 200 });
+  } catch (error) {
+    const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    return NextResponse.json(
+      { error: timeout ? "pumpfun trades upstream timeout" : "pumpfun trades upstream request failed" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
   }
 }
