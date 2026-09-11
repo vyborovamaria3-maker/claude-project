@@ -20,7 +20,6 @@ import {
   applyChartTheme,
   CHART_COLORS,
   CHART_FONTS,
-  formatMcap,
 } from "@/lib/chart/config";
 import type { Timeframe } from "@/lib/chart/types";
 
@@ -36,11 +35,15 @@ const TIMEFRAMES: Array<{ value: Timeframe; label: string }> = [
   { value: "1d", label: "1D" },
 ];
 
-const PUMP_SUPPLY = 1_000_000_000;
+const PUMP_SUPPLY_FALLBACK = 1_000_000_000;
 const MAX_RENDERED_CANDLES = 700;
 const FALLBACK_CHART_HEIGHT = 400;
 
 type MetricMode = "mcap" | "price";
+type MarketReference = {
+  supply: number;
+  source: "market-cap" | "fdv" | "pump-fallback";
+};
 
 function formatTokenPrice(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) return "—";
@@ -60,6 +63,14 @@ function formatMcapAxis(value: number): string {
   return `$${value.toFixed(0)}`;
 }
 
+function formatSupply(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toFixed(0);
+}
+
 function isSecondTimeframe(timeframe: Timeframe): boolean {
   return timeframe === "1s" || timeframe === "5s" || timeframe === "15s";
 }
@@ -73,6 +84,7 @@ export default function SocialAnalysisChart({
 }) {
   const [timeframe, setTimeframe] = useState<Timeframe>("5s");
   const [metricMode, setMetricMode] = useState<MetricMode>("mcap");
+  const [marketReference, setMarketReference] = useState<MarketReference | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -107,6 +119,52 @@ export default function SocialAnalysisChart({
     { headless: true },
   );
 
+  useEffect(() => {
+    const controller = new AbortController();
+    setMarketReference(null);
+
+    void (async () => {
+      let resolved = false;
+      try {
+        const response = await fetch(`/api/token-ohlcv?mint=${encodeURIComponent(mint)}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const data = await response.json().catch(() => ({})) as {
+          pair?: { priceUsd?: number | null; marketCap?: number | null; fdv?: number | null };
+        };
+        if (!response.ok || controller.signal.aborted) return;
+        const price = Number(data.pair?.priceUsd);
+        const marketCap = Number(data.pair?.marketCap);
+        const fdv = Number(data.pair?.fdv);
+        const cap = Number.isFinite(marketCap) && marketCap > 0
+          ? marketCap
+          : Number.isFinite(fdv) && fdv > 0
+            ? fdv
+            : 0;
+        if (Number.isFinite(price) && price > 0 && cap > 0) {
+          const supply = cap / price;
+          if (Number.isFinite(supply) && supply > 0) {
+            setMarketReference({
+              supply,
+              source: Number.isFinite(marketCap) && marketCap > 0 ? "market-cap" : "fdv",
+            });
+            resolved = true;
+          }
+        }
+      } catch {
+        // Keep the price chart usable even if the market snapshot is unavailable.
+      } finally {
+        if (!resolved && !controller.signal.aborted && mint.toLowerCase().endsWith("pump")) {
+          setMarketReference({ supply: PUMP_SUPPLY_FALLBACK, source: "pump-fallback" });
+        }
+      }
+    })();
+
+    return () => controller.abort();
+  }, [mint]);
+
+  const showMcap = metricMode === "mcap" && marketReference != null;
   const visibleCandles = useMemo(
     () => (candles.length > MAX_RENDERED_CANDLES ? candles.slice(-MAX_RENDERED_CANDLES) : candles),
     [candles],
@@ -163,8 +221,8 @@ export default function SocialAnalysisChart({
       lastValueVisible: true,
       priceFormat: {
         type: "custom",
-        minMove: 1,
-        formatter: formatMcapAxis,
+        minMove: 0.0000000001,
+        formatter: formatTokenPrice,
       },
     });
     const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -223,9 +281,9 @@ export default function SocialAnalysisChart({
     const chart = chartRef.current;
     if (!candleSeries || !volumeSeries || !chart) return;
 
-    const multiplier = metricMode === "mcap" ? PUMP_SUPPLY : 1;
+    const multiplier = showMcap ? marketReference.supply : 1;
     candleSeries.applyOptions({
-      priceFormat: metricMode === "mcap"
+      priceFormat: showMcap
         ? {
             type: "custom",
             minMove: 1,
@@ -266,15 +324,20 @@ export default function SocialAnalysisChart({
       });
     }
     previousTimeframeRef.current = timeframe;
-  }, [timeframe, metricMode, visibleCandles]);
+  }, [timeframe, showMcap, marketReference, visibleCandles]);
 
   const changeTone = change24h > 0 ? "text-success" : change24h < 0 ? "text-danger" : "text-content-muted";
-  const displayedValue = metricMode === "mcap" ? formatMcap(lastPrice) : formatTokenPrice(lastPrice);
+  const displayedValue = showMcap
+    ? formatMcapAxis(lastPrice * marketReference.supply)
+    : formatTokenPrice(lastPrice);
+  const marketCapDetail = marketReference
+    ? `MC = token price × ${formatSupply(marketReference.supply)} supply${marketReference.source === "pump-fallback" ? " (pump fallback)" : ""}`
+    : "MC reference unavailable · showing token price";
 
   return (
     <section
       className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
-      data-tag="trade.social_analysis_chart.v6"
+      data-tag="trade.social_analysis_chart.v7"
     >
       <div className="grid md:h-[520px] md:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_350px]">
         <div className="flex min-h-[479px] min-w-0 flex-col border-b border-bg-border bg-bg-card md:h-full md:min-h-0 md:border-b-0 md:border-r">
@@ -282,7 +345,7 @@ export default function SocialAnalysisChart({
             <div className="min-w-0">
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-content-faint">
-                  {metricMode === "mcap" ? "Market Cap" : "Token Price"}
+                  {showMcap ? "Market Cap" : "Token Price"}
                 </span>
                 <h2 className="text-sm font-semibold text-content">{symbol ? `$${symbol.replace(/^\$/, "")}` : "TOKEN"}</h2>
                 <span className="font-mono text-lg font-bold text-content">{displayedValue}</span>
@@ -290,13 +353,13 @@ export default function SocialAnalysisChart({
                   {Number.isFinite(change24h) ? `${change24h >= 0 ? "+" : ""}${change24h.toFixed(2)}%` : "—"}
                 </span>
               </div>
-              <div className="mt-1.5 flex items-center gap-2 text-[9px] text-content-faint">
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[9px] text-content-faint">
                 <span className={`h-1.5 w-1.5 rounded-full ${liveTradesOnline ? "animate-pulse bg-success" : "bg-warning"}`} />
                 <span className="uppercase tracking-[0.12em]">{dataSource || "market"}</span>
                 <span>·</span>
                 <span>{liveTradesOnline ? "live trades" : "history polling"}</span>
                 <span>·</span>
-                <span>{metricMode === "mcap" ? "MC = token price × 1B supply" : "USD price per token"}</span>
+                <span>{metricMode === "mcap" ? marketCapDetail : "USD price per token"}</span>
               </div>
             </div>
 
@@ -308,6 +371,7 @@ export default function SocialAnalysisChart({
                   className={`rounded px-2 py-1 text-[9px] font-bold transition ${
                     metricMode === "mcap" ? "bg-primary-soft text-primary" : "text-content-faint hover:text-content"
                   }`}
+                  title={marketReference ? "Показывать market cap" : "Market-cap reference загружается или недоступен"}
                 >
                   MC
                 </button>
