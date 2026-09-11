@@ -54,6 +54,13 @@ env_value() {
   env_value_from_file .env.server "$key"
 }
 
+truthy() {
+  case "${1,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 telegram_intelligence_enabled() {
   local admin_token=""
   if ! grep -Eq '^TG_MONITOR_CHANNELS=.+$' .env.server; then
@@ -72,6 +79,26 @@ telegram_bot_enabled() {
   grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' .env.server \
     && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' .env.server \
     && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' .env.server
+}
+
+social_intelligence_required() {
+  truthy "$(env_value SOCIAL_INTELLIGENCE_REQUIRED)"
+}
+
+check_social_intelligence() {
+  local api_key
+  local payload
+
+  api_key="$(env_value MEMECOIN_INTELLIGENCE_API_KEY)"
+  [[ ${#api_key} -ge 32 ]] || return 1
+
+  payload="$(curl -fsS --max-time 8 \
+    -H "x-api-key: $api_key" \
+    http://127.0.0.1:3001/api/telegram-ai/status)" || return 1
+
+  printf '%s' "$payload" | grep -Fq '"enabled":true' \
+    && printf '%s' "$payload" | grep -Fq '"mode":"openai-compatible"' \
+    && printf '%s' "$payload" | grep -Fq '"reachable":true'
 }
 
 check_admin_integrations() {
@@ -186,6 +213,8 @@ check_services() {
   printf '%s' "${bad[*]:-}"
 }
 
+social_intelligence_state="off"
+
 for attempt in $(seq 1 45); do
   endpoints_ok=0
   build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
@@ -209,6 +238,21 @@ for attempt in $(seq 1 45); do
     integrations_ok=0
   fi
 
+  social_intelligence_ok=1
+  intelligence_key="$(env_value MEMECOIN_INTELLIGENCE_API_KEY)"
+  if [[ -n "$intelligence_key" ]] || social_intelligence_required; then
+    if check_social_intelligence; then
+      social_intelligence_state="ok"
+    else
+      social_intelligence_state="degraded"
+      if social_intelligence_required; then
+        social_intelligence_ok=0
+      fi
+    fi
+  else
+    social_intelligence_state="off"
+  fi
+
   if curl -fsS http://127.0.0.1/ >/dev/null \
     && curl -fsS http://127.0.0.1/miniapp >/dev/null \
     && curl -fsS http://127.0.0.1/trade/analysis >/dev/null \
@@ -218,6 +262,7 @@ for attempt in $(seq 1 45); do
     && [[ "$admin_location" == "https://potapoff.fun/admin/login" ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
     && [[ "$integrations_ok" -eq 1 ]] \
+    && [[ "$social_intelligence_ok" -eq 1 ]] \
     && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
     endpoints_ok=1
   fi
@@ -225,7 +270,7 @@ for attempt in $(seq 1 45); do
   bad_services="$(check_services)"
 
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok integrations=ok frontend_build=verified"
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok social_intelligence=$social_intelligence_state miniapp_config=ok integrations=ok frontend_build=verified"
     exit 0
   fi
 
@@ -237,6 +282,7 @@ echo "Bad services: ${bad_services:-unknown}" >&2
 echo "Build info: ${build_info:-unavailable}" >&2
 echo "Mini App config: ${miniapp_config:-unavailable}" >&2
 echo "Admin integrations: ${integrations_ok:-0}" >&2
+echo "Social intelligence: ${social_intelligence_state:-unknown} required=$(env_value SOCIAL_INTELLIGENCE_REQUIRED)" >&2
 
 "${COMPOSE[@]}" ps || true
 
