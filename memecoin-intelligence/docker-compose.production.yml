@@ -43,8 +43,11 @@ services:
       INTERNAL_USER_API_KEY: ${MEMECOIN_INTELLIGENCE_API_KEY:?set MEMECOIN_INTELLIGENCE_API_KEY}
       DATABASE_URL: postgresql://${POSTGRES_USER:-memecoin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
-      TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
-      TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-mock}
+      TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-true}
+      # Production never silently falls back to the deterministic mock. If the
+      # real inference service is unavailable, callers receive a degraded/error
+      # state instead of a fake Qwen verdict.
+      TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-openai-compatible}
       TELEGRAM_AI_BASE_URL: ${TELEGRAM_AI_BASE_URL:-http://qwen:8000/v1}
       TELEGRAM_AI_API_KEY: ${TELEGRAM_AI_API_KEY:-}
       TELEGRAM_AI_MODEL: ${TELEGRAM_AI_MODEL:-Qwen/Qwen2.5-7B-Instruct}
@@ -78,8 +81,8 @@ services:
       INTERNAL_USER_API_KEY: ${MEMECOIN_INTELLIGENCE_API_KEY:?set MEMECOIN_INTELLIGENCE_API_KEY}
       DATABASE_URL: postgresql://${POSTGRES_USER:-memecoin}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-memecoin}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
-      TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-false}
-      TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-mock}
+      TELEGRAM_AI_ENABLED: ${TELEGRAM_AI_ENABLED:-true}
+      TELEGRAM_AI_MODE: ${TELEGRAM_AI_MODE:-openai-compatible}
       TELEGRAM_AI_BASE_URL: ${TELEGRAM_AI_BASE_URL:-http://qwen:8000/v1}
       TELEGRAM_AI_API_KEY: ${TELEGRAM_AI_API_KEY:-}
       TELEGRAM_AI_MODEL: ${TELEGRAM_AI_MODEL:-Qwen/Qwen2.5-7B-Instruct}
@@ -91,9 +94,32 @@ services:
       redis:
         condition: service_healthy
 
+  qwen:
+    profiles: ["ai"]
+    build: ./ai/qwen-service
+    restart: unless-stopped
+    environment:
+      QWEN_MODEL_ID: ${QWEN_MODEL_ID:-Qwen/Qwen2.5-7B-Instruct}
+      QWEN_REVISION: ${QWEN_REVISION:-}
+      QWEN_LOAD_MODE: ${QWEN_LOAD_MODE:-4bit}
+      QWEN_MAX_INPUT_TOKENS: ${QWEN_MAX_INPUT_TOKENS:-8192}
+      QWEN_MAX_OUTPUT_TOKENS: ${QWEN_MAX_OUTPUT_TOKENS:-3200}
+      QWEN_LAZY_LOAD: ${QWEN_LAZY_LOAD:-true}
+      QWEN_SERVICE_API_KEY: ${TELEGRAM_AI_API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /models/huggingface
+    # Keep inference private. The host binding is only for local health/debug;
+    # the intelligence API calls qwen:8000 over this compose's default network.
+    ports:
+      - "127.0.0.1:${QWEN_HOST_PORT:-8002}:8000"
+    volumes:
+      - hf_cache:/models/huggingface
+    gpus: all
+
 volumes:
   postgres_data:
   redis_data:
+  hf_cache:
 
 networks:
   potapoff-shared:
