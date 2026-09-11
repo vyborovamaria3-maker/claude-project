@@ -104,7 +104,9 @@ services:
       QWEN_LOAD_MODE: ${QWEN_LOAD_MODE:-4bit}
       QWEN_MAX_INPUT_TOKENS: ${QWEN_MAX_INPUT_TOKENS:-8192}
       QWEN_MAX_OUTPUT_TOKENS: ${QWEN_MAX_OUTPUT_TOKENS:-3200}
-      QWEN_LAZY_LOAD: ${QWEN_LAZY_LOAD:-true}
+      # Production must fail at startup if the configured GPU/model cannot load;
+      # otherwise /health can look green until the first real generation fails.
+      QWEN_LAZY_LOAD: ${QWEN_LAZY_LOAD:-false}
       QWEN_SERVICE_API_KEY: ${TELEGRAM_AI_API_KEY:-}
       HF_TOKEN: ${HF_TOKEN:-}
       HF_HOME: /models/huggingface
