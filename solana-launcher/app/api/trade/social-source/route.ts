@@ -15,8 +15,23 @@ const TOKEN_QUERY_KEYS = new Set([
   "limit",
 ]);
 
+function absoluteHttpBase(value: string | undefined): string | null {
+  if (!value?.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
 function backendBaseUrl() {
-  return (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/, "");
+  // NEXT_PUBLIC_BACKEND_URL is often intentionally relative (e.g. /fastapi)
+  // for browser traffic. Server-to-server fetches require an absolute origin.
+  return absoluteHttpBase(process.env.BACKEND_URL)
+    || absoluteHttpBase(process.env.NEXT_PUBLIC_BACKEND_URL)
+    || DEFAULT_BACKEND_URL;
 }
 
 function upstreamHeaders(request: NextRequest): Headers {
@@ -39,6 +54,11 @@ function passThrough(response: Response, body: string) {
   });
 }
 
+function boundedInteger(value: string | null, fallback: number, min: number, max: number) {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+
 export async function GET(request: NextRequest) {
   const kind = request.nextUrl.searchParams.get("kind") || "token";
 
@@ -57,10 +77,8 @@ export async function GET(request: NextRequest) {
       }
     } else if (kind === "channels") {
       url = new URL(`${backendBaseUrl()}/api/v1/telegram/channels`);
-      const limit = request.nextUrl.searchParams.get("limit") || "100";
-      const offset = request.nextUrl.searchParams.get("offset") || "0";
-      url.searchParams.set("limit", limit);
-      url.searchParams.set("offset", offset);
+      url.searchParams.set("limit", String(boundedInteger(request.nextUrl.searchParams.get("limit"), 100, 1, 500)));
+      url.searchParams.set("offset", String(boundedInteger(request.nextUrl.searchParams.get("offset"), 0, 0, 100_000)));
     } else {
       return NextResponse.json({ detail: "Unsupported social source" }, { status: 400 });
     }
@@ -73,7 +91,10 @@ export async function GET(request: NextRequest) {
     const body = await response.text();
     return passThrough(response, body);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Backend unavailable";
-    return NextResponse.json({ detail: `Social backend unavailable: ${message}` }, { status: 503 });
+    const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    return NextResponse.json(
+      { detail: timeout ? "Social backend timeout" : "Social backend unavailable" },
+      { status: 503 },
+    );
   }
 }
