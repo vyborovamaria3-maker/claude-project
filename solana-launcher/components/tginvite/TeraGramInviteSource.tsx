@@ -254,8 +254,8 @@ export default function TeraGramInviteSource({
                   Сначала нужен один успешный TeraGram scan
                 </div>
                 <p className="mt-1 text-xs leading-5 text-content-muted">
-                  UI специально не запускает тяжёлый многотерабайтный job. После CLI/job scan здесь
-                  автоматически появятся найденные source-каналы и импорт в TG Invite.
+                  Запустите Preview или Full scan в Scanner Control выше. После успешного анализа
+                  здесь автоматически появятся найденные source-каналы и импорт в TG Invite.
                 </p>
               </div>
             </div>

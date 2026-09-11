@@ -183,3 +183,62 @@ def test_contract_bonus_requires_memecoin_context() -> None:
 def test_zenodo_url_targets_original_archive() -> None:
     url = zenodo_archive_url("TGDataset_4.tar.gz")
     assert "zenodo.org/records/7640712/files/TGDataset_4.tar.gz" in url
+
+
+def test_native_solana_target_matching_regressions() -> None:
+    solscan = TGDatasetChannelAccumulator(channel_id="solscan")
+    solscan.observe_message("https://solscan.io/")
+    solscan_result = solscan.result()
+
+    assert solscan_result["signals"]["signal_messages"] == 1
+    assert solscan_result["signals"]["solana_messages"] == 1
+
+    pumpfun = TGDatasetChannelAccumulator(channel_id="pumpfun")
+    pumpfun.observe_message(
+        "https://pump.fun/coin/DaEUPVqGjt3SKEREJaHCgKtkjiTPJNYAhuyKEXZ6pump"
+    )
+    pumpfun_result = pumpfun.result()
+
+    assert pumpfun_result["signals"]["pumpfun_messages"] == 1
+    assert pumpfun_result["signals"]["solana_messages"] == 1
+    assert pumpfun_result["signals"]["unique_solana_mints"] == 1
+
+    sol_ticker = TGDatasetChannelAccumulator(channel_id="sol-ticker")
+    sol_ticker.observe_message("$SOL breakout")
+    sol_result = sol_ticker.result()
+
+    assert sol_result["signals"]["solana_messages"] == 1
+
+    plural_meme = TGDatasetChannelAccumulator(channel_id="memecoins")
+    plural_meme.observe_message("#memecoins")
+    plural_meme_result = plural_meme.result()
+
+    assert plural_meme_result["signals"]["memecoin_messages"] == 1
+
+
+def test_ambiguous_terms_do_not_create_solana_target() -> None:
+    samples = (
+        "Jupiter is the largest planet in the solar system",
+        "The photographer uses a Photon camera",
+        "I use the Phantom browser extension",
+        "BullX is just a word here",
+        "GMGN",
+        "https://dexscreener.com/",
+    )
+
+    for index, sample in enumerate(samples):
+        acc = TGDatasetChannelAccumulator(channel_id=f"ambiguous-{index}")
+        acc.observe_message(sample)
+        result = acc.result()
+
+        assert result["signals"]["solana_messages"] == 0
+        assert "solana" not in result["classifications"]
+
+
+def test_bonkers_is_not_bonk_memecoin_signal() -> None:
+    acc = TGDatasetChannelAccumulator(channel_id="bonkers")
+    acc.observe_message("That plan is completely bonkers")
+    result = acc.result()
+
+    assert result["signals"]["memecoin_messages"] == 0
+    assert result["signals"]["signal_messages"] == 0

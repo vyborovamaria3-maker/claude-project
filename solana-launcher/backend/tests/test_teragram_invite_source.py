@@ -16,7 +16,7 @@ def test_status_is_safe_when_scan_has_not_run(tmp_path, monkeypatch) -> None:
     assert status["ready"] is False
     assert status["seed_channels"] == 0
     assert status["candidate_channels"] == 0
-    assert status["source"]["preview_record_id"] == 18262126
+    assert status["source"]["preview_record_id"] == 21998264
 
 
 def test_invite_source_reads_and_filters_seed_database(tmp_path, monkeypatch) -> None:

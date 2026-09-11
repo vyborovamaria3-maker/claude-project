@@ -7,10 +7,7 @@ import { setupStatusHandlers } from './handlers/status';
 import { setupSubscriptionHandlers } from './handlers/subscription';
 import { loggingMiddleware } from './middleware/logging';
 import { sessionMiddleware } from './middleware/session';
-
-const { SocksProxyAgent } = require('socks-proxy-agent') as {
-  SocksProxyAgent: new (url: string) => any;
-};
+import { SocksProxyAgent } from 'socks-proxy-agent';
 
 loadEnvConfig(process.cwd());
 dotenv.config({ path: '.env', override: false });

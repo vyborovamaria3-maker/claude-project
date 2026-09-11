@@ -56,10 +56,12 @@
     "next": "^16.2.11",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-window": "^2.3.1",
     "recharts": "^2.12.7",
     "socks-proxy-agent": "^10.1.0",
     "tailwind-merge": "^2.5.4",
     "telegraf": "^4.16.3",
+    "telegram": "^2.26.22",
     "ws": "^8.20.1",
     "zustand": "^5.0.13"
   },
@@ -69,16 +71,19 @@
     "@types/node-fetch": "^2.6.13",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/react-window": "^1.8.8",
     "autoprefixer": "^10.4.19",
     "dotenv": "^17.4.2",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.10",
     "figma-mcp": "^0.1.4",
     "playwright": "^1.60.0",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.3",
-    "xlsx": "^0.18.5",
-    "eslint": "^9.39.5",
-    "eslint-config-next": "^16.2.10"
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0",
+    "xlsx": "^0.18.5"
   }
 }

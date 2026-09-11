@@ -10,8 +10,9 @@ from typing import Any, Callable, Iterator, TextIO
 from app.services.tgdataset_scanner import TGDatasetChannelAccumulator, utcnow_iso
 
 
-TERAGRAM_PREVIEW_RECORD_ID = 18262126
-TERAGRAM_PREVIEW_VERSION = "0.1.0"
+TERAGRAM_PREVIEW_RECORD_ID = 21998264
+TERAGRAM_PREVIEW_VERSION = "1.0"
+# Concept/latest DOI remains the stable DOI resolving to the newest preview version.
 TERAGRAM_PREVIEW_LATEST_DOI = "10.5281/zenodo.18262125"
 TERAGRAM_FULL_DOI = "10.25625/GDCXQK"
 TERAGRAM_UPSTREAM_REPOSITORY = "https://github.com/Priesemann-Group/telegram_quality_control"
@@ -22,6 +23,8 @@ _TABLE_ALIASES: dict[str, tuple[str, ...]] = {
     "message_content": ("message_content",),
     "entity_urls": ("entity_urls", "urls"),
     "entity_hashtags": ("entity_hashtags", "hashtags"),
+    "users": ("users",),
+    "chats_users": ("chats_users",),
 }
 
 # DuckDB uses RE2, so keep this pre-gate free of lookbehind/backreferences. The exact
@@ -44,6 +47,8 @@ class TeraGramSources:
     message_content: tuple[Path, ...]
     entity_urls: tuple[Path, ...]
     entity_hashtags: tuple[Path, ...]
+    users: tuple[Path, ...]
+    chats_users: tuple[Path, ...]
 
     @property
     def has_content(self) -> bool:
@@ -61,28 +66,48 @@ class TeraGramSources:
             "message_content": [str(path) for path in self.message_content],
             "entity_urls": [str(path) for path in self.entity_urls],
             "entity_hashtags": [str(path) for path in self.entity_hashtags],
+            "users": [str(path) for path in self.users],
+            "chats_users": [str(path) for path in self.chats_users],
         }
 
 
 def _discover_table(root: Path, aliases: tuple[str, ...]) -> tuple[Path, ...]:
     parquet: list[Path] = []
     csv: list[Path] = []
+    csv_gz: list[Path] = []
+
+
     for alias in aliases:
         direct_parquet = root / f"{alias}.parquet"
         direct_csv = root / f"{alias}.csv"
+        direct_csv_gz = root / f"{alias}.csv.gz"
+
+
         if direct_parquet.is_file():
             parquet.append(direct_parquet)
         if direct_csv.is_file():
             csv.append(direct_csv)
+        if direct_csv_gz.is_file():
+            csv_gz.append(direct_csv_gz)
+
 
         directory = root / alias
         if directory.is_dir():
-            parquet.extend(sorted(path for path in directory.glob("*.parquet") if path.is_file()))
-            csv.extend(sorted(path for path in directory.glob("*.csv") if path.is_file()))
+            parquet.extend(
+                sorted(path for path in directory.glob("*.parquet") if path.is_file())
+            )
+            csv.extend(
+                sorted(path for path in directory.glob("*.csv") if path.is_file())
+            )
+            csv_gz.extend(
+                sorted(path for path in directory.glob("*.csv.gz") if path.is_file())
+            )
 
-    # Never mix formats for one logical relation. The full dataset is Parquet and the preview
-    # is CSV; preferring Parquet makes an accidentally co-located preview harmless.
-    selected = parquet or csv
+
+    # Never read duplicate representations of one relation.
+    # Full TeraGram prefers Parquet; preview prefers an already unpacked CSV,
+    # otherwise DuckDB reads the original .csv.gz directly.
+    selected = parquet or csv or csv_gz
     return tuple(dict.fromkeys(path.resolve() for path in selected))
 
 
@@ -98,6 +123,8 @@ def discover_teragram_sources(input_dir: str | Path) -> TeraGramSources:
         message_content=_discover_table(root, _TABLE_ALIASES["message_content"]),
         entity_urls=_discover_table(root, _TABLE_ALIASES["entity_urls"]),
         entity_hashtags=_discover_table(root, _TABLE_ALIASES["entity_hashtags"]),
+        users=_discover_table(root, _TABLE_ALIASES["users"]),
+        chats_users=_discover_table(root, _TABLE_ALIASES["chats_users"]),
     )
     if not sources.chats:
         raise FileNotFoundError(
@@ -106,8 +133,8 @@ def discover_teragram_sources(input_dir: str | Path) -> TeraGramSources:
         )
     if not sources.messages:
         raise FileNotFoundError(
-            "TeraGram messages table was not found. Expected messages.csv, messages.parquet, "
-            "or messages/*.parquet under the input directory."
+            "TeraGram messages table was not found. Expected messages.csv, messages.csv.gz, "
+            "messages.parquet, or messages/*.parquet under the input directory."
         )
     return sources
 
@@ -133,12 +160,20 @@ def _relation_sql(paths: tuple[Path, ...]) -> str:
     file_list = "[" + ", ".join(_quote_sql(path) for path in paths) + "]"
     if all(path.suffix.lower() == ".parquet" for path in paths):
         return f"read_parquet({file_list}, union_by_name=true)"
-    if all(path.suffix.lower() == ".csv" for path in paths):
+    csv_like = all(
+        path.name.lower().endswith(".csv")
+        or path.name.lower().endswith(".csv.gz")
+        for path in paths
+    )
+    if csv_like:
         return (
-            f"read_csv_auto({file_list}, header=true, union_by_name=true, sample_size=20000, "
-            "ignore_errors=false)"
+            f"read_csv_auto({file_list}, header=true, union_by_name=true, sample_size=200000, "
+            "compression='auto', ignore_errors=true, "
+            "quote='\"', escape='\"')"
         )
-    raise ValueError("TeraGram relation files must all be CSV or all be Parquet")
+    raise ValueError(
+        "TeraGram relation files must all be CSV/CSV.GZ or all be Parquet"
+    )
 
 
 def _columns(connection: Any, view_name: str) -> set[str]:
@@ -185,6 +220,8 @@ def _create_source_views(connection: Any, sources: TeraGramSources) -> dict[str,
         "tg_message_content": sources.message_content,
         "tg_entity_urls": sources.entity_urls,
         "tg_entity_hashtags": sources.entity_hashtags,
+        "tg_users": sources.users,
+        "tg_chats_users": sources.chats_users,
     }
     result: dict[str, set[str]] = {}
     for view_name, paths in relation_sources.items():
@@ -205,6 +242,14 @@ def _create_source_views(connection: Any, sources: TeraGramSources) -> dict[str,
     if result["tg_entity_hashtags"]:
         _require_columns(
             "entity_hashtags", result["tg_entity_hashtags"], {"message_id", "hashtag"}
+        )
+    if result["tg_users"]:
+        _require_columns("users", result["tg_users"], {"id"})
+    if result["tg_chats_users"]:
+        _require_columns(
+            "chats_users",
+            result["tg_chats_users"],
+            {"chat_id", "user_id"},
         )
     return result
 
@@ -228,6 +273,63 @@ def _resolved_signal_source(
     if requested == "entities" and not has_entities:
         raise ValueError("signal_source=entities requested but URL/hashtag tables are unavailable")
     return requested
+
+
+def _create_recent_messages_table(
+    connection: Any,
+    columns: dict[str, set[str]],
+    *,
+    per_chat: int,
+) -> None:
+    """Materialize only the newest N messages per chat for exact scoring."""
+
+
+    if per_chat < 1:
+        raise ValueError("recent_messages_per_chat must be positive")
+
+
+    message_columns = columns["tg_messages"]
+
+
+    ordering = (
+        "TRY_CAST(m.date AS TIMESTAMP) DESC NULLS LAST, "
+        "TRY_CAST(m.id AS BIGINT) DESC NULLS LAST"
+        if "date" in message_columns
+        else "TRY_CAST(m.id AS BIGINT) DESC NULLS LAST"
+    )
+
+
+    selected_columns = ["id", "chat_id"]
+    for name in ("forward_from_id", "forward_from_chat_id"):
+        if name in message_columns:
+            selected_columns.append(name)
+
+
+    projected = ",\n                    ".join(
+        f"m.{name}" for name in selected_columns
+    )
+    output_columns = ", ".join(selected_columns)
+
+
+    connection.execute(
+        f"""
+        CREATE OR REPLACE TEMP TABLE tg_recent_messages AS
+        SELECT {output_columns}
+        FROM (
+            SELECT
+                {projected},
+                ROW_NUMBER() OVER (
+                    PARTITION BY m.chat_id
+                    ORDER BY {ordering}
+                ) AS _recent_rank
+            FROM tg_messages AS m
+            WHERE m.chat_id IS NOT NULL
+        ) AS ranked
+        WHERE _recent_rank <= {int(per_chat)}
+        """
+    )
+
+
 
 
 def _create_signal_table(
@@ -258,7 +360,7 @@ def _create_signal_table(
                     mc.message_id,
                     TRIM({evidence}) AS signal_text
                 FROM tg_message_content AS mc
-                INNER JOIN tg_messages AS m ON m.id = mc.message_id
+                INNER JOIN tg_recent_messages AS m ON m.id = mc.message_id
             ) AS q
             WHERE q.chat_id IS NOT NULL
               AND q.signal_text <> ''
@@ -268,36 +370,71 @@ def _create_signal_table(
         return
 
     if signal_source == "entities":
-        parts: list[str] = []
+        # Important for large TeraGram datasets:
+        # reduce multi-GB entity relations to the recent-message working set
+        # before string_agg. Aggregating every entity first can exhaust RAM.
+        connection.execute(
+            """
+            CREATE OR REPLACE TEMP TABLE tg_signal_entity_rows AS
+            SELECT
+                CAST(NULL AS BIGINT) AS chat_id,
+                CAST(NULL AS BIGINT) AS message_id,
+                CAST(NULL AS VARCHAR) AS evidence
+            WHERE FALSE
+            """
+        )
+
         if columns["tg_entity_urls"]:
-            parts.append(
-                "SELECT message_id, COALESCE(TRY_CAST(url AS VARCHAR), '') AS evidence "
-                "FROM tg_entity_urls"
+            connection.execute(
+                """
+                INSERT INTO tg_signal_entity_rows
+                SELECT
+                    m.chat_id,
+                    u.message_id,
+                    COALESCE(TRY_CAST(u.url AS VARCHAR), '') AS evidence
+                FROM tg_entity_urls AS u
+                INNER JOIN tg_recent_messages AS m
+                    ON m.id = u.message_id
+                WHERE m.chat_id IS NOT NULL
+                  AND u.message_id IS NOT NULL
+                  AND COALESCE(TRY_CAST(u.url AS VARCHAR), '') <> ''
+                """
             )
+
         if columns["tg_entity_hashtags"]:
-            parts.append(
-                "SELECT message_id, '#' || COALESCE(TRY_CAST(hashtag AS VARCHAR), '') AS evidence "
-                "FROM tg_entity_hashtags"
+            connection.execute(
+                """
+                INSERT INTO tg_signal_entity_rows
+                SELECT
+                    m.chat_id,
+                    h.message_id,
+                    '#' || COALESCE(TRY_CAST(h.hashtag AS VARCHAR), '') AS evidence
+                FROM tg_entity_hashtags AS h
+                INNER JOIN tg_recent_messages AS m
+                    ON m.id = h.message_id
+                WHERE m.chat_id IS NOT NULL
+                  AND h.message_id IS NOT NULL
+                  AND COALESCE(TRY_CAST(h.hashtag AS VARCHAR), '') <> ''
+                """
             )
-        entity_union = " UNION ALL ".join(parts)
+
         connection.execute(
             f"""
             CREATE OR REPLACE TEMP TABLE tg_signal_rows AS
-            WITH entity_parts AS (
-                {entity_union}
-            ), grouped AS (
-                SELECT message_id, string_agg(evidence, ' ') AS signal_text
-                FROM entity_parts
-                WHERE evidence <> ''
-                GROUP BY message_id
+            SELECT
+                chat_id,
+                message_id,
+                string_agg(evidence, ' ') AS signal_text
+            FROM tg_signal_entity_rows
+            GROUP BY chat_id, message_id
+            HAVING regexp_matches(
+                lower(string_agg(evidence, ' ')),
+                {_quote_sql(_TERAGRAM_GATE_PATTERN)}
             )
-            SELECT m.chat_id, grouped.message_id, grouped.signal_text
-            FROM grouped
-            INNER JOIN tg_messages AS m ON m.id = grouped.message_id
-            WHERE m.chat_id IS NOT NULL
-              AND regexp_matches(lower(grouped.signal_text), {_quote_sql(_TERAGRAM_GATE_PATTERN)})
             """
         )
+
+        connection.execute("DROP TABLE IF EXISTS tg_signal_entity_rows")
         return
 
     connection.execute(
@@ -309,6 +446,316 @@ def _create_signal_table(
             CAST(NULL AS VARCHAR) AS signal_text
         WHERE FALSE
         """
+    )
+
+
+
+def _create_historical_root_table(
+    connection: Any,
+    columns: dict[str, set[str]],
+    *,
+    window_days: int = 180,
+    density_threshold: float = 0.005,
+) -> None:
+    """Find historical Solana/memecoin roots without changing recent scoring."""
+
+    if window_days < 1:
+        raise ValueError("historical window must be positive")
+    if density_threshold <= 0:
+        raise ValueError("historical density threshold must be positive")
+
+    message_columns = columns["tg_messages"]
+
+    empty_sql = """
+        CREATE OR REPLACE TEMP TABLE tg_historical_roots AS
+        SELECT
+            CAST(NULL AS BIGINT) AS chat_id,
+            CAST(NULL AS BIGINT) AS total_messages,
+            CAST(NULL AS BIGINT) AS target_messages,
+            CAST(NULL AS BIGINT) AS native_messages,
+            CAST(NULL AS BIGINT) AS target_days,
+            CAST(NULL AS BIGINT) AS native_days,
+            CAST(NULL AS BIGINT) AS solana_messages,
+            CAST(NULL AS BIGINT) AS memecoin_messages,
+            CAST(NULL AS DOUBLE) AS target_density,
+            CAST(NULL AS TIMESTAMP) AS last_target,
+            CAST(NULL AS VARCHAR) AS admission_path
+        WHERE FALSE
+    """
+
+    if (
+        "date" not in message_columns
+        or not (
+            columns["tg_entity_urls"]
+            or columns["tg_entity_hashtags"]
+        )
+    ):
+        connection.execute(empty_sql)
+        return
+
+    connection.execute(
+        f"""
+        CREATE OR REPLACE TEMP TABLE tg_historical_messages AS
+        SELECT
+            TRY_CAST(m.id AS BIGINT) AS id,
+            TRY_CAST(m.chat_id AS BIGINT) AS chat_id,
+            TRY_CAST(m.date AS TIMESTAMP) AS message_date
+        FROM tg_messages AS m
+        WHERE m.chat_id IS NOT NULL
+          AND TRY_CAST(m.date AS TIMESTAMP) IS NOT NULL
+          AND TRY_CAST(m.date AS TIMESTAMP) >= (
+                SELECT MAX(TRY_CAST(date AS TIMESTAMP))
+                FROM tg_messages
+          ) - INTERVAL '{int(window_days)} days'
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE OR REPLACE TEMP TABLE tg_historical_entity_rows AS
+        SELECT
+            CAST(NULL AS BIGINT) AS chat_id,
+            CAST(NULL AS BIGINT) AS message_id,
+            CAST(NULL AS TIMESTAMP) AS message_date,
+            CAST(NULL AS VARCHAR) AS evidence
+        WHERE FALSE
+        """
+    )
+
+    if columns["tg_entity_urls"]:
+        connection.execute(
+            """
+            INSERT INTO tg_historical_entity_rows
+            SELECT
+                m.chat_id,
+                u.message_id,
+                m.message_date,
+                COALESCE(
+                    TRY_CAST(u.url AS VARCHAR),
+                    ''
+                )
+            FROM tg_entity_urls AS u
+            INNER JOIN tg_historical_messages AS m
+                ON m.id = u.message_id
+            WHERE u.message_id IS NOT NULL
+              AND COALESCE(
+                    TRY_CAST(u.url AS VARCHAR),
+                    ''
+                  ) <> ''
+            """
+        )
+
+    if columns["tg_entity_hashtags"]:
+        connection.execute(
+            """
+            INSERT INTO tg_historical_entity_rows
+            SELECT
+                m.chat_id,
+                h.message_id,
+                m.message_date,
+                '#' || COALESCE(
+                    TRY_CAST(h.hashtag AS VARCHAR),
+                    ''
+                )
+            FROM tg_entity_hashtags AS h
+            INNER JOIN tg_historical_messages AS m
+                ON m.id = h.message_id
+            WHERE h.message_id IS NOT NULL
+              AND COALESCE(
+                    TRY_CAST(h.hashtag AS VARCHAR),
+                    ''
+                  ) <> ''
+            """
+        )
+
+    # RE2-compatible patterns.
+    # Multi-chain tools such as DexScreener/GMGN/Photon/BullX are
+    # intentionally not standalone historical target evidence.
+    # Native evidence is deliberately stricter than generic target evidence.
+    # Domains such as Solscan/Raydium and pump.fun are strong signals; generic
+    # multi-chain tools remain context-only.
+    native_pattern = (
+        r"(?:"
+        r"pump[.]fun"
+        r"|(^|[./])solscan([./]|$)"
+        r"|(^|[./])raydium([./]|$)"
+        r")"
+    )
+
+    solana_pattern = (
+        r"(?:"
+        r"(^|[^a-z0-9_])"
+        r"(?:solana|[$]sol|raydium|solscan|pumpfun)"
+        r"([^a-z0-9_]|$)"
+        r"|pump[.]fun"
+        r"|(^|[^a-z0-9_])spl[[:space:]]*token([^a-z0-9_]|$)"
+        r")"
+    )
+
+    memecoin_pattern = (
+        r"(^|[^a-z0-9_])"
+        r"(?:"
+        r"memecoins?"
+        r"|meme[[:space:]]+coins?"
+        r"|meme[[:space:]]+tokens?"
+        r")"
+        r"([^a-z0-9_]|$)"
+    )
+
+    connection.execute(
+        f"""
+        CREATE OR REPLACE TEMP TABLE tg_historical_target_rows AS
+        SELECT *
+        FROM (
+            SELECT
+                chat_id,
+                message_id,
+                MAX(message_date) AS message_date,
+
+                MAX(
+                    CASE WHEN regexp_matches(
+                        lower(evidence),
+                        {_quote_sql(native_pattern)}
+                    )
+                    THEN 1 ELSE 0 END
+                )::BIGINT AS native_hit,
+
+                MAX(
+                    CASE WHEN regexp_matches(
+                        lower(evidence),
+                        {_quote_sql(solana_pattern)}
+                    )
+                    THEN 1 ELSE 0 END
+                )::BIGINT AS solana_hit,
+
+                MAX(
+                    CASE WHEN regexp_matches(
+                        lower(evidence),
+                        {_quote_sql(memecoin_pattern)}
+                    )
+                    THEN 1 ELSE 0 END
+                )::BIGINT AS memecoin_hit
+
+            FROM tg_historical_entity_rows
+            GROUP BY chat_id, message_id
+        ) AS scored
+        WHERE solana_hit = 1
+           OR memecoin_hit = 1
+        """
+    )
+
+    connection.execute(
+        f"""
+        CREATE OR REPLACE TEMP TABLE tg_historical_roots AS
+
+        WITH totals AS (
+            SELECT
+                chat_id,
+                COUNT(*)::BIGINT AS total_messages
+            FROM tg_historical_messages
+            GROUP BY chat_id
+        ),
+
+        signals AS (
+            SELECT
+                chat_id,
+                COUNT(*)::BIGINT AS target_messages,
+                SUM(native_hit)::BIGINT AS native_messages,
+
+                COUNT(
+                    DISTINCT CAST(message_date AS DATE)
+                )::BIGINT AS target_days,
+
+                COUNT(
+                    DISTINCT CASE
+                        WHEN native_hit = 1
+                        THEN CAST(message_date AS DATE)
+                        ELSE NULL
+                    END
+                )::BIGINT AS native_days,
+
+                SUM(solana_hit)::BIGINT AS solana_messages,
+                SUM(memecoin_hit)::BIGINT AS memecoin_messages,
+                MAX(message_date) AS last_target
+            FROM tg_historical_target_rows
+            GROUP BY chat_id
+        )
+
+        SELECT
+            s.chat_id,
+            t.total_messages,
+            s.target_messages,
+            s.native_messages,
+            s.target_days,
+            s.native_days,
+            s.solana_messages,
+            s.memecoin_messages,
+
+            (
+                CAST(s.target_messages AS DOUBLE)
+                / NULLIF(
+                    CAST(t.total_messages AS DOUBLE),
+                    0.0
+                )
+            ) AS target_density,
+
+            s.last_target,
+
+            CASE
+                WHEN (
+                    s.native_messages >= 2
+                    AND s.native_days >= 2
+                    AND (
+                        CAST(s.target_messages AS DOUBLE)
+                        / NULLIF(
+                            CAST(t.total_messages AS DOUBLE),
+                            0.0
+                        )
+                    ) >= {float(density_threshold)}
+                )
+                    THEN 'native'
+                ELSE 'repeated'
+            END AS admission_path
+
+        FROM signals AS s
+        INNER JOIN totals AS t
+            ON t.chat_id = s.chat_id
+
+        WHERE
+            (
+                s.native_messages >= 2
+                AND s.native_days >= 2
+                AND (
+                    CAST(s.target_messages AS DOUBLE)
+                    / NULLIF(
+                        CAST(t.total_messages AS DOUBLE),
+                        0.0
+                    )
+                ) >= {float(density_threshold)}
+            )
+
+            OR (
+                s.target_messages >= 3
+                AND s.target_days >= 2
+                AND (
+                    CAST(s.target_messages AS DOUBLE)
+                    / NULLIF(
+                        CAST(t.total_messages AS DOUBLE),
+                        0.0
+                    )
+                ) >= {float(density_threshold)}
+            )
+        """
+    )
+
+    connection.execute(
+        "DROP TABLE IF EXISTS tg_historical_entity_rows"
+    )
+    connection.execute(
+        "DROP TABLE IF EXISTS tg_historical_target_rows"
+    )
+    connection.execute(
+        "DROP TABLE IF EXISTS tg_historical_messages"
     )
 
 
@@ -335,6 +782,12 @@ def _create_candidate_tables(
         SELECT DISTINCT chat_id
         FROM tg_signal_rows
         WHERE chat_id IS NOT NULL
+
+        UNION
+
+        SELECT chat_id
+        FROM tg_historical_roots
+        WHERE chat_id IS NOT NULL
         """
     )
     limit_sql = ""
@@ -347,7 +800,16 @@ def _create_candidate_tables(
         CREATE OR REPLACE TEMP TABLE tg_selected_chat_ids AS
         SELECT chat_id
         FROM tg_candidate_chat_ids
-        ORDER BY chat_id
+        ORDER BY
+            CASE
+                WHEN chat_id IN (
+                    SELECT chat_id
+                    FROM tg_historical_roots
+                )
+                THEN 0
+                ELSE 1
+            END,
+            chat_id
         {limit_sql}
         """
     )
@@ -366,7 +828,7 @@ def _create_candidate_tables(
             m.chat_id,
             COUNT(*)::BIGINT AS messages_total,
             SUM(CASE WHEN {forward_expr} THEN 1 ELSE 0 END)::BIGINT AS forwarded_messages
-        FROM tg_messages AS m
+        FROM tg_recent_messages AS m
         INNER JOIN tg_selected_chat_ids AS selected ON selected.chat_id = m.chat_id
         GROUP BY m.chat_id
         """
@@ -441,6 +903,7 @@ def _seed_payload(row: dict[str, Any]) -> dict[str, Any]:
         "n_subscribers": row["n_subscribers"],
         "channel_id": row["channel_id"],
         "teragram_chat_id": row.get("teragram_chat_id", ""),
+        "historical_root": row.get("historical_root"),
     }
 
 
@@ -460,6 +923,7 @@ def scan_teragram_dataset(
     output_dir: str | Path,
     seed_limit: int = 250,
     max_chats: int | None = None,
+    recent_messages_per_chat: int = 100,
     signal_source: str = "auto",
     duckdb_path: str | Path | None = None,
     threads: int | None = None,
@@ -480,6 +944,8 @@ def scan_teragram_dataset(
 
     if seed_limit < 1:
         raise ValueError("seed_limit must be positive")
+    if recent_messages_per_chat < 1:
+        raise ValueError("recent_messages_per_chat must be positive")
     sources = discover_teragram_sources(input_dir)
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -505,14 +971,97 @@ def scan_teragram_dataset(
         )
         if progress:
             progress(f"TeraGram: signal source = {resolved_source}")
+            progress(
+                f"TeraGram: selecting recent {recent_messages_per_chat} messages per chat"
+            )
+
+
+        _create_recent_messages_table(
+            connection,
+            columns,
+            per_chat=recent_messages_per_chat,
+        )
         _create_signal_table(connection, columns, signal_source=resolved_source)
+
+        if progress:
+            progress(
+                "TeraGram: building 180-day historical Solana/memecoin root gate"
+            )
+
+        _create_historical_root_table(
+            connection,
+            columns,
+            window_days=180,
+            density_threshold=0.005,
+        )
+
         if progress:
             progress("TeraGram: building disk-backed candidate and message indexes")
+
         _create_candidate_tables(connection, columns, max_chats=max_chats)
 
         chats_total = int(connection.execute("SELECT COUNT(*) FROM tg_chats").fetchone()[0])
         prefiltered = int(
             connection.execute("SELECT COUNT(*) FROM tg_selected_chat_ids").fetchone()[0]
+        )
+
+        historical_root_info: dict[str, dict[str, Any]] = {}
+
+        for (
+            historical_chat_id,
+            historical_total,
+            historical_target,
+            historical_native,
+            historical_target_days,
+            historical_native_days,
+            historical_solana,
+            historical_memecoin,
+            historical_density,
+            historical_last_target,
+            historical_path,
+        ) in connection.execute(
+            """
+            SELECT
+                chat_id,
+                total_messages,
+                target_messages,
+                native_messages,
+                target_days,
+                native_days,
+                solana_messages,
+                memecoin_messages,
+                target_density,
+                last_target,
+                admission_path
+            FROM tg_historical_roots
+            ORDER BY chat_id
+            """
+        ).fetchall():
+            historical_root_info[str(historical_chat_id)] = {
+                "window_days": 180,
+                "total_messages": int(historical_total or 0),
+                "target_messages": int(historical_target or 0),
+                "native_messages": int(historical_native or 0),
+                "target_days": int(historical_target_days or 0),
+                "native_days": int(historical_native_days or 0),
+                "solana_messages": int(historical_solana or 0),
+                "memecoin_messages": int(historical_memecoin or 0),
+                "target_density": round(
+                    float(historical_density or 0.0),
+                    6,
+                ),
+                "last_target": (
+                    historical_last_target.isoformat()
+                    if historical_last_target is not None
+                    else None
+                ),
+                "admission_path": str(
+                    historical_path or ""
+                ),
+            }
+
+        historical_root_count = len(
+            historical_root_info
         )
 
         candidate_path = output / "teragram_candidates.jsonl"
@@ -549,6 +1098,51 @@ def scan_teragram_dataset(
             current.forwarded_messages = max(actual_forwarded_messages, current.forwarded_messages)
             row = current.result()
             row["teragram_chat_id"] = current_source_chat_id
+
+            historical = historical_root_info.get(
+                current_source_chat_id
+            )
+
+            if historical is not None:
+                row["historical_root"] = historical
+                row["signals"]["historical_180d"] = historical
+
+                classes = set(
+                    row.get("classifications") or []
+                )
+                classes.add("crypto")
+
+                if (
+                    historical["solana_messages"] > 0
+                    or historical["native_messages"] > 0
+                ):
+                    classes.add("solana")
+
+                if historical["memecoin_messages"] > 0:
+                    classes.add("memecoin")
+
+                if (
+                    "solana" in classes
+                    and "memecoin" in classes
+                ):
+                    classes.add("solana_memecoin")
+
+                row["classifications"] = sorted(classes)
+
+                historical_floor = (
+                    55.0
+                    if historical["admission_path"] == "native"
+                    else 45.0
+                )
+
+                row["seed_score"] = round(
+                    max(
+                        float(row.get("seed_score") or 0.0),
+                        historical_floor,
+                    ),
+                    1,
+                )
+
             if not row["classifications"]:
                 return
 
@@ -634,6 +1228,7 @@ def scan_teragram_dataset(
                 "full_dataset_doi": TERAGRAM_FULL_DOI,
             },
             "signal_source": resolved_source,
+            "recent_messages_per_chat": recent_messages_per_chat,
             "channels": seeds,
             "note": (
                 "Historical TeraGram candidates. Live Telegram discovery must revalidate current "
@@ -649,12 +1244,20 @@ def scan_teragram_dataset(
             "latest_preview_doi": TERAGRAM_PREVIEW_LATEST_DOI,
             "full_dataset_doi": TERAGRAM_FULL_DOI,
             "signal_source": resolved_source,
+            "recent_messages_per_chat": recent_messages_per_chat,
+            "historical_root_window_days": 180,
+            "historical_root_density_threshold": 0.005,
+            "historical_root_count": historical_root_count,
             "chats_total": chats_total,
             "prefiltered_chats": prefiltered,
             "candidate_channels": candidates,
             "signal_rows_exactly_scored": signal_rows,
             "categories": category_counts,
             "seed_channels": len(seeds),
+            "audience_tables": {
+                "users": bool(sources.users),
+                "chats_users": bool(sources.chats_users),
+            },
             "seed_path": str(seed_path),
             "candidate_path": str(candidate_path),
             "duckdb_path": str(database),

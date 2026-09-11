@@ -41,6 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="development/testing limit after the cheap candidate prefilter",
     )
     parser.add_argument(
+        "--recent-messages-per-chat",
+        type=int,
+        default=100,
+        help="score only the newest N messages per chat (default: 100)",
+    )
+    parser.add_argument(
         "--signal-source",
         choices=("auto", "content", "entities", "metadata"),
         default="auto",
@@ -86,6 +92,8 @@ def main() -> None:
         parser.error("--seed-limit must be positive")
     if args.max_chats is not None and args.max_chats < 1:
         parser.error("--max-chats must be positive")
+    if args.recent_messages_per_chat < 1:
+        parser.error("--recent-messages-per-chat must be positive")
     if args.threads is not None and args.threads < 1:
         parser.error("--threads must be positive")
     if args.fetch_size < 1:
@@ -97,6 +105,7 @@ def main() -> None:
         output_dir=output,
         seed_limit=args.seed_limit,
         max_chats=args.max_chats,
+        recent_messages_per_chat=args.recent_messages_per_chat,
         signal_source=args.signal_source,
         duckdb_path=args.database,
         threads=args.threads,

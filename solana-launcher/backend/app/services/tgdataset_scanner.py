@@ -36,13 +36,20 @@ _CRYPTO_RE = re.compile(
     re.IGNORECASE,
 )
 _MEME_RE = re.compile(
-    r"\b(?:memecoin|meme\s*coin|meme\s*token|dogecoin|doge|shiba|shib|floki|babydoge|"
-    r"baby\s*doge|safemoon|pepe|bonk|dogwifhat|\$wif|shitcoin|degen|community\s*token)\b",
+    r"(?<![A-Za-z0-9_])(?:"
+    r"memecoins?|meme\s*coins?|meme\s*tokens?|dogecoin|doge|shiba|shib|floki|"
+    r"babydoge|baby\s*doge|safemoon|pepe|bonk|dogwifhat|\$wif|shitcoin|"
+    r"degen|community\s*token"
+    r")(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
+# Precision-first Solana target matcher.
+# Multi-chain tools and ambiguous product names are context-only and must not
+# create Solana relevance by themselves.
 _SOLANA_RE = re.compile(
-    r"\b(?:solana|\$sol|raydium|jupiter|orca|serum|phantom|solscan|spl\s*token|pump\.fun|"
-    r"pumpfun|dexscreener|birdeye|gmgn|photon|bullx)\b",
+    r"(?<![A-Za-z0-9_])(?:"
+    r"solana|\$sol|raydium|solscan|spl\s*token|pump\.fun|pumpfun"
+    r")(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
 _CALL_RE = re.compile(
@@ -50,12 +57,23 @@ _CALL_RE = re.compile(
     r"100x|50x|20x|10x|cto|stealth|launch|presale|fair\s*launch|market\s*cap|mcap|contract|ca)\b",
     re.IGNORECASE,
 )
-_PUMPFUN_RE = re.compile(r"(?:pump\.fun|pumpfun)", re.IGNORECASE)
+_PUMPFUN_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:pump\.fun|pumpfun)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 _GATE_RE = re.compile(
-    r"(?:crypto|bitcoin|\bbtc\b|ethereum|\beth\b|blockchain|web3|defi|dex|binance|\bbnb\b|"
-    r"altcoin|airdrop|token|coin|meme|doge|shib|floki|safemoon|pepe|bonk|solana|raydium|"
-    r"jupiter|pump\.fun|pumpfun|dexscreener|birdeye|gmgn|photon|bullx|0x[0-9a-fA-F]{40}|"
-    r"\$[A-Za-z][A-Za-z0-9_]{1,11}|\b(?:contract|ca|mcap|gem|presale|launch|100x|50x|20x|10x)\b)",
+    r"(?:"
+    r"\b(?:"
+    r"crypto(?:currency)?|bitcoin|btc|ethereum|ether|eth|blockchain|web3|defi|"
+    r"dex|cex|binance|bnb|altcoin|airdrop|token|coin|nft|staking|liquidity|"
+    r"presale|ido|ico|meme|memecoins?|dogecoin|doge|shiba|shib|floki|safemoon|"
+    r"pepe|bonk|solana|raydium|solscan|spl\s*token|jupiter|pump\.fun|pumpfun|"
+    r"dexscreener|birdeye|gmgn|photon|bullx|contract|ca|mcap|gem|launch|"
+    r"100x|50x|20x|10x"
+    r")\b"
+    r"|0x[0-9a-fA-F]{40}"
+    r"|\$[A-Za-z][A-Za-z0-9_]{1,11}"
+    r")",
     re.IGNORECASE,
 )
 
