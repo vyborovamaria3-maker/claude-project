@@ -40,7 +40,12 @@ export async function readChainStream(
 ): Promise<ChainAnalysis | null> {
   const response = await fetch(
     `/api/trade/analyze-stream?mint=${encodeURIComponent(mint)}`,
-    { cache: "no-store", signal, headers: authHeaders() },
+    {
+      cache: "no-store",
+      credentials: "include",
+      signal,
+      headers: authHeaders(),
+    },
   );
   if (!response.ok || !response.body) {
     throw new Error(`analyze-stream HTTP ${response.status}`);
@@ -84,6 +89,10 @@ export async function readChainStream(
     }
     buffer += decoder.decode();
     if (buffer.trim()) processLine(buffer);
+    if (signal.aborted) return null;
+    if (!finalPayload) {
+      throw new Error("on-chain analysis stream ended before final payload");
+    }
     return finalPayload;
   } finally {
     reader.releaseLock();
