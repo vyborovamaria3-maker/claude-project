@@ -15,6 +15,7 @@ import {
 } from "lightweight-charts";
 import ActivityPanel from "@/components/chart/ActivityPanel";
 import { useOHLCV } from "@/hooks/useOHLCV";
+import { useTradeStream } from "@/hooks/useTradeStream";
 import {
   applyChartTheme,
   CHART_COLORS,
@@ -86,7 +87,25 @@ export default function SocialAnalysisChart({
     error,
     retry,
     dataSource,
+    ingestTrade,
   } = useOHLCV(mint, timeframe);
+
+  const { isOnline: liveTradesOnline } = useTradeStream(
+    mint,
+    1,
+    (trade) => {
+      if (!Number.isFinite(trade.priceUsd) || trade.priceUsd <= 0) return;
+      ingestTrade({
+        mint,
+        solAmount: trade.solAmount,
+        tokenAmount: trade.tokenAmount,
+        isBuy: trade.isBuy,
+        timestamp: trade.ts,
+        priceUsd: trade.priceUsd,
+      });
+    },
+    { headless: true },
+  );
 
   const visibleCandles = useMemo(
     () => (candles.length > MAX_RENDERED_CANDLES ? candles.slice(-MAX_RENDERED_CANDLES) : candles),
@@ -255,7 +274,7 @@ export default function SocialAnalysisChart({
   return (
     <section
       className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
-      data-tag="trade.social_analysis_chart.v5"
+      data-tag="trade.social_analysis_chart.v6"
     >
       <div className="grid md:h-[520px] md:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_350px]">
         <div className="flex min-h-[479px] min-w-0 flex-col border-b border-bg-border bg-bg-card md:h-full md:min-h-0 md:border-b-0 md:border-r">
@@ -272,8 +291,10 @@ export default function SocialAnalysisChart({
                 </span>
               </div>
               <div className="mt-1.5 flex items-center gap-2 text-[9px] text-content-faint">
-                <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                <span className={`h-1.5 w-1.5 rounded-full ${liveTradesOnline ? "animate-pulse bg-success" : "bg-warning"}`} />
                 <span className="uppercase tracking-[0.12em]">{dataSource || "market"}</span>
+                <span>·</span>
+                <span>{liveTradesOnline ? "live trades" : "history polling"}</span>
                 <span>·</span>
                 <span>{metricMode === "mcap" ? "MC = token price × 1B supply" : "USD price per token"}</span>
               </div>
