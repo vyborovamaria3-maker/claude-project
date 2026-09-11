@@ -9,6 +9,12 @@ const panelPath = join(root, "components", "trade", "SocialIntelligencePanel.tsx
 const chartPath = join(root, "components", "trade", "SocialAnalysisChart.tsx");
 const activityPath = join(root, "components", "chart", "ActivityPanel.tsx");
 const routePath = join(root, "app", "api", "trade", "social-ai", "route.ts");
+const tokenHistoryPath = join(root, "app", "api", "token-history", "route.ts");
+const tokenTradesPath = join(root, "app", "api", "token-trades", "route.ts");
+const socialApiPath = join(root, "lib", "trade", "social-intelligence-api.ts");
+const ohlcvHookPath = join(root, "hooks", "useOHLCV.ts");
+const tradeStreamPath = join(root, "hooks", "useTradeStream.ts");
+const proxyPath = join(root, "proxy.ts");
 const wrapperPath = join(root, "lib", "trade", "intelligence-agent-provenance.ts");
 const provenancePath = join(root, "lib", "trade", "analysis-feature-provenance.json");
 const tsconfigPath = join(root, "tsconfig.json");
@@ -19,6 +25,12 @@ const panelSource = readFileSync(panelPath, "utf8");
 const chartSource = readFileSync(chartPath, "utf8");
 const activitySource = readFileSync(activityPath, "utf8");
 const routeSource = readFileSync(routePath, "utf8");
+const tokenHistorySource = readFileSync(tokenHistoryPath, "utf8");
+const tokenTradesSource = readFileSync(tokenTradesPath, "utf8");
+const socialApiSource = readFileSync(socialApiPath, "utf8");
+const ohlcvHookSource = readFileSync(ohlcvHookPath, "utf8");
+const tradeStreamSource = readFileSync(tradeStreamPath, "utf8");
+const proxySource = readFileSync(proxyPath, "utf8");
 const wrapperSource = readFileSync(wrapperPath, "utf8");
 const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
 const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8"));
@@ -51,22 +63,37 @@ assert(
 );
 assert(
   panelSource.includes("<SourceHealthBar")
-    && panelSource.includes('data-tag="trade.social_source_health.v1"'),
-  "Social Intelligence must expose per-source runtime health instead of collapsing missing coverage into scores",
+    && panelSource.includes('data-tag="trade.social_source_health.v2"'),
+  "Social Intelligence must expose truthful per-source runtime health",
 );
 assert(
   panelSource.includes("<OverallVerdict")
-    && panelSource.includes('data-tag="trade.social_overall_verdict.v1"'),
-  "Social Intelligence must keep a readable unified verdict above source details",
+    && panelSource.includes('data-tag="trade.social_overall_verdict.v2"')
+    && panelSource.includes("Social coverage")
+    && panelSource.includes("Core coverage"),
+  "Social Intelligence must distinguish social coverage from generic core coverage",
+);
+assert(
+  panelSource.includes('const hasSocialData = Boolean(x || tg)')
+    && panelSource.includes('value={hasSocialData ? score(derived.socialScore) : "—"}')
+    && panelSource.includes('value={hasSocialData ? score(derived.socialRisk) : "—"}'),
+  "market/chain-only coverage must never render SOCIAL/RISK as real 0/100 values",
+);
+assert(
+  panelSource.includes('ai?.provider === "mock"')
+    && panelSource.includes("MOCK · NOT QWEN")
+    && panelSource.includes('provider === "openai-compatible"'),
+  "mock AI output must never be presented as a real Qwen verdict",
 );
 assert(
   !panelSource.includes("RecentTradesCard"),
   "Social Intelligence must not render the removed duplicate recent-trades table",
 );
+
 assert(
   chartSource.includes('from "@/components/chart/ActivityPanel"')
     && chartSource.includes("<ActivityPanel mint={mint} />"),
-  "the social terminal must reuse the shared live transaction stream on the right side",
+  "the social terminal must reuse the shared live transaction panel on the right side",
 );
 assert(
   activitySource.includes("useTradeStream(mint, 100)"),
@@ -80,8 +107,16 @@ assert(
 );
 assert(
   chartSource.includes('useState<MetricMode>("mcap")')
-    && chartSource.includes('metricMode === "mcap" ? PUMP_SUPPLY : 1'),
-  "the social terminal must default to market-cap candles while retaining price mode",
+    && chartSource.includes("MarketReference")
+    && chartSource.includes("cap / price")
+    && chartSource.includes("marketReference.supply"),
+  "market-cap mode must derive supply from a market reference instead of assuming 1B for every mint",
+);
+assert(
+  chartSource.includes("useTradeStream(")
+    && chartSource.includes("ingestTrade({")
+    && chartSource.includes("liveTradesOnline"),
+  "live trades must feed the shared OHLC aggregator instead of relying only on history polling",
 );
 assert(
   chartSource.includes('chart.priceScale("volume").applyOptions({')
@@ -92,6 +127,57 @@ assert(
 assert(
   !chartSource.includes("[&+section]:hidden"),
   "the terminal must not rely on a sibling-hiding CSS hack for duplicate trades",
+);
+
+assert(
+  tokenHistorySource.includes('const forceMock = req.nextUrl.searchParams.get("mock") === "true"')
+    && tokenHistorySource.includes('source: "none"')
+    && tokenHistorySource.includes('priceUnit: "token_usd"')
+    && !tokenHistorySource.includes("isDevelopment || forceMock"),
+  "token-history must use real data by default and mock data only by explicit opt-in",
+);
+assert(
+  tokenHistorySource.includes('"1s": 1')
+    && tokenHistorySource.includes('"5s": 5')
+    && tokenHistorySource.includes('"15s": 15')
+    && tokenHistorySource.includes("TF_SECONDS[timeframe]"),
+  "mock sub-minute candles must use real second spacing rather than minute spacing",
+);
+assert(
+  tokenHistorySource.includes("new PublicKey(mint)")
+    && tokenHistorySource.includes("VALID_TIMEFRAMES.has(timeframe)"),
+  "token-history must reject invalid mints and unsupported timeframes",
+);
+assert(
+  !ohlcvHookSource.includes("c.close > 1")
+    && ohlcvHookSource.includes("API contract: all candle OHLC values are per-token USD prices"),
+  "the client must never infer candle units from price magnitude",
+);
+assert(
+  !ohlcvHookSource.includes("aggregators.delete(mint)"),
+  "the current mint aggregator must remain shared across chart consumers",
+);
+
+assert(
+  tokenTradesSource.includes("upstream unavailable")
+    && tokenTradesSource.includes("status: 502")
+    && tokenTradesSource.includes("status: 503"),
+  "live-trade upstream failures must surface as errors instead of fake successful empty arrays",
+);
+assert(
+  !tradeStreamSource.includes("|| 150")
+    && tradeStreamSource.includes("upstreamAmountUsd")
+    && tradeStreamSource.includes("p.seenSigs.add(row.signature)"),
+  "live trades must not fabricate USD prices and must validate rows before consuming signatures",
+);
+assert(
+  socialApiSource.includes("stream ended before final payload"),
+  "an interrupted chain NDJSON stream must not be mistaken for a valid empty analysis",
+);
+assert(
+  proxySource.includes('"/api/trade/dev-twitter"')
+    && proxySource.includes('"/api/trade/social-ai"'),
+  "expensive X and Qwen routes must remain under the heavy-route rate limiter",
 );
 
 const intelligenceAlias = tsconfig?.compilerOptions?.paths?.["@/lib/trade/intelligence-agent"];
@@ -221,5 +307,5 @@ assert(
 const extendedCount = totalCount - coreCount;
 console.log(
   `[analysis-regression] OK: ${coreCount}/129 core mapped; ${totalCount}/${totalCount} displayed rows covered; `
-  + `${inputCount} agent-input features + ${aiOutputCount} AI-output placeholders; ${extendedCount} extended rows; social terminal guards OK`,
+  + `${inputCount} agent-input features + ${aiOutputCount} AI-output placeholders; ${extendedCount} extended rows; social terminal/data-integrity guards OK`,
 );
