@@ -460,8 +460,6 @@ export async function GET(req: NextRequest) {
     return !analyzed.isSuspicious && !account?.isBot;
   });
   const displayEligibleHandles = new Set(displayEligible.map((tweet) => tweet.authorHandle));
-  // Persist exclusion only when filtering actually removed every eligible row for
-  // an author. The display limit must never turn normal authors into "excluded".
   const excludedHandles = new Set(
     [...riskHandles].filter((handle) => !displayEligibleHandles.has(handle)),
   );
@@ -627,8 +625,8 @@ export async function GET(req: NextRequest) {
       memecoinAccounts: shillers.length,
       firstAccountCreatedAt: null,
       lastDiscoveredAt: filteredTweets.reduce<number | null>((latest, tweet) => {
-        if (tweet.timestamp == null) return latest;
-        return latest == null ? tweet.timestamp : Math.max(latest, tweet.timestamp);
+        if (tweet.postedAt == null) return latest;
+        return latest == null ? tweet.postedAt : Math.max(latest, tweet.postedAt);
       }, null),
     },
   };
