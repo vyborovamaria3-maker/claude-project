@@ -254,8 +254,8 @@ export default function SocialAnalysisChart({
 
   return (
     <section
-      className="surface-panel col-span-full overflow-hidden rounded-2xl border border-bg-border [&+section]:hidden"
-      data-tag="trade.social_analysis_chart.v4"
+      className="surface-panel overflow-hidden rounded-2xl border border-bg-border"
+      data-tag="trade.social_analysis_chart.v5"
     >
       <div className="grid md:h-[520px] md:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_350px]">
         <div className="flex min-h-[479px] min-w-0 flex-col border-b border-bg-border bg-bg-card md:h-full md:min-h-0 md:border-b-0 md:border-r">
