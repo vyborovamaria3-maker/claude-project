@@ -178,3 +178,72 @@ class TwitterAccountTokenStat(Base):
     token_alpha_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class TwitterDiscoveryCandidate(Base):
+    __tablename__ = "twitter_discovery_candidates"
+    __table_args__ = (
+        UniqueConstraint("candidate_key", name="uq_twitter_discovery_candidates_key"),
+        UniqueConstraint("twitter_id", name="uq_twitter_discovery_candidates_twitter_id"),
+        Index(
+            "ix_twitter_discovery_candidates_queue",
+            "status",
+            "priority",
+            "next_attempt_at",
+        ),
+        Index("ix_twitter_discovery_candidates_username", "username"),
+        Index("ix_twitter_discovery_candidates_depth", "depth", "priority"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    twitter_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    account_type_hint: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    relevance_hint: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("twitter_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    parent_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("twitter_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class TwitterDiscoveryEvidence(Base):
+    __tablename__ = "twitter_discovery_evidence"
+    __table_args__ = (
+        UniqueConstraint(
+            "candidate_id",
+            "source_type",
+            "source_ref",
+            "discovery_reason",
+            name="uq_twitter_discovery_evidence_source",
+        ),
+        Index("ix_twitter_discovery_evidence_candidate_time", "candidate_id", "observed_at"),
+        Index("ix_twitter_discovery_evidence_source", "source_type", "observed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("twitter_discovery_candidates.id", ondelete="CASCADE"), nullable=False
+    )
+    source_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    source_ref: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    discovery_reason: Mapped[str] = mapped_column(String(96), nullable=False, default="unknown")
+    query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
