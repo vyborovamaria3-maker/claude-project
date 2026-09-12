@@ -93,6 +93,12 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def clamp_int(value: int, low: int, high: int) -> int:
     return max(low, min(high, int(value)))
 
@@ -231,6 +237,25 @@ def _clean_ref(value: str | None, max_length: int) -> str:
     return (value or "").strip()[:max_length]
 
 
+async def _canonical_candidate(
+    session: AsyncSession,
+    candidate: TwitterDiscoveryCandidate | None,
+) -> TwitterDiscoveryCandidate | None:
+    seen: set[int] = set()
+    current = candidate
+    while current is not None and current.status == "duplicate" and current.id not in seen:
+        seen.add(current.id)
+        marker = str(current.last_error or "")
+        if not marker.startswith("merged_into_candidate:"):
+            break
+        try:
+            target_id = int(marker.split(":", 1)[1])
+        except (TypeError, ValueError):
+            break
+        current = await session.get(TwitterDiscoveryCandidate, target_id)
+    return current
+
+
 async def _find_candidate(
     session: AsyncSession,
     *,
@@ -250,9 +275,9 @@ async def _find_candidate(
     if candidate is None and normalized_username is not None:
         candidate = (
             await session.execute(
-                select(TwitterDiscoveryCandidate).where(
-                    TwitterDiscoveryCandidate.username == normalized_username
-                )
+                select(TwitterDiscoveryCandidate)
+                .where(TwitterDiscoveryCandidate.username == normalized_username)
+                .order_by(TwitterDiscoveryCandidate.id.asc())
             )
         ).scalars().first()
     if candidate is None:
@@ -263,7 +288,7 @@ async def _find_candidate(
                 )
             )
         ).scalar_one_or_none()
-    return candidate
+    return await _canonical_candidate(session, candidate)
 
 
 async def _ensure_evidence(
@@ -289,7 +314,7 @@ async def _ensure_evidence(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        if observed_at < existing.observed_at:
+        if _as_utc(observed_at) < _as_utc(existing.observed_at):
             existing.observed_at = observed_at
         if existing.query is None and query:
             existing.query = query
@@ -315,8 +340,6 @@ async def _ensure_evidence(
             )
             await session.flush()
     except IntegrityError:
-        # Another worker inserted the same evidence after our SELECT. The unique
-        # constraint is authoritative; no retry/error is needed for idempotent ingest.
         return
 
 
@@ -412,7 +435,8 @@ async def enqueue_discovery_candidate(
     candidate.relevance_hint = max(candidate.relevance_hint, clamp_float(relevance_hint))
     if parent_account_id is not None and candidate.parent_account_id is None:
         candidate.parent_account_id = parent_account_id
-    candidate.last_seen_at = max(candidate.last_seen_at, now)
+    if _as_utc(now) > _as_utc(candidate.last_seen_at):
+        candidate.last_seen_at = now
     if meta:
         candidate.meta = {**(candidate.meta or {}), **meta}
     if candidate.status in {"rejected", "dead"} and relevance_hint >= 70.0:
@@ -473,6 +497,7 @@ async def attach_resolved_profile(
     profile: ResolvedTwitterProfile,
 ) -> TwitterDiscoveryCandidate:
     normalized_id = normalize_twitter_id(profile.twitter_id)
+    normalized_username = normalize_twitter_username(profile.username)
     conflict = (
         await session.execute(
             select(TwitterDiscoveryCandidate).where(
@@ -481,7 +506,8 @@ async def attach_resolved_profile(
             )
         )
     ).scalar_one_or_none()
-    if conflict is not None:
+    conflict = await _canonical_candidate(session, conflict)
+    if conflict is not None and conflict.id != candidate.id:
         await _merge_candidate_evidence(
             session,
             source_candidate=candidate,
@@ -490,12 +516,21 @@ async def attach_resolved_profile(
         conflict.priority = max(conflict.priority, candidate.priority)
         conflict.relevance_hint = max(conflict.relevance_hint, candidate.relevance_hint)
         conflict.depth = min(conflict.depth, candidate.depth)
-        conflict.first_seen_at = min(conflict.first_seen_at, candidate.first_seen_at)
-        conflict.last_seen_at = max(conflict.last_seen_at, candidate.last_seen_at)
+        if _as_utc(candidate.first_seen_at) < _as_utc(conflict.first_seen_at):
+            conflict.first_seen_at = candidate.first_seen_at
+        if _as_utc(candidate.last_seen_at) > _as_utc(conflict.last_seen_at):
+            conflict.last_seen_at = candidate.last_seen_at
         if conflict.parent_account_id is None and candidate.parent_account_id is not None:
             conflict.parent_account_id = candidate.parent_account_id
-        if candidate.meta:
-            conflict.meta = {**(conflict.meta or {}), **candidate.meta}
+        if normalized_username is not None:
+            conflict.username = normalized_username
+        if profile.display_name:
+            conflict.display_name = profile.display_name.strip()[:255]
+        conflict.meta = {
+            **(conflict.meta or {}),
+            **(candidate.meta or {}),
+            "resolved_profile": profile_to_meta(profile),
+        }
         candidate.status = "duplicate"
         candidate.last_error = f"merged_into_candidate:{conflict.id}"
         candidate.next_attempt_at = None
@@ -504,12 +539,13 @@ async def attach_resolved_profile(
         await session.flush()
         return conflict
 
-    normalized_username = normalize_twitter_username(profile.username)
     try:
         async with session.begin_nested():
             candidate.twitter_id = normalized_id
-            candidate.username = normalized_username
-            candidate.display_name = (profile.display_name or "").strip()[:255] or None
+            if normalized_username is not None:
+                candidate.username = normalized_username
+            if profile.display_name:
+                candidate.display_name = profile.display_name.strip()[:255]
             candidate.meta = {
                 **(candidate.meta or {}),
                 "resolved_profile": profile_to_meta(profile),
@@ -523,6 +559,7 @@ async def attach_resolved_profile(
                 )
             )
         ).scalar_one_or_none()
+        conflict = await _canonical_candidate(session, conflict)
         if conflict is None or conflict.id == candidate.id:
             raise
         return await attach_resolved_profile(session, candidate, profile)
