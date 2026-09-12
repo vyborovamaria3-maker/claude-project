@@ -338,6 +338,8 @@ async def _process_frontier(
                         error=f"discovery_error:{exc}",
                     )
                     counters["failed"] += 1
+                if stop:
+                    break
 
             await session.commit()
     return counters
