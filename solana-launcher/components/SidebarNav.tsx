@@ -19,6 +19,7 @@ import {
   TrendingUp,
   Trophy,
   Twitter,
+  UserPlus,
   Wallet,
   AlertTriangle,
 } from "lucide-react";
@@ -43,6 +44,7 @@ const icons = {
   trending: TrendingUp,
   trophy: Trophy,
   twitter: Twitter,
+  userPlus: UserPlus,
   wallet: Wallet,
   warning: AlertTriangle,
 } satisfies Record<SiteIconKey, typeof Rocket>;

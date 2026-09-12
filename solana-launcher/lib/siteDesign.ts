@@ -14,6 +14,7 @@ export type SiteIconKey =
   | "trending"
   | "trophy"
   | "twitter"
+  | "userPlus"
   | "wallet"
   | "warning";
 
@@ -130,6 +131,7 @@ export const siteDesign = {
       { href: "/trade/analysis", labelKey: "nav.tradeAnalysis", icon: "search", tag: "nav.trade_analysis" },
       { href: "/trade/leaderboard", labelKey: "nav.tradeLeaderboard", icon: "trophy", tag: "nav.trade_leaderboard" },
       { href: "/trade/history", labelKey: "nav.tradeHistory", icon: "history", tag: "nav.trade_history" },
+      { href: "/tginvite", labelKey: "nav.tgInvite", icon: "userPlus", tag: "nav.tg_invite" },
     ] satisfies SiteNavItem[],
     common: [
       { href: "/database", labelKey: "nav.database", icon: "database", tag: "nav.database" },
