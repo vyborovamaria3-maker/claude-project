@@ -1,79 +1,53 @@
-# Twitter/X Crypto Account Discovery
+# Twitter/X discovery without requiring the X API
 
-This crawler expands the Twitter intelligence registry from a small set of trusted seeds into a persistent discovery frontier.
+The discovery pipeline is designed to work **without an official X API key**. `X_API_BEARER_TOKEN` is optional enrichment only.
 
-## Sources
+## Primary no-X-API sources
 
-1. Curated seed handles in `data/twitter-discovery/crypto_media_seeds.json`.
-2. Official X API recent-search authors and mentioned users using queries from `data/twitter-discovery/queries.json`.
-3. Official X API following/follower graph expansion from accepted accounts.
-4. Explicit `x.com/...` and `twitter.com/...` profile links found on operator-supplied public web/RSS pages.
+The collector discovers public X/Twitter handles from crypto-native sources that already expose official social links:
 
-The public-web source does not log in, bypass access controls, scrape private pages, or attempt anti-bot evasion.
+1. **DEX Screener** public endpoints
+   - latest token profiles
+   - boosted tokens
+   - token/pair metadata (`info.socials`)
+2. **CoinMarketCap keyless public metadata** when available
+   - official project `urls.twitter` links
+3. Existing Solana token universe in the POTAPoff database
+   - token mints are enriched through DEX Screener in batches
+4. Public project websites / docs / RSS / media pages
+   - only explicit `x.com/<handle>` / `twitter.com/<handle>` links are extracted
+5. Telegram intelligence
+   - public X links already observed in Telegram messages can be fed into the same frontier
 
-## Identity and deduplication
+No login-wall, CAPTCHA, anti-bot or private-page bypass is used.
 
-A discovered handle starts as a `twitter_discovery_candidates` row. Once the official API resolves it, stable X `twitter_id` becomes the canonical identity. Username changes therefore do not create a new `twitter_accounts` identity.
+## Identity model
 
-Every discovery path is recorded in `twitter_discovery_evidence`, so later scoring can distinguish a curated seed, a search hit, a media-site link, a follower edge, and a following edge.
+Without the official X API, a stable numeric X user ID cannot always be resolved reliably. Therefore:
 
-## Frontier safety
+- `twitter_discovery_candidates` is the authoritative **handle universe / frontier**;
+- candidates are deduplicated by normalized handle until a stable `twitter_id` becomes available;
+- provenance is preserved in `twitter_discovery_evidence`;
+- the stable `twitter_accounts` registry is promoted only when a trustworthy stable ID is available;
+- scoring works for unresolved handle candidates too.
 
-Candidates are claimed with a lease and `FOR UPDATE SKIP LOCKED` where the database supports it. Expired `processing` leases are claimable again. API failures use exponential retry/backoff, while permanent low-relevance/not-found candidates remain in the discovery registry rather than being deleted.
+This avoids inventing synthetic X IDs that could later collide with real identities.
 
-## Setup
-
-Run the migrations and configure an official X API bearer token:
+## Recommended no-X-API run
 
 ```bash
 cd solana-launcher/backend
 alembic upgrade head
-export X_API_BEARER_TOKEN='...'
+python -m app.cli.twitter_discovery_public \
+  --dexscreener-latest \
+  --dexscreener-boosts \
+  --db-solana-tokens 500 \
+  --cmc-limit 500 \
+  --rescore-limit 3000
 ```
 
-The crawler intentionally does not use `TWITTER_USERNAME`, `TWITTER_PASSWORD`, or `TWITTER_EMAIL` for automated login/scraping.
+The output is a growing, ranked universe of crypto/memecoin/media X handles with provenance and discovery scores.
 
-## Dry run
+## Optional X API enrichment
 
-```bash
-python -m app.cli.twitter_discovery --dry-run
-```
-
-## Recommended first pass
-
-Use search + following expansion first. Following edges from known crypto/media accounts are usually much cleaner than indiscriminately ingesting their followers.
-
-```bash
-python -m app.cli.twitter_discovery \
-  --network-mode following \
-  --max-depth 2 \
-  --network-limit 100 \
-  --process-limit 500 \
-  --min-relevance 35
-```
-
-## Wider coverage
-
-Once the relevance filter is calibrated, add followers with bounded expansion:
-
-```bash
-python -m app.cli.twitter_discovery \
-  --network-mode both \
-  --max-depth 2 \
-  --network-limit 250 \
-  --process-limit 2000 \
-  --min-relevance 35
-```
-
-## Add public media/research pages
-
-```bash
-python -m app.cli.twitter_discovery \
-  --public-url https://example.com/crypto-team \
-  --public-url https://example.com/feed.xml \
-  --network-mode following
-```
-
-## Important operational rule
-
-Do not try to fetch the entire follower graph in one run. The frontier is persistent by design: repeated bounded runs improve coverage while preserving provenance, rate-limit safety, and the ability to stop/restart the crawler.
+If `X_API_BEARER_TOKEN` is configured later, `app.cli.twitter_discovery` can resolve stable IDs and expand following/follower graph edges. The public-source collector does not depend on it.
