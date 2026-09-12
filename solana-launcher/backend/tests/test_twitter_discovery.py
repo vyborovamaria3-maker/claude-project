@@ -114,6 +114,55 @@ async def test_resolved_id_reuses_username_candidate_and_promotes(session: Async
     assert await session.scalar(select(func.count(TwitterAccount.id))) == 1
 
 
+async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
+    session: AsyncSession,
+):
+    canonical = await enqueue_discovery_candidate(
+        session,
+        twitter_id="777777",
+        username="canonical_alpha",
+        relevance_hint=80,
+        source_type="curated_seed",
+        source_ref="seed.json",
+        discovery_reason="seed",
+    )
+    duplicate = await enqueue_discovery_candidate(
+        session,
+        username="old_alpha_handle",
+        relevance_hint=70,
+        source_type="public_web",
+        source_ref="project-site",
+        discovery_reason="official_social_link",
+    )
+    profile = ResolvedTwitterProfile(
+        twitter_id="777777",
+        username="old_alpha_handle",
+        display_name="Alpha Caller",
+        bio="Solana memecoin alpha trader",
+        followers_count=10_000,
+        source="test",
+    )
+
+    accepted, account_id, _ = await promote_candidate(
+        session,
+        duplicate,
+        profile,
+        min_relevance=0,
+    )
+
+    assert accepted is True
+    assert account_id is not None
+    assert duplicate.status == "duplicate"
+    assert duplicate.last_error == f"merged_into_candidate:{canonical.id}"
+    evidence_count = await session.scalar(
+        select(func.count(TwitterDiscoveryEvidence.id)).where(
+            TwitterDiscoveryEvidence.candidate_id == canonical.id
+        )
+    )
+    assert evidence_count == 2
+    assert canonical.relevance_hint >= 80
+
+
 async def test_low_relevance_candidate_stays_out_of_registry(session: AsyncSession):
     candidate = await enqueue_discovery_candidate(
         session,
