@@ -1,4 +1,5 @@
 import { loadEnvConfig } from '@next/env';
+import type { Agent } from 'node:http';
 import dotenv from 'dotenv';
 import { Telegraf } from 'telegraf';
 import { setupAgentHandlers } from './handlers/agents';
@@ -7,7 +8,11 @@ import { setupStatusHandlers } from './handlers/status';
 import { setupSubscriptionHandlers } from './handlers/subscription';
 import { loggingMiddleware } from './middleware/logging';
 import { sessionMiddleware } from './middleware/session';
-import { SocksProxyAgent } from 'socks-proxy-agent';
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { SocksProxyAgent } = require('socks-proxy-agent') as {
+  SocksProxyAgent: new (url: string) => Agent;
+};
 
 loadEnvConfig(process.cwd());
 dotenv.config({ path: '.env', override: false });
