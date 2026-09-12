@@ -31,11 +31,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _collector_base(args: argparse.Namespace, settings: object) -> str:
+    explicit = args.frontend_base.strip()
+    if explicit:
+        return explicit.rstrip("/")
+    environment = str(getattr(settings, "environment", "development")).strip().lower()
+    if environment in {"production", "prod", "docker"}:
+        return str(getattr(settings, "frontend_internal_url", "http://frontend:3000")).rstrip("/")
+    return "http://localhost:3000"
+
+
 async def run(args: argparse.Namespace) -> dict[str, object]:
     settings = get_settings()
-    frontend_base = (args.frontend_base.strip() or settings.frontend_url).rstrip("/")
+    frontend_base = _collector_base(args, settings)
+    mint = args.mint.strip()
+    if not mint:
+        raise ValueError("--mint must not be empty")
     params = {
-        "mint": args.mint.strip(),
+        "mint": mint,
         "strategy": args.strategy,
         "scope": args.scope,
         "limit": str(max(5, min(100, int(args.limit)))),
@@ -50,12 +63,14 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
 
     url = f"{frontend_base}/api/trade/dev-twitter?{urlencode(params)}"
     timeout = httpx.Timeout(max(5.0, float(args.timeout)), connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         response = await client.get(url)
         response.raise_for_status()
         payload = response.json()
     if not isinstance(payload, dict):
         raise RuntimeError("dev-twitter returned a non-object payload")
+    if payload.get("error"):
+        raise RuntimeError(f"dev-twitter error: {payload.get('error')}")
 
     engine, sessionmaker = create_engine_and_sessionmaker(settings)
     try:
@@ -63,7 +78,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             ingest = await ingest_dev_twitter_stats(
                 session,
                 payload,
-                mint=args.mint.strip(),
+                mint=mint,
                 symbol=(args.symbol.strip().lstrip("$") or payload.get("symbol") or None),
             )
             await session.commit()
