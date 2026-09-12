@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -9,6 +10,7 @@ from app.db.base import Base
 from app.models.twitter_intelligence import TwitterAccount, TwitterAccountSnapshot, TwitterPostToken
 from app.services.twitter_account_registry import (
     link_twitter_post_token,
+    normalize_twitter_username,
     upsert_twitter_account,
     upsert_twitter_account_score,
     upsert_twitter_post,
@@ -84,6 +86,7 @@ async def test_post_token_and_score_upserts_are_idempotent(db_session: AsyncSess
         text="Watching $TEST",
         likes=10,
         reposts=2,
+        spam_probability=0.25,
         source="collector",
     )
     same_post = await upsert_twitter_post(
@@ -93,6 +96,7 @@ async def test_post_token_and_score_upserts_are_idempotent(db_session: AsyncSess
         published_at=published_at,
         likes=25,
         views=500,
+        spam_probability=2.0,
         source="collector",
     )
     link = await link_twitter_post_token(
@@ -127,8 +131,15 @@ async def test_post_token_and_score_upserts_are_idempotent(db_session: AsyncSess
     assert same_post.id == post.id
     assert same_post.likes == 25
     assert same_post.views == 500
+    assert same_post.spam_probability == 1.0
     assert same_link.id == link.id
     assert same_link.confidence == 0.95
     assert token_link_count == 1
     assert score.alpha_score == 91.5
     assert score.model_version == "twitter-reputation-v1"
+
+
+def test_username_normalization_rejects_malformed_handles():
+    assert normalize_twitter_username("@Valid_Name") == "valid_name"
+    with pytest.raises(ValueError, match="invalid X username"):
+        normalize_twitter_username("https://x.com/not-a-handle")
