@@ -136,7 +136,7 @@ async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
     )
     profile = ResolvedTwitterProfile(
         twitter_id="777777",
-        username="old_alpha_handle",
+        username="current_alpha",
         display_name="Alpha Caller",
         bio="Solana memecoin alpha trader",
         followers_count=10_000,
@@ -161,6 +161,7 @@ async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
     )
     assert evidence_count == 2
     assert canonical.relevance_hint >= 80
+    assert canonical.username == "current_alpha"
 
     rediscovered = await enqueue_discovery_candidate(
         session,
@@ -171,6 +172,7 @@ async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
         discovery_reason="token_search_tweet",
     )
     assert rediscovered.id == canonical.id
+    assert canonical.username == "current_alpha"
     evidence_count = await session.scalar(
         select(func.count(TwitterDiscoveryEvidence.id)).where(
             TwitterDiscoveryEvidence.candidate_id == canonical.id
