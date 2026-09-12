@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.twitter_intelligence import (
@@ -13,6 +15,9 @@ from app.models.twitter_intelligence import (
     TwitterPost,
     TwitterPostToken,
 )
+
+
+_USERNAME_RE = re.compile(r"^[a-z0-9_]{1,30}$")
 
 
 def _utcnow() -> datetime:
@@ -35,7 +40,11 @@ def normalize_twitter_username(value: str | None) -> str | None:
     if normalized.startswith("@"):
         normalized = normalized[1:]
     normalized = normalized.strip().lower()
-    return normalized or None
+    if not normalized:
+        return None
+    if not _USERNAME_RE.fullmatch(normalized):
+        raise ValueError("invalid X username")
+    return normalized
 
 
 def _metric(value: int) -> int:
@@ -44,6 +53,17 @@ def _metric(value: int) -> int:
 
 def _score(value: float) -> float:
     return round(max(0.0, min(100.0, float(value))), 4)
+
+
+def _probability(value: float) -> float:
+    return round(max(0.0, min(1.0, float(value))), 6)
+
+
+def _clean(value: str | None, max_length: int) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned[:max_length] or None
 
 
 async def get_twitter_account(
@@ -73,7 +93,7 @@ async def record_twitter_account_snapshot(
         tweet_count=account.tweet_count,
         verified=account.verified,
         captured_at=captured_at or _utcnow(),
-        source=source or account.source,
+        source=_clean(source or account.source, 64) or "unknown",
         raw=raw,
     )
     session.add(snapshot)
@@ -108,22 +128,30 @@ async def upsert_twitter_account(
     account = await get_twitter_account(session, normalized_id)
 
     if account is None:
-        account = TwitterAccount(
-            twitter_id=normalized_id,
-            first_seen_at=now,
-            last_seen_at=now,
-            source=source,
-        )
-        session.add(account)
+        try:
+            async with session.begin_nested():
+                pending = TwitterAccount(
+                    twitter_id=normalized_id,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    source=_clean(source, 64) or "unknown",
+                )
+                session.add(pending)
+                await session.flush()
+                account = pending
+        except IntegrityError:
+            account = await get_twitter_account(session, normalized_id)
+            if account is None:
+                raise
 
     if username is not None:
         account.username = normalized_username
     if display_name is not None:
-        account.display_name = display_name.strip() or None
+        account.display_name = _clean(display_name, 255)
     if bio is not None:
         account.bio = bio
     if avatar_url is not None:
-        account.avatar_url = avatar_url.strip() or None
+        account.avatar_url = _clean(avatar_url, 1024)
     if followers_count is not None:
         account.followers_count = _metric(followers_count)
     if following_count is not None:
@@ -135,13 +163,13 @@ async def upsert_twitter_account(
     if x_created_at is not None:
         account.x_created_at = x_created_at
     if account_type is not None:
-        account.account_type = account_type.strip().lower() or "unknown"
+        account.account_type = _clean(account_type.lower(), 32) or "unknown"
     if status is not None:
-        account.status = status.strip().lower() or "active"
+        account.status = _clean(status.lower(), 24) or "active"
 
     account.last_seen_at = now
     account.last_profile_sync_at = synced_at or now
-    account.source = source
+    account.source = _clean(source, 64) or "unknown"
     if raw is not None:
         account.raw = raw
 
@@ -176,8 +204,16 @@ async def upsert_twitter_account_score(
 ) -> TwitterAccountScore:
     score = await session.get(TwitterAccountScore, account_id)
     if score is None:
-        score = TwitterAccountScore(account_id=account_id)
-        session.add(score)
+        try:
+            async with session.begin_nested():
+                pending = TwitterAccountScore(account_id=account_id)
+                session.add(pending)
+                await session.flush()
+                score = pending
+        except IntegrityError:
+            score = await session.get(TwitterAccountScore, account_id)
+            if score is None:
+                raise
 
     values = {
         "influence_score": influence_score,
@@ -193,8 +229,8 @@ async def upsert_twitter_account_score(
         if value is not None:
             setattr(score, field, _score(value))
 
-    score.score_source = score_source
-    score.model_version = model_version
+    score.score_source = _clean(score_source, 64) or "unknown"
+    score.model_version = _clean(model_version, 128)
     score.updated_at = _utcnow()
     if meta is not None:
         score.meta = meta
@@ -231,16 +267,30 @@ async def upsert_twitter_post(
     now = _utcnow()
 
     if post is None:
-        post = TwitterPost(
-            twitter_post_id=normalized_post_id,
-            account_id=account_id,
-            published_at=published_at,
-            source=source,
-            created_at=now,
-            updated_at=now,
-        )
-        session.add(post)
-    elif post.account_id != account_id:
+        try:
+            async with session.begin_nested():
+                pending = TwitterPost(
+                    twitter_post_id=normalized_post_id,
+                    account_id=account_id,
+                    published_at=published_at,
+                    source=_clean(source, 64) or "unknown",
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(pending)
+                await session.flush()
+                post = pending
+        except IntegrityError:
+            post = (
+                await session.execute(
+                    select(TwitterPost).where(
+                        TwitterPost.twitter_post_id == normalized_post_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if post is None:
+                raise
+    if post.account_id != account_id:
         raise ValueError("twitter_post_id is already owned by another account")
 
     post.published_at = published_at
@@ -257,16 +307,16 @@ async def upsert_twitter_post(
     if views is not None:
         post.views = _metric(views)
     if language is not None:
-        post.language = language.strip().lower() or None
+        post.language = _clean(language.lower(), 16)
     if sentiment is not None:
         post.sentiment = float(sentiment)
     if crypto_relevance is not None:
         post.crypto_relevance = _score(crypto_relevance)
     if spam_probability is not None:
-        post.spam_probability = _score(spam_probability)
+        post.spam_probability = _probability(spam_probability)
     if source_url is not None:
-        post.source_url = source_url.strip() or None
-    post.source = source
+        post.source_url = _clean(source_url, 512)
+    post.source = _clean(source, 64) or "unknown"
     post.updated_at = now
     if raw is not None:
         post.raw = raw
@@ -289,6 +339,7 @@ async def link_twitter_post_token(
     mint = mint_address.strip()
     if not mint:
         raise ValueError("mint_address must not be empty")
+    mint = mint[:64]
 
     link = (
         await session.execute(
@@ -300,17 +351,32 @@ async def link_twitter_post_token(
     ).scalar_one_or_none()
 
     if link is None:
-        link = TwitterPostToken(
-            post_id=post.id,
-            account_id=post.account_id,
-            mint_address=mint,
-            first_seen_at=first_seen_at or post.published_at,
-        )
-        session.add(link)
+        try:
+            async with session.begin_nested():
+                pending = TwitterPostToken(
+                    post_id=post.id,
+                    account_id=post.account_id,
+                    mint_address=mint,
+                    first_seen_at=first_seen_at or post.published_at,
+                )
+                session.add(pending)
+                await session.flush()
+                link = pending
+        except IntegrityError:
+            link = (
+                await session.execute(
+                    select(TwitterPostToken).where(
+                        TwitterPostToken.post_id == post.id,
+                        TwitterPostToken.mint_address == mint,
+                    )
+                )
+            ).scalar_one_or_none()
+            if link is None:
+                raise
 
     if symbol is not None:
-        link.symbol = symbol.strip().upper() or None
-    link.mention_type = mention_type.strip().lower() or "mention"
+        link.symbol = _clean(symbol.upper(), 32)
+    link.mention_type = _clean(mention_type.lower(), 24) or "mention"
     link.confidence = max(0.0, min(1.0, float(confidence)))
     if meta is not None:
         link.meta = meta
