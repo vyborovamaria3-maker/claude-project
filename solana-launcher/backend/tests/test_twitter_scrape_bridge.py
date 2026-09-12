@@ -96,3 +96,31 @@ async def test_bridge_reuses_candidate_and_deduplicates_tweet_evidence(session: 
 
     assert await session.scalar(select(func.count(TwitterDiscoveryCandidate.id))) == 1
     assert await session.scalar(select(func.count(TwitterDiscoveryEvidence.id))) == 2
+
+
+async def test_bridge_skips_malformed_rows_and_keeps_valid_tweets(session: AsyncSession):
+    payload = sample_payload()
+    payload["topTweets"] = [
+        {"id": "bad-id", "text": "bad", "author": "broken/handle"},
+        None,
+        payload["topTweets"][0],
+    ]
+    payload["shillers"] = [
+        {"handle": "broken/handle", "tweets": "not-a-number"},
+        payload["shillers"][0],
+    ]
+
+    result = await ingest_dev_twitter_stats(
+        session,
+        payload,
+        mint="11111111111111111111111111111111",
+        symbol="MEME",
+    )
+    await session.commit()
+
+    assert result["tweets_seen"] == 3
+    assert result["skipped"] == 2
+    assert result["evidence_processed"] == 1
+    assert result["candidates_touched"] == 1
+    assert await session.scalar(select(func.count(TwitterDiscoveryCandidate.id))) == 1
+    assert await session.scalar(select(func.count(TwitterDiscoveryEvidence.id))) == 1
