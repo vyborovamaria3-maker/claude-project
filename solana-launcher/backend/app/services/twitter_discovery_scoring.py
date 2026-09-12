@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.twitter_discovery_scoring import TwitterDiscoveryScore
@@ -353,8 +354,16 @@ async def rescore_discovery_candidate(
     breakdown = await calculate_discovery_score(session, candidate, now=now)
     row = await session.get(TwitterDiscoveryScore, candidate.id)
     if row is None:
-        row = TwitterDiscoveryScore(candidate_id=candidate.id)
-        session.add(row)
+        try:
+            async with session.begin_nested():
+                pending = TwitterDiscoveryScore(candidate_id=candidate.id)
+                session.add(pending)
+                await session.flush()
+                row = pending
+        except IntegrityError:
+            row = await session.get(TwitterDiscoveryScore, candidate.id)
+            if row is None:
+                raise
 
     for field in (
         "discovery_score",
