@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.twitter_intelligence import (
@@ -230,6 +231,95 @@ def _clean_ref(value: str | None, max_length: int) -> str:
     return (value or "").strip()[:max_length]
 
 
+async def _find_candidate(
+    session: AsyncSession,
+    *,
+    normalized_id: str | None,
+    normalized_username: str | None,
+    key: str,
+) -> TwitterDiscoveryCandidate | None:
+    candidate: TwitterDiscoveryCandidate | None = None
+    if normalized_id is not None:
+        candidate = (
+            await session.execute(
+                select(TwitterDiscoveryCandidate).where(
+                    TwitterDiscoveryCandidate.twitter_id == normalized_id
+                )
+            )
+        ).scalar_one_or_none()
+    if candidate is None and normalized_username is not None:
+        candidate = (
+            await session.execute(
+                select(TwitterDiscoveryCandidate).where(
+                    TwitterDiscoveryCandidate.username == normalized_username
+                )
+            )
+        ).scalars().first()
+    if candidate is None:
+        candidate = (
+            await session.execute(
+                select(TwitterDiscoveryCandidate).where(
+                    TwitterDiscoveryCandidate.candidate_key == key
+                )
+            )
+        ).scalar_one_or_none()
+    return candidate
+
+
+async def _ensure_evidence(
+    session: AsyncSession,
+    *,
+    candidate_id: int,
+    source_type: str,
+    source_ref: str,
+    discovery_reason: str,
+    query: str | None,
+    source_url: str | None,
+    observed_at: datetime,
+    raw: dict[str, Any] | None,
+) -> None:
+    existing = (
+        await session.execute(
+            select(TwitterDiscoveryEvidence).where(
+                TwitterDiscoveryEvidence.candidate_id == candidate_id,
+                TwitterDiscoveryEvidence.source_type == source_type,
+                TwitterDiscoveryEvidence.source_ref == source_ref,
+                TwitterDiscoveryEvidence.discovery_reason == discovery_reason,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        if observed_at < existing.observed_at:
+            existing.observed_at = observed_at
+        if existing.query is None and query:
+            existing.query = query
+        if existing.source_url is None and source_url:
+            existing.source_url = source_url
+        if existing.raw is None and raw is not None:
+            existing.raw = raw
+        return
+
+    try:
+        async with session.begin_nested():
+            session.add(
+                TwitterDiscoveryEvidence(
+                    candidate_id=candidate_id,
+                    source_type=source_type,
+                    source_ref=source_ref,
+                    discovery_reason=discovery_reason,
+                    query=query,
+                    source_url=source_url,
+                    observed_at=observed_at,
+                    raw=raw,
+                )
+            )
+            await session.flush()
+    except IntegrityError:
+        # Another worker inserted the same evidence after our SELECT. The unique
+        # constraint is authoritative; no retry/error is needed for idempotent ingest.
+        return
+
+
 async def enqueue_discovery_candidate(
     session: AsyncSession,
     *,
@@ -259,104 +349,122 @@ async def enqueue_discovery_candidate(
     normalized_username = normalize_twitter_username(username)
     key = candidate_key(twitter_id=normalized_id, username=normalized_username)
 
-    candidate: TwitterDiscoveryCandidate | None = None
-    if normalized_id is not None:
-        candidate = (
-            await session.execute(
-                select(TwitterDiscoveryCandidate).where(
-                    TwitterDiscoveryCandidate.twitter_id == normalized_id
-                )
-            )
-        ).scalar_one_or_none()
-    if candidate is None and normalized_username is not None:
-        candidate = (
-            await session.execute(
-                select(TwitterDiscoveryCandidate).where(
-                    TwitterDiscoveryCandidate.username == normalized_username
-                )
-            )
-        ).scalars().first()
+    candidate = await _find_candidate(
+        session,
+        normalized_id=normalized_id,
+        normalized_username=normalized_username,
+        key=key,
+    )
     if candidate is None:
-        candidate = (
-            await session.execute(
-                select(TwitterDiscoveryCandidate).where(
-                    TwitterDiscoveryCandidate.candidate_key == key
+        try:
+            async with session.begin_nested():
+                pending = TwitterDiscoveryCandidate(
+                    candidate_key=key,
+                    twitter_id=normalized_id,
+                    username=normalized_username,
+                    display_name=(display_name or "").strip()[:255] or None,
+                    account_type_hint=(account_type_hint or "unknown").strip().lower()[:32],
+                    status="queued",
+                    priority=clamp_int(priority, 0, 100),
+                    depth=max(0, int(depth)),
+                    relevance_hint=clamp_float(relevance_hint),
+                    parent_account_id=parent_account_id,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    meta=dict(meta or {}),
                 )
+                session.add(pending)
+                await session.flush()
+                candidate = pending
+        except IntegrityError:
+            candidate = await _find_candidate(
+                session,
+                normalized_id=normalized_id,
+                normalized_username=normalized_username,
+                key=key,
             )
-        ).scalar_one_or_none()
+            if candidate is None:
+                raise
 
-    if candidate is None:
-        candidate = TwitterDiscoveryCandidate(
-            candidate_key=key,
-            twitter_id=normalized_id,
-            username=normalized_username,
-            display_name=(display_name or "").strip() or None,
-            account_type_hint=(account_type_hint or "unknown").strip().lower()[:32],
-            status="queued",
-            priority=clamp_int(priority, 0, 100),
-            depth=max(0, int(depth)),
-            relevance_hint=clamp_float(relevance_hint),
-            parent_account_id=parent_account_id,
-            first_seen_at=now,
-            last_seen_at=now,
-            meta=dict(meta or {}),
-        )
-        session.add(candidate)
-        await session.flush()
-    else:
-        if normalized_id is not None and candidate.twitter_id is None:
-            candidate.twitter_id = normalized_id
-        if normalized_username is not None:
-            candidate.username = normalized_username
-        if display_name is not None:
-            candidate.display_name = display_name.strip() or None
-        if account_type_hint and account_type_hint != "unknown":
-            candidate.account_type_hint = account_type_hint.strip().lower()[:32]
-        candidate.priority = max(candidate.priority, clamp_int(priority, 0, 100))
-        candidate.depth = min(candidate.depth, max(0, int(depth)))
-        candidate.relevance_hint = max(
-            candidate.relevance_hint,
-            clamp_float(relevance_hint),
-        )
-        if parent_account_id is not None and candidate.parent_account_id is None:
-            candidate.parent_account_id = parent_account_id
-        candidate.last_seen_at = now
-        if meta:
-            candidate.meta = {**(candidate.meta or {}), **meta}
-        if candidate.status in {"rejected", "dead"} and relevance_hint >= 70.0:
-            candidate.status = "queued"
-            candidate.next_attempt_at = None
-            candidate.last_error = None
-        await session.flush()
+    if normalized_id is not None and candidate.twitter_id is None:
+        try:
+            async with session.begin_nested():
+                candidate.twitter_id = normalized_id
+                await session.flush()
+        except IntegrityError:
+            conflict = await _find_candidate(
+                session,
+                normalized_id=normalized_id,
+                normalized_username=None,
+                key=f"id:{normalized_id}",
+            )
+            if conflict is None:
+                raise
+            candidate = conflict
+    if normalized_username is not None:
+        candidate.username = normalized_username
+    if display_name is not None:
+        candidate.display_name = display_name.strip()[:255] or None
+    if account_type_hint and account_type_hint != "unknown":
+        candidate.account_type_hint = account_type_hint.strip().lower()[:32]
+    candidate.priority = max(candidate.priority, clamp_int(priority, 0, 100))
+    candidate.depth = min(candidate.depth, max(0, int(depth)))
+    candidate.relevance_hint = max(candidate.relevance_hint, clamp_float(relevance_hint))
+    if parent_account_id is not None and candidate.parent_account_id is None:
+        candidate.parent_account_id = parent_account_id
+    candidate.last_seen_at = max(candidate.last_seen_at, now)
+    if meta:
+        candidate.meta = {**(candidate.meta or {}), **meta}
+    if candidate.status in {"rejected", "dead"} and relevance_hint >= 70.0:
+        candidate.status = "queued"
+        candidate.next_attempt_at = None
+        candidate.last_error = None
+    await session.flush()
 
     evidence_type = _clean_ref(source_type, 48) or "unknown"
     evidence_ref = _clean_ref(source_ref, 512)
     evidence_reason = _clean_ref(discovery_reason, 96) or "unknown"
-    existing_evidence = (
-        await session.execute(
-            select(TwitterDiscoveryEvidence).where(
-                TwitterDiscoveryEvidence.candidate_id == candidate.id,
-                TwitterDiscoveryEvidence.source_type == evidence_type,
-                TwitterDiscoveryEvidence.source_ref == evidence_ref,
-                TwitterDiscoveryEvidence.discovery_reason == evidence_reason,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing_evidence is None:
-        session.add(
-            TwitterDiscoveryEvidence(
-                candidate_id=candidate.id,
-                source_type=evidence_type,
-                source_ref=evidence_ref,
-                discovery_reason=evidence_reason,
-                query=query,
-                source_url=_clean_ref(source_url, 1024) or None,
-                observed_at=now,
-                raw=evidence_raw,
-            )
-        )
-        await session.flush()
+    await _ensure_evidence(
+        session,
+        candidate_id=candidate.id,
+        source_type=evidence_type,
+        source_ref=evidence_ref,
+        discovery_reason=evidence_reason,
+        query=query,
+        source_url=_clean_ref(source_url, 1024) or None,
+        observed_at=now,
+        raw=evidence_raw,
+    )
     return candidate
+
+
+async def _merge_candidate_evidence(
+    session: AsyncSession,
+    *,
+    source_candidate: TwitterDiscoveryCandidate,
+    target_candidate: TwitterDiscoveryCandidate,
+) -> None:
+    rows = list(
+        (
+            await session.execute(
+                select(TwitterDiscoveryEvidence).where(
+                    TwitterDiscoveryEvidence.candidate_id == source_candidate.id
+                )
+            )
+        ).scalars().all()
+    )
+    for evidence in rows:
+        await _ensure_evidence(
+            session,
+            candidate_id=target_candidate.id,
+            source_type=evidence.source_type,
+            source_ref=evidence.source_ref,
+            discovery_reason=evidence.discovery_reason,
+            query=evidence.query,
+            source_url=evidence.source_url,
+            observed_at=evidence.observed_at,
+            raw=evidence.raw,
+        )
 
 
 async def attach_resolved_profile(
@@ -374,26 +482,50 @@ async def attach_resolved_profile(
         )
     ).scalar_one_or_none()
     if conflict is not None:
+        await _merge_candidate_evidence(
+            session,
+            source_candidate=candidate,
+            target_candidate=conflict,
+        )
         conflict.priority = max(conflict.priority, candidate.priority)
         conflict.relevance_hint = max(conflict.relevance_hint, candidate.relevance_hint)
-        conflict.last_seen_at = utcnow()
+        conflict.depth = min(conflict.depth, candidate.depth)
+        conflict.first_seen_at = min(conflict.first_seen_at, candidate.first_seen_at)
+        conflict.last_seen_at = max(conflict.last_seen_at, candidate.last_seen_at)
+        if conflict.parent_account_id is None and candidate.parent_account_id is not None:
+            conflict.parent_account_id = candidate.parent_account_id
         if candidate.meta:
             conflict.meta = {**(conflict.meta or {}), **candidate.meta}
         candidate.status = "duplicate"
         candidate.last_error = f"merged_into_candidate:{conflict.id}"
+        candidate.next_attempt_at = None
         candidate.lease_owner = None
         candidate.lease_expires_at = None
         await session.flush()
         return conflict
 
-    candidate.twitter_id = normalized_id
-    candidate.username = normalize_twitter_username(profile.username)
-    candidate.display_name = profile.display_name
-    candidate.meta = {
-        **(candidate.meta or {}),
-        "resolved_profile": profile_to_meta(profile),
-    }
-    await session.flush()
+    normalized_username = normalize_twitter_username(profile.username)
+    try:
+        async with session.begin_nested():
+            candidate.twitter_id = normalized_id
+            candidate.username = normalized_username
+            candidate.display_name = (profile.display_name or "").strip()[:255] or None
+            candidate.meta = {
+                **(candidate.meta or {}),
+                "resolved_profile": profile_to_meta(profile),
+            }
+            await session.flush()
+    except IntegrityError:
+        conflict = (
+            await session.execute(
+                select(TwitterDiscoveryCandidate).where(
+                    TwitterDiscoveryCandidate.twitter_id == normalized_id
+                )
+            )
+        ).scalar_one_or_none()
+        if conflict is None or conflict.id == candidate.id:
+            raise
+        return await attach_resolved_profile(session, candidate, profile)
     return candidate
 
 
@@ -499,10 +631,7 @@ async def promote_candidate(
         )
         return False, None, relevance
 
-    account_type = classify_account_type(
-        profile,
-        hint=candidate.account_type_hint,
-    )
+    account_type = classify_account_type(profile, hint=candidate.account_type_hint)
     record_snapshot = candidate.account_id is None
     account = await upsert_twitter_account(
         session,
