@@ -33,27 +33,29 @@ def _statuses(value: str) -> tuple[str, ...]:
 async def run(args: argparse.Namespace) -> dict:
     settings = get_settings()
     engine, sessionmaker = create_engine_and_sessionmaker(settings)
-    async with sessionmaker() as session:
-        summary = await rescore_discovery_candidates(
-            session,
-            statuses=_statuses(args.statuses),
-            limit=max(1, args.limit),
-        )
-        top = await top_discovery_candidates(
-            session,
-            limit=max(1, args.show_top),
-        )
-        if args.dry_run:
-            await session.rollback()
-        else:
-            await session.commit()
-    await engine.dispose()
-    return {
-        "dry_run": bool(args.dry_run),
-        "statuses": list(_statuses(args.statuses)),
-        **summary,
-        "top": top,
-    }
+    try:
+        async with sessionmaker() as session:
+            summary = await rescore_discovery_candidates(
+                session,
+                statuses=_statuses(args.statuses),
+                limit=max(1, min(int(args.limit), 5000)),
+            )
+            top = await top_discovery_candidates(
+                session,
+                limit=max(1, min(int(args.show_top), 100)),
+            )
+            if args.dry_run:
+                await session.rollback()
+            else:
+                await session.commit()
+        return {
+            "dry_run": bool(args.dry_run),
+            "statuses": list(_statuses(args.statuses)),
+            **summary,
+            "top": top,
+        }
+    finally:
+        await engine.dispose()
 
 
 def main() -> None:
