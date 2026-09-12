@@ -162,6 +162,22 @@ async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
     assert evidence_count == 2
     assert canonical.relevance_hint >= 80
 
+    rediscovered = await enqueue_discovery_candidate(
+        session,
+        username="old_alpha_handle",
+        relevance_hint=75,
+        source_type="x_search",
+        source_ref="tweet:999",
+        discovery_reason="token_search_tweet",
+    )
+    assert rediscovered.id == canonical.id
+    evidence_count = await session.scalar(
+        select(func.count(TwitterDiscoveryEvidence.id)).where(
+            TwitterDiscoveryEvidence.candidate_id == canonical.id
+        )
+    )
+    assert evidence_count == 3
+
 
 async def test_low_relevance_candidate_stays_out_of_registry(session: AsyncSession):
     candidate = await enqueue_discovery_candidate(
