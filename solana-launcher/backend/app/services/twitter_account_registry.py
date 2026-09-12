@@ -17,7 +17,7 @@ from app.models.twitter_intelligence import (
 )
 
 
-_USERNAME_RE = re.compile(r"^[a-z0-9_]{1,30}$")
+_USERNAME_RE = re.compile(r"^[a-z0-9_]{1,15}$")
 
 
 def _utcnow() -> datetime:
