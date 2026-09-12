@@ -66,6 +66,15 @@ def _clean(value: str | None, max_length: int) -> str | None:
     return cleaned[:max_length] or None
 
 
+def _profile_state(account: TwitterAccount) -> tuple[int, int, int, bool]:
+    return (
+        int(account.followers_count or 0),
+        int(account.following_count or 0),
+        int(account.tweet_count or 0),
+        bool(account.verified),
+    )
+
+
 async def get_twitter_account(
     session: AsyncSession,
     twitter_id: str | int,
@@ -126,6 +135,7 @@ async def upsert_twitter_account(
     normalized_id = normalize_twitter_id(twitter_id)
     normalized_username = normalize_twitter_username(username)
     account = await get_twitter_account(session, normalized_id)
+    created = account is None
 
     if account is None:
         try:
@@ -141,8 +151,11 @@ async def upsert_twitter_account(
                 account = pending
         except IntegrityError:
             account = await get_twitter_account(session, normalized_id)
+            created = False
             if account is None:
                 raise
+
+    previous_profile = _profile_state(account)
 
     if username is not None:
         account.username = normalized_username
@@ -174,8 +187,9 @@ async def upsert_twitter_account(
         account.raw = raw
 
     await session.flush()
+    profile_changed = previous_profile != _profile_state(account)
 
-    if record_snapshot:
+    if record_snapshot or created or profile_changed:
         await record_twitter_account_snapshot(
             session,
             account,
