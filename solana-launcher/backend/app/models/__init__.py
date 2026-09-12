@@ -35,6 +35,14 @@ from app.models.social_intelligence import (
 )
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
+from app.models.twitter_intelligence import (
+    TwitterAccount,
+    TwitterAccountScore,
+    TwitterAccountSnapshot,
+    TwitterAccountTokenStat,
+    TwitterPost,
+    TwitterPostToken,
+)
 from app.models.user import User
 
 __all__ = [
@@ -57,6 +65,12 @@ __all__ = [
     "TelegramChannelScore",
     "SocialEvent",
     "SocialRelation",
+    "TwitterAccount",
+    "TwitterAccountSnapshot",
+    "TwitterAccountScore",
+    "TwitterPost",
+    "TwitterPostToken",
+    "TwitterAccountTokenStat",
     "IntelligenceSnapshot",
     "IntelligenceEntity",
     "IntelligenceSnapshotEntity",
