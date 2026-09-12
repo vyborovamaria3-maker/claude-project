@@ -20,21 +20,45 @@ class PublicHandle:
     raw: dict[str, Any] | None = None
 
 
+def _safe_username(value: str | None) -> str | None:
+    try:
+        return normalize_twitter_username(value)
+    except ValueError:
+        return None
+
+
 def _handle_from_url(value: str | None) -> str | None:
     if not value:
         return None
-    lowered = value.strip().lower()
-    marker = None
-    for candidate in ("https://x.com/", "http://x.com/", "https://twitter.com/", "http://twitter.com/"):
-        if lowered.startswith(candidate):
-            marker = candidate
-            break
+    raw = value.strip()
+    lowered = raw.lower()
+    prefixes = (
+        "https://x.com/",
+        "http://x.com/",
+        "https://www.x.com/",
+        "http://www.x.com/",
+        "https://twitter.com/",
+        "http://twitter.com/",
+        "https://www.twitter.com/",
+        "http://www.twitter.com/",
+    )
+    marker = next((candidate for candidate in prefixes if lowered.startswith(candidate)), None)
     if marker is None:
         return None
-    tail = value.strip()[len(marker):]
+    tail = raw[len(marker) :]
     handle = tail.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
-    normalized = normalize_twitter_username(handle)
-    if not normalized or normalized in {"home", "explore", "search", "intent", "share", "i"}:
+    normalized = _safe_username(handle)
+    if not normalized or normalized in {
+        "home",
+        "explore",
+        "search",
+        "intent",
+        "share",
+        "i",
+        "settings",
+        "messages",
+        "notifications",
+    }:
         return None
     return normalized
 
@@ -42,7 +66,7 @@ def _handle_from_url(value: str | None) -> str | None:
 def _dedupe(handles: Iterable[PublicHandle]) -> list[PublicHandle]:
     result: dict[str, PublicHandle] = {}
     for item in handles:
-        key = normalize_twitter_username(item.username)
+        key = _safe_username(item.username)
         if not key:
             continue
         current = result.get(key)
@@ -53,7 +77,12 @@ def _dedupe(handles: Iterable[PublicHandle]) -> list[PublicHandle]:
 
 
 class DexScreenerDiscoverySource:
-    def __init__(self, *, client: httpx.AsyncClient, base_url: str = "https://api.dexscreener.com") -> None:
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        base_url: str = "https://api.dexscreener.com",
+    ) -> None:
         self.client = client
         self.base_url = base_url.rstrip("/")
 
@@ -63,7 +92,12 @@ class DexScreenerDiscoverySource:
         return response.json()
 
     @staticmethod
-    def _extract_links(record: dict[str, Any], *, source_type: str, source_ref: str) -> list[PublicHandle]:
+    def _extract_links(
+        record: dict[str, Any],
+        *,
+        source_type: str,
+        source_ref: str,
+    ) -> list[PublicHandle]:
         rows: list[PublicHandle] = []
         for link in record.get("links") or []:
             if not isinstance(link, dict):
@@ -90,7 +124,7 @@ class DexScreenerDiscoverySource:
                 platform = str(social.get("platform") or "").lower()
                 value = str(social.get("handle") or social.get("url") or "")
                 handle = _handle_from_url(value) or (
-                    normalize_twitter_username(value) if platform in {"twitter", "x"} else None
+                    _safe_username(value) if platform in {"twitter", "x"} else None
                 )
                 if handle:
                     rows.append(
@@ -111,10 +145,19 @@ class DexScreenerDiscoverySource:
         records = payload if isinstance(payload, list) else [payload]
         handles: list[PublicHandle] = []
         for record in records:
-            if not isinstance(record, dict) or str(record.get("chainId") or "").lower() != "solana":
+            if (
+                not isinstance(record, dict)
+                or str(record.get("chainId") or "").lower() != "solana"
+            ):
                 continue
             ref = str(record.get("tokenAddress") or record.get("url") or "unknown")
-            handles.extend(self._extract_links(record, source_type="dexscreener_profile", source_ref=ref))
+            handles.extend(
+                self._extract_links(
+                    record,
+                    source_type="dexscreener_profile",
+                    source_ref=ref,
+                )
+            )
         return _dedupe(handles)
 
     async def latest_boosts(self) -> list[PublicHandle]:
@@ -122,10 +165,19 @@ class DexScreenerDiscoverySource:
         records = payload if isinstance(payload, list) else [payload]
         handles: list[PublicHandle] = []
         for record in records:
-            if not isinstance(record, dict) or str(record.get("chainId") or "").lower() != "solana":
+            if (
+                not isinstance(record, dict)
+                or str(record.get("chainId") or "").lower() != "solana"
+            ):
                 continue
             ref = str(record.get("tokenAddress") or record.get("url") or "unknown")
-            handles.extend(self._extract_links(record, source_type="dexscreener_boost", source_ref=ref))
+            handles.extend(
+                self._extract_links(
+                    record,
+                    source_type="dexscreener_boost",
+                    source_ref=ref,
+                )
+            )
         return _dedupe(handles)
 
     async def token_socials(self, token_addresses: list[str]) -> list[PublicHandle]:
@@ -140,7 +192,13 @@ class DexScreenerDiscoverySource:
                 continue
             base = record.get("baseToken") if isinstance(record.get("baseToken"), dict) else {}
             ref = str(base.get("address") or record.get("pairAddress") or "unknown")
-            handles.extend(self._extract_links(record, source_type="dexscreener_token", source_ref=ref))
+            handles.extend(
+                self._extract_links(
+                    record,
+                    source_type="dexscreener_token",
+                    source_ref=ref,
+                )
+            )
         return _dedupe(handles)
 
 
@@ -199,7 +257,11 @@ class CoinMarketCapKeylessDiscoverySource:
                                 source_url=str(url),
                                 account_type_hint="project",
                                 relevance_hint=65.0,
-                                raw={"id": cmc_id, "name": record.get("name"), "symbol": record.get("symbol")},
+                                raw={
+                                    "id": cmc_id,
+                                    "name": record.get("name"),
+                                    "symbol": record.get("symbol"),
+                                },
                             )
                         )
         return _dedupe(handles)
