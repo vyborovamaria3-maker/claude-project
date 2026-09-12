@@ -252,7 +252,10 @@ async def _canonical_candidate(
             target_id = int(marker.split(":", 1)[1])
         except (TypeError, ValueError):
             break
-        current = await session.get(TwitterDiscoveryCandidate, target_id)
+        target = await session.get(TwitterDiscoveryCandidate, target_id)
+        if target is None:
+            break
+        current = target
     return current
 
 
@@ -410,6 +413,7 @@ async def enqueue_discovery_candidate(
                 raise
 
     if normalized_id is not None and candidate.twitter_id is None:
+        original_candidate = candidate
         try:
             async with session.begin_nested():
                 candidate.twitter_id = normalized_id
@@ -423,10 +427,25 @@ async def enqueue_discovery_candidate(
             )
             if conflict is None:
                 raise
+            if conflict.id != original_candidate.id:
+                await _merge_candidate_evidence(
+                    session,
+                    source_candidate=original_candidate,
+                    target_candidate=conflict,
+                )
+                original_candidate.status = "duplicate"
+                original_candidate.last_error = f"merged_into_candidate:{conflict.id}"
+                original_candidate.next_attempt_at = None
+                original_candidate.lease_owner = None
+                original_candidate.lease_expires_at = None
             candidate = conflict
-    if normalized_username is not None:
+    if normalized_username is not None and (
+        candidate.twitter_id is None or normalized_id is not None
+    ):
         candidate.username = normalized_username
-    if display_name is not None:
+    if display_name is not None and (
+        candidate.twitter_id is None or normalized_id is not None
+    ):
         candidate.display_name = display_name.strip()[:255] or None
     if account_type_hint and account_type_hint != "unknown":
         candidate.account_type_hint = account_type_hint.strip().lower()[:32]
