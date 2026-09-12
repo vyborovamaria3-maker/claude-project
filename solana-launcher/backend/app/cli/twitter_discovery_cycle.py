@@ -27,18 +27,20 @@ def build_parser() -> argparse.ArgumentParser:
 async def _rescore_once(*, limit: int, dry_run: bool) -> dict:
     settings = get_settings()
     engine, sessionmaker = create_engine_and_sessionmaker(settings)
-    async with sessionmaker() as session:
-        summary = await rescore_discovery_candidates(
-            session,
-            statuses=DEFAULT_SCORE_STATUSES,
-            limit=max(1, limit),
-        )
-        if dry_run:
-            await session.rollback()
-        else:
-            await session.commit()
-    await engine.dispose()
-    return summary
+    try:
+        async with sessionmaker() as session:
+            summary = await rescore_discovery_candidates(
+                session,
+                statuses=DEFAULT_SCORE_STATUSES,
+                limit=max(1, min(int(limit), 5000)),
+            )
+            if dry_run:
+                await session.rollback()
+            else:
+                await session.commit()
+        return summary
+    finally:
+        await engine.dispose()
 
 
 async def run(args: argparse.Namespace) -> dict:
