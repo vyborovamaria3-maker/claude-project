@@ -76,6 +76,18 @@ def _dedupe(handles: Iterable[PublicHandle]) -> list[PublicHandle]:
     return list(result.values())
 
 
+def _validate_cmc_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("CoinMarketCap returned a non-object payload")
+    status = payload.get("status")
+    if isinstance(status, dict):
+        error_code = status.get("error_code")
+        if error_code is not None and str(error_code) != "0":
+            message = str(status.get("error_message") or "unknown error")[:500]
+            raise ValueError(f"CoinMarketCap error {error_code}: {message}")
+    return payload
+
+
 class DexScreenerDiscoverySource:
     def __init__(
         self,
@@ -216,10 +228,11 @@ class CoinMarketCapKeylessDiscoverySource:
         listings = await self.client.get(
             f"{self.base_url}/v3/cryptocurrency/listings/latest",
             params={"start": max(1, int(start)), "limit": max(1, min(int(limit), 5000))},
+            headers={"Accept": "application/json"},
         )
         listings.raise_for_status()
-        body = listings.json()
-        rows = body.get("data") if isinstance(body, dict) else None
+        body = _validate_cmc_payload(listings.json())
+        rows = body.get("data")
         if not isinstance(rows, list):
             return []
 
@@ -236,10 +249,11 @@ class CoinMarketCapKeylessDiscoverySource:
             response = await self.client.get(
                 f"{self.base_url}/v2/cryptocurrency/info",
                 params={"id": ",".join(batch)},
+                headers={"Accept": "application/json"},
             )
             response.raise_for_status()
-            payload = response.json()
-            data = payload.get("data") if isinstance(payload, dict) else None
+            payload = _validate_cmc_payload(response.json())
+            data = payload.get("data")
             if not isinstance(data, dict):
                 continue
             for cmc_id, record in data.items():
