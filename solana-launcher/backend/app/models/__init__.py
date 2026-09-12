@@ -35,6 +35,7 @@ from app.models.social_intelligence import (
 )
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
+from app.models.twitter_discovery_scoring import TwitterDiscoveryScore
 from app.models.twitter_intelligence import (
     TwitterAccount,
     TwitterAccountScore,
@@ -75,6 +76,7 @@ __all__ = [
     "TwitterAccountTokenStat",
     "TwitterDiscoveryCandidate",
     "TwitterDiscoveryEvidence",
+    "TwitterDiscoveryScore",
     "IntelligenceSnapshot",
     "IntelligenceEntity",
     "IntelligenceSnapshotEntity",
