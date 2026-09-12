@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
 async def _enqueue(session: Any, handles: list[PublicHandle]) -> int:
     count = 0
     for item in handles:
+        provider = item.source_type[:48]
         await enqueue_discovery_candidate(
             session,
             username=item.username,
@@ -43,11 +44,14 @@ async def _enqueue(session: Any, handles: list[PublicHandle]) -> int:
             priority=max(50, int(item.relevance_hint)),
             depth=0,
             relevance_hint=item.relevance_hint,
-            source_type=item.source_type,
-            source_ref=item.source_ref,
-            discovery_reason="official_social_link",
+            source_type="public_web",
+            source_ref=f"{provider}:{item.source_ref}"[:512],
+            discovery_reason=f"official_social_link:{provider}"[:96],
             source_url=item.source_url,
-            evidence_raw=item.raw,
+            evidence_raw={
+                "provider": provider,
+                "payload": item.raw,
+            },
         )
         count += 1
     return count
