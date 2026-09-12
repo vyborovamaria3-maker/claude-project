@@ -112,7 +112,7 @@ export function normalizeTwitterHandle(
     .replace(/^@/, "")
     .split(/[/?#]/)[0]
     .trim();
-  if (!/^[A-Za-z0-9_]{1,30}$/.test(cleaned)) return undefined;
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(cleaned)) return undefined;
   if (RESERVED_X_PATHS.has(cleaned.toLowerCase())) return undefined;
   return cleaned;
 }
