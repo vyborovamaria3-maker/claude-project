@@ -40,6 +40,8 @@ from app.models.twitter_intelligence import (
     TwitterAccountScore,
     TwitterAccountSnapshot,
     TwitterAccountTokenStat,
+    TwitterDiscoveryCandidate,
+    TwitterDiscoveryEvidence,
     TwitterPost,
     TwitterPostToken,
 )
@@ -71,6 +73,8 @@ __all__ = [
     "TwitterPost",
     "TwitterPostToken",
     "TwitterAccountTokenStat",
+    "TwitterDiscoveryCandidate",
+    "TwitterDiscoveryEvidence",
     "IntelligenceSnapshot",
     "IntelligenceEntity",
     "IntelligenceSnapshotEntity",

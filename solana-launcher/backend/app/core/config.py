@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     twitter_username: str = Field(default="", alias="TWITTER_USERNAME")
     twitter_password: str = Field(default="", alias="TWITTER_PASSWORD")
     twitter_email: str = Field(default="", alias="TWITTER_EMAIL")
+    x_api_bearer_token: str = Field(default="", alias="X_API_BEARER_TOKEN")
+    x_api_base_url: str = Field(default="https://api.x.com/2", alias="X_API_BASE_URL")
     pumpportal_ws_url: str = Field(default="", alias="PUMPPORTAL_WS_URL")
     helius_ws_url: str = Field(default="", alias="HELIUS_WS_URL")
     collector_refresh_seconds: int = Field(default=300, alias="COLLECTOR_REFRESH_SECONDS")
