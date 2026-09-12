@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.models.analytics import Token
 from app.services.twitter_discovery import discovery_stats, enqueue_discovery_candidate
-from app.services.twitter_discovery_scoring import rescore_frontier
+from app.services.twitter_discovery_scoring import rescore_discovery_candidates
 from app.services.twitter_public_discovery_sources import (
     CoinMarketCapKeylessDiscoverySource,
     DexScreenerDiscoverySource,
@@ -81,60 +81,62 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         "errors": [],
     }
 
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        dex = DexScreenerDiscoverySource(client=client)
-        cmc = CoinMarketCapKeylessDiscoverySource(client=client)
-        async with sessionmaker() as session:
-            if args.dexscreener_latest:
-                try:
-                    summary["dexscreener_latest"] = await _enqueue(
-                        session, await dex.latest_token_profiles()
-                    )
-                except httpx.HTTPError as exc:
-                    summary["errors"].append(f"dexscreener_latest:{exc}")
-
-            if args.dexscreener_boosts:
-                try:
-                    summary["dexscreener_boosts"] = await _enqueue(
-                        session, await dex.latest_boosts()
-                    )
-                except httpx.HTTPError as exc:
-                    summary["errors"].append(f"dexscreener_boosts:{exc}")
-
-            addresses = await _token_addresses(session, args.db_solana_tokens)
-            for offset in range(0, len(addresses), 30):
-                try:
-                    summary["dexscreener_db_tokens"] += await _enqueue(
-                        session, await dex.token_socials(addresses[offset : offset + 30])
-                    )
-                except httpx.HTTPError as exc:
-                    summary["errors"].append(f"dexscreener_token_batch:{offset}:{exc}")
-
-            if args.cmc_limit > 0:
-                try:
-                    summary["cmc_keyless"] = await _enqueue(
-                        session, await cmc.discover(limit=args.cmc_limit)
-                    )
-                except httpx.HTTPError as exc:
-                    summary["errors"].append(f"cmc_keyless:{exc}")
-
-            if args.dry_run:
-                await session.rollback()
-            else:
-                await session.commit()
-
-        if not args.dry_run and args.rescore_limit > 0:
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            dex = DexScreenerDiscoverySource(client=client)
+            cmc = CoinMarketCapKeylessDiscoverySource(client=client)
             async with sessionmaker() as session:
-                summary["rescore"] = await rescore_frontier(
-                    session,
-                    limit=max(1, args.rescore_limit),
-                )
-                await session.commit()
+                if args.dexscreener_latest:
+                    try:
+                        summary["dexscreener_latest"] = await _enqueue(
+                            session, await dex.latest_token_profiles()
+                        )
+                    except (httpx.HTTPError, ValueError) as exc:
+                        summary["errors"].append(f"dexscreener_latest:{exc}")
 
-    async with sessionmaker() as session:
-        summary["database"] = await discovery_stats(session)
-    await engine.dispose()
-    return summary
+                if args.dexscreener_boosts:
+                    try:
+                        summary["dexscreener_boosts"] = await _enqueue(
+                            session, await dex.latest_boosts()
+                        )
+                    except (httpx.HTTPError, ValueError) as exc:
+                        summary["errors"].append(f"dexscreener_boosts:{exc}")
+
+                addresses = await _token_addresses(session, args.db_solana_tokens)
+                for offset in range(0, len(addresses), 30):
+                    try:
+                        summary["dexscreener_db_tokens"] += await _enqueue(
+                            session, await dex.token_socials(addresses[offset : offset + 30])
+                        )
+                    except (httpx.HTTPError, ValueError) as exc:
+                        summary["errors"].append(f"dexscreener_token_batch:{offset}:{exc}")
+
+                if args.cmc_limit > 0:
+                    try:
+                        summary["cmc_keyless"] = await _enqueue(
+                            session, await cmc.discover(limit=args.cmc_limit)
+                        )
+                    except (httpx.HTTPError, ValueError) as exc:
+                        summary["errors"].append(f"cmc_keyless:{exc}")
+
+                if args.dry_run:
+                    await session.rollback()
+                else:
+                    await session.commit()
+
+            if not args.dry_run and args.rescore_limit > 0:
+                async with sessionmaker() as session:
+                    summary["rescore"] = await rescore_discovery_candidates(
+                        session,
+                        limit=max(1, min(int(args.rescore_limit), 5000)),
+                    )
+                    await session.commit()
+
+        async with sessionmaker() as session:
+            summary["database"] = await discovery_stats(session)
+        return summary
+    finally:
+        await engine.dispose()
 
 
 def main() -> None:
