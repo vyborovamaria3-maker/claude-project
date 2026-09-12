@@ -61,11 +61,32 @@ class SeedRecord:
     source_url: str | None = None
 
 
+def _safe_username(value: Any) -> str | None:
+    try:
+        return normalize_twitter_username(None if value is None else str(value))
+    except ValueError:
+        return None
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def extract_x_handles(text: str) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for match in _X_PROFILE_RE.finditer(text or ""):
-        username = normalize_twitter_username(match.group(1))
+        username = _safe_username(match.group(1))
         if not username or username in _X_RESERVED or username in seen:
             continue
         seen.add(username)
@@ -84,26 +105,34 @@ def load_seed_records(path: str | Path) -> list[SeedRecord]:
         payload = json.loads(seed_path.read_text(encoding="utf-8-sig"))
         rows = payload.get("accounts", []) if isinstance(payload, dict) else payload
 
+    if not isinstance(rows, list):
+        return []
+
     records: list[SeedRecord] = []
     for row in rows:
         if isinstance(row, str):
-            records.append(SeedRecord(username=row))
+            username = _safe_username(row)
+            if username:
+                records.append(SeedRecord(username=username))
             continue
         if not isinstance(row, dict):
             continue
-        username = normalize_twitter_username(row.get("username"))
-        twitter_id = str(row.get("twitter_id") or "").strip() or None
+        username = _safe_username(row.get("username"))
+        twitter_id = str(row.get("twitter_id") or "").strip()[:32] or None
         if not username and not twitter_id:
             continue
         records.append(
             SeedRecord(
                 username=username,
                 twitter_id=twitter_id,
-                account_type=str(row.get("account_type") or "unknown"),
-                priority=int(row.get("priority") or 70),
-                relevance_hint=float(row.get("relevance_hint") or 60.0),
-                reason=str(row.get("reason") or "curated_seed"),
-                source_url=str(row.get("source_url") or "").strip() or None,
+                account_type=str(row.get("account_type") or "unknown")[:32],
+                priority=max(0, min(100, _safe_int(row.get("priority"), 70))),
+                relevance_hint=max(
+                    0.0,
+                    min(100.0, _safe_float(row.get("relevance_hint"), 60.0)),
+                ),
+                reason=str(row.get("reason") or "curated_seed")[:96],
+                source_url=str(row.get("source_url") or "").strip()[:1024] or None,
             )
         )
     return records
@@ -115,7 +144,9 @@ def load_queries(path: str | Path) -> list[str]:
         return []
     payload = json.loads(query_path.read_text(encoding="utf-8-sig"))
     values = payload.get("queries", []) if isinstance(payload, dict) else payload
-    return [str(value).strip() for value in values if str(value).strip()]
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip()[:512] for value in values if str(value).strip()]
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -131,13 +162,13 @@ def _profile_from_x_user(user: dict[str, Any], *, source: str) -> ResolvedTwitte
     metrics = user.get("public_metrics") if isinstance(user.get("public_metrics"), dict) else {}
     return ResolvedTwitterProfile(
         twitter_id=str(user.get("id") or "").strip(),
-        username=normalize_twitter_username(user.get("username")),
-        display_name=str(user.get("name") or "").strip() or None,
+        username=_safe_username(user.get("username")),
+        display_name=str(user.get("name") or "").strip()[:255] or None,
         bio=str(user.get("description") or ""),
-        avatar_url=str(user.get("profile_image_url") or "").strip() or None,
-        followers_count=int(metrics.get("followers_count") or 0),
-        following_count=int(metrics.get("following_count") or 0),
-        tweet_count=int(metrics.get("tweet_count") or 0),
+        avatar_url=str(user.get("profile_image_url") or "").strip()[:1024] or None,
+        followers_count=max(0, _safe_int(metrics.get("followers_count"), 0)),
+        following_count=max(0, _safe_int(metrics.get("following_count"), 0)),
+        tweet_count=max(0, _safe_int(metrics.get("tweet_count"), 0)),
         verified=bool(user.get("verified")),
         x_created_at=_parse_datetime(user.get("created_at")),
         source=source,
@@ -189,7 +220,7 @@ class XApiDiscoverySource:
         if twitter_id:
             payload = await self._get(f"/users/{twitter_id}", params=params)
         else:
-            normalized = normalize_twitter_username(username)
+            normalized = _safe_username(username)
             if not normalized:
                 return None
             payload = await self._get(f"/users/by/username/{normalized}", params=params)
