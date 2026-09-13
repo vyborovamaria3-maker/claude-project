@@ -214,6 +214,9 @@ async def run_tracked(args: argparse.Namespace) -> dict[str, Any]:
             "dry_run": bool(args.dry_run),
         },
     )
+    if run_id is None:
+        return {"skipped": True, "reason": "already_running"}
+
     try:
         summary = await run(args, run_id=run_id)
     except asyncio.CancelledError:
