@@ -59,7 +59,18 @@ docker exec "$ADMIN_POSTGRES_CONTAINER" \
   > "$DEST/admin-postgres.dump"
 
 test -s "$DEST/admin-postgres.dump"
-sha256sum "$DEST/postgres.dump" "$DEST/admin-postgres.dump" > "$DEST/SHA256SUMS"
+
+# Hash the complete recovery set, not just the database dumps. Run from inside
+# the backup directory so SHA256SUMS contains stable relative paths and never
+# embeds the host's absolute deployment path.
+(
+  cd "$DEST"
+  find . -type f ! -name SHA256SUMS -print0 \
+    | sort -z \
+    | xargs -0 sha256sum \
+    > SHA256SUMS
+  sha256sum -c SHA256SUMS >/dev/null
+)
 
 find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} +
 
