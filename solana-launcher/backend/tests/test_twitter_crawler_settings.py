@@ -1,9 +1,8 @@
 import argparse
 
 import pytest
-from wtforms import SelectField
 
-from app.admin_twitter_settings import NETWORK_MODE_CHOICES, TwitterCrawlerSettingsAdmin
+from app.admin_twitter_settings import TwitterCrawlerSettingsAdmin
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 from app.services.twitter_crawler_settings import (
     TwitterCrawlerConfig,
@@ -34,22 +33,19 @@ def _config() -> TwitterCrawlerConfig:
     )
 
 
-def test_admin_settings_view_is_singleton_edit_only():
+def test_sqladmin_settings_view_is_read_only_to_keep_single_writer():
     assert TwitterCrawlerSettingsAdmin.can_create is False
-    assert TwitterCrawlerSettingsAdmin.can_edit is True
+    assert TwitterCrawlerSettingsAdmin.can_edit is False
     assert TwitterCrawlerSettingsAdmin.can_delete is False
-    assert "enabled" in TwitterCrawlerSettingsAdmin.form_columns
-    assert "process_limit" in TwitterCrawlerSettingsAdmin.form_columns
-    assert "network_mode" in TwitterCrawlerSettingsAdmin.form_columns
-    assert "public_enabled" in TwitterCrawlerSettingsAdmin.form_columns
-    assert "public_dexscreener_latest" in TwitterCrawlerSettingsAdmin.form_columns
-    assert "public_db_solana_tokens" in TwitterCrawlerSettingsAdmin.form_columns
-
-
-def test_network_mode_uses_supported_select_field_configuration():
-    assert TwitterCrawlerSettingsAdmin.form_overrides["network_mode"] is SelectField
-    assert TwitterCrawlerSettingsAdmin.form_args["network_mode"]["choices"] == NETWORK_MODE_CHOICES
-    assert TwitterCrawlerSettingsAdmin.form_args["network_mode"]["validate_choice"] is True
+    assert {
+        "enabled",
+        "process_limit",
+        "network_mode",
+        "public_enabled",
+        "public_dexscreener_latest",
+        "public_db_solana_tokens",
+        "updated_at",
+    }.issubset(set(TwitterCrawlerSettingsAdmin.column_list))
 
 
 def test_admin_defaults_respect_explicit_cli_overrides():
