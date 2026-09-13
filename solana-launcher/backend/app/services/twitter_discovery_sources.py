@@ -14,7 +14,6 @@ import httpx
 from app.services.twitter_account_registry import normalize_twitter_username
 from app.services.twitter_discovery import ResolvedTwitterProfile
 
-
 _X_PROFILE_RE = re.compile(
     r"https?://(?:www\.)?(?:x\.com|twitter\.com)/([A-Za-z0-9_]{1,15})(?:[/?#\"'<>\s]|$)",
     re.IGNORECASE,

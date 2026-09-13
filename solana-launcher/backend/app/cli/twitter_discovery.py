@@ -30,7 +30,6 @@ from app.services.twitter_discovery_sources import (
     load_seed_records,
 )
 
-
 DEFAULT_SEED_FILE = "data/twitter-discovery/crypto_media_seeds.json"
 DEFAULT_QUERIES_FILE = "data/twitter-discovery/queries.json"
 

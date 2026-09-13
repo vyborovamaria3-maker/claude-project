@@ -132,6 +132,7 @@ export const siteDesign = {
       { href: "/trade/history", labelKey: "nav.tradeHistory", icon: "history", tag: "nav.trade_history" },
     ] satisfies SiteNavItem[],
     common: [
+      { href: "/admin/twitter-registry", labelKey: "nav.twitterRegistry", icon: "twitter", tag: "nav.twitter_registry" },
       { href: "/database", labelKey: "nav.database", icon: "database", tag: "nav.database" },
       { href: "/database/wallets", labelKey: "nav.databaseWallets", icon: "wallet", tag: "nav.database_wallets" },
       { href: "/market-overview", labelKey: "nav.marketOverview", icon: "barChart", tag: "nav.market_overview" },

@@ -1,9 +1,6 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
-
 from app.db.base import Base
 from app.models.twitter_intelligence import TwitterAccountTokenStat
 from app.services.twitter_account_registry import (
@@ -16,6 +13,8 @@ from app.services.twitter_discovery import (
     promote_candidate,
 )
 from app.services.twitter_discovery_scoring import rescore_discovery_candidate
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 
 @pytest_asyncio.fixture
@@ -36,7 +35,7 @@ async def session():
 async def test_source_diversity_increases_discovery_score(session: AsyncSession):
     candidate = await enqueue_discovery_candidate(
         session,
-        username="multi_source_alpha",
+        username="multi_alpha",
         relevance_hint=60,
         source_type="curated_seed",
         source_ref="seed.json",
@@ -48,7 +47,7 @@ async def test_source_diversity_increases_discovery_score(session: AsyncSession)
 
     await enqueue_discovery_candidate(
         session,
-        username="multi_source_alpha",
+        username="multi_alpha",
         relevance_hint=60,
         source_type="x_search",
         source_ref="solana memecoin",
@@ -56,7 +55,7 @@ async def test_source_diversity_increases_discovery_score(session: AsyncSession)
     )
     await enqueue_discovery_candidate(
         session,
-        username="multi_source_alpha",
+        username="multi_alpha",
         relevance_hint=60,
         source_type="public_web",
         source_ref="https://example.com/research",
@@ -133,7 +132,7 @@ async def test_early_call_history_lifts_priority(session: AsyncSession):
         following_count=900,
         tweet_count=12_000,
         source="test",
-        x_created_at=datetime(2021, 1, 1, tzinfo=timezone.utc),
+        x_created_at=datetime(2021, 1, 1, tzinfo=UTC),
     )
     accepted, account_id, _ = await promote_candidate(
         session,
