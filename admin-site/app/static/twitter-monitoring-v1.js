@@ -75,6 +75,10 @@
     return api(`/api/sources/${encodeURIComponent(snapshot.source_id)}/tables/${encodeURIComponent(tableName)}?${params}`);
   }
 
+  function displayRunStatus(run) {
+    return run?.stale ? "stale" : (run?.status || "unknown");
+  }
+
   function runStatusClass(status) {
     if (status === "success") return "ok";
     if (status === "running") return "warn";
@@ -97,7 +101,7 @@
       const recentRuns = (snapshot.recent_runs || []).map((row) => ({
         id: row.id,
         job_name: row.job_name,
-        status: row.status,
+        status: displayRunStatus(row),
         phase: row.phase,
         worker: row.worker,
         started_at: formatDate(row.started_at),
@@ -110,15 +114,18 @@
         <div class="cards twitter-monitor-grid">
           ${renderMetric("X аккаунты", formatNumber(metrics.accounts_total), `+${formatNumber(metrics.accounts_24h)} за 24ч`)}
           ${renderMetric("Discovery candidates", formatNumber(metrics.candidates_total), `+${formatNumber(metrics.candidates_24h)} за 24ч`)}
-          ${renderMetric("X posts", formatNumber(metrics.posts_total), `+${formatNumber(metrics.posts_24h)} за 24ч`)}
-          ${renderMetric("Активные runs", formatNumber(metrics.running_runs), `${formatNumber(metrics.failed_runs_24h)} failed / ${formatNumber(metrics.degraded_runs_24h)} degraded за 24ч`)}
+          ${renderMetric("X posts", formatNumber(metrics.posts_total), `${formatNumber(metrics.posts_24h)} опубликовано за 24ч`)}
+          ${renderMetric("Активные runs", formatNumber(metrics.running_runs), `${formatNumber(metrics.stale_running_runs)} stale · ${formatNumber(metrics.failed_runs_24h)} failed · ${formatNumber(metrics.degraded_runs_24h)} degraded`)}
         </div>
 
         <div class="section-grid">
           <section class="section">
             <div class="section-head"><div><h3>Состояние сборщика</h3><p class="muted">Последние запуски и heartbeat</p></div></div>
             <div class="twitter-health-line">
-              ${(snapshot.recent_runs || []).slice(0, 6).map((run) => `<span class="status-pill ${runStatusClass(run.status)}">${escapeHtml(run.job_name)} · ${escapeHtml(run.status)} · ${escapeHtml(run.phase)}</span>`).join("") || '<span class="muted">Запусков пока нет</span>'}
+              ${(snapshot.recent_runs || []).slice(0, 6).map((run) => {
+                const status = displayRunStatus(run);
+                return `<span class="status-pill ${runStatusClass(status)}">${escapeHtml(run.job_name)} · ${escapeHtml(status)} · ${escapeHtml(run.phase)}</span>`;
+              }).join("") || '<span class="muted">Запусков пока нет</span>'}
             </div>
           </section>
           <section class="section">
@@ -141,7 +148,7 @@
 
         <div style="height:18px"></div>
         <section class="section full">
-          <div class="section-head"><div><h3>Последние crawler runs</h3><p class="muted">success / degraded / failed / cancelled / disabled</p></div></div>
+          <div class="section-head"><div><h3>Последние crawler runs</h3><p class="muted">success / degraded / failed / stale / cancelled / disabled</p></div></div>
           ${genericTable(recentRuns, ["id", "job_name", "status", "phase", "worker", "started_at", "heartbeat_at", "duration_ms", "error"])}
         </section>
 
