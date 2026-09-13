@@ -27,6 +27,12 @@ class TwitterCrawlerSettings(Base):
     network_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     lease_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     rescore_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=1500)
+    public_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    public_dexscreener_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    public_dexscreener_boosts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    public_db_solana_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    public_cmc_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    public_rescore_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=3000)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
@@ -58,6 +64,18 @@ class TwitterCrawlerSettings(Base):
     @validates("rescore_limit")
     def validate_rescore_limit(self, _key: str, value: int) -> int:
         return self._bounded_int(value, 1, 5000, "rescore_limit")
+
+    @validates("public_db_solana_tokens")
+    def validate_public_db_solana_tokens(self, _key: str, value: int) -> int:
+        return self._bounded_int(value, 0, 10000, "public_db_solana_tokens")
+
+    @validates("public_cmc_limit")
+    def validate_public_cmc_limit(self, _key: str, value: int) -> int:
+        return self._bounded_int(value, 0, 5000, "public_cmc_limit")
+
+    @validates("public_rescore_limit")
+    def validate_public_rescore_limit(self, _key: str, value: int) -> int:
+        return self._bounded_int(value, 0, 5000, "public_rescore_limit")
 
     @validates("min_relevance")
     def validate_min_relevance(self, _key: str, value: float) -> float:
