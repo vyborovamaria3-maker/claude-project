@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import logging
 from datetime import datetime
 from typing import Literal
@@ -51,6 +52,29 @@ def _store(request: Request) -> TwitterMonitoringStore:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
+def _audit_ip(request: Request) -> str:
+    settings = request.app.state.settings
+    direct = request.client.host if request.client else "unknown"
+    if not settings.trust_proxy:
+        return direct
+    values = [
+        item.strip()
+        for item in request.headers.get("x-forwarded-for", "").split(",")
+        if item.strip()
+    ]
+    if not values:
+        return direct
+    index = len(values) - settings.trusted_proxy_hops - 1
+    if index < 0:
+        return direct
+    candidate = values[index]
+    try:
+        ipaddress.ip_address(candidate)
+        return candidate
+    except ValueError:
+        return direct
+
+
 def _audit_settings_update(
     request: Request,
     *,
@@ -63,7 +87,7 @@ def _audit_settings_update(
             action="twitter_crawler_settings_update",
             success=success,
             username=username,
-            ip_address=request.client.host if request.client else "unknown",
+            ip_address=_audit_ip(request),
             resource="twitter_crawler_settings:1",
             details=details,
         )
