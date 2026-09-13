@@ -7,7 +7,29 @@ permissions:
   contents: read
 
 jobs:
+  require-main:
+    name: Require main branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reject non-main production dispatches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production deploys must be dispatched from main; got $GITHUB_REF" >&2
+            exit 1
+          fi
+
+  predeploy:
+    name: Predeploy validation
+    needs: require-main
+    uses: ./.github/workflows/potapoff-predeploy-gate.yml
+
   deploy:
+    needs:
+      - require-main
+      - predeploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
