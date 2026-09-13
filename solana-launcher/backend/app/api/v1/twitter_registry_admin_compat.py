@@ -349,6 +349,11 @@ async def run_now(
 
     args = build_cycle_parser().parse_args([])
     result = await run_cycle_configured(args, [])
+    if result.get("skipped") is True and result.get("reason") == "already_running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A Twitter discovery run is already in progress",
+        )
     return {"status": "success", "summary": result}
 
 
@@ -366,7 +371,13 @@ async def promote_now(
     candidate_id: int,
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    candidate = await session.get(TwitterDiscoveryCandidate, candidate_id)
+    candidate = (
+        await session.execute(
+            select(TwitterDiscoveryCandidate)
+            .where(TwitterDiscoveryCandidate.id == candidate_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
     if candidate is None:
         raise HTTPException(status_code=404, detail="Candidate not found")
     if candidate.account_id is not None:
