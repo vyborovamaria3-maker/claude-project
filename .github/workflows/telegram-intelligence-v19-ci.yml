@@ -90,5 +90,8 @@ jobs:
           POSTGRES_PASSWORD: test-postgres
           RABBITMQ_PASSWORD: test-rabbit
           SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
+          SUBSCRIPTION_INTERNAL_KEY: ci-subscription-internal-abcdefghijklmnopqrstuvwxyz
           TELEGRAM_BOT_TOKEN: test-token
+          TELEGRAM_WEBHOOK_URL: https://example.invalid/api/telegram/webhook
+          TELEGRAM_WEBHOOK_SECRET: ci-webhook-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
         run: docker compose -f docker-compose.production.yml config >/dev/null
