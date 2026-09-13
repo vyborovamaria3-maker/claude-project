@@ -231,6 +231,28 @@ verify_admin_route() {
   echo "ADMIN_ROUTE_OK $body"
 }
 
+verify_twitter_admin_backend() {
+  "${ADMIN_COMPOSE[@]}" exec -T admin python - <<'PY'
+import os
+import httpx
+
+base = os.environ.get("ADMIN_TWITTER_BACKEND_URL", "http://backend:8000").rstrip("/")
+key = os.environ.get("TWITTER_CRAWLER_ADMIN_KEY", "")
+if len(key) < 32:
+    raise SystemExit("TWITTER_CRAWLER_ADMIN_KEY is missing in admin container")
+with httpx.Client(timeout=5.0, trust_env=False) as client:
+    response = client.get(
+        f"{base}/api/v1/twitter/admin/crawler-settings/access",
+        headers={"X-Twitter-Crawler-Admin-Key": key},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("ok") is not True:
+        raise SystemExit(f"unexpected Twitter admin access payload: {payload!r}")
+print("TWITTER_ADMIN_BACKEND_OK")
+PY
+}
+
 start_core_services() {
   "${COMPOSE[@]}" up -d --remove-orphans \
     postgres \
@@ -324,6 +346,7 @@ sync_telegram_bot
 sync_telegram_intelligence
 
 "${COMPOSE[@]}" exec -T backend alembic upgrade heads
+verify_twitter_admin_backend
 
 "${COMPOSE[@]}" up -d celery-worker
 start_twitter_discovery_required
