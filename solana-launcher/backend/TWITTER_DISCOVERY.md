@@ -33,7 +33,17 @@ Without the official X API, a stable numeric X user ID cannot always be resolved
 
 This avoids inventing synthetic X IDs that could later collide with real identities.
 
-## Recommended no-X-API run
+## Background collector and admin controls
+
+Docker Compose runs `app.cli.twitter_discovery_daemon` as the dedicated `twitter-discovery` service. It runs the configured public-source collector every 15 minutes and the X/API discovery cycle every 30 minutes. The two collectors run sequentially inside one process, so scheduled Twitter discovery runs do not overlap each other.
+
+Use `/admin` -> **Twitter / X monitoring** -> **Crawler settings** to control both collector families. The public collector has independent enable/source/limit settings, while the X/API cycle has its own enable/search/frontier/network settings. Each individual run is written to **Crawler runs / status**, including phase heartbeats, final status, duration, summary and errors.
+
+Safe defaults enable DEX Screener latest profiles, latest boosts and enrichment of the latest 500 Solana tokens. CoinMarketCap discovery is disabled by default because its keyless public endpoint is less predictable; it can be enabled by setting a positive `public_cmc_limit` in admin.
+
+The backend Docker image includes `data/twitter-discovery/crypto_media_seeds.json` and `data/twitter-discovery/queries.json`, which are used by the X/API cycle.
+
+## Manual no-X-API run
 
 ```bash
 cd solana-launcher/backend
@@ -46,8 +56,10 @@ python -m app.cli.twitter_discovery_public \
   --rescore-limit 3000
 ```
 
+Admin values are defaults. Explicit command-line flags take precedence for manual diagnostics. Boolean DEX Screener flags support both positive and negative forms, for example `--dexscreener-latest` and `--no-dexscreener-latest`.
+
 The output is a growing, ranked universe of crypto/memecoin/media X handles with provenance and discovery scores.
 
 ## Optional X API enrichment
 
-If `X_API_BEARER_TOKEN` is configured later, `app.cli.twitter_discovery` can resolve stable IDs and expand following/follower graph edges. The public-source collector does not depend on it.
+If `X_API_BEARER_TOKEN` is configured, `app.cli.twitter_discovery_cycle` can resolve stable IDs, search configured queries and expand following/follower graph edges. Without the token, public discovery still keeps the unresolved handle frontier growing and scored.
