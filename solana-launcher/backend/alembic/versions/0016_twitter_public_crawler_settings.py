@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0016_twitter_public_crawler_settings"
+revision = "0016_twitter_public_settings"
 down_revision = "0015_twitter_crawler_settings"
 branch_labels = None
 depends_on = None
