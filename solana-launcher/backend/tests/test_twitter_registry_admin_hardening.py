@@ -99,7 +99,7 @@ def test_promote_without_stable_id_is_rejected_without_req_query_param(app_and_c
     )
     assert response.status_code == 400
     assert "Stable X user ID unavailable" in response.json()["detail"]
-    assert "req" not in response.text
+    assert "Field required" not in response.text
 
 
 def test_candidate_source_filter_uses_evidence(app_and_client):

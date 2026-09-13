@@ -4,8 +4,6 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from app.db.base import Base
 from app.models.twitter_discovery_admin import TwitterDiscoveryRun, TwitterDiscoveryRunLock
 from app.services.twitter_discovery_admin_runtime import (
@@ -14,6 +12,7 @@ from app.services.twitter_discovery_admin_runtime import (
     recover_stale_discovery_runs,
     start_discovery_run,
 )
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 @pytest.mark.asyncio
