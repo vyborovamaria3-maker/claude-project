@@ -35,12 +35,10 @@ The workflows use a self-hosted runner by default so the release gate does not d
 
 The runner must have Docker, Docker Compose, Bash and Git available. The workflows install project dependencies through their existing setup steps. A queued workflow with no matching runner is not a passing validation.
 
-To bootstrap an Ubuntu runner, generate a fresh repository runner token in GitHub, then run:
+To bootstrap an Ubuntu runner, copy `.github/scripts/install-self-hosted-runner.sh` to the server, generate a fresh repository runner token in GitHub, then run:
 
 ```bash
 export RUNNER_TOKEN='<fresh repository runner registration token>'
-curl -fsSLo /tmp/install-self-hosted-runner.sh \
-  https://raw.githubusercontent.com/vyborovamaria3-maker/claude-project/integration/twitter-monitoring-main-resolved/.github/scripts/install-self-hosted-runner.sh
 sudo -E bash /tmp/install-self-hosted-runner.sh
 ```
 
