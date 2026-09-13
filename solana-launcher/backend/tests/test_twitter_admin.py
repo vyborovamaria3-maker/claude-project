@@ -47,21 +47,13 @@ def test_crawler_run_view_is_read_only_and_shows_health_fields():
     }.issubset(set(TwitterCrawlerRunAdmin.column_list))
 
 
-def test_candidate_admin_only_edits_operational_queue_fields():
+def test_candidate_admin_is_read_only_to_avoid_worker_races():
     assert TwitterDiscoveryCandidateAdmin.can_create is False
+    assert TwitterDiscoveryCandidateAdmin.can_edit is False
     assert TwitterDiscoveryCandidateAdmin.can_delete is False
-    assert TwitterDiscoveryCandidateAdmin.can_edit is True
-    assert TwitterDiscoveryCandidateAdmin.form_columns == [
-        "account_type_hint",
-        "status",
-        "priority",
-        "relevance_hint",
-        "next_attempt_at",
-    ]
 
 
-def test_account_admin_only_edits_classification_fields():
+def test_account_registry_is_read_only():
     assert TwitterAccountAdmin.can_create is False
+    assert TwitterAccountAdmin.can_edit is False
     assert TwitterAccountAdmin.can_delete is False
-    assert TwitterAccountAdmin.can_edit is True
-    assert TwitterAccountAdmin.form_columns == ["account_type", "status"]
