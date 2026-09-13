@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, JSON, String, Text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -18,6 +18,12 @@ class TwitterCrawlerRun(Base):
         Index("ix_twitter_crawler_runs_job_started", "job_name", "started_at"),
         Index("ix_twitter_crawler_runs_status_heartbeat", "status", "heartbeat_at"),
         Index("ix_twitter_crawler_runs_status_started", "status", "started_at"),
+        Index(
+            "uq_twitter_crawler_runs_running_job",
+            "job_name",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
