@@ -293,18 +293,25 @@ if telegram_bot_enabled; then
   "${COMPOSE[@]}" --profile telegram pull telegram-bot
 fi
 
+# Background writers are stopped before the schema transition. The currently
+# serving backend/frontend remain on the previous tag until the migration has
+# completed successfully.
 stop_telegram
 stop_twitter_discovery
 "${COMPOSE[@]}" stop celery-worker >/dev/null 2>&1 || true
 
-start_admin
+# Run the new image as a one-shot migration container against the already-live
+# database. This prevents new application code from seeing a pre-migration
+# schema and still allows rollback because production backend startup does not
+# run Alembic implicitly.
+"${COMPOSE[@]}" run --rm --no-deps backend alembic upgrade heads
+
 start_core_services
+start_admin
 restart_nginx
 sync_telegram_bot
 sync_telegram_intelligence
 
-# Apply schema before any background worker can touch the new Twitter tables.
-"${COMPOSE[@]}" exec -T backend alembic upgrade heads
 verify_twitter_admin_backend
 "${COMPOSE[@]}" up -d celery-worker
 start_twitter_discovery_required
