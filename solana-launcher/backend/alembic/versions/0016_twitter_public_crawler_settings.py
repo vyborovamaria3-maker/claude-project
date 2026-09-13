@@ -22,7 +22,7 @@ def upgrade() -> None:
             "public_dexscreener_latest",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.false(),
+            server_default=sa.true(),
         ),
     )
     op.add_column(
@@ -31,12 +31,12 @@ def upgrade() -> None:
             "public_dexscreener_boosts",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.false(),
+            server_default=sa.true(),
         ),
     )
     op.add_column(
         "twitter_crawler_settings",
-        sa.Column("public_db_solana_tokens", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("public_db_solana_tokens", sa.Integer(), nullable=False, server_default="500"),
     )
     op.add_column(
         "twitter_crawler_settings",
