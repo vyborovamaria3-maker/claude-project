@@ -8,6 +8,7 @@ from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 from app.services.twitter_crawler_settings import (
     TwitterCrawlerConfig,
     apply_twitter_crawler_config,
+    apply_twitter_public_config,
     explicit_cli_flags,
 )
 
@@ -24,6 +25,12 @@ def _config() -> TwitterCrawlerConfig:
         network_limit=180,
         lease_seconds=600,
         rescore_limit=2500,
+        public_enabled=True,
+        public_dexscreener_latest=True,
+        public_dexscreener_boosts=True,
+        public_db_solana_tokens=700,
+        public_cmc_limit=900,
+        public_rescore_limit=3200,
     )
 
 
@@ -34,6 +41,9 @@ def test_admin_settings_view_is_singleton_edit_only():
     assert "enabled" in TwitterCrawlerSettingsAdmin.form_columns
     assert "process_limit" in TwitterCrawlerSettingsAdmin.form_columns
     assert "network_mode" in TwitterCrawlerSettingsAdmin.form_columns
+    assert "public_enabled" in TwitterCrawlerSettingsAdmin.form_columns
+    assert "public_dexscreener_latest" in TwitterCrawlerSettingsAdmin.form_columns
+    assert "public_db_solana_tokens" in TwitterCrawlerSettingsAdmin.form_columns
 
 
 def test_network_mode_uses_supported_select_field_configuration():
@@ -69,6 +79,52 @@ def test_admin_defaults_respect_explicit_cli_overrides():
     assert args.rescore_limit == 2500
 
 
+def test_public_admin_defaults_apply_without_cli_overrides():
+    args = argparse.Namespace(
+        dexscreener_latest=False,
+        dexscreener_boosts=False,
+        db_solana_tokens=0,
+        cmc_limit=0,
+        rescore_limit=3000,
+    )
+
+    apply_twitter_public_config(args, _config(), explicit_flags=set())
+
+    assert args.dexscreener_latest is True
+    assert args.dexscreener_boosts is True
+    assert args.db_solana_tokens == 700
+    assert args.cmc_limit == 900
+    assert args.rescore_limit == 3200
+
+
+def test_public_cli_flags_override_admin_defaults_including_negative_flags():
+    args = argparse.Namespace(
+        dexscreener_latest=False,
+        dexscreener_boosts=True,
+        db_solana_tokens=12,
+        cmc_limit=34,
+        rescore_limit=56,
+    )
+    flags = explicit_cli_flags(
+        [
+            "--no-dexscreener-latest",
+            "--dexscreener-boosts",
+            "--db-solana-tokens=12",
+            "--cmc-limit",
+            "34",
+            "--rescore-limit=56",
+        ]
+    )
+
+    apply_twitter_public_config(args, _config(), explicit_flags=flags)
+
+    assert args.dexscreener_latest is False
+    assert args.dexscreener_boosts is True
+    assert args.db_solana_tokens == 12
+    assert args.cmc_limit == 34
+    assert args.rescore_limit == 56
+
+
 def test_crawler_settings_reject_invalid_operational_ranges():
     settings = TwitterCrawlerSettings()
     with pytest.raises(ValueError):
@@ -83,3 +139,9 @@ def test_crawler_settings_reject_invalid_operational_ranges():
         settings.network_mode = "random"
     with pytest.raises(ValueError):
         settings.network_mode = None  # type: ignore[assignment]
+    with pytest.raises(ValueError):
+        settings.public_db_solana_tokens = 10001
+    with pytest.raises(ValueError):
+        settings.public_cmc_limit = 5001
+    with pytest.raises(ValueError):
+        settings.public_rescore_limit = -1
