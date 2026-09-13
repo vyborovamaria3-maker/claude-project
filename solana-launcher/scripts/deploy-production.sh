@@ -44,6 +44,16 @@ set_env_value() {
 
 ensure_twitter_crawler_admin_secret() {
   local backend_key admin_key key
+
+  # backend and worker containers load backend.env first and .env.server second.
+  # A value in .env.server would therefore override the dedicated backend-only
+  # credential, including an empty assignment. Keep this secret exclusively in
+  # backend.env + admin-site/.env and fail before touching the deployment.
+  if grep -q '^TWITTER_CRAWLER_ADMIN_KEY=' .env.server; then
+    echo "Remove TWITTER_CRAWLER_ADMIN_KEY from .env.server; keep it only in backend.env and admin-site/.env" >&2
+    return 1
+  fi
+
   backend_key="$(env_value_from_file backend.env TWITTER_CRAWLER_ADMIN_KEY)"
   admin_key="$(env_value_from_file "$ADMIN_ENV_FILE" TWITTER_CRAWLER_ADMIN_KEY)"
 
