@@ -23,6 +23,7 @@ class TwitterCrawlerRun(Base):
             "job_name",
             unique=True,
             postgresql_where=text("status = 'running'"),
+            sqlite_where=text("status = 'running'"),
         ),
     )
 
