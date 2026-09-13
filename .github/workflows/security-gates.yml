@@ -10,6 +10,8 @@ on:
       - "telegram-miniapp/bot/**"
       - "security/**"
       - ".github/workflows/security-gates.yml"
+      - ".github/workflows/potapoff-predeploy-gate.yml"
+      - ".github/workflows/potapoff-release-images.yml"
       - ".github/workflows/potapoff-production.yml"
   workflow_dispatch:
 
