@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import copy
 import json
+import sys
 
 from app.cli.twitter_discovery import build_parser as build_discovery_parser
 from app.cli.twitter_discovery import run as run_discovery
@@ -13,6 +14,11 @@ from app.services.twitter_crawler_runs import (
     try_finish_twitter_crawler_run,
     try_heartbeat_twitter_crawler_run,
     try_start_twitter_crawler_run,
+)
+from app.services.twitter_crawler_settings import (
+    apply_twitter_crawler_config,
+    explicit_cli_flags,
+    load_twitter_crawler_config,
 )
 from app.services.twitter_discovery_scoring import rescore_discovery_candidates
 
@@ -112,6 +118,14 @@ async def run_tracked(args: argparse.Namespace) -> dict:
             "dry_run": bool(args.dry_run),
             "skip_frontier": bool(args.skip_frontier),
             "skip_rescore": bool(args.skip_rescore),
+            "query_limit": int(args.query_limit),
+            "process_limit": int(args.process_limit),
+            "batch_size": int(args.batch_size),
+            "max_depth": int(args.max_depth),
+            "min_relevance": float(args.min_relevance),
+            "network_mode": str(args.network_mode),
+            "network_limit": int(args.network_limit),
+            "lease_seconds": int(args.lease_seconds),
             "rescore_limit": int(args.rescore_limit),
         },
     )
@@ -135,9 +149,34 @@ async def run_tracked(args: argparse.Namespace) -> dict:
     return result
 
 
+async def run_configured(args: argparse.Namespace, argv: list[str]) -> dict:
+    config = await load_twitter_crawler_config()
+    if config is not None:
+        apply_twitter_crawler_config(
+            args,
+            config,
+            explicit_flags=explicit_cli_flags(argv),
+        )
+        if not config.enabled:
+            run_id = await try_start_twitter_crawler_run(
+                "twitter_discovery_cycle",
+                phase="disabled",
+                meta={"reason": "disabled_by_admin"},
+            )
+            result = {"skipped": True, "reason": "disabled_by_admin"}
+            await try_finish_twitter_crawler_run(
+                run_id,
+                status="disabled",
+                phase="disabled",
+                summary=result,
+            )
+            return result
+    return await run_tracked(args)
+
+
 def main() -> None:
     args = build_parser().parse_args()
-    result = asyncio.run(run_tracked(args))
+    result = asyncio.run(run_configured(args, sys.argv[1:]))
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
