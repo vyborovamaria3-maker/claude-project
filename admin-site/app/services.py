@@ -13,9 +13,13 @@ BLOCKCHAIN_TABLES = [
     "migration_token_rows", "migration_wallet_rows", "payments", "PaymentTransaction",
 ]
 X_TABLES = [
-    "twitter_token_analyses", "twitter_token_tweets", "twitter_accounts",
-    "twitter_token_shillers", "twitter_social_discoveries", "x_mentions",
-    "twitter_mentions", "tweets", "x_search_runs", "social_posts", "social_accounts",
+    "twitter_crawler_runs", "twitter_crawler_settings", "twitter_discovery_candidates",
+    "twitter_discovery_evidence", "twitter_discovery_scores", "twitter_accounts",
+    "twitter_account_snapshots", "twitter_account_scores", "twitter_posts",
+    "twitter_post_tokens", "twitter_account_token_stats", "twitter_token_analyses",
+    "twitter_token_tweets", "twitter_token_shillers", "twitter_social_discoveries",
+    "x_mentions", "twitter_mentions", "tweets", "x_search_runs", "social_posts",
+    "social_accounts",
 ]
 TELEGRAM_TABLES = [
     "NotificationLog", "notification_logs", "notifications", "agents", "tasks",
@@ -217,5 +221,14 @@ def relation_graph(registry: SourceRegistry, query: str, *, limit: int = 100) ->
 
 
 def queue_overview(registry: SourceRegistry, limit: int = 100) -> dict[str, Any]:
-    candidates = ["jobs", "tasks", "queue_jobs", "analysis_runs", "telegram_ai_runs", "x_search_runs"]
+    candidates = [
+        "jobs",
+        "tasks",
+        "queue_jobs",
+        "analysis_runs",
+        "telegram_ai_runs",
+        "x_search_runs",
+        "twitter_discovery_candidates",
+        "twitter_crawler_runs",
+    ]
     return domain_tables(registry, candidates, limit=limit)
