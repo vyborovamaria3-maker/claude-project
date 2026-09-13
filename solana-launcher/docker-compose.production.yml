@@ -77,6 +77,10 @@ services:
       REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
       SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:-}
       REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"
+    # Production migrations are owned by deploy-production.sh. Overriding the
+    # image CMD keeps rollback compatible after a newer Alembic revision has
+    # already been recorded in the database.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     depends_on:
       postgres:
         condition: service_healthy
