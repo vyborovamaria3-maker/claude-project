@@ -21,6 +21,7 @@ REQUIRED_SERVICES=(
   rabbitmq
   backend
   celery-worker
+  twitter-discovery
   frontend
   nginx
   prometheus
@@ -165,7 +166,7 @@ for attempt in $(seq 1 45); do
   bad_services="$(check_services)"
 
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok frontend_build=verified"
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok twitter_discovery=running frontend_build=verified"
     exit 0
   fi
 
@@ -185,6 +186,7 @@ echo "Build info: ${build_info:-unavailable}" >&2
   rabbitmq \
   backend \
   celery-worker \
+  twitter-discovery \
   frontend \
   nginx \
   prometheus || true
