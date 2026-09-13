@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+from fastapi import HTTPException
+
+from app.api.v1 import twitter_registry_admin_compat as compat
 from app.api.v1.router import api_router
 from app.api.v1.twitter_registry_admin_compat import LegacyConfigPatch, _legacy_config
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
@@ -65,3 +69,27 @@ def test_legacy_patch_rejects_unknown_and_invalid_values():
             pass
         else:
             raise AssertionError(f"invalid legacy config accepted: {payload!r}")
+
+
+class _NoRunningResult:
+    def scalar_one_or_none(self):
+        return None
+
+
+class _NoRunningSession:
+    async def execute(self, _statement):
+        return _NoRunningResult()
+
+
+@pytest.mark.asyncio
+async def test_manual_run_reports_conflict_if_atomic_run_claim_loses_race(monkeypatch):
+    async def already_running(_args, _argv):
+        return {"skipped": True, "reason": "already_running"}
+
+    monkeypatch.setattr(compat, "run_cycle_configured", already_running)
+
+    with pytest.raises(HTTPException) as exc:
+        await compat.run_now(session=_NoRunningSession())
+
+    assert exc.value.status_code == 409
+    assert "already in progress" in str(exc.value.detail)
