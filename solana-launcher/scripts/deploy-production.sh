@@ -9,8 +9,10 @@ BACKUP_SCRIPT="$DEPLOY_DIR/scripts/backup-production.sh"
 HEALTH_SCRIPT="$DEPLOY_DIR/scripts/healthcheck-production.sh"
 PROMETHEUS_CONFIG="$DEPLOY_DIR/prometheus/prometheus.yml"
 ADMIN_DIR="${ADMIN_DIR:-/opt/claude-project/admin-site}"
+ADMIN_ROLLBACK_DIR="${ADMIN_ROLLBACK_DIR:-/opt/claude-project/.admin-site-rollback}"
 ADMIN_COMPOSE_FILE="$ADMIN_DIR/docker-compose.yml"
 ADMIN_ENV_FILE="$ADMIN_DIR/.env"
+REGISTRY_BASE="ghcr.io/vyborovamaria3-maker/claude-project"
 
 cd "$DEPLOY_DIR"
 
@@ -117,6 +119,37 @@ telegram_bot_enabled() {
   grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' .env.server \
     && grep -Eq '^TELEGRAM_WEBHOOK_URL=https://.+$' .env.server \
     && grep -Eq '^TELEGRAM_WEBHOOK_SECRET=[A-Za-z0-9_-]{32,256}$' .env.server
+}
+
+verify_release_images() {
+  local tag="$1"
+  local image
+  local images=(backend frontend)
+  if telegram_bot_enabled; then
+    images+=(telegram-bot)
+  fi
+  for image in "${images[@]}"; do
+    if ! docker manifest inspect "$REGISTRY_BASE/$image:$tag" >/dev/null 2>&1; then
+      echo "Required release image is unavailable: $REGISTRY_BASE/$image:$tag" >&2
+      return 1
+    fi
+  done
+  echo "RELEASE_IMAGES_OK tag=$tag"
+}
+
+restore_admin_source() {
+  local failed_dir
+  if [[ ! -d "$ADMIN_ROLLBACK_DIR" ]]; then
+    return 0
+  fi
+  failed_dir="${ADMIN_DIR}.failed-$(date -u +%Y%m%d%H%M%S)"
+  rm -rf "$failed_dir"
+  if [[ -d "$ADMIN_DIR" ]]; then
+    mv "$ADMIN_DIR" "$failed_dir"
+  fi
+  mv "$ADMIN_ROLLBACK_DIR" "$ADMIN_DIR"
+  rm -rf "$failed_dir"
+  echo "ADMIN_SOURCE_ROLLBACK_OK"
 }
 
 stop_telegram() {
@@ -243,8 +276,9 @@ rollback() {
   local exit_code=$?
   trap - ERR
   echo "Deployment failed; starting rollback" >&2
+  restore_admin_source
   if [[ -z "$PREVIOUS_TAG" ]]; then
-    echo "No previous GHCR tag exists; manual recovery is required" >&2
+    echo "No previous GHCR tag exists; admin source was restored but manual core recovery is required" >&2
     exit "$exit_code"
   fi
 
@@ -265,8 +299,8 @@ rollback() {
   stop_telegram
   stop_twitter_discovery
   "${COMPOSE[@]}" stop celery-worker >/dev/null 2>&1 || true
-  start_admin
   start_core_services
+  start_admin
   "${COMPOSE[@]}" up -d celery-worker
   start_twitter_discovery_rollback
   restart_nginx
@@ -280,6 +314,11 @@ rollback() {
   echo "ROLLBACK_OK tag=$PREVIOUS_TAG"
   exit "$exit_code"
 }
+
+# Fail before backup, tag mutation, migrations or service restarts if the release
+# images are not actually present in GHCR. The workflow performs the same check
+# before staging admin sources; this duplicate guard protects direct script use.
+verify_release_images "$NEW_TAG"
 
 trap rollback ERR
 "$BACKUP_SCRIPT"
@@ -318,6 +357,7 @@ start_twitter_discovery_required
 
 "$HEALTH_SCRIPT"
 verify_admin_route
+rm -rf "$ADMIN_ROLLBACK_DIR"
 trap - ERR
 
 docker image prune -f --filter "until=168h" >/dev/null || true
