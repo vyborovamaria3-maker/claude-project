@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 import pytest
@@ -187,6 +189,44 @@ def test_account_detail_returns_true_counts_over_preview_limit(app_and_client):
     assert payload["posts_count"] == 25
     assert len(payload["snapshots"]) == 20
     assert len(payload["posts"]) == 20
+
+
+def test_admin_run_http_concurrent_request_returns_409(app_and_client, monkeypatch):
+    client, headers, _sessionmaker = app_and_client
+    first_runner_started = threading.Event()
+    release_first_runner = threading.Event()
+
+    async def slow_runner(_args):
+        first_runner_started.set()
+        released = await asyncio.to_thread(release_first_runner.wait, 5)
+        assert released
+        return {"rescore": {"rescored": 0}}
+
+    async def fast_registry_runner(_args):
+        return {"frontier": {"accepted": 0, "failed": 0}}
+
+    monkeypatch.setattr("app.api.v1.twitter_registry_admin_hardened.run_public_discovery", slow_runner)
+    monkeypatch.setattr("app.api.v1.twitter_registry_admin_hardened.run_registry_discovery", fast_registry_runner)
+
+    def run_request():
+        return client.post(
+            "/api/v1/admin/twitter-registry/actions/run",
+            json={"trigger": "http_concurrency_test"},
+            headers=headers,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(run_request)
+        assert first_runner_started.wait(5)
+        second = executor.submit(run_request)
+        second_response = second.result(timeout=5)
+        release_first_runner.set()
+        first_response = first.result(timeout=5)
+
+    responses = [first_response, second_response]
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    conflict = next(response for response in responses if response.status_code == 409)
+    assert "already in progress" in conflict.json()["detail"]
 
 
 @pytest.mark.asyncio
