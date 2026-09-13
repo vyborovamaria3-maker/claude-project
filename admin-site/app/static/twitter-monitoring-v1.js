@@ -202,8 +202,8 @@
   });
 
   document.querySelector("#navigation")?.addEventListener("click", (event) => {
-    const appNav = event.target.closest("[data-view]");
-    if (appNav) active = false;
+    const navItem = event.target.closest(".nav-item");
+    if (navItem && navItem.id !== "twitterMonitoringNav") active = false;
   }, true);
 
   document.querySelector("#refreshButton")?.addEventListener("click", async (event) => {
