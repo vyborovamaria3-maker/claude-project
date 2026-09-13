@@ -86,6 +86,17 @@ def _serialize(row: dict) -> dict:
     return result
 
 
+@router.get("/crawler-settings/access")
+async def crawler_settings_access(
+    x_twitter_crawler_admin_key: str | None = Header(
+        default=None,
+        alias="X-Twitter-Crawler-Admin-Key",
+    ),
+) -> dict:
+    _require_admin_key(x_twitter_crawler_admin_key)
+    return {"ok": True, "scope": "twitter_crawler_settings"}
+
+
 @router.put("/crawler-settings")
 async def update_crawler_settings(
     body: TwitterCrawlerSettingsUpdate,
