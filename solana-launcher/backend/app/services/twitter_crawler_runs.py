@@ -36,11 +36,13 @@ async def _expire_stale_runs(session: Any, *, job_name: str, now: datetime) -> i
     cutoff = now - timedelta(seconds=STALE_RUN_SECONDS)
     rows = (
         await session.execute(
-            select(TwitterCrawlerRun).where(
+            select(TwitterCrawlerRun)
+            .where(
                 TwitterCrawlerRun.job_name == job_name,
                 TwitterCrawlerRun.status == "running",
                 TwitterCrawlerRun.heartbeat_at < cutoff,
             )
+            .with_for_update(skip_locked=True)
         )
     ).scalars().all()
     for row in rows:
@@ -143,14 +145,27 @@ async def finish_twitter_crawler_run(
             if row is None or row.status != "running":
                 return
             now = _utcnow()
-            row.status = status
-            row.phase = phase
-            row.heartbeat_at = now
-            row.finished_at = now
-            row.duration_ms = _duration_ms(row.started_at, now)
-            row.error = error
+            values: dict[str, Any] = {
+                "status": status,
+                "phase": phase,
+                "heartbeat_at": now,
+                "finished_at": now,
+                "duration_ms": _duration_ms(row.started_at, now),
+                "error": error,
+            }
             if summary is not None:
-                row.summary = summary
+                values["summary"] = summary
+            result = await session.execute(
+                update(TwitterCrawlerRun)
+                .where(
+                    TwitterCrawlerRun.id == run_id,
+                    TwitterCrawlerRun.status == "running",
+                )
+                .values(**values)
+            )
+            if int(getattr(result, "rowcount", 0) or 0) == 0:
+                await session.rollback()
+                return
             await session.commit()
     finally:
         await engine.dispose()
