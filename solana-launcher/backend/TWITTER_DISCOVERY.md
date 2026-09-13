@@ -37,11 +37,15 @@ This avoids inventing synthetic X IDs that could later collide with real identit
 
 Docker Compose runs `app.cli.twitter_discovery_daemon` as the dedicated `twitter-discovery` service. It runs the configured public-source collector every 15 minutes and the X/API discovery cycle every 30 minutes. The two collectors run sequentially inside one process, so scheduled Twitter discovery runs do not overlap each other.
 
-Use `/admin` -> **Twitter / X monitoring** -> **Crawler settings** to control both collector families. The public collector has independent enable/source/limit settings, while the X/API cycle has its own enable/search/frontier/network settings. Each individual run is written to **Crawler runs / status**, including phase heartbeats, final status, duration, summary and errors.
+The production Control Center at `admin.potapoff.fun` has a dedicated **X мониторинг** tab. It shows account/candidate/post growth, active and stale runs, queue status, recent accounts, run history, a read-only Twitter table explorer and the editable crawler settings. Settings writes use a strict field whitelist, validated ranges and optimistic locking on `updated_at` so two admin sessions cannot silently overwrite each other.
+
+The backend SQLAdmin `/admin` also exposes **Twitter / X monitoring** tables as an internal/fallback view. The production Control Center is the primary operator UI.
 
 Safe defaults enable DEX Screener latest profiles, latest boosts and enrichment of the latest 500 Solana tokens. CoinMarketCap discovery is disabled by default because its keyless public endpoint is less predictable; it can be enabled by setting a positive `public_cmc_limit` in admin.
 
-The backend Docker image includes `data/twitter-discovery/crypto_media_seeds.json` and `data/twitter-discovery/queries.json`, which are used by the X/API cycle.
+Each individual run is written to `twitter_crawler_runs`, including phase heartbeats, final status, duration, summary and errors. Graceful cancellation is recorded as `cancelled`. A late heartbeat cannot revive a terminal run, and a `running` row with an expired heartbeat is treated as stale and is marked failed when the next run for that job starts.
+
+The backend Docker image includes `data/twitter-discovery/crypto_media_seeds.json` and `data/twitter-discovery/queries.json`, which are used by the X/API cycle. Production health checks require the `twitter-discovery` container to be running.
 
 ## Manual no-X-API run
 
