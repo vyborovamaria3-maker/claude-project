@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Literal
 
@@ -9,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .auth import require_admin
 from .twitter_monitoring import TwitterMonitoringStore, find_twitter_source
+
+logger = logging.getLogger(__name__)
 
 
 class TwitterCrawlerSettingsBody(BaseModel):
@@ -48,6 +51,31 @@ def _store(request: Request) -> TwitterMonitoringStore:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
+def _audit_settings_update(
+    request: Request,
+    *,
+    username: str,
+    success: bool,
+    details: dict,
+) -> None:
+    try:
+        request.app.state.audit.record(
+            action="twitter_crawler_settings_update",
+            success=success,
+            username=username,
+            ip_address=request.client.host if request.client else "unknown",
+            resource="twitter_crawler_settings:1",
+            details=details,
+        )
+    except Exception:
+        # Audit persistence is valuable, but it must not make the already-known
+        # outcome of the settings transaction ambiguous to the operator.
+        logger.exception(
+            "Could not persist Twitter crawler settings audit event success=%s",
+            success,
+        )
+
+
 def build_twitter_monitoring_router() -> APIRouter:
     router = APIRouter(prefix="/api/twitter-monitoring", tags=["twitter-monitoring"])
 
@@ -73,23 +101,19 @@ def build_twitter_monitoring_router() -> APIRouter:
                 expected_updated_at=body.expected_updated_at,
             )
         except (psycopg.Error, ValueError) as exc:
-            request.app.state.audit.record(
-                action="twitter_crawler_settings_update",
-                success=False,
+            _audit_settings_update(
+                request,
                 username=admin["sub"],
-                ip_address=request.client.host if request.client else "unknown",
-                resource="twitter_crawler_settings:1",
+                success=False,
                 details={"error": str(exc)[:200]},
             )
             raise HTTPException(status_code=503, detail="Twitter settings update failed") from None
 
         if row is None:
-            request.app.state.audit.record(
-                action="twitter_crawler_settings_update",
-                success=False,
+            _audit_settings_update(
+                request,
                 username=admin["sub"],
-                ip_address=request.client.host if request.client else "unknown",
-                resource="twitter_crawler_settings:1",
+                success=False,
                 details={"reason": "optimistic_lock_conflict"},
             )
             raise HTTPException(
@@ -97,12 +121,10 @@ def build_twitter_monitoring_router() -> APIRouter:
                 detail="Twitter settings changed in another session; refresh and retry",
             )
 
-        request.app.state.audit.record(
-            action="twitter_crawler_settings_update",
-            success=True,
+        _audit_settings_update(
+            request,
             username=admin["sub"],
-            ip_address=request.client.host if request.client else "unknown",
-            resource="twitter_crawler_settings:1",
+            success=True,
             details={"updated_fields": sorted(values)},
         )
         return {"ok": True, "settings": row}
