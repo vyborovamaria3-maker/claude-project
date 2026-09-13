@@ -34,7 +34,7 @@ class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
         "rescore_limit",
     ]
     column_labels = {
-        "enabled": "Crawler enabled",
+        "enabled": "Discovery cycle enabled",
         "query_limit": "X search results / query",
         "process_limit": "Candidates / cycle",
         "batch_size": "Claim batch size",
