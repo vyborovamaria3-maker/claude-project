@@ -4,6 +4,16 @@ services:
       context: ${POTAPOFF_SOURCE_ROOT:-/opt/claude-project}/solana-launcher/backend
       dockerfile: Dockerfile
 
+  celery-worker:
+    build:
+      context: ${POTAPOFF_SOURCE_ROOT:-/opt/claude-project}/solana-launcher/backend
+      dockerfile: Dockerfile
+
+  twitter-discovery:
+    build:
+      context: ${POTAPOFF_SOURCE_ROOT:-/opt/claude-project}/solana-launcher/backend
+      dockerfile: Dockerfile
+
   frontend:
     build:
       context: ${POTAPOFF_SOURCE_ROOT:-/opt/claude-project}/solana-launcher

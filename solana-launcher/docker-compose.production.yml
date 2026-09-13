@@ -75,9 +75,6 @@ services:
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
-      # Pass this from a backend-only environment source (for example a second
-      # --env-file). Do not store it in .env.server because frontend reads values
-      # from that deployment env during Compose interpolation.
       SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:-}
       REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"
     depends_on:
@@ -115,6 +112,26 @@ services:
         condition: service_healthy
     logging: *default-logging
 
+  twitter-discovery:
+    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    env_file:
+      - backend.env
+      - .env.server
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    command: ["python", "-m", "app.cli.twitter_discovery_daemon", "--public-interval", "900", "--cycle-interval", "1800"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *default-logging
+
   telegram-intelligence:
     profiles: ["telegram-intelligence"]
     image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
@@ -144,8 +161,6 @@ services:
   frontend:
     image: ghcr.io/vyborovamaria3-maker/claude-project/frontend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
-    # Intentionally no env_file here: the public-facing Next.js container must
-    # not inherit database, JWT, RabbitMQ or backend master credentials.
     environment:
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
@@ -174,7 +189,6 @@ services:
     profiles: ["telegram"]
     image: ghcr.io/vyborovamaria3-maker/claude-project/telegram-bot:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
-    # Keep the bot isolated from backend/database env files as well.
     environment:
       NODE_ENV: production
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}

@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/static/analysis-confirm-v5.css" />
   <link rel="stylesheet" href="/static/security-ui-v7.css" />
   <link rel="stylesheet" href="/static/theme-picker.css" />
+  <link rel="stylesheet" href="/static/twitter-monitoring-v1.css" />
   <link rel="stylesheet" href="/static/subscription-ui.css" />
 </head>
 <body>
@@ -22,7 +23,7 @@
       <div class="brand-mark">P</div>
       <p class="eyebrow">POTAPoff / secure console</p>
       <h1>Administrator</h1>
-      <p class="muted">Единая read-only панель для баз, блокчейна, Telegram, X, пользователей и логов.</p>
+      <p class="muted">Единая защищённая панель для баз, мониторинга и управляемых operational-настроек.</p>
       <form id="loginForm" class="stack">
         <label>Логин<input id="loginUsername" autocomplete="username" required /></label>
         <label>Пароль<input id="loginPassword" type="password" autocomplete="current-password" required /></label>
@@ -44,16 +45,17 @@
         <button data-view="blockchain" class="nav-item"><span>03</span>Блокчейн</button>
         <button data-view="telegram" class="nav-item"><span>04</span>Telegram</button>
         <button data-view="x" class="nav-item"><span>05</span>X / Twitter</button>
-        <button data-view="users" class="nav-item"><span>06</span>Пользователи</button>
-        <button data-view="logs" class="nav-item"><span>07</span>Логи</button>
-        <button data-view="search" class="nav-item"><span>08</span>Глобальный поиск</button>
-        <button data-view="graph" class="nav-item"><span>09</span>Граф связей</button>
-        <button data-view="queues" class="nav-item"><span>10</span>Очереди</button>
-        <button data-view="monitoring" class="nav-item"><span>11</span>Мониторинг</button>
-        <button data-view="control" class="nav-item"><span>12</span>Control Center</button>
-        <button id="analysisProfilesNav" class="nav-item"><span>13</span>Параметры анализа</button>
-        <button data-view="audit" class="nav-item"><span>14</span>Аудит</button>
-        <button id="subscriptionNav" class="nav-item"><span>15</span>Подписка / Mini App</button>
+        <button id="twitterMonitoringNav" class="nav-item"><span>06</span>X мониторинг</button>
+        <button data-view="users" class="nav-item"><span>07</span>Пользователи</button>
+        <button data-view="logs" class="nav-item"><span>08</span>Логи</button>
+        <button data-view="search" class="nav-item"><span>09</span>Глобальный поиск</button>
+        <button data-view="graph" class="nav-item"><span>10</span>Граф связей</button>
+        <button data-view="queues" class="nav-item"><span>11</span>Очереди</button>
+        <button data-view="monitoring" class="nav-item"><span>12</span>Мониторинг</button>
+        <button data-view="control" class="nav-item"><span>13</span>Control Center</button>
+        <button id="analysisProfilesNav" class="nav-item"><span>14</span>Параметры анализа</button>
+        <button data-view="audit" class="nav-item"><span>15</span>Аудит</button>
+        <button id="subscriptionNav" class="nav-item"><span>16</span>Подписка / Mini App</button>
       </nav>
       <div class="sidebar-footer">
         <span id="adminIdentity">admin</span>
@@ -84,6 +86,7 @@
   <script src="/static/theme-picker.js" defer></script>
   <script src="/static/security-ui-v7.js" defer></script>
   <script src="/static/app.js" defer></script>
+  <script src="/static/twitter-monitoring-v1.js" defer></script>
   <script src="/static/database-migrated-v8.js" defer></script>
   <script src="/static/database-deeplink-v8.js" defer></script>
   <script src="/static/analysis-confirm-v5.js" defer></script>

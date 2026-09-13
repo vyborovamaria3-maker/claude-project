@@ -15,6 +15,11 @@ from app.models import intelligence_memory  # noqa: F401
 from app.models import social_intelligence  # noqa: F401
 from app.models import subscription_order  # noqa: F401
 from app.models import subscription_settings  # noqa: F401
+from app.models import twitter_crawler_run  # noqa: F401
+from app.models import twitter_crawler_settings  # noqa: F401
+from app.models import twitter_discovery_admin  # noqa: F401
+from app.models import twitter_discovery_scoring  # noqa: F401
+from app.models import twitter_intelligence  # noqa: F401
 from app.models import user  # noqa: F401
 
 config = context.config

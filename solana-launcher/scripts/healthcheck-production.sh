@@ -6,7 +6,6 @@ COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
 IMAGE_TAG="${IMAGE_TAG:-$(cat "$DEPLOY_DIR/.current-image-tag")}"
 
 export IMAGE_TAG
-
 cd "$DEPLOY_DIR"
 
 env_value_from_file() {
@@ -17,9 +16,6 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
-# docker-compose.production.yml injects this server-only secret into the
-# frontend so Mini App API routes can authenticate to FastAPI. Resolve the
-# same value as the backend without exposing the rest of backend.env.
 if [[ -z "${BACKEND_API_KEY:-}" ]]; then
   BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
 fi
@@ -32,22 +28,11 @@ if [[ -z "${BACKEND_API_KEY:-}" ]]; then
 fi
 export BACKEND_API_KEY
 
-COMPOSE=(
-  docker compose
-  --env-file .env.server
-  -f "$COMPOSE_FILE"
-)
-
-REQUIRED_SERVICES=(
-  postgres
-  redis
-  rabbitmq
-  backend
-  celery-worker
-  frontend
-  nginx
-  prometheus
-)
+COMPOSE=(docker compose --env-file .env.server -f "$COMPOSE_FILE")
+REQUIRED_SERVICES=(postgres redis rabbitmq backend celery-worker frontend nginx prometheus)
+if [[ "${SKIP_TWITTER_DISCOVERY_HEALTH:-0}" != "1" ]]; then
+  REQUIRED_SERVICES+=(twitter-discovery)
+fi
 
 telegram_intelligence_enabled() {
   grep -Eq '^TG_API_ID=.+$' .env.server \
@@ -67,110 +52,66 @@ env_value() {
 }
 
 check_telegram_webhook() {
-  local webhook_url
-  local webhook_secret
-  local webhook_host
-  local webhook_path
-  local container_id
-  local state
-
+  local webhook_url webhook_secret webhook_host webhook_path container_id state
   webhook_url="$(env_value TELEGRAM_WEBHOOK_URL)"
   webhook_secret="$(env_value TELEGRAM_WEBHOOK_SECRET)"
-
   webhook_host="${webhook_url#*://}"
   webhook_host="${webhook_host%%/*}"
   webhook_host="${webhook_host%%:*}"
-
   webhook_path="${webhook_url#*://}"
   webhook_path="/${webhook_path#*/}"
-
   [[ -n "$webhook_host" ]] || return 1
   [[ "$webhook_path" == /* ]] || return 1
-
-  # Exercise the real production nginx -> application webhook route locally.
-  # This intentionally avoids external DNS/TLS dependencies on the VPS.
-  curl     --connect-timeout 3     --max-time 8     -fsS     -H "Host: $webhook_host"     -H "x-webhook-secret: $webhook_secret"     "http://127.0.0.1$webhook_path"     | grep -Fq '"status":"ok"'     || return 1
-
-  container_id="$(
-    "${COMPOSE[@]}" --profile telegram ps -q telegram-bot 2>/dev/null || true
-  )"
-
+  curl --connect-timeout 3 --max-time 8 -fsS \
+    -H "Host: $webhook_host" \
+    -H "x-webhook-secret: $webhook_secret" \
+    "http://127.0.0.1$webhook_path" \
+    | grep -Fq '"status":"ok"' || return 1
+  container_id="$("${COMPOSE[@]}" --profile telegram ps -q telegram-bot 2>/dev/null || true)"
   [[ -n "$container_id" ]] || return 1
-
-  state="$(
-    docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true
-  )"
-
+  state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
   [[ "$state" == "running" ]]
 }
 
 check_services() {
-  local service
-  local container_id
-  local state
-  local health
+  local service container_id state health
   local bad=()
-
   for service in "${REQUIRED_SERVICES[@]}"; do
-    container_id="$(
-      "${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true
-    )"
-
+    container_id="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true)"
     if [[ -z "$container_id" ]]; then
       bad+=("$service:missing")
       continue
     fi
-
-    state="$(
-      docker inspect \
-        --format '{{.State.Status}}' \
-        "$container_id" 2>/dev/null || true
-    )"
-
-    health="$(
-      docker inspect \
-        --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-        "$container_id" 2>/dev/null || true
-    )"
-
+    state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+    health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null || true)"
     if [[ "$state" != "running" ]]; then
       bad+=("$service:$state")
       continue
     fi
-
     if [[ "$health" != "none" && "$health" != "healthy" ]]; then
       bad+=("$service:$health")
     fi
   done
 
   if telegram_intelligence_enabled; then
-    container_id="$(
-      "${COMPOSE[@]}" --profile telegram-intelligence ps -q telegram-intelligence 2>/dev/null || true
-    )"
+    container_id="$("${COMPOSE[@]}" --profile telegram-intelligence ps -q telegram-intelligence 2>/dev/null || true)"
     if [[ -z "$container_id" ]]; then
       bad+=("telegram-intelligence:missing")
     else
       state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
-      if [[ "$state" != "running" ]]; then
-        bad+=("telegram-intelligence:$state")
-      fi
+      [[ "$state" == "running" ]] || bad+=("telegram-intelligence:$state")
     fi
   fi
 
   if telegram_bot_enabled && [[ "${SKIP_TELEGRAM_BOT_HEALTH:-0}" != "1" ]]; then
-    container_id="$(
-      "${COMPOSE[@]}" --profile telegram ps -q telegram-bot 2>/dev/null || true
-    )"
+    container_id="$("${COMPOSE[@]}" --profile telegram ps -q telegram-bot 2>/dev/null || true)"
     if [[ -z "$container_id" ]]; then
       bad+=("telegram-bot:missing")
     else
       state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
-      if [[ "$state" != "running" ]]; then
-        bad+=("telegram-bot:$state")
-      fi
+      [[ "$state" == "running" ]] || bad+=("telegram-bot:$state")
     fi
   fi
-
   printf '%s' "${bad[*]:-}"
 }
 
@@ -178,17 +119,10 @@ for attempt in $(seq 1 45); do
   endpoints_ok=0
   build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
   miniapp_config="$(curl -fsS http://127.0.0.1/api/miniapp/config 2>/dev/null || true)"
-
-    admin_ok=0
-    if curl \
-      --connect-timeout 3 \
-      --max-time 8 \
-      -fsS \
-      -H 'Host: admin.potapoff.fun' \
-      http://127.0.0.1/ \
-      >/dev/null 2>&1; then
-      admin_ok=1
-    fi
+  admin_ok=0
+  if curl --connect-timeout 3 --max-time 8 -fsS -H 'Host: admin.potapoff.fun' http://127.0.0.1/ >/dev/null 2>&1; then
+    admin_ok=1
+  fi
   telegram_ok=1
   if telegram_bot_enabled \
     && [[ "${SKIP_TELEGRAM_BOT_HEALTH:-0}" != "1" ]] \
@@ -202,19 +136,22 @@ for attempt in $(seq 1 45); do
     && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
     && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
     && printf '%s' "$miniapp_config" | grep -Fq '"monthlyPriceSol"' \
-      && [[ "$admin_ok" -eq 1 ]] \
+    && [[ "$admin_ok" -eq 1 ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
     && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
     endpoints_ok=1
   fi
 
   bad_services="$(check_services)"
-
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok frontend_build=verified"
+    if [[ "${SKIP_TWITTER_DISCOVERY_HEALTH:-0}" == "1" ]]; then
+      discovery_status="skipped"
+    else
+      discovery_status="running"
+    fi
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok twitter_discovery=$discovery_status frontend_build=verified"
     exit 0
   fi
-
   sleep 4
 done
 
@@ -222,26 +159,12 @@ echo "HEALTHCHECK_FAILED image_tag=$IMAGE_TAG" >&2
 echo "Bad services: ${bad_services:-unknown}" >&2
 echo "Build info: ${build_info:-unavailable}" >&2
 echo "Mini App config: ${miniapp_config:-unavailable}" >&2
-
 "${COMPOSE[@]}" ps || true
-
-"${COMPOSE[@]}" logs \
-  --tail 120 \
-  postgres \
-  redis \
-  rabbitmq \
-  backend \
-  celery-worker \
-  frontend \
-  nginx \
-  prometheus || true
-
+"${COMPOSE[@]}" logs --tail 120 postgres redis rabbitmq backend celery-worker twitter-discovery frontend nginx prometheus || true
 if telegram_intelligence_enabled; then
   "${COMPOSE[@]}" --profile telegram-intelligence logs --tail 120 telegram-intelligence || true
 fi
-
 if telegram_bot_enabled; then
   "${COMPOSE[@]}" --profile telegram logs --tail 120 telegram-bot || true
 fi
-
 exit 1
