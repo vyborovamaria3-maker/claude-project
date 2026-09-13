@@ -44,7 +44,7 @@ class _Store:
             "source_id": "potapoff",
             "source_label": "POTAPoff backend",
             "settings": {"id": 1, "updated_at": "2026-09-13T12:00:00+00:00"},
-            "metrics": {"accounts_total": 12},
+            "metrics": {"accounts_total": 12, "stale_running_runs": 0},
             "candidate_statuses": [{"status": "queued", "count": 3}],
             "recent_runs": [],
             "recent_accounts": [],
@@ -102,6 +102,7 @@ class TwitterMonitoringTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["source_id"], "potapoff")
         self.assertEqual(body["metrics"]["accounts_total"], 12)
+        self.assertEqual(body["metrics"]["stale_running_runs"], 0)
         self.assertIn("twitter_crawler_runs", body["tables"])
         self.assertIn("twitter_accounts", body["tables"])
 
@@ -128,11 +129,12 @@ class TwitterMonitoringTest(unittest.TestCase):
             "optimistic_lock_conflict",
         )
 
-    def test_settings_request_rejects_invalid_ranges_and_modes(self):
-        invalid = _payload()
-        invalid["query_limit"] = 9
+    def test_settings_request_rejects_invalid_ranges_modes_and_extra_fields(self):
         response_store = _Store()
         client, _app = self._client(response_store)
+
+        invalid = _payload()
+        invalid["query_limit"] = 9
         self.assertEqual(
             client.put("/api/twitter-monitoring/settings", json=invalid).status_code,
             422,
@@ -153,9 +155,21 @@ class TwitterMonitoringTest(unittest.TestCase):
             422,
         )
 
-    def test_settings_model_rejects_non_finite_relevance(self):
+        invalid = _payload()
+        invalid["unexpected_setting"] = 1
+        self.assertEqual(
+            client.put("/api/twitter-monitoring/settings", json=invalid).status_code,
+            422,
+        )
+
+    def test_settings_model_rejects_non_finite_relevance_and_naive_lock_timestamp(self):
         invalid = _payload()
         invalid["min_relevance"] = float("nan")
+        with self.assertRaises(ValidationError):
+            TwitterCrawlerSettingsBody.model_validate(invalid)
+
+        invalid = _payload()
+        invalid["expected_updated_at"] = "2026-09-13T12:00:00"
         with self.assertRaises(ValidationError):
             TwitterCrawlerSettingsBody.model_validate(invalid)
 
@@ -209,6 +223,7 @@ class TwitterMonitoringTest(unittest.TestCase):
         self.assertIn('/api/twitter-monitoring/settings', script)
         self.assertIn('expected_updated_at: settings.updated_at', script)
         self.assertIn('navItem.id !== "twitterMonitoringNav"', script)
+        self.assertIn('stale_running_runs', script)
         self.assertIn('Read-only таблицы backend registry', script)
 
 
