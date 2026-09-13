@@ -9,6 +9,11 @@ import httpx
 
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
+from app.services.twitter_crawler_runs import (
+    try_finish_twitter_crawler_run,
+    try_heartbeat_twitter_crawler_run,
+    try_start_twitter_crawler_run,
+)
 from app.services.twitter_scrape_bridge import ingest_dev_twitter_stats
 
 
@@ -41,7 +46,7 @@ def _collector_base(args: argparse.Namespace, settings: object) -> str:
     return "http://localhost:3000"
 
 
-async def run(args: argparse.Namespace) -> dict[str, object]:
+async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict[str, object]:
     settings = get_settings()
     frontend_base = _collector_base(args, settings)
     mint = args.mint.strip()
@@ -63,6 +68,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
 
     url = f"{frontend_base}/api/trade/dev-twitter?{urlencode(params)}"
     timeout = httpx.Timeout(max(5.0, float(args.timeout)), connect=10.0)
+    await try_heartbeat_twitter_crawler_run(run_id, phase="collect")
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         response = await client.get(url)
         response.raise_for_status()
@@ -72,6 +78,16 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     if payload.get("error"):
         raise RuntimeError(f"dev-twitter error: {payload.get('error')}")
 
+    await try_heartbeat_twitter_crawler_run(
+        run_id,
+        phase="ingest",
+        summary={
+            "collection_strategy": payload.get("collectionStrategy"),
+            "total_tweets": payload.get("totalTweets", 0),
+            "top_tweets": len(payload.get("topTweets") or []),
+            "shillers": len(payload.get("shillers") or []),
+        },
+    )
     engine, sessionmaker = create_engine_and_sessionmaker(settings)
     try:
         async with sessionmaker() as session:
@@ -96,9 +112,41 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+async def run_tracked(args: argparse.Namespace) -> dict[str, object]:
+    run_id = await try_start_twitter_crawler_run(
+        "twitter_scrape_bridge",
+        meta={
+            "mint": args.mint.strip(),
+            "symbol": args.symbol.strip().lstrip("$"),
+            "scope": args.scope,
+            "strategy": args.strategy,
+            "limit": int(args.limit),
+            "hours": str(args.hours),
+        },
+    )
+    try:
+        result = await run(args, run_id=run_id)
+    except Exception as exc:
+        await try_finish_twitter_crawler_run(
+            run_id,
+            status="failed",
+            phase="failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+
+    await try_finish_twitter_crawler_run(
+        run_id,
+        status="success",
+        phase="complete",
+        summary=result,
+    )
+    return result
+
+
 def main() -> None:
     args = build_parser().parse_args()
-    result = asyncio.run(run(args))
+    result = asyncio.run(run_tracked(args))
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
