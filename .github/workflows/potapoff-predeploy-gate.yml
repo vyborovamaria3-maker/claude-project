@@ -10,6 +10,7 @@ on:
       - "memecoin-intelligence/**"
       - ".github/workflows/potapoff-predeploy-gate.yml"
       - ".github/workflows/potapoff-production.yml"
+      - ".github/workflows/potapoff-release-images.yml"
 
 permissions:
   contents: read
@@ -174,9 +175,9 @@ jobs:
         run: docker compose -f docker-compose.production.yml config >/dev/null
 
   production-static:
-    name: Production Compose, Dockerfile and deploy scripts
+    name: Production Compose, Dockerfiles and deploy scripts
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -210,5 +211,22 @@ jobs:
       - name: Validate production Compose
         working-directory: solana-launcher
         run: docker compose --env-file .env.server -f docker-compose.production.yml config --quiet
-      - name: Build backend image definition
+      - name: Build backend production image
         run: docker build --pull -t potapoff-backend-predeploy:${{ github.sha }} solana-launcher/backend
+      - name: Build frontend production image
+        run: |
+          docker build --pull \
+            -f solana-launcher/Dockerfile.frontend.prod \
+            --build-arg NEXT_PUBLIC_APP_URL=https://potapoff.fun \
+            --build-arg NEXT_PUBLIC_FRONTEND_URL=https://potapoff.fun \
+            --build-arg NEXT_PUBLIC_BACKEND_URL=https://potapoff.fun/fastapi \
+            --build-arg NEXT_PUBLIC_TELEGRAM_BOT_URL=https://t.me/Soft777bot \
+            --build-arg NEXT_PUBLIC_BUILD_SHA=predeploy-${{ github.sha }} \
+            -t potapoff-frontend-predeploy:${{ github.sha }} \
+            solana-launcher
+      - name: Build Telegram bot production image
+        run: |
+          docker build --pull \
+            -f solana-launcher/Dockerfile.telegram-bot \
+            -t potapoff-telegram-bot-predeploy:${{ github.sha }} \
+            solana-launcher
