@@ -1,20 +1,11 @@
 from sqladmin import ModelView
-from wtforms import SelectField
 
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 
 
-NETWORK_MODE_CHOICES = [
-    ("none", "None"),
-    ("following", "Following"),
-    ("followers", "Followers"),
-    ("both", "Both"),
-]
-
-
 class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
-    name = "Crawler settings"
-    name_plural = "Crawler settings"
+    name = "Crawler settings (read-only)"
+    name_plural = "Crawler settings (read-only)"
     icon = "fa-solid fa-sliders"
     category = "Twitter / X monitoring"
     column_list = [
@@ -36,24 +27,6 @@ class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
         "public_rescore_limit",
         "updated_at",
     ]
-    form_columns = [
-        "enabled",
-        "query_limit",
-        "process_limit",
-        "batch_size",
-        "max_depth",
-        "min_relevance",
-        "network_mode",
-        "network_limit",
-        "lease_seconds",
-        "rescore_limit",
-        "public_enabled",
-        "public_dexscreener_latest",
-        "public_dexscreener_boosts",
-        "public_db_solana_tokens",
-        "public_cmc_limit",
-        "public_rescore_limit",
-    ]
     column_labels = {
         "enabled": "X API discovery cycle enabled",
         "query_limit": "X search results / query",
@@ -73,14 +46,7 @@ class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
         "public_rescore_limit": "Candidates rescored / public run",
         "updated_at": "Updated",
     }
-    form_overrides = {"network_mode": SelectField}
-    form_args = {
-        "network_mode": {
-            "choices": NETWORK_MODE_CHOICES,
-            "validate_choice": True,
-        }
-    }
     can_create = False
-    can_edit = True
+    can_edit = False
     can_delete = False
     can_view_details = True
