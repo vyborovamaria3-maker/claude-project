@@ -5,7 +5,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "0018_twitter_monitoring_indexes"
-down_revision = "0017_twitter_public_discovery_defaults"
+down_revision = "0017_twitter_public_defaults"
 branch_labels = None
 depends_on = None
 
