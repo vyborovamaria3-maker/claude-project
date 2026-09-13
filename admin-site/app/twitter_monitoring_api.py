@@ -5,13 +5,15 @@ from typing import Literal
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .auth import require_admin
 from .twitter_monitoring import TwitterMonitoringStore, find_twitter_source
 
 
 class TwitterCrawlerSettingsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_updated_at: datetime
     enabled: bool
     query_limit: int = Field(ge=10, le=100)
@@ -29,6 +31,13 @@ class TwitterCrawlerSettingsBody(BaseModel):
     public_db_solana_tokens: int = Field(ge=0, le=10000)
     public_cmc_limit: int = Field(ge=0, le=5000)
     public_rescore_limit: int = Field(ge=0, le=5000)
+
+    @field_validator("expected_updated_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("expected_updated_at must include a timezone")
+        return value
 
 
 def _store(request: Request) -> TwitterMonitoringStore:
