@@ -272,7 +272,7 @@ async def calculate_discovery_score(
     now: datetime | None = None,
 ) -> DiscoveryScoreBreakdown:
     current_time = _aware(now or datetime.now(timezone.utc))
-    source_score, evidence_count, source_type_count, source_types = await _evidence_score(
+    source_score, evidence_count, source_type_count, _source_types = await _evidence_score(
         session,
         candidate.id,
     )
@@ -324,7 +324,7 @@ async def calculate_discovery_score(
     if token_history_count > 0:
         confidence += min(10.0, 4.0 + token_history_count)
 
-    breakdown = DiscoveryScoreBreakdown(
+    return DiscoveryScoreBreakdown(
         discovery_score=round(discovery_score, 2),
         confidence=round(_clamp(confidence), 2),
         relevance_score=relevance_score,
@@ -338,11 +338,6 @@ async def calculate_discovery_score(
         resolved_profile=resolved,
         token_history_count=token_history_count,
     )
-    candidate.meta = {
-        **(candidate.meta or {}),
-        "discovery_score_sources": source_types,
-    }
-    return breakdown
 
 
 async def rescore_discovery_candidate(
@@ -387,12 +382,6 @@ async def rescore_discovery_candidate(
         candidate.priority = computed_priority
     else:
         candidate.priority = max(candidate.priority, computed_priority)
-    candidate.meta = {
-        **(candidate.meta or {}),
-        "discovery_score": breakdown.discovery_score,
-        "discovery_score_confidence": breakdown.confidence,
-        "discovery_score_version": DISCOVERY_SCORE_VERSION,
-    }
     await session.flush()
     return row
 
