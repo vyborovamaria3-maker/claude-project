@@ -172,3 +172,34 @@ async def test_early_call_history_lifts_priority(session: AsyncSession):
     assert score.early_signal_score >= 85
     assert score.confidence >= 70
     assert candidate.priority == round(score.discovery_score)
+
+
+async def test_rescore_does_not_rewrite_shared_candidate_metadata(session: AsyncSession):
+    candidate = await enqueue_discovery_candidate(
+        session,
+        username="metadata_safe_alpha",
+        relevance_hint=72,
+        source_type="x_search",
+        source_ref="metadata safety",
+        discovery_reason="search",
+    )
+    original_meta = {
+        "resolved_profile": {
+            "twitter_id": "444",
+            "username": "metadata_safe_alpha",
+            "followers_count": 12345,
+            "following_count": 321,
+            "tweet_count": 4567,
+            "verified": False,
+        },
+        "resolver_marker": "must-survive-rescore",
+    }
+    candidate.meta = original_meta.copy()
+    await session.flush()
+
+    score = await rescore_discovery_candidate(session, candidate)
+
+    assert candidate.meta == original_meta
+    assert score.components is not None
+    assert score.components["score_version"] == "discovery-score-v1"
+    assert score.components["resolved_profile"] is True
