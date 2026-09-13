@@ -15,6 +15,7 @@ ADMIN_ROLLBACK_DIR="${ADMIN_ROLLBACK_DIR:-$ADMIN_ROOT/.admin-site-rollback}"
 ADMIN_COMPOSE_FILE="$ADMIN_DIR/docker-compose.yml"
 ADMIN_ENV_FILE="$ADMIN_DIR/.env"
 REGISTRY_BASE="ghcr.io/vyborovamaria3-maker/claude-project"
+LOCAL_IMAGES="${POTAPOFF_LOCAL_IMAGES:-0}"
 
 cd "$DEPLOY_DIR"
 
@@ -49,10 +50,6 @@ set_env_value() {
 ensure_twitter_crawler_admin_secret() {
   local backend_key admin_key key
 
-  # backend and worker containers load backend.env first and .env.server second.
-  # A value in .env.server would therefore override the dedicated backend-only
-  # credential, including an empty assignment. Keep this secret exclusively in
-  # backend.env + admin-site/.env and fail before touching the deployment.
   if grep -q '^TWITTER_CRAWLER_ADMIN_KEY=' .env.server; then
     echo "Remove TWITTER_CRAWLER_ADMIN_KEY from .env.server; keep it only in backend.env and admin-site/.env" >&2
     return 1
@@ -100,6 +97,7 @@ resolve_backend_api_key() {
 
 COMPOSE=(docker compose --env-file .env.server -f "$COMPOSE_FILE")
 export DB_BUSY_TIMEOUT="${DB_BUSY_TIMEOUT:-5000}"
+export ADMIN_IMAGE_TAG="${ADMIN_IMAGE_TAG:-$NEW_TAG}"
 ADMIN_COMPOSE=(docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOSE_FILE")
 
 PREVIOUS_TAG=""
@@ -128,12 +126,48 @@ verify_release_images() {
     images+=(telegram-bot)
   fi
   for image in "${images[@]}"; do
-    if ! docker manifest inspect "$REGISTRY_BASE/$image:$tag" >/dev/null 2>&1; then
+    if [[ "$LOCAL_IMAGES" == "1" ]]; then
+      if ! docker image inspect "$REGISTRY_BASE/$image:$tag" >/dev/null 2>&1; then
+        echo "Required local release image is unavailable: $REGISTRY_BASE/$image:$tag" >&2
+        return 1
+      fi
+    elif ! docker manifest inspect "$REGISTRY_BASE/$image:$tag" >/dev/null 2>&1; then
       echo "Required release image is unavailable: $REGISTRY_BASE/$image:$tag" >&2
       return 1
     fi
   done
-  echo "RELEASE_IMAGES_OK tag=$tag"
+  if [[ "$LOCAL_IMAGES" == "1" ]]; then
+    echo "LOCAL_RELEASE_IMAGES_OK tag=$tag"
+  else
+    echo "RELEASE_IMAGES_OK tag=$tag"
+  fi
+}
+
+prepare_forward_images() {
+  if [[ "$LOCAL_IMAGES" == "1" ]]; then
+    echo "Using prebuilt local exact-SHA images; registry pull skipped"
+    return 0
+  fi
+  "${COMPOSE[@]}" pull backend frontend
+  if telegram_bot_enabled; then
+    "${COMPOSE[@]}" --profile telegram pull telegram-bot
+  fi
+}
+
+ensure_rollback_core_images() {
+  if "${COMPOSE[@]}" pull backend frontend; then
+    return 0
+  fi
+  echo "Registry pull for previous core images failed; checking local cache" >&2
+  docker image inspect "$REGISTRY_BASE/backend:$PREVIOUS_TAG" >/dev/null 2>&1
+  docker image inspect "$REGISTRY_BASE/frontend:$PREVIOUS_TAG" >/dev/null 2>&1
+}
+
+ensure_rollback_telegram_image() {
+  if "${COMPOSE[@]}" --profile telegram pull telegram-bot; then
+    return 0
+  fi
+  docker image inspect "$REGISTRY_BASE/telegram-bot:$PREVIOUS_TAG" >/dev/null 2>&1
 }
 
 activate_admin_source() {
@@ -241,7 +275,11 @@ start_admin() {
   echo "Starting admin Control Center"
   docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
   "${ADMIN_COMPOSE[@]}" config --quiet
-  "${ADMIN_COMPOSE[@]}" up -d --build admin-postgres admin
+  if [[ "$LOCAL_IMAGES" == "1" ]] && docker image inspect "admin-site-admin:$ADMIN_IMAGE_TAG" >/dev/null 2>&1; then
+    "${ADMIN_COMPOSE[@]}" up -d --no-build admin-postgres admin
+  else
+    "${ADMIN_COMPOSE[@]}" up -d --build admin-postgres admin
+  fi
   for _ in $(seq 1 60); do
     if curl --fail --silent --max-time 3 http://127.0.0.1:18080/api/ready | grep -Fq '"ready":true'; then
       echo "ADMIN_READY_OK"
@@ -302,19 +340,17 @@ rollback() {
   fi
 
   if [[ -z "$PREVIOUS_TAG" ]]; then
-    echo "No previous GHCR tag exists; admin source was restored but manual core recovery is required" >&2
+    echo "No previous image tag exists; admin source was restored but manual core recovery is required" >&2
     exit "$exit_code"
   fi
 
   printf '%s\n' "$PREVIOUS_TAG" > .current-image-tag
   export IMAGE_TAG="$PREVIOUS_TAG"
-  "${COMPOSE[@]}" pull backend celery-worker frontend
-  if ! "${COMPOSE[@]}" pull twitter-discovery; then
-    TWITTER_DISCOVERY_AVAILABLE=0
-    echo "Previous Twitter discovery image/command may be unavailable; continuing rollback" >&2
-  fi
+  export ADMIN_IMAGE_TAG="$PREVIOUS_TAG"
+
+  ensure_rollback_core_images
   if telegram_bot_enabled; then
-    if ! "${COMPOSE[@]}" --profile telegram pull telegram-bot; then
+    if ! ensure_rollback_telegram_image; then
       BOT_IMAGE_AVAILABLE=0
       echo "Previous Telegram bot image is unavailable; continuing core rollback" >&2
     fi
@@ -341,9 +377,6 @@ rollback() {
 
 trap rollback ERR
 
-# Everything before the backup is a reversible preflight. The active admin
-# source is switched only under the rollback trap, and core containers are not
-# touched until the backup succeeds.
 verify_release_images "$NEW_TAG"
 activate_admin_source
 ensure_twitter_crawler_admin_secret
@@ -351,6 +384,7 @@ resolve_backend_api_key
 
 docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
 export IMAGE_TAG="$NEW_TAG"
+export ADMIN_IMAGE_TAG="$NEW_TAG"
 "${COMPOSE[@]}" config >/dev/null
 "${ADMIN_COMPOSE[@]}" config --quiet
 
@@ -359,22 +393,12 @@ DEPLOYMENT_STARTED=1
 printf '%s\n' "$PREVIOUS_TAG" > .previous-image-tag
 printf '%s\n' "$NEW_TAG" > .current-image-tag
 
-"${COMPOSE[@]}" pull backend celery-worker twitter-discovery frontend
-if telegram_bot_enabled; then
-  "${COMPOSE[@]}" --profile telegram pull telegram-bot
-fi
+prepare_forward_images
 
-# Background writers are stopped before the schema transition. The currently
-# serving backend/frontend remain on the previous tag until the migration has
-# completed successfully.
 stop_telegram
 stop_twitter_discovery
 "${COMPOSE[@]}" stop celery-worker >/dev/null 2>&1 || true
 
-# Run the new image as a one-shot migration container against the already-live
-# database. This prevents new application code from seeing a pre-migration
-# schema and still allows rollback because production backend startup does not
-# run Alembic implicitly.
 "${COMPOSE[@]}" run --rm --no-deps backend alembic upgrade heads
 
 start_core_services
