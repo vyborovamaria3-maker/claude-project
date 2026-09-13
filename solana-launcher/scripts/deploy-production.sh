@@ -100,14 +100,15 @@ start_admin() {
   "${ADMIN_COMPOSE[@]}" config --quiet
   "${ADMIN_COMPOSE[@]}" up -d --build admin-postgres admin
   for _ in $(seq 1 60); do
-    if curl --fail --silent --max-time 3 http://127.0.0.1:18080/api/health >/dev/null 2>&1; then
-      echo "ADMIN_HEALTH_OK"
+    if curl --fail --silent --max-time 3 http://127.0.0.1:18080/api/ready \
+      | grep -Fq '"ready":true'; then
+      echo "ADMIN_READY_OK"
       return 0
     fi
     sleep 2
   done
   "${ADMIN_COMPOSE[@]}" logs --tail=150 admin >&2 || true
-  echo "Admin Control Center did not become healthy" >&2
+  echo "Admin Control Center did not become ready" >&2
   return 1
 }
 
@@ -141,6 +142,7 @@ rollback() {
   "${COMPOSE[@]}" pull \
     backend \
     celery-worker \
+    twitter-discovery \
     frontend
 
   if telegram_bot_enabled; then
@@ -180,6 +182,7 @@ export IMAGE_TAG="$NEW_TAG"
 "${COMPOSE[@]}" pull \
   backend \
   celery-worker \
+  twitter-discovery \
   frontend
 
 if telegram_bot_enabled; then
