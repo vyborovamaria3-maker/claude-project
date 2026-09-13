@@ -19,6 +19,7 @@ from app.models.twitter_intelligence import (
     TwitterDiscoveryEvidence,
     TwitterPost,
 )
+from app.services.twitter_discovery import ResolvedTwitterProfile, promote_candidate
 from app.services.twitter_discovery_scoring import rescore_discovery_candidates
 
 router = APIRouter(dependencies=[Depends(get_current_superuser)])
@@ -65,8 +66,6 @@ def _legacy_config(row: TwitterCrawlerSettings, *, x_api_configured: bool) -> di
             row.public_dexscreener_latest or row.public_dexscreener_boosts
         ),
         "coinmarketcap_enabled": int(row.public_cmc_limit) > 0,
-        # Curated seeds remain part of the X/API cycle. The legacy UI exposes
-        # this flag for compatibility but the canonical control is cycle enabled.
         "seed_discovery_enabled": bool(row.enabled),
         "public_web_enabled": bool(row.public_enabled),
         "x_api_enrichment_enabled": bool(row.enabled and x_api_configured),
@@ -294,8 +293,6 @@ async def patch_config(
         else:
             row.public_cmc_limit = 0
     if "seed_discovery_enabled" in changes:
-        # Canonical seed discovery belongs to the cycle. Turning it off from the
-        # compatibility UI disables that cycle rather than creating a second flag.
         row.enabled = bool(changes["seed_discovery_enabled"])
     if "public_web_enabled" in changes:
         row.public_enabled = bool(changes["public_web_enabled"])
@@ -306,7 +303,13 @@ async def patch_config(
     if "rescore_limit" in changes:
         row.rescore_limit = max(1, int(changes["rescore_limit"]))
         row.public_rescore_limit = int(changes["rescore_limit"])
-    for field in ("process_limit", "network_limit", "max_depth", "min_relevance", "batch_size"):
+    for field in (
+        "process_limit",
+        "network_limit",
+        "max_depth",
+        "min_relevance",
+        "batch_size",
+    ):
         if field in changes:
             setattr(row, field, changes[field])
 
@@ -356,3 +359,53 @@ async def rescore_now(session: AsyncSession = Depends(get_db)) -> dict[str, Any]
     stats = await rescore_discovery_candidates(session, limit=limit)
     await session.commit()
     return {"status": "success", "stats": stats}
+
+
+@router.post("/actions/candidates/{candidate_id}/promote")
+async def promote_now(
+    candidate_id: int,
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    candidate = await session.get(TwitterDiscoveryCandidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    if candidate.account_id is not None:
+        raise HTTPException(status_code=400, detail="Candidate is already promoted")
+    if not candidate.twitter_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Stable X user ID is required for canonical promotion",
+        )
+
+    profile_meta = (candidate.meta or {}).get("resolved_profile")
+    if not isinstance(profile_meta, dict) or not profile_meta.get("twitter_id"):
+        raise HTTPException(status_code=400, detail="Resolved profile metadata is missing")
+
+    profile = ResolvedTwitterProfile(
+        twitter_id=str(profile_meta["twitter_id"]),
+        username=profile_meta.get("username"),
+        display_name=profile_meta.get("display_name"),
+        bio=str(profile_meta.get("bio") or ""),
+        avatar_url=profile_meta.get("avatar_url"),
+        followers_count=int(profile_meta.get("followers_count") or 0),
+        following_count=int(profile_meta.get("following_count") or 0),
+        tweet_count=int(profile_meta.get("tweet_count") or 0),
+        verified=bool(profile_meta.get("verified")),
+        source=str(profile_meta.get("source") or "admin_manual"),
+        raw=profile_meta.get("raw"),
+    )
+    settings = await session.get(TwitterCrawlerSettings, 1)
+    min_relevance = float(settings.min_relevance) if settings is not None else 35.0
+    accepted, account_id, relevance = await promote_candidate(
+        session,
+        candidate,
+        profile,
+        min_relevance=min_relevance,
+    )
+    await session.commit()
+    return {
+        "status": "success",
+        "accepted": accepted,
+        "account_id": account_id,
+        "relevance_score": relevance,
+    }
