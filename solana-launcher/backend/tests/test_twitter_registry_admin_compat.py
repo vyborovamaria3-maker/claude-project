@@ -7,14 +7,14 @@ from app.api.v1.twitter_registry_admin_compat import LegacyConfigPatch, _legacy_
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 
 
-def test_next_proxy_backend_prefix_is_registered_with_compat_first():
+def test_next_proxy_backend_prefix_is_registered_with_compat_patch_first():
     matching = [
         route
         for route in api_router.routes
         if getattr(route, "path", "") == "/admin/twitter-registry/config"
+        and "PATCH" in getattr(route, "methods", set())
     ]
     assert len(matching) >= 2
-    assert "PATCH" in matching[0].methods
     assert matching[0].endpoint.__module__.endswith("twitter_registry_admin_compat")
 
 
