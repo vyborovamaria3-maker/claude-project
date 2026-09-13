@@ -32,7 +32,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: npx playwright install chromium firefox webkit
 
       - name: Build frontend from locked app dependencies
         run: npm run build
