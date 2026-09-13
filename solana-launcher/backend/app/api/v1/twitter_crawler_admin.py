@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import func, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -78,6 +78,13 @@ def _require_admin_key(supplied: str | None) -> None:
         )
 
 
+def _setting_columns() -> list:
+    columns = [TwitterCrawlerSettings.id]
+    columns.extend(getattr(TwitterCrawlerSettings, field) for field in SETTING_FIELDS)
+    columns.append(TwitterCrawlerSettings.updated_at)
+    return columns
+
+
 def _serialize(row: dict) -> dict:
     result = dict(row)
     updated_at = result.get("updated_at")
@@ -97,6 +104,27 @@ async def crawler_settings_access(
     return {"ok": True, "scope": "twitter_crawler_settings"}
 
 
+@router.get("/crawler-settings")
+async def get_crawler_settings(
+    session: AsyncSession = Depends(get_db),
+    x_twitter_crawler_admin_key: str | None = Header(
+        default=None,
+        alias="X-Twitter-Crawler-Admin-Key",
+    ),
+) -> dict:
+    _require_admin_key(x_twitter_crawler_admin_key)
+    result = await session.execute(
+        select(*_setting_columns()).where(TwitterCrawlerSettings.id == 1)
+    )
+    row = result.mappings().one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Twitter crawler settings are not initialized",
+        )
+    return {"ok": True, "settings": _serialize(dict(row))}
+
+
 @router.put("/crawler-settings")
 async def update_crawler_settings(
     body: TwitterCrawlerSettingsUpdate,
@@ -110,10 +138,6 @@ async def update_crawler_settings(
 
     values = body.model_dump(exclude={"expected_updated_at"})
     values["updated_at"] = func.now()
-    columns = [TwitterCrawlerSettings.id]
-    columns.extend(getattr(TwitterCrawlerSettings, field) for field in SETTING_FIELDS)
-    columns.append(TwitterCrawlerSettings.updated_at)
-
     statement = (
         update(TwitterCrawlerSettings)
         .where(
@@ -121,7 +145,7 @@ async def update_crawler_settings(
             TwitterCrawlerSettings.updated_at == body.expected_updated_at,
         )
         .values(**values)
-        .returning(*columns)
+        .returning(*_setting_columns())
     )
     result = await session.execute(statement)
     row = result.mappings().one_or_none()
