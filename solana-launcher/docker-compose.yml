@@ -74,6 +74,12 @@ services:
         condition: service_started
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   celery-worker:
     build:
@@ -91,7 +97,7 @@ services:
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info"]
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:
@@ -121,7 +127,7 @@ services:
         "1800",
       ]
     depends_on:
-      postgres:
+      backend:
         condition: service_healthy
 
   frontend:
