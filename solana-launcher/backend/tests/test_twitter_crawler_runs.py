@@ -17,8 +17,9 @@ class _ScalarRows:
 
 
 class _ExecuteResult:
-    def __init__(self, rows):
-        self._rows = rows
+    def __init__(self, rows=None, *, rowcount=0):
+        self._rows = rows or []
+        self.rowcount = rowcount
 
     def scalars(self):
         return _ScalarRows(self._rows)
@@ -67,9 +68,12 @@ class _Engine:
 
 
 class _Session:
-    def __init__(self, row):
+    def __init__(self, row, *, update_rowcount=1):
         self.row = row
+        self.update_rowcount = update_rowcount
         self.committed = False
+        self.rolled_back = False
+        self.execute_calls = 0
 
     async def __aenter__(self):
         return self
@@ -80,8 +84,15 @@ class _Session:
     async def get(self, _model, _run_id):
         return self.row
 
+    async def execute(self, _statement):
+        self.execute_calls += 1
+        return _ExecuteResult(rowcount=self.update_rowcount)
+
     async def commit(self):
         self.committed = True
+
+    async def rollback(self):
+        self.rolled_back = True
 
 
 @pytest.mark.asyncio
@@ -114,28 +125,18 @@ async def test_finish_does_not_overwrite_terminal_status(monkeypatch):
         summary={"new": True},
     )
 
-    assert row.status == "cancelled"
-    assert row.phase == "cancelled"
-    assert row.summary == {"old": True}
+    assert session.execute_calls == 0
     assert session.committed is False
+    assert session.rolled_back is False
     assert engine.disposed is True
 
 
 @pytest.mark.asyncio
-async def test_finish_updates_a_running_status_once(monkeypatch):
+async def test_finish_commits_atomic_update_for_running_status(monkeypatch):
     started = datetime.now(timezone.utc) - timedelta(seconds=2)
-    row = SimpleNamespace(
-        status="running",
-        phase="work",
-        started_at=started,
-        heartbeat_at=started,
-        finished_at=None,
-        duration_ms=None,
-        error=None,
-        summary=None,
-    )
+    row = SimpleNamespace(status="running", started_at=started)
     engine = _Engine()
-    session = _Session(row)
+    session = _Session(row, update_rowcount=1)
 
     monkeypatch.setattr(runs, "get_settings", lambda: object())
     monkeypatch.setattr(
@@ -151,10 +152,35 @@ async def test_finish_updates_a_running_status_once(monkeypatch):
         summary={"ok": True},
     )
 
-    assert row.status == "success"
-    assert row.phase == "complete"
-    assert row.finished_at is not None
-    assert row.duration_ms >= 0
-    assert row.summary == {"ok": True}
+    assert session.execute_calls == 1
     assert session.committed is True
+    assert session.rolled_back is False
+    assert engine.disposed is True
+
+
+@pytest.mark.asyncio
+async def test_finish_loses_race_without_overwriting_terminal_status(monkeypatch):
+    started = datetime.now(timezone.utc) - timedelta(seconds=2)
+    row = SimpleNamespace(status="running", started_at=started)
+    engine = _Engine()
+    # Simulate another transaction moving the row out of running after our read.
+    session = _Session(row, update_rowcount=0)
+
+    monkeypatch.setattr(runs, "get_settings", lambda: object())
+    monkeypatch.setattr(
+        runs,
+        "create_engine_and_sessionmaker",
+        lambda _settings: (engine, lambda: session),
+    )
+
+    await runs.finish_twitter_crawler_run(
+        9,
+        status="success",
+        phase="complete",
+        summary={"late": True},
+    )
+
+    assert session.execute_calls == 1
+    assert session.committed is False
+    assert session.rolled_back is True
     assert engine.disposed is True
