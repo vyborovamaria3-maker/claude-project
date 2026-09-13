@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.models.analytics import Token
 from app.services.twitter_discovery import discovery_stats, enqueue_discovery_candidate
+from app.services.twitter_discovery_admin_runtime import DiscoveryRunBusy, run_tracked_cli
 from app.services.twitter_discovery_scoring import rescore_discovery_candidates
 from app.services.twitter_public_discovery_sources import (
     CoinMarketCapKeylessDiscoverySource,
@@ -143,9 +144,29 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         await engine.dispose()
 
 
+async def _run_tracked(args: argparse.Namespace) -> dict[str, Any]:
+    trigger = "cli_public_dry_run" if args.dry_run else "cli_public"
+    return await run_tracked_cli(
+        lambda: run(args),
+        mode="public_no_x_api",
+        trigger=trigger,
+        config_snapshot={
+            "dexscreener_latest": args.dexscreener_latest,
+            "dexscreener_boosts": args.dexscreener_boosts,
+            "db_solana_tokens": args.db_solana_tokens,
+            "cmc_limit": args.cmc_limit,
+            "rescore_limit": args.rescore_limit,
+            "dry_run": args.dry_run,
+        },
+    )
+
+
 def main() -> None:
     args = build_parser().parse_args()
-    summary = asyncio.run(run(args))
+    try:
+        summary = asyncio.run(_run_tracked(args))
+    except DiscoveryRunBusy as exc:
+        raise SystemExit(str(exc)) from exc
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 
 

@@ -9,7 +9,7 @@ from app.api.v1 import (
     subscriptions,
     tasks,
     telegram_intelligence,
-    twitter_registry_admin,
+    twitter_registry_admin_hardened,
     users,
 )
 
@@ -40,7 +40,7 @@ api_router.include_router(
     tags=["advanced-intelligence"],
 )
 api_router.include_router(
-    twitter_registry_admin.router,
+    twitter_registry_admin_hardened.router,
     prefix="/admin/twitter-registry",
     tags=["twitter-registry-admin"],
 )

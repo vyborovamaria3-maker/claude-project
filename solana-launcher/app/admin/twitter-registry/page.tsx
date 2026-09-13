@@ -1,14 +1,31 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
-import { Twitter, RefreshCw, Play, CheckCircle2, AlertTriangle, ShieldAlert, Database, Search, Filter, Layers, Activity, Clock, Terminal } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { AlertTriangle, RefreshCw, Search, Twitter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-interface Overview {
+type Tab = "overview" | "candidates" | "accounts" | "evidence" | "runs" | "config";
+type Notice = { kind: "success" | "error"; text: string } | null;
+
+type WindowMetric = {
+  new_candidates: number;
+  new_evidence: number;
+  new_canonical_accounts: number;
+  new_posts: number;
+  completed_runs: number;
+  failed_runs: number;
+  promoted: number;
+  rescored: number;
+  skipped: number;
+  source_breakdown: Record<string, number>;
+};
+
+type Overview = {
   status: string;
   x_api_configured: boolean;
+  x_api_enrichment_enabled: boolean;
   mode: string;
   total_candidates: number;
   candidate_status_counts: Record<string, number>;
@@ -23,64 +40,10 @@ interface Overview {
   last_promoted_account: string | null;
   last_run_duration_seconds: number | null;
   worker_id: string | null;
-}
+  metrics: Record<"1h" | "24h" | "7d", WindowMetric>;
+};
 
-interface CandidateItem {
-  id: number;
-  candidate_key: string;
-  twitter_id: string | null;
-  username: string | null;
-  display_name: string | null;
-  status: string;
-  priority: number;
-  depth: number;
-  relevance_hint: number;
-  account_id: number | null;
-  attempts: number;
-  last_error: string | null;
-  first_seen_at: string | null;
-  last_seen_at: string | null;
-  discovery_score: number;
-  confidence: number;
-  promotion_ready: boolean;
-}
-
-interface AccountItem {
-  id: number;
-  twitter_id: string;
-  username: string | null;
-  display_name: string | null;
-  account_type: string;
-  status: string;
-  followers_count: number;
-  following_count: number;
-  tweet_count: number;
-  verified: boolean;
-  source: string;
-  first_seen_at: string | null;
-  last_seen_at: string | null;
-  alpha_score: number;
-  trust_score: number;
-  influence_score: number;
-}
-
-interface RunItem {
-  id: number;
-  started_at: string | null;
-  finished_at: string | null;
-  status: string;
-  worker_id: string | null;
-  mode: string;
-  trigger: string;
-  candidates_created: number;
-  evidence_created: number;
-  rescored: number;
-  promoted: number;
-  failed: number;
-  error: string | null;
-}
-
-interface ConfigData {
+type ConfigData = {
   discovery_enabled: boolean;
   dexscreener_enabled: boolean;
   coinmarketcap_enabled: boolean;
@@ -95,766 +58,308 @@ interface ConfigData {
   min_relevance: number;
   batch_size: number;
   updated_at: string | null;
+  updated_by: string | null;
+};
+
+const PAGE_SIZE = 25;
+
+function dt(value?: string | null) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function JsonBlock({ value, label = "Raw JSON" }: { value: unknown; label?: string }) {
+  if (value == null) return null;
+  return (
+    <details className="rounded-xl border border-bg-border bg-bg-elevated p-3 text-xs">
+      <summary className="cursor-pointer font-semibold text-content">{label}</summary>
+      <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-all text-content-muted">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-bg-border bg-bg-card p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between gap-4 border-b border-bg-border pb-4">
+          <h3 className="text-lg font-bold text-content">{title}</h3>
+          <Button size="sm" variant="outline" onClick={onClose}>Close</Button>
+        </div>
+        <div className="space-y-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Info({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="rounded-xl border border-bg-border bg-bg-elevated p-3 text-sm">
+      <div className="text-xs text-content-muted">{label}</div>
+      <div className="mt-1 break-all font-medium text-content">{String(value ?? "—")}</div>
+    </div>
+  );
+}
+
+function Pager({ page, total, setPage }: { page: number; total: number; setPage: (value: number) => void }) {
+  const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const end = Math.min(total, (page + 1) * PAGE_SIZE);
+  return (
+    <div className="mt-4 flex items-center justify-between border-t border-bg-border pt-4 text-xs text-content-muted">
+      <span>{start}–{end} of {total}</span>
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(Math.max(0, page - 1))}>Previous</Button>
+        <Button size="sm" variant="outline" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage(page + 1)}>Next</Button>
+      </div>
+    </div>
+  );
+}
+
+async function parseResponse(response: Response) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = typeof payload?.detail === "string" ? payload.detail : `Request failed (${response.status})`;
+    throw new Error(detail);
+  }
+  return payload;
 }
 
 export default function TwitterRegistryAdminPage() {
-  const [activeTab, setActiveTab] = useState<"overview" | "candidates" | "accounts" | "evidence" | "runs" | "config">("overview");
+  const [tab, setTab] = useState<Tab>("overview");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [config, setConfig] = useState<ConfigData | null>(null);
-  const [candidates, setCandidates] = useState<CandidateItem[]>([]);
-  const [candidateTotal, setCandidateTotal] = useState<number>(0);
-  const [candidatePage, setCandidatePage] = useState<number>(0);
-  const [candidateStatusFilter, setCandidateStatusFilter] = useState<string>("");
-  const [candidateSearch, setCandidateSearch] = useState<string>("");
+  const [draft, setDraft] = useState<ConfigData | null>(null);
+  const [candidates, setCandidates] = useState<any[]>([]);
+  const [candidateTotal, setCandidateTotal] = useState(0);
+  const [candidatePage, setCandidatePage] = useState(0);
+  const [candidateSearch, setCandidateSearch] = useState("");
+  const [candidateStatus, setCandidateStatus] = useState("");
+  const [candidateSource, setCandidateSource] = useState("");
+  const [candidateMinScore, setCandidateMinScore] = useState("");
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [accountTotal, setAccountTotal] = useState(0);
+  const [accountPage, setAccountPage] = useState(0);
+  const [accountSearch, setAccountSearch] = useState("");
+  const [evidence, setEvidence] = useState<any[]>([]);
+  const [evidenceTotal, setEvidenceTotal] = useState(0);
+  const [evidencePage, setEvidencePage] = useState(0);
+  const [evidenceSearch, setEvidenceSearch] = useState("");
+  const [evidenceSource, setEvidenceSource] = useState("");
+  const [runs, setRuns] = useState<any[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<any>(null);
+  const [selectedAccount, setSelectedAccount] = useState<any>(null);
+  const [selectedEvidence, setSelectedEvidence] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice>(null);
 
-  const [accounts, setAccounts] = useState<AccountItem[]>([]);
-  const [accountTotal, setAccountTotal] = useState<number>(0);
-  const [runs, setRuns] = useState<RunItem[]>([]);
-
-  const [loading, setLoading] = useState<boolean>(true);
-  const [actionLoading, setActionLoading] = useState<boolean>(false);
-  const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const [selectedCandidateDetail, setSelectedCandidateDetail] = useState<any | null>(null);
-
-  const fetchOverview = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/twitter-registry/overview");
-      if (res.ok) {
-        setOverview(await res.json());
-      }
-    } catch (err) {
-      console.error("Failed to fetch overview", err);
-    }
+  const api = useCallback(async (path: string, init?: RequestInit) => {
+    const response = await fetch(`/api/admin/twitter-registry${path}`, {
+      cache: "no-store",
+      ...init,
+      headers: {
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(init?.headers || {}),
+      },
+    });
+    return parseResponse(response);
   }, []);
 
-  const fetchConfig = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/twitter-registry/config");
-      if (res.ok) {
-        setConfig(await res.json());
-      }
-    } catch (err) {
-      console.error("Failed to fetch config", err);
-    }
-  }, []);
+  const loadOverview = useCallback(async () => setOverview(await api("/overview")), [api]);
+  const loadConfig = useCallback(async () => {
+    const value = await api("/config");
+    setConfig(value);
+    setDraft(value);
+  }, [api]);
+  const loadRuns = useCallback(async () => setRuns((await api("/runs?limit=25")).items || []), [api]);
 
-  const fetchCandidates = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({
-        limit: "25",
-        offset: String(candidatePage * 25),
-      });
-      if (candidateStatusFilter) params.append("status", candidateStatusFilter);
-      if (candidateSearch) params.append("search", candidateSearch);
+  const loadCandidates = useCallback(async () => {
+    const p = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(candidatePage * PAGE_SIZE), sort_by: "score", order: "desc" });
+    if (candidateSearch.trim()) p.set("search", candidateSearch.trim());
+    if (candidateStatus) p.set("status", candidateStatus);
+    if (candidateSource) p.set("source", candidateSource);
+    if (candidateMinScore.trim()) p.set("min_score", candidateMinScore.trim());
+    const value = await api(`/candidates?${p}`);
+    setCandidates(value.items || []);
+    setCandidateTotal(value.meta?.total || 0);
+  }, [api, candidatePage, candidateSearch, candidateStatus, candidateSource, candidateMinScore]);
 
-      const res = await fetch(`/api/admin/twitter-registry/candidates?${params.toString()}`);
-      if (res.ok) {
-        const data = await res.json();
-        setCandidates(data.items);
-        setCandidateTotal(data.meta.total);
-      }
-    } catch (err) {
-      console.error("Failed to fetch candidates", err);
-    }
-  }, [candidatePage, candidateStatusFilter, candidateSearch]);
+  const loadAccounts = useCallback(async () => {
+    const p = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(accountPage * PAGE_SIZE) });
+    if (accountSearch.trim()) p.set("search", accountSearch.trim());
+    const value = await api(`/accounts?${p}`);
+    setAccounts(value.items || []);
+    setAccountTotal(value.meta?.total || 0);
+  }, [api, accountPage, accountSearch]);
 
-  const fetchAccounts = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/twitter-registry/accounts?limit=25");
-      if (res.ok) {
-        const data = await res.json();
-        setAccounts(data.items);
-        setAccountTotal(data.meta.total);
-      }
-    } catch (err) {
-      console.error("Failed to fetch accounts", err);
-    }
-  }, []);
+  const loadEvidence = useCallback(async () => {
+    const p = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(evidencePage * PAGE_SIZE) });
+    if (evidenceSearch.trim()) p.set("search", evidenceSearch.trim());
+    if (evidenceSource) p.set("source_type", evidenceSource);
+    const value = await api(`/evidence?${p}`);
+    setEvidence(value.items || []);
+    setEvidenceTotal(value.meta?.total || 0);
+  }, [api, evidencePage, evidenceSearch, evidenceSource]);
 
-  const fetchRuns = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/twitter-registry/runs?limit=20");
-      if (res.ok) {
-        const data = await res.json();
-        setRuns(data.items);
-      }
-    } catch (err) {
-      console.error("Failed to fetch runs", err);
-    }
-  }, []);
-
-  const loadAllData = useCallback(async () => {
+  const refresh = useCallback(async () => {
     setLoading(true);
-    await Promise.all([
-      fetchOverview(),
-      fetchConfig(),
-      fetchCandidates(),
-      fetchAccounts(),
-      fetchRuns(),
-    ]);
-    setLoading(false);
-  }, [fetchOverview, fetchConfig, fetchCandidates, fetchAccounts, fetchRuns]);
+    try {
+      await Promise.all([loadOverview(), loadConfig(), loadRuns(), loadCandidates(), loadAccounts(), loadEvidence()]);
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "Failed to load Twitter Registry" });
+    } finally {
+      setLoading(false);
+    }
+  }, [loadOverview, loadConfig, loadRuns, loadCandidates, loadAccounts, loadEvidence]);
 
-  useEffect(() => {
-    loadAllData();
-  }, [loadAllData]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void loadCandidates().catch(() => undefined); }, [loadCandidates]);
+  useEffect(() => { void loadAccounts().catch(() => undefined); }, [loadAccounts]);
+  useEffect(() => { void loadEvidence().catch(() => undefined); }, [loadEvidence]);
 
-  useEffect(() => {
-    fetchCandidates();
-  }, [candidatePage, candidateStatusFilter, candidateSearch, fetchCandidates]);
-
-  const handleRunDiscovery = async () => {
-    setActionLoading(true);
+  const runAction = useCallback(async (name: string, path: string, message: string, body: unknown = {}) => {
+    if (!window.confirm(message)) return;
+    setPending(name);
     setNotice(null);
     try {
-      const res = await fetch("/api/admin/twitter-registry/actions/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trigger: "admin_ui" }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setNotice({ type: "success", message: `Discovery run completed successfully. Created candidates: ${data.summary?.seed_discovered || 0}` });
-        loadAllData();
-      } else {
-        setNotice({ type: "error", message: data.detail || "Failed to execute discovery run" });
-      }
-    } catch (err) {
-      setNotice({ type: "error", message: "Network error executing discovery run" });
+      const result = await api(path, { method: "POST", body: JSON.stringify(body) });
+      setNotice({ kind: "success", text: `Completed${result.run_id ? ` · run #${result.run_id}` : ""}` });
+      await refresh();
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "Action failed" });
     } finally {
-      setActionLoading(false);
+      setPending(null);
     }
-  };
+  }, [api, refresh]);
 
-  const handleRescore = async () => {
-    setActionLoading(true);
+  const saveConfig = useCallback(async () => {
+    if (!draft || !config) return;
+    const changed = Object.fromEntries(
+      Object.entries(draft).filter(([key, value]) => !["updated_at", "updated_by"].includes(key) && value !== config[key as keyof ConfigData]),
+    );
+    if (Object.keys(changed).length === 0) return;
+    setPending("config");
     setNotice(null);
     try {
-      const res = await fetch("/api/admin/twitter-registry/actions/rescore", {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setNotice({ type: "success", message: `Successfully rescored ${data.stats?.rescored || 0} candidates.` });
-        loadAllData();
-      } else {
-        setNotice({ type: "error", message: data.detail || "Failed to rescore" });
-      }
-    } catch (err) {
-      setNotice({ type: "error", message: "Network error during rescore" });
+      const result = await api("/config", { method: "PATCH", body: JSON.stringify(changed) });
+      setConfig(result.config);
+      setDraft(result.config);
+      setNotice({ kind: "success", text: "Discovery settings saved." });
+      await loadOverview();
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "Failed to save settings" });
     } finally {
-      setActionLoading(false);
+      setPending(null);
     }
-  };
+  }, [api, config, draft, loadOverview]);
 
-  const handlePromote = async (candidateId: number) => {
-    setActionLoading(true);
-    setNotice(null);
-    try {
-      const res = await fetch(`/api/admin/twitter-registry/actions/candidates/${candidateId}/promote`, {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setNotice({ type: "success", message: `Candidate successfully promoted to canonical account ID ${data.account_id}` });
-        loadAllData();
-      } else {
-        setNotice({ type: "error", message: data.detail || "Promotion failed" });
-      }
-    } catch (err) {
-      setNotice({ type: "error", message: "Network error during promotion" });
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  const sources = useMemo(() => {
+    const found = new Set<string>();
+    Object.values(overview?.metrics || {}).forEach((metric) => Object.keys(metric.source_breakdown || {}).forEach((name) => found.add(name)));
+    ["dexscreener", "coinmarketcap", "curated_seed", "public_web", "x_search"].forEach((name) => found.add(name));
+    return [...found].sort();
+  }, [overview]);
 
-  const handleUpdateConfig = async (newConfig: Partial<ConfigData>) => {
-    setActionLoading(true);
-    setNotice(null);
-    try {
-      const res = await fetch("/api/admin/twitter-registry/config", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newConfig),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setConfig(data.config);
-        setNotice({ type: "success", message: "Discovery configuration updated successfully." });
-      } else {
-        setNotice({ type: "error", message: data.detail || "Failed to update config" });
-      }
-    } catch {
-      setNotice({ type: "error", message: "Network error updating config" });
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  const openCandidate = async (id: number) => setSelectedCandidate(await api(`/candidates/${id}`));
+  const openAccount = async (id: number) => setSelectedAccount(await api(`/accounts/${id}`));
 
-  const viewCandidateDetail = async (id: number) => {
-    try {
-      const res = await fetch(`/api/admin/twitter-registry/candidates/${id}`);
-      if (res.ok) {
-        setSelectedCandidateDetail(await res.json());
-      }
-    } catch (err) {
-      console.error("Failed to load candidate detail", err);
-    }
-  };
+  const tabs: Array<[Tab, string]> = [
+    ["overview", "Overview & Health"],
+    ["candidates", `Candidates (${candidateTotal})`],
+    ["accounts", `Accounts (${accountTotal})`],
+    ["evidence", `Evidence (${evidenceTotal})`],
+    ["runs", "Discovery Runs"],
+    ["config", "Settings"],
+  ];
 
   return (
-    <div className="w-full max-w-[1480px] mx-auto space-y-6 py-6 px-4">
-      {/* Hero Section */}
-      <section className="surface-panel-hero relative overflow-hidden p-6 rounded-2xl border border-bg-border bg-[linear-gradient(160deg,color-mix(in_srgb,var(--theme-bg-elevated)_100%,white_4%),var(--theme-bg-card)_72%)]">
+    <div className="mx-auto w-full max-w-[1500px] space-y-6 px-4 py-6">
+      <section className="rounded-2xl border border-bg-border bg-bg-card p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary-border/60 bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">
-              <Twitter className="h-4 w-4" />
-              Twitter / X Registry Intelligence
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-content">
-              Twitter Registry & Discovery Control
-            </h1>
-            <p className="text-sm text-content-muted max-w-2xl">
-              Monitor candidate queues, evidence trails, discovery scores, canonical account promotion, and live worker health.
-            </p>
+          <div>
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary-border/60 bg-primary-soft px-3 py-1 text-xs font-semibold text-primary"><Twitter className="h-4 w-4"/> Twitter / X Registry</div>
+            <h1 className="text-2xl font-bold text-content">Discovery Control & Registry Intelligence</h1>
+            <p className="mt-1 text-sm text-content-muted">Real database state, evidence, scoring, worker history, source controls and safe manual actions.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" onClick={loadAllData} disabled={loading || actionLoading}>
-              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
-            <Button variant="secondary" onClick={handleRescore} disabled={actionLoading}>
-              Rescore Queue
-            </Button>
-            <Button onClick={handleRunDiscovery} disabled={actionLoading}>
-              <Play className="h-4 w-4 fill-current" />
-              Run Discovery
-            </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => void refresh()} disabled={loading || pending !== null}><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}/> Refresh</Button>
+            <Button variant="secondary" disabled={pending !== null} onClick={() => void runAction("rescore", "/actions/rescore", "Rescore the configured candidate queue now?")}>Rescore Queue</Button>
+            <Button variant="secondary" disabled={pending !== null} onClick={() => void runAction("public", "/actions/run-public", "Run enabled public discovery sources (DexScreener / CoinMarketCap)?", { trigger: "admin_public" })}>Run Public Discovery</Button>
+            <Button disabled={pending !== null} onClick={() => void runAction("full", "/actions/run", "Run the full enabled discovery pipeline now?", { trigger: "admin_full" })}>Run Discovery</Button>
           </div>
         </div>
-
-        {/* Notice Banner */}
-        {notice && (
-          <div className={`mt-4 p-3 rounded-xl border text-sm flex items-center gap-2 ${notice.type === "success" ? "border-success-border bg-success-soft text-success" : "border-danger-border bg-danger-soft text-danger"}`}>
-            {notice.type === "success" ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <ShieldAlert className="h-4 w-4 shrink-0" />}
-            <span>{notice.message}</span>
-          </div>
-        )}
+        {notice && <div className={`mt-4 rounded-xl border p-3 text-sm ${notice.kind === "error" ? "border-danger-border bg-danger-soft text-danger" : "border-success-border bg-success-soft text-success"}`}>{notice.text}</div>}
       </section>
 
-      {/* Public Mode Warning Banner if X API not configured */}
       {overview && !overview.x_api_configured && (
-        <div className="rounded-2xl border border-warning-border bg-warning-soft p-4 text-warning flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
-          <div className="space-y-1 text-sm">
-            <p className="font-semibold">Public Discovery Mode Active (X API: Not Configured)</p>
-            <p className="text-content-muted">
-              Stable numeric X user IDs may be unavailable via public web & DexScreener/CMC sources, so some candidates cannot yet be promoted to canonical accounts until stable IDs are resolved or X API is configured.
-            </p>
-          </div>
-        </div>
+        <div className="flex gap-3 rounded-2xl border border-warning-border bg-warning-soft p-4 text-sm text-warning"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0"/><div><strong>Public discovery mode is active.</strong><div className="mt-1 text-content-muted">X API is not configured. Handles, evidence and scores still work, but canonical promotion is blocked until a reliable stable numeric X user ID is available.</div></div></div>
       )}
 
-      {/* Status / Health Cards */}
       {overview && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Discovery Status</CardDescription>
-              <CardTitle className="text-xl capitalize flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 rounded-full ${overview.status === "running" ? "bg-success animate-pulse" : overview.status === "failed" ? "bg-danger" : "bg-warning"}`} />
-                {overview.status}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xs text-content-muted">
-                Mode: <span className="font-mono text-content">{overview.mode}</span> | X API: <span className="font-mono text-content">{overview.x_api_configured ? "true" : "false"}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Candidates Queue</CardDescription>
-              <CardTitle className="text-xl font-mono">{overview.total_candidates}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xs text-content-muted flex flex-wrap gap-2">
-                <span>Queued: {overview.candidate_status_counts["queued"] || 0}</span>
-                <span>Accepted: {overview.candidate_status_counts["accepted"] || 0}</span>
-                <span>Retry: {overview.candidate_status_counts["retry"] || 0}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Canonical Accounts</CardDescription>
-              <CardTitle className="text-xl font-mono">{overview.total_accounts}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xs text-content-muted">
-                Evidence items: {overview.total_evidence} | Posts: {overview.total_posts}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Last Run Duration</CardDescription>
-              <CardTitle className="text-xl font-mono">
-                {overview.last_run_duration_seconds !== null ? `${overview.last_run_duration_seconds.toFixed(1)}s` : "N/A"}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xs text-content-muted truncate">
-                Worker: {overview.worker_id || "None"}
-              </div>
-            </CardContent>
-          </Card>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Info label="Discovery status" value={`${overview.status} · ${overview.mode}`}/>
+          <Info label="Candidates / accounts" value={`${overview.total_candidates} / ${overview.total_accounts}`}/>
+          <Info label="Evidence / posts" value={`${overview.total_evidence} / ${overview.total_posts}`}/>
+          <Info label="Worker / duration" value={`${overview.worker_id || "—"} · ${overview.last_run_duration_seconds == null ? "—" : `${overview.last_run_duration_seconds.toFixed(1)}s`}`}/>
         </div>
       )}
 
-      {/* Tabs Navigation */}
-      <div className="flex flex-wrap gap-2 border-b border-bg-border pb-3">
-        {[
-          { id: "overview", label: "Overview & Health" },
-          { id: "candidates", label: `Candidates (${candidateTotal})` },
-          { id: "accounts", label: `Canonical Accounts (${accountTotal})` },
-          { id: "runs", label: "Discovery Runs" },
-          { id: "config", label: "Discovery Settings" },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${activeTab === tab.id ? "bg-primary text-primary-foreground shadow-sm" : "bg-bg-elevated text-content-muted hover:text-content"}`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <div className="flex flex-wrap gap-2 border-b border-bg-border pb-3">{tabs.map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`rounded-xl px-4 py-2 text-sm font-semibold ${tab === id ? "bg-primary text-primary-foreground" : "bg-bg-elevated text-content-muted hover:text-content"}`}>{label}</button>)}</div>
 
-      {/* Tab: Overview */}
-      {activeTab === "overview" && overview && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-primary" />
-                Pipeline Health & Timestamps
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              <div className="flex justify-between border-b border-bg-border pb-2">
-                <span className="text-content-muted">Last Run Started:</span>
-                <span className="font-mono">{overview.last_run || "Never"}</span>
-              </div>
-              <div className="flex justify-between border-b border-bg-border pb-2">
-                <span className="text-content-muted">Last Successful Run:</span>
-                <span className="font-mono">{overview.last_successful_run || "None"}</span>
-              </div>
-              <div className="flex justify-between border-b border-bg-border pb-2">
-                <span className="text-content-muted">Last Failed Run:</span>
-                <span className="font-mono">{overview.last_failed_run || "None"}</span>
-              </div>
-              <div className="flex justify-between border-b border-bg-border pb-2">
-                <span className="text-content-muted">Last New Candidate:</span>
-                <span className="font-mono">{overview.last_new_candidate || "None"}</span>
-              </div>
-              <div className="flex justify-between border-b border-bg-border pb-2">
-                <span className="text-content-muted">Last New Evidence:</span>
-                <span className="font-mono">{overview.last_new_evidence || "None"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-content-muted">Last Promoted Account:</span>
-                <span className="font-mono">{overview.last_promoted_account || "None"}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Layers className="h-5 w-5 text-primary" />
-                Candidate Status Breakdown
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {Object.entries(overview.candidate_status_counts).map(([st, count]) => (
-                <div key={st} className="flex items-center justify-between p-3 rounded-xl bg-bg-elevated border border-bg-border">
-                  <span className="capitalize font-medium text-content">{st}</span>
-                  <Badge variant={st === "accepted" ? "success" : st === "rejected" || st === "dead" ? "danger" : "default"}>
-                    {count}
-                  </Badge>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Tab: Candidates */}
-      {activeTab === "candidates" && (
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <CardTitle>Discovery Candidates Frontier</CardTitle>
-                <CardDescription>Server-side paginated queue of discovered handles and handles pending promotion.</CardDescription>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-content-faint" />
-                  <input
-                    type="text"
-                    placeholder="Search handle..."
-                    value={candidateSearch}
-                    onChange={(e) => setCandidateSearch(e.target.value)}
-                    className="rounded-xl border border-bg-border bg-bg-card pl-9 pr-3 py-2 text-sm text-content outline-none focus:border-primary"
-                  />
-                </div>
-                <select
-                  value={candidateStatusFilter}
-                  onChange={(e) => setCandidateStatusFilter(e.target.value)}
-                  className="rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm text-content outline-none focus:border-primary"
-                >
-                  <option value="">All Statuses</option>
-                  <option value="queued">Queued</option>
-                  <option value="processing">Processing</option>
-                  <option value="accepted">Accepted (Promoted)</option>
-                  <option value="rejected">Rejected</option>
-                  <option value="retry">Retry</option>
-                  <option value="dead">Dead</option>
-                </select>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-bg-border text-content-muted">
-                  <tr>
-                    <th className="py-3 px-4">Handle</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4">Score</th>
-                    <th className="py-3 px-4">Confidence</th>
-                    <th className="py-3 px-4">Twitter ID</th>
-                    <th className="py-3 px-4">Last Seen</th>
-                    <th className="py-3 px-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-bg-border">
-                  {candidates.map((c) => (
-                    <tr key={c.id} className="hover:bg-bg-elevated/50">
-                      <td className="py-3 px-4 font-semibold text-content">
-                        {c.username ? `@${c.username}` : c.candidate_key}
-                      </td>
-                      <td className="py-3 px-4">
-                        <Badge variant={c.status === "accepted" ? "success" : c.status === "rejected" ? "danger" : "default"}>
-                          {c.status}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-4 font-mono">{c.discovery_score.toFixed(1)}</td>
-                      <td className="py-3 px-4 font-mono">{c.confidence.toFixed(1)}%</td>
-                      <td className="py-3 px-4 font-mono text-xs text-content-muted">
-                        {c.twitter_id || <span className="text-warning">Unavailable</span>}
-                      </td>
-                      <td className="py-3 px-4 text-xs text-content-muted">
-                        {c.last_seen_at ? new Date(c.last_seen_at).toLocaleString() : "N/A"}
-                      </td>
-                      <td className="py-3 px-4 text-right space-x-2">
-                        <Button size="sm" variant="outline" onClick={() => viewCandidateDetail(c.id)}>
-                          Details
-                        </Button>
-                        {!c.account_id && (
-                          <Button
-                            size="sm"
-                            variant="success"
-                            onClick={() => handlePromote(c.id)}
-                            disabled={!c.twitter_id || actionLoading}
-                            title={!c.twitter_id ? "Stable X user ID required for canonical promotion" : "Promote to canonical account"}
-                          >
-                            Promote
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {candidates.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-content-muted">
-                        No discovery candidates found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination */}
-            <div className="mt-4 flex items-center justify-between border-t border-bg-border pt-4">
-              <span className="text-xs text-content-muted">Showing {candidates.length} of {candidateTotal} candidates</span>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" disabled={candidatePage === 0} onClick={() => setCandidatePage(p => Math.max(0, p - 1))}>
-                  Previous
-                </Button>
-                <Button size="sm" variant="outline" disabled={(candidatePage + 1) * 25 >= candidateTotal} onClick={() => setCandidatePage(p => p + 1)}>
-                  Next
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Tab: Accounts */}
-      {activeTab === "accounts" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Canonical Twitter Accounts ({accountTotal})</CardTitle>
-            <CardDescription>Successfully verified and promoted Twitter/X accounts with stable IDs and crypto metrics.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-bg-border text-content-muted">
-                  <tr>
-                    <th className="py-3 px-4">Handle</th>
-                    <th className="py-3 px-4">Twitter ID</th>
-                    <th className="py-3 px-4">Type</th>
-                    <th className="py-3 px-4">Followers</th>
-                    <th className="py-3 px-4">Alpha Score</th>
-                    <th className="py-3 px-4">Verified</th>
-                    <th className="py-3 px-4">Last Seen</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-bg-border">
-                  {accounts.map((acc) => (
-                    <tr key={acc.id} className="hover:bg-bg-elevated/50">
-                      <td className="py-3 px-4 font-semibold text-content">@{acc.username || acc.twitter_id}</td>
-                      <td className="py-3 px-4 font-mono text-xs">{acc.twitter_id}</td>
-                      <td className="py-3 px-4 capitalize">{acc.account_type}</td>
-                      <td className="py-3 px-4 font-mono">{acc.followers_count.toLocaleString()}</td>
-                      <td className="py-3 px-4 font-mono text-primary">{acc.alpha_score.toFixed(1)}</td>
-                      <td className="py-3 px-4">{acc.verified ? <span className="text-success font-semibold">Yes</span> : "No"}</td>
-                      <td className="py-3 px-4 text-xs text-content-muted">{acc.last_seen_at ? new Date(acc.last_seen_at).toLocaleString() : "N/A"}</td>
-                    </tr>
-                  ))}
-                  {accounts.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-content-muted">No canonical accounts found yet.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Tab: Runs */}
-      {activeTab === "runs" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Discovery Run History</CardTitle>
-            <CardDescription>Recent discovery worker executions, triggers, and outcome metrics.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-bg-border text-content-muted">
-                  <tr>
-                    <th className="py-3 px-4">ID</th>
-                    <th className="py-3 px-4">Started At</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4">Mode</th>
-                    <th className="py-3 px-4">Trigger</th>
-                    <th className="py-3 px-4">Created</th>
-                    <th className="py-3 px-4">Promoted</th>
-                    <th className="py-3 px-4">Error</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-bg-border">
-                  {runs.map((r) => (
-                    <tr key={r.id} className="hover:bg-bg-elevated/50">
-                      <td className="py-3 px-4 font-mono">#{r.id}</td>
-                      <td className="py-3 px-4 text-xs text-content-muted">{r.started_at ? new Date(r.started_at).toLocaleString() : "N/A"}</td>
-                      <td className="py-3 px-4">
-                        <Badge variant={r.status === "completed" ? "success" : r.status === "failed" ? "danger" : "warning"}>
-                          {r.status}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-4 font-mono text-xs">{r.mode}</td>
-                      <td className="py-3 px-4">{r.trigger}</td>
-                      <td className="py-3 px-4 font-mono">{r.candidates_created}</td>
-                      <td className="py-3 px-4 font-mono text-success">{r.promoted}</td>
-                      <td className="py-3 px-4 text-xs text-danger truncate max-w-[200px]" title={r.error || ""}>{r.error || "None"}</td>
-                    </tr>
-                  ))}
-                  {runs.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="py-8 text-center text-content-muted">No discovery runs recorded yet.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Tab: Config */}
-      {activeTab === "config" && config && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Discovery Settings & Parameters</CardTitle>
-            <CardDescription>Configure safe execution parameters for Twitter discovery and ingestion cycles.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="flex items-center justify-between p-4 rounded-xl border border-bg-border bg-bg-elevated">
-                <div>
-                  <div className="font-semibold text-content">Discovery Enabled</div>
-                  <div className="text-xs text-content-muted">Master switch for discovery workers</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={config.discovery_enabled}
-                  onChange={(e) => handleUpdateConfig({ discovery_enabled: e.target.checked })}
-                  className="h-5 w-5 accent-primary cursor-pointer"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-4 rounded-xl border border-bg-border bg-bg-elevated">
-                <div>
-                  <div className="font-semibold text-content">Seed Discovery</div>
-                  <div className="text-xs text-content-muted">Load curated crypto media seeds</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={config.seed_discovery_enabled}
-                  onChange={(e) => handleUpdateConfig({ seed_discovery_enabled: e.target.checked })}
-                  className="h-5 w-5 accent-primary cursor-pointer"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-4 rounded-xl border border-bg-border bg-bg-elevated">
-                <div>
-                  <div className="font-semibold text-content">DexScreener / CMC Sources</div>
-                  <div className="text-xs text-content-muted">Ingest handles from token market listings</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={config.coinmarketcap_enabled}
-                  onChange={(e) => handleUpdateConfig({ coinmarketcap_enabled: e.target.checked, dexscreener_enabled: e.target.checked })}
-                  className="h-5 w-5 accent-primary cursor-pointer"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-4 rounded-xl border border-bg-border bg-bg-elevated">
-                <div>
-                  <div className="font-semibold text-content">Public Web Scraping</div>
-                  <div className="text-xs text-content-muted">Extract X profile links from public sources</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={config.public_web_enabled}
-                  onChange={(e) => handleUpdateConfig({ public_web_enabled: e.target.checked })}
-                  className="h-5 w-5 accent-primary cursor-pointer"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 pt-4 border-t border-bg-border">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-content">Process Limit</label>
-                <input
-                  type="number"
-                  value={config.process_limit}
-                  onChange={(e) => handleUpdateConfig({ process_limit: parseInt(e.target.value) || 250 })}
-                  className="w-full rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm text-content outline-none focus:border-primary"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-content">Min Relevance Score</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={config.min_relevance}
-                  onChange={(e) => handleUpdateConfig({ min_relevance: parseFloat(e.target.value) || 35.0 })}
-                  className="w-full rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm text-content outline-none focus:border-primary"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-content">Max Depth</label>
-                <input
-                  type="number"
-                  value={config.max_depth}
-                  onChange={(e) => handleUpdateConfig({ max_depth: parseInt(e.target.value) || 2 })}
-                  className="w-full rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm text-content outline-none focus:border-primary"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Candidate Detail Modal / Drawer */}
-      {selectedCandidateDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="surface-panel w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-bg-border bg-bg-card p-6 space-y-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-bg-border pb-4">
-              <div>
-                <h3 className="text-lg font-bold text-content">
-                  Candidate: {selectedCandidateDetail.candidate.username ? `@${selectedCandidateDetail.candidate.username}` : selectedCandidateDetail.candidate.candidate_key}
-                </h3>
-                <p className="text-xs font-mono text-content-muted">ID: {selectedCandidateDetail.candidate.id}</p>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => setSelectedCandidateDetail(null)}>
-                Close
-              </Button>
-            </div>
-
-            <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-3 rounded-xl bg-bg-elevated border border-bg-border">
-                  <span className="text-xs text-content-muted block">Status</span>
-                  <span className="font-semibold capitalize text-content">{selectedCandidateDetail.candidate.status}</span>
-                </div>
-                <div className="p-3 rounded-xl bg-bg-elevated border border-bg-border">
-                  <span className="text-xs text-content-muted block">Discovery Score</span>
-                  <span className="font-mono font-bold text-primary">{selectedCandidateDetail.score?.discovery_score || 0}</span>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <h4 className="font-semibold text-content text-xs uppercase tracking-wider">Evidence Trail ({selectedCandidateDetail.evidence.length})</h4>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {selectedCandidateDetail.evidence.map((ev: any) => (
-                    <div key={ev.id} className="p-3 rounded-xl bg-bg-elevated border border-bg-border text-xs space-y-1">
-                      <div className="flex justify-between font-mono text-content-muted">
-                        <span>Source: {ev.source_type}</span>
-                        <span>{new Date(ev.observed_at).toLocaleString()}</span>
-                      </div>
-                      <div className="text-content">Reason: {ev.discovery_reason} | Ref: {ev.source_ref}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {selectedCandidateDetail.candidate.last_error && (
-                <div className="p-3 rounded-xl bg-danger-soft border border-danger-border text-danger text-xs">
-                  <span className="font-semibold block">Last Error:</span>
-                  {selectedCandidateDetail.candidate.last_error}
-                </div>
-              )}
-            </div>
+      {tab === "overview" && overview && (
+        <div className="space-y-6">
+          <Card><CardHeader><CardTitle>Velocity</CardTitle><CardDescription>Real database deltas by time window.</CardDescription></CardHeader><CardContent><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-content-muted"><tr><th className="px-3 py-2">Window</th><th>New candidates</th><th>Evidence</th><th>Accounts</th><th>Posts</th><th>Completed</th><th>Failed</th><th>Promoted</th><th>Rescored</th><th>Skipped</th></tr></thead><tbody>{(["1h","24h","7d"] as const).map((window) => { const m = overview.metrics[window]; return <tr key={window} className="border-t border-bg-border"><td className="px-3 py-3 font-semibold">{window}</td><td>{m.new_candidates}</td><td>{m.new_evidence}</td><td>{m.new_canonical_accounts}</td><td>{m.new_posts}</td><td>{m.completed_runs}</td><td>{m.failed_runs}</td><td>{m.promoted}</td><td>{m.rescored}</td><td>{m.skipped}</td></tr>; })}</tbody></table></div></CardContent></Card>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card><CardHeader><CardTitle>Health timestamps</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2"><Info label="Last run" value={dt(overview.last_run)}/><Info label="Last success" value={dt(overview.last_successful_run)}/><Info label="Last failure" value={dt(overview.last_failed_run)}/><Info label="Last candidate" value={dt(overview.last_new_candidate)}/><Info label="Last evidence" value={dt(overview.last_new_evidence)}/><Info label="Last promoted account" value={dt(overview.last_promoted_account)}/></CardContent></Card>
+            <Card><CardHeader><CardTitle>Sources · last 24h</CardTitle></CardHeader><CardContent className="grid gap-2 sm:grid-cols-2">{Object.entries(overview.metrics["24h"].source_breakdown).sort((a,b)=>b[1]-a[1]).map(([source,count]) => <div key={source} className="flex items-center justify-between rounded-xl border border-bg-border bg-bg-elevated p-3 text-sm"><span>{source}</span><Badge>{count}</Badge></div>)}</CardContent></Card>
           </div>
         </div>
       )}
+
+      {tab === "candidates" && (
+        <Card><CardHeader><CardTitle>Discovery Candidates</CardTitle><CardDescription>Server-side frontier with evidence provenance and safe promotion readiness.</CardDescription></CardHeader><CardContent>
+          <div className="mb-4 grid gap-2 md:grid-cols-4"><div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-content-faint"/><input value={candidateSearch} onChange={(e)=>{setCandidateSearch(e.target.value);setCandidatePage(0);}} placeholder="Search handle" className="w-full rounded-xl border border-bg-border bg-bg-card py-2 pl-9 pr-3 text-sm"/></div><select value={candidateStatus} onChange={(e)=>{setCandidateStatus(e.target.value);setCandidatePage(0);}} className="rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm"><option value="">All statuses</option>{["queued","processing","retry","accepted","rejected","dead","duplicate"].map(v=><option key={v} value={v}>{v}</option>)}</select><select value={candidateSource} onChange={(e)=>{setCandidateSource(e.target.value);setCandidatePage(0);}} className="rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm"><option value="">All sources</option>{sources.map(v=><option key={v} value={v}>{v}</option>)}</select><input type="number" min="0" max="100" value={candidateMinScore} onChange={(e)=>{setCandidateMinScore(e.target.value);setCandidatePage(0);}} placeholder="Min score" className="rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm"/></div>
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-content-muted"><tr><th className="px-3 py-2">Handle</th><th>Status</th><th>Score</th><th>Confidence</th><th>Evidence</th><th>Sources</th><th>X ID</th><th></th></tr></thead><tbody>{candidates.map((item) => <tr key={item.id} className="border-t border-bg-border"><td className="px-3 py-3 font-semibold">{item.username ? `@${item.username}` : item.candidate_key}</td><td><Badge>{item.status}</Badge></td><td>{Number(item.discovery_score || 0).toFixed(1)}</td><td>{Number(item.confidence || 0).toFixed(1)}%</td><td>{item.evidence_count}</td><td className="max-w-52 text-xs">{(item.sources || []).join(", ") || "—"}</td><td className="font-mono text-xs">{item.twitter_id || "—"}</td><td className="space-x-2 text-right"><Button size="sm" variant="outline" onClick={()=>void openCandidate(item.id)}>Details</Button>{!item.account_id && <Button size="sm" disabled={!item.promotion_ready || pending !== null} onClick={()=>void runAction(`promote-${item.id}`, `/actions/candidates/${item.id}/promote`, `Promote ${item.username ? `@${item.username}` : item.candidate_key} to a canonical account?`)}>Promote</Button>}</td></tr>)}</tbody></table></div>
+          <Pager page={candidatePage} total={candidateTotal} setPage={setCandidatePage}/>
+        </CardContent></Card>
+      )}
+
+      {tab === "accounts" && (
+        <Card><CardHeader><CardTitle>Canonical Accounts</CardTitle><CardDescription>Stable-ID accounts with registry scores and true detail counts.</CardDescription></CardHeader><CardContent>
+          <div className="relative mb-4 max-w-md"><Search className="absolute left-3 top-2.5 h-4 w-4 text-content-faint"/><input value={accountSearch} onChange={(e)=>{setAccountSearch(e.target.value);setAccountPage(0);}} placeholder="Search handle or X ID" className="w-full rounded-xl border border-bg-border bg-bg-card py-2 pl-9 pr-3 text-sm"/></div>
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-content-muted"><tr><th className="px-3 py-2">Handle</th><th>X ID</th><th>Type</th><th>Followers</th><th>Alpha</th><th>Trust</th><th>Source</th><th></th></tr></thead><tbody>{accounts.map((item)=><tr key={item.id} className="border-t border-bg-border"><td className="px-3 py-3 font-semibold">@{item.username || item.twitter_id}</td><td className="font-mono text-xs">{item.twitter_id}</td><td>{item.account_type}</td><td>{Number(item.followers_count || 0).toLocaleString()}</td><td>{Number(item.alpha_score || 0).toFixed(1)}</td><td>{Number(item.trust_score || 0).toFixed(1)}</td><td>{item.source}</td><td className="text-right"><Button size="sm" variant="outline" onClick={()=>void openAccount(item.id)}>Details</Button></td></tr>)}</tbody></table></div>
+          <Pager page={accountPage} total={accountTotal} setPage={setAccountPage}/>
+        </CardContent></Card>
+      )}
+
+      {tab === "evidence" && (
+        <Card><CardHeader><CardTitle>Discovery Evidence</CardTitle><CardDescription>Source records that caused candidates to enter or remain in the frontier.</CardDescription></CardHeader><CardContent>
+          <div className="mb-4 grid gap-2 md:grid-cols-2"><input value={evidenceSearch} onChange={(e)=>{setEvidenceSearch(e.target.value);setEvidencePage(0);}} placeholder="Handle / source reference" className="rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm"/><select value={evidenceSource} onChange={(e)=>{setEvidenceSource(e.target.value);setEvidencePage(0);}} className="rounded-xl border border-bg-border bg-bg-card px-3 py-2 text-sm"><option value="">All sources</option>{sources.map(v=><option key={v} value={v}>{v}</option>)}</select></div>
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-content-muted"><tr><th className="px-3 py-2">Candidate</th><th>Source</th><th>Reason</th><th>Reference</th><th>Observed</th><th></th></tr></thead><tbody>{evidence.map((item)=><tr key={item.id} className="border-t border-bg-border"><td className="px-3 py-3 font-semibold">{item.candidate_username ? `@${item.candidate_username}` : item.candidate_key}</td><td>{item.source_type}</td><td>{item.discovery_reason}</td><td className="max-w-72 truncate text-xs" title={item.source_ref}>{item.source_ref}</td><td className="text-xs">{dt(item.observed_at)}</td><td className="text-right"><Button size="sm" variant="outline" onClick={()=>setSelectedEvidence(item)}>Raw</Button></td></tr>)}</tbody></table></div>
+          <Pager page={evidencePage} total={evidenceTotal} setPage={setEvidencePage}/>
+        </CardContent></Card>
+      )}
+
+      {tab === "runs" && (
+        <Card><CardHeader><CardTitle>Discovery Run History</CardTitle><CardDescription>Admin and CLI worker executions, including real database deltas and errors.</CardDescription></CardHeader><CardContent><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-content-muted"><tr><th className="px-3 py-2">Run</th><th>Status</th><th>Mode</th><th>Worker</th><th>Started</th><th>Candidates</th><th>Evidence</th><th>Rescored</th><th>Promoted</th><th>Skipped</th><th>Error</th></tr></thead><tbody>{runs.map((item)=><tr key={item.id} className="border-t border-bg-border"><td className="px-3 py-3">#{item.id}</td><td><Badge>{item.status}</Badge></td><td>{item.mode}</td><td className="max-w-44 truncate font-mono text-xs">{item.worker_id || "—"}</td><td className="text-xs">{dt(item.started_at)}</td><td>{item.candidates_created}</td><td>{item.evidence_created}</td><td>{item.rescored}</td><td>{item.promoted}</td><td>{item.skipped}</td><td className="max-w-64 truncate text-xs text-danger" title={item.error || ""}>{item.error || "—"}</td></tr>)}</tbody></table></div></CardContent></Card>
+      )}
+
+      {tab === "config" && draft && (
+        <Card><CardHeader><CardTitle>Discovery Settings</CardTitle><CardDescription>Validated operational controls only. Secrets, database credentials and API tokens are never editable here.</CardDescription></CardHeader><CardContent className="space-y-6">
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">{(["discovery_enabled","dexscreener_enabled","coinmarketcap_enabled","seed_discovery_enabled","public_web_enabled","x_api_enrichment_enabled"] as const).map((key)=><label key={key} className="flex items-center justify-between rounded-xl border border-bg-border bg-bg-elevated p-3 text-sm"><span>{key.replaceAll("_", " ")}</span><input type="checkbox" checked={draft[key]} onChange={(e)=>setDraft({...draft,[key]:e.target.checked})}/></label>)}</div>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">{(["cmc_limit","rescore_limit","process_limit","network_limit","max_depth","min_relevance","batch_size"] as const).map((key)=><label key={key} className="space-y-1 text-sm"><span className="text-content-muted">{key.replaceAll("_", " ")}</span><input type="number" value={draft[key]} onChange={(e)=>setDraft({...draft,[key]:Number(e.target.value)})} className="w-full rounded-xl border border-bg-border bg-bg-card px-3 py-2"/></label>)}</div>
+          <div className="flex flex-wrap items-center justify-between gap-4"><div className="text-xs text-content-muted">Last update: {dt(draft.updated_at)} · by {draft.updated_by || "—"}</div><Button disabled={pending !== null} onClick={()=>void saveConfig()}>Save Settings</Button></div>
+        </CardContent></Card>
+      )}
+
+      {selectedCandidate && <Modal title={`Candidate ${selectedCandidate.candidate?.username ? `@${selectedCandidate.candidate.username}` : selectedCandidate.candidate?.candidate_key}`} onClose={()=>setSelectedCandidate(null)}><div className="grid gap-3 md:grid-cols-3"><Info label="Status" value={selectedCandidate.candidate?.status}/><Info label="Twitter ID" value={selectedCandidate.candidate?.twitter_id || "—"}/><Info label="Account ID" value={selectedCandidate.candidate?.account_id || "—"}/><Info label="Score" value={selectedCandidate.score?.discovery_score ?? "—"}/><Info label="Confidence" value={selectedCandidate.score?.confidence ?? "—"}/><Info label="Attempts" value={selectedCandidate.candidate?.attempts}/><Info label="First seen" value={dt(selectedCandidate.candidate?.first_seen_at)}/><Info label="Last seen" value={dt(selectedCandidate.candidate?.last_seen_at)}/><Info label="Last error" value={selectedCandidate.candidate?.last_error || "—"}/></div><JsonBlock value={selectedCandidate.score?.components} label="Score components"/><JsonBlock value={selectedCandidate.candidate?.meta} label="Candidate metadata"/><div className="space-y-2"><h4 className="font-semibold">Evidence ({selectedCandidate.evidence?.length || 0})</h4>{(selectedCandidate.evidence || []).map((item: any)=><div key={item.id} className="rounded-xl border border-bg-border p-3 text-xs"><strong>{item.source_type}</strong> · {item.discovery_reason}<div className="text-content-muted">{item.source_ref}</div><JsonBlock value={item.raw}/></div>)}</div></Modal>}
+
+      {selectedAccount && <Modal title={`Account @${selectedAccount.account?.username || selectedAccount.account?.twitter_id}`} onClose={()=>setSelectedAccount(null)}><div className="grid gap-3 md:grid-cols-3"><Info label="X ID" value={selectedAccount.account?.twitter_id}/><Info label="Followers" value={selectedAccount.account?.followers_count}/><Info label="Alpha" value={selectedAccount.score?.alpha_score ?? "—"}/><Info label="Snapshots" value={selectedAccount.snapshots_count}/><Info label="Posts" value={selectedAccount.posts_count}/><Info label="Token stats" value={selectedAccount.token_stats_count}/></div><JsonBlock value={selectedAccount.account?.raw} label="Account raw"/><div><h4 className="mb-2 font-semibold">Recent posts</h4><div className="space-y-2">{(selectedAccount.posts || []).map((post: any)=><div key={post.twitter_post_id} className="rounded-xl border border-bg-border p-3 text-xs"><div className="mb-1 text-content-muted">{dt(post.published_at)} · ♥ {post.likes} · ↻ {post.reposts}</div><div>{post.text}</div></div>)}</div></div></Modal>}
+
+      {selectedEvidence && <Modal title={`Evidence #${selectedEvidence.id}`} onClose={()=>setSelectedEvidence(null)}><div className="grid gap-3 md:grid-cols-2"><Info label="Candidate" value={selectedEvidence.candidate_username ? `@${selectedEvidence.candidate_username}` : selectedEvidence.candidate_key}/><Info label="Source" value={selectedEvidence.source_type}/><Info label="Reference" value={selectedEvidence.source_ref}/><Info label="Reason" value={selectedEvidence.discovery_reason}/></div><JsonBlock value={selectedEvidence.raw}/></Modal>}
     </div>
   );
 }

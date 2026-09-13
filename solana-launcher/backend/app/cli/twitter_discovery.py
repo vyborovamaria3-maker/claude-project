@@ -22,6 +22,10 @@ from app.services.twitter_discovery import (
     promote_candidate,
     reject_candidate,
 )
+from app.services.twitter_discovery_admin_runtime import (
+    DiscoveryRunBusy,
+    run_tracked_cli,
+)
 from app.services.twitter_discovery_sources import (
     DiscoveryRateLimited,
     PublicWebDiscoverySource,
@@ -360,74 +364,110 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     }
 
     timeout = httpx.Timeout(20.0, connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        public_source = PublicWebDiscoverySource(client=client)
-        x_source = (
-            XApiDiscoverySource(
-                bearer_token=settings.x_api_bearer_token,
-                client=client,
-                base_url=settings.x_api_base_url,
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            public_source = PublicWebDiscoverySource(client=client)
+            x_source = (
+                XApiDiscoverySource(
+                    bearer_token=settings.x_api_bearer_token,
+                    client=client,
+                    base_url=settings.x_api_base_url,
+                )
+                if settings.x_api_bearer_token.strip()
+                else None
             )
-            if settings.x_api_bearer_token.strip()
-            else None
-        )
+
+            async with sessionmaker() as session:
+                if not args.skip_seeds:
+                    summary["seed_discovered"] = await _ingest_seeds(
+                        session,
+                        args.seed_file,
+                    )
+                if args.public_url:
+                    discovered, errors = await _ingest_public_urls(
+                        session,
+                        public_source,
+                        args.public_url,
+                    )
+                    summary["public_web_discovered"] = discovered
+                    summary["public_web_errors"] = errors
+                if x_source is not None and not args.skip_x_search:
+                    queries = load_queries(args.queries_file)
+                    discovered, errors, rate_limited = await _ingest_x_search(
+                        session,
+                        x_source,
+                        queries,
+                        query_limit=args.query_limit,
+                    )
+                    summary["x_search_discovered"] = discovered
+                    summary["x_search_errors"] = errors
+                    summary["x_search_rate_limited"] = rate_limited
+                if args.dry_run:
+                    await session.rollback()
+                else:
+                    await session.commit()
+
+            if x_source is not None and not args.skip_frontier:
+                summary["frontier"] = await _process_frontier(
+                    sessionmaker,
+                    x_source,
+                    worker_id=worker_id,
+                    process_limit=max(1, args.process_limit),
+                    batch_size=max(1, args.batch_size),
+                    max_depth=max(0, args.max_depth),
+                    min_relevance=max(0.0, min(100.0, args.min_relevance)),
+                    network_mode=args.network_mode,
+                    network_limit=max(1, args.network_limit),
+                    lease_seconds=max(30, args.lease_seconds),
+                    dry_run=bool(args.dry_run),
+                )
+            elif x_source is None:
+                summary["frontier_skipped"] = "X_API_BEARER_TOKEN is not configured"
 
         async with sessionmaker() as session:
-            if not args.skip_seeds:
-                summary["seed_discovered"] = await _ingest_seeds(
-                    session,
-                    args.seed_file,
-                )
-            if args.public_url:
-                discovered, errors = await _ingest_public_urls(
-                    session,
-                    public_source,
-                    args.public_url,
-                )
-                summary["public_web_discovered"] = discovered
-                summary["public_web_errors"] = errors
-            if x_source is not None and not args.skip_x_search:
-                queries = load_queries(args.queries_file)
-                discovered, errors, rate_limited = await _ingest_x_search(
-                    session,
-                    x_source,
-                    queries,
-                    query_limit=args.query_limit,
-                )
-                summary["x_search_discovered"] = discovered
-                summary["x_search_errors"] = errors
-                summary["x_search_rate_limited"] = rate_limited
-            if args.dry_run:
-                await session.rollback()
-            else:
-                await session.commit()
+            summary["database"] = await discovery_stats(session)
+        return summary
+    finally:
+        await engine.dispose()
 
-        if x_source is not None and not args.skip_frontier:
-            summary["frontier"] = await _process_frontier(
-                sessionmaker,
-                x_source,
-                worker_id=worker_id,
-                process_limit=max(1, args.process_limit),
-                batch_size=max(1, args.batch_size),
-                max_depth=max(0, args.max_depth),
-                min_relevance=max(0.0, min(100.0, args.min_relevance)),
-                network_mode=args.network_mode,
-                network_limit=max(1, args.network_limit),
-                lease_seconds=max(30, args.lease_seconds),
-                dry_run=bool(args.dry_run),
-            )
-        elif x_source is None:
-            summary["frontier_skipped"] = "X_API_BEARER_TOKEN is not configured"
 
-    async with sessionmaker() as session:
-        summary["database"] = await discovery_stats(session)
-    await engine.dispose()
-    return summary
+async def _run_tracked(args: argparse.Namespace) -> dict[str, Any]:
+    settings = get_settings()
+    x_enabled = bool(settings.x_api_bearer_token.strip() and not args.skip_x_search)
+    has_public_phase = bool(not args.skip_seeds or args.public_url)
+    mode = "hybrid" if x_enabled and has_public_phase else "x_api" if x_enabled else "public_no_x_api"
+    trigger = "cli_dry_run" if args.dry_run else "cli"
+    return await run_tracked_cli(
+        lambda: run(args),
+        mode=mode,
+        trigger=trigger,
+        worker_id=args.worker_id,
+        config_snapshot={
+            "seed_file": args.seed_file,
+            "queries_file": args.queries_file,
+            "public_url_count": len(args.public_url),
+            "skip_seeds": args.skip_seeds,
+            "skip_x_search": args.skip_x_search,
+            "skip_frontier": args.skip_frontier,
+            "query_limit": args.query_limit,
+            "process_limit": args.process_limit,
+            "batch_size": args.batch_size,
+            "max_depth": args.max_depth,
+            "min_relevance": args.min_relevance,
+            "network_mode": args.network_mode,
+            "network_limit": args.network_limit,
+            "lease_seconds": args.lease_seconds,
+            "dry_run": args.dry_run,
+        },
+    )
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    summary = asyncio.run(run(args))
+    try:
+        summary = asyncio.run(_run_tracked(args))
+    except DiscoveryRunBusy as exc:
+        raise SystemExit(str(exc)) from exc
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 
 
