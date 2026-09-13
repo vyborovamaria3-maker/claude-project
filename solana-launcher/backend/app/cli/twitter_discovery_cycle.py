@@ -155,6 +155,9 @@ async def run_tracked(args: argparse.Namespace) -> dict:
             "rescore_limit": int(args.rescore_limit),
         },
     )
+    if run_id is None:
+        return {"skipped": True, "reason": "already_running"}
+
     try:
         result = await run(args, run_id=run_id)
     except asyncio.CancelledError:
