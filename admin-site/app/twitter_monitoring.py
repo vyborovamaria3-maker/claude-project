@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -153,36 +152,3 @@ class TwitterMonitoringStore:
             "recent_accounts": [dict(row) for row in recent_accounts],
             "tables": [table for table in TWITTER_MONITOR_TABLES if table in existing],
         }
-
-    def update_settings(
-        self,
-        values: dict[str, Any],
-        *,
-        expected_updated_at: datetime,
-    ) -> dict[str, Any] | None:
-        unknown = set(values) - set(TWITTER_SETTINGS_FIELDS)
-        if unknown:
-            raise ValueError(f"Unsupported Twitter setting(s): {', '.join(sorted(unknown))}")
-        if set(values) != set(TWITTER_SETTINGS_FIELDS):
-            missing = set(TWITTER_SETTINGS_FIELDS) - set(values)
-            raise ValueError(f"Missing Twitter setting(s): {', '.join(sorted(missing))}")
-
-        assignments = ", ".join(f'"{field}" = %s' for field in TWITTER_SETTINGS_FIELDS)
-        params = [values[field] for field in TWITTER_SETTINGS_FIELDS]
-        params.extend([expected_updated_at])
-        sql = f"""
-            UPDATE twitter_crawler_settings
-            SET {assignments}, updated_at = NOW()
-            WHERE id = 1 AND updated_at = %s
-            RETURNING *
-        """
-
-        with self._connect() as db:
-            db.execute("SET LOCAL statement_timeout=5000")
-            db.execute("SET LOCAL lock_timeout=2000")
-            row = db.execute(sql, params).fetchone()
-            if row is None:
-                db.rollback()
-                return None
-            db.commit()
-            return dict(row)
