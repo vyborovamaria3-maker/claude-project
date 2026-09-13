@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String
@@ -32,7 +33,7 @@ class TwitterCrawlerSettings(Base):
 
     @validates("query_limit")
     def validate_query_limit(self, _key: str, value: int) -> int:
-        return self._bounded_int(value, 1, 100, "query_limit")
+        return self._bounded_int(value, 10, 100, "query_limit")
 
     @validates("process_limit")
     def validate_process_limit(self, _key: str, value: int) -> int:
@@ -61,13 +62,15 @@ class TwitterCrawlerSettings(Base):
     @validates("min_relevance")
     def validate_min_relevance(self, _key: str, value: float) -> float:
         normalized = float(value)
-        if normalized < 0.0 or normalized > 100.0:
-            raise ValueError("min_relevance must be between 0 and 100")
+        if not math.isfinite(normalized) or normalized < 0.0 or normalized > 100.0:
+            raise ValueError("min_relevance must be a finite number between 0 and 100")
         return normalized
 
     @validates("network_mode")
     def validate_network_mode(self, _key: str, value: str) -> str:
-        normalized = str(value).strip().lower()
+        if not isinstance(value, str):
+            raise ValueError("network_mode must be none, following, followers, or both")
+        normalized = value.strip().lower()
         if normalized not in {"none", "following", "followers", "both"}:
             raise ValueError("network_mode must be none, following, followers, or both")
         return normalized
