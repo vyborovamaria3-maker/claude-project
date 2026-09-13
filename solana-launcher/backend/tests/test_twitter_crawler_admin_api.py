@@ -10,6 +10,7 @@ from app.api.v1.twitter_crawler_admin import (
     SETTING_FIELDS,
     TwitterCrawlerSettingsUpdate,
     crawler_settings_access,
+    get_crawler_settings,
     update_crawler_settings,
 )
 
@@ -113,6 +114,38 @@ async def test_access_probe_requires_and_accepts_dedicated_key(monkeypatch):
 
     result = await crawler_settings_access(x_twitter_crawler_admin_key=TEST_KEY)
     assert result == {"ok": True, "scope": "twitter_crawler_settings"}
+
+
+@pytest.mark.asyncio
+async def test_read_endpoint_requires_key_before_db_access(monkeypatch):
+    monkeypatch.setenv("TWITTER_CRAWLER_ADMIN_KEY", TEST_KEY)
+    session = _Session(_row())
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_crawler_settings(
+            session=session,  # type: ignore[arg-type]
+            x_twitter_crawler_admin_key="wrong-key",
+        )
+
+    assert exc_info.value.status_code == 401
+    assert session.executed is False
+
+
+@pytest.mark.asyncio
+async def test_read_endpoint_returns_canonical_settings(monkeypatch):
+    monkeypatch.setenv("TWITTER_CRAWLER_ADMIN_KEY", TEST_KEY)
+    session = _Session(_row())
+
+    result = await get_crawler_settings(
+        session=session,  # type: ignore[arg-type]
+        x_twitter_crawler_admin_key=TEST_KEY,
+    )
+
+    assert session.executed is True
+    assert result["ok"] is True
+    assert result["settings"]["id"] == 1
+    assert result["settings"]["updated_at"].endswith("+00:00")
+    assert set(result["settings"]) == {"id", "updated_at", *SETTING_FIELDS}
 
 
 @pytest.mark.asyncio
