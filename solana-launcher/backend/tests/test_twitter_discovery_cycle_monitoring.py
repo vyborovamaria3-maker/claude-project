@@ -1,4 +1,4 @@
-from app.cli.twitter_discovery_cycle import cycle_result_is_degraded
+from app.cli.twitter_discovery_cycle import cycle_result_is_degraded, frontier_was_processed
 
 
 def test_cycle_health_is_success_without_partial_failures():
@@ -35,3 +35,10 @@ def test_cycle_health_is_degraded_on_rate_limit_or_frontier_failure():
     }
     assert cycle_result_is_degraded(rate_limited) is True
     assert cycle_result_is_degraded(frontier_failed) is True
+
+
+def test_frontier_processed_requires_actual_frontier_counters():
+    assert frontier_was_processed(None) is False
+    assert frontier_was_processed({"frontier_skipped": "X API not configured"}) is False
+    assert frontier_was_processed({"frontier": None}) is False
+    assert frontier_was_processed({"frontier": {"processed": 0}}) is True
