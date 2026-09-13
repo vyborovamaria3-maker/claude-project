@@ -12,14 +12,21 @@ from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 
 
 def test_next_proxy_backend_prefix_is_registered_with_compat_patch_first():
-    matching = [
+    included = [
         route
         for route in api_router.routes
-        if getattr(route, "path", "") == "/admin/twitter-registry/config"
+        if getattr(getattr(route, "include_context", None), "prefix", None)
+        == "/admin/twitter-registry"
+    ]
+    assert len(included) >= 2
+    compat_routes = [
+        route
+        for route in included[0].original_router.routes
+        if getattr(route, "path", "") == "/config"
         and "PATCH" in getattr(route, "methods", set())
     ]
-    assert len(matching) >= 2
-    assert matching[0].endpoint.__module__.endswith("twitter_registry_admin_compat")
+    assert compat_routes
+    assert compat_routes[0].endpoint.__module__.endswith("twitter_registry_admin_compat")
 
 
 def test_legacy_config_is_derived_from_canonical_crawler_settings():

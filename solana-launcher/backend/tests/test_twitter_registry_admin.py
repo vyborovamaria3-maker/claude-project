@@ -4,6 +4,7 @@ import pytest_asyncio
 from app.core.config import get_settings
 from app.db.base import Base
 from app.main import create_app
+from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 from app.schemas.user import UserCreate
 from app.services.users import create_user
 from fastapi.testclient import TestClient
@@ -38,6 +39,7 @@ async def app_and_client():
             UserCreate(email="user@potapoff.com", password="UserPassword123!"),
             is_superuser=False,
         )
+        session.add(TwitterCrawlerSettings(id=1))
         await session.commit()
 
     with TestClient(app) as client:
