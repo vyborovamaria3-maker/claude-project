@@ -22,6 +22,7 @@ from .postgres_task_queue import PostgresTaskQueue
 from . import security_v2
 from .services import TELEGRAM_TABLES
 from .task_queue import AdminTaskQueue
+from .twitter_monitoring_api import build_twitter_monitoring_router
 
 
 for _table in (
@@ -181,6 +182,7 @@ def create_app() -> FastAPI:
     app.include_router(build_analysis_router())
     app.include_router(build_analysis_editor_router())
     app.include_router(build_intelligence_router())
+    app.include_router(build_twitter_monitoring_router())
     if shared_security is None:
         security_v2.install_security(app)
     else:

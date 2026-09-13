@@ -1,11 +1,12 @@
 import pytest_asyncio
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
 from app.db.base import Base
 from app.models.twitter_discovery_scoring import TwitterDiscoveryScore
 from app.models.twitter_intelligence import TwitterDiscoveryCandidate, TwitterDiscoveryEvidence
 from app.services.twitter_scrape_bridge import ingest_dev_twitter_stats
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 
 @pytest_asyncio.fixture

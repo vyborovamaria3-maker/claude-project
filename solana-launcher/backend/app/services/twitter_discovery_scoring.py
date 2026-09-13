@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -55,8 +55,8 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _meta_float(meta: dict[str, Any] | None, key: str) -> float:
@@ -271,7 +271,7 @@ async def calculate_discovery_score(
     *,
     now: datetime | None = None,
 ) -> DiscoveryScoreBreakdown:
-    current_time = _aware(now or datetime.now(UTC))
+    current_time = _aware(now or datetime.now(timezone.utc))
     source_score, evidence_count, source_type_count, source_types = await _evidence_score(
         session,
         candidate.id,
@@ -321,7 +321,6 @@ async def calculate_discovery_score(
         confidence += 15.0
     if own_score is not None:
         confidence += 10.0
-        confidence += min(10.0, _clamp(own_score.score_confidence) * 0.10)
     if token_history_count > 0:
         confidence += min(10.0, 4.0 + token_history_count)
 
@@ -380,7 +379,7 @@ async def rescore_discovery_candidate(
         "score_version",
     ):
         setattr(row, field, getattr(breakdown, field))
-    row.scored_at = _aware(now or datetime.now(UTC))
+    row.scored_at = _aware(now or datetime.now(timezone.utc))
     row.components = asdict(breakdown)
 
     computed_priority = int(round(breakdown.discovery_score))
@@ -419,7 +418,7 @@ async def rescore_discovery_candidates(
 
     score_total = 0.0
     confidence_total = 0.0
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     for candidate in rows:
         score = await rescore_discovery_candidate(session, candidate, now=now)
         score_total += score.discovery_score

@@ -108,6 +108,35 @@ services:
         condition: service_healthy
     logging: *default-logging
 
+  twitter-discovery:
+    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    env_file:
+      - backend.env
+      - .env.server
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    command:
+      [
+        "python",
+        "-m",
+        "app.cli.twitter_discovery_daemon",
+        "--public-interval",
+        "900",
+        "--cycle-interval",
+        "1800",
+      ]
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *default-logging
+
   telegram-intelligence:
     profiles: ["telegram-intelligence"]
     image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}

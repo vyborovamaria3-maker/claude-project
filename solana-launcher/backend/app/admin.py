@@ -2,6 +2,8 @@ from sqladmin import Admin, ModelView
 from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
 
+from app.admin_twitter import TWITTER_ADMIN_VIEWS
+from app.admin_twitter_settings import TwitterCrawlerSettingsAdmin
 from app.core.config import Settings
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
@@ -129,4 +131,7 @@ def setup_admin(app, engine, settings: Settings) -> Admin:
     admin.add_view(UserAdmin)
     admin.add_view(SubscriptionSettingsAdmin)
     admin.add_view(SubscriptionOrderAdmin)
+    admin.add_view(TwitterCrawlerSettingsAdmin)
+    for view in TWITTER_ADMIN_VIEWS:
+        admin.add_view(view)
     return admin

@@ -26,6 +26,7 @@ dependencies = [
   "pynacl>=1.5",
   "python-multipart>=0.0.9",
   "sqladmin>=0.18",
+  "wtforms>=3.1",
   "celery>=5.4",
   "redis>=5.0",
   "prometheus-fastapi-instrumentator>=7.0",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select
@@ -17,6 +17,7 @@ from app.services.twitter_account_registry import (
     normalize_twitter_username,
     upsert_twitter_account,
 )
+
 
 CRYPTO_TERMS: dict[str, float] = {
     "crypto": 22.0,
@@ -89,13 +90,13 @@ class ResolvedTwitterProfile:
 
 
 def utcnow() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def clamp_int(value: int, low: int, high: int) -> int:

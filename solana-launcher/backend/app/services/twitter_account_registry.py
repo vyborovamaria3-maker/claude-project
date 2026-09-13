@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -16,11 +16,12 @@ from app.models.twitter_intelligence import (
     TwitterPostToken,
 )
 
+
 _USERNAME_RE = re.compile(r"^[a-z0-9_]{1,15}$")
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def normalize_twitter_id(value: str | int) -> str:

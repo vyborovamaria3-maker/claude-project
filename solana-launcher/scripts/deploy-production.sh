@@ -10,6 +10,7 @@ HEALTH_SCRIPT="$DEPLOY_DIR/scripts/healthcheck-production.sh"
 PROMETHEUS_CONFIG="$DEPLOY_DIR/prometheus/prometheus.yml"
 ADMIN_DIR="${ADMIN_DIR:-/opt/claude-project/admin-site}"
 ADMIN_COMPOSE_FILE="$ADMIN_DIR/docker-compose.yml"
+ADMIN_ENV_FILE="$ADMIN_DIR/.env"
 
 cd "$DEPLOY_DIR"
 
@@ -20,6 +21,62 @@ test -r "$BACKUP_SCRIPT"
 test -r "$HEALTH_SCRIPT"
 test -r "$PROMETHEUS_CONFIG"
 test -r "$ADMIN_COMPOSE_FILE"
+test -r "$ADMIN_ENV_FILE"
+
+env_value_from_file() {
+  local file="$1"
+  local key="$2"
+  local value
+  value="$(sed -n "s/^${key}=//p" "$file" | tail -n 1)"
+  printf '%s' "${value%$'\r'}"
+}
+
+set_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*$|${key}=${value}|" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+ensure_twitter_crawler_admin_secret() {
+  local backend_key
+  local admin_key
+  local key
+
+  backend_key="$(env_value_from_file backend.env TWITTER_CRAWLER_ADMIN_KEY)"
+  admin_key="$(env_value_from_file "$ADMIN_ENV_FILE" TWITTER_CRAWLER_ADMIN_KEY)"
+
+  if [[ -n "$backend_key" && -n "$admin_key" && "$backend_key" != "$admin_key" ]]; then
+    echo "TWITTER_CRAWLER_ADMIN_KEY differs between backend.env and admin-site/.env" >&2
+    return 1
+  fi
+
+  key="${backend_key:-$admin_key}"
+  if [[ -z "$key" ]]; then
+    key="$(openssl rand -hex 32)"
+    echo "Generated dedicated Twitter crawler admin secret"
+  fi
+
+  if [[ ! "$key" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+    echo "TWITTER_CRAWLER_ADMIN_KEY must be 32-256 URL-safe characters" >&2
+    return 1
+  fi
+
+  set_env_value backend.env TWITTER_CRAWLER_ADMIN_KEY "$key"
+  set_env_value "$ADMIN_ENV_FILE" TWITTER_CRAWLER_ADMIN_KEY "$key"
+
+  if [[ -z "$(env_value_from_file "$ADMIN_ENV_FILE" ADMIN_TWITTER_BACKEND_URL)" ]]; then
+    set_env_value "$ADMIN_ENV_FILE" ADMIN_TWITTER_BACKEND_URL "http://backend:8000"
+  fi
+
+  chmod 600 backend.env "$ADMIN_ENV_FILE" 2>/dev/null || true
+}
+
+ensure_twitter_crawler_admin_secret
 
 # The admin stack owns the same external network so the public ingress can
 # route admin.potapoff.fun directly to potapoff-admin:8080.
@@ -39,6 +96,7 @@ ADMIN_COMPOSE=(
 
 PREVIOUS_TAG=""
 BOT_IMAGE_AVAILABLE=1
+TWITTER_DISCOVERY_AVAILABLE=1
 
 if [[ -f .current-image-tag ]]; then
   PREVIOUS_TAG="$(cat .current-image-tag)"
@@ -64,6 +122,11 @@ stop_telegram() {
     >/dev/null 2>&1 || true
 }
 
+stop_twitter_discovery() {
+  "${COMPOSE[@]}" stop twitter-discovery >/dev/null 2>&1 || true
+  "${COMPOSE[@]}" rm -f twitter-discovery >/dev/null 2>&1 || true
+}
+
 sync_telegram_bot() {
   if telegram_bot_enabled && [[ "$BOT_IMAGE_AVAILABLE" -eq 1 ]]; then
     echo "Starting Telegram bot"
@@ -87,6 +150,50 @@ sync_telegram_intelligence() {
   fi
 }
 
+start_twitter_discovery_required() {
+  local container_id
+  local state
+
+  echo "Starting Twitter discovery daemon"
+  "${COMPOSE[@]}" up -d twitter-discovery
+  sleep 3
+  container_id="$("${COMPOSE[@]}" ps -q twitter-discovery 2>/dev/null || true)"
+  state=""
+  if [[ -n "$container_id" ]]; then
+    state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+  fi
+  if [[ "$state" != "running" ]]; then
+    "${COMPOSE[@]}" logs --tail=120 twitter-discovery >&2 || true
+    echo "Twitter discovery daemon failed to start" >&2
+    return 1
+  fi
+}
+
+start_twitter_discovery_rollback() {
+  local container_id
+  local state
+
+  TWITTER_DISCOVERY_AVAILABLE=1
+  if ! "${COMPOSE[@]}" up -d twitter-discovery >/dev/null 2>&1; then
+    TWITTER_DISCOVERY_AVAILABLE=0
+  else
+    sleep 3
+    container_id="$("${COMPOSE[@]}" ps -q twitter-discovery 2>/dev/null || true)"
+    state=""
+    if [[ -n "$container_id" ]]; then
+      state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+    fi
+    if [[ "$state" != "running" ]]; then
+      TWITTER_DISCOVERY_AVAILABLE=0
+    fi
+  fi
+
+  if [[ "$TWITTER_DISCOVERY_AVAILABLE" -ne 1 ]]; then
+    echo "Previous backend image has no working Twitter discovery daemon; skipping it during rollback" >&2
+    stop_twitter_discovery
+  fi
+}
+
 restart_nginx() {
   # nginx resolves Docker service names when its configuration is loaded.
   # backend/frontend are recreated on each tagged deploy and may receive new
@@ -100,14 +207,15 @@ start_admin() {
   "${ADMIN_COMPOSE[@]}" config --quiet
   "${ADMIN_COMPOSE[@]}" up -d --build admin-postgres admin
   for _ in $(seq 1 60); do
-    if curl --fail --silent --max-time 3 http://127.0.0.1:18080/api/health >/dev/null 2>&1; then
-      echo "ADMIN_HEALTH_OK"
+    if curl --fail --silent --max-time 3 http://127.0.0.1:18080/api/ready \
+      | grep -Fq '"ready":true'; then
+      echo "ADMIN_READY_OK"
       return 0
     fi
     sleep 2
   done
   "${ADMIN_COMPOSE[@]}" logs --tail=150 admin >&2 || true
-  echo "Admin Control Center did not become healthy" >&2
+  echo "Admin Control Center did not become ready" >&2
   return 1
 }
 
@@ -121,6 +229,39 @@ verify_admin_route() {
     return 1
   }
   echo "ADMIN_ROUTE_OK $body"
+}
+
+verify_twitter_admin_backend() {
+  "${ADMIN_COMPOSE[@]}" exec -T admin python - <<'PY'
+import os
+import httpx
+
+base = os.environ.get("ADMIN_TWITTER_BACKEND_URL", "http://backend:8000").rstrip("/")
+key = os.environ.get("TWITTER_CRAWLER_ADMIN_KEY", "")
+if len(key) < 32:
+    raise SystemExit("TWITTER_CRAWLER_ADMIN_KEY is missing in admin container")
+with httpx.Client(timeout=5.0, trust_env=False) as client:
+    response = client.get(
+        f"{base}/api/v1/twitter/admin/crawler-settings/access",
+        headers={"X-Twitter-Crawler-Admin-Key": key},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("ok") is not True:
+        raise SystemExit(f"unexpected Twitter admin access payload: {payload!r}")
+print("TWITTER_ADMIN_BACKEND_OK")
+PY
+}
+
+start_core_services() {
+  "${COMPOSE[@]}" up -d --remove-orphans \
+    postgres \
+    redis \
+    rabbitmq \
+    backend \
+    frontend \
+    nginx \
+    prometheus
 }
 
 rollback() {
@@ -141,6 +282,7 @@ rollback() {
   "${COMPOSE[@]}" pull \
     backend \
     celery-worker \
+    twitter-discovery \
     frontend
 
   if telegram_bot_enabled; then
@@ -151,14 +293,20 @@ rollback() {
   fi
 
   stop_telegram
+  stop_twitter_discovery
+  "${COMPOSE[@]}" stop celery-worker >/dev/null 2>&1 || true
 
   start_admin
-  "${COMPOSE[@]}" up -d --remove-orphans
+  start_core_services
+  "${COMPOSE[@]}" up -d celery-worker
+  start_twitter_discovery_rollback
   restart_nginx
   sync_telegram_bot
   sync_telegram_intelligence
 
-  SKIP_TELEGRAM_BOT_HEALTH="$((1 - BOT_IMAGE_AVAILABLE))" "$HEALTH_SCRIPT"
+  SKIP_TELEGRAM_BOT_HEALTH="$((1 - BOT_IMAGE_AVAILABLE))" \
+  SKIP_TWITTER_DISCOVERY_HEALTH="$((1 - TWITTER_DISCOVERY_AVAILABLE))" \
+    "$HEALTH_SCRIPT"
   verify_admin_route
 
   echo "ROLLBACK_OK tag=$PREVIOUS_TAG"
@@ -180,6 +328,7 @@ export IMAGE_TAG="$NEW_TAG"
 "${COMPOSE[@]}" pull \
   backend \
   celery-worker \
+  twitter-discovery \
   frontend
 
 if telegram_bot_enabled; then
@@ -187,14 +336,20 @@ if telegram_bot_enabled; then
 fi
 
 stop_telegram
+stop_twitter_discovery
+"${COMPOSE[@]}" stop celery-worker >/dev/null 2>&1 || true
 
 start_admin
-"${COMPOSE[@]}" up -d --remove-orphans
+start_core_services
 restart_nginx
 sync_telegram_bot
 sync_telegram_intelligence
 
 "${COMPOSE[@]}" exec -T backend alembic upgrade heads
+verify_twitter_admin_backend
+
+"${COMPOSE[@]}" up -d celery-worker
+start_twitter_discovery_required
 
 "$HEALTH_SCRIPT"
 verify_admin_route

@@ -1,4 +1,5 @@
 import pytest
+
 from app.services.twitter_public_discovery_sources import (
     _handle_from_url,
     _validate_cmc_payload,
