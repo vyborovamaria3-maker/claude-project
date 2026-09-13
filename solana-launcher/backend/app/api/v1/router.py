@@ -46,16 +46,17 @@ api_router.include_router(
     prefix="/twitter/admin",
     tags=["twitter-crawler-admin"],
 )
-# Compatibility routes must be registered before the older registry router so
-# overview/config/runs/actions use the canonical crawler settings/run tables.
+# The Next admin proxy targets /api/v1/admin/twitter-registry/*.
+# Compatibility routes must be registered first so overview/config/runs/actions
+# use the canonical crawler settings/run tables rather than the legacy tables.
 api_router.include_router(
     twitter_registry_admin_compat.router,
-    prefix="/twitter-registry",
+    prefix="/admin/twitter-registry",
     tags=["twitter-registry-admin"],
 )
 api_router.include_router(
     twitter_registry_admin.router,
-    prefix="/twitter-registry",
+    prefix="/admin/twitter-registry",
     tags=["twitter-registry-admin"],
 )
 api_router.include_router(health.router, tags=["health"])
