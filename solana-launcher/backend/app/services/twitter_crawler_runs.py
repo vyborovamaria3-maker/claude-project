@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
@@ -15,6 +16,10 @@ from app.models.twitter_crawler_run import TwitterCrawlerRun
 logger = logging.getLogger(__name__)
 
 STALE_RUN_SECONDS = 2 * 60 * 60
+
+
+class TwitterCrawlerRunAlreadyRunning(RuntimeError):
+    """Raised when the database active-run singleton is already held."""
 
 
 def _utcnow() -> datetime:
@@ -65,6 +70,9 @@ async def start_twitter_crawler_run(
                     expired,
                     job_name,
                 )
+            # Flush stale terminal transitions before trying to claim the partial
+            # unique index for a new running row.
+            await session.flush()
             row = TwitterCrawlerRun(
                 job_name=job_name,
                 status="running",
@@ -74,8 +82,15 @@ async def start_twitter_crawler_run(
                 heartbeat_at=now,
                 meta=meta,
             )
-            session.add(row)
-            await session.flush()
+            try:
+                async with session.begin_nested():
+                    session.add(row)
+                    await session.flush()
+            except IntegrityError as exc:
+                # Commit any stale-run cleanup done above, but never let a second
+                # worker proceed when the active-run singleton is already held.
+                await session.commit()
+                raise TwitterCrawlerRunAlreadyRunning(job_name) from exc
             run_id = row.id
             await session.commit()
             return run_id
@@ -149,11 +164,8 @@ async def try_start_twitter_crawler_run(
 ) -> int | None:
     try:
         return await start_twitter_crawler_run(job_name, phase=phase, meta=meta)
-    except Exception:
-        logger.exception(
-            "Twitter crawler monitoring could not start for job=%s; work will continue",
-            job_name,
-        )
+    except TwitterCrawlerRunAlreadyRunning:
+        logger.info("Twitter crawler run already active for job=%s", job_name)
         return None
 
 
