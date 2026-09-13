@@ -149,7 +149,7 @@ jobs:
             docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/frontend:${GITHUB_SHA}' >/dev/null
             echo RELEASE_IMAGES_OK"
 
-      - name: Stage admin Control Center sources with rollback copy
+      - name: Stage admin Control Center release
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
@@ -173,27 +173,13 @@ jobs:
           "${SCP[@]}" "$archive" "$SERVER_USER@$SERVER_HOST:$archive"
           "${SSH[@]}" "set -euo pipefail
             root=/opt/claude-project
-            active=\"\$root/admin-site\"
-            rollback=\"\$root/.admin-site-rollback\"
             stage=\"\$root/.admin-site-stage-${GITHUB_SHA}\"
             rm -rf \"\$stage\"
             mkdir -p \"\$stage\"
             tar -xzf '$archive' -C \"\$stage\"
-            test -r \"\$stage/admin-site/docker-compose.yml\"
-            rm -rf \"\$rollback\"
-            if [[ -d \"\$active\" ]]; then
-              mv \"\$active\" \"\$rollback\"
-            fi
-            mv \"\$stage/admin-site\" \"\$active\"
-            for file in .env .env.intelligence sources.json logs.json; do
-              if [[ -e \"\$rollback/\$file\" ]]; then
-                cp -a \"\$rollback/\$file\" \"\$active/\$file\"
-              fi
-            done
-            rm -rf \"\$stage\"
             rm -f '$archive'
-            test -r \"\$active/.env\"
-            echo ADMIN_SOURCE_STAGED"
+            test -r \"\$stage/admin-site/docker-compose.yml\"
+            echo ADMIN_RELEASE_STAGED"
           rm -f "$archive"
 
       - name: Deploy with backup and rollback
