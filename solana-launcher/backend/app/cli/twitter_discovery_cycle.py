@@ -4,21 +4,19 @@ import argparse
 import asyncio
 import copy
 import json
-import logging
 
 from app.cli.twitter_discovery import build_parser as build_discovery_parser
 from app.cli.twitter_discovery import run as run_discovery
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.services.twitter_crawler_runs import (
-    finish_twitter_crawler_run,
-    heartbeat_twitter_crawler_run,
-    start_twitter_crawler_run,
+    try_finish_twitter_crawler_run,
+    try_heartbeat_twitter_crawler_run,
+    try_start_twitter_crawler_run,
 )
 from app.services.twitter_discovery_scoring import rescore_discovery_candidates
 
 DEFAULT_SCORE_STATUSES = ("queued", "retry", "processing", "accepted", "rejected")
-logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,70 +48,19 @@ async def _rescore_once(*, limit: int, dry_run: bool) -> dict:
         await engine.dispose()
 
 
-async def _start_tracking(args: argparse.Namespace) -> int | None:
-    try:
-        return await start_twitter_crawler_run(
-            "twitter_discovery_cycle",
-            meta={
-                "dry_run": bool(args.dry_run),
-                "skip_frontier": bool(args.skip_frontier),
-                "skip_rescore": bool(args.skip_rescore),
-                "rescore_limit": int(args.rescore_limit),
-            },
-        )
-    except Exception:
-        logger.exception("Twitter crawler monitoring could not start; discovery will continue")
-        return None
-
-
-async def _heartbeat(run_id: int | None, phase: str, summary: dict | None = None) -> None:
-    if run_id is None:
-        return
-    try:
-        await heartbeat_twitter_crawler_run(run_id, phase=phase, summary=summary)
-    except Exception:
-        logger.exception(
-            "Twitter crawler heartbeat failed for run_id=%s phase=%s; discovery will continue",
-            run_id,
-            phase,
-        )
-
-
-async def _finish_tracking(
-    run_id: int | None,
-    *,
-    status: str,
-    phase: str,
-    summary: dict | None = None,
-    error: str | None = None,
-) -> None:
-    if run_id is None:
-        return
-    try:
-        await finish_twitter_crawler_run(
-            run_id,
-            status=status,
-            phase=phase,
-            summary=summary,
-            error=error,
-        )
-    except Exception:
-        logger.exception(
-            "Twitter crawler monitoring could not finish run_id=%s status=%s",
-            run_id,
-            status,
-        )
-
-
 async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict:
-    await _heartbeat(run_id, "ingest")
+    await try_heartbeat_twitter_crawler_run(run_id, phase="ingest")
     ingest_args = copy.copy(args)
     ingest_args.skip_frontier = True
     ingest_summary = await run_discovery(ingest_args)
 
     before: dict | None = None
     if not args.skip_rescore:
-        await _heartbeat(run_id, "rescore_before_frontier", {"ingest": ingest_summary})
+        await try_heartbeat_twitter_crawler_run(
+            run_id,
+            phase="rescore_before_frontier",
+            summary={"ingest": ingest_summary},
+        )
         before = await _rescore_once(
             limit=args.rescore_limit,
             dry_run=bool(args.dry_run),
@@ -121,10 +68,10 @@ async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict:
 
     frontier_summary: dict | None = None
     if not args.skip_frontier:
-        await _heartbeat(
+        await try_heartbeat_twitter_crawler_run(
             run_id,
-            "frontier",
-            {"ingest": ingest_summary, "rescore_before_frontier": before},
+            phase="frontier",
+            summary={"ingest": ingest_summary, "rescore_before_frontier": before},
         )
         frontier_args = copy.copy(args)
         frontier_args.skip_seeds = True
@@ -135,10 +82,10 @@ async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict:
 
     after: dict | None = None
     if not args.skip_rescore:
-        await _heartbeat(
+        await try_heartbeat_twitter_crawler_run(
             run_id,
-            "rescore_after_frontier",
-            {
+            phase="rescore_after_frontier",
+            summary={
                 "ingest": ingest_summary,
                 "rescore_before_frontier": before,
                 "frontier": frontier_summary,
@@ -159,11 +106,19 @@ async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict:
 
 
 async def run_tracked(args: argparse.Namespace) -> dict:
-    run_id = await _start_tracking(args)
+    run_id = await try_start_twitter_crawler_run(
+        "twitter_discovery_cycle",
+        meta={
+            "dry_run": bool(args.dry_run),
+            "skip_frontier": bool(args.skip_frontier),
+            "skip_rescore": bool(args.skip_rescore),
+            "rescore_limit": int(args.rescore_limit),
+        },
+    )
     try:
         result = await run(args, run_id=run_id)
     except Exception as exc:
-        await _finish_tracking(
+        await try_finish_twitter_crawler_run(
             run_id,
             status="failed",
             phase="failed",
@@ -171,7 +126,7 @@ async def run_tracked(args: argparse.Namespace) -> dict:
         )
         raise
 
-    await _finish_tracking(
+    await try_finish_twitter_crawler_run(
         run_id,
         status="success",
         phase="complete",
