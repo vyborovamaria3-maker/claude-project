@@ -10,6 +10,8 @@ from app.api.v1 import (
     tasks,
     telegram_intelligence,
     twitter_crawler_admin,
+    twitter_registry_admin,
+    twitter_registry_admin_compat,
     users,
 )
 
@@ -43,5 +45,17 @@ api_router.include_router(
     twitter_crawler_admin.router,
     prefix="/twitter/admin",
     tags=["twitter-crawler-admin"],
+)
+# Compatibility routes must be registered before the older registry router so
+# overview/config/runs/actions use the canonical crawler settings/run tables.
+api_router.include_router(
+    twitter_registry_admin_compat.router,
+    prefix="/twitter-registry",
+    tags=["twitter-registry-admin"],
+)
+api_router.include_router(
+    twitter_registry_admin.router,
+    prefix="/twitter-registry",
+    tags=["twitter-registry-admin"],
 )
 api_router.include_router(health.router, tags=["health"])
