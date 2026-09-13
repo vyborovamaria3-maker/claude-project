@@ -8,8 +8,10 @@ COMPOSE_FILE="$DEPLOY_DIR/docker-compose.production.yml"
 BACKUP_SCRIPT="$DEPLOY_DIR/scripts/backup-production.sh"
 HEALTH_SCRIPT="$DEPLOY_DIR/scripts/healthcheck-production.sh"
 PROMETHEUS_CONFIG="$DEPLOY_DIR/prometheus/prometheus.yml"
-ADMIN_DIR="${ADMIN_DIR:-/opt/claude-project/admin-site}"
-ADMIN_ROLLBACK_DIR="${ADMIN_ROLLBACK_DIR:-/opt/claude-project/.admin-site-rollback}"
+ADMIN_ROOT="${ADMIN_ROOT:-/opt/claude-project}"
+ADMIN_DIR="${ADMIN_DIR:-$ADMIN_ROOT/admin-site}"
+ADMIN_STAGE_DIR="${ADMIN_STAGE_DIR:-$ADMIN_ROOT/.admin-site-stage-$NEW_TAG}"
+ADMIN_ROLLBACK_DIR="${ADMIN_ROLLBACK_DIR:-$ADMIN_ROOT/.admin-site-rollback}"
 ADMIN_COMPOSE_FILE="$ADMIN_DIR/docker-compose.yml"
 ADMIN_ENV_FILE="$ADMIN_DIR/.env"
 REGISTRY_BASE="ghcr.io/vyborovamaria3-maker/claude-project"
@@ -82,23 +84,19 @@ ensure_twitter_crawler_admin_secret() {
   chmod 600 backend.env "$ADMIN_ENV_FILE" 2>/dev/null || true
 }
 
-ensure_twitter_crawler_admin_secret
-
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
-fi
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
-fi
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  echo "BACKEND_API_KEY is required in .env.server or backend.env" >&2
-  exit 1
-fi
-export BACKEND_API_KEY
-
-# The admin stack owns the same external network so the public ingress can
-# route admin.potapoff.fun directly to potapoff-admin:8080.
-docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
+resolve_backend_api_key() {
+  if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+    BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
+  fi
+  if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+    BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
+  fi
+  if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+    echo "BACKEND_API_KEY is required in .env.server or backend.env" >&2
+    return 1
+  fi
+  export BACKEND_API_KEY
+}
 
 COMPOSE=(docker compose --env-file .env.server -f "$COMPOSE_FILE")
 export DB_BUSY_TIMEOUT="${DB_BUSY_TIMEOUT:-5000}"
@@ -107,6 +105,7 @@ ADMIN_COMPOSE=(docker compose --project-directory "$ADMIN_DIR" -f "$ADMIN_COMPOS
 PREVIOUS_TAG=""
 BOT_IMAGE_AVAILABLE=1
 TWITTER_DISCOVERY_AVAILABLE=1
+DEPLOYMENT_STARTED=0
 [[ -f .current-image-tag ]] && PREVIOUS_TAG="$(cat .current-image-tag)"
 
 telegram_intelligence_enabled() {
@@ -135,6 +134,24 @@ verify_release_images() {
     fi
   done
   echo "RELEASE_IMAGES_OK tag=$tag"
+}
+
+activate_admin_source() {
+  local staged="$ADMIN_STAGE_DIR/admin-site"
+  local file
+  test -r "$staged/docker-compose.yml"
+  rm -rf "$ADMIN_ROLLBACK_DIR"
+  mv "$ADMIN_DIR" "$ADMIN_ROLLBACK_DIR"
+  mv "$staged" "$ADMIN_DIR"
+  for file in .env .env.intelligence sources.json logs.json; do
+    if [[ -e "$ADMIN_ROLLBACK_DIR/$file" ]]; then
+      cp -a "$ADMIN_ROLLBACK_DIR/$file" "$ADMIN_DIR/$file"
+    fi
+  done
+  rm -rf "$ADMIN_STAGE_DIR"
+  test -r "$ADMIN_COMPOSE_FILE"
+  test -r "$ADMIN_ENV_FILE"
+  echo "ADMIN_SOURCE_ACTIVATED tag=$NEW_TAG"
 }
 
 restore_admin_source() {
@@ -277,6 +294,13 @@ rollback() {
   trap - ERR
   echo "Deployment failed; starting rollback" >&2
   restore_admin_source
+
+  if [[ "$DEPLOYMENT_STARTED" -ne 1 ]]; then
+    rm -rf "$ADMIN_STAGE_DIR"
+    echo "PREFLIGHT_ROLLBACK_OK; core services were not changed" >&2
+    exit "$exit_code"
+  fi
+
   if [[ -z "$PREVIOUS_TAG" ]]; then
     echo "No previous GHCR tag exists; admin source was restored but manual core recovery is required" >&2
     exit "$exit_code"
@@ -315,18 +339,26 @@ rollback() {
   exit "$exit_code"
 }
 
-# Fail before backup, tag mutation, migrations or service restarts if the release
-# images are not actually present in GHCR. The workflow performs the same check
-# before staging admin sources; this duplicate guard protects direct script use.
-verify_release_images "$NEW_TAG"
-
 trap rollback ERR
+
+# Everything before the backup is a reversible preflight. The active admin
+# source is switched only under the rollback trap, and core containers are not
+# touched until the backup succeeds.
+verify_release_images "$NEW_TAG"
+activate_admin_source
+ensure_twitter_crawler_admin_secret
+resolve_backend_api_key
+
+docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
+export IMAGE_TAG="$NEW_TAG"
+"${COMPOSE[@]}" config >/dev/null
+"${ADMIN_COMPOSE[@]}" config --quiet
+
 "$BACKUP_SCRIPT"
+DEPLOYMENT_STARTED=1
 printf '%s\n' "$PREVIOUS_TAG" > .previous-image-tag
 printf '%s\n' "$NEW_TAG" > .current-image-tag
-export IMAGE_TAG="$NEW_TAG"
 
-"${COMPOSE[@]}" config >/dev/null
 "${COMPOSE[@]}" pull backend celery-worker twitter-discovery frontend
 if telegram_bot_enabled; then
   "${COMPOSE[@]}" --profile telegram pull telegram-bot
@@ -357,7 +389,7 @@ start_twitter_discovery_required
 
 "$HEALTH_SCRIPT"
 verify_admin_route
-rm -rf "$ADMIN_ROLLBACK_DIR"
+rm -rf "$ADMIN_ROLLBACK_DIR" "$ADMIN_STAGE_DIR"
 trap - ERR
 
 docker image prune -f --filter "until=168h" >/dev/null || true
