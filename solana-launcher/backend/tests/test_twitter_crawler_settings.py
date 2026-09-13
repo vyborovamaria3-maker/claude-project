@@ -1,8 +1,9 @@
 import argparse
 
 import pytest
+from wtforms import SelectField
 
-from app.admin_twitter_settings import TwitterCrawlerSettingsAdmin
+from app.admin_twitter_settings import NETWORK_MODE_CHOICES, TwitterCrawlerSettingsAdmin
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 from app.services.twitter_crawler_settings import (
     TwitterCrawlerConfig,
@@ -35,6 +36,12 @@ def test_admin_settings_view_is_singleton_edit_only():
     assert "network_mode" in TwitterCrawlerSettingsAdmin.form_columns
 
 
+def test_network_mode_uses_supported_select_field_configuration():
+    assert TwitterCrawlerSettingsAdmin.form_overrides["network_mode"] is SelectField
+    assert TwitterCrawlerSettingsAdmin.form_args["network_mode"]["choices"] == NETWORK_MODE_CHOICES
+    assert TwitterCrawlerSettingsAdmin.form_args["network_mode"]["validate_choice"] is True
+
+
 def test_admin_defaults_respect_explicit_cli_overrides():
     args = argparse.Namespace(
         query_limit=50,
@@ -42,7 +49,7 @@ def test_admin_defaults_respect_explicit_cli_overrides():
         batch_size=25,
         max_depth=2,
         min_relevance=35.0,
-        network_mode="following",
+        network_mode="followers",
         network_limit=100,
         lease_seconds=300,
         rescore_limit=1500,
@@ -56,7 +63,7 @@ def test_admin_defaults_respect_explicit_cli_overrides():
     assert args.batch_size == 40
     assert args.max_depth == 4
     assert args.min_relevance == 55.0
-    assert args.network_mode == "following"
+    assert args.network_mode == "followers"
     assert args.network_limit == 180
     assert args.lease_seconds == 600
     assert args.rescore_limit == 2500
