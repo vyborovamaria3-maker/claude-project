@@ -121,9 +121,35 @@ jobs:
             'chmod 700 /opt/potapoff-deploy/scripts/*.sh &&
              chmod 755 /opt/potapoff-deploy/nginx &&
              chmod 644 /opt/potapoff-deploy/nginx/nginx.conf &&
-              test -r /opt/potapoff-deploy/prometheus/prometheus.yml'
+             test -r /opt/potapoff-deploy/prometheus/prometheus.yml'
 
-      - name: Upload admin Control Center sources
+      - name: Login server to GHCR
+        env:
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" |
+            ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
+              "docker login ghcr.io -u '$GHCR_USERNAME' --password-stdin"
+
+      - name: Verify required release images exist
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
+          "${SSH[@]}" "set -euo pipefail
+            docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/backend:${GITHUB_SHA}' >/dev/null
+            docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/frontend:${GITHUB_SHA}' >/dev/null
+            echo RELEASE_IMAGES_OK"
+
+      - name: Stage admin Control Center sources with rollback copy
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
@@ -145,21 +171,30 @@ jobs:
 
           "${SSH[@]}" 'mkdir -p /opt/claude-project'
           "${SCP[@]}" "$archive" "$SERVER_USER@$SERVER_HOST:$archive"
-          "${SSH[@]}" "tar -xzf '$archive' -C /opt/claude-project && rm -f '$archive'"
+          "${SSH[@]}" "set -euo pipefail
+            root=/opt/claude-project
+            active=\"\$root/admin-site\"
+            rollback=\"\$root/.admin-site-rollback\"
+            stage=\"\$root/.admin-site-stage-${GITHUB_SHA}\"
+            rm -rf \"\$stage\"
+            mkdir -p \"\$stage\"
+            tar -xzf '$archive' -C \"\$stage\"
+            test -r \"\$stage/admin-site/docker-compose.yml\"
+            rm -rf \"\$rollback\"
+            if [[ -d \"\$active\" ]]; then
+              mv \"\$active\" \"\$rollback\"
+            fi
+            mv \"\$stage/admin-site\" \"\$active\"
+            for file in .env .env.intelligence sources.json logs.json; do
+              if [[ -e \"\$rollback/\$file\" ]]; then
+                cp -a \"\$rollback/\$file\" \"\$active/\$file\"
+              fi
+            done
+            rm -rf \"\$stage\"
+            rm -f '$archive'
+            test -r \"\$active/.env\"
+            echo ADMIN_SOURCE_STAGED"
           rm -f "$archive"
-
-      - name: Login server to GHCR
-        env:
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$GHCR_TOKEN" |
-            ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
-              "docker login ghcr.io -u '$GHCR_USERNAME' --password-stdin"
 
       - name: Deploy with backup and rollback
         env:
