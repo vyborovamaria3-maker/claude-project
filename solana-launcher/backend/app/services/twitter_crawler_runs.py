@@ -3,16 +3,18 @@ from __future__ import annotations
 import logging
 import os
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.models.twitter_crawler_run import TwitterCrawlerRun
 
 logger = logging.getLogger(__name__)
+
+STALE_RUN_SECONDS = 2 * 60 * 60
 
 
 def _utcnow() -> datetime:
@@ -23,6 +25,26 @@ def _duration_ms(started_at: datetime, finished_at: datetime) -> int:
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=timezone.utc)
     return max(0, int((finished_at - started_at).total_seconds() * 1000))
+
+
+async def _expire_stale_runs(session: Any, *, job_name: str, now: datetime) -> int:
+    cutoff = now - timedelta(seconds=STALE_RUN_SECONDS)
+    rows = (
+        await session.execute(
+            select(TwitterCrawlerRun).where(
+                TwitterCrawlerRun.job_name == job_name,
+                TwitterCrawlerRun.status == "running",
+                TwitterCrawlerRun.heartbeat_at < cutoff,
+            )
+        )
+    ).scalars().all()
+    for row in rows:
+        row.status = "failed"
+        row.phase = "stale"
+        row.finished_at = now
+        row.duration_ms = _duration_ms(row.started_at, now)
+        row.error = "crawler heartbeat expired before the next run"
+    return len(rows)
 
 
 async def start_twitter_crawler_run(
@@ -36,6 +58,13 @@ async def start_twitter_crawler_run(
     try:
         async with sessionmaker() as session:
             now = _utcnow()
+            expired = await _expire_stale_runs(session, job_name=job_name, now=now)
+            if expired:
+                logger.warning(
+                    "Marked %s stale Twitter crawler run(s) failed for job=%s",
+                    expired,
+                    job_name,
+                )
             row = TwitterCrawlerRun(
                 job_name=job_name,
                 status="running",
@@ -96,7 +125,7 @@ async def finish_twitter_crawler_run(
     try:
         async with sessionmaker() as session:
             row = await session.get(TwitterCrawlerRun, run_id)
-            if row is None:
+            if row is None or row.status != "running":
                 return
             now = _utcnow()
             row.status = status
