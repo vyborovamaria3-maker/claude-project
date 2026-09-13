@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import socket
 from datetime import datetime, timezone
@@ -8,6 +9,8 @@ from typing import Any
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.models.twitter_crawler_run import TwitterCrawlerRun
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -99,3 +102,63 @@ async def finish_twitter_crawler_run(
             await session.commit()
     finally:
         await engine.dispose()
+
+
+async def try_start_twitter_crawler_run(
+    job_name: str,
+    *,
+    phase: str = "starting",
+    meta: dict[str, Any] | None = None,
+) -> int | None:
+    try:
+        return await start_twitter_crawler_run(job_name, phase=phase, meta=meta)
+    except Exception:
+        logger.exception(
+            "Twitter crawler monitoring could not start for job=%s; work will continue",
+            job_name,
+        )
+        return None
+
+
+async def try_heartbeat_twitter_crawler_run(
+    run_id: int | None,
+    *,
+    phase: str,
+    summary: dict[str, Any] | None = None,
+) -> None:
+    if run_id is None:
+        return
+    try:
+        await heartbeat_twitter_crawler_run(run_id, phase=phase, summary=summary)
+    except Exception:
+        logger.exception(
+            "Twitter crawler heartbeat failed for run_id=%s phase=%s; work will continue",
+            run_id,
+            phase,
+        )
+
+
+async def try_finish_twitter_crawler_run(
+    run_id: int | None,
+    *,
+    status: str,
+    phase: str,
+    summary: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    if run_id is None:
+        return
+    try:
+        await finish_twitter_crawler_run(
+            run_id,
+            status=status,
+            phase=phase,
+            summary=summary,
+            error=error,
+        )
+    except Exception:
+        logger.exception(
+            "Twitter crawler monitoring could not finish run_id=%s status=%s",
+            run_id,
+            status,
+        )
