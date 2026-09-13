@@ -106,8 +106,9 @@ class TwitterMonitoringStore:
                       (SELECT COUNT(*) FROM twitter_discovery_candidates) AS candidates_total,
                       (SELECT COUNT(*) FROM twitter_discovery_candidates WHERE first_seen_at >= NOW() - INTERVAL '24 hours') AS candidates_24h,
                       (SELECT COUNT(*) FROM twitter_posts) AS posts_total,
-                      (SELECT COUNT(*) FROM twitter_posts WHERE created_at >= NOW() - INTERVAL '24 hours') AS posts_24h,
-                      (SELECT COUNT(*) FROM twitter_crawler_runs WHERE status = 'running') AS running_runs,
+                      (SELECT COUNT(*) FROM twitter_posts WHERE published_at >= NOW() - INTERVAL '24 hours') AS posts_24h,
+                      (SELECT COUNT(*) FROM twitter_crawler_runs WHERE status = 'running' AND heartbeat_at >= NOW() - INTERVAL '2 hours') AS running_runs,
+                      (SELECT COUNT(*) FROM twitter_crawler_runs WHERE status = 'running' AND heartbeat_at < NOW() - INTERVAL '2 hours') AS stale_running_runs,
                       (SELECT COUNT(*) FROM twitter_crawler_runs WHERE status = 'failed' AND started_at >= NOW() - INTERVAL '24 hours') AS failed_runs_24h,
                       (SELECT COUNT(*) FROM twitter_crawler_runs WHERE status = 'degraded' AND started_at >= NOW() - INTERVAL '24 hours') AS degraded_runs_24h
                     """
@@ -124,7 +125,8 @@ class TwitterMonitoringStore:
                 recent_runs = db.execute(
                     """
                     SELECT id, job_name, status, phase, worker, started_at, heartbeat_at,
-                           finished_at, duration_ms, error, summary
+                           finished_at, duration_ms, error, summary,
+                           (status = 'running' AND heartbeat_at < NOW() - INTERVAL '2 hours') AS stale
                     FROM twitter_crawler_runs
                     ORDER BY started_at DESC, id DESC
                     LIMIT 30
