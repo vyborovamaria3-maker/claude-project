@@ -51,6 +51,10 @@ def _summary_has_partial_failures(summary: object) -> bool:
     return False
 
 
+def frontier_was_processed(summary: object) -> bool:
+    return isinstance(summary, dict) and isinstance(summary.get("frontier"), dict)
+
+
 def cycle_result_is_degraded(result: dict) -> bool:
     return _summary_has_partial_failures(result.get("ingest")) or _summary_has_partial_failures(
         result.get("frontier")
@@ -109,7 +113,7 @@ async def run(args: argparse.Namespace, *, run_id: int | None = None) -> dict:
         frontier_summary = await run_discovery(frontier_args)
 
     after: dict | None = None
-    if not args.skip_rescore:
+    if not args.skip_rescore and frontier_was_processed(frontier_summary):
         await try_heartbeat_twitter_crawler_run(
             run_id,
             phase="rescore_after_frontier",
