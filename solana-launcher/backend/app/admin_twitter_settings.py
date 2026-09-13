@@ -28,6 +28,12 @@ class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
         "network_limit",
         "lease_seconds",
         "rescore_limit",
+        "public_enabled",
+        "public_dexscreener_latest",
+        "public_dexscreener_boosts",
+        "public_db_solana_tokens",
+        "public_cmc_limit",
+        "public_rescore_limit",
         "updated_at",
     ]
     form_columns = [
@@ -41,9 +47,15 @@ class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
         "network_limit",
         "lease_seconds",
         "rescore_limit",
+        "public_enabled",
+        "public_dexscreener_latest",
+        "public_dexscreener_boosts",
+        "public_db_solana_tokens",
+        "public_cmc_limit",
+        "public_rescore_limit",
     ]
     column_labels = {
-        "enabled": "Discovery cycle enabled",
+        "enabled": "X API discovery cycle enabled",
         "query_limit": "X search results / query",
         "process_limit": "Candidates / cycle",
         "batch_size": "Claim batch size",
@@ -52,7 +64,13 @@ class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
         "network_mode": "Network expansion",
         "network_limit": "Network accounts / candidate",
         "lease_seconds": "Worker lease, seconds",
-        "rescore_limit": "Candidates rescored / cycle",
+        "rescore_limit": "Candidates rescored / X cycle",
+        "public_enabled": "Public discovery enabled",
+        "public_dexscreener_latest": "DEX Screener latest profiles",
+        "public_dexscreener_boosts": "DEX Screener latest boosts",
+        "public_db_solana_tokens": "DB Solana tokens / public run",
+        "public_cmc_limit": "CoinMarketCap listings / public run",
+        "public_rescore_limit": "Candidates rescored / public run",
         "updated_at": "Updated",
     }
     form_overrides = {"network_mode": SelectField}
