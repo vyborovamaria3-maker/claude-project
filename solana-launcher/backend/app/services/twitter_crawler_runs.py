@@ -6,6 +6,8 @@ import socket
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import update
+
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.models.twitter_crawler_run import TwitterCrawlerRun
@@ -62,14 +64,20 @@ async def heartbeat_twitter_crawler_run(
     engine, sessionmaker = create_engine_and_sessionmaker(settings)
     try:
         async with sessionmaker() as session:
-            row = await session.get(TwitterCrawlerRun, run_id)
-            if row is None:
-                return
-            row.status = "running"
-            row.phase = phase
-            row.heartbeat_at = _utcnow()
+            values: dict[str, Any] = {
+                "phase": phase,
+                "heartbeat_at": _utcnow(),
+            }
             if summary is not None:
-                row.summary = summary
+                values["summary"] = summary
+            await session.execute(
+                update(TwitterCrawlerRun)
+                .where(
+                    TwitterCrawlerRun.id == run_id,
+                    TwitterCrawlerRun.status == "running",
+                )
+                .values(**values)
+            )
             await session.commit()
     finally:
         await engine.dispose()
