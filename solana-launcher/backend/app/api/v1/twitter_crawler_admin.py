@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hmac
+import os
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,8 +64,8 @@ class TwitterCrawlerSettingsUpdate(BaseModel):
         return value
 
 
-def _require_admin_key(request: Request, supplied: str | None) -> None:
-    expected = request.app.state.settings.twitter_crawler_admin_key.strip()
+def _require_admin_key(supplied: str | None) -> None:
+    expected = os.getenv("TWITTER_CRAWLER_ADMIN_KEY", "").strip()
     if not expected:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -88,14 +89,13 @@ def _serialize(row: dict) -> dict:
 @router.put("/crawler-settings")
 async def update_crawler_settings(
     body: TwitterCrawlerSettingsUpdate,
-    request: Request,
     session: AsyncSession = Depends(get_db),
     x_twitter_crawler_admin_key: str | None = Header(
         default=None,
         alias="X-Twitter-Crawler-Admin-Key",
     ),
 ) -> dict:
-    _require_admin_key(request, x_twitter_crawler_admin_key)
+    _require_admin_key(x_twitter_crawler_admin_key)
 
     values = body.model_dump(exclude={"expected_updated_at"})
     values["updated_at"] = func.now()
