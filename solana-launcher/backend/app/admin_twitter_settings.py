@@ -1,6 +1,15 @@
 from sqladmin import ModelView
+from wtforms import SelectField
 
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
+
+
+NETWORK_MODE_CHOICES = [
+    ("none", "None"),
+    ("following", "Following"),
+    ("followers", "Followers"),
+    ("both", "Both"),
+]
 
 
 class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
@@ -46,13 +55,12 @@ class TwitterCrawlerSettingsAdmin(ModelView, model=TwitterCrawlerSettings):
         "rescore_limit": "Candidates rescored / cycle",
         "updated_at": "Updated",
     }
-    form_choices = {
-        "network_mode": [
-            ("none", "None"),
-            ("following", "Following"),
-            ("followers", "Followers"),
-            ("both", "Both"),
-        ]
+    form_overrides = {"network_mode": SelectField}
+    form_args = {
+        "network_mode": {
+            "choices": NETWORK_MODE_CHOICES,
+            "validate_choice": True,
+        }
     }
     can_create = False
     can_edit = True
