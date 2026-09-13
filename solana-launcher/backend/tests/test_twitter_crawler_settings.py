@@ -72,8 +72,14 @@ def test_admin_defaults_respect_explicit_cli_overrides():
 def test_crawler_settings_reject_invalid_operational_ranges():
     settings = TwitterCrawlerSettings()
     with pytest.raises(ValueError):
+        settings.query_limit = 9
+    with pytest.raises(ValueError):
         settings.process_limit = 0
     with pytest.raises(ValueError):
         settings.min_relevance = 101
     with pytest.raises(ValueError):
+        settings.min_relevance = float("nan")
+    with pytest.raises(ValueError):
         settings.network_mode = "random"
+    with pytest.raises(ValueError):
+        settings.network_mode = None  # type: ignore[assignment]
