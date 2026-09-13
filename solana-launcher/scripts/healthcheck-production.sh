@@ -102,22 +102,44 @@ if len(key) < 32:
     raise SystemExit("TWITTER_CRAWLER_ADMIN_KEY is missing in backend container")
 headers = {"X-Twitter-Crawler-Admin-Key": key}
 url = "http://127.0.0.1:8000/api/v1/twitter/admin/crawler-settings"
-with httpx.Client(timeout=5.0, trust_env=False) as client:
-    read = client.get(url, headers=headers)
-    read.raise_for_status()
-    body = read.json()
+
+
+def read_payload(client: httpx.Client) -> dict:
+    response = client.get(url, headers=headers)
+    response.raise_for_status()
+    body = response.json()
     settings = body.get("settings") or {}
     if body.get("ok") is not True or not settings.get("updated_at"):
         raise SystemExit("unexpected Twitter crawler settings read payload")
-    payload = {
+    return {
         "expected_updated_at": settings["updated_at"],
         **{field: settings[field] for field in fields},
     }
-    write = client.put(url, headers=headers, json=payload)
-    write.raise_for_status()
-    written = write.json()
-    if written.get("ok") is not True:
+
+
+with httpx.Client(timeout=5.0, trust_env=False) as client:
+    payload = None
+    written = None
+    for attempt in range(2):
+        payload = read_payload(client)
+        write = client.put(url, headers=headers, json=payload)
+        if write.status_code == 409 and attempt == 0:
+            # A real admin may have saved between our GET and PUT. Re-read once
+            # instead of rolling back an otherwise healthy release.
+            continue
+        write.raise_for_status()
+        written = write.json()
+        break
+
+    if payload is None or written is None or written.get("ok") is not True:
         raise SystemExit("Twitter crawler settings no-op write did not succeed")
+    written_settings = written.get("settings") or {}
+    for field in fields:
+        if written_settings.get(field) != payload[field]:
+            raise SystemExit(f"Twitter crawler settings smoke changed {field} unexpectedly")
+
+    # Reusing the successfully consumed version token must be rejected even if
+    # another admin writes after our no-op update.
     stale = client.put(url, headers=headers, json=payload)
     if stale.status_code != 409:
         raise SystemExit(
