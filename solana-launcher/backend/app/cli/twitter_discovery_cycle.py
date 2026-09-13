@@ -153,6 +153,14 @@ async def run_tracked(args: argparse.Namespace) -> dict:
     )
     try:
         result = await run(args, run_id=run_id)
+    except asyncio.CancelledError:
+        await try_finish_twitter_crawler_run(
+            run_id,
+            status="cancelled",
+            phase="cancelled",
+            error="crawler task was cancelled",
+        )
+        raise
     except Exception as exc:
         await try_finish_twitter_crawler_run(
             run_id,
