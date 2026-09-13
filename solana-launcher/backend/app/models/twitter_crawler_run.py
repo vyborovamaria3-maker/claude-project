@@ -17,6 +17,7 @@ class TwitterCrawlerRun(Base):
     __table_args__ = (
         Index("ix_twitter_crawler_runs_job_started", "job_name", "started_at"),
         Index("ix_twitter_crawler_runs_status_heartbeat", "status", "heartbeat_at"),
+        Index("ix_twitter_crawler_runs_status_started", "status", "started_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
