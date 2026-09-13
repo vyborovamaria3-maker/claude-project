@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
 from datetime import datetime
 from typing import Literal
 
+import httpx
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -92,12 +94,52 @@ def _audit_settings_update(
             details=details,
         )
     except Exception:
-        # Audit persistence is valuable, but it must not make the already-known
-        # outcome of the settings transaction ambiguous to the operator.
         logger.exception(
             "Could not persist Twitter crawler settings audit event success=%s",
             success,
         )
+
+
+def _backend_settings_url() -> str:
+    base = os.getenv("ADMIN_TWITTER_BACKEND_URL", "http://backend:8000").strip().rstrip("/")
+    if not base:
+        raise RuntimeError("ADMIN_TWITTER_BACKEND_URL is not configured")
+    return f"{base}/api/v1/twitter/admin/crawler-settings"
+
+
+def _update_via_backend(body: TwitterCrawlerSettingsBody) -> dict:
+    key = os.getenv("TWITTER_CRAWLER_ADMIN_KEY", "").strip()
+    if len(key) < 32:
+        raise RuntimeError("TWITTER_CRAWLER_ADMIN_KEY is not configured")
+
+    try:
+        with httpx.Client(timeout=8.0, trust_env=False) as client:
+            response = client.put(
+                _backend_settings_url(),
+                json=body.model_dump(mode="json"),
+                headers={"X-Twitter-Crawler-Admin-Key": key},
+            )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Twitter settings backend is unavailable: {exc}") from exc
+
+    if response.status_code == 409:
+        raise HTTPException(
+            status_code=409,
+            detail="Twitter settings changed in another session; refresh and retry",
+        )
+    if response.status_code != 200:
+        logger.error(
+            "Twitter settings backend rejected update status=%s body=%s",
+            response.status_code,
+            response.text[:400],
+        )
+        raise RuntimeError("Twitter settings backend rejected the update")
+
+    payload = response.json()
+    settings = payload.get("settings") if isinstance(payload, dict) else None
+    if not isinstance(settings, dict):
+        raise RuntimeError("Twitter settings backend returned an invalid response")
+    return settings
 
 
 def build_twitter_monitoring_router() -> APIRouter:
@@ -118,13 +160,18 @@ def build_twitter_monitoring_router() -> APIRouter:
         admin=Depends(require_admin),
     ) -> dict:
         values = body.model_dump(exclude={"expected_updated_at"})
-        store = _store(request)
         try:
-            row = store.update_settings(
-                values,
-                expected_updated_at=body.expected_updated_at,
-            )
-        except (psycopg.Error, ValueError) as exc:
+            row = _update_via_backend(body)
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                _audit_settings_update(
+                    request,
+                    username=admin["sub"],
+                    success=False,
+                    details={"reason": "optimistic_lock_conflict"},
+                )
+            raise
+        except (RuntimeError, ValueError) as exc:
             _audit_settings_update(
                 request,
                 username=admin["sub"],
@@ -132,18 +179,6 @@ def build_twitter_monitoring_router() -> APIRouter:
                 details={"error": str(exc)[:200]},
             )
             raise HTTPException(status_code=503, detail="Twitter settings update failed") from None
-
-        if row is None:
-            _audit_settings_update(
-                request,
-                username=admin["sub"],
-                success=False,
-                details={"reason": "optimistic_lock_conflict"},
-            )
-            raise HTTPException(
-                status_code=409,
-                detail="Twitter settings changed in another session; refresh and retry",
-            )
 
         _audit_settings_update(
             request,
