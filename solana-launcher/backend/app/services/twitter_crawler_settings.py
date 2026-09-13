@@ -22,6 +22,12 @@ class TwitterCrawlerConfig:
     network_limit: int
     lease_seconds: int
     rescore_limit: int
+    public_enabled: bool
+    public_dexscreener_latest: bool
+    public_dexscreener_boosts: bool
+    public_db_solana_tokens: int
+    public_cmc_limit: int
+    public_rescore_limit: int
 
 
 async def load_twitter_crawler_config() -> TwitterCrawlerConfig | None:
@@ -46,6 +52,12 @@ async def load_twitter_crawler_config() -> TwitterCrawlerConfig | None:
                 network_limit=int(row.network_limit),
                 lease_seconds=int(row.lease_seconds),
                 rescore_limit=int(row.rescore_limit),
+                public_enabled=bool(row.public_enabled),
+                public_dexscreener_latest=bool(row.public_dexscreener_latest),
+                public_dexscreener_boosts=bool(row.public_dexscreener_boosts),
+                public_db_solana_tokens=int(row.public_db_solana_tokens),
+                public_cmc_limit=int(row.public_cmc_limit),
+                public_rescore_limit=int(row.public_rescore_limit),
             )
     except Exception:
         logger.exception(
@@ -57,11 +69,7 @@ async def load_twitter_crawler_config() -> TwitterCrawlerConfig | None:
 
 
 def explicit_cli_flags(argv: list[str]) -> set[str]:
-    return {
-        item.split("=", 1)[0]
-        for item in argv
-        if item.startswith("--")
-    }
+    return {item.split("=", 1)[0] for item in argv if item.startswith("--")}
 
 
 def apply_twitter_crawler_config(
@@ -84,3 +92,37 @@ def apply_twitter_crawler_config(
     for flag, attribute in mappings:
         if flag not in explicit_flags:
             setattr(args, attribute, getattr(config, attribute))
+
+
+def apply_twitter_public_config(
+    args: object,
+    config: TwitterCrawlerConfig,
+    *,
+    explicit_flags: set[str],
+) -> None:
+    boolean_mappings = (
+        (
+            "--dexscreener-latest",
+            "--no-dexscreener-latest",
+            "dexscreener_latest",
+            "public_dexscreener_latest",
+        ),
+        (
+            "--dexscreener-boosts",
+            "--no-dexscreener-boosts",
+            "dexscreener_boosts",
+            "public_dexscreener_boosts",
+        ),
+    )
+    for positive_flag, negative_flag, attribute, config_attribute in boolean_mappings:
+        if positive_flag not in explicit_flags and negative_flag not in explicit_flags:
+            setattr(args, attribute, getattr(config, config_attribute))
+
+    numeric_mappings = (
+        ("--db-solana-tokens", "db_solana_tokens", "public_db_solana_tokens"),
+        ("--cmc-limit", "cmc_limit", "public_cmc_limit"),
+        ("--rescore-limit", "rescore_limit", "public_rescore_limit"),
+    )
+    for flag, attribute, config_attribute in numeric_mappings:
+        if flag not in explicit_flags:
+            setattr(args, attribute, getattr(config, config_attribute))
