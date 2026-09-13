@@ -90,6 +90,7 @@ class TwitterMonitoringTest(unittest.TestCase):
     def _client(self, store: _Store, *, audit=None):
         app = FastAPI()
         app.state.registry = object()
+        app.state.settings = SimpleNamespace(trust_proxy=False, trusted_proxy_hops=1)
         app.state.audit = audit or _Audit()
         app.include_router(build_twitter_monitoring_router())
         app.dependency_overrides[require_admin] = lambda: {"sub": "admin"}
@@ -120,6 +121,19 @@ class TwitterMonitoringTest(unittest.TestCase):
         self.assertEqual(store.last_expected, datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc))
         self.assertTrue(app.state.audit.rows[-1]["success"])
         self.assertEqual(app.state.audit.rows[-1]["action"], "twitter_crawler_settings_update")
+
+    def test_settings_audit_uses_effective_forwarded_client_ip(self):
+        store = _Store()
+        client, app = self._client(store)
+        app.state.settings.trust_proxy = True
+        app.state.settings.trusted_proxy_hops = 1
+        response = client.put(
+            "/api/twitter-monitoring/settings",
+            json=_payload(),
+            headers={"x-forwarded-for": "203.0.113.10, 10.0.0.2"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(app.state.audit.rows[-1]["ip_address"], "203.0.113.10")
 
     def test_settings_update_result_survives_audit_storage_failure(self):
         store = _Store()
