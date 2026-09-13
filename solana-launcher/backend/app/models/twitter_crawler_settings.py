@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.db.base import Base
@@ -15,6 +15,37 @@ def utcnow() -> datetime:
 
 class TwitterCrawlerSettings(Base):
     __tablename__ = "twitter_crawler_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_twitter_crawler_settings_singleton"),
+        CheckConstraint(
+            "query_limit BETWEEN 10 AND 100",
+            name="ck_twitter_crawler_settings_query_limit",
+        ),
+        CheckConstraint(
+            "process_limit BETWEEN 1 AND 5000 AND batch_size BETWEEN 1 AND 250 "
+            "AND max_depth BETWEEN 0 AND 8",
+            name="ck_twitter_crawler_settings_cycle_limits",
+        ),
+        CheckConstraint(
+            "min_relevance >= 0 AND min_relevance <= 100",
+            name="ck_twitter_crawler_settings_relevance",
+        ),
+        CheckConstraint(
+            "network_mode IN ('none','following','followers','both')",
+            name="ck_twitter_crawler_settings_network_mode",
+        ),
+        CheckConstraint(
+            "network_limit BETWEEN 1 AND 1000 AND lease_seconds BETWEEN 30 AND 3600 "
+            "AND rescore_limit BETWEEN 1 AND 5000",
+            name="ck_twitter_crawler_settings_worker_limits",
+        ),
+        CheckConstraint(
+            "public_db_solana_tokens BETWEEN 0 AND 10000 "
+            "AND public_cmc_limit BETWEEN 0 AND 5000 "
+            "AND public_rescore_limit BETWEEN 0 AND 5000",
+            name="ck_twitter_crawler_settings_public_limits",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
