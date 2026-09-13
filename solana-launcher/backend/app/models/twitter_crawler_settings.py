@@ -28,9 +28,9 @@ class TwitterCrawlerSettings(Base):
     lease_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     rescore_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=1500)
     public_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    public_dexscreener_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    public_dexscreener_boosts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    public_db_solana_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    public_dexscreener_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    public_dexscreener_boosts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    public_db_solana_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
     public_cmc_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     public_rescore_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=3000)
     updated_at: Mapped[datetime] = mapped_column(
