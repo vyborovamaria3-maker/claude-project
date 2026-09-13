@@ -37,6 +37,7 @@ from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
 from app.models.twitter_crawler_run import TwitterCrawlerRun
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
+from app.models.twitter_discovery_admin import TwitterDiscoveryConfig, TwitterDiscoveryRun
 from app.models.twitter_discovery_scoring import TwitterDiscoveryScore
 from app.models.twitter_intelligence import (
     TwitterAccount,
@@ -72,6 +73,8 @@ __all__ = [
     "SocialRelation",
     "TwitterCrawlerRun",
     "TwitterCrawlerSettings",
+    "TwitterDiscoveryConfig",
+    "TwitterDiscoveryRun",
     "TwitterAccount",
     "TwitterAccountSnapshot",
     "TwitterAccountScore",
