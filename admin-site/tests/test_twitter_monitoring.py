@@ -33,6 +33,11 @@ class _Audit:
         self.rows.append(kwargs)
 
 
+class _FailingAudit:
+    def record(self, **_kwargs) -> None:
+        raise RuntimeError("audit unavailable")
+
+
 class _Store:
     def __init__(self) -> None:
         self.conflict = False
@@ -82,10 +87,10 @@ def _payload() -> dict:
 
 
 class TwitterMonitoringTest(unittest.TestCase):
-    def _client(self, store: _Store):
+    def _client(self, store: _Store, *, audit=None):
         app = FastAPI()
         app.state.registry = object()
-        app.state.audit = _Audit()
+        app.state.audit = audit or _Audit()
         app.include_router(build_twitter_monitoring_router())
         app.dependency_overrides[require_admin] = lambda: {"sub": "admin"}
         patcher = patch("app.twitter_monitoring_api._store", return_value=store)
@@ -115,6 +120,17 @@ class TwitterMonitoringTest(unittest.TestCase):
         self.assertEqual(store.last_expected, datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc))
         self.assertTrue(app.state.audit.rows[-1]["success"])
         self.assertEqual(app.state.audit.rows[-1]["action"], "twitter_crawler_settings_update")
+
+    def test_settings_update_result_survives_audit_storage_failure(self):
+        store = _Store()
+        client, _app = self._client(store, audit=_FailingAudit())
+        response = client.put("/api/twitter-monitoring/settings", json=_payload())
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+
+        store.conflict = True
+        response = client.put("/api/twitter-monitoring/settings", json=_payload())
+        self.assertEqual(response.status_code, 409)
 
     def test_settings_update_detects_optimistic_lock_conflict(self):
         store = _Store()
