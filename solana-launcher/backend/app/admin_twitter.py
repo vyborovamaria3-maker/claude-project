@@ -120,17 +120,10 @@ class TwitterDiscoveryCandidateAdmin(ModelView, model=TwitterDiscoveryCandidate)
         "first_seen_at": "Discovered",
         "last_seen_at": "Last observed",
     }
-    form_columns = [
-        "account_type_hint",
-        "status",
-        "priority",
-        "relevance_hint",
-        "next_attempt_at",
-    ]
     page_size = 50
     page_size_options = PAGE_SIZES
     can_create = False
-    can_edit = True
+    can_edit = False
     can_delete = False
     can_view_details = True
 
@@ -181,11 +174,10 @@ class TwitterAccountAdmin(ModelView, model=TwitterAccount):
         "last_seen_at": "Last seen",
         "last_profile_sync_at": "Profile sync",
     }
-    form_columns = ["account_type", "status"]
     page_size = 50
     page_size_options = PAGE_SIZES
     can_create = False
-    can_edit = True
+    can_edit = False
     can_delete = False
     can_view_details = True
 
