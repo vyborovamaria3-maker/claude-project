@@ -17,7 +17,7 @@ def strong_settings() -> Settings:
         allowed_networks=[ipaddress.ip_network("10.0.0.0/8")],
         allowed_origins=["https://admin.potapoff.fun"],
         solana_rpc_url="https://api.mainnet-beta.solana.com",
-        intelligence_db_path="C:/data/intelligence/intelligence.sqlite3",
+        intelligence_db_path="/data/intelligence/intelligence.sqlite3",
     )
 
 
