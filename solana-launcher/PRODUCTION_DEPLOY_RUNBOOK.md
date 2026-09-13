@@ -29,6 +29,12 @@ Do not merge or deploy if any item below is false.
 
 If `main` is unprotected, the CI/deploy code is still fail-closed, but GitHub itself does not prevent someone from bypassing the merge gate.
 
+### Self-hosted runner requirement
+
+The workflows use a self-hosted runner by default so the release gate does not depend on paid GitHub-hosted minutes. Register a Linux runner for this repository with the `self-hosted` label, or set the repository variable `POTAPOFF_RUNNER` to a more specific label such as `potapoff-linux`.
+
+The runner must have Docker, Docker Compose, Bash and Git available. The workflows install project dependencies through their existing setup steps. A queued workflow with no matching runner is not a passing validation.
+
 ## 2. Release image chain
 
 `POTAPoff release images` runs only for `main` and depends on the reusable predeploy gate before it can publish anything.

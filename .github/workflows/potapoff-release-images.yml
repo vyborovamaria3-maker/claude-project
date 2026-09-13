@@ -17,7 +17,7 @@ concurrency:
 jobs:
   require-main:
     name: Require main branch
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 5
     steps:
       - name: Reject non-main image publication
@@ -39,7 +39,7 @@ jobs:
     needs:
       - require-main
       - predeploy
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 60
     env:
       REGISTRY: ghcr.io

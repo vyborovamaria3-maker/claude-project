@@ -9,7 +9,7 @@ permissions:
 jobs:
   require-main:
     name: Require main branch
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 5
     steps:
       - name: Reject non-main production dispatches
@@ -30,7 +30,7 @@ jobs:
     needs:
       - require-main
       - predeploy
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     environment: production
 

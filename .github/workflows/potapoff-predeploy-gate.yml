@@ -22,7 +22,7 @@ concurrency:
 jobs:
   backend-and-migrations:
     name: Backend, Twitter tests and Alembic
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
     services:
       postgres:
@@ -73,7 +73,7 @@ jobs:
 
   frontend:
     name: Frontend typecheck, regressions and build
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
     defaults:
       run:
@@ -98,7 +98,7 @@ jobs:
 
   admin-control-center:
     name: Control Center regression and Compose
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     services:
       postgres:
@@ -148,7 +148,7 @@ jobs:
 
   intelligence:
     name: Qwen/intelligence typecheck, tests and build
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
     defaults:
       run:
@@ -177,7 +177,7 @@ jobs:
 
   production-static:
     name: Production Compose, Dockerfiles and deploy scripts
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 45
     steps:
       - name: Checkout

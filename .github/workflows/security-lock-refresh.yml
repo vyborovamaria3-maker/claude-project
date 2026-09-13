@@ -14,7 +14,7 @@ permissions:
 jobs:
   refresh-lockfiles:
     if: github.head_ref == 'security/full-audit-20260818'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     steps:
       - name: Checkout audit branch

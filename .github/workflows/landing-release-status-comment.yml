@@ -13,7 +13,7 @@ permissions:
 jobs:
   report:
     if: ${{ github.event.issue.pull_request && github.event.comment.body == '/status-landing-release' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 5
     steps:
       - name: Report latest landing release

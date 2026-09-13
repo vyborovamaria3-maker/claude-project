@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   mobile-user-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     defaults:
       run:
