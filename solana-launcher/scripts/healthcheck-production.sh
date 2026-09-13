@@ -73,6 +73,60 @@ check_telegram_webhook() {
   [[ "$state" == "running" ]]
 }
 
+check_twitter_settings_write() {
+  "${COMPOSE[@]}" exec -T backend python - <<'PY'
+import os
+
+import httpx
+
+fields = (
+    "enabled",
+    "query_limit",
+    "process_limit",
+    "batch_size",
+    "max_depth",
+    "min_relevance",
+    "network_mode",
+    "network_limit",
+    "lease_seconds",
+    "rescore_limit",
+    "public_enabled",
+    "public_dexscreener_latest",
+    "public_dexscreener_boosts",
+    "public_db_solana_tokens",
+    "public_cmc_limit",
+    "public_rescore_limit",
+)
+key = os.environ.get("TWITTER_CRAWLER_ADMIN_KEY", "").strip()
+if len(key) < 32:
+    raise SystemExit("TWITTER_CRAWLER_ADMIN_KEY is missing in backend container")
+headers = {"X-Twitter-Crawler-Admin-Key": key}
+url = "http://127.0.0.1:8000/api/v1/twitter/admin/crawler-settings"
+with httpx.Client(timeout=5.0, trust_env=False) as client:
+    read = client.get(url, headers=headers)
+    read.raise_for_status()
+    body = read.json()
+    settings = body.get("settings") or {}
+    if body.get("ok") is not True or not settings.get("updated_at"):
+        raise SystemExit("unexpected Twitter crawler settings read payload")
+    payload = {
+        "expected_updated_at": settings["updated_at"],
+        **{field: settings[field] for field in fields},
+    }
+    write = client.put(url, headers=headers, json=payload)
+    write.raise_for_status()
+    written = write.json()
+    if written.get("ok") is not True:
+        raise SystemExit("Twitter crawler settings no-op write did not succeed")
+    stale = client.put(url, headers=headers, json=payload)
+    if stale.status_code != 409:
+        raise SystemExit(
+            f"Twitter crawler optimistic-lock smoke expected 409, got {stale.status_code}"
+        )
+print("TWITTER_SETTINGS_WRITE_SMOKE_OK")
+PY
+}
+
 check_services() {
   local service container_id state health
   local bad=()
@@ -146,11 +200,19 @@ for attempt in $(seq 1 45); do
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
     if [[ "${SKIP_TWITTER_DISCOVERY_HEALTH:-0}" == "1" ]]; then
       discovery_status="skipped"
+      twitter_settings_status="skipped"
     else
       discovery_status="running"
+      if check_twitter_settings_write; then
+        twitter_settings_status="write_conflict_ok"
+      else
+        twitter_settings_status="failed"
+      fi
     fi
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok twitter_discovery=$discovery_status frontend_build=verified"
-    exit 0
+    if [[ "$twitter_settings_status" != "failed" ]]; then
+      echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok twitter_discovery=$discovery_status twitter_settings=$twitter_settings_status frontend_build=verified"
+      exit 0
+    fi
   fi
   sleep 4
 done
