@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.api.v1.twitter_crawler_admin import (
     SETTING_FIELDS,
     TwitterCrawlerSettingsUpdate,
+    crawler_settings_access,
     update_crawler_settings,
 )
 
@@ -100,6 +101,18 @@ def test_schema_matches_operational_settings_contract():
     invalid["unexpected"] = True
     with pytest.raises(ValidationError):
         TwitterCrawlerSettingsUpdate.model_validate(invalid)
+
+
+@pytest.mark.asyncio
+async def test_access_probe_requires_and_accepts_dedicated_key(monkeypatch):
+    monkeypatch.setenv("TWITTER_CRAWLER_ADMIN_KEY", TEST_KEY)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await crawler_settings_access(x_twitter_crawler_admin_key="wrong-key")
+    assert exc_info.value.status_code == 401
+
+    result = await crawler_settings_access(x_twitter_crawler_admin_key=TEST_KEY)
+    assert result == {"ok": True, "scope": "twitter_crawler_settings"}
 
 
 @pytest.mark.asyncio
