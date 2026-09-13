@@ -35,6 +35,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _summary_has_partial_failures(summary: object) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    if summary.get("public_web_errors") or summary.get("x_search_errors"):
+        return True
+    if summary.get("x_search_rate_limited"):
+        return True
+    frontier = summary.get("frontier")
+    if isinstance(frontier, dict):
+        if int(frontier.get("failed") or 0) > 0:
+            return True
+        if int(frontier.get("rate_limited") or 0) > 0:
+            return True
+    return False
+
+
+def cycle_result_is_degraded(result: dict) -> bool:
+    return _summary_has_partial_failures(result.get("ingest")) or _summary_has_partial_failures(
+        result.get("frontier")
+    )
+
+
 async def _rescore_once(*, limit: int, dry_run: bool) -> dict:
     settings = get_settings()
     engine, sessionmaker = create_engine_and_sessionmaker(settings)
@@ -140,11 +162,13 @@ async def run_tracked(args: argparse.Namespace) -> dict:
         )
         raise
 
+    degraded = cycle_result_is_degraded(result)
     await try_finish_twitter_crawler_run(
         run_id,
-        status="success",
+        status="degraded" if degraded else "success",
         phase="complete",
         summary=result,
+        error="partial discovery failure; inspect run summary" if degraded else None,
     )
     return result
 
