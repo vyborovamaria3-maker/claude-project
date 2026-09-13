@@ -5,9 +5,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -16,13 +16,8 @@ sys.path.insert(0, str(ADMIN_ROOT))
 
 from app.auth import require_admin
 from app.services import X_TABLES
-from app.twitter_monitoring import (
-    TWITTER_MONITOR_TABLES,
-    TWITTER_SETTINGS_FIELDS,
-    TwitterMonitoringStore,
-    find_twitter_source,
-)
-from app.twitter_monitoring_api import TwitterCrawlerSettingsBody, build_twitter_monitoring_router
+from app.twitter_monitoring import TWITTER_MONITOR_TABLES, TWITTER_SETTINGS_FIELDS, TwitterMonitoringStore, find_twitter_source
+from app.twitter_monitoring_api import TwitterCrawlerSettingsBody, _update_via_backend, build_twitter_monitoring_router
 
 
 class _Audit:
@@ -39,11 +34,6 @@ class _FailingAudit:
 
 
 class _Store:
-    def __init__(self) -> None:
-        self.conflict = False
-        self.last_values = None
-        self.last_expected = None
-
     def snapshot(self) -> dict:
         return {
             "source_id": "potapoff",
@@ -55,13 +45,6 @@ class _Store:
             "recent_accounts": [],
             "tables": list(TWITTER_MONITOR_TABLES),
         }
-
-    def update_settings(self, values, *, expected_updated_at):
-        self.last_values = dict(values)
-        self.last_expected = expected_updated_at
-        if self.conflict:
-            return None
-        return {"id": 1, **values, "updated_at": datetime(2026, 9, 13, 12, 1, tzinfo=timezone.utc)}
 
 
 def _payload() -> dict:
@@ -86,23 +69,37 @@ def _payload() -> dict:
     }
 
 
+def _backend_row() -> dict:
+    payload = _payload()
+    payload.pop("expected_updated_at")
+    return {"id": 1, **payload, "updated_at": "2026-09-13T12:01:00+00:00"}
+
+
 class TwitterMonitoringTest(unittest.TestCase):
-    def _client(self, store: _Store, *, audit=None):
+    def _client(self, store: _Store, *, audit=None, backend_side_effect=None):
         app = FastAPI()
         app.state.registry = object()
         app.state.settings = SimpleNamespace(trust_proxy=False, trusted_proxy_hops=1)
         app.state.audit = audit or _Audit()
         app.include_router(build_twitter_monitoring_router())
         app.dependency_overrides[require_admin] = lambda: {"sub": "admin"}
-        patcher = patch("app.twitter_monitoring_api._store", return_value=store)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+
+        store_patcher = patch("app.twitter_monitoring_api._store", return_value=store)
+        store_patcher.start()
+        self.addCleanup(store_patcher.stop)
+
+        backend_patcher = patch("app.twitter_monitoring_api._update_via_backend", return_value=_backend_row())
+        backend_mock = backend_patcher.start()
+        if backend_side_effect is not None:
+            backend_mock.side_effect = backend_side_effect
+        self.addCleanup(backend_patcher.stop)
+
         client = TestClient(app)
         self.addCleanup(client.close)
-        return client, app
+        return client, app, backend_mock
 
     def test_snapshot_route_returns_monitoring_data(self):
-        client, _app = self._client(_Store())
+        client, _app, _backend = self._client(_Store())
         response = client.get("/api/twitter-monitoring")
         self.assertEqual(response.status_code, 200)
         body = response.json()
@@ -112,19 +109,18 @@ class TwitterMonitoringTest(unittest.TestCase):
         self.assertIn("twitter_crawler_runs", body["tables"])
         self.assertIn("twitter_accounts", body["tables"])
 
-    def test_settings_update_passes_only_whitelisted_validated_fields(self):
-        store = _Store()
-        client, app = self._client(store)
+    def test_settings_update_passes_validated_payload_to_backend_only(self):
+        client, app, backend = self._client(_Store())
         response = client.put("/api/twitter-monitoring/settings", json=_payload())
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(set(store.last_values), set(TWITTER_SETTINGS_FIELDS))
-        self.assertEqual(store.last_expected, datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc))
+        sent = backend.call_args.args[0].model_dump()
+        self.assertEqual(set(sent) - {"expected_updated_at"}, set(TWITTER_SETTINGS_FIELDS))
+        self.assertEqual(sent["expected_updated_at"], datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc))
         self.assertTrue(app.state.audit.rows[-1]["success"])
         self.assertEqual(app.state.audit.rows[-1]["action"], "twitter_crawler_settings_update")
 
     def test_settings_audit_uses_effective_forwarded_client_ip(self):
-        store = _Store()
-        client, app = self._client(store)
+        client, app, _backend = self._client(_Store())
         app.state.settings.trust_proxy = True
         app.state.settings.trusted_proxy_hops = 1
         response = client.put(
@@ -136,61 +132,31 @@ class TwitterMonitoringTest(unittest.TestCase):
         self.assertEqual(app.state.audit.rows[-1]["ip_address"], "203.0.113.10")
 
     def test_settings_update_result_survives_audit_storage_failure(self):
-        store = _Store()
-        client, _app = self._client(store, audit=_FailingAudit())
+        client, _app, _backend = self._client(_Store(), audit=_FailingAudit())
         response = client.put("/api/twitter-monitoring/settings", json=_payload())
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
 
-        store.conflict = True
-        response = client.put("/api/twitter-monitoring/settings", json=_payload())
-        self.assertEqual(response.status_code, 409)
-
-    def test_settings_update_detects_optimistic_lock_conflict(self):
-        store = _Store()
-        store.conflict = True
-        client, app = self._client(store)
+    def test_settings_update_detects_backend_optimistic_lock_conflict(self):
+        conflict = HTTPException(status_code=409, detail="Twitter settings changed in another session; refresh and retry")
+        client, app, _backend = self._client(_Store(), backend_side_effect=conflict)
         response = client.put("/api/twitter-monitoring/settings", json=_payload())
         self.assertEqual(response.status_code, 409)
         self.assertIn("another session", response.json()["detail"])
         self.assertFalse(app.state.audit.rows[-1]["success"])
-        self.assertEqual(
-            app.state.audit.rows[-1]["details"]["reason"],
-            "optimistic_lock_conflict",
-        )
+        self.assertEqual(app.state.audit.rows[-1]["details"]["reason"], "optimistic_lock_conflict")
 
     def test_settings_request_rejects_invalid_ranges_modes_and_extra_fields(self):
-        response_store = _Store()
-        client, _app = self._client(response_store)
-
-        invalid = _payload()
-        invalid["query_limit"] = 9
-        self.assertEqual(
-            client.put("/api/twitter-monitoring/settings", json=invalid).status_code,
-            422,
-        )
-        self.assertIsNone(response_store.last_values)
-
-        invalid = _payload()
-        invalid["network_mode"] = "random"
-        self.assertEqual(
-            client.put("/api/twitter-monitoring/settings", json=invalid).status_code,
-            422,
-        )
-
-        invalid = _payload()
-        invalid["public_cmc_limit"] = 5001
-        self.assertEqual(
-            client.put("/api/twitter-monitoring/settings", json=invalid).status_code,
-            422,
-        )
+        client, _app, backend = self._client(_Store())
+        for field, value in (("query_limit", 9), ("network_mode", "random"), ("public_cmc_limit", 5001)):
+            invalid = _payload()
+            invalid[field] = value
+            self.assertEqual(client.put("/api/twitter-monitoring/settings", json=invalid).status_code, 422)
 
         invalid = _payload()
         invalid["unexpected_setting"] = 1
-        self.assertEqual(
-            client.put("/api/twitter-monitoring/settings", json=invalid).status_code,
-            422,
-        )
+        self.assertEqual(client.put("/api/twitter-monitoring/settings", json=invalid).status_code, 422)
+        backend.assert_not_called()
 
     def test_settings_model_rejects_non_finite_relevance_and_naive_lock_timestamp(self):
         invalid = _payload()
@@ -203,23 +169,34 @@ class TwitterMonitoringTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             TwitterCrawlerSettingsBody.model_validate(invalid)
 
-    def test_store_rejects_partial_or_unknown_setting_sets_before_connecting(self):
-        source = SimpleNamespace(
-            config=SimpleNamespace(kind="postgres", dsn="postgresql://unused")
-        )
-        store = TwitterMonitoringStore(source)
-        with self.assertRaisesRegex(ValueError, "Missing Twitter setting"):
-            store.update_settings(
-                {"enabled": True},
-                expected_updated_at=datetime.now(timezone.utc),
-            )
-        values = {field: 1 for field in TWITTER_SETTINGS_FIELDS}
-        values["unknown"] = 1
-        with self.assertRaisesRegex(ValueError, "Unsupported Twitter setting"):
-            store.update_settings(
-                values,
-                expected_updated_at=datetime.now(timezone.utc),
-            )
+    def test_product_monitoring_store_has_no_write_method(self):
+        self.assertFalse(hasattr(TwitterMonitoringStore, "update_settings"))
+
+    def test_backend_writer_uses_dedicated_header_and_internal_url(self):
+        body = TwitterCrawlerSettingsBody.model_validate(_payload())
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"ok": True, "settings": _backend_row()}
+        http_client = MagicMock()
+        http_client.__enter__.return_value = http_client
+        http_client.__exit__.return_value = False
+        http_client.put.return_value = response
+        test_key = "unit-test-placeholder-key-value-0001"
+
+        with patch.dict(
+            "os.environ",
+            {
+                "TWITTER_CRAWLER_ADMIN_KEY": test_key,
+                "ADMIN_TWITTER_BACKEND_URL": "http://backend:8000",
+            },
+            clear=False,
+        ):
+            with patch("app.twitter_monitoring_api.httpx.Client", return_value=http_client):
+                result = _update_via_backend(body)
+
+        self.assertEqual(result["id"], 1)
+        self.assertEqual(http_client.put.call_args.kwargs["headers"]["X-Twitter-Crawler-Admin-Key"], test_key)
+        self.assertEqual(http_client.put.call_args.args[0], "http://backend:8000/api/v1/twitter/admin/crawler-settings")
 
     def test_find_twitter_source_prefers_named_potapoff_postgres(self):
         preferred = SimpleNamespace(config=SimpleNamespace(kind="postgres", role="core"))
@@ -244,9 +221,7 @@ class TwitterMonitoringTest(unittest.TestCase):
 
     def test_static_control_center_wires_twitter_monitoring_tab(self):
         index = (ADMIN_ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
-        script = (ADMIN_ROOT / "app" / "static" / "twitter-monitoring-v1.js").read_text(
-            encoding="utf-8"
-        )
+        script = (ADMIN_ROOT / "app" / "static" / "twitter-monitoring-v1.js").read_text(encoding="utf-8")
         self.assertIn('id="twitterMonitoringNav"', index)
         self.assertIn('/static/twitter-monitoring-v1.css', index)
         self.assertIn('/static/twitter-monitoring-v1.js', index)
