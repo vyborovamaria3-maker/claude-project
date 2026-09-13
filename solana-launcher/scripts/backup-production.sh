@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/potapoff-deploy}"
 BACKUP_ROOT="${BACKUP_ROOT:-$DEPLOY_DIR/backups}"
+ADMIN_DIR="${ADMIN_DIR:-/opt/claude-project/admin-site}"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 DEST="$BACKUP_ROOT/$STAMP"
 
@@ -13,6 +14,16 @@ cp -a "$DEPLOY_DIR/.env.server" "$DEST/" 2>/dev/null || true
 cp -a "$DEPLOY_DIR/backend.env" "$DEST/" 2>/dev/null || true
 cp -a "$DEPLOY_DIR/docker-compose.production.yml" "$DEST/" 2>/dev/null || true
 cp -a "$DEPLOY_DIR/.current-image-tag" "$DEST/" 2>/dev/null || true
+
+# Keep the Control Center's server-only configuration with the same restrictive
+# backup directory permissions. These files are excluded from GitHub release
+# archives and are required to reconstruct the admin service after host loss.
+mkdir -p "$DEST/admin-site"
+for file in .env .env.intelligence sources.json logs.json; do
+  if [[ -r "$ADMIN_DIR/$file" ]]; then
+    cp -a "$ADMIN_DIR/$file" "$DEST/admin-site/$file"
+  fi
+done
 
 POSTGRES_CONTAINER="$(
   docker ps \
