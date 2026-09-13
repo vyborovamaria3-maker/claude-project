@@ -42,7 +42,24 @@ docker exec "$POSTGRES_CONTAINER" \
   > "$DEST/postgres.dump"
 
 test -s "$DEST/postgres.dump"
-sha256sum "$DEST/postgres.dump" > "$DEST/SHA256SUMS"
+
+ADMIN_POSTGRES_CONTAINER="$(
+  docker ps \
+    --filter 'name=^/potapoff-admin-postgres$' \
+    --format '{{.Names}}' | head -n1
+)"
+
+if [[ -z "$ADMIN_POSTGRES_CONTAINER" ]]; then
+  echo "Control Center PostgreSQL container was not found" >&2
+  exit 1
+fi
+
+docker exec "$ADMIN_POSTGRES_CONTAINER" \
+  pg_dump -U potapoff_admin -d potapoff_admin -Fc \
+  > "$DEST/admin-postgres.dump"
+
+test -s "$DEST/admin-postgres.dump"
+sha256sum "$DEST/postgres.dump" "$DEST/admin-postgres.dump" > "$DEST/SHA256SUMS"
 
 find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} +
 
