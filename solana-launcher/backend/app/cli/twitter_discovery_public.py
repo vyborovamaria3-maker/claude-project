@@ -11,6 +11,10 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.models.analytics import Token
+from app.services.twitter_crawler_runs import (
+    try_finish_twitter_crawler_run,
+    try_start_twitter_crawler_run,
+)
 from app.services.twitter_discovery import discovery_stats, enqueue_discovery_candidate
 from app.services.twitter_discovery_scoring import rescore_discovery_candidates
 from app.services.twitter_public_discovery_sources import (
@@ -143,9 +147,43 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         await engine.dispose()
 
 
+async def run_tracked(args: argparse.Namespace) -> dict[str, Any]:
+    run_id = await try_start_twitter_crawler_run(
+        "twitter_discovery_public",
+        meta={
+            "dexscreener_latest": bool(args.dexscreener_latest),
+            "dexscreener_boosts": bool(args.dexscreener_boosts),
+            "db_solana_tokens": int(args.db_solana_tokens),
+            "cmc_limit": int(args.cmc_limit),
+            "rescore_limit": int(args.rescore_limit),
+            "dry_run": bool(args.dry_run),
+        },
+    )
+    try:
+        summary = await run(args)
+    except Exception as exc:
+        await try_finish_twitter_crawler_run(
+            run_id,
+            status="failed",
+            phase="failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+
+    errors = summary.get("errors") or []
+    await try_finish_twitter_crawler_run(
+        run_id,
+        status="degraded" if errors else "success",
+        phase="complete",
+        summary=summary,
+        error="; ".join(str(item) for item in errors)[:4000] if errors else None,
+    )
+    return summary
+
+
 def main() -> None:
     args = build_parser().parse_args()
-    summary = asyncio.run(run(args))
+    summary = asyncio.run(run_tracked(args))
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 
 
