@@ -30,6 +30,7 @@ class TwitterAccount(Base):
         UniqueConstraint("twitter_id", name="uq_twitter_accounts_twitter_id"),
         Index("ix_twitter_accounts_username", "username"),
         Index("ix_twitter_accounts_type_status", "account_type", "status"),
+        Index("ix_twitter_accounts_first_seen", "first_seen_at"),
         Index("ix_twitter_accounts_last_seen", "last_seen_at"),
     )
 
@@ -193,6 +194,7 @@ class TwitterDiscoveryCandidate(Base):
         ),
         Index("ix_twitter_discovery_candidates_username", "username"),
         Index("ix_twitter_discovery_candidates_depth", "depth", "priority"),
+        Index("ix_twitter_discovery_candidates_first_seen", "first_seen_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
