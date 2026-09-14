@@ -21,6 +21,38 @@ def _trade_value(amount: float | None, price: float | None) -> float | None:
     return value if value >= 0 else None
 
 
+def _attribution_rank(
+    attribution: KOLWalletAttribution,
+    profile: KOLProfile,
+) -> tuple[int, float, float, int]:
+    return (
+        1 if attribution.verified else 0,
+        float(attribution.confidence or 0.0),
+        float(profile.confidence or 0.0),
+        -int(profile.id or 0),
+    )
+
+
+def canonical_kol_trade_rows(
+    rows: list[tuple[WalletTrade, Wallet, KOLWalletAttribution, KOLProfile]],
+) -> list[tuple[WalletTrade, Wallet, KOLWalletAttribution, KOLProfile]]:
+    """Return one canonical KOL attribution per WalletTrade.
+
+    A single analytics wallet can be linked to multiple KOL profiles. Counting the same
+    WalletTrade once per attribution inflates volume/net-flow and can create false
+    accumulation signals. Prefer verified/high-confidence attribution deterministically.
+    """
+    best_by_trade: dict[int, tuple[WalletTrade, Wallet, KOLWalletAttribution, KOLProfile]] = {}
+    for row in rows:
+        trade, _wallet, attribution, profile = row
+        existing = best_by_trade.get(trade.id)
+        if existing is None or _attribution_rank(attribution, profile) > _attribution_rank(
+            existing[2], existing[3]
+        ):
+            best_by_trade[trade.id] = row
+    return list(best_by_trade.values())
+
+
 async def build_kol_token_intelligence(
     session: AsyncSession,
     mint_address: str,
@@ -39,7 +71,7 @@ async def build_kol_token_intelligence(
             "actors": [],
         }
 
-    rows = list(
+    raw_rows = list(
         (
             await session.execute(
                 select(WalletTrade, Wallet, KOLWalletAttribution, KOLProfile)
@@ -56,6 +88,7 @@ async def build_kol_token_intelligence(
             )
         ).all()
     )
+    rows = canonical_kol_trade_rows(raw_rows)
 
     now = utcnow()
     windows: dict[str, Any] = {}
@@ -168,7 +201,7 @@ async def build_kol_token_intelligence(
         "signal": signal,
         "ownership_claim": False,
         "attribution_note": (
-            "KOL-wallet links are weighted by stored evidence confidence. "
+            "Each WalletTrade is counted once using the strongest stored KOL attribution. "
             "Behavioral or related-wallet links are not treated as proof of ownership."
         ),
         "windows": windows,
