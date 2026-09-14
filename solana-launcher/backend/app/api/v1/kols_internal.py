@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -24,17 +25,21 @@ class KOLMetricsLookupRequest(BaseModel):
     addresses: list[str] = Field(default_factory=list, max_length=500)
 
 
-def _require_backend_key(request: Request, supplied: str | None) -> None:
-    expected = request.app.state.settings.backend_api_key
+def _require_kol_internal_key(request: Request, supplied: str | None) -> None:
+    settings = request.app.state.settings
+    expected = os.getenv("KOL_INTERNAL_KEY", "").strip()
+    is_production = settings.environment.strip().lower() in {"production", "prod"}
+    if not expected and not is_production:
+        expected = settings.backend_api_key.strip()
     if not expected:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="BACKEND_API_KEY is not configured",
+            detail="KOL_INTERNAL_KEY is not configured",
         )
     if not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid backend API key",
+            detail="Invalid KOL internal key",
         )
 
 
@@ -62,9 +67,9 @@ async def internal_token_kol_intelligence(
     mint_address: str,
     request: Request,
     session: AsyncSession = Depends(get_db),
-    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+    x_kol_internal_key: str | None = Header(default=None, alias="X-KOL-Internal-Key"),
 ) -> dict:
-    _require_backend_key(request, x_backend_api_key)
+    _require_kol_internal_key(request, x_kol_internal_key)
     if not is_solana_address(mint_address):
         raise HTTPException(status_code=400, detail="Invalid Solana mint address")
     return await build_kol_token_intelligence(session, mint_address)
@@ -76,9 +81,9 @@ async def internal_related_wallets(
     request: Request,
     limit: int = Query(default=20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
-    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+    x_kol_internal_key: str | None = Header(default=None, alias="X-KOL-Internal-Key"),
 ) -> dict:
-    _require_backend_key(request, x_backend_api_key)
+    _require_kol_internal_key(request, x_kol_internal_key)
     normalized = _clean_handle(handle)
     wallets = list(
         (
@@ -127,9 +132,9 @@ async def internal_kol_metrics(
     payload: KOLMetricsLookupRequest,
     request: Request,
     session: AsyncSession = Depends(get_db),
-    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+    x_kol_internal_key: str | None = Header(default=None, alias="X-KOL-Internal-Key"),
 ) -> dict[str, Any]:
-    _require_backend_key(request, x_backend_api_key)
+    _require_kol_internal_key(request, x_kol_internal_key)
     addresses = list(
         dict.fromkeys(
             address.strip()
@@ -191,9 +196,9 @@ async def internal_live_trades(
     request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     session: AsyncSession = Depends(get_db),
-    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+    x_kol_internal_key: str | None = Header(default=None, alias="X-KOL-Internal-Key"),
 ) -> dict:
-    _require_backend_key(request, x_backend_api_key)
+    _require_kol_internal_key(request, x_kol_internal_key)
     raw_rows = list(
         (
             await session.execute(
