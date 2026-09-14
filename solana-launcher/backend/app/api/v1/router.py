@@ -7,6 +7,7 @@ from app.api.v1 import (
     health,
     intelligence_memory,
     kols,
+    kols_backtest,
     kols_internal,
     subscriptions,
     tasks,
@@ -22,6 +23,7 @@ api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(kols_internal.router, prefix="/kols", tags=["kol-intelligence-internal"])
+api_router.include_router(kols_backtest.router, prefix="/kols", tags=["kol-backtest-internal"])
 api_router.include_router(kols.router, prefix="/kols", tags=["kol-intelligence"])
 api_router.include_router(
     telegram_intelligence.router,
