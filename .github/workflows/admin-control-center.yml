@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
 
+# Runner selection is controlled centrally by POTAPOFF_RUNNER.
 concurrency:
   group: admin-control-center-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

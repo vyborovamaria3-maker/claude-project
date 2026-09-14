@@ -22,6 +22,7 @@ concurrency:
 permissions:
   contents: read
 
+# Runner selection is controlled centrally by POTAPOFF_RUNNER.
 jobs:
   secret-scan:
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}

@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
 
+# Runner selection is controlled centrally by POTAPOFF_RUNNER.
 concurrency:
   group: potapoff-predeploy-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

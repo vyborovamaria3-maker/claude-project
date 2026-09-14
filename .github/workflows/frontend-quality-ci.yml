@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
 
+# Runner selection is controlled centrally by POTAPOFF_RUNNER.
 jobs:
   accessibility-and-performance:
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}

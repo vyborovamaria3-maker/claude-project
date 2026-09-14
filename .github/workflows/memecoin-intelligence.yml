@@ -14,6 +14,7 @@ on:
 permissions:
   contents: read
 
+# Runner selection is controlled centrally by POTAPOFF_RUNNER.
 jobs:
   validate:
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
