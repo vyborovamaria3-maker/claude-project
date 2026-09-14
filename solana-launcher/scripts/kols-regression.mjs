@@ -15,17 +15,48 @@ function assert(condition, message) {
 const proxy = read("proxy.ts");
 const resolver = read("lib/kols/resolver.ts");
 const nextRoute = read("app/api/kols/route.ts");
+const backtestRoute = read("app/api/kols/backtest/route.ts");
 const internalApi = read("backend/app/api/v1/kols_internal.py");
+const backtestApi = read("backend/app/api/v1/kols_backtest.py");
 const metrics = read("backend/app/services/kol_metrics.py");
 const intelligence = read("backend/app/services/kol_intelligence.py");
+const backtest = read("backend/app/services/kol_backtest.py");
 const advanced = read("backend/app/api/v1/advanced_intelligence.py");
 const compose = read("docker-compose.production.yml");
 const tests = read("backend/tests/test_kol_intelligence.py");
+const backtestTests = read("backend/tests/test_kol_backtest.py");
+const siteDesign = read("lib/siteDesign.ts");
+const sidebar = read("components/SidebarNav.tsx");
+const responsive = read("app/responsive.css");
+const kolsPage = read("app/trade/kols-twitter/page.tsx");
 
 const paidBlock = proxy.match(/const PAID_ROUTE_PREFIXES = \[([\s\S]*?)\];/)?.[1] ?? "";
 const heavyBlock = proxy.match(/const HEAVY_ROUTE_PREFIXES = \[([\s\S]*?)\];/)?.[1] ?? "";
 assert(paidBlock.includes('"/api/kols"'), "/api/kols must stay behind paid authentication");
 assert(heavyBlock.includes('"/api/kols"'), "/api/kols must stay behind the heavy-route rate limit");
+
+assert(
+  siteDesign.includes('{ href: "/trade/kols-twitter", labelKey: "nav.xAnalysis", icon: "twitter", tag: "nav.kols_twitter" }'),
+  "KOLs Twitter must remain part of the shared trade navigation config",
+);
+assert(
+  !sidebar.includes("KOLS_TWITTER_NAV_ITEM"),
+  "Sidebar must not maintain a second ad-hoc KOL navigation source",
+);
+assert(
+  responsive.includes('[data-tag="trade.kols_twitter"] .site-table tr')
+    && responsive.includes("grid-template-columns: minmax(0, 1fr) auto"),
+  "mobile KOL leaderboard must keep its card layout instead of a wide desktop table",
+);
+assert(
+  responsive.includes('[data-tag="trade.kols_backtest"]'),
+  "KOL backtest must stay inside the shared responsive safeguards",
+);
+assert(
+  kolsPage.indexOf("<KolsTwitterPanel />") < kolsPage.indexOf("<KOLTokenFlowPanel />")
+    && kolsPage.includes("<KOLBacktestPanel />"),
+  "KOL tab must lead with the directory and keep backtest integrated in the same workspace",
+);
 
 assert(
   resolver.includes('const NEXT_ID_PROOF_URL = "https://proof-service.next.id/v1/proof"'),
@@ -91,6 +122,37 @@ assert(
   "KOL enrichment must fail open without breaking Advanced Intelligence",
 );
 
+assert(
+  backtestRoute.includes('"X-KOL-Internal-Key": KOL_INTERNAL_KEY')
+    && backtestRoute.includes("ALLOWED_PARAMS"),
+  "backtest proxy must use the scoped KOL key and an explicit query allowlist",
+);
+assert(
+  backtestApi.includes("_require_kol_internal_key")
+    && backtestApi.includes("backtest_kol_signals"),
+  "backend backtest endpoint must require the scoped KOL key",
+);
+assert(
+  backtest.includes('baseline_source = "token_metric_before_signal"')
+    && backtest.includes('baseline_source = "trigger_trade_fallback"'),
+  "backtest baseline must prefer a historical market metric before any aggregate trade-price fallback",
+);
+assert(
+  backtest.includes("_price_at_or_before(")
+    && backtest.includes("_price_at_or_after(")
+    && backtest.includes('"lookaheadGuard"'),
+  "backtest must keep explicit before/after price boundaries and document lookahead protection",
+);
+assert(
+  backtest.includes("all_signals")
+    && backtest.includes("returned_signals = all_signals[:max_signals]"),
+  "backtest summary must use the full signal sample while truncating only response detail",
+);
+assert(
+  backtest.includes("current KOL attribution snapshot is applied to historical trades"),
+  "backtest must disclose current-attribution selection bias",
+);
+
 const frontendService = compose.match(/\n  frontend:\n([\s\S]*?)\n  telegram-bot:\n/)?.[1] ?? "";
 const backendService = compose.match(/\n  backend:\n([\s\S]*?)\n  celery-worker:\n/)?.[1] ?? "";
 assert(frontendService.includes("KOL_INTERNAL_KEY"), "frontend server must receive the scoped KOL key");
@@ -112,6 +174,18 @@ assert(
 assert(
   tests.includes("test_internal_sync_requires_scoped_key"),
   "backend tests must cover scoped internal KOL authentication",
+);
+assert(
+  backtestTests.includes("test_backtest_builds_signal_without_future_price_leakage"),
+  "backtest tests must cover historical price lookahead leakage",
+);
+assert(
+  backtestTests.includes("test_backtest_dedupes_multiple_labels_for_one_trade"),
+  "backtest tests must cover duplicate identity labels on one WalletTrade",
+);
+assert(
+  backtestTests.includes("test_strict_attribution_time_excludes_pre_attribution_trades"),
+  "backtest tests must cover strict attribution timing",
 );
 
 console.log("KOLS_REGRESSION_OK");
