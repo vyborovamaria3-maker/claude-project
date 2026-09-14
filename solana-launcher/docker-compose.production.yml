@@ -73,6 +73,7 @@ services:
       FRONTEND_URL: https://potapoff.fun
       FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
+      KOL_INTERNAL_KEY: ${KOL_INTERNAL_KEY:?KOL_INTERNAL_KEY is required}
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
       # Pass this from a backend-only environment source (for example a second
@@ -149,6 +150,7 @@ services:
     environment:
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
+      KOL_INTERNAL_KEY: ${KOL_INTERNAL_KEY:?KOL_INTERNAL_KEY is required}
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
