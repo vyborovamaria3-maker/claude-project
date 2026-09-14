@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import delete, select
 
 from app.models.analytics import Token, TokenMetric, Wallet, WalletTrade
 from app.models.kol_intelligence import KOLProfile, KOLWalletAttribution
@@ -57,15 +58,16 @@ async def _seed_accumulation_case(test_app):
                     buy_timestamp=start + timedelta(minutes=index * 10),
                     amount_buy=100,
                     amount_sold=0,
-                    avg_buy_price=None,
+                    avg_buy_price=99.0,
                     avg_sell_price=None,
                     realized_profit_usd=None,
                     still_holding=True,
                 )
             )
 
-        # The third buy triggers at start+20m. Baseline must use the last price
-        # BEFORE the trigger, never the deliberately extreme +21m future price.
+        # The third buy triggers at start+20m. Baseline must use the last market
+        # price BEFORE the trigger, never the deliberately extreme trade average or
+        # the +21m future market price.
         session.add_all(
             [
                 TokenMetric(token_id=token.id, timestamp=start + timedelta(minutes=15), price_usd=1.0),
@@ -97,6 +99,8 @@ async def test_backtest_builds_signal_without_future_price_leakage(client, test_
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["status"] == "ok"
+    assert payload["coverage"]["rawSignalTriggers"] == 1
+    assert payload["coverage"]["signalsSkippedNoBaseline"] == 0
     assert payload["coverage"]["signals"] == 1
 
     signal = payload["signals"][0]
@@ -113,14 +117,46 @@ async def test_backtest_builds_signal_without_future_price_leakage(client, test_
 
 
 @pytest.mark.asyncio
+async def test_backtest_skips_trigger_without_pre_signal_market_price(test_app):
+    await _seed_accumulation_case(test_app)
+
+    async with test_app.state.sessionmaker() as session:
+        token = (await session.execute(select(Token))).scalar_one()
+        await session.execute(delete(TokenMetric).where(TokenMetric.token_id == token.id))
+        # Add only a post-trigger price. Position avg_buy_price remains populated,
+        # but must never be used as a backtest entry fallback.
+        trade = (await session.execute(select(WalletTrade).order_by(WalletTrade.buy_timestamp.desc()))).scalars().first()
+        assert trade is not None
+        session.add(
+            TokenMetric(
+                token_id=token.id,
+                timestamp=trade.buy_timestamp + timedelta(minutes=1),
+                price_usd=2.0,
+            )
+        )
+        await session.commit()
+
+        payload = await backtest_kol_signals(
+            session,
+            lookback_days=7,
+            min_kols=3,
+            min_confidence=70,
+        )
+
+    assert payload["coverage"]["rawSignalTriggers"] == 1
+    assert payload["coverage"]["signalsSkippedNoBaseline"] == 1
+    assert payload["coverage"]["signals"] == 0
+    assert payload["signals"] == []
+
+
+@pytest.mark.asyncio
 async def test_backtest_dedupes_multiple_labels_for_one_trade(test_app):
     await _seed_accumulation_case(test_app)
 
     async with test_app.state.sessionmaker() as session:
-        # Attach a weaker second identity to the first wallet. The backtest must
-        # still count the underlying WalletTrade once and keep 3 distinct actors.
-        wallet = await session.get(Wallet, 1)
-        assert wallet is not None
+        wallet = (
+            await session.execute(select(Wallet).where(Wallet.wallet_address == "test-wallet-0"))
+        ).scalar_one()
         weak_profile = KOLProfile(
             twitter_handle="weak_duplicate",
             display_name="Weak Duplicate",
@@ -164,8 +200,6 @@ async def test_strict_attribution_time_excludes_pre_attribution_trades(test_app)
     start = await _seed_accumulation_case(test_app)
 
     async with test_app.state.sessionmaker() as session:
-        from sqlalchemy import select
-
         attributions = list((await session.execute(select(KOLWalletAttribution))).scalars().all())
         for attribution in attributions:
             attribution.first_seen_at = start + timedelta(hours=1)
