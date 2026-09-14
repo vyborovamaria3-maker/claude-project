@@ -22,6 +22,7 @@ from app.services.advanced_intelligence_persistence import (
     persist_advanced_intelligence_state,
 )
 from app.services.intelligence_outcomes import persist_outcome_values
+from app.services.kol_intelligence import build_kol_token_intelligence
 from app.services.telegram_parser import is_solana_address
 
 router = APIRouter()
@@ -85,6 +86,12 @@ async def advanced_report(
             get_settings(),
             snapshot=payload.snapshot,
             report=report,
+        )
+        # Keep the advanced-intelligence 20-layer contract intact: KOL intelligence
+        # is a top-level enrichment, not a new layer.
+        report["kol_intelligence"] = await build_kol_token_intelligence(
+            session,
+            mint,
         )
     if payload.persist:
         await persist_advanced_intelligence_state(
@@ -176,6 +183,7 @@ async def investigation_view(
             )
         ).scalars().all()
     )
+    kol_intelligence = await build_kol_token_intelligence(session, mint)
     return {
         "mint": mint,
         "snapshots": [
@@ -222,4 +230,5 @@ async def investigation_view(
             }
             for row in outcomes
         ],
+        "kol_intelligence": kol_intelligence,
     }

@@ -23,6 +23,13 @@ from app.models.intelligence_memory import (
     IntelligenceSnapshotEdge,
     IntelligenceSnapshotEntity,
 )
+from app.models.kol_intelligence import (
+    KOLProfile,
+    KOLSourceSync,
+    KOLWalletAttribution,
+    KOLWalletEvidence,
+    KOLWalletMetric,
+)
 from app.models.social_intelligence import (
     SocialEvent,
     SocialRelation,
@@ -68,4 +75,9 @@ __all__ = [
     "IntelligenceOutcome",
     "IntelligenceCalibrationStat",
     "IntelligenceNarrativeMemory",
+    "KOLProfile",
+    "KOLWalletAttribution",
+    "KOLWalletEvidence",
+    "KOLWalletMetric",
+    "KOLSourceSync",
 ]
