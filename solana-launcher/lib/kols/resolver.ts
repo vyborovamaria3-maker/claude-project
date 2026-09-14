@@ -10,7 +10,7 @@ import type {
 const KOLSCAN_DATASET_URL =
   "https://raw.githubusercontent.com/nirholas/kol-quest/main/output/kolscan-leaderboard.json";
 const FIREFLY_PROFILE_URL = "https://api.firefly.land/v2/wallet/profile";
-const NEXT_ID_PROOF_URL = "https://proof-service.nextnext.id/v1/proof";
+const NEXT_ID_PROOF_URL = "https://proof-service.next.id/v1/proof";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 POTAPoff-KOL-Resolver/1.0";
@@ -78,6 +78,20 @@ function handleFromUrl(value?: string | null) {
   return value ? normalizeTwitterHandle(value) : "";
 }
 
+function isValidEthereumAddress(value: string) {
+  return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+}
+
+function isLikelySolanaAddress(value: string) {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.trim());
+}
+
+function isValidWalletAddress(address: string, chain: "solana" | "ethereum") {
+  return chain === "ethereum"
+    ? isValidEthereumAddress(address)
+    : isLikelySolanaAddress(address);
+}
+
 function createProfile(handle: string, name?: string | null): KolProfile {
   return {
     handle,
@@ -97,9 +111,23 @@ function mergeMetrics(base: KolWalletMetrics, incoming: KolWalletMetrics): KolWa
     pnl1dSol: incoming.pnl1dSol ?? base.pnl1dSol,
     pnl7dSol: incoming.pnl7dSol ?? base.pnl7dSol,
     pnl30dSol: incoming.pnl30dSol ?? base.pnl30dSol,
+    realizedPnl1dUsd: incoming.realizedPnl1dUsd ?? base.realizedPnl1dUsd,
+    realizedPnl7dUsd: incoming.realizedPnl7dUsd ?? base.realizedPnl7dUsd,
+    realizedPnl30dUsd: incoming.realizedPnl30dUsd ?? base.realizedPnl30dUsd,
+    wins1d: incoming.wins1d ?? base.wins1d,
+    losses1d: incoming.losses1d ?? base.losses1d,
+    winRate1d: incoming.winRate1d ?? base.winRate1d,
+    wins7d: incoming.wins7d ?? base.wins7d,
+    losses7d: incoming.losses7d ?? base.losses7d,
+    winRate7d: incoming.winRate7d ?? base.winRate7d,
+    wins30d: incoming.wins30d ?? base.wins30d,
+    losses30d: incoming.losses30d ?? base.losses30d,
+    winRate30d: incoming.winRate30d ?? base.winRate30d,
     wins: incoming.wins ?? base.wins,
     losses: incoming.losses ?? base.losses,
     winRate: incoming.winRate ?? base.winRate,
+    lastTradeAt: incoming.lastTradeAt ?? base.lastTradeAt,
+    internalSource: incoming.internalSource ?? base.internalSource,
   };
 }
 
@@ -123,6 +151,7 @@ function recalcProfile(profile: KolProfile) {
 }
 
 function mergeWallet(profile: KolProfile, incoming: KolWallet) {
+  if (!isValidWalletAddress(incoming.address, incoming.chain)) return;
   const existing = profile.wallets.find(
     (wallet) =>
       wallet.chain === incoming.chain &&
@@ -153,17 +182,28 @@ function mergeWallet(profile: KolProfile, incoming: KolWallet) {
 
 function addKolscanRow(profile: KolProfile, row: KolscanRow) {
   const address = row.wallet_address?.trim();
-  if (!address) return;
+  if (!address || !isLikelySolanaAddress(address)) return;
 
   const wins = Number.isFinite(row.wins) ? Number(row.wins) : undefined;
   const losses = Number.isFinite(row.losses) ? Number(row.losses) : undefined;
   const total = (wins ?? 0) + (losses ?? 0);
+  const winRate = total > 0 ? ((wins ?? 0) / total) * 100 : undefined;
   const timeframe = row.timeframe === 7 || row.timeframe === 30 ? row.timeframe : 1;
-  const metrics: KolWalletMetrics = {
-    wins,
-    losses,
-    winRate: total > 0 ? ((wins ?? 0) / total) * 100 : undefined,
-  };
+  const metrics: KolWalletMetrics = {};
+  if (timeframe === 30) {
+    metrics.wins30d = wins;
+    metrics.losses30d = losses;
+    metrics.winRate30d = winRate;
+  } else if (timeframe === 7) {
+    metrics.wins7d = wins;
+    metrics.losses7d = losses;
+    metrics.winRate7d = winRate;
+  } else {
+    metrics.wins1d = wins;
+    metrics.losses1d = losses;
+    metrics.winRate1d = winRate;
+  }
+
   const profit = Number(row.profit);
   if (Number.isFinite(profit)) {
     if (timeframe === 30) metrics.pnl30dSol = profit;
@@ -197,6 +237,7 @@ async function fetchKolscanRows(): Promise<KolscanRow[]> {
   const response = await fetch(KOLSCAN_DATASET_URL, {
     headers: { accept: "application/json", "user-agent": USER_AGENT },
     next: { revalidate: 1800 },
+    signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new Error(`KOL dataset HTTP ${response.status}`);
   const data: unknown = await response.json();
@@ -209,6 +250,7 @@ async function enrichFromFirefly(handle: string, profile: KolProfile) {
   const response = await fetch(url, {
     headers: { accept: "application/json", "user-agent": USER_AGENT },
     next: { revalidate: 300 },
+    signal: AbortSignal.timeout(6_000),
   });
   if (!response.ok) throw new Error(`Firefly HTTP ${response.status}`);
 
@@ -221,7 +263,7 @@ async function enrichFromFirefly(handle: string, profile: KolProfile) {
 
   const ingest = (wallet: FireflyWalletProfile, chain: "solana" | "ethereum") => {
     const address = wallet.address?.trim();
-    if (!address) return;
+    if (!address || !isValidWalletAddress(address, chain)) return;
     const sources = Array.isArray(wallet.verifiedSources) ? wallet.verifiedSources : [];
     const hasVerifiedSource = sources.length > 0;
     const connected = wallet.is_connected === true;
@@ -263,12 +305,13 @@ async function enrichFromNextId(handle: string, profile: KolProfile) {
   const response = await fetch(url, {
     headers: { accept: "application/json", "user-agent": USER_AGENT },
     next: { revalidate: 900 },
+    signal: AbortSignal.timeout(6_000),
   });
   if (!response.ok) throw new Error(`Next.ID HTTP ${response.status}`);
   const payload = (await response.json()) as NextIdResponse;
 
   for (const identity of payload.ids ?? []) {
-    const proofs = (identity.proofs ?? []).filter((proof) => proof.is_valid !== false);
+    const proofs = (identity.proofs ?? []).filter((proof) => proof.is_valid === true);
     const twitterProof = proofs.find(
       (proof) =>
         proof.platform?.toLowerCase() === "twitter" &&
@@ -280,7 +323,7 @@ async function enrichFromNextId(handle: string, profile: KolProfile) {
       const platform = proof.platform?.toLowerCase();
       if (platform !== "solana" && platform !== "ethereum") continue;
       const address = proof.identity?.trim();
-      if (!address) continue;
+      if (!address || !isValidWalletAddress(address, platform)) continue;
       mergeWallet(profile, {
         address,
         chain: platform,
@@ -302,22 +345,22 @@ async function enrichFromNextId(handle: string, profile: KolProfile) {
   }
 }
 
-function metricForTimeframe(wallet: KolWallet, timeframe: 1 | 7 | 30) {
-  if (timeframe === 30) return wallet.metrics.pnl30dSol ?? Number.NEGATIVE_INFINITY;
-  if (timeframe === 7) return wallet.metrics.pnl7dSol ?? Number.NEGATIVE_INFINITY;
-  return wallet.metrics.pnl1dSol ?? Number.NEGATIVE_INFINITY;
+function metricForTimeframe(wallet: KolWallet, timeframe: 1 | 7 | 30): number | null {
+  if (timeframe === 30) return wallet.metrics.pnl30dSol ?? null;
+  if (timeframe === 7) return wallet.metrics.pnl7dSol ?? null;
+  return wallet.metrics.pnl1dSol ?? null;
 }
 
-function profileMetric(profile: KolProfile, timeframe: 1 | 7 | 30) {
+function profileMetric(profile: KolProfile, timeframe: 1 | 7 | 30): number | null {
   const values = profile.wallets
     .map((wallet) => metricForTimeframe(wallet, timeframe))
-    .filter(Number.isFinite);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) : Number.NEGATIVE_INFINITY;
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
 }
 
 function looksLikeWallet(value: string) {
   const trimmed = value.trim();
-  return /^0x[a-fA-F0-9]{40}$/.test(trimmed) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed);
+  return isValidEthereumAddress(trimmed) || isLikelySolanaAddress(trimmed);
 }
 
 export async function getKols(options: {
@@ -351,7 +394,7 @@ export async function getKols(options: {
 
   const normalizedHandle = normalizeTwitterHandle(query);
   const exactKey = normalizedHandle.toLowerCase();
-  const shouldResolveIdentity = Boolean(query) && !looksLikeWallet(query) && /^[A-Za-z0-9_]{1,32}$/.test(normalizedHandle);
+  const shouldResolveIdentity = Boolean(query) && !looksLikeWallet(query) && /^[A-Za-z0-9_]{1,15}$/.test(normalizedHandle);
 
   if (shouldResolveIdentity) {
     const profile = profiles.get(exactKey) ?? createProfile(normalizedHandle);
@@ -390,8 +433,12 @@ export async function getKols(options: {
   if (minConfidence > 0) items = items.filter((profile) => profile.confidence >= minConfidence);
 
   items.sort((a, b) => {
-    const metricDiff = profileMetric(b, timeframe) - profileMetric(a, timeframe);
-    if (Number.isFinite(metricDiff) && metricDiff !== 0) return metricDiff;
+    const aMetric = profileMetric(a, timeframe);
+    const bMetric = profileMetric(b, timeframe);
+    const aHasMetric = aMetric != null && Number.isFinite(aMetric);
+    const bHasMetric = bMetric != null && Number.isFinite(bMetric);
+    if (aHasMetric !== bHasMetric) return bHasMetric ? 1 : -1;
+    if (aHasMetric && bHasMetric && aMetric !== bMetric) return (bMetric as number) - (aMetric as number);
     return b.confidence - a.confidence || a.handle.localeCompare(b.handle);
   });
 
