@@ -206,6 +206,11 @@ class Settings(BaseSettings):
     def validate_runtime_security(self) -> "Settings":
         is_production = self.environment.strip().lower() in {"production", "prod"}
 
+        # Keep insecure CI-only service defaults out of local/test settings
+        # even when a parent process exports DATABASE_URL.
+        if not is_production and "potapoff:potapoff@" in self.database_url:
+            self.database_url = "sqlite+aiosqlite:///./potapoff.db"
+
         # Local/test sessions still need a non-empty signing secret, but there is
         # no committed standalone session credential. Production must configure a
         # distinct secret below.

@@ -8,12 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
-from sqlalchemy import func, select, update
-from sqlalchemy.dialects import postgresql
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from app.api.deps import get_current_superuser
 from app.api.v1 import twitter_registry_admin_compat as compat
 from app.cli import twitter_discovery_cycle as cycle
@@ -24,6 +18,11 @@ from app.models.twitter_crawler_run import TwitterCrawlerRun
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 from app.models.twitter_intelligence import TwitterAccount, TwitterDiscoveryCandidate
 from app.services import twitter_crawler_runs as runs
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 @pytest_asyncio.fixture
