@@ -134,8 +134,13 @@ assert(
 );
 assert(
   backtest.includes('baseline_source = "token_metric_before_signal"')
-    && backtest.includes('baseline_source = "trigger_trade_fallback"'),
-  "backtest baseline must prefer a historical market metric before any aggregate trade-price fallback",
+    && !backtest.includes("trigger_trade_fallback"),
+  "backtest entry must come only from a timestamped market price at/before the signal",
+);
+assert(
+  backtest.includes("signalsSkippedNoBaseline")
+    && backtest.includes("last_signal_at = timestamp\n                continue"),
+  "signals without a pre-trigger market price must be excluded without shifting their trigger timeline",
 );
 assert(
   backtest.includes("_price_at_or_before(")
@@ -178,6 +183,10 @@ assert(
 assert(
   backtestTests.includes("test_backtest_builds_signal_without_future_price_leakage"),
   "backtest tests must cover historical price lookahead leakage",
+);
+assert(
+  backtestTests.includes("test_backtest_skips_trigger_without_pre_signal_market_price"),
+  "backtest tests must reject triggers that only have post-signal pricing",
 );
 assert(
   backtestTests.includes("test_backtest_dedupes_multiple_labels_for_one_trade"),
