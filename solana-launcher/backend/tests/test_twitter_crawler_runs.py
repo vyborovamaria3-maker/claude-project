@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-
 from app.services import twitter_crawler_runs as runs
 
 
@@ -35,7 +34,7 @@ class _ExpireSession:
 
 @pytest.mark.asyncio
 async def test_expire_stale_runs_marks_old_running_rows_failed():
-    now = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 13, 12, 0, tzinfo=UTC)
     row = SimpleNamespace(
         status="running",
         phase="frontier",
@@ -97,7 +96,7 @@ class _Session:
 
 @pytest.mark.asyncio
 async def test_finish_does_not_overwrite_terminal_status(monkeypatch):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     row = SimpleNamespace(
         status="cancelled",
         phase="cancelled",
@@ -133,7 +132,7 @@ async def test_finish_does_not_overwrite_terminal_status(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_finish_commits_atomic_update_for_running_status(monkeypatch):
-    started = datetime.now(timezone.utc) - timedelta(seconds=2)
+    started = datetime.now(UTC) - timedelta(seconds=2)
     row = SimpleNamespace(status="running", started_at=started)
     engine = _Engine()
     session = _Session(row, update_rowcount=1)
@@ -160,7 +159,7 @@ async def test_finish_commits_atomic_update_for_running_status(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_finish_loses_race_without_overwriting_terminal_status(monkeypatch):
-    started = datetime.now(timezone.utc) - timedelta(seconds=2)
+    started = datetime.now(UTC) - timedelta(seconds=2)
     row = SimpleNamespace(status="running", started_at=started)
     engine = _Engine()
     # Simulate another transaction moving the row out of running after our read.

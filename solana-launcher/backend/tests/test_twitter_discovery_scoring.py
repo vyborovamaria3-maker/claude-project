@@ -1,9 +1,6 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
-
 from app.db.base import Base
 from app.models.twitter_intelligence import TwitterAccountTokenStat
 from app.services.twitter_account_registry import (
@@ -16,6 +13,8 @@ from app.services.twitter_discovery import (
     promote_candidate,
 )
 from app.services.twitter_discovery_scoring import rescore_discovery_candidate
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 
 @pytest_asyncio.fixture
@@ -149,7 +148,7 @@ async def test_early_call_history_lifts_priority(session: AsyncSession):
         following_count=900,
         tweet_count=12_000,
         source="test",
-        x_created_at=datetime(2021, 1, 1, tzinfo=timezone.utc),
+        x_created_at=datetime(2021, 1, 1, tzinfo=UTC),
     )
     accepted, account_id, _ = await promote_candidate(
         session,

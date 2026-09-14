@@ -1,7 +1,6 @@
 import argparse
 
 import pytest
-
 from app.admin_twitter_settings import TwitterCrawlerSettingsAdmin
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 from app.services.twitter_crawler_settings import (

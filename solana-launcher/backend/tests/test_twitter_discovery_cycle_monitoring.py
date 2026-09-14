@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
 import pytest
-
 from app.cli import twitter_discovery_cycle as cycle
 from app.cli import twitter_discovery_public as public
 from app.cli.twitter_discovery_cycle import cycle_result_is_degraded, frontier_was_processed

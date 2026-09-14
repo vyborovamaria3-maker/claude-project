@@ -14,7 +14,6 @@ import httpx
 from app.services.twitter_account_registry import normalize_twitter_username
 from app.services.twitter_discovery import ResolvedTwitterProfile
 
-
 _X_PROFILE_RE = re.compile(
     r"https?://(?:www\.)?(?:x\.com|twitter\.com)/([A-Za-z0-9_]{1,15})(?:[/?#\"'<>\s]|$)",
     re.IGNORECASE,
@@ -39,8 +38,7 @@ _X_RESERVED = {
 }
 
 _USER_FIELDS = (
-    "id,name,username,description,profile_image_url,public_metrics,"
-    "verified,created_at,url,location"
+    "id,name,username,description,profile_image_url,public_metrics,verified,created_at,url,location"
 )
 
 
@@ -159,7 +157,8 @@ def _parse_datetime(value: Any) -> datetime | None:
 
 
 def _profile_from_x_user(user: dict[str, Any], *, source: str) -> ResolvedTwitterProfile:
-    metrics = user.get("public_metrics") if isinstance(user.get("public_metrics"), dict) else {}
+    raw_metrics = user.get("public_metrics")
+    metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
     return ResolvedTwitterProfile(
         twitter_id=str(user.get("id") or "").strip(),
         username=_safe_username(user.get("username")),
@@ -286,7 +285,8 @@ class XApiDiscoverySource:
                 f"/users/{twitter_id}/{normalized_direction}",
                 params=params,
             )
-            rows = payload.get("data") if isinstance(payload.get("data"), list) else []
+            raw_rows = payload.get("data")
+            rows = raw_rows if isinstance(raw_rows, list) else []
             for user in rows:
                 if not isinstance(user, dict) or not user.get("id"):
                     continue
@@ -303,7 +303,8 @@ class XApiDiscoverySource:
                 remaining -= 1
                 if remaining <= 0:
                     break
-            meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+            raw_meta = payload.get("meta")
+            meta = raw_meta if isinstance(raw_meta, dict) else {}
             token_value = meta.get("next_token")
             token = str(token_value) if token_value else None
             if not token or not rows:

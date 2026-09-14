@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from fastapi import HTTPException
-
 from app.api.v1 import twitter_registry_admin_compat as compat
 from app.api.v1.router import api_router
 from app.api.v1.twitter_registry_admin_compat import LegacyConfigPatch, _legacy_config
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
+from fastapi import HTTPException
 
 
 def test_next_proxy_backend_prefix_is_registered_with_compat_patch_first():
@@ -22,8 +21,7 @@ def test_next_proxy_backend_prefix_is_registered_with_compat_patch_first():
     compat_routes = [
         route
         for route in included[0].original_router.routes
-        if getattr(route, "path", "") == "/config"
-        and "PATCH" in getattr(route, "methods", set())
+        if getattr(route, "path", "") == "/config" and "PATCH" in getattr(route, "methods", set())
     ]
     assert compat_routes
     assert compat_routes[0].endpoint.__module__.endswith("twitter_registry_admin_compat")
@@ -48,7 +46,7 @@ def test_legacy_config_is_derived_from_canonical_crawler_settings():
         public_db_solana_tokens=500,
         public_cmc_limit=75,
         public_rescore_limit=3000,
-        updated_at=datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 9, 13, 12, 0, tzinfo=UTC),
     )
     payload = _legacy_config(row, x_api_configured=True)
     assert payload["discovery_enabled"] is True

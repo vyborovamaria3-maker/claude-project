@@ -46,9 +46,7 @@ class LegacyConfigPatch(BaseModel):
 async def _settings_for_update(session: AsyncSession) -> TwitterCrawlerSettings:
     row = (
         await session.execute(
-            select(TwitterCrawlerSettings)
-            .where(TwitterCrawlerSettings.id == 1)
-            .with_for_update()
+            select(TwitterCrawlerSettings).where(TwitterCrawlerSettings.id == 1).with_for_update()
         )
     ).scalar_one_or_none()
     if row is None:
@@ -62,9 +60,7 @@ async def _settings_for_update(session: AsyncSession) -> TwitterCrawlerSettings:
 def _legacy_config(row: TwitterCrawlerSettings, *, x_api_configured: bool) -> dict[str, Any]:
     return {
         "discovery_enabled": bool(row.enabled or row.public_enabled),
-        "dexscreener_enabled": bool(
-            row.public_dexscreener_latest or row.public_dexscreener_boosts
-        ),
+        "dexscreener_enabled": bool(row.public_dexscreener_latest or row.public_dexscreener_boosts),
         "coinmarketcap_enabled": int(row.public_cmc_limit) > 0,
         "seed_discovery_enabled": bool(row.enabled),
         "public_web_enabled": bool(row.public_enabled),
@@ -87,8 +83,12 @@ def _summary_int(summary: object, *path: str) -> int:
         if not isinstance(current, dict):
             return 0
         current = current.get(key)
+    if current is None:
+        return 0
+    if not isinstance(current, int | float | str):
+        return 0
     try:
-        return int(current or 0)
+        return int(current)
     except (TypeError, ValueError):
         return 0
 
@@ -136,8 +136,9 @@ async def overview(
 ) -> dict[str, Any]:
     candidate_rows = (
         await session.execute(
-            select(TwitterDiscoveryCandidate.status, func.count(TwitterDiscoveryCandidate.id))
-            .group_by(TwitterDiscoveryCandidate.status)
+            select(
+                TwitterDiscoveryCandidate.status, func.count(TwitterDiscoveryCandidate.id)
+            ).group_by(TwitterDiscoveryCandidate.status)
         )
     ).all()
     candidate_status_counts = {str(key): int(value) for key, value in candidate_rows}
@@ -147,9 +148,7 @@ async def overview(
     total_evidence = int(
         (await session.execute(select(func.count(TwitterDiscoveryEvidence.id)))).scalar_one() or 0
     )
-    total_posts = int(
-        (await session.execute(select(func.count(TwitterPost.id)))).scalar_one() or 0
-    )
+    total_posts = int((await session.execute(select(func.count(TwitterPost.id)))).scalar_one() or 0)
 
     run_rows = list(
         (
@@ -163,7 +162,9 @@ async def overview(
                 .order_by(TwitterCrawlerRun.started_at.desc(), TwitterCrawlerRun.id.desc())
                 .limit(100)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     last_run = run_rows[0] if run_rows else None
     last_success = next((row for row in run_rows if row.status == "success"), None)
@@ -249,7 +250,9 @@ async def runs(
                 .order_by(TwitterCrawlerRun.started_at.desc(), TwitterCrawlerRun.id.desc())
                 .limit(limit)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     return {"items": [_run_item(row) for row in rows]}
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select
@@ -17,7 +17,6 @@ from app.services.twitter_account_registry import (
     normalize_twitter_username,
     upsert_twitter_account,
 )
-
 
 CRYPTO_TERMS: dict[str, float] = {
     "crypto": 22.0,
@@ -90,13 +89,13 @@ class ResolvedTwitterProfile:
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def clamp_int(value: int, low: int, high: int) -> int:
@@ -277,12 +276,16 @@ async def _find_candidate(
         ).scalar_one_or_none()
     if candidate is None and normalized_username is not None:
         candidate = (
-            await session.execute(
-                select(TwitterDiscoveryCandidate)
-                .where(TwitterDiscoveryCandidate.username == normalized_username)
-                .order_by(TwitterDiscoveryCandidate.id.asc())
+            (
+                await session.execute(
+                    select(TwitterDiscoveryCandidate)
+                    .where(TwitterDiscoveryCandidate.username == normalized_username)
+                    .order_by(TwitterDiscoveryCandidate.id.asc())
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
     if candidate is None:
         candidate = (
             await session.execute(
@@ -443,9 +446,7 @@ async def enqueue_discovery_candidate(
         candidate.twitter_id is None or normalized_id is not None
     ):
         candidate.username = normalized_username
-    if display_name is not None and (
-        candidate.twitter_id is None or normalized_id is not None
-    ):
+    if display_name is not None and (candidate.twitter_id is None or normalized_id is not None):
         candidate.display_name = display_name.strip()[:255] or None
     if account_type_hint and account_type_hint != "unknown":
         candidate.account_type_hint = account_type_hint.strip().lower()[:32]
@@ -494,7 +495,9 @@ async def _merge_candidate_evidence(
                     TwitterDiscoveryEvidence.candidate_id == source_candidate.id
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     for evidence in rows:
         await _ensure_evidence(

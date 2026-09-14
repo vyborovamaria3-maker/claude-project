@@ -4,14 +4,14 @@ import json
 import math
 import re
 import tarfile
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Iterable, Iterator
+from typing import Any, BinaryIO, cast
 from urllib.request import Request, urlopen
 
 from app.services.telegram_parser import parse_telegram_message
-
 
 ZENODO_RECORD_ID = 7640712
 ZENODO_ARCHIVES = (
@@ -79,7 +79,7 @@ _GATE_RE = re.compile(
 
 
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def zenodo_archive_url(filename: str, *, record_id: int = ZENODO_RECORD_ID) -> str:
@@ -220,7 +220,9 @@ class TGDatasetChannelAccumulator:
             + _scaled_count(self.memecoin_messages, 20, 35.0)
             + _density(self.memecoin_messages, total, 25.0)
             + _scaled_count(
-                self.explicit_call_messages if (self.memecoin_messages or self.metadata_memecoin) else 0,
+                self.explicit_call_messages
+                if (self.memecoin_messages or self.metadata_memecoin)
+                else 0,
                 10,
                 15.0,
             )
@@ -337,7 +339,11 @@ def iter_tgdataset_channels(fileobj: BinaryIO) -> Iterator[dict[str, Any]]:
             if event in {"string", "number", "boolean", "null"}:
                 current.observe_metadata(relative, value)
             continue
-        if relative.startswith("text_messages.") and relative.endswith(".message") and event == "string":
+        if (
+            relative.startswith("text_messages.")
+            and relative.endswith(".message")
+            and event == "string"
+        ):
             current.observe_message(str(value or ""))
             continue
         if (
@@ -386,7 +392,7 @@ def scan_tar_stream(
             if extracted is None:
                 continue
             stats.json_members += 1
-            for channel in iter_tgdataset_channels(extracted):
+            for channel in iter_tgdataset_channels(cast(BinaryIO, extracted)):
                 stats.channels_scanned += 1
                 stats.messages_scanned += int(channel.get("signals", {}).get("messages_total") or 0)
                 if channel.get("classifications"):
@@ -396,7 +402,8 @@ def scan_tar_stream(
                     return stats
             if progress is not None:
                 progress(
-                    f"[{archive_name}] files={stats.json_members} channels={stats.channels_scanned} "
+                    f"[{archive_name}] files={stats.json_members} "
+                    f"channels={stats.channels_scanned} "
                     f"candidates={stats.candidates} messages={stats.messages_scanned}"
                 )
     return stats
@@ -485,17 +492,13 @@ def build_outputs(output_dir: Path, *, seed_limit: int = 250) -> dict[str, Any]:
         ],
     }
     seed_path = output_dir / "telegram_seed_database.json"
-    seed_path.write_text(
-        json.dumps(seed_payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    seed_path.write_text(json.dumps(seed_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     summary = {
         "generated_at": utcnow_iso(),
         "candidate_channels": len(rows),
         "crypto_channels": sum("crypto" in (row.get("classifications") or []) for row in rows),
-        "memecoin_channels": sum(
-            "memecoin" in (row.get("classifications") or []) for row in rows
-        ),
+        "memecoin_channels": sum("memecoin" in (row.get("classifications") or []) for row in rows),
         "solana_channels": sum("solana" in (row.get("classifications") or []) for row in rows),
         "caller_channels": sum("caller" in (row.get("classifications") or []) for row in rows),
         "seed_channels": len(seed_candidates),
@@ -538,9 +541,7 @@ def scan_archives(
     manifest_path = destination / "manifest.json"
     try:
         manifest = (
-            json.loads(manifest_path.read_text(encoding="utf-8"))
-            if manifest_path.exists()
-            else {}
+            json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
         )
     except json.JSONDecodeError:
         manifest = {}
@@ -550,7 +551,12 @@ def scan_archives(
     for archive_name in selected:
         final_candidates = destination / f"{archive_name}.candidates.jsonl"
         final_stats = destination / f"{archive_name}.stats.json"
-        if resume and archive_name in completed and final_candidates.exists() and final_stats.exists():
+        if (
+            resume
+            and archive_name in completed
+            and final_candidates.exists()
+            and final_stats.exists()
+        ):
             archive_stats.append(json.loads(final_stats.read_text(encoding="utf-8")))
             if progress is not None:
                 progress(f"[{archive_name}] already completed; skipping")
@@ -573,6 +579,7 @@ def scan_archives(
             )
 
         with partial.open("w", encoding="utf-8") as output:
+
             def emit(row: dict[str, Any]) -> None:
                 output.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
 

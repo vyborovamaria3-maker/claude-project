@@ -17,18 +17,10 @@ def install_x_api_settings_compat() -> None:
 
     fields = getattr(Settings, "model_fields", {})
     if "x_api_bearer_token" not in fields:
-        setattr(
-            Settings,
-            "x_api_bearer_token",
-            property(lambda _self: os.getenv("X_API_BEARER_TOKEN", "").strip()),
+        Settings.x_api_bearer_token = property(  # type: ignore[attr-defined]
+            lambda _self: os.getenv("X_API_BEARER_TOKEN", "").strip()
         )
     if "x_api_base_url" not in fields:
-        setattr(
-            Settings,
-            "x_api_base_url",
-            property(
-                lambda _self: os.getenv("X_API_BASE_URL", "https://api.x.com/2")
-                .strip()
-                .rstrip("/")
-            ),
+        Settings.x_api_base_url = property(  # type: ignore[attr-defined]
+            lambda _self: os.getenv("X_API_BASE_URL", "https://api.x.com/2").strip().rstrip("/")
         )

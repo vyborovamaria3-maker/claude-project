@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -10,7 +11,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -21,7 +21,7 @@ from app.db.base import Base
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class TwitterAccount(Base):
@@ -47,9 +47,15 @@ class TwitterAccount(Base):
     x_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     account_type: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="active")
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_profile_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_profile_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -68,7 +74,9 @@ class TwitterAccountSnapshot(Base):
     following_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     tweet_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -90,7 +98,9 @@ class TwitterAccountScore(Base):
     score_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     score_source: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     model_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
@@ -121,8 +131,12 @@ class TwitterPost(Base):
     source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
 
 
 class TwitterPostToken(Base):
@@ -151,7 +165,9 @@ class TwitterPostToken(Base):
 class TwitterAccountTokenStat(Base):
     __tablename__ = "twitter_account_token_stats"
     __table_args__ = (
-        UniqueConstraint("account_id", "mint_address", name="uq_twitter_account_token_stats_account_mint"),
+        UniqueConstraint(
+            "account_id", "mint_address", name="uq_twitter_account_token_stats_account_mint"
+        ),
         Index("ix_twitter_account_token_stats_mint_alpha", "mint_address", "token_alpha_score"),
         Index("ix_twitter_account_token_stats_account_updated", "account_id", "updated_at"),
     )
@@ -165,7 +181,9 @@ class TwitterAccountTokenStat(Base):
     bullish_mentions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bearish_mentions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     neutral_mentions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    first_mention_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_mention_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_mention_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     price_at_first_mention: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_price_after_mention: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -177,7 +195,9 @@ class TwitterAccountTokenStat(Base):
     successful_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_alpha_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
@@ -215,12 +235,18 @@ class TwitterDiscoveryCandidate(Base):
     )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
@@ -247,5 +273,7 @@ class TwitterDiscoveryEvidence(Base):
     discovery_reason: Mapped[str] = mapped_column(String(96), nullable=False, default="unknown")
     query: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)

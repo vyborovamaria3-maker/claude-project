@@ -7,10 +7,14 @@ import signal
 
 from app.cli.twitter_discovery_cycle import (
     build_parser as build_cycle_parser,
+)
+from app.cli.twitter_discovery_cycle import (
     run_configured as run_cycle_configured,
 )
 from app.cli.twitter_discovery_public import (
     build_parser as build_public_parser,
+)
+from app.cli.twitter_discovery_public import (
     run_configured as run_public_configured,
 )
 

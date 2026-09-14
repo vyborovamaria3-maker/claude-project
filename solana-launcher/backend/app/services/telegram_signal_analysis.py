@@ -173,8 +173,8 @@ def analyze_coordination_events(events: Iterable[dict[str, Any]]) -> dict[str, A
         item = dict(raw)
         item["source_handle"] = source
         item["occurred_at"] = _aware(occurred)
-        previous = earliest_by_source.get(source)
-        if previous is None or item["occurred_at"] < previous["occurred_at"]:
+        previous_event = earliest_by_source.get(source)
+        if previous_event is None or item["occurred_at"] < previous_event["occurred_at"]:
             earliest_by_source[source] = item
 
     rows = sorted(earliest_by_source.values(), key=lambda item: item["occurred_at"])
@@ -214,23 +214,23 @@ def analyze_coordination_events(events: Iterable[dict[str, Any]]) -> dict[str, A
         is_forwarded = _is_forwarded_payload(payload)
         best_index: int | None = None
         best_similarity = 0.0
-        for previous in range(index - 1, -1, -1):
-            delta = (row["occurred_at"] - rows[previous]["occurred_at"]).total_seconds()
+        for previous_index in range(index - 1, -1, -1):
+            delta = (row["occurred_at"] - rows[previous_index]["occurred_at"]).total_seconds()
             if delta > _COORDINATION_WINDOW_SECONDS:
                 break
-            previous_source = str(rows[previous].get("source_handle") or "")
+            previous_source = str(rows[previous_index].get("source_handle") or "")
             if forwarded and (
                 forwarded == previous_source
                 or previous_source in forwarded
                 or forwarded in previous_source
             ):
-                best_index = previous
+                best_index = previous_index
                 best_similarity = 1.0
                 break
-            similarity = _jaccard(tokens[index], tokens[previous])
+            similarity = _jaccard(tokens[index], tokens[previous_index])
             if similarity > best_similarity:
                 best_similarity = similarity
-                best_index = previous
+                best_index = previous_index
         if is_forwarded:
             coordinated.add(index)
         if best_index is not None and best_similarity >= _HIGH_SIMILARITY:
@@ -300,30 +300,32 @@ def build_caller_reputation(
         row["username"] = username
         row["called_at"] = _aware(called_at)
         by_caller[username].append(row)
-        previous = by_mint[mint].get(username)
-        if previous is None or row["called_at"] < previous["called_at"]:
+        previous_call = by_mint[mint].get(username)
+        if previous_call is None or row["called_at"] < previous_call["called_at"]:
             by_mint[mint][username] = row
 
     first_count: defaultdict[str, int] = defaultdict(int)
     top3_count: defaultdict[str, int] = defaultdict(int)
     lead_minutes: defaultdict[str, list[float]] = defaultdict(list)
-    for caller_rows in by_mint.values():
-        ordered = sorted(caller_rows.values(), key=lambda item: item["called_at"])
-        for rank, row in enumerate(ordered, start=1):
-            username = row["username"]
+    for mint_callers in by_mint.values():
+        ordered = sorted(mint_callers.values(), key=lambda item: item["called_at"])
+        for rank, ordered_call in enumerate(ordered, start=1):
+            ordered_username = ordered_call["username"]
             if rank <= 3:
-                top3_count[username] += 1
+                top3_count[ordered_username] += 1
             if rank == 1:
-                first_count[username] += 1
+                first_count[ordered_username] += 1
                 if len(ordered) > 1:
-                    delta = (ordered[1]["called_at"] - row["called_at"]).total_seconds() / 60.0
+                    delta = (
+                        ordered[1]["called_at"] - ordered_call["called_at"]
+                    ).total_seconds() / 60.0
                     if delta >= 0:
-                        lead_minutes[username].append(delta)
+                        lead_minutes[ordered_username].append(delta)
 
     result: list[dict[str, Any]] = []
-    for username, caller_rows in by_caller.items():
-        unique_mints = {str(row.get("mint_address") or "") for row in caller_rows}
-        evaluated = [row for row in caller_rows if row.get("outcome") not in {None, "pending"}]
+    for username, caller_call_rows in by_caller.items():
+        unique_mints = {str(row.get("mint_address") or "") for row in caller_call_rows}
+        evaluated = [row for row in caller_call_rows if row.get("outcome") not in {None, "pending"}]
         wins = sum(1 for row in evaluated if row.get("outcome") in {"win", "win_then_rug"})
         rugs = sum(1 for row in evaluated if row.get("outcome") in {"rug", "win_then_rug"})
         rois = [
@@ -332,12 +334,12 @@ def build_caller_reputation(
         avg_roi_for_score = mean(rois) if rois else 0.0
         early = sum(
             1
-            for row in caller_rows
+            for row in caller_call_rows
             if row.get("call_market_cap_usd") is not None
             and float(row["call_market_cap_usd"]) <= 50_000
         )
-        reposts = sum(1 for row in caller_rows if row.get("forwarded_from"))
-        calls_count = len(caller_rows)
+        reposts = sum(1 for row in caller_call_rows if row.get("forwarded_from"))
+        calls_count = len(caller_call_rows)
         mint_count = max(1, len(unique_mints))
         first_rate = first_count[username] / mint_count
         top3_rate = top3_count[username] / mint_count
@@ -350,7 +352,7 @@ def build_caller_reputation(
             early=early,
             avg_roi=avg_roi_for_score,
         )
-        outcome_windows = _temporal_outcome_profile(caller_rows)
+        outcome_windows = _temporal_outcome_profile(caller_call_rows)
         temporal_outcome_score = _temporal_outcome_score(outcome_windows)
         originality_score = _clamp(
             (1.0 - repost_rate) * 55.0 + first_rate * 30.0 + top3_rate * 15.0

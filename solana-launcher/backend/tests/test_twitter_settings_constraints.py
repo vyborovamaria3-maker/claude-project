@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint
-
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
-
+from sqlalchemy import CheckConstraint
 
 EXPECTED_CHECKS = {
     "ck_twitter_crawler_settings_singleton",

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
-from typing import Any, Iterable
+from collections import deque
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from app.services.social_intelligence import upsert_channel_score
 from app.services.telegram_parser import normalize_telegram_target, parse_telegram_message
@@ -16,7 +17,6 @@ from app.services.telegram_public_web import (
     TelegramPublicWebUnavailable,
     utcnow,
 )
-
 
 _TME_CHANNEL_RE = re.compile(
     r"https?://(?:www\.)?t\.me/(?:s/)?([A-Za-z0-9_]{4,64})(?=$|[/?#])",
@@ -143,7 +143,9 @@ def score_memecoin_channel(messages: Iterable[PublicTelegramMessage]) -> Telegra
         if parsed.explicit_call:
             explicit_call_posts += 1
         lowered = evidence.lower()
-        if "pump.fun" in lowered or any(address.lower().endswith("pump") for address in parsed.addresses):
+        if "pump.fun" in lowered or any(
+            address.lower().endswith("pump") for address in parsed.addresses
+        ):
             pumpfun_posts += 1
         if _MEMECOIN_KEYWORDS_RE.search(evidence):
             keyword_posts += 1
@@ -200,15 +202,29 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
 
     @property
     def discovery_entity_limit(self) -> int:
-        return max(1, min(int(getattr(self.settings, "telegram_public_web_discovery_entity_limit", 25)), 500))
+        return max(
+            1,
+            min(int(getattr(self.settings, "telegram_public_web_discovery_entity_limit", 25)), 500),
+        )
 
     @property
     def relevance_min_score(self) -> float:
-        return max(0.0, min(float(getattr(self.settings, "telegram_public_web_relevance_min_score", 35.0)), 100.0))
+        return max(
+            0.0,
+            min(
+                float(getattr(self.settings, "telegram_public_web_relevance_min_score", 35.0)),
+                100.0,
+            ),
+        )
 
     @property
     def discovery_history_limit(self) -> int:
-        return max(10, min(int(getattr(self.settings, "telegram_public_web_discovery_history_limit", 40)), 200))
+        return max(
+            10,
+            min(
+                int(getattr(self.settings, "telegram_public_web_discovery_history_limit", 40)), 200
+            ),
+        )
 
     @property
     def database_seed_channels(self) -> list[str]:
@@ -268,7 +284,9 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
                 matches += await self._save_message(session, channel, message)
                 saved += 1
             if saved == 0:
-                raise TelegramPublicWebUnavailable("Telegram public preview had no timestamped messages")
+                raise TelegramPublicWebUnavailable(
+                    "Telegram public preview had no timestamped messages"
+                )
             if matches:
                 await upsert_channel_score(session, channel.id)
             channel.last_scanned_at = utcnow()
@@ -296,8 +314,8 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
 
         explicit_seed_list = channels is not None
         seeds: list[str] = []
-        for item in channels or self.configured_channels:
-            normalized = normalize_telegram_target(item)
+        for seed_item in channels or self.configured_channels:
+            normalized = normalize_telegram_target(seed_item)
             if normalized and normalized not in seeds:
                 seeds.append(normalized)
         if not seeds:
@@ -317,8 +335,10 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
         )
         candidate_history_limit = min(seed_history_limit, self.discovery_history_limit)
         max_entities = max(len(seeds), self.discovery_entity_limit)
-        queue = deque(_QueueItem(seed, 0, None, seed in force_accept) for seed in seeds)
-        scheduled = set(seeds)
+        queue: deque[_QueueItem] = deque(
+            _QueueItem(seed, 0, None, seed in force_accept) for seed in seeds
+        )
+        scheduled: set[str] = set(seeds)
         results: list[dict[str, Any]] = []
         accepted_channels: list[str] = []
         discovered_total = accepted_discovered = rejected_discovered = 0
@@ -330,15 +350,15 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
         self._last_scan_at = None
         try:
             while queue:
-                item = queue.popleft()
-                limit = seed_history_limit if item.depth == 0 else candidate_history_limit
+                queue_item = queue.popleft()
+                limit = seed_history_limit if queue_item.depth == 0 else candidate_history_limit
                 try:
-                    messages = await self._load_channel(item.username, limit)
+                    messages = await self._load_channel(queue_item.username, limit)
                     relevance = score_memecoin_channel(messages)
-                    accepted = item.force_accept or (
+                    accepted = queue_item.force_accept or (
                         relevance.token_posts > 0 and relevance.score >= self.relevance_min_score
                     )
-                    is_graph_discovered = item.discovered_from is not None
+                    is_graph_discovered = queue_item.discovered_from is not None
 
                     if not accepted:
                         if is_graph_discovered:
@@ -347,35 +367,37 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
                             rejected_seeds += 1
                         results.append(
                             {
-                                "username": item.username,
+                                "username": queue_item.username,
                                 "collector": "public_web",
                                 "filtered": True,
                                 "reason": "memecoin_relevance_below_threshold",
                                 "memecoin_relevance": relevance.as_dict(),
-                                "discovered_from": item.discovered_from,
-                                "discovery_depth": item.depth,
+                                "discovered_from": queue_item.discovered_from,
+                                "discovery_depth": queue_item.depth,
                             }
                         )
                         continue
 
                     persisted = await self._persist_loaded_channel(
-                        item.username,
+                        queue_item.username,
                         messages,
                         relevance=relevance,
-                        discovered_from=item.discovered_from,
-                        discovery_depth=item.depth,
+                        discovered_from=queue_item.discovered_from,
+                        discovery_depth=queue_item.depth,
                     )
                     results.append(persisted)
-                    if item.username not in accepted_channels:
-                        accepted_channels.append(item.username)
+                    if queue_item.username not in accepted_channels:
+                        accepted_channels.append(queue_item.username)
                     if is_graph_discovered:
                         accepted_discovered += 1
                     else:
                         validated_seeds += 1
 
-                    if item.depth >= self.discovery_depth:
+                    if queue_item.depth >= self.discovery_depth:
                         continue
-                    for candidate in extract_discovered_channels(messages, source_username=item.username):
+                    for candidate in extract_discovered_channels(
+                        messages, source_username=queue_item.username
+                    ):
                         if candidate in scheduled or len(scheduled) >= max_entities:
                             continue
                         scheduled.add(candidate)
@@ -383,26 +405,30 @@ class TelegramPublicWebDiscoveryCollector(TelegramPublicWebCollector):
                         queue.append(
                             _QueueItem(
                                 username=candidate,
-                                depth=item.depth + 1,
-                                discovered_from=item.username,
+                                depth=queue_item.depth + 1,
+                                discovered_from=queue_item.username,
                                 force_accept=False,
                             )
                         )
                 except TelegramPublicWebError as exc:
                     results.append(
                         {
-                            "username": item.username,
+                            "username": queue_item.username,
                             "collector": "public_web",
                             "error": str(exc),
-                            "discovered_from": item.discovered_from,
-                            "discovery_depth": item.depth,
+                            "discovered_from": queue_item.discovered_from,
+                            "discovery_depth": queue_item.depth,
                         }
                     )
 
-            successful = [row for row in results if not row.get("error") and not row.get("filtered")]
+            successful = [
+                row for row in results if not row.get("error") and not row.get("filtered")
+            ]
             errors = [str(row.get("error")) for row in results if row.get("error")]
             self._last_scan_messages = sum(int(row.get("posts_saved") or 0) for row in successful)
-            self._last_scan_matches = sum(int(row.get("token_mentions_created") or 0) for row in successful)
+            self._last_scan_matches = sum(
+                int(row.get("token_mentions_created") or 0) for row in successful
+            )
             self._last_error = errors[0] if errors and not successful else None
             self._last_scan_at = utcnow() if successful else None
             self._last_discovered_channels = discovered_total

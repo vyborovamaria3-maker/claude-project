@@ -80,13 +80,17 @@ async def _token_addresses(session: Any, limit: int) -> list[str]:
     if limit <= 0:
         return []
     rows = (
-        await session.execute(
-            select(Token.mint_address)
-            .where(Token.mint_address.is_not(None))
-            .order_by(Token.id.desc())
-            .limit(min(max(1, int(limit)), 10000))
+        (
+            await session.execute(
+                select(Token.mint_address)
+                .where(Token.mint_address.is_not(None))
+                .order_by(Token.id.desc())
+                .limit(min(max(1, int(limit)), 10000))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [str(value) for value in rows if value]
 
 

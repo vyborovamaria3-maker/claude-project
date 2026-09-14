@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import httpx
 
@@ -157,10 +158,7 @@ class DexScreenerDiscoverySource:
         records = payload if isinstance(payload, list) else [payload]
         handles: list[PublicHandle] = []
         for record in records:
-            if (
-                not isinstance(record, dict)
-                or str(record.get("chainId") or "").lower() != "solana"
-            ):
+            if not isinstance(record, dict) or str(record.get("chainId") or "").lower() != "solana":
                 continue
             ref = str(record.get("tokenAddress") or record.get("url") or "unknown")
             handles.extend(
@@ -177,10 +175,7 @@ class DexScreenerDiscoverySource:
         records = payload if isinstance(payload, list) else [payload]
         handles: list[PublicHandle] = []
         for record in records:
-            if (
-                not isinstance(record, dict)
-                or str(record.get("chainId") or "").lower() != "solana"
-            ):
+            if not isinstance(record, dict) or str(record.get("chainId") or "").lower() != "solana":
                 continue
             ref = str(record.get("tokenAddress") or record.get("url") or "unknown")
             handles.extend(
@@ -202,7 +197,8 @@ class DexScreenerDiscoverySource:
         for record in records:
             if not isinstance(record, dict):
                 continue
-            base = record.get("baseToken") if isinstance(record.get("baseToken"), dict) else {}
+            base_token = record.get("baseToken")
+            base = base_token if isinstance(base_token, dict) else {}
             ref = str(base.get("address") or record.get("pairAddress") or "unknown")
             handles.extend(
                 self._extract_links(
@@ -259,7 +255,8 @@ class CoinMarketCapKeylessDiscoverySource:
             for cmc_id, record in data.items():
                 if not isinstance(record, dict):
                     continue
-                urls = record.get("urls") if isinstance(record.get("urls"), dict) else {}
+                raw_urls = record.get("urls")
+                urls = raw_urls if isinstance(raw_urls, dict) else {}
                 for url in urls.get("twitter") or []:
                     handle = _handle_from_url(str(url))
                     if handle:

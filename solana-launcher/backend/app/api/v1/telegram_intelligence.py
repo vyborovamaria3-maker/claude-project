@@ -42,7 +42,8 @@ def _manager(request: Request) -> TelegramMonitorManager:
 def _safe_collector_status(request: Request) -> dict:
     runtime = _manager(request).status()
     channels = runtime.get("channels") or []
-    registry = runtime.get("registry") if isinstance(runtime.get("registry"), dict) else {}
+    raw_registry = runtime.get("registry")
+    registry = raw_registry if isinstance(raw_registry, dict) else {}
     return {
         "mode": runtime.get("mode") or "unavailable",
         "configured": bool(runtime.get("configured")),
@@ -59,12 +60,8 @@ def _safe_collector_status(request: Request) -> dict:
             runtime.get("public_web_seed_database_channels") or 0
         ),
         "public_web_discovered_channels": int(runtime.get("public_web_discovered_channels") or 0),
-        "public_web_accepted_discovered": int(
-            runtime.get("public_web_accepted_discovered") or 0
-        ),
-        "public_web_rejected_discovered": int(
-            runtime.get("public_web_rejected_discovered") or 0
-        ),
+        "public_web_accepted_discovered": int(runtime.get("public_web_accepted_discovered") or 0),
+        "public_web_rejected_discovered": int(runtime.get("public_web_rejected_discovered") or 0),
         "registry": {
             "total": int(registry.get("total") or 0),
             "validated": int(registry.get("validated") or 0),
@@ -237,7 +234,9 @@ async def calls(
     current_user=Depends(get_current_subscriber),
 ) -> dict:
     if mint and not is_solana_address(mint):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address"
+        )
     items, total = await list_calls(
         session,
         limit=limit,
@@ -263,7 +262,9 @@ async def telegram_token(
     mint: str,
     request: Request,
     hours: int | None = Query(default=None, ge=1, le=8760),
-    sources: str | None = Query(default=None, description="Comma-separated Telegram channel usernames"),
+    sources: str | None = Query(
+        default=None, description="Comma-separated Telegram channel usernames"
+    ),
     explicit_calls_only: bool = Query(default=False),
     min_engagement: int = Query(default=0, ge=0, le=1_000_000_000),
     min_channel_score: float = Query(default=0.0, ge=0.0, le=100.0),
@@ -272,7 +273,9 @@ async def telegram_token(
     current_user=Depends(get_current_subscriber),
 ) -> dict:
     if not is_solana_address(mint):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address"
+        )
     payload = await _filtered_timeline(
         session,
         mint,
@@ -307,7 +310,9 @@ async def social_relations(
     current_user=Depends(get_current_subscriber),
 ) -> dict:
     if platform and platform not in {"telegram", "x"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x"
+        )
     return {
         "items": await list_social_relations(
             session,
@@ -333,9 +338,13 @@ async def social_token(
     current_user=Depends(get_current_subscriber),
 ) -> dict:
     if not is_solana_address(mint):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address"
+        )
     if platform and platform not in {"telegram", "x"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="platform must be telegram or x"
+        )
     payload = await _filtered_timeline(
         session,
         mint,
@@ -361,7 +370,9 @@ async def refresh_x(
     current_user=Depends(get_current_superuser),
 ) -> dict:
     if not is_solana_address(mint):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address"
+        )
     try:
         payload = await refresh_x_for_mint(
             backend_frontend_url=request.app.state.settings.frontend_internal_url,
@@ -390,7 +401,11 @@ async def x_ingest(
             detail="BACKEND_API_KEY is not configured",
         )
     if not x_backend_api_key or not hmac.compare_digest(x_backend_api_key, expected):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid backend API key")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid backend API key"
+        )
     if not is_solana_address(payload.token_mint):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Solana mint address"
+        )
     return await ingest_x_events(session, payload.model_dump())

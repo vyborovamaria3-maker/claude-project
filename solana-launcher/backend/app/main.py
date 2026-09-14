@@ -4,19 +4,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.middleware.sessions import SessionMiddleware
-from redis.asyncio import Redis
 
-from app.api.v1.router import api_router
+from app import models  # noqa: F401
 from app.admin import setup_admin
+from app.api.v1.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.rate_limit import RateLimiter
 from app.db.base import Base
 from app.db.session import create_engine_and_sessionmaker
 from app.metrics import instrument_app
-from app import models  # noqa: F401
 from app.schemas.token import Message
 from app.services.etl import get_or_create_jobs
 from app.services.telegram_runtime import TelegramMonitorManager

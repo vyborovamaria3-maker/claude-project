@@ -5,10 +5,8 @@ import os
 from pathlib import Path
 from typing import Literal
 
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-
 
 from app.api.deps import get_current_subscriber, get_current_superuser
 from app.services.teragram_invite_source import (
@@ -17,12 +15,7 @@ from app.services.teragram_invite_source import (
 )
 from app.services.teragram_scan_job import teragram_scan_manager
 
-
-
-
 router = APIRouter()
-
-
 
 
 class TeraGramScanRequest(BaseModel):
@@ -33,8 +26,6 @@ class TeraGramScanRequest(BaseModel):
     threads: int | None = Field(default=None, ge=1, le=256)
     memory_limit: str = Field(default="4GB", min_length=2, max_length=16)
     fetch_size: int = Field(default=10_000, ge=1, le=1_000_000)
-
-
 
 
 @router.get("/status")
@@ -50,11 +41,7 @@ async def teragram_invite_status(
         )
         or ""
     )
-    return get_teragram_invite_status(
-        active_seed_database=active_seed_database
-    )
-
-
+    return get_teragram_invite_status(active_seed_database=active_seed_database)
 
 
 @router.get("/channels")
@@ -73,7 +60,6 @@ async def teragram_invite_channels(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-
 
     return {
         "items": items,
@@ -199,10 +185,7 @@ async def start_teragram_scan(
             detail=str(exc),
         ) from exc
 
-
     return {"job": job}
-
-
 
 
 @router.get("/scan/status")
@@ -210,8 +193,6 @@ async def teragram_scan_status(
     current_user=Depends(get_current_superuser),
 ) -> dict:
     return {"job": teragram_scan_manager.status()}
-
-
 
 
 @router.post("/scan/stop")
@@ -225,6 +206,5 @@ async def stop_teragram_scan(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-
 
     return {"job": job}

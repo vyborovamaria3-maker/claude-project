@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import jwt
@@ -18,8 +18,8 @@ SESSION_COOKIE = "potapoff_access_token"
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 async def get_current_user(
@@ -64,7 +64,7 @@ async def get_current_subscriber(current_user: User = Depends(get_current_user))
         return current_user
 
     expires_at = current_user.subscription_expires_at
-    if expires_at is None or _as_utc(expires_at) <= datetime.now(timezone.utc):
+    if expires_at is None or _as_utc(expires_at) <= datetime.now(UTC):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Active subscription required",

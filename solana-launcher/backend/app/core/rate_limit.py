@@ -16,7 +16,7 @@ class RateLimitResult:
 
 
 class RateLimiter:
-    def __init__(self, redis_client: Redis[str] | None = None) -> None:
+    def __init__(self, redis_client: Redis | None = None) -> None:
         self._redis = redis_client
         self._memory: dict[str, tuple[int, float]] = {}
         self._lock = asyncio.Lock()
@@ -31,10 +31,13 @@ class RateLimiter:
         return await self._allow_memory(key, limit=limit, window_seconds=window_seconds)
 
     async def _allow_redis(self, key: str, *, limit: int, window_seconds: int) -> RateLimitResult:
-        count = await self._redis.incr(key)
+        redis = self._redis
+        if redis is None:
+            return await self._allow_memory(key, limit=limit, window_seconds=window_seconds)
+        count = await redis.incr(key)
         if count == 1:
-            await self._redis.expire(key, window_seconds)
-        ttl = await self._redis.ttl(key)
+            await redis.expire(key, window_seconds)
+        ttl = await redis.ttl(key)
         remaining = max(0, limit - count)
         retry_after = ttl if isinstance(ttl, int) and ttl > 0 else window_seconds
         return RateLimitResult(allowed=count <= limit, remaining=remaining, retry_after=retry_after)
@@ -50,7 +53,9 @@ class RateLimiter:
             self._memory[key] = (count, expires_at)
             remaining = max(0, limit - count)
             retry_after = max(1, int(expires_at - now))
-            return RateLimitResult(allowed=count <= limit, remaining=remaining, retry_after=retry_after)
+            return RateLimitResult(
+                allowed=count <= limit, remaining=remaining, retry_after=retry_after
+            )
 
 
 def make_limit_key(*parts: Any) -> str:

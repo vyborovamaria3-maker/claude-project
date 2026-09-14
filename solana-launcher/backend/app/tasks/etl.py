@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
-from app.services.etl import get_or_create_jobs, run_full_collection, sync_metrics_for_active_tokens, sync_pumpfun_tokens, sync_wallet_links_and_top_wallets
+from app.services.etl import (
+    get_or_create_jobs,
+    run_full_collection,
+    sync_metrics_for_active_tokens,
+    sync_pumpfun_tokens,
+    sync_wallet_links_and_top_wallets,
+)
 from app.tasks.celery_app import celery_app
 
 
@@ -37,7 +41,9 @@ def refresh_metrics() -> dict[str, int]:
 
 @celery_app.task(name="app.tasks.etl.refresh_links")
 def refresh_links() -> dict[str, int]:
-    return asyncio.run(_run_with_session(lambda session: sync_wallet_links_and_top_wallets(session)))
+    return asyncio.run(
+        _run_with_session(lambda session: sync_wallet_links_and_top_wallets(session))
+    )
 
 
 @celery_app.task(name="app.tasks.etl.bootstrap_jobs")

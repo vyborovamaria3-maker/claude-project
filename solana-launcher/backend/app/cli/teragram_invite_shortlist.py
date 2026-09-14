@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _SOLANA_HINT_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:solana|[$]sol|pump[.]fun|pumpfun|raydium|solscan|spl\s*token)(?![A-Za-z0-9_])",
@@ -34,7 +34,7 @@ _ALLOWED_CLASSES = {
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -62,7 +62,9 @@ def _read_discovery(path: Path) -> list[dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return []
     candidates = payload.get("candidates") if isinstance(payload, dict) else None
-    return [row for row in candidates if isinstance(row, dict)] if isinstance(candidates, list) else []
+    return (
+        [row for row in candidates if isinstance(row, dict)] if isinstance(candidates, list) else []
+    )
 
 
 def _safe_int(value: Any) -> int:
@@ -188,8 +190,10 @@ def _score_root(row: dict[str, Any]) -> tuple[float, list[str], list[str]]:
 
 
 def _score_discovery(row: dict[str, Any]) -> tuple[float, list[str], list[str]]:
-    flags = row.get("flags") if isinstance(row.get("flags"), dict) else {}
-    evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+    raw_flags = row.get("flags")
+    flags = cast(dict[str, Any], raw_flags) if isinstance(raw_flags, dict) else {}
+    raw_evidence = row.get("evidence")
+    evidence = cast(dict[str, Any], raw_evidence) if isinstance(raw_evidence, dict) else {}
     text = _text(row)
     reasons = [str(value) for value in (row.get("reasons") or [])]
     cautions: list[str] = []
@@ -347,7 +351,9 @@ def build_shortlist(
         "selected": len(selected),
         "accepted_for_live_validation": len(accepted),
         "tiers": tiers,
-        "note": "Offline shortlist only. Run live MTProto validation before parsing users or inviting.",
+        "note": (
+            "Offline shortlist only. Run live MTProto validation before parsing users or inviting."
+        ),
         "channels": selected,
     }
     shortlist_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

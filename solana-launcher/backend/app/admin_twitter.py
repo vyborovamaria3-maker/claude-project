@@ -12,7 +12,6 @@ from app.models.twitter_intelligence import (
     TwitterPost,
 )
 
-
 TWITTER_ADMIN_CATEGORY = "Twitter / X monitoring"
 PAGE_SIZES = [25, 50, 100, 200]
 

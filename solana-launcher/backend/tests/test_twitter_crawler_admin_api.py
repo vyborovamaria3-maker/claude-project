@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from fastapi import HTTPException
-from pydantic import ValidationError
-
 from app.api.v1.twitter_crawler_admin import (
     SETTING_FIELDS,
     TwitterCrawlerSettingsUpdate,
@@ -13,6 +10,8 @@ from app.api.v1.twitter_crawler_admin import (
     get_crawler_settings,
     update_crawler_settings,
 )
+from fastapi import HTTPException
+from pydantic import ValidationError
 
 TEST_KEY = "unit-test-placeholder-key-value-0001"
 
@@ -45,7 +44,7 @@ def _row() -> dict:
     return {
         "id": 1,
         **payload,
-        "updated_at": datetime(2026, 9, 13, 12, 1, tzinfo=timezone.utc),
+        "updated_at": datetime(2026, 9, 13, 12, 1, tzinfo=UTC),
     }
 
 

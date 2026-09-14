@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from datetime import UTC, datetime
 from typing import Any
 
@@ -35,6 +36,10 @@ router = APIRouter(dependencies=[Depends(get_current_superuser)])
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _x_api_bearer_token(settings: Settings) -> str:
+    return str(getattr(settings, "x_api_bearer_token", "")).strip()
 
 
 async def _get_or_create_config(session: AsyncSession) -> TwitterDiscoveryConfig:
@@ -73,9 +78,7 @@ async def get_twitter_registry_overview(
     total_evidence = (
         await session.execute(select(func.count(TwitterDiscoveryEvidence.id)))
     ).scalar_one() or 0
-    total_posts = (
-        await session.execute(select(func.count(TwitterPost.id)))
-    ).scalar_one() or 0
+    total_posts = (await session.execute(select(func.count(TwitterPost.id)))).scalar_one() or 0
 
     # Last runs
     last_run = (
@@ -128,7 +131,7 @@ async def get_twitter_registry_overview(
     ).scalar_one_or_none()
 
     config = await _get_or_create_config(session)
-    x_api_configured = bool(settings.x_api_bearer_token and settings.x_api_bearer_token.strip())
+    x_api_configured = bool(_x_api_bearer_token(settings))
 
     discovery_status = "idle"
     if last_run and last_run.status == "running":
@@ -148,11 +151,19 @@ async def get_twitter_registry_overview(
         "total_evidence": total_evidence,
         "total_posts": total_posts,
         "last_run": last_run.started_at.isoformat() if last_run and last_run.started_at else None,
-        "last_successful_run": last_success.started_at.isoformat() if last_success and last_success.started_at else None,
-        "last_failed_run": last_failed.started_at.isoformat() if last_failed and last_failed.started_at else None,
-        "last_new_candidate": latest_candidate.first_seen_at.isoformat() if latest_candidate else None,
+        "last_successful_run": last_success.started_at.isoformat()
+        if last_success and last_success.started_at
+        else None,
+        "last_failed_run": last_failed.started_at.isoformat()
+        if last_failed and last_failed.started_at
+        else None,
+        "last_new_candidate": latest_candidate.first_seen_at.isoformat()
+        if latest_candidate
+        else None,
         "last_new_evidence": latest_evidence.observed_at.isoformat() if latest_evidence else None,
-        "last_promoted_account": latest_promoted.last_seen_at.isoformat() if latest_promoted else None,
+        "last_promoted_account": latest_promoted.last_seen_at.isoformat()
+        if latest_promoted
+        else None,
         "last_run_duration_seconds": (
             (last_run.finished_at - last_run.started_at).total_seconds()
             if last_run and last_run.finished_at and last_run.started_at
@@ -202,7 +213,7 @@ async def list_candidates(
 
     # Sorting
     if sort_by == "score":
-        sort_col = TwitterDiscoveryScore.discovery_score
+        sort_col: Any = TwitterDiscoveryScore.discovery_score
     elif sort_by == "confidence":
         sort_col = TwitterDiscoveryScore.confidence
     elif sort_by == "last_seen":
@@ -222,25 +233,31 @@ async def list_candidates(
 
     items = []
     for candidate, score in rows:
-        items.append({
-            "id": candidate.id,
-            "candidate_key": candidate.candidate_key,
-            "twitter_id": candidate.twitter_id,
-            "username": candidate.username,
-            "display_name": candidate.display_name,
-            "status": candidate.status,
-            "priority": candidate.priority,
-            "depth": candidate.depth,
-            "relevance_hint": candidate.relevance_hint,
-            "account_id": candidate.account_id,
-            "attempts": candidate.attempts,
-            "last_error": candidate.last_error,
-            "first_seen_at": candidate.first_seen_at.isoformat() if candidate.first_seen_at else None,
-            "last_seen_at": candidate.last_seen_at.isoformat() if candidate.last_seen_at else None,
-            "discovery_score": score.discovery_score if score else 0.0,
-            "confidence": score.confidence if score else 0.0,
-            "promotion_ready": bool(candidate.twitter_id and candidate.status != "accepted"),
-        })
+        items.append(
+            {
+                "id": candidate.id,
+                "candidate_key": candidate.candidate_key,
+                "twitter_id": candidate.twitter_id,
+                "username": candidate.username,
+                "display_name": candidate.display_name,
+                "status": candidate.status,
+                "priority": candidate.priority,
+                "depth": candidate.depth,
+                "relevance_hint": candidate.relevance_hint,
+                "account_id": candidate.account_id,
+                "attempts": candidate.attempts,
+                "last_error": candidate.last_error,
+                "first_seen_at": candidate.first_seen_at.isoformat()
+                if candidate.first_seen_at
+                else None,
+                "last_seen_at": candidate.last_seen_at.isoformat()
+                if candidate.last_seen_at
+                else None,
+                "discovery_score": score.discovery_score if score else 0.0,
+                "confidence": score.confidence if score else 0.0,
+                "promotion_ready": bool(candidate.twitter_id and candidate.status != "accepted"),
+            }
+        )
 
     return {
         "items": items,
@@ -259,12 +276,16 @@ async def get_candidate_detail(
 
     score = await session.get(TwitterDiscoveryScore, candidate_id)
     evidence_rows = (
-        await session.execute(
-            select(TwitterDiscoveryEvidence)
-            .where(TwitterDiscoveryEvidence.candidate_id == candidate_id)
-            .order_by(TwitterDiscoveryEvidence.observed_at.desc())
+        (
+            await session.execute(
+                select(TwitterDiscoveryEvidence)
+                .where(TwitterDiscoveryEvidence.candidate_id == candidate_id)
+                .order_by(TwitterDiscoveryEvidence.observed_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     canonical_account = None
     if candidate.account_id:
@@ -286,11 +307,19 @@ async def get_candidate_detail(
             "parent_account_id": candidate.parent_account_id,
             "attempts": candidate.attempts,
             "lease_owner": candidate.lease_owner,
-            "lease_expires_at": candidate.lease_expires_at.isoformat() if candidate.lease_expires_at else None,
-            "last_attempt_at": candidate.last_attempt_at.isoformat() if candidate.last_attempt_at else None,
-            "next_attempt_at": candidate.next_attempt_at.isoformat() if candidate.next_attempt_at else None,
+            "lease_expires_at": candidate.lease_expires_at.isoformat()
+            if candidate.lease_expires_at
+            else None,
+            "last_attempt_at": candidate.last_attempt_at.isoformat()
+            if candidate.last_attempt_at
+            else None,
+            "next_attempt_at": candidate.next_attempt_at.isoformat()
+            if candidate.next_attempt_at
+            else None,
             "last_error": candidate.last_error,
-            "first_seen_at": candidate.first_seen_at.isoformat() if candidate.first_seen_at else None,
+            "first_seen_at": candidate.first_seen_at.isoformat()
+            if candidate.first_seen_at
+            else None,
             "last_seen_at": candidate.last_seen_at.isoformat() if candidate.last_seen_at else None,
             "meta": candidate.meta,
         },
@@ -307,7 +336,9 @@ async def get_candidate_detail(
             "score_version": score.score_version if score else None,
             "scored_at": score.scored_at.isoformat() if score and score.scored_at else None,
             "components": score.components if score else None,
-        } if score else None,
+        }
+        if score
+        else None,
         "evidence": [
             {
                 "id": ev.id,
@@ -331,7 +362,9 @@ async def get_candidate_detail(
             "following_count": canonical_account.following_count,
             "tweet_count": canonical_account.tweet_count,
             "verified": canonical_account.verified,
-        } if canonical_account else None,
+        }
+        if canonical_account
+        else None,
     }
 
 
@@ -366,24 +399,26 @@ async def list_accounts(
     items = []
     for acc in accounts:
         score = await session.get(TwitterAccountScore, acc.id)
-        items.append({
-            "id": acc.id,
-            "twitter_id": acc.twitter_id,
-            "username": acc.username,
-            "display_name": acc.display_name,
-            "account_type": acc.account_type,
-            "status": acc.status,
-            "followers_count": acc.followers_count,
-            "following_count": acc.following_count,
-            "tweet_count": acc.tweet_count,
-            "verified": acc.verified,
-            "source": acc.source,
-            "first_seen_at": acc.first_seen_at.isoformat() if acc.first_seen_at else None,
-            "last_seen_at": acc.last_seen_at.isoformat() if acc.last_seen_at else None,
-            "alpha_score": score.alpha_score if score else 0.0,
-            "trust_score": score.trust_score if score else 0.0,
-            "influence_score": score.influence_score if score else 0.0,
-        })
+        items.append(
+            {
+                "id": acc.id,
+                "twitter_id": acc.twitter_id,
+                "username": acc.username,
+                "display_name": acc.display_name,
+                "account_type": acc.account_type,
+                "status": acc.status,
+                "followers_count": acc.followers_count,
+                "following_count": acc.following_count,
+                "tweet_count": acc.tweet_count,
+                "verified": acc.verified,
+                "source": acc.source,
+                "first_seen_at": acc.first_seen_at.isoformat() if acc.first_seen_at else None,
+                "last_seen_at": acc.last_seen_at.isoformat() if acc.last_seen_at else None,
+                "alpha_score": score.alpha_score if score else 0.0,
+                "trust_score": score.trust_score if score else 0.0,
+                "influence_score": score.influence_score if score else 0.0,
+            }
+        )
 
     return {
         "items": items,
@@ -409,26 +444,36 @@ async def get_account_detail(
                 .order_by(TwitterAccountSnapshot.captured_at.desc())
                 .limit(20)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
     posts = (
-        await session.execute(
-            select(TwitterPost)
-            .where(TwitterPost.account_id == account_id)
-            .order_by(TwitterPost.published_at.desc())
-            .limit(20)
+        (
+            await session.execute(
+                select(TwitterPost)
+                .where(TwitterPost.account_id == account_id)
+                .order_by(TwitterPost.published_at.desc())
+                .limit(20)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     token_stats = (
-        await session.execute(
-            select(TwitterAccountTokenStat)
-            .where(TwitterAccountTokenStat.account_id == account_id)
-            .order_by(TwitterAccountTokenStat.token_alpha_score.desc())
-            .limit(20)
+        (
+            await session.execute(
+                select(TwitterAccountTokenStat)
+                .where(TwitterAccountTokenStat.account_id == account_id)
+                .order_by(TwitterAccountTokenStat.token_alpha_score.desc())
+                .limit(20)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return {
         "account": {
@@ -448,7 +493,9 @@ async def get_account_detail(
             "source": account.source,
             "first_seen_at": account.first_seen_at.isoformat() if account.first_seen_at else None,
             "last_seen_at": account.last_seen_at.isoformat() if account.last_seen_at else None,
-            "last_profile_sync_at": account.last_profile_sync_at.isoformat() if account.last_profile_sync_at else None,
+            "last_profile_sync_at": account.last_profile_sync_at.isoformat()
+            if account.last_profile_sync_at
+            else None,
             "raw": account.raw,
         },
         "score": {
@@ -463,7 +510,9 @@ async def get_account_detail(
             "score_source": score.score_source if score else "unknown",
             "model_version": score.model_version if score else None,
             "updated_at": score.updated_at.isoformat() if score and score.updated_at else None,
-        } if score else None,
+        }
+        if score
+        else None,
         "snapshots_count": len(snapshots) if isinstance(snapshots, list) else 0,
         "posts_count": len(posts),
         "token_stats_count": len(token_stats),
@@ -513,10 +562,16 @@ async def list_discovery_runs(
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
     runs = (
-        await session.execute(
-            select(TwitterDiscoveryRun).order_by(TwitterDiscoveryRun.started_at.desc()).limit(limit)
+        (
+            await session.execute(
+                select(TwitterDiscoveryRun)
+                .order_by(TwitterDiscoveryRun.started_at.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     items = [
         {
@@ -603,7 +658,10 @@ async def action_run_discovery(
     trigger = str(payload.get("trigger", "admin_manual"))
     config = await _get_or_create_config(session)
     if not config.discovery_enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Twitter discovery is disabled in settings")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Twitter discovery is disabled in settings",
+        )
 
     # Check for concurrent running
     running = (
@@ -612,11 +670,13 @@ async def action_run_discovery(
         )
     ).scalar_one_or_none()
     if running:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A discovery run is already in progress")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="A discovery run is already in progress"
+        )
 
     run_record = TwitterDiscoveryRun(
         status="running",
-        mode="x_api" if settings.x_api_bearer_token else "public_no_x_api",
+        mode="x_api" if _x_api_bearer_token(settings) else "public_no_x_api",
         trigger=trigger,
         config_snapshot={
             "process_limit": config.process_limit,
@@ -629,28 +689,33 @@ async def action_run_discovery(
 
     try:
         # Build args for discovery CLI runner
-        class Args:
-            seed_file = "data/twitter-discovery/crypto_media_seeds.json"
-            queries_file = "data/twitter-discovery/queries.json"
-            public_url = []
-            skip_seeds = not config.seed_discovery_enabled
-            skip_x_search = not settings.x_api_bearer_token
-            skip_frontier = False
-            query_limit = config.cmc_limit
-            process_limit = config.process_limit
-            batch_size = config.batch_size
-            max_depth = config.max_depth
-            min_relevance = config.min_relevance
-            network_mode = "following"
-            network_limit = config.network_limit
-            lease_seconds = 300
-            worker_id = f"admin-api:{run_record.id}"
-            dry_run = False
+        args = argparse.Namespace(
+            seed_file="data/twitter-discovery/crypto_media_seeds.json",
+            queries_file="data/twitter-discovery/queries.json",
+            public_url=[],
+            skip_seeds=not config.seed_discovery_enabled,
+            skip_x_search=not _x_api_bearer_token(settings),
+            skip_frontier=False,
+            query_limit=config.cmc_limit,
+            process_limit=config.process_limit,
+            batch_size=config.batch_size,
+            max_depth=config.max_depth,
+            min_relevance=config.min_relevance,
+            network_mode="following",
+            network_limit=config.network_limit,
+            lease_seconds=300,
+            worker_id=f"admin-api:{run_record.id}",
+            dry_run=False,
+        )
 
-        summary = await run_discovery_cli_sync(Args())
+        summary = await run_discovery_cli_sync(args)
         run_record.status = "completed"
         run_record.finished_at = utcnow()
-        run_record.candidates_created = int(summary.get("seed_discovered", 0) + summary.get("public_web_discovered", 0) + summary.get("x_search_discovered", 0))
+        run_record.candidates_created = int(
+            summary.get("seed_discovered", 0)
+            + summary.get("public_web_discovered", 0)
+            + summary.get("x_search_discovered", 0)
+        )
         run_record.promoted = int(summary.get("frontier", {}).get("accepted", 0))
         run_record.failed = int(summary.get("frontier", {}).get("failed", 0))
         await session.commit()
@@ -660,7 +725,9 @@ async def action_run_discovery(
         run_record.finished_at = utcnow()
         run_record.error = str(exc)[:4000]
         await session.commit()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Discovery run failed: {exc}") from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Discovery run failed: {exc}"
+        ) from exc
 
 
 @router.post("/actions/rescore")
@@ -681,16 +748,25 @@ async def action_promote_candidate(
     if not candidate:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
     if candidate.account_id is not None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Candidate is already promoted to canonical account")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Candidate is already promoted to canonical account",
+        )
     if not candidate.twitter_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Stable X user ID unavailable. Candidate can be discovered and scored, but canonical promotion requires reliable twitter_id resolution.",
+            detail=(
+                "Stable X user ID unavailable. Candidate can be discovered and scored, "
+                "but canonical promotion requires reliable twitter_id resolution."
+            ),
         )
 
     profile_meta = (candidate.meta or {}).get("resolved_profile")
     if not isinstance(profile_meta, dict) or not profile_meta.get("twitter_id"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Resolved profile metadata missing for candidate")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Resolved profile metadata missing for candidate",
+        )
 
     profile = ResolvedTwitterProfile(
         twitter_id=str(profile_meta["twitter_id"]),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -55,8 +55,8 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _meta_float(meta: dict[str, Any] | None, key: str) -> float:
@@ -113,7 +113,9 @@ async def _evidence_score(
                     TwitterDiscoveryEvidence.candidate_id == candidate_id
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     source_types = sorted({str(value or "unknown") for value in evidence})
     evidence_count = len(evidence)
@@ -198,9 +200,7 @@ def _network_account_score(score: TwitterAccountScore | None) -> float:
     if score is None:
         return 0.0
     return _clamp(
-        score.trust_score * 0.40
-        + score.alpha_score * 0.35
-        + score.influence_score * 0.25
+        score.trust_score * 0.40 + score.alpha_score * 0.35 + score.influence_score * 0.25
     )
 
 
@@ -217,9 +217,7 @@ async def _graph_score(
             values.append(_network_account_score(parent_score))
             has_graph_evidence = True
     if own_score is not None:
-        values.append(
-            _clamp(own_score.trust_score * 0.55 + own_score.influence_score * 0.45)
-        )
+        values.append(_clamp(own_score.trust_score * 0.55 + own_score.influence_score * 0.45))
         has_graph_evidence = True
     return (round(max(values, default=0.0), 2), has_graph_evidence)
 
@@ -271,7 +269,7 @@ async def calculate_discovery_score(
     *,
     now: datetime | None = None,
 ) -> DiscoveryScoreBreakdown:
-    current_time = _aware(now or datetime.now(timezone.utc))
+    current_time = _aware(now or datetime.now(UTC))
     source_score, evidence_count, source_type_count, _source_types = await _evidence_score(
         session,
         candidate.id,
@@ -290,8 +288,7 @@ async def calculate_discovery_score(
     ]
     if own_score is not None:
         relevance_values.append(
-            own_score.crypto_relevance_score * 0.55
-            + own_score.solana_relevance_score * 0.45
+            own_score.crypto_relevance_score * 0.55 + own_score.solana_relevance_score * 0.45
         )
     relevance_score = round(_clamp(max(relevance_values, default=0.0)), 2)
     engagement_score = await _engagement_score(session, candidate, profile)
@@ -374,7 +371,7 @@ async def rescore_discovery_candidate(
         "score_version",
     ):
         setattr(row, field, getattr(breakdown, field))
-    row.scored_at = _aware(now or datetime.now(timezone.utc))
+    row.scored_at = _aware(now or datetime.now(UTC))
     row.components = asdict(breakdown)
 
     computed_priority = int(round(breakdown.discovery_score))
@@ -400,14 +397,16 @@ async def rescore_discovery_candidates(
                 .order_by(TwitterDiscoveryCandidate.last_seen_at.desc())
                 .limit(max(1, min(int(limit), 5000)))
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     if not rows:
         return {"rescored": 0, "avg_score": 0.0, "avg_confidence": 0.0}
 
     score_total = 0.0
     confidence_total = 0.0
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for candidate in rows:
         score = await rescore_discovery_candidate(session, candidate, now=now)
         score_total += score.discovery_score

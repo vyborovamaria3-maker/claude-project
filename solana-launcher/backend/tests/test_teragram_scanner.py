@@ -6,14 +6,12 @@ import json
 from pathlib import Path
 
 import pytest
-
 from app.services.teragram_scanner import (
     TERAGRAM_PREVIEW_RECORD_ID,
     TERAGRAM_PREVIEW_VERSION,
     discover_teragram_sources,
     scan_teragram_dataset,
 )
-
 
 pytest.importorskip("duckdb")
 
@@ -37,8 +35,6 @@ def _write_csv_gz(
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-
-
 
 
 def _base_tables(root: Path) -> None:
@@ -106,17 +102,13 @@ def test_current_preview_release_metadata() -> None:
     assert TERAGRAM_PREVIEW_VERSION == "1.0"
 
 
-
-
 def test_discovers_official_v1_compressed_messages_and_audience_tables(
     tmp_path: Path,
 ) -> None:
     _base_tables(tmp_path)
 
-
     messages = tmp_path / "messages.csv"
     rows = list(csv.DictReader(messages.open(encoding="utf-8")))
-
 
     _write_csv_gz(
         tmp_path / "messages.csv.gz",
@@ -124,7 +116,6 @@ def test_discovers_official_v1_compressed_messages_and_audience_tables(
         rows,
     )
     messages.unlink()
-
 
     _write_csv(
         tmp_path / "users.csv",
@@ -137,24 +128,18 @@ def test_discovers_official_v1_compressed_messages_and_audience_tables(
         [{"chat_id": 1, "user_id": 100, "joined": "", "status": "member"}],
     )
 
-
     sources = discover_teragram_sources(tmp_path)
-
 
     assert sources.messages == ((tmp_path / "messages.csv.gz").resolve(),)
     assert sources.users == ((tmp_path / "users.csv").resolve(),)
     assert sources.chats_users == ((tmp_path / "chats_users.csv").resolve(),)
 
 
-
-
 def test_scan_reads_messages_csv_gz_directly(tmp_path: Path) -> None:
     _base_tables(tmp_path)
 
-
     messages = tmp_path / "messages.csv"
     rows = list(csv.DictReader(messages.open(encoding="utf-8")))
-
 
     _write_csv_gz(
         tmp_path / "messages.csv.gz",
@@ -162,7 +147,6 @@ def test_scan_reads_messages_csv_gz_directly(tmp_path: Path) -> None:
         rows,
     )
     messages.unlink()
-
 
     _write_csv(
         tmp_path / "hashtags.csv",
@@ -189,7 +173,6 @@ def test_scan_reads_messages_csv_gz_directly(tmp_path: Path) -> None:
         ],
     )
 
-
     output = tmp_path / "out_gzip"
     summary = scan_teragram_dataset(
         input_dir=tmp_path,
@@ -199,12 +182,9 @@ def test_scan_reads_messages_csv_gz_directly(tmp_path: Path) -> None:
         memory_limit="256MB",
     )
 
-
     assert summary["signal_source"] == "entities"
     assert summary["candidate_channels"] == 1
     assert summary["sources"]["messages"][0].endswith("messages.csv.gz")
-
-
 
 
 def test_recent_100_excludes_older_entity_signal(tmp_path: Path) -> None:
@@ -232,7 +212,6 @@ def test_recent_100_excludes_older_entity_signal(tmp_path: Path) -> None:
         ],
     )
 
-
     rows = []
     for message_id in range(1, 102):
         rows.append(
@@ -245,7 +224,6 @@ def test_recent_100_excludes_older_entity_signal(tmp_path: Path) -> None:
             }
         )
 
-
     _write_csv(
         tmp_path / "messages.csv",
         [
@@ -257,7 +235,6 @@ def test_recent_100_excludes_older_entity_signal(tmp_path: Path) -> None:
         ],
         rows,
     )
-
 
     # Only the oldest message has crypto evidence.
     _write_csv(
@@ -272,7 +249,6 @@ def test_recent_100_excludes_older_entity_signal(tmp_path: Path) -> None:
         ],
     )
 
-
     output = tmp_path / "recent100"
     summary = scan_teragram_dataset(
         input_dir=tmp_path,
@@ -283,12 +259,9 @@ def test_recent_100_excludes_older_entity_signal(tmp_path: Path) -> None:
         memory_limit="256MB",
     )
 
-
     assert summary["recent_messages_per_chat"] == 100
     assert summary["candidate_channels"] == 0
     assert summary["seed_channels"] == 0
-
-
 
 
 def test_content_scan_reuses_exact_existing_scoring(tmp_path: Path) -> None:
@@ -413,7 +386,6 @@ def test_metadata_mode_does_not_fake_message_evidence(tmp_path: Path) -> None:
 
 def test_historical_native_burst_same_day_is_not_root() -> None:
     import duckdb
-
     from app.services import teragram_scanner as scanner
 
     connection = duckdb.connect(":memory:")
@@ -480,8 +452,7 @@ def test_historical_native_burst_same_day_is_not_root() -> None:
                 (
                     1,
                     10000,
-                    "https://pump.fun/coin/"
-                    "DaEUPVqGjt3SKEREJaHCgKtkjiTPJNYAhuyKEXZ6pump",
+                    "https://pump.fun/coin/DaEUPVqGjt3SKEREJaHCgKtkjiTPJNYAhuyKEXZ6pump",
                 ),
                 (
                     2,
@@ -528,9 +499,10 @@ def test_historical_native_burst_same_day_is_not_root() -> None:
 
     finally:
         connection.close()
+
+
 def test_memecoin_hype_suffix_is_not_exact_historical_target() -> None:
     import duckdb
-
     from app.services import teragram_scanner as scanner
 
     connection = duckdb.connect(":memory:")
@@ -605,9 +577,7 @@ def test_memecoin_hype_suffix_is_not_exact_historical_target() -> None:
             density_threshold=0.005,
         )
 
-        count = connection.execute(
-            "SELECT COUNT(*) FROM tg_historical_roots"
-        ).fetchone()[0]
+        count = connection.execute("SELECT COUNT(*) FROM tg_historical_roots").fetchone()[0]
 
         assert count == 0
 
@@ -617,7 +587,6 @@ def test_memecoin_hype_suffix_is_not_exact_historical_target() -> None:
 
 def test_historical_repeated_target_across_days_is_root() -> None:
     import duckdb
-
     from app.services import teragram_scanner as scanner
 
     connection = duckdb.connect(":memory:")

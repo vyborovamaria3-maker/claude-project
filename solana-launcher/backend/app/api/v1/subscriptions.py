@@ -143,9 +143,7 @@ async def update_settings(
     # cannot silently interleave field-by-field updates.
     await get_subscription_settings(session)
     result = await session.execute(
-        select(SubscriptionSettings)
-        .where(SubscriptionSettings.id == 1)
-        .with_for_update()
+        select(SubscriptionSettings).where(SubscriptionSettings.id == 1).with_for_update()
     )
     settings = result.scalar_one()
 
@@ -158,7 +156,9 @@ async def update_settings(
         await session.commit()
     except ValueError as exc:
         await session.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
 
     await session.refresh(settings)
     return _settings_response(settings)

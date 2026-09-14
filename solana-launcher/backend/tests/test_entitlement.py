@@ -1,7 +1,5 @@
 import pytest
-
 from tests.conftest import TEST_SUBSCRIPTION_INTERNAL_KEY
-
 
 pytestmark = pytest.mark.asyncio
 

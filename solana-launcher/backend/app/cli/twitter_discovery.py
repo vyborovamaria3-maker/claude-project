@@ -30,7 +30,6 @@ from app.services.twitter_discovery_sources import (
     load_seed_records,
 )
 
-
 DEFAULT_SEED_FILE = "data/twitter-discovery/crypto_media_seeds.json"
 DEFAULT_QUERIES_FILE = "data/twitter-discovery/queries.json"
 
@@ -347,6 +346,8 @@ async def _process_frontier(
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
     settings = get_settings()
+    x_api_bearer_token = str(getattr(settings, "x_api_bearer_token", "")).strip()
+    x_api_base_url = str(getattr(settings, "x_api_base_url", "https://api.x.com/2")).strip()
     engine, sessionmaker = create_engine_and_sessionmaker(settings)
     try:
         worker_id = args.worker_id.strip() or f"{socket.gethostname()}:{os.getpid()}"
@@ -358,7 +359,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             "x_search_discovered": 0,
             "public_web_errors": [],
             "x_search_errors": [],
-            "x_api_configured": bool(settings.x_api_bearer_token.strip()),
+            "x_api_configured": bool(x_api_bearer_token),
         }
 
         timeout = httpx.Timeout(20.0, connect=10.0)
@@ -366,11 +367,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             public_source = PublicWebDiscoverySource(client=client)
             x_source = (
                 XApiDiscoverySource(
-                    bearer_token=settings.x_api_bearer_token,
+                    bearer_token=x_api_bearer_token,
                     client=client,
-                    base_url=settings.x_api_base_url,
+                    base_url=x_api_base_url,
                 )
-                if settings.x_api_bearer_token.strip()
+                if x_api_bearer_token
                 else None
             )
 

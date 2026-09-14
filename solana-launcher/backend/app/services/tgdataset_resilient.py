@@ -8,7 +8,7 @@ import tarfile
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -67,7 +67,8 @@ def _write_checkpoint(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _stats_from_checkpoint(checkpoint: dict[str, Any], archive_name: str) -> ArchiveScanStats:
-    stats = checkpoint.get("stats") if isinstance(checkpoint.get("stats"), dict) else {}
+    raw_stats = checkpoint.get("stats")
+    stats = cast(dict[str, Any], raw_stats) if isinstance(raw_stats, dict) else {}
     return ArchiveScanStats(
         archive=archive_name,
         json_members=max(0, int(stats.get("json_members") or 0)),
@@ -142,7 +143,7 @@ def scan_tar_stream_resumable(
             )
             member_output_offset = output.tell()
             try:
-                for channel in iter_tgdataset_channels(extracted):
+                for channel in iter_tgdataset_channels(cast(BinaryIO, extracted)):
                     stats.channels_scanned += 1
                     stats.messages_scanned += int(
                         channel.get("signals", {}).get("messages_total") or 0

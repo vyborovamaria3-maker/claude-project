@@ -33,10 +33,7 @@ def _char_ngrams(text: str, size: int = 3) -> Counter[str]:
     normalized = f"  {_normalize(text)}  "
     if len(normalized) < size:
         return Counter()
-    return Counter(
-        normalized[index : index + size]
-        for index in range(len(normalized) - size + 1)
-    )
+    return Counter(normalized[index : index + size] for index in range(len(normalized) - size + 1))
 
 
 def _cosine(left: Counter[str], right: Counter[str]) -> float:
@@ -61,11 +58,7 @@ def _semantic_similarity(left: str, right: str) -> float:
 
 
 def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
-    evidence = [
-        row
-        for row in snapshot.get("evidence") or []
-        if isinstance(row, dict)
-    ][:160]
+    evidence = [row for row in snapshot.get("evidence") or [] if isinstance(row, dict)][:160]
     prepared = []
     for row in evidence:
         text = str(row.get("text") or "")
@@ -103,20 +96,16 @@ def semantic_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
         if len(members) < 2 or len(sources) < 2:
             continue
         assigned.update(members)
-        average_similarity = (
-            sum(pair_scores) / len(pair_scores) if pair_scores else 1.0
-        )
+        average_similarity = sum(pair_scores) / len(pair_scores) if pair_scores else 1.0
         clusters.append(
             {
                 "cluster_id": f"semantic-template-{index}",
                 "sample": prepared[index]["normalized"][:240],
                 "messages": len(members),
                 "sources": sorted(sources),
-                "evidence_ids": [
-                    prepared[item]["id"]
-                    for item in members
-                    if prepared[item]["id"]
-                ][:30],
+                "evidence_ids": [prepared[item]["id"] for item in members if prepared[item]["id"]][
+                    :30
+                ],
                 "average_similarity": round(average_similarity, 4),
                 "confidence": round(
                     min(0.95, 0.45 + average_similarity * 0.45),
@@ -167,8 +156,7 @@ async def performance_aware_source_reliability(
                 )
                 .join(
                     IntelligenceSnapshot,
-                    IntelligenceSnapshot.snapshot_id
-                    == IntelligenceSnapshotEntity.snapshot_id,
+                    IntelligenceSnapshot.snapshot_id == IntelligenceSnapshotEntity.snapshot_id,
                 )
                 .where(IntelligenceSnapshotEntity.entity_key.in_(actor_ids))
                 .order_by(
@@ -186,9 +174,7 @@ async def performance_aware_source_reliability(
             (row.entity_key, row.mint_address),
             row,
         )
-    snapshot_ids = {
-        row.snapshot_id for row in earliest_by_entity_mint.values()
-    }
+    snapshot_ids = {row.snapshot_id for row in earliest_by_entity_mint.values()}
     outcomes: list[IntelligenceOutcome] = []
     if snapshot_ids:
         outcomes = list(
@@ -199,7 +185,9 @@ async def performance_aware_source_reliability(
                         IntelligenceOutcome.horizon_hours == 72,
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
     outcome_by_snapshot = {row.snapshot_id: row for row in outcomes}
 
@@ -222,8 +210,7 @@ async def performance_aware_source_reliability(
         bucket["matured_mints"].add(mint)
         bucket["wins"] += int(outcome.max_multiple >= 2)
         bucket["collapses"] += int(
-            outcome.max_drawdown_pct is not None
-            and outcome.max_drawdown_pct <= -80
+            outcome.max_drawdown_pct is not None and outcome.max_drawdown_pct <= -80
         )
         bucket["multiples"].append(float(outcome.max_multiple))
 
@@ -247,25 +234,18 @@ async def performance_aware_source_reliability(
         base.update(
             {
                 "distinct_token_occurrences": (
-                    len(mints)
-                    or int(base.get("distinct_token_occurrences") or 0)
+                    len(mints) or int(base.get("distinct_token_occurrences") or 0)
                 ),
                 "matured_72h_samples": matured,
                 "historical_2x_rate_72h": (
-                    round(stats.get("wins", 0) / matured, 4)
-                    if matured
-                    else None
+                    round(stats.get("wins", 0) / matured, 4) if matured else None
                 ),
                 "historical_collapse_rate_72h": (
-                    round(stats.get("collapses", 0) / matured, 4)
-                    if matured
-                    else None
+                    round(stats.get("collapses", 0) / matured, 4) if matured else None
                 ),
                 "median_max_multiple_72h": median_multiple,
                 "performance_status": (
-                    "calibrated_history"
-                    if matured >= 10
-                    else "limited_outcome_history"
+                    "calibrated_history" if matured >= 10 else "limited_outcome_history"
                 ),
                 "selection_rule": "earliest_snapshot_per_entity_and_mint",
                 "causality_note": (
@@ -306,9 +286,7 @@ async def enrich_advanced_report(
             "rpc": funding,
             "verified_by_rpc": bool(initial_edges),
             "verified_edges": initial_edges,
-            "observed_incoming_transfers": (
-                funding.get("observed_incoming_transfers") or []
-            ),
+            "observed_incoming_transfers": (funding.get("observed_incoming_transfers") or []),
             "same_funder_groups": funding.get("same_funder_groups") or [],
             "status": (
                 "rpc_verified_initial_funding"
@@ -338,9 +316,7 @@ async def enrich_advanced_report(
     critic["required"] = bool(targets)
     critic["targets"] = targets
     critic["independent_pass"] = True
-    critic["rule"] = (
-        "Critic receives facts and proposed conclusions, not hidden analyst reasoning."
-    )
+    critic["rule"] = "Critic receives facts and proposed conclusions, not hidden analyst reasoning."
     layers["dedicated_critic"] = critic
 
     report["layers"] = layers

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import os
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -78,8 +78,8 @@ def _require_admin_key(supplied: str | None) -> None:
         )
 
 
-def _setting_columns() -> list:
-    columns = [TwitterCrawlerSettings.id]
+def _setting_columns() -> list[Any]:
+    columns: list[Any] = [TwitterCrawlerSettings.id]
     columns.extend(getattr(TwitterCrawlerSettings, field) for field in SETTING_FIELDS)
     columns.append(TwitterCrawlerSettings.updated_at)
     return columns

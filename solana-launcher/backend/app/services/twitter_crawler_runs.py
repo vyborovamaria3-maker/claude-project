@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
@@ -23,28 +23,32 @@ class TwitterCrawlerRunAlreadyRunning(RuntimeError):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _duration_ms(started_at: datetime, finished_at: datetime) -> int:
     if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=timezone.utc)
+        started_at = started_at.replace(tzinfo=UTC)
     return max(0, int((finished_at - started_at).total_seconds() * 1000))
 
 
 async def _expire_stale_runs(session: Any, *, job_name: str, now: datetime) -> int:
     cutoff = now - timedelta(seconds=STALE_RUN_SECONDS)
     rows = (
-        await session.execute(
-            select(TwitterCrawlerRun)
-            .where(
-                TwitterCrawlerRun.job_name == job_name,
-                TwitterCrawlerRun.status == "running",
-                TwitterCrawlerRun.heartbeat_at < cutoff,
+        (
+            await session.execute(
+                select(TwitterCrawlerRun)
+                .where(
+                    TwitterCrawlerRun.job_name == job_name,
+                    TwitterCrawlerRun.status == "running",
+                    TwitterCrawlerRun.heartbeat_at < cutoff,
+                )
+                .with_for_update(skip_locked=True)
             )
-            .with_for_update(skip_locked=True)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for row in rows:
         row.status = "failed"
         row.phase = "stale"

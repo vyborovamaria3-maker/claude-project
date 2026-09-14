@@ -1,16 +1,14 @@
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
-from starlette.requests import Request
-
 from app.api.v1.subscriptions import (
     _require_admin_access,
     _require_checkout_access,
     _require_settings_read_access,
 )
 from app.core.config import Settings
-
+from fastapi import HTTPException
+from starlette.requests import Request
 
 SECRET = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
 CHECKOUT_KEY = "c" * 64

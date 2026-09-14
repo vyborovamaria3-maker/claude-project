@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from app.db.base import Base
 from app.models.advanced_intelligence import (
     CampaignFingerprint,
@@ -14,6 +11,8 @@ from app.services.advanced_intelligence import build_advanced_intelligence_repor
 from app.services.advanced_intelligence_persistence import (
     persist_advanced_intelligence_state,
 )
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 MINT = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
 MINT_2 = "So11111111111111111111111111111111111111112"
@@ -58,7 +57,12 @@ def snapshot(
             },
             "nodes": [
                 {"id": "token:test", "type": "token", "label": "TEST", "attributes": {}},
-                {"id": "x_account:a", "type": "x_account", "label": "@a", "attributes": {"suspicious": True}},
+                {
+                    "id": "x_account:a",
+                    "type": "x_account",
+                    "label": "@a",
+                    "attributes": {"suspicious": True},
+                },
                 {"id": "x_account:b", "type": "x_account", "label": "@b", "attributes": {}},
                 {"id": "tg_channel:c", "type": "tg_channel", "label": "@c", "attributes": {}},
                 {"id": "wallet:w1", "type": "wallet", "label": "w1", "attributes": {"smart": True}},
@@ -66,20 +70,102 @@ def snapshot(
                 {"id": "bundle:1", "type": "bundle", "label": "Bundle 1", "attributes": {}},
             ],
             "edges": [
-                {"id": "e1", "source": "wallet:w1", "target": "bundle:1", "type": "bundle_member", "confidence": 1, "evidenceIds": [], "attributes": {}},
-                {"id": "e2", "source": "wallet:w2", "target": "bundle:1", "type": "bundle_member", "confidence": 1, "evidenceIds": [], "attributes": {}},
-                {"id": "e3", "source": "x_account:a", "target": "url:u", "type": "shared_link", "confidence": 1, "evidenceIds": ["ev1"], "attributes": {}},
-                {"id": "e4", "source": "x_account:b", "target": "url:u", "type": "shared_link", "confidence": 1, "evidenceIds": ["ev2"], "attributes": {}},
-                {"id": "e5", "source": "x_account:a", "target": "wallet:w1", "type": "mentions_wallet", "confidence": 1, "evidenceIds": ["ev1"], "attributes": {}},
-                {"id": "e6", "source": "tg_channel:c", "target": "wallet:w1", "type": "mentions_wallet", "confidence": 1, "evidenceIds": ["ev3"], "attributes": {}},
-                {"id": "e7", "source": "tg_channel:c", "target": "x_account:b", "type": "amplifies", "confidence": 0.8, "evidenceIds": ["ev3", "ev2"], "attributes": {"lagSeconds": 90}},
-                {"id": "e8", "source": "wallet:w1", "target": "token:test", "type": "trades", "confidence": 1, "evidenceIds": [], "attributes": {}},
+                {
+                    "id": "e1",
+                    "source": "wallet:w1",
+                    "target": "bundle:1",
+                    "type": "bundle_member",
+                    "confidence": 1,
+                    "evidenceIds": [],
+                    "attributes": {},
+                },
+                {
+                    "id": "e2",
+                    "source": "wallet:w2",
+                    "target": "bundle:1",
+                    "type": "bundle_member",
+                    "confidence": 1,
+                    "evidenceIds": [],
+                    "attributes": {},
+                },
+                {
+                    "id": "e3",
+                    "source": "x_account:a",
+                    "target": "url:u",
+                    "type": "shared_link",
+                    "confidence": 1,
+                    "evidenceIds": ["ev1"],
+                    "attributes": {},
+                },
+                {
+                    "id": "e4",
+                    "source": "x_account:b",
+                    "target": "url:u",
+                    "type": "shared_link",
+                    "confidence": 1,
+                    "evidenceIds": ["ev2"],
+                    "attributes": {},
+                },
+                {
+                    "id": "e5",
+                    "source": "x_account:a",
+                    "target": "wallet:w1",
+                    "type": "mentions_wallet",
+                    "confidence": 1,
+                    "evidenceIds": ["ev1"],
+                    "attributes": {},
+                },
+                {
+                    "id": "e6",
+                    "source": "tg_channel:c",
+                    "target": "wallet:w1",
+                    "type": "mentions_wallet",
+                    "confidence": 1,
+                    "evidenceIds": ["ev3"],
+                    "attributes": {},
+                },
+                {
+                    "id": "e7",
+                    "source": "tg_channel:c",
+                    "target": "x_account:b",
+                    "type": "amplifies",
+                    "confidence": 0.8,
+                    "evidenceIds": ["ev3", "ev2"],
+                    "attributes": {"lagSeconds": 90},
+                },
+                {
+                    "id": "e8",
+                    "source": "wallet:w1",
+                    "target": "token:test",
+                    "type": "trades",
+                    "confidence": 1,
+                    "evidenceIds": [],
+                    "attributes": {},
+                },
             ],
         },
         "evidence": [
-            {"id": "ev1", "platform": "x", "source": "@a", "text": "same campaign text alpha alpha alpha", "timestamp": "2026-08-12T00:00:00Z"},
-            {"id": "ev2", "platform": "x", "source": "@b", "text": "same campaign text alpha alpha alpha", "timestamp": "2026-08-12T00:01:00Z"},
-            {"id": "ev3", "platform": "telegram", "source": "@c", "text": "same campaign text alpha alpha alpha", "timestamp": "2026-08-12T00:02:00Z"},
+            {
+                "id": "ev1",
+                "platform": "x",
+                "source": "@a",
+                "text": "same campaign text alpha alpha alpha",
+                "timestamp": "2026-08-12T00:00:00Z",
+            },
+            {
+                "id": "ev2",
+                "platform": "x",
+                "source": "@b",
+                "text": "same campaign text alpha alpha alpha",
+                "timestamp": "2026-08-12T00:01:00Z",
+            },
+            {
+                "id": "ev3",
+                "platform": "telegram",
+                "source": "@c",
+                "text": "same campaign text alpha alpha alpha",
+                "timestamp": "2026-08-12T00:02:00Z",
+            },
         ],
         "rawSummary": {
             "xPosts": 2,
@@ -187,9 +273,7 @@ async def test_hypothesis_reputation_uses_distinct_mints_not_refresh_count() -> 
             ai_result=AI_RESULT,
             role="analyst",
         )
-        fingerprints = list(
-            (await session.execute(select(CampaignFingerprint))).scalars().all()
-        )
+        fingerprints = list((await session.execute(select(CampaignFingerprint))).scalars().all())
         hypotheses = list(
             (await session.execute(select(IntelligenceHypothesisState))).scalars().all()
         )
@@ -238,9 +322,7 @@ async def test_critic_can_override_same_mint_without_extra_vote() -> None:
             ai_result=critic_result,
             role="critic",
         )
-        row = (
-            await session.execute(select(IntelligenceHypothesisState))
-        ).scalar_one()
+        row = (await session.execute(select(IntelligenceHypothesisState))).scalar_one()
         assert row.support_count == 0
         assert row.contradiction_count == 1
         assert len(row.observations or {}) == 1
