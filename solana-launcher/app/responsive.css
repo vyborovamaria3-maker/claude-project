@@ -70,6 +70,7 @@ pre {
   [data-tag="trade.kols_twitter"],
   [data-tag="trade.kols_token_flow"],
   [data-tag="trade.kols_live_feed"],
+  [data-tag="trade.kols_backtest"],
   [data-tag="trade.kols_related_wallets"] {
     width: 100%;
     min-width: 0;
@@ -78,6 +79,7 @@ pre {
   [data-tag="trade.kols_twitter"] .surface-panel,
   [data-tag="trade.kols_token_flow"] .surface-panel,
   [data-tag="trade.kols_live_feed"] .surface-panel,
+  [data-tag="trade.kols_backtest"] .surface-panel,
   [data-tag="trade.kols_related_wallets"] .surface-panel {
     min-width: 0;
   }
@@ -198,6 +200,7 @@ pre {
   [data-tag="trade.kols_twitter"] .site-table td:nth-child(2) .font-mono,
   [data-tag="trade.kols_twitter"] article .font-mono,
   [data-tag="trade.kols_live_feed"] .font-mono,
+  [data-tag="trade.kols_backtest"] .font-mono,
   [data-tag="trade.kols_related_wallets"] .font-mono {
     overflow-wrap: anywhere;
     word-break: break-word;
@@ -211,7 +214,8 @@ pre {
     max-height: 28rem;
   }
 
-  [data-tag="trade.kols_live_feed"] [class*="md:grid-cols"] {
+  [data-tag="trade.kols_live_feed"] [class*="md:grid-cols"],
+  [data-tag="trade.kols_backtest"] [class*="md:grid-cols"] {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -265,6 +269,7 @@ pre {
   [data-tag="trade.kols_twitter"],
   [data-tag="trade.kols_token_flow"],
   [data-tag="trade.kols_live_feed"],
+  [data-tag="trade.kols_backtest"],
   [data-tag="trade.kols_related_wallets"] {
     padding-top: 1rem;
     padding-bottom: 1rem;
@@ -283,12 +288,14 @@ pre {
     width: 100%;
   }
 
-  [data-tag="trade.kols_token_flow"] form .site-primary-action {
+  [data-tag="trade.kols_token_flow"] form .site-primary-action,
+  [data-tag="trade.kols_backtest"] .site-primary-action {
     width: 100%;
   }
 
   [data-tag="trade.kols_related_wallets"] .grid,
-  [data-tag="trade.kols_token_flow"] .grid {
+  [data-tag="trade.kols_token_flow"] .grid,
+  [data-tag="trade.kols_backtest"] .grid {
     min-width: 0;
   }
 }
