@@ -31,8 +31,8 @@ jobs:
       - name: Install app dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Install Playwright Chromium for Lighthouse
+        run: npx playwright install chromium
 
       - name: Build frontend from locked app dependencies
         run: npm run build
@@ -51,9 +51,13 @@ jobs:
           exit 1
 
       - name: Cross-browser smoke
-        env:
-          BASE_URL: http://127.0.0.1:3000
-        run: node tests/cross-browser-smoke.mjs
+        run: |
+          docker run --rm --network host --ipc=host \
+            -e BASE_URL=http://127.0.0.1:3000 \
+            -v "$PWD:/work" \
+            -w /work \
+            mcr.microsoft.com/playwright:v1.60.0-noble \
+            node tests/cross-browser-smoke.mjs
 
       - name: Install isolated quality tools
         run: |
