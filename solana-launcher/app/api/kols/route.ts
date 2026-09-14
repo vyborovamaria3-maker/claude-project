@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getKols } from "@/lib/kols/resolver";
-import type { KolListResponse, KolWallet } from "@/lib/kols/types";
+import type { KolListResponse, KolProfile, KolWallet } from "@/lib/kols/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,9 +38,21 @@ function parseBoolean(value: string | null) {
   return value === "1" || value === "true";
 }
 
+function canonicalizeProfileForPersistence(profile: KolProfile): KolProfile {
+  return {
+    ...profile,
+    wallets: profile.wallets.map((wallet) => (
+      wallet.chain === "ethereum"
+        ? { ...wallet, address: wallet.address.toLowerCase() }
+        : wallet
+    )),
+  };
+}
+
 async function persistKols(payload: KolListResponse, exactQuery: boolean) {
   if (!KOL_INTERNAL_KEY || payload.items.length === 0) return;
-  const items = exactQuery ? payload.items : payload.items.slice(0, 50);
+  const items = (exactQuery ? payload.items : payload.items.slice(0, 50))
+    .map(canonicalizeProfileForPersistence);
   try {
     const response = await fetch(`${BACKEND_BASE}/api/v1/kols/internal/sync`, {
       method: "POST",
