@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import WalletTrade
@@ -20,6 +21,49 @@ def trade_value(amount: float | None, price: float | None) -> float | None:
     return value if value >= 0 else None
 
 
+async def _get_or_create_internal_metric(
+    session: AsyncSession,
+    *,
+    wallet_id: int,
+    timeframe_days: int,
+) -> KOLWalletMetric:
+    metric = (
+        await session.execute(
+            select(KOLWalletMetric).where(
+                KOLWalletMetric.wallet_id == wallet_id,
+                KOLWalletMetric.timeframe_days == timeframe_days,
+                KOLWalletMetric.source == "internal_wallet_trades",
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if metric is not None:
+        return metric
+
+    candidate = KOLWalletMetric(
+        wallet_id=wallet_id,
+        timeframe_days=timeframe_days,
+        source="internal_wallet_trades",
+    )
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        metric = (
+            await session.execute(
+                select(KOLWalletMetric).where(
+                    KOLWalletMetric.wallet_id == wallet_id,
+                    KOLWalletMetric.timeframe_days == timeframe_days,
+                    KOLWalletMetric.source == "internal_wallet_trades",
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        if metric is None:
+            raise
+        return metric
+
+
 async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
     now = utcnow()
     cutoff = now - timedelta(days=30)
@@ -27,17 +71,19 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
         (
             await session.execute(
                 select(KOLWalletAttribution, WalletTrade)
-                .join(
+                .outerjoin(
                     WalletTrade,
-                    WalletTrade.wallet_id == KOLWalletAttribution.analytics_wallet_id,
+                    and_(
+                        WalletTrade.wallet_id == KOLWalletAttribution.analytics_wallet_id,
+                        or_(
+                            WalletTrade.buy_timestamp >= cutoff,
+                            WalletTrade.sell_timestamp >= cutoff,
+                        ),
+                    ),
                 )
                 .where(
                     KOLWalletAttribution.chain == "solana",
                     KOLWalletAttribution.analytics_wallet_id.is_not(None),
-                    or_(
-                        WalletTrade.buy_timestamp >= cutoff,
-                        WalletTrade.sell_timestamp >= cutoff,
-                    ),
                 )
             )
         ).all()
@@ -47,7 +93,8 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
     for attribution, trade in rows:
         if attribution.id not in grouped:
             grouped[attribution.id] = (attribution, [])
-        grouped[attribution.id][1].append(trade)
+        if trade is not None:
+            grouped[attribution.id][1].append(trade)
 
     refreshed = 0
     for attribution, trades in grouped.values():
@@ -90,25 +137,16 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
                         elif profit < 0:
                             losses += 1
 
-            metric = (
-                await session.execute(
-                    select(KOLWalletMetric).where(
-                        KOLWalletMetric.wallet_id == attribution.id,
-                        KOLWalletMetric.timeframe_days == days,
-                        KOLWalletMetric.source == "internal_wallet_trades",
-                    ).limit(1)
-                )
-            ).scalar_one_or_none()
-            if metric is None:
-                metric = KOLWalletMetric(
-                    wallet_id=attribution.id,
-                    timeframe_days=days,
-                    source="internal_wallet_trades",
-                )
-                session.add(metric)
-
+            metric = await _get_or_create_internal_metric(
+                session,
+                wallet_id=attribution.id,
+                timeframe_days=days,
+            )
             closed = wins + losses
+            metric.pnl_value = None
+            metric.pnl_currency = None
             metric.realized_pnl_usd = realized if has_realized else None
+            metric.unrealized_pnl_usd = None
             metric.win_rate = (wins / closed * 100) if closed else None
             metric.wins = wins if closed else None
             metric.losses = losses if closed else None
@@ -118,6 +156,7 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
             metric.raw_payload = {
                 "method": "existing_wallet_trades",
                 "window_days": days,
+                "stale_cleared": trade_count == 0,
             }
             metric.calculated_at = now
             refreshed += 1
