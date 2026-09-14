@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import hmac
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.analytics import Token, Wallet, WalletTrade
-from app.models.kol_intelligence import KOLProfile, KOLWalletAttribution
+from app.models.kol_intelligence import KOLProfile, KOLWalletAttribution, KOLWalletMetric
 from app.services.kol_intelligence import (
     build_kol_token_intelligence,
     related_wallet_candidates,
@@ -16,6 +18,10 @@ from app.services.kol_intelligence import (
 from app.services.telegram_parser import is_solana_address
 
 router = APIRouter()
+
+
+class KOLMetricsLookupRequest(BaseModel):
+    addresses: list[str] = Field(default_factory=list, max_length=500)
 
 
 def _require_backend_key(request: Request, supplied: str | None) -> None:
@@ -34,9 +40,21 @@ def _require_backend_key(request: Request, supplied: str | None) -> None:
 
 def _clean_handle(value: str) -> str:
     handle = value.strip().lstrip("@").lower()
-    if not handle or len(handle) > 64 or not all(char.isalnum() or char == "_" for char in handle):
+    if not handle or len(handle) > 15 or not all(char.isalnum() or char == "_" for char in handle):
         raise HTTPException(status_code=400, detail="Invalid X handle")
     return handle
+
+
+def _attribution_rank(
+    attribution: KOLWalletAttribution,
+    profile: KOLProfile,
+) -> tuple[int, float, float, int]:
+    return (
+        1 if attribution.verified else 0,
+        float(attribution.confidence or 0.0),
+        float(profile.confidence or 0.0),
+        -int(profile.id or 0),
+    )
 
 
 @router.get("/internal/token/{mint_address}")
@@ -104,6 +122,70 @@ async def internal_related_wallets(
     }
 
 
+@router.post("/internal/metrics")
+async def internal_kol_metrics(
+    payload: KOLMetricsLookupRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+    x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
+) -> dict[str, Any]:
+    _require_backend_key(request, x_backend_api_key)
+    addresses = list(
+        dict.fromkeys(
+            address.strip()
+            for address in payload.addresses
+            if isinstance(address, str) and is_solana_address(address.strip())
+        )
+    )[:500]
+    if not addresses:
+        return {"items": []}
+
+    rows = list(
+        (
+            await session.execute(
+                select(KOLWalletAttribution.address, KOLWalletMetric)
+                .join(KOLWalletMetric, KOLWalletMetric.wallet_id == KOLWalletAttribution.id)
+                .where(
+                    KOLWalletAttribution.chain == "solana",
+                    KOLWalletAttribution.address.in_(addresses),
+                    KOLWalletMetric.source == "internal_wallet_trades",
+                )
+            )
+        ).all()
+    )
+
+    best: dict[tuple[str, int], KOLWalletMetric] = {}
+    for address, metric in rows:
+        key = (address, metric.timeframe_days)
+        existing = best.get(key)
+        if existing is None or metric.calculated_at > existing.calculated_at:
+            best[key] = metric
+
+    by_address: dict[str, list[dict[str, Any]]] = {address: [] for address in addresses}
+    for (address, _days), metric in best.items():
+        by_address.setdefault(address, []).append(
+            {
+                "timeframeDays": metric.timeframe_days,
+                "source": metric.source,
+                "realizedPnlUsd": metric.realized_pnl_usd,
+                "winRate": metric.win_rate,
+                "wins": metric.wins,
+                "losses": metric.losses,
+                "volumeUsd": metric.volume_usd,
+                "tradeCount": metric.trade_count,
+                "lastTradeAt": metric.last_trade_at.isoformat() if metric.last_trade_at else None,
+                "calculatedAt": metric.calculated_at.isoformat() if metric.calculated_at else None,
+            }
+        )
+    return {
+        "items": [
+            {"address": address, "chain": "solana", "metrics": metrics}
+            for address, metrics in by_address.items()
+            if metrics
+        ]
+    }
+
+
 @router.get("/internal/live-trades")
 async def internal_live_trades(
     request: Request,
@@ -112,7 +194,7 @@ async def internal_live_trades(
     x_backend_api_key: str | None = Header(default=None, alias="X-Backend-API-Key"),
 ) -> dict:
     _require_backend_key(request, x_backend_api_key)
-    rows = list(
+    raw_rows = list(
         (
             await session.execute(
                 select(WalletTrade, Token, Wallet, KOLWalletAttribution, KOLProfile)
@@ -127,13 +209,22 @@ async def internal_live_trades(
                 .order_by(
                     func.coalesce(WalletTrade.sell_timestamp, WalletTrade.buy_timestamp).desc()
                 )
-                .limit(limit)
+                .limit(min(limit * 4, 800))
             )
         ).all()
     )
 
-    events: list[dict] = []
-    for trade, token, wallet, attribution, profile in rows:
+    best_by_trade: dict[int, tuple[WalletTrade, Token, Wallet, KOLWalletAttribution, KOLProfile]] = {}
+    for row in raw_rows:
+        trade, _token, _wallet, attribution, profile = row
+        existing = best_by_trade.get(trade.id)
+        if existing is None or _attribution_rank(attribution, profile) > _attribution_rank(
+            existing[3], existing[4]
+        ):
+            best_by_trade[trade.id] = row
+
+    events: list[dict[str, Any]] = []
+    for trade, token, wallet, attribution, profile in best_by_trade.values():
         common = {
             "handle": profile.twitter_handle,
             "name": profile.display_name,
@@ -144,11 +235,13 @@ async def internal_live_trades(
             "mint": token.mint_address,
             "symbol": token.symbol,
             "tokenName": token.name,
+            "tradeId": trade.id,
         }
         if trade.buy_timestamp:
             events.append(
                 {
                     **common,
+                    "eventId": f"{trade.id}:buy",
                     "side": "buy",
                     "timestamp": trade.buy_timestamp.isoformat(),
                     "amount": trade.amount_buy,
@@ -164,6 +257,7 @@ async def internal_live_trades(
             events.append(
                 {
                     **common,
+                    "eventId": f"{trade.id}:sell",
                     "side": "sell",
                     "timestamp": trade.sell_timestamp.isoformat(),
                     "amount": trade.amount_sold,
@@ -178,4 +272,5 @@ async def internal_live_trades(
             )
 
     events.sort(key=lambda item: item["timestamp"], reverse=True)
-    return {"items": events[:limit], "total": min(len(events), limit)}
+    selected = events[:limit]
+    return {"items": selected, "total": len(selected)}
