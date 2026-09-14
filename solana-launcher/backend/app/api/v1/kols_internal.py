@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.kols import KOLSyncRequest, sync_kols
 from app.db.session import get_db
 from app.models.analytics import Token, Wallet, WalletTrade
 from app.models.kol_intelligence import KOLProfile, KOLWalletAttribution, KOLWalletMetric
@@ -59,6 +60,24 @@ def _attribution_rank(
         float(attribution.confidence or 0.0),
         float(profile.confidence or 0.0),
         -int(profile.id or 0),
+    )
+
+
+@router.post("/internal/sync")
+async def internal_sync_kols(
+    payload: KOLSyncRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+    x_kol_internal_key: str | None = Header(default=None, alias="X-KOL-Internal-Key"),
+) -> dict[str, Any]:
+    _require_kol_internal_key(request, x_kol_internal_key)
+    # Delegate to the existing sync implementation with the backend-only master key.
+    # The public-facing Next service never receives that master credential.
+    return await sync_kols(
+        payload,
+        request,
+        session,
+        request.app.state.settings.backend_api_key,
     )
 
 
