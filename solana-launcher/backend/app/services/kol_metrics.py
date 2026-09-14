@@ -14,6 +14,14 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def trade_value(amount: float | None, price: float | None) -> float | None:
     if amount is None or price is None:
         return None
@@ -110,12 +118,14 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
             last_trade_at: datetime | None = None
 
             for trade in trades:
-                buy_recent = bool(trade.buy_timestamp and trade.buy_timestamp >= start)
-                sell_recent = bool(trade.sell_timestamp and trade.sell_timestamp >= start)
+                buy_timestamp = _as_utc(trade.buy_timestamp)
+                sell_timestamp = _as_utc(trade.sell_timestamp)
+                buy_recent = bool(buy_timestamp and buy_timestamp >= start)
+                sell_recent = bool(sell_timestamp and sell_timestamp >= start)
                 if not buy_recent and not sell_recent:
                     continue
                 trade_count += 1
-                activity = trade.sell_timestamp or trade.buy_timestamp
+                activity = sell_timestamp or buy_timestamp
                 if activity and (last_trade_at is None or activity > last_trade_at):
                     last_trade_at = activity
                 if buy_recent:
