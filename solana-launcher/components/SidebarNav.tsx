@@ -26,7 +26,7 @@ import {
 import clsx from "clsx";
 import { useI18n } from "@/components/providers/I18nProvider";
 import { currentUser } from "@/lib/mockData";
-import { siteDesign, type SiteIconKey, type SiteNavItem, type SiteNavMode } from "@/lib/siteDesign";
+import { siteDesign, type SiteIconKey, type SiteNavMode } from "@/lib/siteDesign";
 
 const icons = {
   barChart: BarChart3,
@@ -49,13 +49,6 @@ const icons = {
   warning: AlertTriangle,
 } satisfies Record<SiteIconKey, typeof Rocket>;
 
-const KOLS_TWITTER_NAV_ITEM: SiteNavItem = {
-  href: "/trade/kols-twitter",
-  labelKey: "nav.xAnalysis",
-  icon: "twitter",
-  tag: "nav.kols_twitter",
-};
-
 export default function SidebarNav() {
   const { t } = useI18n();
   const translate = (key: string) => t(key as Parameters<typeof t>[0]);
@@ -70,18 +63,9 @@ export default function SidebarNav() {
     [pathname]
   );
 
-  const navItems = useMemo<SiteNavItem[]>(() => {
-    const items: SiteNavItem[] = [...siteDesign.nav[activeTab]];
-    if (activeTab === "trade") {
-      const analysisIndex = items.findIndex((item) => item.href === "/trade/analysis");
-      items.splice(analysisIndex >= 0 ? analysisIndex + 1 : items.length, 0, KOLS_TWITTER_NAV_ITEM);
-    }
-    return items;
-  }, [activeTab]);
-
   const allNavItems = useMemo(
-    () => [...navItems, ...siteDesign.nav.common].filter((item) => !item.href.startsWith("/database")),
-    [navItems]
+    () => [...siteDesign.nav[activeTab], ...siteDesign.nav.common].filter((item) => !item.href.startsWith("/database")),
+    [activeTab]
   );
 
   const activeHref = useMemo(() => {
