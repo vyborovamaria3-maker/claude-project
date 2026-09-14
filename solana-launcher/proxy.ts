@@ -3,6 +3,7 @@ import { requireProdAuth } from "@/lib/routeAuth";
 
 const PAID_ROUTE_PREFIXES = [
   "/api/trade",
+  "/api/kols",
 ];
 
 const PRIVATE_PRODUCTION_PREFIXES = [
@@ -16,6 +17,7 @@ const HEAVY_ROUTE_PREFIXES = [
   "/api/trade/creator-fee",
   "/api/miniapp/create-invoice",
   "/api/miniapp/verify-payment",
+  "/api/kols",
 ];
 
 const HEAVY_LIMIT = 30;
