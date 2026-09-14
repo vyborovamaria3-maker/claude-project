@@ -17,6 +17,7 @@ from app.models.kol_intelligence import (
 from app.services.kol_metrics import refresh_kol_metrics
 
 BACKEND_HEADERS = {"X-Backend-API-Key": "test-backend-api-key-2026"}
+KOL_HEADERS = {"X-KOL-Internal-Key": "test-backend-api-key-2026"}
 SOL_ADDRESS = "11111111111111111111111111111111"
 MINT = "So11111111111111111111111111111111111111112"
 
@@ -73,6 +74,22 @@ def sync_payload(
 async def test_kol_sync_requires_backend_key(client):
     response = await client.post("/api/v1/kols/sync", json={"items": [], "sourceStatus": []})
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_internal_sync_requires_scoped_key(client):
+    response = await client.post(
+        "/api/v1/kols/internal/sync",
+        json={"items": [], "sourceStatus": []},
+    )
+    assert response.status_code == 401
+
+    accepted = await client.post(
+        "/api/v1/kols/internal/sync",
+        json={"items": [], "sourceStatus": []},
+        headers=KOL_HEADERS,
+    )
+    assert accepted.status_code == 200, accepted.text
 
 
 @pytest.mark.asyncio
@@ -211,7 +228,7 @@ async def test_shared_wallet_trade_is_counted_once(client, test_app):
         )
         await session.commit()
 
-    response = await client.get(f"/api/v1/kols/internal/token/{MINT}", headers=BACKEND_HEADERS)
+    response = await client.get(f"/api/v1/kols/internal/token/{MINT}", headers=KOL_HEADERS)
     assert response.status_code == 200, response.text
     one_hour = response.json()["windows"]["1h"]
     assert one_hour["buyers"] == 1
@@ -219,7 +236,7 @@ async def test_shared_wallet_trade_is_counted_once(client, test_app):
     assert one_hour["net_flow_usd"] == 20.0
     assert one_hour["handles"] == ["strong_kol"]
 
-    feed = await client.get("/api/v1/kols/internal/live-trades?limit=20", headers=BACKEND_HEADERS)
+    feed = await client.get("/api/v1/kols/internal/live-trades?limit=20", headers=KOL_HEADERS)
     assert feed.status_code == 200, feed.text
     assert len(feed.json()["items"]) == 1
     assert feed.json()["items"][0]["eventId"].endswith(":buy")
