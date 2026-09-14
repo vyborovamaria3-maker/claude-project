@@ -14,6 +14,14 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _trade_value(amount: float | None, price: float | None) -> float | None:
     if amount is None or price is None:
         return None
@@ -108,7 +116,9 @@ async def build_kol_token_intelligence(
 
         for trade, _wallet, attribution, profile in rows:
             handle = profile.twitter_handle
-            if trade.buy_timestamp and trade.buy_timestamp >= cutoff:
+            buy_timestamp = _as_utc(trade.buy_timestamp)
+            sell_timestamp = _as_utc(trade.sell_timestamp)
+            if buy_timestamp and buy_timestamp >= cutoff:
                 buyers.add(handle)
                 if attribution.confidence >= 90:
                     high_confidence_buyers.add(handle)
@@ -116,7 +126,7 @@ async def build_kol_token_intelligence(
                 if value is not None:
                     buy_value += value
                     valued_buys += 1
-            if trade.sell_timestamp and trade.sell_timestamp >= cutoff:
+            if sell_timestamp and sell_timestamp >= cutoff:
                 sellers.add(handle)
                 value = _trade_value(trade.amount_sold, trade.avg_sell_price)
                 if value is not None:
@@ -156,7 +166,7 @@ async def build_kol_token_intelligence(
         )
         actor["wallets"].add(wallet.wallet_address)
         actor["trades"] += 1
-        activity = trade.sell_timestamp or trade.buy_timestamp
+        activity = _as_utc(trade.sell_timestamp or trade.buy_timestamp)
         if activity and (
             actor["last_activity_at"] is None
             or activity > actor["last_activity_at"]
