@@ -31,7 +31,7 @@ class KOLProfile(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    twitter_handle: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    twitter_handle: Mapped[str] = mapped_column(String(64), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     twitter_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -135,7 +135,7 @@ class KOLSourceSync(Base):
     __table_args__ = (UniqueConstraint("source", name="uq_kol_source_sync_source"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(120), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
     records_seen: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
