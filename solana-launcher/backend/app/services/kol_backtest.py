@@ -134,7 +134,7 @@ async def backtest_kol_signals(
 ) -> dict[str, Any]:
     """Backtest KOL accumulation/distribution signals against historical prices.
 
-    Signal construction uses only trade timestamps available at or before the trigger.
+    Signal construction uses only event timestamps available at or before the trigger.
     The entry price must be an independently timestamped TokenMetric at or before the
     trigger; future TokenMetric rows are consulted only for outcome measurement.
     Current KOL labels can still introduce attribution-selection bias unless strict
@@ -169,50 +169,58 @@ async def backtest_kol_signals(
         ).all()
     )
 
-    # A single wallet can have several labels. Keep one strongest identity per
-    # WalletTrade so neither actor counts nor returns are duplicated by the join.
-    best_by_trade: dict[int, tuple[WalletTrade, Token, Wallet, KOLWalletAttribution, KOLProfile]] = {}
-    for row in raw_rows:
-        trade, _token, _wallet, attribution, profile = row
-        existing = best_by_trade.get(trade.id)
-        if existing is None or _attribution_rank(attribution, profile) > _attribution_rank(
-            existing[3], existing[4]
-        ):
-            best_by_trade[trade.id] = row
+    # Canonicalize attribution per historical event, not per whole WalletTrade.
+    # In strict mode a newer stronger label must not erase an older valid label from
+    # a buy/sell event that happened before the stronger label was first observed.
+    canonical_events: dict[
+        tuple[int, str],
+        tuple[WalletTrade, Token, Wallet, KOLWalletAttribution, KOLProfile, datetime],
+    ] = {}
+    for trade, token, wallet, attribution, profile in raw_rows:
+        first_seen_at = _aware(attribution.first_seen_at)
+        candidates: list[tuple[str, datetime]] = []
+        if trade.buy_timestamp:
+            candidates.append(("buy", _aware(trade.buy_timestamp)))
+        if trade.sell_timestamp:
+            candidates.append(("sell", _aware(trade.sell_timestamp)))
+
+        for side, event_at in candidates:
+            if event_at < cutoff:
+                continue
+            if strict_attribution_time and event_at < first_seen_at:
+                continue
+            key = (trade.id, side)
+            existing = canonical_events.get(key)
+            if existing is None or _attribution_rank(attribution, profile) > _attribution_rank(
+                existing[3], existing[4]
+            ):
+                canonical_events[key] = (
+                    trade,
+                    token,
+                    wallet,
+                    attribution,
+                    profile,
+                    event_at,
+                )
 
     events_by_token_side: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
     tokens: dict[int, Token] = {}
-    for trade, token, wallet, attribution, profile in best_by_trade.values():
+    unique_trade_ids: set[int] = set()
+    for (trade_id, side), row in canonical_events.items():
+        trade, token, wallet, attribution, profile, event_at = row
+        del trade
         tokens[token.id] = token
-        first_seen_at = _aware(attribution.first_seen_at)
-        if trade.buy_timestamp:
-            buy_timestamp = _aware(trade.buy_timestamp)
-            if buy_timestamp >= cutoff and (
-                not strict_attribution_time or buy_timestamp >= first_seen_at
-            ):
-                events_by_token_side[(token.id, "accumulation")].append(
-                    {
-                        "timestamp": buy_timestamp,
-                        "handle": profile.twitter_handle,
-                        "wallet": wallet.wallet_address,
-                        "tradeId": trade.id,
-                        "confidence": float(attribution.confidence or 0.0),
-                    }
-                )
-        if trade.sell_timestamp:
-            sell_timestamp = _aware(trade.sell_timestamp)
-            if sell_timestamp >= cutoff and (
-                not strict_attribution_time or sell_timestamp >= first_seen_at
-            ):
-                events_by_token_side[(token.id, "distribution")].append(
-                    {
-                        "timestamp": sell_timestamp,
-                        "handle": profile.twitter_handle,
-                        "wallet": wallet.wallet_address,
-                        "tradeId": trade.id,
-                        "confidence": float(attribution.confidence or 0.0),
-                    }
-                )
+        unique_trade_ids.add(trade_id)
+        signal_type = "accumulation" if side == "buy" else "distribution"
+        events_by_token_side[(token.id, signal_type)].append(
+            {
+                "timestamp": event_at,
+                "handle": profile.twitter_handle,
+                "wallet": wallet.wallet_address,
+                "tradeId": trade_id,
+                "confidence": float(attribution.confidence or 0.0),
+            }
+        )
 
     candidate_token_ids = list(tokens)
     metric_rows: list[tuple[int, datetime, float | None]] = []
@@ -386,7 +394,8 @@ async def backtest_kol_signals(
         },
         "coverage": {
             "joinedTradeRows": len(raw_rows),
-            "uniqueTrades": len(best_by_trade),
+            "canonicalEvents": len(canonical_events),
+            "uniqueTrades": len(unique_trade_ids),
             "tokensWithAttributedTrades": len(tokens),
             "tokensWithPriceHistory": len(price_points),
             "rawSignalTriggers": raw_signal_triggers,
@@ -405,11 +414,11 @@ async def backtest_kol_signals(
             "entryPrice": "latest TokenMetric at or before the signal (max age 2h); signals without a pre-signal price are excluded from evaluated outcomes",
             "outcomes": "first TokenMetric at or after each target horizon within a bounded lag tolerance",
             "eventGranularity": "WalletTrade position-level buy/sell timestamps; repeated intra-position fills may be compressed upstream",
-            "dedupe": "one strongest KOL attribution per WalletTrade; one identity per rolling signal window",
+            "dedupe": "one strongest eligible KOL attribution per buy/sell event timestamp; one identity per rolling signal window",
             "transactionCost": f"{cost_bps} bps subtracted from directional return",
             "lookaheadGuard": "future prices and position-average trade prices are never used for signal construction or entry selection",
             "attributionBias": (
-                "strict: trades before attribution.first_seen_at are excluded"
+                "strict: each buy/sell event only uses attributions already observed by that event timestamp"
                 if strict_attribution_time
                 else "current KOL attribution snapshot is applied to historical trades; this can introduce selection/look-ahead bias"
             ),
