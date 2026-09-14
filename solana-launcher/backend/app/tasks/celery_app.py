@@ -12,6 +12,7 @@ celery_app = Celery(
         "app.tasks.notifications",
         "app.tasks.etl",
         "app.tasks.intelligence",
+        "app.tasks.kols",
     ],
 )
 
@@ -41,6 +42,10 @@ celery_app.conf.update(
         "evaluate-intelligence-outcomes-every-15-minutes": {
             "task": "app.tasks.intelligence.evaluate_matured_outcomes",
             "schedule": 900.0,
+        },
+        "refresh-kol-wallet-metrics-every-5-minutes": {
+            "task": "app.tasks.kols.refresh_metrics",
+            "schedule": 300.0,
         },
     },
 )
