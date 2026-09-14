@@ -27,7 +27,6 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("twitter_handle", name="uq_kol_profiles_twitter_handle"),
     )
-    op.create_index("ix_kol_profiles_twitter_handle", "kol_profiles", ["twitter_handle"], unique=True)
     op.create_index("ix_kol_profiles_confidence", "kol_profiles", ["confidence"])
     op.create_index("ix_kol_profiles_verified_updated", "kol_profiles", ["verified", "updated_at"])
 
@@ -103,7 +102,6 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("source", name="uq_kol_source_sync_source"),
     )
-    op.create_index("ix_kol_source_syncs_source", "kol_source_syncs", ["source"], unique=True)
 
 
 def downgrade() -> None:
