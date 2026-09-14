@@ -6,7 +6,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const BACKEND_BASE = (process.env.BACKEND_URL || "http://backend:8000").replace(/\/$/, "");
-const BACKEND_KEY = process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || "";
+const KOL_INTERNAL_KEY = process.env.KOL_INTERNAL_KEY || (
+  process.env.NODE_ENV !== "production"
+    ? process.env.BACKEND_API_KEY || process.env.INTERNAL_API_KEY || ""
+    : ""
+);
 
 type InternalMetric = {
   timeframeDays: number;
@@ -35,14 +39,14 @@ function parseBoolean(value: string | null) {
 }
 
 async function persistKols(payload: KolListResponse, exactQuery: boolean) {
-  if (!BACKEND_KEY || payload.items.length === 0) return;
+  if (!KOL_INTERNAL_KEY || payload.items.length === 0) return;
   const items = exactQuery ? payload.items : payload.items.slice(0, 50);
   try {
-    const response = await fetch(`${BACKEND_BASE}/api/v1/kols/sync`, {
+    const response = await fetch(`${BACKEND_BASE}/api/v1/kols/internal/sync`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "X-Backend-API-Key": BACKEND_KEY,
+        "X-KOL-Internal-Key": KOL_INTERNAL_KEY,
       },
       body: JSON.stringify({ items, sourceStatus: payload.sourceStatus }),
       cache: "no-store",
@@ -80,7 +84,7 @@ function applyInternalMetric(wallet: KolWallet, metric: InternalMetric) {
 }
 
 async function mergeInternalMetrics(payload: KolListResponse) {
-  if (!BACKEND_KEY) return;
+  if (!KOL_INTERNAL_KEY) return;
   const addresses = Array.from(
     new Set(
       payload.items.flatMap((profile) =>
@@ -97,7 +101,7 @@ async function mergeInternalMetrics(payload: KolListResponse) {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "X-Backend-API-Key": BACKEND_KEY,
+        "X-KOL-Internal-Key": KOL_INTERNAL_KEY,
       },
       body: JSON.stringify({ addresses }),
       cache: "no-store",
