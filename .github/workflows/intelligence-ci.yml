@@ -20,7 +20,7 @@ on:
 permissions:
   contents: read
 
-# Runner selection is controlled centrally by POTAPOFF_RUNNER.
+# Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   intelligence-tests:
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}

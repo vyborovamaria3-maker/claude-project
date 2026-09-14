@@ -15,7 +15,7 @@ on:
 permissions:
   contents: read
 
-# Runner selection is controlled centrally by POTAPOFF_RUNNER.
+# Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 concurrency:
   group: potapoff-predeploy-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
