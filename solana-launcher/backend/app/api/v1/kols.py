@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -28,6 +30,7 @@ from app.services.kol_intelligence import (
 from app.services.telegram_parser import is_solana_address
 
 router = APIRouter()
+EVM_ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 
 
 class KOLSyncRequest(BaseModel):
@@ -55,7 +58,7 @@ def _require_backend_key(request: Request, supplied: str | None) -> None:
 
 def _clean_handle(value: Any) -> str:
     handle = str(value or "").strip().lstrip("@").lower()
-    if not handle or len(handle) > 64 or not all(char.isalnum() or char == "_" for char in handle):
+    if not handle or len(handle) > 15 or not all(char.isalnum() or char == "_" for char in handle):
         raise ValueError("invalid twitter handle")
     return handle
 
@@ -75,6 +78,21 @@ def _int(value: Any) -> int | None:
         return None
 
 
+def _clamp_confidence(value: Any) -> float | None:
+    parsed = _float(value)
+    if parsed is None:
+        return None
+    return max(0.0, min(100.0, parsed))
+
+
+def _is_valid_wallet(address: str, chain: str) -> bool:
+    if chain == "solana":
+        return is_solana_address(address)
+    if chain == "ethereum":
+        return bool(EVM_ADDRESS_RE.fullmatch(address))
+    return False
+
+
 def _evidence_fingerprint(row: dict[str, Any]) -> str:
     source = str(row.get("source") or "")
     kind = str(row.get("kind") or "")
@@ -83,7 +101,7 @@ def _evidence_fingerprint(row: dict[str, Any]) -> str:
     return hashlib.sha256(f"{source}|{kind}|{detail}|{url}".encode()).hexdigest()
 
 
-def _serialize_profile(profile: KOLProfile) -> dict[str, Any]:
+def serialize_profile(profile: KOLProfile) -> dict[str, Any]:
     return {
         "id": profile.id,
         "handle": profile.twitter_handle,
@@ -141,11 +159,268 @@ def _serialize_profile(profile: KOLProfile) -> dict[str, Any]:
     }
 
 
-def _profile_options():
+def profile_options():
     return (
         selectinload(KOLProfile.wallets).selectinload(KOLWalletAttribution.evidence),
         selectinload(KOLProfile.wallets).selectinload(KOLWalletAttribution.metrics),
     )
+
+
+async def _get_or_create_profile(session: AsyncSession, handle: str) -> KOLProfile:
+    profile = (
+        await session.execute(
+            select(KOLProfile).where(KOLProfile.twitter_handle == handle).limit(1)
+        )
+    ).scalar_one_or_none()
+    if profile is not None:
+        return profile
+
+    candidate = KOLProfile(twitter_handle=handle)
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        profile = (
+            await session.execute(
+                select(KOLProfile).where(KOLProfile.twitter_handle == handle).limit(1)
+            )
+        ).scalar_one_or_none()
+        if profile is None:
+            raise
+        return profile
+
+
+async def _get_or_create_attribution(
+    session: AsyncSession,
+    *,
+    kol_id: int,
+    chain: str,
+    address: str,
+    now: datetime,
+) -> KOLWalletAttribution:
+    attribution = (
+        await session.execute(
+            select(KOLWalletAttribution).where(
+                KOLWalletAttribution.kol_id == kol_id,
+                KOLWalletAttribution.chain == chain,
+                KOLWalletAttribution.address == address,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if attribution is not None:
+        return attribution
+
+    candidate = KOLWalletAttribution(
+        kol_id=kol_id,
+        address=address,
+        chain=chain,
+        first_seen_at=now,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        attribution = (
+            await session.execute(
+                select(KOLWalletAttribution).where(
+                    KOLWalletAttribution.kol_id == kol_id,
+                    KOLWalletAttribution.chain == chain,
+                    KOLWalletAttribution.address == address,
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        if attribution is None:
+            raise
+        return attribution
+
+
+async def _get_or_create_analytics_wallet(
+    session: AsyncSession,
+    address: str,
+    now: datetime,
+) -> Wallet:
+    wallet = (
+        await session.execute(
+            select(Wallet).where(Wallet.wallet_address == address).limit(1)
+        )
+    ).scalar_one_or_none()
+    if wallet is not None:
+        return wallet
+
+    candidate = Wallet(wallet_address=address, first_seen_date=now, tags=["kol"])
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        wallet = (
+            await session.execute(
+                select(Wallet).where(Wallet.wallet_address == address).limit(1)
+            )
+        ).scalar_one_or_none()
+        if wallet is None:
+            raise
+        return wallet
+
+
+async def _get_or_create_evidence(
+    session: AsyncSession,
+    *,
+    wallet_id: int,
+    source: str,
+    kind: str,
+    fingerprint: str,
+) -> KOLWalletEvidence:
+    evidence = (
+        await session.execute(
+            select(KOLWalletEvidence).where(
+                KOLWalletEvidence.wallet_id == wallet_id,
+                KOLWalletEvidence.source == source,
+                KOLWalletEvidence.kind == kind,
+                KOLWalletEvidence.fingerprint == fingerprint,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if evidence is not None:
+        return evidence
+
+    candidate = KOLWalletEvidence(
+        wallet_id=wallet_id,
+        source=source,
+        kind=kind,
+        fingerprint=fingerprint,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        evidence = (
+            await session.execute(
+                select(KOLWalletEvidence).where(
+                    KOLWalletEvidence.wallet_id == wallet_id,
+                    KOLWalletEvidence.source == source,
+                    KOLWalletEvidence.kind == kind,
+                    KOLWalletEvidence.fingerprint == fingerprint,
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        if evidence is None:
+            raise
+        return evidence
+
+
+async def _get_or_create_metric(
+    session: AsyncSession,
+    *,
+    wallet_id: int,
+    timeframe_days: int,
+    source: str,
+) -> KOLWalletMetric:
+    metric = (
+        await session.execute(
+            select(KOLWalletMetric).where(
+                KOLWalletMetric.wallet_id == wallet_id,
+                KOLWalletMetric.timeframe_days == timeframe_days,
+                KOLWalletMetric.source == source,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if metric is not None:
+        return metric
+
+    candidate = KOLWalletMetric(
+        wallet_id=wallet_id,
+        timeframe_days=timeframe_days,
+        source=source,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        metric = (
+            await session.execute(
+                select(KOLWalletMetric).where(
+                    KOLWalletMetric.wallet_id == wallet_id,
+                    KOLWalletMetric.timeframe_days == timeframe_days,
+                    KOLWalletMetric.source == source,
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        if metric is None:
+            raise
+        return metric
+
+
+async def _get_or_create_source_sync(session: AsyncSession, source: str) -> KOLSourceSync:
+    row = (
+        await session.execute(
+            select(KOLSourceSync).where(KOLSourceSync.source == source).limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        return row
+
+    candidate = KOLSourceSync(source=source)
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        row = (
+            await session.execute(
+                select(KOLSourceSync).where(KOLSourceSync.source == source).limit(1)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise
+        return row
+
+
+def _source_profile_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for raw_profile in items:
+        sources = {str(value)[:120] for value in raw_profile.get("sources") or [] if value}
+        for raw_wallet in raw_profile.get("wallets") or []:
+            if not isinstance(raw_wallet, dict):
+                continue
+            for evidence in raw_wallet.get("evidence") or []:
+                if isinstance(evidence, dict) and evidence.get("source"):
+                    sources.add(str(evidence.get("source"))[:120])
+        for source in sources:
+            counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def _window_metric_values(raw_metrics: dict[str, Any], days: int) -> tuple[float | None, int | None, int | None, float | None]:
+    suffix = f"{days}d"
+    pnl = _float(raw_metrics.get(f"pnl{suffix}Sol"))
+    wins = _int(raw_metrics.get(f"wins{suffix}"))
+    losses = _int(raw_metrics.get(f"losses{suffix}"))
+    win_rate = _float(raw_metrics.get(f"winRate{suffix}"))
+
+    has_specific = any(
+        key in raw_metrics
+        for key in (
+            f"wins{suffix}",
+            f"losses{suffix}",
+            f"winRate{suffix}",
+        )
+    )
+    if not has_specific and pnl is not None:
+        wins = _int(raw_metrics.get("wins"))
+        losses = _int(raw_metrics.get("losses"))
+        win_rate = _float(raw_metrics.get("winRate"))
+    return pnl, wins, losses, win_rate
 
 
 @router.get("")
@@ -158,7 +433,7 @@ async def list_kols(
     current_user=Depends(get_current_subscriber),
 ) -> dict[str, Any]:
     del current_user
-    stmt = select(KOLProfile).options(*_profile_options())
+    stmt = select(KOLProfile).options(*profile_options())
     if q:
         value = q.strip().lstrip("@").lower()
         if value:
@@ -180,7 +455,7 @@ async def list_kols(
             )
         ).scalars().unique().all()
     )
-    return {"items": [_serialize_profile(item) for item in rows], "total": len(rows)}
+    return {"items": [serialize_profile(item) for item in rows], "total": len(rows)}
 
 
 @router.get("/source-health")
@@ -235,14 +510,14 @@ async def get_kol(
     profile = (
         await session.execute(
             select(KOLProfile)
-            .options(*_profile_options())
+            .options(*profile_options())
             .where(KOLProfile.twitter_handle == normalized)
             .limit(1)
         )
     ).scalar_one_or_none()
     if profile is None:
         raise HTTPException(status_code=404, detail="KOL not found")
-    return _serialize_profile(profile)
+    return serialize_profile(profile)
 
 
 @router.get("/{handle}/related")
@@ -266,7 +541,7 @@ async def get_related_wallets(
         raise HTTPException(status_code=404, detail="KOL not found")
 
     items: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[str] = {wallet.address for wallet in profile.wallets}
     for wallet in profile.wallets:
         if wallet.chain != "solana":
             continue
@@ -299,141 +574,122 @@ async def sync_kols(
     now = utcnow()
     synced_profiles = 0
     synced_wallets = 0
+    source_counts = _source_profile_counts(payload.items)
 
     for raw_profile in payload.items:
         try:
             handle = _clean_handle(raw_profile.get("handle"))
         except ValueError:
             continue
-        profile = (
-            await session.execute(
-                select(KOLProfile).where(KOLProfile.twitter_handle == handle).limit(1)
-            )
-        ).scalar_one_or_none()
-        if profile is None:
-            profile = KOLProfile(twitter_handle=handle)
-            session.add(profile)
-            await session.flush()
+        profile = await _get_or_create_profile(session, handle)
 
-        profile.display_name = str(raw_profile.get("name") or "")[:255] or profile.display_name
-        profile.avatar_url = str(raw_profile.get("avatar") or "")[:1024] or None
-        profile.twitter_url = str(raw_profile.get("twitterUrl") or f"https://x.com/{handle}")[:512]
-        profile.telegram_url = str(raw_profile.get("telegramUrl") or "")[:512] or None
-        profile.confidence = max(0.0, min(100.0, _float(raw_profile.get("confidence")) or 0.0))
-        profile.verified = bool(raw_profile.get("verified"))
-        profile.source_meta = {"sources": [str(item)[:120] for item in raw_profile.get("sources") or []][:50]}
+        display_name = str(raw_profile.get("name") or "").strip()[:255]
+        avatar_url = str(raw_profile.get("avatar") or "").strip()[:1024]
+        twitter_url = str(raw_profile.get("twitterUrl") or "").strip()[:512]
+        telegram_url = str(raw_profile.get("telegramUrl") or "").strip()[:512]
+        if display_name:
+            profile.display_name = display_name
+        if avatar_url:
+            profile.avatar_url = avatar_url
+        if twitter_url:
+            profile.twitter_url = twitter_url
+        elif not profile.twitter_url:
+            profile.twitter_url = f"https://x.com/{handle}"
+        if telegram_url:
+            profile.telegram_url = telegram_url
+
+        incoming_profile_confidence = _clamp_confidence(raw_profile.get("confidence"))
+        if incoming_profile_confidence is not None:
+            profile.confidence = max(float(profile.confidence or 0.0), incoming_profile_confidence)
+        profile.verified = bool(profile.verified or raw_profile.get("verified"))
+        existing_sources = set((profile.source_meta or {}).get("sources", []))
+        incoming_sources = {str(item)[:120] for item in raw_profile.get("sources") or [] if item}
+        profile.source_meta = {"sources": sorted(existing_sources | incoming_sources)[:50]}
         profile.updated_at = now
+        await session.flush()
         synced_profiles += 1
 
         for raw_wallet in raw_profile.get("wallets") or []:
+            if not isinstance(raw_wallet, dict):
+                continue
             address = str(raw_wallet.get("address") or "").strip()
             chain = str(raw_wallet.get("chain") or "").strip().lower()
-            if not address or chain not in {"solana", "ethereum"} or len(address) > 128:
+            if not address or not _is_valid_wallet(address, chain):
                 continue
-            attribution = (
-                await session.execute(
-                    select(KOLWalletAttribution).where(
-                        KOLWalletAttribution.kol_id == profile.id,
-                        KOLWalletAttribution.chain == chain,
-                        KOLWalletAttribution.address == address,
-                    ).limit(1)
-                )
-            ).scalar_one_or_none()
-            if attribution is None:
-                attribution = KOLWalletAttribution(
-                    kol_id=profile.id,
-                    address=address,
-                    chain=chain,
-                    first_seen_at=now,
-                )
-                session.add(attribution)
-                await session.flush()
 
-            attribution.confidence = max(0.0, min(100.0, _float(raw_wallet.get("confidence")) or 0.0))
-            attribution.verified = bool(raw_wallet.get("verified"))
+            attribution = await _get_or_create_attribution(
+                session,
+                kol_id=profile.id,
+                chain=chain,
+                address=address,
+                now=now,
+            )
+            incoming_wallet_confidence = _clamp_confidence(raw_wallet.get("confidence"))
+            if incoming_wallet_confidence is not None:
+                attribution.confidence = max(
+                    float(attribution.confidence or 0.0),
+                    incoming_wallet_confidence,
+                )
+            attribution.verified = bool(attribution.verified or raw_wallet.get("verified"))
             attribution.last_seen_at = now
-            evidences = [item for item in raw_wallet.get("evidence") or [] if isinstance(item, dict)]
-            attribution.source_count = len({str(item.get("source") or "") for item in evidences if item.get("source")})
 
-            if chain == "solana" and is_solana_address(address):
-                analytics_wallet = (
-                    await session.execute(
-                        select(Wallet).where(Wallet.wallet_address == address).limit(1)
-                    )
-                ).scalar_one_or_none()
-                if analytics_wallet is None:
-                    analytics_wallet = Wallet(
-                        wallet_address=address,
-                        first_seen_date=now,
-                        tags=["kol"],
-                    )
-                    session.add(analytics_wallet)
-                    await session.flush()
-                elif "kol" not in (analytics_wallet.tags or []):
+            if chain == "solana":
+                analytics_wallet = await _get_or_create_analytics_wallet(session, address, now)
+                if "kol" not in (analytics_wallet.tags or []):
                     analytics_wallet.tags = [*(analytics_wallet.tags or []), "kol"]
                 attribution.analytics_wallet_id = analytics_wallet.id
 
             await session.flush()
+            evidences = [item for item in raw_wallet.get("evidence") or [] if isinstance(item, dict)]
             for raw_evidence in evidences:
                 source = str(raw_evidence.get("source") or "unknown")[:120]
                 kind = str(raw_evidence.get("kind") or "curated_label")[:64]
                 fingerprint = _evidence_fingerprint(raw_evidence)
-                evidence = (
-                    await session.execute(
-                        select(KOLWalletEvidence).where(
-                            KOLWalletEvidence.wallet_id == attribution.id,
-                            KOLWalletEvidence.source == source,
-                            KOLWalletEvidence.kind == kind,
-                            KOLWalletEvidence.fingerprint == fingerprint,
-                        ).limit(1)
-                    )
-                ).scalar_one_or_none()
-                if evidence is None:
-                    evidence = KOLWalletEvidence(
-                        wallet_id=attribution.id,
-                        source=source,
-                        kind=kind,
-                        fingerprint=fingerprint,
-                    )
-                    session.add(evidence)
-                evidence.confidence = max(0.0, min(100.0, _float(raw_evidence.get("confidence")) or 0.0))
-                evidence.verified = bool(raw_evidence.get("verified"))
-                evidence.detail = str(raw_evidence.get("detail") or "")[:1000] or None
-                evidence.source_url = str(raw_evidence.get("url") or "")[:1024] or None
+                evidence = await _get_or_create_evidence(
+                    session,
+                    wallet_id=attribution.id,
+                    source=source,
+                    kind=kind,
+                    fingerprint=fingerprint,
+                )
+                evidence.confidence = _clamp_confidence(raw_evidence.get("confidence")) or 0.0
+                evidence.verified = bool(evidence.verified or raw_evidence.get("verified"))
+                evidence.detail = str(raw_evidence.get("detail") or "")[:1000] or evidence.detail
+                evidence.source_url = str(raw_evidence.get("url") or "")[:1024] or evidence.source_url
                 evidence.raw_payload = raw_evidence
                 evidence.observed_at = now
 
+            source_count = (
+                await session.execute(
+                    select(func.count(func.distinct(KOLWalletEvidence.source))).where(
+                        KOLWalletEvidence.wallet_id == attribution.id
+                    )
+                )
+            ).scalar_one()
+            attribution.source_count = int(source_count or 0)
+
             raw_metrics = raw_wallet.get("metrics") or {}
             if isinstance(raw_metrics, dict):
-                for days, key in ((1, "pnl1dSol"), (7, "pnl7dSol"), (30, "pnl30dSol")):
-                    pnl = _float(raw_metrics.get(key))
-                    wins = _int(raw_metrics.get("wins"))
-                    losses = _int(raw_metrics.get("losses"))
-                    win_rate = _float(raw_metrics.get("winRate"))
+                for days in (1, 7, 30):
+                    pnl, wins, losses, win_rate = _window_metric_values(raw_metrics, days)
                     if pnl is None and wins is None and losses is None and win_rate is None:
                         continue
-                    metric = (
-                        await session.execute(
-                            select(KOLWalletMetric).where(
-                                KOLWalletMetric.wallet_id == attribution.id,
-                                KOLWalletMetric.timeframe_days == days,
-                                KOLWalletMetric.source == "resolver",
-                            ).limit(1)
-                        )
-                    ).scalar_one_or_none()
-                    if metric is None:
-                        metric = KOLWalletMetric(
-                            wallet_id=attribution.id,
-                            timeframe_days=days,
-                            source="resolver",
-                        )
-                        session.add(metric)
+                    metric = await _get_or_create_metric(
+                        session,
+                        wallet_id=attribution.id,
+                        timeframe_days=days,
+                        source="resolver",
+                    )
                     metric.pnl_value = pnl
                     metric.pnl_currency = "SOL" if pnl is not None else None
                     metric.wins = wins
                     metric.losses = losses
                     metric.win_rate = win_rate
-                    metric.trade_count = (wins + losses) if wins is not None and losses is not None else None
+                    metric.trade_count = (
+                        wins + losses
+                        if wins is not None and losses is not None
+                        else None
+                    )
                     metric.raw_payload = raw_metrics
                     metric.calculated_at = now
             synced_wallets += 1
@@ -442,18 +698,11 @@ async def sync_kols(
         source = str(raw_status.get("source") or "")[:120]
         if not source:
             continue
-        row = (
-            await session.execute(
-                select(KOLSourceSync).where(KOLSourceSync.source == source).limit(1)
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            row = KOLSourceSync(source=source)
-            session.add(row)
+        row = await _get_or_create_source_sync(session, source)
         ok = bool(raw_status.get("ok"))
         row.status = "ok" if ok else "error"
         row.detail = str(raw_status.get("detail") or "")[:1000] or None
-        row.records_seen = synced_profiles
+        row.records_seen = source_counts.get(source, 0)
         row.updated_at = now
         if ok:
             row.last_success_at = now
