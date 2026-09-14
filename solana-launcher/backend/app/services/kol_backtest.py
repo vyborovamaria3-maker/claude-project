@@ -27,6 +27,10 @@ def _safe_float(value: Any) -> float | None:
     return parsed
 
 
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def _attribution_rank(
     attribution: KOLWalletAttribution,
     profile: KOLProfile,
@@ -63,6 +67,7 @@ def _price_at_or_before(
     *,
     max_age: timedelta,
 ) -> tuple[float, datetime] | None:
+    target = _aware(target)
     index = bisect_right(timestamps, target) - 1
     if index < 0:
         return None
@@ -79,6 +84,7 @@ def _price_at_or_after(
     *,
     max_lag: timedelta,
 ) -> tuple[float, datetime] | None:
+    target = _aware(target)
     index = bisect_left(timestamps, target)
     if index >= len(points):
         return None
@@ -128,10 +134,10 @@ async def backtest_kol_signals(
 ) -> dict[str, Any]:
     """Backtest KOL accumulation/distribution signals against historical prices.
 
-    The signal construction uses only trade events available at or before the signal
-    timestamp. Future TokenMetric rows are consulted only for outcome measurement.
-    Current attribution labels may still introduce selection/look-ahead bias unless
-    strict_attribution_time=True, so that caveat is returned explicitly.
+    Signal construction uses only trade timestamps available at or before the trigger.
+    Historical TokenMetric data at/before the trigger is preferred for the baseline;
+    future TokenMetric rows are consulted only for outcome measurement. Current KOL
+    labels can still introduce attribution-selection bias unless strict mode is used.
     """
 
     now = utcnow()
@@ -163,8 +169,8 @@ async def backtest_kol_signals(
         ).all()
     )
 
-    # A single wallet can have multiple KOL labels. Pick the strongest attribution
-    # per trade so money and actor counts are never duplicated by the join.
+    # A single wallet can have several labels. Keep one strongest identity per
+    # WalletTrade so neither actor counts nor returns are duplicated by the join.
     best_by_trade: dict[int, tuple[WalletTrade, Token, Wallet, KOLWalletAttribution, KOLProfile]] = {}
     for row in raw_rows:
         trade, _token, _wallet, attribution, profile = row
@@ -178,11 +184,15 @@ async def backtest_kol_signals(
     tokens: dict[int, Token] = {}
     for trade, token, wallet, attribution, profile in best_by_trade.values():
         tokens[token.id] = token
-        if trade.buy_timestamp and trade.buy_timestamp >= cutoff:
-            if not strict_attribution_time or trade.buy_timestamp >= attribution.first_seen_at:
+        first_seen_at = _aware(attribution.first_seen_at)
+        if trade.buy_timestamp:
+            buy_timestamp = _aware(trade.buy_timestamp)
+            if buy_timestamp >= cutoff and (
+                not strict_attribution_time or buy_timestamp >= first_seen_at
+            ):
                 events_by_token_side[(token.id, "accumulation")].append(
                     {
-                        "timestamp": trade.buy_timestamp,
+                        "timestamp": buy_timestamp,
                         "handle": profile.twitter_handle,
                         "wallet": wallet.wallet_address,
                         "tradeId": trade.id,
@@ -190,11 +200,14 @@ async def backtest_kol_signals(
                         "confidence": float(attribution.confidence or 0.0),
                     }
                 )
-        if trade.sell_timestamp and trade.sell_timestamp >= cutoff:
-            if not strict_attribution_time or trade.sell_timestamp >= attribution.first_seen_at:
+        if trade.sell_timestamp:
+            sell_timestamp = _aware(trade.sell_timestamp)
+            if sell_timestamp >= cutoff and (
+                not strict_attribution_time or sell_timestamp >= first_seen_at
+            ):
                 events_by_token_side[(token.id, "distribution")].append(
                     {
-                        "timestamp": trade.sell_timestamp,
+                        "timestamp": sell_timestamp,
                         "handle": profile.twitter_handle,
                         "wallet": wallet.wallet_address,
                         "tradeId": trade.id,
@@ -224,13 +237,13 @@ async def backtest_kol_signals(
     for token_id, timestamp, raw_price in metric_rows:
         price = _safe_float(raw_price)
         if price is not None and price > 0:
-            price_points[token_id].append((timestamp, price))
+            price_points[token_id].append((_aware(timestamp), price))
     price_timestamps = {
         token_id: [timestamp for timestamp, _price in points]
         for token_id, points in price_points.items()
     }
 
-    signals: list[dict[str, Any]] = []
+    all_signals: list[dict[str, Any]] = []
     for (token_id, signal_type), raw_events in events_by_token_side.items():
         events = sorted(raw_events, key=lambda item: item["timestamp"])
         active: deque[dict[str, Any]] = deque()
@@ -242,8 +255,8 @@ async def backtest_kol_signals(
                 active.popleft()
             active.append(event)
 
-            # One handle may trade several times or through several wallets in the
-            # same window. Count the identity once and retain its latest event.
+            # A handle can trade multiple times/wallets inside the window. Count
+            # that identity once and retain its most recent event.
             by_handle: dict[str, dict[str, Any]] = {}
             for active_event in active:
                 by_handle[active_event["handle"]] = active_event
@@ -253,31 +266,42 @@ async def backtest_kol_signals(
                 continue
 
             participants = sorted(by_handle.values(), key=lambda item: item["handle"])
-            baseline_price = event.get("priceUsd")
-            baseline_source = "trigger_trade"
-            baseline_timestamp = timestamp
             points = price_points.get(token_id, [])
             timestamps = price_timestamps.get(token_id, [])
-            if not baseline_price or baseline_price <= 0:
-                resolved = _price_at_or_before(
-                    points,
-                    timestamps,
-                    timestamp,
-                    max_age=timedelta(hours=2),
-                )
-                if resolved is not None:
-                    baseline_price, baseline_timestamp = resolved
-                    baseline_source = "token_metric_before_signal"
 
-            if not baseline_price or baseline_price <= 0:
-                # A signal without an observable entry price cannot be evaluated.
-                continue
+            # Prefer an independently timestamped market snapshot at/before the
+            # trigger. WalletTrade.avg_* can be a position-level aggregate and may
+            # encode later fills, so it is only a fallback when no historical
+            # market snapshot exists.
+            resolved_baseline = _price_at_or_before(
+                points,
+                timestamps,
+                timestamp,
+                max_age=timedelta(hours=2),
+            )
+            if resolved_baseline is not None:
+                baseline_price, baseline_timestamp = resolved_baseline
+                baseline_source = "token_metric_before_signal"
+            else:
+                fallback_price = _safe_float(event.get("priceUsd"))
+                if fallback_price is None or fallback_price <= 0:
+                    continue
+                baseline_price = fallback_price
+                baseline_timestamp = timestamp
+                baseline_source = "trigger_trade_fallback"
 
             returns: dict[str, Any] = {}
             for horizon in horizons_hours:
                 target = timestamp + timedelta(hours=horizon)
-                tolerance = timedelta(minutes=90 if horizon == 1 else 180 if horizon <= 6 else 360)
-                future = _price_at_or_after(points, timestamps, target, max_lag=tolerance)
+                tolerance = timedelta(
+                    minutes=90 if horizon == 1 else 180 if horizon <= 6 else 360
+                )
+                future = _price_at_or_after(
+                    points,
+                    timestamps,
+                    target,
+                    max_lag=tolerance,
+                )
                 if future is None:
                     returns[f"{horizon}h"] = None
                     continue
@@ -295,7 +319,7 @@ async def backtest_kol_signals(
                 }
 
             token = tokens[token_id]
-            signals.append(
+            all_signals.append(
                 {
                     "signalType": signal_type,
                     "mint": token.mint_address,
@@ -307,7 +331,9 @@ async def backtest_kol_signals(
                     "handles": [item["handle"] for item in participants],
                     "wallets": sorted({item["wallet"] for item in participants}),
                     "tradeIds": sorted({int(item["tradeId"]) for item in participants}),
-                    "minParticipantConfidence": round(min(item["confidence"] for item in participants), 2),
+                    "minParticipantConfidence": round(
+                        min(item["confidence"] for item in participants), 2
+                    ),
                     "baselinePriceUsd": round(float(baseline_price), 12),
                     "baselinePriceAt": baseline_timestamp.isoformat(),
                     "baselineSource": baseline_source,
@@ -316,8 +342,7 @@ async def backtest_kol_signals(
             )
             last_signal_at = timestamp
 
-    signals.sort(key=lambda item: item["signalAt"], reverse=True)
-    signals = signals[:max_signals]
+    all_signals.sort(key=lambda item: item["signalAt"], reverse=True)
 
     by_horizon: dict[str, dict[str, Any]] = {}
     by_side: dict[str, dict[str, Any]] = {}
@@ -325,13 +350,13 @@ async def backtest_kol_signals(
         key = f"{horizon}h"
         values = [
             float(signal["returns"][key]["netDirectionalReturnPct"])
-            for signal in signals
+            for signal in all_signals
             if signal["returns"].get(key) is not None
         ]
         by_horizon[key] = _summary(values)
 
     for side in ("accumulation", "distribution"):
-        side_signals = [signal for signal in signals if signal["signalType"] == side]
+        side_signals = [signal for signal in all_signals if signal["signalType"] == side]
         side_horizons: dict[str, Any] = {}
         for horizon in horizons_hours:
             key = f"{horizon}h"
@@ -346,6 +371,7 @@ async def backtest_kol_signals(
             "horizons": side_horizons,
         }
 
+    returned_signals = all_signals[:max_signals]
     return {
         "status": "ok",
         "generatedAt": now.isoformat(),
@@ -368,9 +394,10 @@ async def backtest_kol_signals(
             "uniqueTrades": len(best_by_trade),
             "tokensWithAttributedTrades": len(tokens),
             "tokensWithPriceHistory": len(price_points),
-            "signals": len(signals),
+            "signals": len(all_signals),
+            "returnedSignals": len(returned_signals),
             "signalsWith24hOutcome": sum(
-                1 for signal in signals if signal["returns"].get("24h") is not None
+                1 for signal in all_signals if signal["returns"].get("24h") is not None
             ),
         },
         "summary": {
@@ -378,16 +405,20 @@ async def backtest_kol_signals(
             "bySignalType": by_side,
         },
         "methodology": {
-            "entryPrice": "trigger trade price, otherwise latest TokenMetric at or before the signal (max age 2h)",
+            "entryPrice": (
+                "latest TokenMetric at or before the signal (max age 2h); "
+                "position-level trigger trade price only as fallback"
+            ),
             "outcomes": "first TokenMetric at or after each target horizon within a bounded lag tolerance",
+            "eventGranularity": "WalletTrade position-level buy/sell timestamps; repeated intra-position fills may be compressed upstream",
             "dedupe": "one strongest KOL attribution per WalletTrade; one identity per rolling signal window",
             "transactionCost": f"{cost_bps} bps subtracted from directional return",
-            "lookaheadGuard": "future prices are never used for signal construction or baseline selection",
+            "lookaheadGuard": "future prices are never used for signal construction or primary baseline selection",
             "attributionBias": (
                 "strict: trades before attribution.first_seen_at are excluded"
                 if strict_attribution_time
                 else "current KOL attribution snapshot is applied to historical trades; this can introduce selection/look-ahead bias"
             ),
         },
-        "signals": signals,
+        "signals": returned_signals,
     }
