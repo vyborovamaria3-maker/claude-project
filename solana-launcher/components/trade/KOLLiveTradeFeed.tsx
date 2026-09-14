@@ -6,6 +6,8 @@ import { ArrowDownRight, ArrowUpRight, Loader2, RefreshCw, Radio } from "lucide-
 import { siteDesign } from "@/lib/siteDesign";
 
 type TradeEvent = {
+  eventId: string;
+  tradeId?: number;
   handle: string;
   name?: string | null;
   profileConfidence: number;
@@ -88,8 +90,8 @@ export default function KOLLiveTradeFeed() {
         ) : null}
         {items.length ? (
           <div className="max-h-[360px] divide-y divide-bg-border overflow-y-auto">
-            {items.map((event, index) => (
-              <div key={`${event.handle}:${event.mint}:${event.side}:${event.timestamp}:${index}`} className="grid gap-2 px-4 py-3 md:grid-cols-[1.1fr_.8fr_.6fr_.35fr] md:items-center">
+            {items.map((event) => (
+              <div key={event.eventId} className="grid gap-2 px-4 py-3 md:grid-cols-[1.1fr_.8fr_.6fr_.35fr] md:items-center">
                 <div className="min-w-0">
                   <Link href={`/trade/kols-twitter/${encodeURIComponent(event.handle)}`} className="font-semibold text-content hover:text-primary">@{event.handle}</Link>
                   <div className="mt-0.5 truncate font-mono text-[9px] text-content-faint">{event.wallet}</div>
