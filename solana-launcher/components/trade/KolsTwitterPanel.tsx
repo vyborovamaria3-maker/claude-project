@@ -22,29 +22,86 @@ interface KolsTwitterPanelProps {
   detailMode?: boolean;
 }
 
+type PnlValue = { value: number; currency: "USD" | "SOL" } | null;
+
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-5)}`;
 }
 
-function pnlFor(wallet: KolWallet, timeframe: 1 | 7 | 30) {
+function normalizeHandle(value: string) {
+  return value
+    .trim()
+    .replace(/^https?:\/\/(?:www\.)?(?:x|twitter)\.com\//i, "")
+    .replace(/^@/, "")
+    .split(/[/?#]/)[0]
+    ?.toLowerCase() ?? "";
+}
+
+function solPnlFor(wallet: KolWallet, timeframe: 1 | 7 | 30) {
   if (timeframe === 30) return wallet.metrics.pnl30dSol;
   if (timeframe === 7) return wallet.metrics.pnl7dSol;
   return wallet.metrics.pnl1dSol;
 }
 
-function aggregatePnl(profile: KolProfile, timeframe: 1 | 7 | 30) {
-  const values = profile.wallets
-    .map((wallet) => pnlFor(wallet, timeframe))
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+function usdPnlFor(wallet: KolWallet, timeframe: 1 | 7 | 30) {
+  if (timeframe === 30) return wallet.metrics.realizedPnl30dUsd;
+  if (timeframe === 7) return wallet.metrics.realizedPnl7dUsd;
+  return wallet.metrics.realizedPnl1dUsd;
 }
 
-function aggregateWinRate(profile: KolProfile) {
+function pnlFor(wallet: KolWallet, timeframe: 1 | 7 | 30): PnlValue {
+  const usd = usdPnlFor(wallet, timeframe);
+  if (typeof usd === "number" && Number.isFinite(usd)) return { value: usd, currency: "USD" };
+  const sol = solPnlFor(wallet, timeframe);
+  if (typeof sol === "number" && Number.isFinite(sol)) return { value: sol, currency: "SOL" };
+  return null;
+}
+
+function aggregatePnl(profile: KolProfile, timeframe: 1 | 7 | 30): PnlValue {
+  const usdValues = profile.wallets
+    .map((wallet) => usdPnlFor(wallet, timeframe))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (usdValues.length) {
+    return { value: usdValues.reduce((sum, value) => sum + value, 0), currency: "USD" };
+  }
+
+  const solValues = profile.wallets
+    .map((wallet) => solPnlFor(wallet, timeframe))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return solValues.length
+    ? { value: solValues.reduce((sum, value) => sum + value, 0), currency: "SOL" }
+    : null;
+}
+
+function walletWinLoss(wallet: KolWallet, timeframe: 1 | 7 | 30) {
+  if (timeframe === 30) {
+    return {
+      wins: wallet.metrics.wins30d ?? wallet.metrics.wins,
+      losses: wallet.metrics.losses30d ?? wallet.metrics.losses,
+      rate: wallet.metrics.winRate30d ?? wallet.metrics.winRate,
+    };
+  }
+  if (timeframe === 7) {
+    return {
+      wins: wallet.metrics.wins7d ?? wallet.metrics.wins,
+      losses: wallet.metrics.losses7d ?? wallet.metrics.losses,
+      rate: wallet.metrics.winRate7d ?? wallet.metrics.winRate,
+    };
+  }
+  return {
+    wins: wallet.metrics.wins1d ?? wallet.metrics.wins,
+    losses: wallet.metrics.losses1d ?? wallet.metrics.losses,
+    rate: wallet.metrics.winRate1d ?? wallet.metrics.winRate,
+  };
+}
+
+function aggregateWinRate(profile: KolProfile, timeframe: 1 | 7 | 30) {
   let wins = 0;
   let losses = 0;
   for (const wallet of profile.wallets) {
-    wins += wallet.metrics.wins ?? 0;
-    losses += wallet.metrics.losses ?? 0;
+    const row = walletWinLoss(wallet, timeframe);
+    wins += row.wins ?? 0;
+    losses += row.losses ?? 0;
   }
   const total = wins + losses;
   return total > 0 ? { rate: (wins / total) * 100, wins, losses } : null;
@@ -56,10 +113,19 @@ function confidenceTone(confidence: number) {
   return "border-white/10 bg-white/5 text-content-muted";
 }
 
-function formatPnl(value: number | null) {
-  if (value == null) return "—";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(Math.abs(value) >= 10 ? 1 : 3)} SOL`;
+function formatPnl(pnl: PnlValue) {
+  if (!pnl) return "—";
+  const sign = pnl.value > 0 ? "+" : "";
+  if (pnl.currency === "USD") {
+    const absolute = Math.abs(pnl.value);
+    const formatted = absolute >= 1_000_000
+      ? `${(absolute / 1_000_000).toFixed(2)}m`
+      : absolute >= 1_000
+        ? `${(absolute / 1_000).toFixed(1)}k`
+        : absolute.toFixed(0);
+    return `${pnl.value < 0 ? "-" : sign}$${formatted}`;
+  }
+  return `${sign}${pnl.value.toFixed(Math.abs(pnl.value) >= 10 ? 1 : 3)} SOL`;
 }
 
 export default function KolsTwitterPanel({ initialQuery = "", detailMode = false }: KolsTwitterPanelProps) {
@@ -118,7 +184,11 @@ export default function KolsTwitterPanel({ initialQuery = "", detailMode = false
     return { wallets, verified, avgConfidence };
   }, [data]);
 
-  const exactDetail = detailMode ? data?.items[0] ?? null : null;
+  const exactDetail = useMemo(() => {
+    if (!detailMode) return null;
+    const expected = normalizeHandle(submittedQuery || initialQuery);
+    return data?.items.find((item) => item.handle.toLowerCase() === expected) ?? null;
+  }, [data, detailMode, initialQuery, submittedQuery]);
 
   return (
     <div className={siteDesign.page.compactContainerClassName} data-tag="trade.kols_twitter">
@@ -314,7 +384,7 @@ function KolTable({ items, timeframe }: { items: KolProfile[]; timeframe: 1 | 7 
           <tbody>
             {items.map((profile) => {
               const pnl = aggregatePnl(profile, timeframe);
-              const win = aggregateWinRate(profile);
+              const win = aggregateWinRate(profile, timeframe);
               return (
                 <tr key={profile.handle.toLowerCase()} className={siteDesign.table.rowClassName}>
                   <td className="px-4 py-3 align-top">
@@ -349,7 +419,7 @@ function KolTable({ items, timeframe }: { items: KolProfile[]; timeframe: 1 | 7 
                       {profile.confidence}/100
                     </span>
                   </td>
-                  <td className={`px-4 py-3 align-top font-mono font-semibold ${pnl != null && pnl > 0 ? "text-emerald-300" : pnl != null && pnl < 0 ? "text-danger" : "text-content-muted"}`}>
+                  <td className={`px-4 py-3 align-top font-mono font-semibold ${pnl && pnl.value > 0 ? "text-emerald-300" : pnl && pnl.value < 0 ? "text-danger" : "text-content-muted"}`}>
                     {formatPnl(pnl)}
                   </td>
                   <td className="px-4 py-3 align-top">
@@ -377,13 +447,13 @@ function KolTable({ items, timeframe }: { items: KolProfile[]; timeframe: 1 | 7 
 
 function KolDetail({ profile, timeframe }: { profile: KolProfile; timeframe: 1 | 7 | 30 }) {
   const pnl = aggregatePnl(profile, timeframe);
-  const win = aggregateWinRate(profile);
+  const win = aggregateWinRate(profile, timeframe);
   return (
     <div className="space-y-4">
       <section className="grid gap-3 md:grid-cols-4">
         <StatCard label="Confidence" value={`${profile.confidence}/100`} sub={profile.verified ? "verified evidence present" : "curated / inferred attribution"} />
         <StatCard label="Wallets" value={String(profile.wallets.length)} sub={`${profile.wallets.filter((wallet) => wallet.verified).length} verified`} />
-        <StatCard label={`PnL ${timeframe}D`} value={formatPnl(pnl)} sub="public leaderboard metric" />
+        <StatCard label={`PnL ${timeframe}D`} value={formatPnl(pnl)} sub={pnl?.currency === "USD" ? "internal wallet_trades realized PnL" : "public leaderboard metric"} />
         <StatCard label="Winrate" value={win ? `${win.rate.toFixed(1)}%` : "—"} sub={win ? `${win.wins}W / ${win.losses}L` : "no trade metric"} />
       </section>
 
@@ -399,7 +469,7 @@ function KolDetail({ profile, timeframe }: { profile: KolProfile; timeframe: 1 |
                 </div>
                 <div className="mt-2 break-all font-mono text-xs text-content">{wallet.address}</div>
               </div>
-              <div className="text-right text-xs text-content-muted">{formatPnl(pnlFor(wallet, timeframe) ?? null)}</div>
+              <div className="text-right text-xs text-content-muted">{formatPnl(pnlFor(wallet, timeframe))}</div>
             </div>
 
             <div className="mt-4 grid gap-2">
