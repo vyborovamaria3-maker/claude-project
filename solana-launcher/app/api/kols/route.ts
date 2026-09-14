@@ -109,14 +109,15 @@ async function mergeInternalMetrics(payload: KolListResponse) {
     });
     if (!response.ok) throw new Error(`internal metrics HTTP ${response.status}`);
     const data = (await response.json()) as InternalMetricResponse;
+    // Solana base58 addresses are case-sensitive. Never lowercase them for identity joins.
     const lookup = new Map(
-      (data.items ?? []).map((item) => [item.address.toLowerCase(), item.metrics] as const),
+      (data.items ?? []).map((item) => [item.address, item.metrics] as const),
     );
     let mergedWallets = 0;
     for (const profile of payload.items) {
       for (const wallet of profile.wallets) {
         if (wallet.chain !== "solana") continue;
-        const metrics = lookup.get(wallet.address.toLowerCase());
+        const metrics = lookup.get(wallet.address);
         if (!metrics?.length) continue;
         for (const metric of metrics) applyInternalMetric(wallet, metric);
         mergedWallets += 1;

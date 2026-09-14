@@ -1,3 +1,4 @@
+import bs58 from "bs58";
 import type {
   KolEvidence,
   KolListResponse,
@@ -82,14 +83,26 @@ function isValidEthereumAddress(value: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 }
 
-function isLikelySolanaAddress(value: string) {
-  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.trim());
+function isValidSolanaAddress(value: string) {
+  const trimmed = value.trim();
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed)) return false;
+  try {
+    return bs58.decode(trimmed).length === 32;
+  } catch {
+    return false;
+  }
 }
 
 function isValidWalletAddress(address: string, chain: "solana" | "ethereum") {
   return chain === "ethereum"
     ? isValidEthereumAddress(address)
-    : isLikelySolanaAddress(address);
+    : isValidSolanaAddress(address);
+}
+
+function walletAddressEquals(left: string, right: string, chain: "solana" | "ethereum") {
+  return chain === "solana"
+    ? left === right
+    : left.toLowerCase() === right.toLowerCase();
 }
 
 function createProfile(handle: string, name?: string | null): KolProfile {
@@ -155,7 +168,7 @@ function mergeWallet(profile: KolProfile, incoming: KolWallet) {
   const existing = profile.wallets.find(
     (wallet) =>
       wallet.chain === incoming.chain &&
-      wallet.address.toLowerCase() === incoming.address.toLowerCase(),
+      walletAddressEquals(wallet.address, incoming.address, incoming.chain),
   );
 
   if (!existing) {
@@ -182,7 +195,7 @@ function mergeWallet(profile: KolProfile, incoming: KolWallet) {
 
 function addKolscanRow(profile: KolProfile, row: KolscanRow) {
   const address = row.wallet_address?.trim();
-  if (!address || !isLikelySolanaAddress(address)) return;
+  if (!address || !isValidSolanaAddress(address)) return;
 
   const wins = Number.isFinite(row.wins) ? Number(row.wins) : undefined;
   const losses = Number.isFinite(row.losses) ? Number(row.losses) : undefined;
@@ -360,7 +373,7 @@ function profileMetric(profile: KolProfile, timeframe: 1 | 7 | 30): number | nul
 
 function looksLikeWallet(value: string) {
   const trimmed = value.trim();
-  return isValidEthereumAddress(trimmed) || isLikelySolanaAddress(trimmed);
+  return isValidEthereumAddress(trimmed) || isValidSolanaAddress(trimmed);
 }
 
 export async function getKols(options: {
@@ -416,16 +429,24 @@ export async function getKols(options: {
     if (profile.wallets.length > 0 || profiles.has(exactKey)) profiles.set(exactKey, profile);
   }
 
-  const queryLower = query.toLowerCase();
+  const queryText = query.trim();
+  const queryLower = queryText.toLowerCase();
   let items = Array.from(profiles.values()).filter((profile) => {
-    if (!query) return true;
-    if (looksLikeWallet(query)) {
-      return profile.wallets.some((wallet) => wallet.address.toLowerCase() === queryLower);
+    if (!queryText) return true;
+    if (looksLikeWallet(queryText)) {
+      const chain = isValidEthereumAddress(queryText) ? "ethereum" : "solana";
+      return profile.wallets.some(
+        (wallet) => wallet.chain === chain && walletAddressEquals(wallet.address, queryText, chain),
+      );
     }
     return (
       profile.handle.toLowerCase().includes(exactKey) ||
       profile.name.toLowerCase().includes(queryLower) ||
-      profile.wallets.some((wallet) => wallet.address.toLowerCase().includes(queryLower))
+      profile.wallets.some((wallet) =>
+        wallet.chain === "ethereum"
+          ? wallet.address.toLowerCase().includes(queryLower)
+          : wallet.address.includes(queryText),
+      )
     );
   });
 
