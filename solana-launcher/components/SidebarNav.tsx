@@ -26,7 +26,7 @@ import {
 import clsx from "clsx";
 import { useI18n } from "@/components/providers/I18nProvider";
 import { currentUser } from "@/lib/mockData";
-import { siteDesign, type SiteIconKey, type SiteNavMode } from "@/lib/siteDesign";
+import { siteDesign, type SiteIconKey, type SiteNavItem, type SiteNavMode } from "@/lib/siteDesign";
 
 const icons = {
   barChart: BarChart3,
@@ -49,6 +49,13 @@ const icons = {
   warning: AlertTriangle,
 } satisfies Record<SiteIconKey, typeof Rocket>;
 
+const KOLS_TWITTER_NAV_ITEM: SiteNavItem = {
+  href: "/trade/kols-twitter",
+  labelKey: "nav.xAnalysis",
+  icon: "twitter",
+  tag: "nav.kols_twitter",
+};
+
 export default function SidebarNav() {
   const { t } = useI18n();
   const translate = (key: string) => t(key as Parameters<typeof t>[0]);
@@ -63,7 +70,15 @@ export default function SidebarNav() {
     [pathname]
   );
 
-  const navItems = siteDesign.nav[activeTab];
+  const navItems = useMemo<SiteNavItem[]>(() => {
+    const items: SiteNavItem[] = [...siteDesign.nav[activeTab]];
+    if (activeTab === "trade") {
+      const analysisIndex = items.findIndex((item) => item.href === "/trade/analysis");
+      items.splice(analysisIndex >= 0 ? analysisIndex + 1 : items.length, 0, KOLS_TWITTER_NAV_ITEM);
+    }
+    return items;
+  }, [activeTab]);
+
   const allNavItems = useMemo(
     () => [...navItems, ...siteDesign.nav.common].filter((item) => !item.href.startsWith("/database")),
     [navItems]
@@ -115,6 +130,7 @@ export default function SidebarNav() {
         {allNavItems.map((item) => {
           const active = activeHref === item.href;
           const Icon = icons[item.icon] ?? Rocket;
+          const label = item.tag === "nav.kols_twitter" ? "KOLs Twitter" : translate(item.labelKey);
           return (
             <Link
               key={item.href}
@@ -127,7 +143,7 @@ export default function SidebarNav() {
               )}
             >
               <Icon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-105" />
-              <span className="truncate">{translate(item.labelKey)}</span>
+              <span className="truncate">{label}</span>
             </Link>
           );
         })}
