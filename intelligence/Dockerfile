@@ -4,6 +4,7 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive \
     PYTHONPATH=/app \
     HOME=/tmp/potapoff-intelligence \
     XDG_CACHE_HOME=/tmp/potapoff-intelligence/cache \
@@ -16,7 +17,10 @@ WORKDIR /app
 
 COPY --from=deno /deno /usr/local/bin/deno
 
-RUN groupadd --gid 10002 intelligence \
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10002 intelligence \
     && useradd --uid 10002 --gid intelligence --shell /usr/sbin/nologin intelligence
 
 COPY requirements.txt /tmp/requirements.txt
