@@ -18,9 +18,23 @@ export interface KolWalletMetrics {
   pnl1dSol?: number;
   pnl7dSol?: number;
   pnl30dSol?: number;
+  realizedPnl1dUsd?: number;
+  realizedPnl7dUsd?: number;
+  realizedPnl30dUsd?: number;
+  wins1d?: number;
+  losses1d?: number;
+  winRate1d?: number;
+  wins7d?: number;
+  losses7d?: number;
+  winRate7d?: number;
+  wins30d?: number;
+  losses30d?: number;
+  winRate30d?: number;
   wins?: number;
   losses?: number;
   winRate?: number;
+  lastTradeAt?: string;
+  internalSource?: string;
 }
 
 export interface KolWallet {
