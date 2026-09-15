@@ -31,6 +31,8 @@ const kolTask = read("backend/app/tasks/kols.py");
 const celery = read("backend/app/tasks/celery_app.py");
 const compose = read("docker-compose.production.yml");
 const localCompose = read("docker-compose.yml");
+const deployProduction = read("scripts/deploy-production.sh");
+const healthProduction = read("scripts/healthcheck-production.sh");
 const envExample = read(".env.example");
 const backendEnvExample = read("backend/.env.example");
 const tests = read("backend/tests/test_kol_intelligence.py");
@@ -163,12 +165,17 @@ assert(
 assert(
   ingestion.includes("session.begin_nested()")
     && ingestion.includes("except IntegrityError")
-    && ingestion.includes("uq_kol_trade_event_wallet_tx_index") === false,
-  "event writes must tolerate a concurrent unique-key race via savepoints",
+    && ingestion.includes("with_for_update()"),
+  "event writes and cursor state must tolerate concurrent manual/scheduled ingestion",
 );
 assert(
   ingestion.includes('side="sell"') && ingestion.includes('side="buy"'),
   "normalizer must preserve both sides of token-to-token swaps",
+);
+assert(
+  ingestion.includes('"Es9vMFrzaCERmJfrF4H2FYDk6wN1nZ6rB7bQm1WfTjK"')
+    && !ingestion.includes("_BASE_SYMBOLS"),
+  "base-asset classification must use canonical mints instead of spoofable symbols",
 );
 
 assert(
@@ -193,6 +200,12 @@ assert(
 assert(
   metrics.includes("fully_matched") && metrics.includes("fully_priced") && metrics.includes("else None"),
   "FIFO PnL must reject partial or unpriced sell cost basis",
+);
+assert(
+  metrics.includes("transactions = {}")
+    && metrics.includes('metric.trade_count = len(transactions)')
+    && metrics.includes('"event_count": len(recent)'),
+  "wallet metrics must count one transaction/notional per signature while retaining event granularity",
 );
 
 assert(
@@ -278,6 +291,19 @@ assert(
     && compose.includes('"beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"'),
   "production Compose must run Celery Beat",
 );
+assert(
+  deployProduction.includes("resolve_env_value()")
+    && deployProduction.includes("KOL_INTERNAL_KEY must be at least 32 characters")
+    && deployProduction.includes("KOL_INTERNAL_KEY must be different from BACKEND_API_KEY")
+    && deployProduction.includes("export SOLANA_TRACKER_API_KEY"),
+  "production deploy must fail closed on the scoped KOL key and preserve optional provider env",
+);
+assert(
+  healthProduction.includes("celery-beat")
+    && healthProduction.includes("KOL_INTERNAL_KEY must be at least 32 characters")
+    && healthProduction.includes("kol_ingestion=$kol_ingestion"),
+  "production healthcheck must require Celery Beat and report KOL ingestion state",
+);
 
 const localBackendService = localCompose.match(/\n  backend:\n([\s\S]*?)\n  celery-worker:\n/)?.[1] ?? "";
 const localWorkerService = localCompose.match(/\n  celery-worker:\n([\s\S]*?)\n  celery-beat:\n/)?.[1] ?? "";
@@ -322,15 +348,17 @@ assert(
   ingestionTests.includes("test_normalize_base_to_token_as_buy")
     && ingestionTests.includes("test_normalize_token_to_base_as_sell")
     && ingestionTests.includes("test_normalize_token_to_token_preserves_both_legs")
+    && ingestionTests.includes("test_symbol_spoof_does_not_turn_unknown_mint_into_base_asset")
     && ingestionTests.includes("test_fifo_realized_refuses_partial_or_unpriced_cost_basis"),
-  "trade ingestion tests must cover directionality and conservative FIFO PnL",
+  "trade ingestion tests must cover directionality, symbol spoofing and conservative FIFO PnL",
 );
 assert(
   runtimeGuardTests.includes("test_production_kol_key_rejects_short_secret")
     && runtimeGuardTests.includes("test_production_kol_key_must_differ_from_backend_master")
     && runtimeGuardTests.includes("test_refresh_metrics_skips_when_distributed_lock_is_held")
-    && runtimeGuardTests.includes("test_refresh_metrics_releases_lock_after_success"),
-  "runtime guard tests must cover scoped-key hardening and distributed refresh locking",
+    && runtimeGuardTests.includes("test_refresh_metrics_releases_lock_after_success")
+    && runtimeGuardTests.includes("test_sync_trade_events_skips_when_distributed_lock_is_held"),
+  "runtime guard tests must cover scoped-key hardening and both distributed KOL locks",
 );
 assert(
   backtestTests.includes("test_backtest_builds_signal_without_future_price_leakage")
