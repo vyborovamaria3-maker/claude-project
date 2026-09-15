@@ -65,6 +65,8 @@ def upgrade() -> None:
         sa.Column("source", sa.String(length=120), nullable=False, server_default="solana_tracker"),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="pending"),
         sa.Column("events_seen", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("next_cursor", sa.String(length=255), nullable=True),
+        sa.Column("backfill_complete", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_success_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_error_at", sa.DateTime(timezone=True), nullable=True),
