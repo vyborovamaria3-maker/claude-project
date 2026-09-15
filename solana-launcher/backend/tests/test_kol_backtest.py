@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import delete, select
 
-from app.models.analytics import Token, TokenMetric, Wallet, WalletTrade
-from app.models.kol_intelligence import KOLProfile, KOLWalletAttribution
+from app.models.analytics import Token, TokenMetric, Wallet
+from app.models.kol_intelligence import KOLProfile, KOLTradeEvent, KOLWalletAttribution
 from app.services.kol_backtest import backtest_kol_signals
 
 KOL_HEADERS = {"X-KOL-Internal-Key": "test-backend-api-key-2026"}
@@ -18,7 +18,7 @@ async def _seed_accumulation_case(test_app):
 
     async with test_app.state.sessionmaker() as session:
         token = Token(
-            mint_address="So11111111111111111111111111111111111111112",
+            mint_address="BacktestToken111111111111111111111111111111",
             name="Backtest Token",
             symbol="BT",
         )
@@ -52,21 +52,26 @@ async def _seed_accumulation_case(test_app):
             )
             session.add(attribution)
             session.add(
-                WalletTrade(
-                    wallet_id=wallet.id,
-                    token_id=token.id,
-                    buy_timestamp=start + timedelta(minutes=index * 10),
-                    amount_buy=100,
-                    amount_sold=0,
-                    avg_buy_price=99.0,
-                    avg_sell_price=None,
-                    realized_profit_usd=None,
-                    still_holding=True,
+                KOLTradeEvent(
+                    analytics_wallet_id=wallet.id,
+                    chain="solana",
+                    address=wallet.wallet_address,
+                    tx_signature=f"backtest-signature-{index}",
+                    event_index=1,
+                    side="buy",
+                    mint_address=token.mint_address,
+                    token_symbol=token.symbol,
+                    token_name=token.name,
+                    amount=100,
+                    price_usd=99.0,
+                    value_usd=9900.0,
+                    source="test",
+                    occurred_at=start + timedelta(minutes=index * 10),
                 )
             )
 
         # The third buy triggers at start+20m. Baseline must use the last market
-        # price BEFORE the trigger, never the deliberately extreme trade average or
+        # price BEFORE the trigger, never the deliberately extreme provider price or
         # the +21m future market price.
         session.add_all(
             [
@@ -102,6 +107,7 @@ async def test_backtest_builds_signal_without_future_price_leakage(client, test_
     assert payload["coverage"]["rawSignalTriggers"] == 1
     assert payload["coverage"]["signalsSkippedNoBaseline"] == 0
     assert payload["coverage"]["signals"] == 1
+    assert payload["coverage"]["uniqueEvents"] == 3
 
     signal = payload["signals"][0]
     assert signal["signalType"] == "accumulation"
@@ -109,6 +115,7 @@ async def test_backtest_builds_signal_without_future_price_leakage(client, test_
     assert signal["baselineSource"] == "token_metric_before_signal"
     assert signal["baselinePriceUsd"] == 1.0
     assert signal["baselinePriceAt"] == (start + timedelta(minutes=15)).isoformat()
+    assert len(signal["eventIds"]) == 3
     assert signal["returns"]["1h"]["futurePriceUsd"] == 1.1
     assert signal["returns"]["1h"]["netDirectionalReturnPct"] == 9.5
     assert signal["returns"]["24h"]["netDirectionalReturnPct"] == 49.5
@@ -123,14 +130,18 @@ async def test_backtest_skips_trigger_without_pre_signal_market_price(test_app):
     async with test_app.state.sessionmaker() as session:
         token = (await session.execute(select(Token))).scalar_one()
         await session.execute(delete(TokenMetric).where(TokenMetric.token_id == token.id))
-        # Add only a post-trigger price. Position avg_buy_price remains populated,
+        event = (
+            await session.execute(
+                select(KOLTradeEvent).order_by(KOLTradeEvent.occurred_at.desc())
+            )
+        ).scalars().first()
+        assert event is not None
+        # Add only a post-trigger market price. The provider event price is populated
         # but must never be used as a backtest entry fallback.
-        trade = (await session.execute(select(WalletTrade).order_by(WalletTrade.buy_timestamp.desc()))).scalars().first()
-        assert trade is not None
         session.add(
             TokenMetric(
                 token_id=token.id,
-                timestamp=trade.buy_timestamp + timedelta(minutes=1),
+                timestamp=event.occurred_at + timedelta(minutes=1),
                 price_usd=2.0,
             )
         )
@@ -150,7 +161,7 @@ async def test_backtest_skips_trigger_without_pre_signal_market_price(test_app):
 
 
 @pytest.mark.asyncio
-async def test_backtest_dedupes_multiple_labels_for_one_trade(test_app):
+async def test_backtest_dedupes_multiple_labels_for_one_event(test_app):
     await _seed_accumulation_case(test_app)
 
     async with test_app.state.sessionmaker() as session:
@@ -188,6 +199,7 @@ async def test_backtest_dedupes_multiple_labels_for_one_trade(test_app):
             cost_bps=0,
         )
 
+    assert payload["coverage"]["uniqueEvents"] == 3
     assert payload["coverage"]["uniqueTrades"] == 3
     assert payload["coverage"]["signals"] == 1
     signal = payload["signals"][0]
@@ -196,7 +208,7 @@ async def test_backtest_dedupes_multiple_labels_for_one_trade(test_app):
 
 
 @pytest.mark.asyncio
-async def test_strict_attribution_time_excludes_pre_attribution_trades(test_app):
+async def test_strict_attribution_time_excludes_pre_attribution_events(test_app):
     start = await _seed_accumulation_case(test_app)
 
     async with test_app.state.sessionmaker() as session:
