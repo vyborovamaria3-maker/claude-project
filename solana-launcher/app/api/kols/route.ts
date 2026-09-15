@@ -30,6 +30,23 @@ type InternalMetricItem = {
 
 type InternalMetricResponse = { items?: InternalMetricItem[] };
 
+type TradeCoverageResponse = {
+  status?: "no_attributed_wallets" | "ingestion_disabled" | "ingestion_missing" | "partial" | "covered" | string;
+  attributedSolanaWallets?: number;
+  walletsWithTradeHistory?: number;
+  walletsAttempted?: number;
+  eventRows?: number;
+  coverageRatio?: number;
+  latestEventAt?: string | null;
+  provider?: {
+    source?: string;
+    status?: string;
+    detail?: string | null;
+    lastSuccessAt?: string | null;
+    lastErrorAt?: string | null;
+  };
+};
+
 function parseTimeframe(value: string | null): 1 | 7 | 30 {
   return value === "1" || value === "30" ? Number(value) as 1 | 30 : 7;
 }
@@ -136,15 +153,57 @@ async function mergeInternalMetrics(payload: KolListResponse) {
       }
     }
     payload.sourceStatus.push({
-      source: "Internal wallet trades",
+      source: "Internal KOL event metrics",
       ok: true,
       detail: `${mergedWallets} wallet metric set(s) merged`,
     });
   } catch (error) {
     payload.sourceStatus.push({
-      source: "Internal wallet trades",
+      source: "Internal KOL event metrics",
       ok: false,
-      detail: error instanceof Error ? error.message : "internal metrics unavailable",
+      detail: error instanceof Error ? error.message : "internal KOL metrics unavailable",
+    });
+  }
+}
+
+function coverageDetail(data: TradeCoverageResponse) {
+  const attributed = data.attributedSolanaWallets ?? 0;
+  const covered = data.walletsWithTradeHistory ?? 0;
+  const events = data.eventRows ?? 0;
+  const provider = data.provider?.status || "unknown";
+  const latest = data.latestEventAt ? ` · latest ${data.latestEventAt}` : "";
+  return `${data.status || "unknown"} · ${covered}/${attributed} wallets · ${events} events · provider ${provider}${latest}`;
+}
+
+async function mergeTradeCoverage(payload: KolListResponse) {
+  if (!KOL_INTERNAL_KEY) {
+    payload.sourceStatus.push({
+      source: "KOL trade ingestion",
+      ok: false,
+      detail: "KOL_INTERNAL_KEY is not configured; local event coverage is unavailable",
+    });
+    return;
+  }
+
+  try {
+    const response = await fetch(`${BACKEND_BASE}/api/v1/kols/internal/trade-coverage`, {
+      headers: { "X-KOL-Internal-Key": KOL_INTERNAL_KEY },
+      cache: "no-store",
+      signal: AbortSignal.timeout(4_000),
+    });
+    if (!response.ok) throw new Error(`trade coverage HTTP ${response.status}`);
+    const data = (await response.json()) as TradeCoverageResponse;
+    const status = data.status || "unknown";
+    payload.sourceStatus.push({
+      source: "KOL trade ingestion",
+      ok: status === "covered" || status === "partial" || status === "no_attributed_wallets",
+      detail: coverageDetail(data),
+    });
+  } catch (error) {
+    payload.sourceStatus.push({
+      source: "KOL trade ingestion",
+      ok: false,
+      detail: error instanceof Error ? error.message : "trade ingestion coverage unavailable",
     });
   }
 }
@@ -165,7 +224,10 @@ export async function GET(request: NextRequest) {
       verifiedOnly: parseBoolean(params.get("verifiedOnly")),
     });
     await persistKols(payload, Boolean(query));
-    await mergeInternalMetrics(payload);
+    await Promise.all([
+      mergeInternalMetrics(payload),
+      mergeTradeCoverage(payload),
+    ]);
     return NextResponse.json(payload, {
       headers: { "cache-control": "private, no-store, max-age=0" },
     });
