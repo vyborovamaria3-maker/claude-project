@@ -7,7 +7,44 @@ from sqlalchemy import select
 
 from app.models.analytics import Wallet
 from app.models.kol_intelligence import KOLTradeEvent
-from app.tests.test_kol_intelligence import KOL_HEADERS, BACKEND_HEADERS, MINT, SOL_ADDRESS, sync_payload
+
+BACKEND_HEADERS = {"X-Backend-API-Key": "test-backend-api-key-2026"}
+KOL_HEADERS = {"X-KOL-Internal-Key": "test-backend-api-key-2026"}
+SOL_ADDRESS = "11111111111111111111111111111111"
+MINT = "So11111111111111111111111111111111111111112"
+
+
+def _sync_payload() -> dict:
+    return {
+        "items": [
+            {
+                "handle": "coverage_kol",
+                "name": "Coverage KOL",
+                "confidence": 100,
+                "verified": True,
+                "sources": ["Next.ID"],
+                "wallets": [
+                    {
+                        "address": SOL_ADDRESS,
+                        "chain": "solana",
+                        "confidence": 100,
+                        "verified": True,
+                        "evidence": [
+                            {
+                                "source": "Next.ID",
+                                "kind": "signed_proof",
+                                "confidence": 100,
+                                "verified": True,
+                                "detail": "coverage fixture",
+                            }
+                        ],
+                        "metrics": {},
+                    }
+                ],
+            }
+        ],
+        "sourceStatus": [{"source": "Next.ID", "ok": True, "detail": "test"}],
+    }
 
 
 @pytest.mark.asyncio
@@ -20,7 +57,7 @@ async def test_trade_coverage_requires_scoped_key(client):
 async def test_trade_coverage_distinguishes_missing_ingestion_from_covered_history(client, test_app):
     synced = await client.post(
         "/api/v1/kols/sync",
-        json=sync_payload(),
+        json=_sync_payload(),
         headers=BACKEND_HEADERS,
     )
     assert synced.status_code == 200, synced.text
