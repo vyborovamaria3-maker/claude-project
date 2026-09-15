@@ -64,9 +64,9 @@ def _with_redis_lock(lock_key: str, ttl_seconds: int, runner):
         try:
             acquired = bool(lock.acquire(blocking=False))
         except RedisError:
-            return {"wallets": 0, "metrics": 0, "events": 0, "skipped": 1}
+            return {"skipped": 1}
         if not acquired:
-            return {"wallets": 0, "metrics": 0, "events": 0, "skipped": 1}
+            return {"skipped": 1}
         return runner()
     finally:
         if acquired:
@@ -93,7 +93,12 @@ def refresh_metrics() -> dict[str, int]:
         _REFRESH_LOCK_TTL_SECONDS,
         lambda: asyncio.run(_run_refresh()),
     )
-    return {key: int(value) for key, value in result.items() if isinstance(value, int)}
+    if result.get("skipped"):
+        return {"wallets": 0, "metrics": 0, "skipped": 1}
+    return {
+        "wallets": int(result.get("wallets", 0)),
+        "metrics": int(result.get("metrics", 0)),
+    }
 
 
 @celery_app.task(name="app.tasks.kols.sync_trade_events")
@@ -105,8 +110,11 @@ def sync_trade_events() -> dict[str, int | str]:
     retries idempotent. Missing SOLANA_TRACKER_API_KEY returns a disabled status
     instead of crashing Celery.
     """
-    return _with_redis_lock(
+    result = _with_redis_lock(
         _TRADE_SYNC_LOCK_KEY,
         _TRADE_SYNC_LOCK_TTL_SECONDS,
         lambda: asyncio.run(_run_trade_sync()),
     )
+    if result.get("skipped"):
+        return {"wallets": 0, "events": 0, "failures": 0, "status": "skipped", "skipped": 1}
+    return result
