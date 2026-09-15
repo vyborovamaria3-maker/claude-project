@@ -30,12 +30,27 @@ def _require_kol_internal_key(request: Request, supplied: str | None) -> None:
     settings = request.app.state.settings
     expected = os.getenv("KOL_INTERNAL_KEY", "").strip()
     is_production = settings.environment.strip().lower() in {"production", "prod"}
+    backend_key = settings.backend_api_key.strip()
+
     if not expected and not is_production:
-        expected = settings.backend_api_key.strip()
+        # Keep local/test startup ergonomic while production requires a distinct
+        # scoped credential through KOL_INTERNAL_KEY.
+        expected = backend_key
+
     if not expected:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="KOL_INTERNAL_KEY is not configured",
+        )
+    if is_production and len(expected) < 32:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="KOL_INTERNAL_KEY must be at least 32 characters in production",
+        )
+    if is_production and backend_key and hmac.compare_digest(expected, backend_key):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="KOL_INTERNAL_KEY must be different from BACKEND_API_KEY",
         )
     if not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(
