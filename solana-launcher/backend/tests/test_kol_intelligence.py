@@ -16,9 +16,10 @@ from app.models.kol_intelligence import (
     KOLWalletMetric,
 )
 from app.services.kol_metrics import refresh_kol_metrics
+from tests.conftest import TEST_BACKEND_API_KEY, TEST_KOL_INTERNAL_KEY
 
-BACKEND_HEADERS = {"X-Backend-API-Key": "test-backend-api-key-2026"}
-KOL_HEADERS = {"X-KOL-Internal-Key": "test-backend-api-key-2026"}
+BACKEND_HEADERS = {"X-Backend-API-Key": TEST_BACKEND_API_KEY}
+KOL_HEADERS = {"X-KOL-Internal-Key": TEST_KOL_INTERNAL_KEY}
 SOL_ADDRESS = "11111111111111111111111111111111"
 MINT = "So11111111111111111111111111111111111111112"
 
