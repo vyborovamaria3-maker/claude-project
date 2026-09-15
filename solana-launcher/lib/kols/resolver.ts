@@ -193,6 +193,15 @@ function mergeWallet(profile: KolProfile, incoming: KolWallet) {
   recalcProfile(profile);
 }
 
+function mergeProfile(target: KolProfile, incoming: KolProfile) {
+  if (target.name.startsWith("@") && !incoming.name.startsWith("@")) target.name = incoming.name;
+  if (!target.avatar && incoming.avatar) target.avatar = incoming.avatar;
+  if (!target.telegramUrl && incoming.telegramUrl) target.telegramUrl = incoming.telegramUrl;
+  if (!target.twitterUrl && incoming.twitterUrl) target.twitterUrl = incoming.twitterUrl;
+  for (const wallet of incoming.wallets) mergeWallet(target, wallet);
+  recalcProfile(target);
+}
+
 function addKolscanRow(profile: KolProfile, row: KolscanRow) {
   const address = row.wallet_address?.trim();
   if (!address || !isValidSolanaAddress(address)) return;
@@ -257,20 +266,20 @@ async function fetchKolscanRows(): Promise<KolscanRow[]> {
   return Array.isArray(data) ? (data as KolscanRow[]) : [];
 }
 
-async function enrichFromFirefly(handle: string, profile: KolProfile) {
+async function fetchFireflyProfile(parameter: "twitterHandle" | "walletAddress" | "solanaAddress", value: string) {
   const url = new URL(FIREFLY_PROFILE_URL);
-  url.searchParams.set("twitterHandle", handle);
+  url.searchParams.set(parameter, value);
   const response = await fetch(url, {
     headers: { accept: "application/json", "user-agent": USER_AGENT },
     next: { revalidate: 300 },
     signal: AbortSignal.timeout(6_000),
   });
   if (!response.ok) throw new Error(`Firefly HTTP ${response.status}`);
-
   const payload = (await response.json()) as FireflyResponse;
-  const data = payload.data;
-  if (!data) return;
+  return payload.data ?? null;
+}
 
+function mergeFireflyData(handle: string, profile: KolProfile, data: NonNullable<FireflyResponse["data"]>) {
   if (data.account?.displayName) profile.name = data.account.displayName;
   if (data.account?.avatar) profile.avatar = data.account.avatar;
 
@@ -308,6 +317,43 @@ async function enrichFromFirefly(handle: string, profile: KolProfile) {
 
   for (const wallet of data.walletProfiles ?? []) ingest(wallet, "ethereum");
   for (const wallet of data.solanaWalletProfiles ?? []) ingest(wallet, "solana");
+}
+
+async function enrichFromFirefly(handle: string, profile: KolProfile) {
+  const data = await fetchFireflyProfile("twitterHandle", handle);
+  if (!data) return;
+  mergeFireflyData(handle, profile, data);
+}
+
+async function resolveFromFireflyWallet(address: string): Promise<KolProfile[]> {
+  const chain: "solana" | "ethereum" = isValidEthereumAddress(address) ? "ethereum" : "solana";
+  if (!isValidWalletAddress(address, chain)) return [];
+  const parameter = chain === "ethereum" ? "walletAddress" : "solanaAddress";
+  const data = await fetchFireflyProfile(parameter, address);
+  if (!data) return [];
+
+  const returnedWallets = chain === "ethereum" ? data.walletProfiles ?? [] : data.solanaWalletProfiles ?? [];
+  const queriedWalletPresent = returnedWallets.some((wallet) => {
+    const candidate = wallet.address?.trim();
+    return candidate ? walletAddressEquals(candidate, address, chain) : false;
+  });
+  if (!queriedWalletPresent) return [];
+
+  const results: KolProfile[] = [];
+  const seenHandles = new Set<string>();
+  for (const twitter of data.twitterProfiles ?? []) {
+    const handle = normalizeTwitterHandle(twitter.handle ?? "");
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) continue;
+    const key = handle.toLowerCase();
+    if (seenHandles.has(key)) continue;
+    seenHandles.add(key);
+    const profile = createProfile(handle, data.account?.displayName);
+    mergeFireflyData(handle, profile, data);
+    if (profile.wallets.some((wallet) => wallet.chain === chain && walletAddressEquals(wallet.address, address, chain))) {
+      results.push(profile);
+    }
+  }
+  return results;
 }
 
 async function enrichFromNextId(handle: string, profile: KolProfile) {
@@ -405,9 +451,11 @@ export async function getKols(options: {
     sourceStatus.push({ source: "KOL Quest / KolScan", ok: false, detail: error instanceof Error ? error.message : "dataset unavailable" });
   }
 
-  const normalizedHandle = normalizeTwitterHandle(query);
+  const queryText = query.trim();
+  const walletQuery = looksLikeWallet(queryText);
+  const normalizedHandle = normalizeTwitterHandle(queryText);
   const exactKey = normalizedHandle.toLowerCase();
-  const shouldResolveIdentity = Boolean(query) && !looksLikeWallet(query) && /^[A-Za-z0-9_]{1,15}$/.test(normalizedHandle);
+  const shouldResolveIdentity = Boolean(queryText) && !walletQuery && /^[A-Za-z0-9_]{1,15}$/.test(normalizedHandle);
 
   if (shouldResolveIdentity) {
     const profile = profiles.get(exactKey) ?? createProfile(normalizedHandle);
@@ -429,11 +477,33 @@ export async function getKols(options: {
     if (profile.wallets.length > 0 || profiles.has(exactKey)) profiles.set(exactKey, profile);
   }
 
-  const queryText = query.trim();
+  if (queryText && walletQuery) {
+    try {
+      const reverseProfiles = await resolveFromFireflyWallet(queryText);
+      for (const incoming of reverseProfiles) {
+        const key = incoming.handle.toLowerCase();
+        const profile = profiles.get(key) ?? createProfile(incoming.handle, incoming.name);
+        mergeProfile(profile, incoming);
+        profiles.set(key, profile);
+      }
+      sourceStatus.push({
+        source: "Firefly",
+        ok: true,
+        detail: `${reverseProfiles.length} X identity match(es) for wallet`,
+      });
+    } catch (error) {
+      sourceStatus.push({
+        source: "Firefly",
+        ok: false,
+        detail: error instanceof Error ? error.message : "wallet identity lookup unavailable",
+      });
+    }
+  }
+
   const queryLower = queryText.toLowerCase();
   let items = Array.from(profiles.values()).filter((profile) => {
     if (!queryText) return true;
-    if (looksLikeWallet(queryText)) {
+    if (walletQuery) {
       const chain = isValidEthereumAddress(queryText) ? "ethereum" : "solana";
       return profile.wallets.some(
         (wallet) => wallet.chain === chain && walletAddressEquals(wallet.address, queryText, chain),
