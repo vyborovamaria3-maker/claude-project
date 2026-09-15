@@ -225,6 +225,14 @@ async def related_wallet_candidates(
     *,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
+    """Return behavioral wallet candidates with a bounded 0..1 similarity score.
+
+    The legacy wallet_links ETL increments stored shared-token counters on repeated
+    refreshes, so those counters cannot be trusted as a current similarity metric.
+    We use wallet_links only to discover candidates, then recompute unique token
+    participation from wallet_trades and rank by Jaccard overlap. This remains a
+    behavioral relationship only and is never an ownership claim.
+    """
     wallet = (
         await session.execute(
             select(Wallet).where(Wallet.wallet_address == wallet_address).limit(1)
@@ -233,6 +241,8 @@ async def related_wallet_candidates(
     if wallet is None:
         return []
 
+    requested_limit = max(1, min(limit, 100))
+    candidate_limit = min(500, max(50, requested_limit * 5))
     rows = list(
         (
             await session.execute(
@@ -243,7 +253,7 @@ async def related_wallet_candidates(
                     )
                 )
                 .order_by(WalletLink.similarity_score.desc())
-                .limit(max(1, min(limit, 100)))
+                .limit(candidate_limit)
             )
         ).scalars().all()
     )
@@ -251,34 +261,67 @@ async def related_wallet_candidates(
         row.wallet_b_id if row.wallet_a_id == wallet.id else row.wallet_a_id
         for row in rows
     }
-    others = {}
-    if other_ids:
-        others = {
-            item.id: item
-            for item in (
-                await session.execute(select(Wallet).where(Wallet.id.in_(other_ids)))
-            ).scalars().all()
-        }
+    if not other_ids:
+        return []
 
-    result = []
+    others = {
+        item.id: item
+        for item in (
+            await session.execute(select(Wallet).where(Wallet.id.in_(other_ids)))
+        ).scalars().all()
+    }
+
+    token_sets: dict[int, set[int]] = {wallet.id: set()}
+    for other_id in other_ids:
+        token_sets[other_id] = set()
+    participation_rows = (
+        await session.execute(
+            select(WalletTrade.wallet_id, WalletTrade.token_id)
+            .where(WalletTrade.wallet_id.in_([wallet.id, *other_ids]))
+            .distinct()
+        )
+    ).all()
+    for wallet_id, token_id in participation_rows:
+        token_sets.setdefault(int(wallet_id), set()).add(int(token_id))
+
+    source_tokens = token_sets.get(wallet.id, set())
+    if not source_tokens:
+        return []
+
+    result: list[dict[str, Any]] = []
     for link in rows:
         other_id = link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
         other = others.get(other_id)
         if other is None:
             continue
+        other_tokens = token_sets.get(other_id, set())
+        shared_tokens = source_tokens & other_tokens
+        if not shared_tokens:
+            continue
+        union_tokens = source_tokens | other_tokens
+        similarity = len(shared_tokens) / len(union_tokens) if union_tokens else 0.0
         result.append(
             {
                 "address": other.wallet_address,
-                "similarity_score": link.similarity_score,
-                "shared_tokens_count": link.shared_tokens_count,
+                "similarity_score": round(max(0.0, min(1.0, similarity)), 6),
+                "shared_tokens_count": len(shared_tokens),
                 "first_interaction_date": (
                     link.first_interaction_date.isoformat()
                     if link.first_interaction_date
                     else None
                 ),
-                "details": link.details,
+                "details": {
+                    **(link.details or {}),
+                    "method": "jaccard_unique_token_participation",
+                    "stored_shared_tokens_count": link.shared_tokens_count,
+                },
                 "classification": "possible_related_wallet",
                 "ownership_claim": False,
             }
         )
-    return result
+
+    result.sort(
+        key=lambda item: (item["similarity_score"], item["shared_tokens_count"], item["address"]),
+        reverse=True,
+    )
+    return result[:requested_limit]
