@@ -109,14 +109,14 @@ jobs:
           POSTGRES_USER: potapoff_admin
           POSTGRES_PASSWORD: ci-admin-state-password
         ports:
-          - 55432:5432
+          - 55434:5432
         options: >-
           --health-cmd "pg_isready -U potapoff_admin -d potapoff_admin_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      ADMIN_STATE_TEST_DSN: postgresql://potapoff_admin:ci-admin-state-password@127.0.0.1:55432/potapoff_admin_test
+      ADMIN_STATE_TEST_DSN: postgresql://potapoff_admin:ci-admin-state-password@127.0.0.1:55434/potapoff_admin_test
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
