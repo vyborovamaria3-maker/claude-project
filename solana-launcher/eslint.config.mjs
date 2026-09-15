@@ -35,6 +35,8 @@ export default defineConfig([
     "test-results/**",
     "data/**",
     "solana-wallet-warmup/**",
+    ".venv*/**",
+    "**/.venv*/**",
     "tmp-check-dups.cjs",
   ]),
 ]);
