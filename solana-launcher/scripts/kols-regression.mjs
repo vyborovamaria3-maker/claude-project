@@ -99,9 +99,9 @@ assert(
 );
 
 assert(
-  nextRoute.includes("new Map(\n      (data.items ?? []).map((item) => [item.address, item.metrics] as const)")
-    && nextRoute.includes("const metrics = lookup.get(wallet.address)")
-    && !nextRoute.includes("item.address.toLowerCase(), item.metrics"),
+  nextRoute.includes("(data.items ?? []).map((item) => [item.address, item.metrics] as const)")
+    && nextRoute.includes("lookup.get(wallet.address)")
+    && !nextRoute.includes("item.address.toLowerCase()"),
   "internal Solana metric joins must remain exact and case-sensitive",
 );
 assert(
