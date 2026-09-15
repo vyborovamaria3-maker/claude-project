@@ -29,20 +29,61 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
-# The frontend's Mini App routes make authenticated server-to-server requests
-# to the FastAPI subscription endpoints. Keep backend.env private, but export
-# only the shared API key so Docker Compose can inject it into the frontend.
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
-fi
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
-fi
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+resolve_env_value() {
+  local key="$1"
+  local value="${!key:-}"
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file .env.server "$key")"
+  fi
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file backend.env "$key")"
+  fi
+  printf '%s' "$value"
+}
+
+# Values used by Compose interpolation must exist in the deploy shell itself.
+# backend.env remains private; only explicitly selected server-side values are
+# exported here. None of these are NEXT_PUBLIC_* browser variables.
+BACKEND_API_KEY="$(resolve_env_value BACKEND_API_KEY)"
+if [[ -z "$BACKEND_API_KEY" ]]; then
   echo "BACKEND_API_KEY is required in .env.server or backend.env" >&2
   exit 1
 fi
 export BACKEND_API_KEY
+
+KOL_INTERNAL_KEY="$(resolve_env_value KOL_INTERNAL_KEY)"
+if [[ -z "$KOL_INTERNAL_KEY" ]]; then
+  echo "KOL_INTERNAL_KEY is required in .env.server or backend.env" >&2
+  exit 1
+fi
+if (( ${#KOL_INTERNAL_KEY} < 32 )); then
+  echo "KOL_INTERNAL_KEY must be at least 32 characters" >&2
+  exit 1
+fi
+if [[ "$KOL_INTERNAL_KEY" == "$BACKEND_API_KEY" ]]; then
+  echo "KOL_INTERNAL_KEY must be different from BACKEND_API_KEY" >&2
+  exit 1
+fi
+export KOL_INTERNAL_KEY
+
+# Solana Tracker ingestion is optional: when the key is absent, the KOL UI
+# explicitly reports ingestion_disabled instead of pretending there were no
+# trades. If configured in backend.env, export it so Compose does not overwrite
+# the env_file value with an empty interpolation result.
+SOLANA_TRACKER_API_KEY="$(resolve_env_value SOLANA_TRACKER_API_KEY)"
+SOLANA_TRACKER_API_BASE="$(resolve_env_value SOLANA_TRACKER_API_BASE)"
+KOL_TRADE_SYNC_INTERVAL_SECONDS="$(resolve_env_value KOL_TRADE_SYNC_INTERVAL_SECONDS)"
+KOL_TRADE_SYNC_WALLETS_PER_RUN="$(resolve_env_value KOL_TRADE_SYNC_WALLETS_PER_RUN)"
+export SOLANA_TRACKER_API_KEY
+export SOLANA_TRACKER_API_BASE="${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}"
+export KOL_TRADE_SYNC_INTERVAL_SECONDS="${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}"
+export KOL_TRADE_SYNC_WALLETS_PER_RUN="${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}"
+
+if [[ -n "$SOLANA_TRACKER_API_KEY" ]]; then
+  echo "KOL trade ingestion provider: enabled"
+else
+  echo "KOL trade ingestion provider: disabled (SOLANA_TRACKER_API_KEY is not configured)"
+fi
 
 # The admin stack owns the same external network so the public ingress can
 # route admin.potapoff.fun directly to potapoff-admin:8080.
