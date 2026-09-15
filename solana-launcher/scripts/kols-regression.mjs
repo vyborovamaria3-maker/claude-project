@@ -81,7 +81,7 @@ assert(
 assert(!resolver.includes("proof-service.nextnext.id"), "Next.ID staging endpoint must not be used");
 assert(resolver.includes("bs58.decode(trimmed).length === 32"), "Solana identities must be valid 32-byte public keys");
 assert(
-  resolver.includes('chain === "solana"\n    ? left === right')
+  /chain\s*===\s*"solana"\s*\?\s*left\s*===\s*right/.test(resolver)
     && !resolver.includes("wallet.address.toLowerCase() === incoming.address.toLowerCase()"),
   "Solana wallet equality must remain case-sensitive",
 );
@@ -348,7 +348,7 @@ assert(
   ingestionTests.includes("test_normalize_base_to_token_as_buy")
     && ingestionTests.includes("test_normalize_token_to_base_as_sell")
     && ingestionTests.includes("test_normalize_token_to_token_preserves_both_legs")
-    && ingestionTests.includes("test_symbol_spoof_does_not_turn_unknown_mint_into_base_asset")
+    && ingestionTests.includes("test_symbol_spoof_does_not_turn_arbitrary_token_into_base_asset")
     && ingestionTests.includes("test_fifo_realized_refuses_partial_or_unpriced_cost_basis"),
   "trade ingestion tests must cover directionality, symbol spoofing and conservative FIFO PnL",
 );
