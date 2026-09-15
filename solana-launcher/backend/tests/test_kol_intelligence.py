@@ -6,10 +6,11 @@ import pytest
 from sqlalchemy import func, select
 
 from app.api.v1 import advanced_intelligence as advanced_api
-from app.models.analytics import Token, Wallet, WalletTrade
+from app.models.analytics import Wallet
 from app.models.kol_intelligence import (
     KOLProfile,
     KOLSourceSync,
+    KOLTradeEvent,
     KOLWalletAttribution,
     KOLWalletEvidence,
     KOLWalletMetric,
@@ -194,7 +195,7 @@ async def test_sync_rejects_invalid_wallet_addresses(client, test_app):
 
 
 @pytest.mark.asyncio
-async def test_shared_wallet_trade_is_counted_once(client, test_app):
+async def test_shared_wallet_event_is_counted_once(client, test_app):
     strong = sync_payload(handle="strong_kol", confidence=100, verified=True)
     weak = sync_payload(
         handle="weak_kol",
@@ -210,20 +211,22 @@ async def test_shared_wallet_trade_is_counted_once(client, test_app):
         wallet = (
             await session.execute(select(Wallet).where(Wallet.wallet_address == SOL_ADDRESS))
         ).scalar_one()
-        token = Token(mint_address=MINT, name="Wrapped SOL", symbol="SOL")
-        session.add(token)
-        await session.flush()
         session.add(
-            WalletTrade(
-                wallet_id=wallet.id,
-                token_id=token.id,
-                buy_timestamp=datetime.now(timezone.utc),
-                amount_buy=10,
-                amount_sold=0,
-                avg_buy_price=2,
-                avg_sell_price=None,
-                realized_profit_usd=None,
-                still_holding=True,
+            KOLTradeEvent(
+                analytics_wallet_id=wallet.id,
+                chain="solana",
+                address=wallet.wallet_address,
+                tx_signature="shared-wallet-event-signature",
+                event_index=1,
+                side="buy",
+                mint_address=MINT,
+                token_symbol="SOL",
+                token_name="Wrapped SOL",
+                amount=10,
+                price_usd=2,
+                value_usd=20,
+                source="test",
+                occurred_at=datetime.now(timezone.utc),
             )
         )
         await session.commit()
@@ -239,12 +242,13 @@ async def test_shared_wallet_trade_is_counted_once(client, test_app):
     feed = await client.get("/api/v1/kols/internal/live-trades?limit=20", headers=KOL_HEADERS)
     assert feed.status_code == 200, feed.text
     assert len(feed.json()["items"]) == 1
-    assert feed.json()["items"][0]["eventId"].endswith(":buy")
+    assert feed.json()["items"][0]["eventId"].startswith("kol-event:")
+    assert feed.json()["items"][0]["side"] == "buy"
     assert feed.json()["items"][0]["handle"] == "strong_kol"
 
 
 @pytest.mark.asyncio
-async def test_refresh_clears_stale_internal_metric(client, test_app):
+async def test_refresh_clears_stale_internal_event_metric(client, test_app):
     assert (
         await client.post(
             "/api/v1/kols/sync",
@@ -258,7 +262,7 @@ async def test_refresh_clears_stale_internal_metric(client, test_app):
         stale = KOLWalletMetric(
             wallet_id=attribution.id,
             timeframe_days=1,
-            source="internal_wallet_trades",
+            source="internal_kol_events",
             realized_pnl_usd=123,
             win_rate=100,
             wins=4,
@@ -278,7 +282,7 @@ async def test_refresh_clears_stale_internal_metric(client, test_app):
                 select(KOLWalletMetric).where(
                     KOLWalletMetric.wallet_id == attribution.id,
                     KOLWalletMetric.timeframe_days == 1,
-                    KOLWalletMetric.source == "internal_wallet_trades",
+                    KOLWalletMetric.source == "internal_kol_events",
                 )
             )
         ).scalar_one()
