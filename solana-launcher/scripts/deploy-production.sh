@@ -14,6 +14,7 @@ ADMIN_STAGE_DIR="${ADMIN_STAGE_DIR:-$ADMIN_ROOT/.admin-site-stage-$NEW_TAG}"
 ADMIN_ROLLBACK_DIR="${ADMIN_ROLLBACK_DIR:-$ADMIN_ROOT/.admin-site-rollback}"
 ADMIN_COMPOSE_FILE="$ADMIN_DIR/docker-compose.yml"
 ADMIN_ENV_FILE="$ADMIN_DIR/.env"
+SUBSCRIPTION_ADMIN_ENV_FILE="$DEPLOY_DIR/subscription-admin.env"
 REGISTRY_BASE="ghcr.io/vyborovamaria3-maker/claude-project"
 
 cd "$DEPLOY_DIR"
@@ -26,6 +27,7 @@ test -r "$HEALTH_SCRIPT"
 test -r "$PROMETHEUS_CONFIG"
 test -r "$ADMIN_COMPOSE_FILE"
 test -r "$ADMIN_ENV_FILE"
+test -r "$SUBSCRIPTION_ADMIN_ENV_FILE"
 
 env_value_from_file() {
   local file="$1"
@@ -96,6 +98,16 @@ resolve_backend_api_key() {
     return 1
   fi
   export BACKEND_API_KEY
+}
+
+resolve_subscription_admin_key() {
+  local key
+  key="$(env_value_from_file "$SUBSCRIPTION_ADMIN_ENV_FILE" SUBSCRIPTION_ADMIN_KEY)"
+  if [[ ! "$key" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+    echo "SUBSCRIPTION_ADMIN_KEY must be configured in subscription-admin.env with 32-256 URL-safe characters" >&2
+    return 1
+  fi
+  export SUBSCRIPTION_ADMIN_KEY="$key"
 }
 
 COMPOSE=(docker compose --env-file .env.server -f "$COMPOSE_FILE")
@@ -348,6 +360,7 @@ verify_release_images "$NEW_TAG"
 activate_admin_source
 ensure_twitter_crawler_admin_secret
 resolve_backend_api_key
+resolve_subscription_admin_key
 
 docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
 export IMAGE_TAG="$NEW_TAG"
