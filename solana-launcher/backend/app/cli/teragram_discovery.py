@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-
 import argparse
 import json
 
-
 from app.services.teragram_graph_discovery import discover_teragram_graph
-
-
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Expand TeraGram candidates through historical Telegram graph signals."
     )
-
 
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--candidates", required=True)
@@ -42,9 +37,7 @@ def main() -> None:
         default="4GB",
     )
 
-
     args = parser.parse_args()
-
 
     result = discover_teragram_graph(
         input_dir=args.input_dir,
@@ -55,7 +48,6 @@ def main() -> None:
         threads=args.threads,
         memory_limit=args.memory_limit,
     )
-
 
     print(
         json.dumps(
@@ -68,8 +60,6 @@ def main() -> None:
             indent=2,
         )
     )
-
-
 
 
 if __name__ == "__main__":

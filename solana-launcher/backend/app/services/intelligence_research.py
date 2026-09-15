@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -20,8 +20,8 @@ def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 def _handle(value: str) -> str:
@@ -47,9 +47,7 @@ def _explicit_funding(details: dict[str, Any] | None) -> dict[str, Any] | None:
         "transfer_sol",
     }
     evidence = {
-        key: details[key]
-        for key in keys
-        if key in details and details[key] not in (None, "")
+        key: details[key] for key in keys if key in details and details[key] not in (None, "")
     }
     nested = details.get("funding")
     if isinstance(nested, dict) and nested:
@@ -84,18 +82,17 @@ async def _wallet_and_links(
                 )
                 .limit(max(1, min(link_limit, 100)))
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     peer_ids = {
-        link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
-        for link in links
+        link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id for link in links
     }
     peers: dict[int, str] = {}
     if peer_ids:
         rows = list(
-            (
-                await session.execute(select(Wallet).where(Wallet.id.in_(peer_ids)))
-            ).scalars().all()
+            (await session.execute(select(Wallet).where(Wallet.id.in_(peer_ids)))).scalars().all()
         )
         peers = {row.id: row.wallet_address for row in rows}
     return wallet, links, peers
@@ -151,13 +148,9 @@ async def expand_wallet(
             "address": wallet.wallet_address,
             "first_seen_at": _iso(wallet.first_seen_date),
             "tags": wallet.tags or [],
-            "tokens_in_returned_trades": len(
-                {token.mint_address for _, token in trade_rows}
-            ),
+            "tokens_in_returned_trades": len({token.mint_address for _, token in trade_rows}),
             "trades_returned": len(trade_rows),
-            "realized_profit_usd_in_returned_trades": (
-                sum(realized) if realized else None
-            ),
+            "realized_profit_usd_in_returned_trades": (sum(realized) if realized else None),
         },
         "trades": [
             {
@@ -229,7 +222,9 @@ async def expand_x_account(
                 .order_by(SocialEvent.occurred_at.desc())
                 .limit(max(1, min(event_limit, 250)))
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     if not rows:
         return {"tool": "expand_x_account", "entity_key": entity_key, "found": False}
@@ -291,7 +286,9 @@ async def expand_tg_channel(
                 .order_by(TelegramCall.called_at.desc())
                 .limit(max(1, min(call_limit, 250)))
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     return {
         "tool": "expand_tg_channel",

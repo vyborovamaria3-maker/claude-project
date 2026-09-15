@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-
 import json
 import math
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 from app.services.teragram_scanner import (
     _configure_duckdb,
@@ -17,21 +15,14 @@ from app.services.teragram_scanner import (
     discover_teragram_sources,
 )
 
-
-
-
 _TME_RE = re.compile(
     r"https?://(?:www\.)?(?:t\.me|telegram\.me)/(?:s/)?([a-zA-Z0-9_]{5,32})",
     re.IGNORECASE,
 )
 
 
-
-
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
+    return datetime.now(UTC).isoformat()
 
 
 def _load_roots(candidate_path: Path) -> list[int]:
@@ -46,8 +37,7 @@ def _load_roots(candidate_path: Path) -> list[int]:
 
             signals = row.get("signals") or {}
             classifications = {
-                str(value).strip().lower()
-                for value in (row.get("classifications") or [])
+                str(value).strip().lower() for value in (row.get("classifications") or [])
             }
 
             has_target_signal = (
@@ -72,8 +62,6 @@ def _load_roots(candidate_path: Path) -> list[int]:
     return sorted(set(roots))
 
 
-
-
 def discover_teragram_graph(
     *,
     input_dir: str | Path,
@@ -89,14 +77,11 @@ def discover_teragram_graph(
     if max_results < 1:
         raise ValueError("max_results must be positive")
 
-
     sources = discover_teragram_sources(input_dir)
-
 
     candidate_file = Path(candidate_path).expanduser().resolve()
     if not candidate_file.is_file():
         raise FileNotFoundError(candidate_file)
-
 
     roots = _load_roots(candidate_file)
 
@@ -127,13 +112,10 @@ def discover_teragram_graph(
 
     duckdb = _require_duckdb()
 
-
     database = output.with_suffix(".duckdb")
     temp_dir = output.parent / "graph_duckdb_tmp"
 
-
     connection = duckdb.connect(str(database))
-
 
     try:
         _configure_duckdb(
@@ -143,7 +125,6 @@ def discover_teragram_graph(
             temp_dir=temp_dir,
         )
 
-
         connection.execute(
             f"""
             CREATE OR REPLACE TEMP VIEW tg_chats AS
@@ -152,7 +133,6 @@ def discover_teragram_graph(
             """
         )
 
-
         connection.execute(
             f"""
             CREATE OR REPLACE TEMP VIEW tg_messages AS
@@ -160,7 +140,6 @@ def discover_teragram_graph(
             FROM {_relation_sql(sources.messages)}
             """
         )
-
 
         if sources.entity_urls:
             connection.execute(
@@ -171,7 +150,6 @@ def discover_teragram_graph(
                 """
             )
 
-
         if sources.chats_users:
             connection.execute(
                 f"""
@@ -181,7 +159,6 @@ def discover_teragram_graph(
                 """
             )
 
-
         connection.execute(
             """
             CREATE OR REPLACE TEMP TABLE tg_graph_roots (
@@ -190,12 +167,10 @@ def discover_teragram_graph(
             """
         )
 
-
         connection.executemany(
             "INSERT INTO tg_graph_roots VALUES (?)",
             [(value,) for value in roots],
         )
-
 
         evidence: dict[int, dict[str, Any]] = defaultdict(
             lambda: {
@@ -207,11 +182,9 @@ def discover_teragram_graph(
             }
         )
 
-
         # --------------------------------------------------------
         # 1. linked_chat_id, both directions
         # --------------------------------------------------------
-
 
         linked_rows = connection.execute(
             """
@@ -234,26 +207,21 @@ def discover_teragram_graph(
             """
         ).fetchall()
 
-
         for root_id, target_id in linked_rows:
             if target_id is None:
                 continue
-
 
             target = int(target_id)
             if target in roots:
                 continue
 
-
             item = evidence[target]
             item["linked"] += 1
             item["root_connections"].add(int(root_id))
 
-
         # --------------------------------------------------------
         # 2. historical forwards into roots
         # --------------------------------------------------------
-
 
         forward_rows = connection.execute(
             """
@@ -272,18 +240,15 @@ def discover_teragram_graph(
             """
         ).fetchall()
 
-
         for target_id, count, root_count in forward_rows:
             target = int(target_id)
             item = evidence[target]
             item["forward_count"] = int(count or 0)
             item["forward_root_count"] = int(root_count or 0)
 
-
         # --------------------------------------------------------
         # 3. t.me references
         # --------------------------------------------------------
-
 
         if sources.entity_urls:
             url_rows = connection.execute(
@@ -303,7 +268,6 @@ def discover_teragram_graph(
                 """
             ).fetchall()
 
-
             usernames: dict[str, dict[str, Any]] = defaultdict(
                 lambda: {
                     "count": 0,
@@ -311,17 +275,14 @@ def discover_teragram_graph(
                 }
             )
 
-
             for root_id, url in url_rows:
                 match = _TME_RE.search(str(url or ""))
                 if not match:
                     continue
 
-
                 username = match.group(1).lower()
                 usernames[username]["count"] += 1
                 usernames[username]["roots"].add(int(root_id))
-
 
             if usernames:
                 connection.execute(
@@ -332,12 +293,10 @@ def discover_teragram_graph(
                     """
                 )
 
-
                 connection.executemany(
                     "INSERT INTO tg_graph_usernames VALUES (?)",
                     [(name,) for name in usernames],
                 )
-
 
                 mapped = connection.execute(
                     """
@@ -350,25 +309,20 @@ def discover_teragram_graph(
                     """
                 ).fetchall()
 
-
                 for target_id, username in mapped:
                     target = int(target_id)
                     if target in roots:
                         continue
 
-
                     stats = usernames[str(username)]
                     item = evidence[target]
-
 
                     item["tme_count"] += int(stats["count"])
                     item["root_connections"].update(stats["roots"])
 
-
         # --------------------------------------------------------
         # 4. audience overlap
         # --------------------------------------------------------
-
 
         if sources.chats_users:
             audience_rows = connection.execute(
@@ -405,13 +359,11 @@ def discover_teragram_graph(
                 [min_audience_overlap],
             ).fetchall()
 
-
             for target_id, overlap, connected_roots in audience_rows:
                 target = int(target_id)
                 item = evidence[target]
                 item["audience_overlap"] = int(overlap or 0)
                 item["audience_root_count"] = int(connected_roots or 0)
-
 
         if not evidence:
             payload = {
@@ -421,16 +373,13 @@ def discover_teragram_graph(
                 "candidates": [],
             }
 
-
             output.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             return payload
 
-
         ids = sorted(evidence)
-
 
         connection.execute(
             """
@@ -440,12 +389,10 @@ def discover_teragram_graph(
             """
         )
 
-
         connection.executemany(
             "INSERT INTO tg_graph_targets VALUES (?)",
             [(value,) for value in ids],
         )
-
 
         metadata_rows = connection.execute(
             """
@@ -466,9 +413,7 @@ def discover_teragram_graph(
             """
         ).fetchall()
 
-
         results: list[dict[str, Any]] = []
-
 
         for (
             chat_id,
@@ -485,18 +430,13 @@ def discover_teragram_graph(
             chat_id = int(chat_id)
             item = evidence[chat_id]
 
-
             linked = int(item.get("linked", 0))
             forwards = int(item.get("forward_count", 0))
             tme = int(item.get("tme_count", 0))
             overlap = int(item.get("audience_overlap", 0))
 
-            forward_root_count = int(
-                item.get("forward_root_count", 0) or 0
-            )
-            audience_root_count = int(
-                item.get("audience_root_count", 0) or 0
-            )
+            forward_root_count = int(item.get("forward_root_count", 0) or 0)
+            audience_root_count = int(item.get("audience_root_count", 0) or 0)
 
             connected_root_count = max(
                 len(item.get("root_connections", set())),
@@ -507,13 +447,10 @@ def discover_teragram_graph(
             if connected_root_count < 1:
                 continue
 
-
             score = 0.0
-
 
             if linked:
                 score += 45.0
-
 
             if forwards:
                 score += min(
@@ -521,13 +458,11 @@ def discover_teragram_graph(
                     7.0 + 6.0 * math.log1p(forwards),
                 )
 
-
             if tme:
                 score += min(
                     30.0,
                     8.0 + 5.0 * math.log1p(tme),
                 )
-
 
             if overlap:
                 score += min(
@@ -535,17 +470,13 @@ def discover_teragram_graph(
                     4.0 * math.sqrt(overlap),
                 )
 
-
             if scam or fake:
                 score -= 50.0
-
 
             if restricted:
                 score -= 10.0
 
-
             score = round(max(0.0, min(100.0, score)), 1)
-
 
             reasons: list[str] = []
             if linked:
@@ -556,7 +487,6 @@ def discover_teragram_graph(
                 reasons.append("telegram_reference")
             if overlap:
                 reasons.append("audience_overlap")
-
 
             results.append(
                 {
@@ -585,7 +515,6 @@ def discover_teragram_graph(
                 }
             )
 
-
         results.sort(
             key=lambda row: (
                 row["historical_discovery_score"],
@@ -594,9 +523,7 @@ def discover_teragram_graph(
             reverse=True,
         )
 
-
         results = results[:max_results]
-
 
         payload = {
             "generated_at": _now(),
@@ -606,21 +533,17 @@ def discover_teragram_graph(
             "min_audience_overlap": min_audience_overlap,
             "max_results": max_results,
             "note": (
-                "Historical graph candidates only. "
-                "Live MTProto validation is required before use."
+                "Historical graph candidates only. Live MTProto validation is required before use."
             ),
             "candidates": results,
         }
-
 
         output.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
-
         return payload
-
 
     finally:
         connection.close()

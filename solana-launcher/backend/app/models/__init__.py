@@ -35,6 +35,20 @@ from app.models.social_intelligence import (
 )
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
+from app.models.twitter_crawler_run import TwitterCrawlerRun
+from app.models.twitter_crawler_settings import TwitterCrawlerSettings
+from app.models.twitter_discovery_admin import TwitterDiscoveryConfig, TwitterDiscoveryRun
+from app.models.twitter_discovery_scoring import TwitterDiscoveryScore
+from app.models.twitter_intelligence import (
+    TwitterAccount,
+    TwitterAccountScore,
+    TwitterAccountSnapshot,
+    TwitterAccountTokenStat,
+    TwitterDiscoveryCandidate,
+    TwitterDiscoveryEvidence,
+    TwitterPost,
+    TwitterPostToken,
+)
 from app.models.user import User
 
 __all__ = [
@@ -57,6 +71,19 @@ __all__ = [
     "TelegramChannelScore",
     "SocialEvent",
     "SocialRelation",
+    "TwitterCrawlerRun",
+    "TwitterCrawlerSettings",
+    "TwitterDiscoveryConfig",
+    "TwitterDiscoveryRun",
+    "TwitterAccount",
+    "TwitterAccountSnapshot",
+    "TwitterAccountScore",
+    "TwitterPost",
+    "TwitterPostToken",
+    "TwitterAccountTokenStat",
+    "TwitterDiscoveryCandidate",
+    "TwitterDiscoveryEvidence",
+    "TwitterDiscoveryScore",
     "IntelligenceSnapshot",
     "IntelligenceEntity",
     "IntelligenceSnapshotEntity",

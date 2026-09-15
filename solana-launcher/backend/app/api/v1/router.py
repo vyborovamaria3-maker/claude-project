@@ -10,6 +10,9 @@ from app.api.v1 import (
     tasks,
     telegram_intelligence,
     teragram_invite,
+    twitter_crawler_admin,
+    twitter_registry_admin,
+    twitter_registry_admin_compat,
     users,
 )
 
@@ -43,5 +46,22 @@ api_router.include_router(
     advanced_intelligence.router,
     prefix="/social/intelligence/advanced",
     tags=["advanced-intelligence"],
+)
+api_router.include_router(
+    twitter_crawler_admin.router,
+    prefix="/twitter/admin",
+    tags=["twitter-crawler-admin"],
+)
+# The Next admin proxy targets /api/v1/admin/twitter-registry/*. Compatibility
+# routes stay first so operational endpoints use canonical crawler state.
+api_router.include_router(
+    twitter_registry_admin_compat.router,
+    prefix="/admin/twitter-registry",
+    tags=["twitter-registry-admin"],
+)
+api_router.include_router(
+    twitter_registry_admin.router,
+    prefix="/admin/twitter-registry",
+    tags=["twitter-registry-admin"],
 )
 api_router.include_router(health.router, tags=["health"])

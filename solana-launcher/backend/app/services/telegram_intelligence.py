@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,17 +23,21 @@ from app.models.social_intelligence import (
 )
 from app.services.social_intelligence import nearest_token_snapshot, upsert_channel_score
 from app.services.social_relations import upsert_social_relation
-from app.services.telegram_parser import ParsedTelegramMessage, normalize_telegram_target, parse_telegram_message
+from app.services.telegram_parser import (
+    ParsedTelegramMessage,
+    normalize_telegram_target,
+    parse_telegram_message,
+)
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def aware(value: datetime | None) -> datetime:
     if value is None:
         return utcnow()
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def message_replies(message: Any) -> int:
@@ -68,7 +73,7 @@ class TelegramIntelligenceService:
             session_path.parent.mkdir(parents=True, exist_ok=True)
             session = str(session_path)
         self.client = TelegramClient(session, settings.telegram_api_id, settings.telegram_api_hash)
-        self._handler = None
+        self._handler: Callable[[Any], Awaitable[None]] | None = None
         self._monitored: list[str] = []
 
     async def connect(self) -> None:
@@ -76,7 +81,8 @@ class TelegramIntelligenceService:
         if not await self.client.is_user_authorized():
             await self.client.disconnect()
             raise TelegramSessionError(
-                "Telegram user session is not authorized. Run `python -m app.cli.telegram_login` and configure TG_SESSION_STRING."
+                "Telegram user session is not authorized. Run "
+                "`python -m app.cli.telegram_login` and configure TG_SESSION_STRING."
             )
 
     async def disconnect(self) -> None:
@@ -92,10 +98,16 @@ class TelegramIntelligenceService:
             participants = int(getattr(full.full_chat, "participants_count", 0) or 0)
             linked_chat_id = getattr(full.full_chat, "linked_chat_id", None)
             linked_chat = next(
-                (chat for chat in getattr(full, "chats", []) if getattr(chat, "id", None) == linked_chat_id),
+                (
+                    chat
+                    for chat in getattr(full, "chats", [])
+                    if getattr(chat, "id", None) == linked_chat_id
+                ),
                 None,
             )
-            linked_username = getattr(linked_chat, "username", None) if linked_chat is not None else None
+            linked_username = (
+                getattr(linked_chat, "username", None) if linked_chat is not None else None
+            )
         except Exception:
             about = ""
             participants = int(getattr(entity, "participants_count", 0) or 0)
@@ -103,7 +115,9 @@ class TelegramIntelligenceService:
             linked_username = None
         entity_username = getattr(entity, "username", None)
         row = (
-            await session.execute(select(TelegramChannel).where(TelegramChannel.telegram_id == int(entity.id)))
+            await session.execute(
+                select(TelegramChannel).where(TelegramChannel.telegram_id == int(entity.id))
+            )
         ).scalar_one_or_none()
         if row is None and entity_username:
             public_row = (
@@ -163,7 +177,9 @@ class TelegramIntelligenceService:
         except Exception:
             sender = None
         row = (
-            await session.execute(select(TelegramUser).where(TelegramUser.telegram_id == int(sender_id)))
+            await session.execute(
+                select(TelegramUser).where(TelegramUser.telegram_id == int(sender_id))
+            )
         ).scalar_one_or_none()
         username = getattr(sender, "username", None) if sender is not None else None
         first = getattr(sender, "first_name", None) if sender is not None else None
@@ -221,10 +237,15 @@ class TelegramIntelligenceService:
             "forwards": int(getattr(message, "forwards", 0) or 0),
             "replies": message_replies(message),
             "reactions": message_reactions(message),
-            "raw": {"collector": "mtproto", "grouped_id": str(getattr(message, "grouped_id", "") or "") or None},
+            "raw": {
+                "collector": "mtproto",
+                "grouped_id": str(getattr(message, "grouped_id", "") or "") or None,
+            },
         }
         if stored is None:
-            stored = TelegramMessage(channel_id=channel.id, telegram_message_id=int(message.id), **values)
+            stored = TelegramMessage(
+                channel_id=channel.id, telegram_message_id=int(message.id), **values
+            )
             session.add(stored)
         else:
             for key, value in values.items():
@@ -268,7 +289,11 @@ class TelegramIntelligenceService:
                     )
                 )
             ).scalar_one_or_none()
-            source_url = f"https://t.me/{channel.username}/{stored.telegram_message_id}" if channel.username else None
+            source_url = (
+                f"https://t.me/{channel.username}/{stored.telegram_message_id}"
+                if channel.username
+                else None
+            )
             if mention is None:
                 mention = TelegramTokenMention(
                     message_id=stored.id,
@@ -288,7 +313,9 @@ class TelegramIntelligenceService:
                 mention.is_explicit_call = mention.is_explicit_call or parsed.explicit_call
 
             call = (
-                await session.execute(select(TelegramCall).where(TelegramCall.mention_id == mention.id))
+                await session.execute(
+                    select(TelegramCall).where(TelegramCall.mention_id == mention.id)
+                )
             ).scalar_one_or_none()
             if call is None and parsed.explicit_call:
                 price, market_cap = await nearest_token_snapshot(session, mint, published_at)
@@ -310,7 +337,9 @@ class TelegramIntelligenceService:
                 )
             elif call is not None:
                 call.caller_telegram_id = stored.sender_telegram_id or call.caller_telegram_id
-                call.caller_username = stored.sender_username or call.caller_username or source_handle
+                call.caller_username = (
+                    stored.sender_username or call.caller_username or source_handle
+                )
                 call.meta = {**(call.meta or {}), "collector": "mtproto"}
 
             external_id = f"{channel.telegram_id}:{stored.telegram_message_id}"
@@ -396,8 +425,12 @@ class TelegramIntelligenceService:
                     relation_type="discussion",
                     evidence="linked discussion chat",
                 )
-            async for message in self.client.iter_messages(entity, limit=max(1, min(post_limit, 5000))):
-                parsed, created = await self.save_message(session, channel, message, update_score=False)
+            async for message in self.client.iter_messages(
+                entity, limit=max(1, min(post_limit, 5000))
+            ):
+                parsed, created = await self.save_message(
+                    session, channel, message, update_score=False
+                )
                 discovered_tg.update(parsed.telegram_links)
                 discovered_x.update(parsed.x_usernames)
                 saved += 1
@@ -426,7 +459,11 @@ class TelegramIntelligenceService:
         post_limit: int = 200,
         entity_limit: int = 100,
     ) -> dict[str, Any]:
-        queue = [(normalize_telegram_target(seed), 0) for seed in seeds if normalize_telegram_target(seed)]
+        queue = [
+            (normalize_telegram_target(seed), 0)
+            for seed in seeds
+            if normalize_telegram_target(seed)
+        ]
         seen: set[str] = set()
         results: list[dict[str, Any]] = []
         while queue and len(results) < max(1, min(entity_limit, 1000)):
@@ -452,7 +489,9 @@ class TelegramIntelligenceService:
     async def start_monitor(self, channels: list[str]) -> dict[str, Any]:
         if self._handler is not None:
             return {"running": True, "channels": self._monitored}
-        cleaned = [normalize_telegram_target(item) for item in channels if normalize_telegram_target(item)]
+        cleaned = [
+            normalize_telegram_target(item) for item in channels if normalize_telegram_target(item)
+        ]
         if not cleaned:
             raise ValueError("At least one Telegram channel is required")
         resolved = []

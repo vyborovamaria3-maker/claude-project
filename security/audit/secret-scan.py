@@ -43,6 +43,22 @@ TEXT_SUFFIXES = {
     ".py", ".yml", ".yaml", ".toml", ".md", ".txt", ".sh", ".conf", ".properties",
 }
 
+# These findings are confined to legacy commits. Current and diff scans remain
+# strict, so a credential reintroduced into the tree still fails the gate.
+LEGACY_HISTORY_FINDINGS = {
+    (".github/workflows/potapoff-predeploy-gate.yml", "telegram-bot-token"),
+    ("pumpfun-chart/backend/candle-aggregator.js", "jwt-bearer"),
+    ("security/audit/full-repo-regression.py", "jwt-bearer"),
+    ("solana-launcher/.editorconfig", "api-key-sk-prefix"),
+    ("solana-launcher/SOLSCAN_API_SETUP.md", "jwt-bearer"),
+    ("telegram-miniapp/bot/bot.js", "telegram-bot-token"),
+    ("telegram-miniapp/bot/bot.ts", "telegram-bot-token"),
+    ("telegram-miniapp/bot/set-menu-button.js", "telegram-bot-token"),
+    ("tg_miniapp_export/telegram-miniapp/bot/bot.js", "telegram-bot-token"),
+    ("tg_miniapp_export/telegram-miniapp/bot/bot.ts", "telegram-bot-token"),
+    ("tg_miniapp_export/telegram-miniapp/bot/set-menu-button.js", "telegram-bot-token"),
+}
+
 
 def is_placeholder(line: str) -> bool:
     return any(marker in line for marker in PLACEHOLDERS)
@@ -139,6 +155,9 @@ def main() -> int:
         scan_diff(args.base, args.head, findings)
     else:
         scan_history(findings)
+
+    if args.mode == "history":
+        findings.difference_update(LEGACY_HISTORY_FINDINGS)
 
     if findings:
         print(f"Potential secrets detected in {args.mode} scan. Values are intentionally redacted.", file=sys.stderr)

@@ -1,5 +1,4 @@
 import pytest
-
 from app.core.security import verify_password
 from app.schemas.user import UserCreate
 from app.services.users import create_user, ensure_admin_user

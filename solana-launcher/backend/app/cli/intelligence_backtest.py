@@ -38,7 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-window-refresh",
         action="store_true",
-        help="skip best-effort stored outcome refresh; missing prior windows are still built on demand",
+        help=(
+            "skip best-effort stored outcome refresh; missing prior windows are still built "
+            "on demand"
+        ),
     )
     return parser
 

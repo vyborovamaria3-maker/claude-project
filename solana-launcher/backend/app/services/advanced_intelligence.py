@@ -5,7 +5,7 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from statistics import median
 from typing import Any
 
@@ -25,7 +25,7 @@ CAMPAIGN_VECTOR_SCHEMA_KEY = "schema_v2"
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _number(value: Any) -> float | None:
@@ -111,11 +111,7 @@ def _cosine_dict(left: dict[str, float], right: dict[str, float]) -> float:
 
 
 def _actor_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        row
-        for row in nodes
-        if row.get("type") in {"x_account", "tg_channel"}
-    ]
+    return [row for row in nodes if row.get("type") in {"x_account", "tg_channel"}]
 
 
 def _wallet_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -146,16 +142,8 @@ def _edge_weight(edge: dict[str, Any]) -> tuple[str, float]:
 
 def _evidence_quality(snapshot: dict[str, Any]) -> dict[str, Any]:
     nodes, edges = _graph(snapshot)
-    evidence = [
-        row
-        for row in snapshot.get("evidence") or []
-        if isinstance(row, dict)
-    ]
-    unique_evidence = {
-        str(row.get("id"))
-        for row in evidence
-        if row.get("id")
-    }
+    evidence = [row for row in snapshot.get("evidence") or [] if isinstance(row, dict)]
+    unique_evidence = {str(row.get("id")) for row in evidence if row.get("id")}
     unique_sources = {
         (str(row.get("platform") or ""), str(row.get("source") or ""))
         for row in evidence
@@ -198,11 +186,7 @@ def _evidence_quality(snapshot: dict[str, Any]) -> dict[str, Any]:
     evidence_coverage = min(1.0, len(unique_evidence) / 30.0)
     source_coverage = min(1.0, len(unique_sources) / 12.0)
     relation_coverage = min(1.0, len(seen_relations) / 40.0)
-    coverage = (
-        evidence_coverage * 0.4
-        + source_coverage * 0.3
-        + relation_coverage * 0.3
-    )
+    coverage = evidence_coverage * 0.4 + source_coverage * 0.3 + relation_coverage * 0.3
     return {
         "score": round(100 * (quality * 0.7 + coverage * 0.3), 1),
         "quality": round(quality, 4),
@@ -234,9 +218,7 @@ def _funding_verification(snapshot: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
             continue
         explicit.extend(payload.get("explicit_funding_evidence") or [])
-        similarity_only.extend(
-            payload.get("similarity_links_not_funding_proof") or []
-        )
+        similarity_only.extend(payload.get("similarity_links_not_funding_proof") or [])
     return {
         "status": "evidence_available" if explicit else "insufficient_data",
         "explicit_edges": explicit[:30],
@@ -275,15 +257,15 @@ def _wallet_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
             continue
         verified = bool(rows) and all(row[2] for row in rows)
         edge_confidence = min((row[1] for row in rows), default=0.0)
-        confidence = min(0.98, edge_confidence) if verified else min(0.7, 0.45 + edge_confidence * 0.25)
+        confidence = (
+            min(0.98, edge_confidence) if verified else min(0.7, 0.45 + edge_confidence * 0.25)
+        )
         clusters.append(
             {
                 "cluster_id": f"wallet_cluster:{_sha([bundle_id, members])[:16]}",
                 "members": members,
                 "confidence": round(confidence, 3),
-                "reasons": [
-                    "verified_atomic_bundle" if verified else "synchronous_buy_cluster"
-                ],
+                "reasons": ["verified_atomic_bundle" if verified else "synchronous_buy_cluster"],
                 "status": "verified_cluster" if verified else "heuristic_candidate_cluster",
                 "ownership_claim": False,
             }
@@ -292,7 +274,10 @@ def _wallet_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "clusters": sorted(clusters, key=lambda row: row["confidence"], reverse=True),
         "unclustered_wallets": max(0, len(wallet_ids) - len(clustered)),
-        "method": "bundle edge semantics are preserved; heuristic co-buy clusters do not imply common ownership",
+        "method": (
+            "bundle edge semantics are preserved; heuristic co-buy clusters do not imply "
+            "common ownership"
+        ),
     }
 
 
@@ -316,11 +301,9 @@ def _identity_resolution(snapshot: dict[str, Any]) -> dict[str, Any]:
             for right in ordered[index + 1 :]:
                 shared[(left, right)].append(target)
 
-    candidates = []
+    candidates: list[dict[str, Any]] = []
     for (left, right), targets in shared.items():
-        wallet_mentions = sum(
-            target_types.get(target) == "mentions_wallet" for target in targets
-        )
+        wallet_mentions = sum(target_types.get(target) == "mentions_wallet" for target in targets)
         shared_links = len(targets) - wallet_mentions
         confidence = min(
             0.72,
@@ -343,7 +326,7 @@ def _identity_resolution(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 def _temporal_graph(snapshot: dict[str, Any]) -> dict[str, Any]:
     _, edges = _graph(snapshot)
-    rows = []
+    rows: list[dict[str, Any]] = []
     for edge in edges:
         attrs = edge.get("attributes") or {}
         lag = _number(attrs.get("lagSeconds"))
@@ -393,11 +376,15 @@ def _campaign_vector(snapshot: dict[str, Any]) -> dict[str, float]:
         "copies": _scaled_count(edge_types["copies"], 30),
         "amplifies": _scaled_count(edge_types["amplifies"], 30),
         "mentions_wallet": _scaled_count(edge_types["mentions_wallet"], 30),
-        "social_score": _score_feature(features, "scores.social", "combined.social_score", "social.score"),
+        "social_score": _score_feature(
+            features, "scores.social", "combined.social_score", "social.score"
+        ),
         "x_score": _score_feature(features, "scores.x", "x.score"),
         "telegram_score": _score_feature(features, "scores.telegram", "tg.score"),
         "organic": _score_feature(features, "scores.organic", "combined.organic", "social.organic"),
-        "manipulation": _score_feature(features, "scores.manipulation", "combined.manipulation", "social.manipulation"),
+        "manipulation": _score_feature(
+            features, "scores.manipulation", "combined.manipulation", "social.manipulation"
+        ),
         "early": _score_feature(features, "scores.early", "combined.early", "social.early"),
         "alpha": _score_feature(features, "scores.alpha", "combined.alpha", "social.alpha"),
         "bot_risk": _score_feature(features, "x_twitter.bot_risk", "x.botRisk", "x.bot_risk"),
@@ -414,15 +401,9 @@ def _campaign_fingerprint(
     payload = {
         "version": CAMPAIGN_FINGERPRINT_VERSION,
         "vector": _campaign_vector(snapshot),
-        "actors": sorted(
-            str(row.get("id"))
-            for row in _actor_nodes(nodes)
-            if row.get("id")
-        ),
+        "actors": sorted(str(row.get("id")) for row in _actor_nodes(nodes) if row.get("id")),
         "links": sorted(
-            str(edge.get("target"))
-            for edge in edges
-            if edge.get("type") == "shared_link"
+            str(edge.get("target")) for edge in edges if edge.get("type") == "shared_link"
         ),
         "narrative": _normalize_text(narrative),
     }
@@ -437,7 +418,7 @@ def _text_template_clusters(snapshot: dict[str, Any]) -> dict[str, Any]:
         normalized = _normalize_text(str(row.get("text") or ""))
         if len(normalized) >= 20:
             groups[normalized].append(row)
-    clusters = []
+    clusters: list[dict[str, Any]] = []
     for template, rows in groups.items():
         sources = sorted({str(row.get("source") or "unknown") for row in rows})
         if len(rows) < 2 or len(sources) < 2:
@@ -466,11 +447,7 @@ def _narrative(
     campaign = (ai_result or {}).get("campaignHypothesis") or {}
     label = str(campaign.get("narrative") or "").strip()
     confidence = _clamp(_number(campaign.get("confidence")) or 0.0)
-    tokens = {
-        token
-        for token in _normalize_text(label).split()
-        if len(token) > 3
-    }
+    tokens = {token for token in _normalize_text(label).split() if len(token) > 3}
     supporting_messages = 0
     supporting_sources: set[str] = set()
     term_counts: Counter[str] = Counter()
@@ -514,9 +491,7 @@ def _counterfactual(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
     actor_ids = {str(node.get("id")) for node in _actor_nodes(nodes)}
     actor_edges = [row for row in edges if str(row.get("source")) in actor_ids]
-    suspicious_edges = [
-        row for row in actor_edges if str(row.get("source")) in suspicious
-    ]
+    suspicious_edges = [row for row in actor_edges if str(row.get("source")) in suspicious]
     influence = len(suspicious_edges) / len(actor_edges) if actor_edges else 0.0
     return {
         "remove_suspicious_x": {
@@ -525,7 +500,9 @@ def _counterfactual(snapshot: dict[str, Any]) -> dict[str, Any]:
             "share_of_actor_graph_removed": round(influence, 4),
             "robustness": round(1.0 - influence, 4),
         },
-        "note": "Graph-only counterfactual on retained X evidence; no market outcome is recomputed.",
+        "note": (
+            "Graph-only counterfactual on retained X evidence; no market outcome is recomputed."
+        ),
     }
 
 
@@ -543,18 +520,26 @@ def _anomalies(
     if mentions and authors is not None:
         ratio = authors / mentions
         if mentions >= 50 and ratio < 0.15:
-            rows.append({"type": "x_low_author_diffusion", "severity": "high", "ratio": round(ratio, 4)})
+            rows.append(
+                {"type": "x_low_author_diffusion", "severity": "high", "ratio": round(ratio, 4)}
+            )
     if mentions and engagement is not None:
         per_mention = engagement / mentions
         if mentions >= 20 and per_mention > 5000:
-            rows.append({"type": "x_engagement_outlier", "severity": "medium", "engagement_per_mention": round(per_mention, 1)})
+            rows.append(
+                {
+                    "type": "x_engagement_outlier",
+                    "severity": "medium",
+                    "engagement_per_mention": round(per_mention, 1),
+                }
+            )
     if tg_mentions and tg_channels is not None:
         ratio = tg_channels / tg_mentions
         if tg_mentions >= 30 and ratio < 0.08:
-            rows.append({"type": "tg_channel_concentration", "severity": "medium", "ratio": round(ratio, 4)})
-    rows.extend(
-        row for row in (ai_result or {}).get("anomalies") or [] if isinstance(row, dict)
-    )
+            rows.append(
+                {"type": "tg_channel_concentration", "severity": "medium", "ratio": round(ratio, 4)}
+            )
+    rows.extend(row for row in (ai_result or {}).get("anomalies") or [] if isinstance(row, dict))
     return {"items": rows[:100], "count": len(rows)}
 
 
@@ -565,16 +550,36 @@ def _contradictions(
     features = _feature_map(snapshot)
     x_score = _feature_number(features, "scores.x", "x.score")
     tg_score = _feature_number(features, "scores.telegram", "tg.score")
-    manipulation = _feature_number(features, "scores.manipulation", "combined.manipulation", "social.manipulation")
+    manipulation = _feature_number(
+        features, "scores.manipulation", "combined.manipulation", "social.manipulation"
+    )
     organic = _feature_number(features, "scores.organic", "combined.organic", "social.organic")
     bot = _feature_number(features, "x_twitter.bot_risk", "x.botRisk", "x.bot_risk")
     rows: list[dict[str, Any]] = []
     if x_score is not None and tg_score is not None and abs(x_score - tg_score) >= 30:
-        rows.append({"type": "cross_platform_disagreement", "severity": "medium", "values": {"x": x_score, "tg": tg_score}})
+        rows.append(
+            {
+                "type": "cross_platform_disagreement",
+                "severity": "medium",
+                "values": {"x": x_score, "tg": tg_score},
+            }
+        )
     if manipulation is not None and organic is not None and manipulation >= 70 and organic >= 70:
-        rows.append({"type": "organic_manipulation_conflict", "severity": "high", "values": {"organic": organic, "manipulation": manipulation}})
+        rows.append(
+            {
+                "type": "organic_manipulation_conflict",
+                "severity": "high",
+                "values": {"organic": organic, "manipulation": manipulation},
+            }
+        )
     if bot is not None and x_score is not None and bot >= 65 and x_score >= 75:
-        rows.append({"type": "high_x_score_high_bot_risk", "severity": "high", "values": {"x_score": x_score, "bot_risk": bot}})
+        rows.append(
+            {
+                "type": "high_x_score_high_bot_risk",
+                "severity": "high",
+                "values": {"x_score": x_score, "bot_risk": bot},
+            }
+        )
     rows.extend(
         {"type": "ai_reported", **row}
         for row in (ai_result or {}).get("contradictions") or []
@@ -595,7 +600,7 @@ def _planner(snapshot: dict[str, Any], parts: dict[str, Any]) -> dict[str, Any]:
         for value in (row.get("source"), row.get("target"))
         if value
     }
-    candidates = []
+    candidates: list[dict[str, Any]] = []
     for node in nodes:
         node_id = str(node.get("id") or "")
         node_type = str(node.get("type") or "")
@@ -620,7 +625,14 @@ def _planner(snapshot: dict[str, Any], parts: dict[str, Any]) -> dict[str, Any]:
             "x_account": ["expand_x_account", "related_launches"],
             "tg_channel": ["expand_tg_channel", "related_launches"],
         }[node_type]
-        candidates.append({"entity": node_id, "entity_type": node_type, "expected_information_gain": round(score, 4), "recommended_tools": tools})
+        candidates.append(
+            {
+                "entity": node_id,
+                "entity_type": node_type,
+                "expected_information_gain": round(score, 4),
+                "recommended_tools": tools,
+            }
+        )
     candidates.sort(key=lambda row: row["expected_information_gain"], reverse=True)
     return {"candidates": candidates[:20]}
 
@@ -683,11 +695,11 @@ async def _historical_context(
         rows = list(
             (
                 await session.execute(
-                    select(IntelligenceEntity).where(
-                        IntelligenceEntity.entity_key.in_(node_ids)
-                    )
+                    select(IntelligenceEntity).where(IntelligenceEntity.entity_key.in_(node_ids))
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         entities = {row.entity_key: row for row in rows}
     reliability = [
@@ -697,7 +709,9 @@ async def _historical_context(
             "distinct_token_occurrences": row.occurrence_count,
             "first_seen_at": row.first_seen_at.isoformat(),
             "last_seen_at": row.last_seen_at.isoformat(),
-            "reliability_status": "history_available" if row.occurrence_count >= 3 else "limited_history",
+            "reliability_status": "history_available"
+            if row.occurrence_count >= 3
+            else "limited_history",
         }
         for key, row in entities.items()
     ]
@@ -712,35 +726,37 @@ async def _historical_context(
                 .order_by(CampaignFingerprint.created_at.desc())
                 .limit(500)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     best_by_mint: dict[str, dict[str, Any]] = {}
-    for row in prior:
-        if row.mint_address == current_mint:
+    for fingerprint_row in prior:
+        if fingerprint_row.mint_address == current_mint:
             continue
         previous = {
             str(key): float(value)
-            for key, value in (row.vector or {}).items()
+            for key, value in (fingerprint_row.vector or {}).items()
             if _number(value) is not None
         }
         if previous.get(CAMPAIGN_VECTOR_SCHEMA_KEY) != 1.0:
             continue
         vector_similarity = _cosine_dict(current_vector, previous)
-        actor_similarity = _jaccard(actor_set, set(row.actors or []))
+        actor_similarity = _jaccard(actor_set, set(fingerprint_row.actors or []))
         similarity = vector_similarity * 0.75 + actor_similarity * 0.25
         if similarity < 0.5:
             continue
         candidate = {
-            "snapshot_id": row.snapshot_id,
-            "mint": row.mint_address,
+            "snapshot_id": fingerprint_row.snapshot_id,
+            "mint": fingerprint_row.mint_address,
             "similarity": round(similarity, 4),
             "vector_similarity": round(vector_similarity, 4),
             "actor_similarity": round(actor_similarity, 4),
-            "created_at": row.created_at.isoformat(),
+            "created_at": fingerprint_row.created_at.isoformat(),
         }
-        previous_best = best_by_mint.get(row.mint_address)
+        previous_best = best_by_mint.get(fingerprint_row.mint_address)
         if previous_best is None or candidate["similarity"] > previous_best["similarity"]:
-            best_by_mint[row.mint_address] = candidate
+            best_by_mint[fingerprint_row.mint_address] = candidate
     neighbors = sorted(best_by_mint.values(), key=lambda row: row["similarity"], reverse=True)[:10]
 
     hypothesis_rows = list(
@@ -750,36 +766,35 @@ async def _historical_context(
                 .order_by(IntelligenceHypothesisState.updated_at.desc())
                 .limit(300)
             )
-        ).scalars().all()
-    )
-    relevant_hypotheses = []
-    for row in hypothesis_rows:
-        endpoint_match = (
-            (row.source_key is not None and row.source_key in node_set)
-            or (row.target_key is not None and row.target_key in node_set)
         )
-        mint_match = row.mint_address == current_mint
+        .scalars()
+        .all()
+    )
+    relevant_hypotheses: list[dict[str, Any]] = []
+    for hypothesis_row in hypothesis_rows:
+        endpoint_match = (
+            hypothesis_row.source_key is not None and hypothesis_row.source_key in node_set
+        ) or (hypothesis_row.target_key is not None and hypothesis_row.target_key in node_set)
+        mint_match = hypothesis_row.mint_address == current_mint
         if not endpoint_match and not mint_match:
             continue
         relevant_hypotheses.append(
             {
-                "hypothesis_key": row.hypothesis_key,
-                "type": row.hypothesis_type,
-                "source": row.source_key,
-                "target": row.target_key,
-                "status": row.status,
-                "confidence": row.confidence,
-                "support_count": row.support_count,
-                "contradiction_count": row.contradiction_count,
-                "updated_at": row.updated_at.isoformat(),
+                "hypothesis_key": hypothesis_row.hypothesis_key,
+                "type": hypothesis_row.hypothesis_type,
+                "source": hypothesis_row.source_key,
+                "target": hypothesis_row.target_key,
+                "status": hypothesis_row.status,
+                "confidence": hypothesis_row.confidence,
+                "support_count": hypothesis_row.support_count,
+                "contradiction_count": hypothesis_row.contradiction_count,
+                "updated_at": hypothesis_row.updated_at.isoformat(),
             }
         )
         if len(relevant_hypotheses) >= 80:
             break
     negative_memory = [
-        row
-        for row in relevant_hypotheses
-        if row["status"] in {"contradicted", "rejected"}
+        row for row in relevant_hypotheses if row["status"] in {"contradicted", "rejected"}
     ][:40]
 
     calibration_rows = list(
@@ -789,25 +804,39 @@ async def _historical_context(
                 .order_by(IntelligenceCalibrationStat.updated_at.desc())
                 .limit(200)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
-    calibration = []
-    for row in calibration_rows:
-        empirical = row.confirmed_count / row.sample_count if row.sample_count else None
-        predicted = row.predicted_confidence_sum / row.sample_count if row.sample_count else None
+    calibration: list[dict[str, Any]] = []
+    for calibration_row in calibration_rows:
+        empirical = (
+            calibration_row.confirmed_count / calibration_row.sample_count
+            if calibration_row.sample_count
+            else None
+        )
+        predicted = (
+            calibration_row.predicted_confidence_sum / calibration_row.sample_count
+            if calibration_row.sample_count
+            else None
+        )
         calibration.append(
             {
-                "model_version": row.model_version,
-                "signal_type": row.signal_type,
-                "bucket": row.bucket,
-                "samples": row.sample_count,
+                "model_version": calibration_row.model_version,
+                "signal_type": calibration_row.signal_type,
+                "bucket": calibration_row.bucket,
+                "samples": calibration_row.sample_count,
                 "predicted": predicted,
                 "empirical": empirical,
-                "error": abs(predicted - empirical) if predicted is not None and empirical is not None else None,
+                "error": abs(predicted - empirical)
+                if predicted is not None and empirical is not None
+                else None,
             }
         )
     return {
-        "source_reliability": sorted(reliability, key=lambda row: row["distinct_token_occurrences"], reverse=True),
+        "source_reliability": sorted(
+            reliability, key=lambda row: row["distinct_token_occurrences"], reverse=True
+        ),
         "nearest_neighbors": neighbors,
         "hypotheses": relevant_hypotheses,
         "negative_memory": negative_memory,
@@ -828,7 +857,10 @@ async def build_advanced_intelligence_report(
         "wallet_clusters": _wallet_clusters(snapshot),
         "identity_resolution": _identity_resolution(snapshot),
         "temporal_graph": _temporal_graph(snapshot),
-        "campaign_fingerprint": {**fingerprint, "nearest_neighbors": historical["nearest_neighbors"]},
+        "campaign_fingerprint": {
+            **fingerprint,
+            "nearest_neighbors": historical["nearest_neighbors"],
+        },
         "text_template_clustering": _text_template_clusters(snapshot),
         "narrative_engine": _narrative(snapshot, ai_result),
         "source_reliability": historical["source_reliability"],
@@ -848,7 +880,10 @@ async def build_advanced_intelligence_report(
     parts["outcome_learning"] = {
         "status": "pending_future_outcome",
         "horizons_hours": [6, 24, 72],
-        "leakage_rule": "Only matured future outcomes are stored; they are never injected into the originating snapshot.",
+        "leakage_rule": (
+            "Only matured future outcomes are stored; they are never injected into the "
+            "originating snapshot."
+        ),
     }
     parts["ai_calibration"] = {
         "status": "history_available" if historical["calibration"] else "insufficient_history",

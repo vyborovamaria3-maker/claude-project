@@ -36,7 +36,9 @@ async def read_tokens(
     current_user=Depends(get_current_subscriber),
 ) -> TokenListResponse:
     del current_user
-    items, total = await list_tokens(session, limit=limit, offset=offset, sort_by=sort_by, order=order)
+    items, total = await list_tokens(
+        session, limit=limit, offset=offset, sort_by=sort_by, order=order
+    )
     return TokenListResponse(items=items, meta={"limit": limit, "offset": offset, "total": total})
 
 
@@ -115,4 +117,11 @@ async def run_collector(
     del current_user
     result = await run_full_collection(session)
     await get_or_create_jobs(session)
-    return CollectorRunResponse(detail="collection queued", tasks=[f"tokens={result['tokens']}", f"metrics={result['metrics']}", f"links={result['links']}"])
+    return CollectorRunResponse(
+        detail="collection queued",
+        tasks=[
+            f"tokens={result['tokens']}",
+            f"metrics={result['metrics']}",
+            f"links={result['links']}",
+        ],
+    )

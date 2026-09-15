@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +21,7 @@ def _csv_relation(path: Path) -> str:
 
 def _columns(connection: Any, relation: str) -> set[str]:
     return {
-        str(row[0])
-        for row in connection.execute(f"DESCRIBE SELECT * FROM {relation}").fetchall()
+        str(row[0]) for row in connection.execute(f"DESCRIBE SELECT * FROM {relation}").fetchall()
     }
 
 
@@ -84,10 +83,18 @@ def run_audit(
         connection.execute(f"SET memory_limit TO {_quote_sql(memory_limit)}")
         connection.execute(f"SET temp_directory TO {_quote_sql(temp_dir.resolve())}")
 
-        connection.execute(f"CREATE OR REPLACE VIEW tg_messages AS SELECT * FROM {_csv_relation(messages_path)}")
-        connection.execute(f"CREATE OR REPLACE VIEW tg_entity_urls AS SELECT * FROM {_csv_relation(urls_path)}")
-        connection.execute(f"CREATE OR REPLACE VIEW tg_hashtags AS SELECT * FROM {_csv_relation(hashtags_path)}")
-        connection.execute(f"CREATE OR REPLACE VIEW tg_chats AS SELECT * FROM {_csv_relation(chats_path)}")
+        connection.execute(
+            f"CREATE OR REPLACE VIEW tg_messages AS SELECT * FROM {_csv_relation(messages_path)}"
+        )
+        connection.execute(
+            f"CREATE OR REPLACE VIEW tg_entity_urls AS SELECT * FROM {_csv_relation(urls_path)}"
+        )
+        connection.execute(
+            f"CREATE OR REPLACE VIEW tg_hashtags AS SELECT * FROM {_csv_relation(hashtags_path)}"
+        )
+        connection.execute(
+            f"CREATE OR REPLACE VIEW tg_chats AS SELECT * FROM {_csv_relation(chats_path)}"
+        )
 
         message_columns = _columns(connection, "tg_messages")
         url_columns = _columns(connection, "tg_entity_urls")
@@ -131,9 +138,7 @@ def run_audit(
             else "TRY_CAST(c.id AS VARCHAR)"
         )
 
-        native_pattern = (
-            r"(?:pump[.]fun|(^|[./])solscan([./]|$)|(^|[./])raydium([./]|$))"
-        )
+        native_pattern = r"(?:pump[.]fun|(^|[./])solscan([./]|$)|(^|[./])raydium([./]|$))"
         solana_pattern = (
             r"(?:"
             r"(^|[^a-z0-9_])(?:solana|[$]sol|raydium|solscan|pumpfun)([^a-z0-9_]|$)"
@@ -287,10 +292,10 @@ def run_audit(
         """
 
         rows = connection.execute(candidate_sql + f" LIMIT {int(max_candidates)}").fetchall()
-        columns = [item[0] for item in connection.description]
+        result_columns = [item[0] for item in connection.description]
         with candidates_path.open("w", encoding="utf-8") as handle:
             for values in rows:
-                payload = dict(zip(columns, values, strict=True))
+                payload = dict(zip(result_columns, values, strict=True))
                 if isinstance(payload.get("last_target"), datetime):
                     payload["last_target"] = payload["last_target"].isoformat()
                 signals = {
@@ -331,10 +336,14 @@ def run_audit(
             """
         ).fetchone()
 
-        total_chats = connection.execute("SELECT COUNT(*) FROM tg_chats").fetchone()[0]
-        total_messages = connection.execute("SELECT COUNT(*) FROM tg_messages").fetchone()[0]
+        total_chats_row = connection.execute("SELECT COUNT(*) FROM tg_chats").fetchone()
+        total_messages_row = connection.execute("SELECT COUNT(*) FROM tg_messages").fetchone()
+        if summary_row is None or total_chats_row is None or total_messages_row is None:
+            raise RuntimeError("TeraGram nomination audit returned no summary rows")
+        total_chats = total_chats_row[0]
+        total_messages = total_messages_row[0]
         audit = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "input_dir": str(input_dir),
             "outputs": {
                 "audit_json": str(audit_path),

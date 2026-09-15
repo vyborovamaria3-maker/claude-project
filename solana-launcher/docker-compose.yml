@@ -73,6 +73,12 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
   celery-worker:
     build:
@@ -92,11 +98,31 @@ services:
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info"]
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_started
+
+  twitter-discovery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: potapoff-twitter-discovery
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEBUG: ${DEBUG:-false}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-potapoff}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in solana-launcher/.env}@postgres:5432/${POSTGRES_DB:-potapoff}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in solana-launcher/.env}@redis:6379/0
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-potapoff}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in solana-launcher/.env}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in solana-launcher/.env}@redis:6379/1
+    command: ["python", "-m", "app.cli.twitter_discovery_daemon", "--public-interval", "900", "--cycle-interval", "1800"]
+    depends_on:
+      backend:
+        condition: service_healthy
 
   frontend:
     build:
@@ -139,7 +165,7 @@ services:
       frontend:
         condition: service_started
       backend:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "80:80"
     volumes:

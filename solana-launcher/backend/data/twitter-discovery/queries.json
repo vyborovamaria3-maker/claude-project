@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "queries": [
+    "(memecoin OR \"meme coin\") lang:en -is:retweet",
+    "(pumpfun OR \"pump.fun\") lang:en -is:retweet",
+    "(solana OR $SOL) (memecoin OR meme) lang:en -is:retweet",
+    "(solana OR $SOL) (alpha OR degen OR trader) lang:en -is:retweet",
+    "(solana OR $SOL) (whale OR \"smart money\" OR onchain) lang:en -is:retweet",
+    "(solana OR $SOL) (launchpad OR token launch) lang:en -is:retweet",
+    "(raydium OR jupiter OR meteora OR orca) lang:en -is:retweet",
+    "(rug OR rugpull OR scam) (solana OR memecoin) lang:en -is:retweet",
+    "(memecoin OR \"meme coin\") (whale OR alpha OR call) lang:en -is:retweet",
+    "(memecoin OR \"meme coin\") (news OR media OR journalist OR reporter) lang:en -is:retweet",
+    "(crypto OR bitcoin OR solana) (journalist OR reporter OR editor) lang:en -is:retweet",
+    "(crypto OR solana) (research OR analyst OR analytics) lang:en -is:retweet",
+    "(crypto OR solana) (market maker OR liquidity) lang:en -is:retweet",
+    "(crypto OR solana) (venture OR fund OR VC) lang:en -is:retweet",
+    "solana (developer OR builder OR founder) lang:en -is:retweet",
+    "(token OR coin) (listing OR exchange listing) (solana OR memecoin) lang:en -is:retweet",
+    "(airdrop OR presale OR launch) (solana OR memecoin) lang:en -is:retweet",
+    "(onchain OR on-chain) (memecoin OR solana) lang:en -is:retweet",
+    "(trending OR viral) (memecoin OR \"meme coin\") lang:en -is:retweet",
+    "(KOL OR influencer) (crypto OR solana OR memecoin) lang:en -is:retweet"
+  ]
+}

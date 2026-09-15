@@ -12,12 +12,10 @@ from typing import Any
 from telethon import TelegramClient
 from telethon.errors import (
     ChannelPrivateError,
-    ChatAdminRequiredError,
     FloodWaitError,
     UsernameNotOccupiedError,
 )
 from telethon.tl.types import Channel
-
 
 # Precision-first live classifiers.
 # Generic words such as jupiter/orca/phantom/ape/cto are intentionally
@@ -101,10 +99,7 @@ def score_analysis(stats: dict[str, int]) -> dict[str, Any]:
         score += 15
         reasons.append("pumpfun_relevant")
     # Generic call vocabulary must not create a strong source by itself.
-    if (
-        stats.get("target_messages", 0) >= 2
-        and stats["signal_messages"] > msgs * 0.3
-    ):
+    if stats.get("target_messages", 0) >= 2 and stats["signal_messages"] > msgs * 0.3:
         score += 10
         reasons.append("high_signal_density")
 
@@ -335,7 +330,7 @@ async def run_curator(
         print(msg, flush=True)
 
     output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
 
     checkpoint_path = output / "curator_checkpoint.jsonl"
 
@@ -375,7 +370,7 @@ async def run_curator(
             threads=threads,
             memory_limit=memory_limit,
         )
-        log(f"Discovery complete")
+        log("Discovery complete")
     else:
         log("=== SKIP SCAN: using existing candidates + discovery ===")
 
@@ -418,9 +413,7 @@ async def run_curator(
                     {
                         "username": username,
                         "title": cand.get("title", ""),
-                        "historical_discovery_score": cand.get(
-                            "historical_discovery_score", 0
-                        ),
+                        "historical_discovery_score": cand.get("historical_discovery_score", 0),
                         "source": "discovery",
                     }
                 )
@@ -463,9 +456,7 @@ async def run_curator(
         result = await validate_channel(client, username, limit=live_limit)
 
         can_parse_users = result["extractable_users"] > 0
-        parser_access_status = (
-            "available" if can_parse_users else "unavailable"
-        )
+        parser_access_status = "available" if can_parse_users else "unavailable"
 
         # Source quality is independent from participant-list availability.
         # Keep an explicit Solana/memecoin signal guard so generic channels
@@ -477,13 +468,11 @@ async def run_curator(
 
         if messages_analyzed >= 20:
             has_target_signal = (
-                target_messages >= 3
-                and (target_messages / messages_analyzed) >= 0.03
+                target_messages >= 3 and (target_messages / messages_analyzed) >= 0.03
             )
         else:
             has_target_signal = (
-                target_messages >= 2
-                and (target_messages / max(messages_analyzed, 1)) >= 0.20
+                target_messages >= 2 and (target_messages / max(messages_analyzed, 1)) >= 0.20
             )
 
         is_accepted = (

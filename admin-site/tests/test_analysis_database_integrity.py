@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -77,7 +78,7 @@ class AnalysisDatabaseStoreIntegrityTest(unittest.TestCase):
         self.store.update_builtin("wallet", "migration_rate", enabled=True, threshold=">= 21%", username="admin")
         self.store.hide_builtin("wallet", "migration_rate", "admin")
         self.store.restore_builtin("wallet", "migration_rate", "admin")
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             count = db.execute("SELECT COUNT(*) FROM analysis_parameter_overrides WHERE domain='wallet' AND key='migration_rate'").fetchone()[0]
             self.assertEqual(count, 1)

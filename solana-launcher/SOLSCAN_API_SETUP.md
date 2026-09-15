@@ -1,16 +1,20 @@
 # Настройка API для Dev Analytics
 
-## QuickNode RPC (уже настроен)
-```
-NEXT_PUBLIC_QUICKNODE_RPC_URL=https://solana-mainnet.g.alchemy.com/v2/QN_4ae4c43cd2e143048868d499f5f77b98
+## Solana RPC
+Добавьте URL вашего RPC-провайдера в `.env.local`:
+
+```env
+NEXT_PUBLIC_QUICKNODE_RPC_URL=https://your-solana-rpc-provider.example/v2/<YOUR_RPC_KEY>
 ```
 
-## Solscan API (добавить)
-Добавьте в файл `.env.local` следующую строку:
+## Solscan API
+Добавьте токен Solscan в `.env.local`:
 
+```env
+SOLSCAN_API_TOKEN=<YOUR_SOLSCAN_API_TOKEN>
 ```
-SOLSCAN_API_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3Nzk0NDk2Njk4NjgsImVtYWlsIjoicG90YXBvdmRpbWEzNTRAZ21haWwuY29tIiwiYWN0aW9uIjoidG9rZW4tYXBpIiwiYXBpVmVyc2lvbiI6InYyIiwiaWF0IjoxNzc5NDQ5NjY5fQ.N8dYxEQfrBcKKhQP3GdOFFof3DpfA9yLiFlEChj9Id4
-```
+
+Не коммитьте реальные API-ключи или токены в репозиторий. Для production храните их только в секретах окружения/CI.
 
 ## После настройки
 Перезапустите dev сервер:
@@ -20,7 +24,7 @@ npm run dev
 ```
 
 ## Что дают эти API:
-- **QuickNode RPC**: Надежный доступ к Solana mainnet
+- **Solana RPC**: Надежный доступ к Solana mainnet
 - **Solscan API**: Точный поиск creator адресов и детальная информация о токенах
 - **Улучшенная аналитика**: Полные данные о всех токенах dev wallet
 

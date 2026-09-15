@@ -6,10 +6,9 @@ from urllib.parse import urlencode, urlsplit
 
 import base58
 import pytest
+from app.models.user import User
 from nacl.signing import SigningKey
 from sqlalchemy import select
-
-from app.models.user import User
 
 
 def signed_telegram_init_data(bot_token: str, user: dict) -> str:
@@ -20,7 +19,9 @@ def signed_telegram_init_data(bot_token: str, user: dict) -> str:
     }
     data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(payload.items()))
     secret = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
-    payload["hash"] = hmac.new(secret, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    payload["hash"] = hmac.new(
+        secret, data_check_string.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
     return urlencode(payload)
 
 
@@ -51,7 +52,9 @@ async def test_register_login_and_me(client, test_app):
 async def test_phantom_nonce_creates_wallet_user(client, test_app):
     wallet_address = "11111111111111111111111111111111"
 
-    response = await client.post("/api/v1/auth/phantom/nonce", json={"wallet_address": wallet_address})
+    response = await client.post(
+        "/api/v1/auth/phantom/nonce", json={"wallet_address": wallet_address}
+    )
     assert response.status_code == 200
 
     body = response.json()
@@ -116,7 +119,9 @@ async def test_telegram_callback_requires_signed_init_data(client, test_app):
 
 
 @pytest.mark.asyncio
-async def test_telegram_callback_accepts_signed_init_data_without_tokenized_redirect(client, test_app):
+async def test_telegram_callback_accepts_signed_init_data_without_tokenized_redirect(
+    client, test_app
+):
     test_app.state.settings.telegram_bot_token = "123456:test-token"
     init_data = signed_telegram_init_data(
         test_app.state.settings.telegram_bot_token,

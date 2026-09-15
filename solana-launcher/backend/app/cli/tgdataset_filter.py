@@ -16,7 +16,9 @@ def _archive_numbers(value: str) -> list[int]:
         try:
             number = int(item)
         except ValueError as exc:
-            raise argparse.ArgumentTypeError("--archives must contain comma-separated numbers 1..4") from exc
+            raise argparse.ArgumentTypeError(
+                "--archives must contain comma-separated numbers 1..4"
+            ) from exc
         if number not in {1, 2, 3, 4}:
             raise argparse.ArgumentTypeError("--archives values must be between 1 and 4")
         if number not in result:

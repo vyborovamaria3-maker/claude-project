@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from app.db.base import Base
 from app.models.intelligence_memory import (
     IntelligenceDiscovery,
@@ -18,6 +16,7 @@ from app.services.intelligence_memory import (
     persist_intelligence_memory,
     token_memory_history,
 )
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 MINT = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
 MINT_2 = "So11111111111111111111111111111111111111112"
@@ -203,9 +202,7 @@ async def test_persistent_memory_is_idempotent_and_unique_mint_aware() -> None:
         assert entity_after_second_mint is not None
         assert entity_after_second_mint["entity"]["occurrence_count"] == 2
         amplify_after = next(
-            item
-            for item in entity_after_second_mint["edges"]
-            if item["type"] == "amplifies"
+            item for item in entity_after_second_mint["edges"] if item["type"] == "amplifies"
         )
         assert amplify_after["occurrence_count"] == 2
         assert amplify_after["avg_confidence"] == pytest.approx(0.8)

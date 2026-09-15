@@ -1,8 +1,6 @@
 import pytest
-from pydantic import ValidationError
-
 from app.core.config import Settings
-
+from pydantic import ValidationError
 
 SECRET = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
 BACKEND_API_KEY = "b" * 64
@@ -101,10 +99,13 @@ def test_production_accepts_explicit_strong_security_settings():
     assert settings.debug is False
     assert settings.require_subscription_internal_key is True
     assert settings.require_subscription_admin_key is True
-    assert len(
-        {
-            settings.backend_api_key,
-            settings.subscription_internal_key,
-            settings.subscription_admin_key,
-        }
-    ) == 3
+    assert (
+        len(
+            {
+                settings.backend_api_key,
+                settings.subscription_internal_key,
+                settings.subscription_admin_key,
+            }
+        )
+        == 3
+    )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import json
 import os
 import re
@@ -8,28 +7,20 @@ import subprocess
 import sys
 import threading
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-
 from app.services.teragram_invite_source import teragram_output_dir
-
-
-
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _MEMORY_LIMIT_RE = re.compile(r"^[1-9][0-9]*(?:MB|GB|TB)$", re.IGNORECASE)
 _ALLOWED_SIGNAL_SOURCES = {"auto", "content", "entities", "metadata"}
 
 
-
-
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
+    return datetime.now(UTC).isoformat()
 
 
 def _resolve_server_path(value: str) -> Path:
@@ -39,29 +30,19 @@ def _resolve_server_path(value: str) -> Path:
     return path.resolve()
 
 
-
-
 def _configured_input_dir() -> Path:
     configured = (os.getenv("TG_TERAGRAM_INPUT_DIR") or "").strip()
     if not configured:
-        raise ValueError(
-            "TG_TERAGRAM_INPUT_DIR is not configured on the backend"
-        )
-
+        raise ValueError("TG_TERAGRAM_INPUT_DIR is not configured on the backend")
 
     path = _resolve_server_path(configured)
     if not path.is_dir():
-        raise FileNotFoundError(
-            f"TeraGram input directory does not exist: {path}"
-        )
+        raise FileNotFoundError(f"TeraGram input directory does not exist: {path}")
     return path
-
-
 
 
 def _progress_for_line(line: str) -> tuple[int | None, str | None]:
     value = line.lower()
-
 
     if "discovering csv/parquet relations" in value:
         return 10, "discovering"
@@ -74,10 +55,7 @@ def _progress_for_line(line: str) -> tuple[int | None, str | None]:
     if "teragram: done;" in value:
         return 100, "completed"
 
-
     return None, None
-
-
 
 
 def _build_scan_command(
@@ -96,39 +74,29 @@ def _build_scan_command(
     if normalized_mode not in {"preview", "full"}:
         raise ValueError("mode must be preview or full")
 
-
     if seed_limit < 1:
         raise ValueError("seed_limit must be positive")
-
 
     if max_chats is not None and max_chats < 1:
         raise ValueError("max_chats must be positive")
 
-
     if threads is not None and threads < 1:
         raise ValueError("threads must be positive")
 
-
     if fetch_size < 1:
         raise ValueError("fetch_size must be positive")
-
 
     normalized_memory = memory_limit.strip().upper()
     if not _MEMORY_LIMIT_RE.fullmatch(normalized_memory):
         raise ValueError("memory_limit must look like 512MB, 4GB, or 16GB")
 
-
     normalized_signal = signal_source.strip().lower()
     if normalized_signal not in _ALLOWED_SIGNAL_SOURCES:
-        raise ValueError(
-            "signal_source must be auto, content, entities, or metadata"
-        )
-
+        raise ValueError("signal_source must be auto, content, entities, or metadata")
 
     effective_max_chats = max_chats
     if normalized_mode == "preview" and effective_max_chats is None:
         effective_max_chats = 1000
-
 
     command = [
         sys.executable,
@@ -148,14 +116,11 @@ def _build_scan_command(
         str(fetch_size),
     ]
 
-
     if effective_max_chats is not None:
         command.extend(["--max-chats", str(effective_max_chats)])
 
-
     if threads is not None:
         command.extend(["--threads", str(threads)])
-
 
     config = {
         "mode": normalized_mode,
@@ -169,10 +134,7 @@ def _build_scan_command(
         "fetch_size": fetch_size,
     }
 
-
     return command, config
-
-
 
 
 class TeraGramScanJobManager:
@@ -196,12 +158,10 @@ class TeraGramScanJobManager:
             "summary": None,
         }
 
-
     def _snapshot_locked(self) -> dict[str, Any]:
         result = dict(self._state)
         result["logs"] = list(self._logs)
         return result
-
 
     def _persist_locked(self, output: Path) -> None:
         try:
@@ -220,7 +180,6 @@ class TeraGramScanJobManager:
         except OSError:
             pass
 
-
     @staticmethod
     def _load_summary(output: Path) -> dict[str, Any] | None:
         path = output / "summary.json"
@@ -230,11 +189,9 @@ class TeraGramScanJobManager:
             return None
         return payload if isinstance(payload, dict) else None
 
-
     def status(self) -> dict[str, Any]:
         with self._lock:
             return self._snapshot_locked()
-
 
     def start(
         self,
@@ -250,7 +207,6 @@ class TeraGramScanJobManager:
         input_dir = _configured_input_dir()
         output = teragram_output_dir()
 
-
         command, config = _build_scan_command(
             input_dir=input_dir,
             output_dir=output,
@@ -263,16 +219,13 @@ class TeraGramScanJobManager:
             fetch_size=fetch_size,
         )
 
-
         with self._lock:
             if self._process is not None:
                 raise RuntimeError("A TeraGram scan is already running or finalizing")
 
-
             job_id = uuid4().hex
             self._stop_requested = False
             self._logs.clear()
-
 
             self._state = {
                 "job_id": job_id,
@@ -287,7 +240,6 @@ class TeraGramScanJobManager:
                 "config": config,
                 "summary": None,
             }
-
 
             try:
                 process = subprocess.Popen(
@@ -312,13 +264,11 @@ class TeraGramScanJobManager:
                 self._persist_locked(output)
                 raise
 
-
             self._process = process
             self._state["pid"] = process.pid
             self._state["status"] = "running"
             self._state["stage"] = "starting"
             self._persist_locked(output)
-
 
             watcher = threading.Thread(
                 target=self._watch_process,
@@ -329,9 +279,7 @@ class TeraGramScanJobManager:
             self._watcher = watcher
             watcher.start()
 
-
             return self._snapshot_locked()
-
 
     def _watch_process(
         self,
@@ -340,46 +288,36 @@ class TeraGramScanJobManager:
     ) -> None:
         stdout = process.stdout
 
-
         if stdout is not None:
             for raw_line in stdout:
                 line = raw_line.rstrip("\r\n")
                 if not line:
                     continue
 
-
                 progress, stage = _progress_for_line(line)
-
 
                 with self._lock:
                     if self._process is not process:
                         continue
 
-
                     self._logs.append(line)
                     self._state["last_line"] = line
-
 
                     if progress is not None:
                         self._state["progress_percent"] = progress
                     if stage is not None:
                         self._state["stage"] = stage
 
-
                     self._persist_locked(output)
 
-
         return_code = process.wait()
-
 
         with self._lock:
             if self._process is not process:
                 return
 
-
             stopped = self._stop_requested
             summary = self._load_summary(output) if return_code == 0 else None
-
 
             if return_code == 0 and not stopped:
                 self._state.update(
@@ -411,33 +349,27 @@ class TeraGramScanJobManager:
                     }
                 )
 
-
             self._state["finished_at"] = _utcnow_iso()
             self._state["pid"] = None
             self._persist_locked(output)
-
 
             self._process = None
             self._watcher = None
             self._stop_requested = False
 
-
     def stop(self) -> dict[str, Any]:
         output = teragram_output_dir()
-
 
         with self._lock:
             process = self._process
             if process is None or process.poll() is not None:
                 raise RuntimeError("No active TeraGram scan to stop")
 
-
             self._stop_requested = True
             self._state["status"] = "stopping"
             self._state["stage"] = "stopping"
             self._logs.append("Stop requested by administrator")
             self._state["last_line"] = "Stop requested by administrator"
-
 
             try:
                 process.terminate()
@@ -446,11 +378,8 @@ class TeraGramScanJobManager:
                 self._persist_locked(output)
                 raise RuntimeError("Failed to terminate TeraGram scanner") from exc
 
-
             self._persist_locked(output)
             return self._snapshot_locked()
-
-
 
 
 teragram_scan_manager = TeraGramScanJobManager()

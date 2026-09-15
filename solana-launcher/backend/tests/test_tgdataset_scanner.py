@@ -12,7 +12,6 @@ from app.services.tgdataset_scanner import (
     zenodo_archive_url,
 )
 
-
 ADDR_1 = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
 ADDR_2 = "DksAcB4w38E7bfzQ2KbjwG3sf95vUPWX9x7rhniwpump"
 
@@ -71,7 +70,9 @@ def _dataset_bytes() -> bytes:
             "n_subscribers": 8000,
             "text_messages": {
                 "1": {
-                    "message": "Meme gem contract 0x1111111111111111111111111111111111111111 buy entry",
+                    "message": (
+                        "Meme gem contract 0x1111111111111111111111111111111111111111 buy entry"
+                    ),
                     "date": 1,
                     "author": 1003,
                     "is_forwarded": False,
@@ -194,9 +195,7 @@ def test_native_solana_target_matching_regressions() -> None:
     assert solscan_result["signals"]["solana_messages"] == 1
 
     pumpfun = TGDatasetChannelAccumulator(channel_id="pumpfun")
-    pumpfun.observe_message(
-        "https://pump.fun/coin/DaEUPVqGjt3SKEREJaHCgKtkjiTPJNYAhuyKEXZ6pump"
-    )
+    pumpfun.observe_message("https://pump.fun/coin/DaEUPVqGjt3SKEREJaHCgKtkjiTPJNYAhuyKEXZ6pump")
     pumpfun_result = pumpfun.result()
 
     assert pumpfun_result["signals"]["pumpfun_messages"] == 1

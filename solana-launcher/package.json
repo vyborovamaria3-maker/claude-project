@@ -53,11 +53,12 @@
     "immer": "^11.1.8",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^0.453.0",
-    "next": "^16.2.11",
+    "next": "^16.3.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-window": "^2.3.1",
     "recharts": "^2.12.7",
+    "sharp": "^0.35.4",
     "socks-proxy-agent": "^10.1.0",
     "tailwind-merge": "^2.5.4",
     "telegraf": "^4.16.3",
@@ -85,5 +86,8 @@
     "vite": "^8.2.2",
     "vitest": "^5.0.0",
     "xlsx": "^0.18.5"
+  },
+  "overrides": {
+    "toml": "^5.0.0"
   }
 }

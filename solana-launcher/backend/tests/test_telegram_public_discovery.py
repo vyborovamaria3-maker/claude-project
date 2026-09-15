@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.services.telegram_public_discovery import (
     TelegramPublicWebDiscoveryCollector,
@@ -8,10 +8,9 @@ from app.services.telegram_public_discovery import (
 )
 from app.services.telegram_public_web import PublicTelegramMessage
 
-
 ADDR_1 = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
 ADDR_2 = "DksAcB4w38E7bfzQ2KbjwG3sf95vUPWX9x7rhniwpump"
-NOW = datetime(2026, 8, 31, 8, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 31, 8, 0, tzinfo=UTC)
 
 
 def _message(
@@ -58,7 +57,10 @@ def test_discovery_uses_explicit_tme_links_not_plain_mentions() -> None:
             links=["https://t.me/s/BetaCalls", "https://t.me/seed_calls/1"],
         )
     ]
-    assert extract_discovered_channels(messages, source_username="seed_calls") == ["alphacalls", "betacalls"]
+    assert extract_discovered_channels(messages, source_username="seed_calls") == [
+        "alphacalls",
+        "betacalls",
+    ]
 
 
 def test_relevance_score_prefers_real_memecoin_call_channels() -> None:

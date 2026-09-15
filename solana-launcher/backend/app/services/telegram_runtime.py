@@ -58,7 +58,10 @@ class TelegramMonitorManager:
 
     @property
     def manual_public_channels(self) -> list[str]:
-        raw = self.settings.telegram_public_web_channels.strip() or self.settings.telegram_monitor_channels.strip()
+        raw = (
+            self.settings.telegram_public_web_channels.strip()
+            or self.settings.telegram_monitor_channels.strip()
+        )
         result: list[str] = []
         for item in raw.split(","):
             normalized = normalize_telegram_target(item)
@@ -165,13 +168,17 @@ class TelegramMonitorManager:
             return
         if not self.settings.telegram_public_web_refresh_enabled:
             if not self._public_bootstrapped and self.public_web.configured_channels:
-                await self.scan_public_web(history_limit=self.settings.telegram_public_web_history_limit)
+                await self.scan_public_web(
+                    history_limit=self.settings.telegram_public_web_history_limit
+                )
                 self._public_bootstrapped = True
             return
 
         if not self._public_bootstrapped:
             if self.public_web.configured_channels:
-                await self.scan_public_web(history_limit=self.settings.telegram_public_web_history_limit)
+                await self.scan_public_web(
+                    history_limit=self.settings.telegram_public_web_history_limit
+                )
                 self._public_bootstrapped = True
                 return
             self._registry_summary = await registry_summary(self.sessionmaker)
@@ -240,7 +247,9 @@ class TelegramMonitorManager:
                 elif mtproto_error and not self.settings.telegram_public_web_enabled:
                     self._last_background_error = mtproto_error
                 elif mtproto_error:
-                    self._last_background_error = f"MTProto: {mtproto_error}; Public Web fallback active"
+                    self._last_background_error = (
+                        f"MTProto: {mtproto_error}; Public Web fallback active"
+                    )
                 else:
                     self._last_background_error = None
                 await asyncio.sleep(self.settings.telegram_public_web_refresh_tick_seconds)

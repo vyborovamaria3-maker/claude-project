@@ -3,12 +3,12 @@ from __future__ import annotations
 import heapq
 import json
 import re
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator, TextIO
+from typing import Any, TextIO
 
 from app.services.tgdataset_scanner import TGDatasetChannelAccumulator, utcnow_iso
-
 
 TERAGRAM_PREVIEW_RECORD_ID = 21998264
 TERAGRAM_PREVIEW_VERSION = "1.0"
@@ -76,12 +76,10 @@ def _discover_table(root: Path, aliases: tuple[str, ...]) -> tuple[Path, ...]:
     csv: list[Path] = []
     csv_gz: list[Path] = []
 
-
     for alias in aliases:
         direct_parquet = root / f"{alias}.parquet"
         direct_csv = root / f"{alias}.csv"
         direct_csv_gz = root / f"{alias}.csv.gz"
-
 
         if direct_parquet.is_file():
             parquet.append(direct_parquet)
@@ -90,19 +88,11 @@ def _discover_table(root: Path, aliases: tuple[str, ...]) -> tuple[Path, ...]:
         if direct_csv_gz.is_file():
             csv_gz.append(direct_csv_gz)
 
-
         directory = root / alias
         if directory.is_dir():
-            parquet.extend(
-                sorted(path for path in directory.glob("*.parquet") if path.is_file())
-            )
-            csv.extend(
-                sorted(path for path in directory.glob("*.csv") if path.is_file())
-            )
-            csv_gz.extend(
-                sorted(path for path in directory.glob("*.csv.gz") if path.is_file())
-            )
-
+            parquet.extend(sorted(path for path in directory.glob("*.parquet") if path.is_file()))
+            csv.extend(sorted(path for path in directory.glob("*.csv") if path.is_file()))
+            csv_gz.extend(sorted(path for path in directory.glob("*.csv.gz") if path.is_file()))
 
     # Never read duplicate representations of one relation.
     # Full TeraGram prefers Parquet; preview prefers an already unpacked CSV,
@@ -161,8 +151,7 @@ def _relation_sql(paths: tuple[Path, ...]) -> str:
     if all(path.suffix.lower() == ".parquet" for path in paths):
         return f"read_parquet({file_list}, union_by_name=true)"
     csv_like = all(
-        path.name.lower().endswith(".csv")
-        or path.name.lower().endswith(".csv.gz")
+        path.name.lower().endswith(".csv") or path.name.lower().endswith(".csv.gz")
         for path in paths
     )
     if csv_like:
@@ -171,9 +160,7 @@ def _relation_sql(paths: tuple[Path, ...]) -> str:
             "compression='auto', ignore_errors=true, "
             "quote='\"', escape='\"')"
         )
-    raise ValueError(
-        "TeraGram relation files must all be CSV/CSV.GZ or all be Parquet"
-    )
+    raise ValueError("TeraGram relation files must all be CSV/CSV.GZ or all be Parquet")
 
 
 def _columns(connection: Any, view_name: str) -> set[str]:
@@ -184,7 +171,9 @@ def _columns(connection: Any, view_name: str) -> set[str]:
 def _require_columns(view_name: str, actual: set[str], required: set[str]) -> None:
     missing = sorted(required - actual)
     if missing:
-        raise ValueError(f"TeraGram table {view_name} is missing required columns: {', '.join(missing)}")
+        raise ValueError(
+            f"TeraGram table {view_name} is missing required columns: {', '.join(missing)}"
+        )
 
 
 def _column_expr(columns: set[str], name: str, *, default: str, cast: str = "VARCHAR") -> str:
@@ -240,9 +229,7 @@ def _create_source_views(connection: Any, sources: TeraGramSources) -> dict[str,
     if result["tg_entity_urls"]:
         _require_columns("entity_urls", result["tg_entity_urls"], {"message_id", "url"})
     if result["tg_entity_hashtags"]:
-        _require_columns(
-            "entity_hashtags", result["tg_entity_hashtags"], {"message_id", "hashtag"}
-        )
+        _require_columns("entity_hashtags", result["tg_entity_hashtags"], {"message_id", "hashtag"})
     if result["tg_users"]:
         _require_columns("users", result["tg_users"], {"id"})
     if result["tg_chats_users"]:
@@ -283,33 +270,24 @@ def _create_recent_messages_table(
 ) -> None:
     """Materialize only the newest N messages per chat for exact scoring."""
 
-
     if per_chat < 1:
         raise ValueError("recent_messages_per_chat must be positive")
 
-
     message_columns = columns["tg_messages"]
 
-
     ordering = (
-        "TRY_CAST(m.date AS TIMESTAMP) DESC NULLS LAST, "
-        "TRY_CAST(m.id AS BIGINT) DESC NULLS LAST"
+        "TRY_CAST(m.date AS TIMESTAMP) DESC NULLS LAST, TRY_CAST(m.id AS BIGINT) DESC NULLS LAST"
         if "date" in message_columns
         else "TRY_CAST(m.id AS BIGINT) DESC NULLS LAST"
     )
-
 
     selected_columns = ["id", "chat_id"]
     for name in ("forward_from_id", "forward_from_chat_id"):
         if name in message_columns:
             selected_columns.append(name)
 
-
-    projected = ",\n                    ".join(
-        f"m.{name}" for name in selected_columns
-    )
+    projected = ",\n                    ".join(f"m.{name}" for name in selected_columns)
     output_columns = ", ".join(selected_columns)
-
 
     connection.execute(
         f"""
@@ -330,8 +308,6 @@ def _create_recent_messages_table(
     )
 
 
-
-
 def _create_signal_table(
     connection: Any,
     columns: dict[str, set[str]],
@@ -339,7 +315,8 @@ def _create_signal_table(
     signal_source: str,
 ) -> None:
     # Materialize the cheap pre-gate once. On full TeraGram, re-reading entity/content tables for
-    # candidate discovery and again for exact scoring would otherwise duplicate the most expensive scan.
+    # candidate discovery and again for exact scoring would otherwise duplicate the most
+    # expensive scan.
     if signal_source == "content":
         content_columns = columns["tg_message_content"]
         text_parts: list[str] = []
@@ -449,7 +426,6 @@ def _create_signal_table(
     )
 
 
-
 def _create_historical_root_table(
     connection: Any,
     columns: dict[str, set[str]],
@@ -483,12 +459,8 @@ def _create_historical_root_table(
         WHERE FALSE
     """
 
-    if (
-        "date" not in message_columns
-        or not (
-            columns["tg_entity_urls"]
-            or columns["tg_entity_hashtags"]
-        )
+    if "date" not in message_columns or not (
+        columns["tg_entity_urls"] or columns["tg_entity_hashtags"]
     ):
         connection.execute(empty_sql)
         return
@@ -748,15 +720,9 @@ def _create_historical_root_table(
         """
     )
 
-    connection.execute(
-        "DROP TABLE IF EXISTS tg_historical_entity_rows"
-    )
-    connection.execute(
-        "DROP TABLE IF EXISTS tg_historical_target_rows"
-    )
-    connection.execute(
-        "DROP TABLE IF EXISTS tg_historical_messages"
-    )
+    connection.execute("DROP TABLE IF EXISTS tg_historical_entity_rows")
+    connection.execute("DROP TABLE IF EXISTS tg_historical_target_rows")
+    connection.execute("DROP TABLE IF EXISTS tg_historical_messages")
 
 
 def _create_candidate_tables(
@@ -850,12 +816,12 @@ def _candidate_query(columns: dict[str, set[str]]) -> str:
         SELECT
             TRY_CAST(c.id AS VARCHAR) AS teragram_chat_id,
             {channel_id_expr} AS channel_id,
-            {_chat_select_expr(chats, 'name', 'username', "''", 'VARCHAR')},
-            {_chat_select_expr(chats, 'title', 'title', "''", 'VARCHAR')},
-            {_chat_select_expr(chats, 'description', 'description', "''", 'VARCHAR')},
-            {_chat_select_expr(chats, 'is_scam', 'scam', 'FALSE', 'BOOLEAN')},
-            {_chat_select_expr(chats, 'is_verified', 'verified', 'FALSE', 'BOOLEAN')},
-            {_chat_select_expr(chats, 'members_count', 'n_subscribers', '0', 'BIGINT')},
+            {_chat_select_expr(chats, "name", "username", "''", "VARCHAR")},
+            {_chat_select_expr(chats, "title", "title", "''", "VARCHAR")},
+            {_chat_select_expr(chats, "description", "description", "''", "VARCHAR")},
+            {_chat_select_expr(chats, "is_scam", "scam", "FALSE", "BOOLEAN")},
+            {_chat_select_expr(chats, "is_verified", "verified", "FALSE", "BOOLEAN")},
+            {_chat_select_expr(chats, "members_count", "n_subscribers", "0", "BIGINT")},
             COALESCE(stats.messages_total, 0)::BIGINT AS messages_total,
             COALESCE(stats.forwarded_messages, 0)::BIGINT AS forwarded_messages,
             signals.message_id,
@@ -949,7 +915,9 @@ def scan_teragram_dataset(
     sources = discover_teragram_sources(input_dir)
     output = Path(output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    database = Path(duckdb_path).expanduser().resolve() if duckdb_path else output / "teragram.duckdb"
+    database = (
+        Path(duckdb_path).expanduser().resolve() if duckdb_path else output / "teragram.duckdb"
+    )
     scratch = Path(temp_dir).expanduser().resolve() if temp_dir else output / "duckdb_tmp"
 
     duckdb = _require_duckdb()
@@ -971,10 +939,7 @@ def scan_teragram_dataset(
         )
         if progress:
             progress(f"TeraGram: signal source = {resolved_source}")
-            progress(
-                f"TeraGram: selecting recent {recent_messages_per_chat} messages per chat"
-            )
-
+            progress(f"TeraGram: selecting recent {recent_messages_per_chat} messages per chat")
 
         _create_recent_messages_table(
             connection,
@@ -984,9 +949,7 @@ def scan_teragram_dataset(
         _create_signal_table(connection, columns, signal_source=resolved_source)
 
         if progress:
-            progress(
-                "TeraGram: building 180-day historical Solana/memecoin root gate"
-            )
+            progress("TeraGram: building 180-day historical Solana/memecoin root gate")
 
         _create_historical_root_table(
             connection,
@@ -1055,14 +1018,10 @@ def scan_teragram_dataset(
                     if historical_last_target is not None
                     else None
                 ),
-                "admission_path": str(
-                    historical_path or ""
-                ),
+                "admission_path": str(historical_path or ""),
             }
 
-        historical_root_count = len(
-            historical_root_info
-        )
+        historical_root_count = len(historical_root_info)
 
         candidate_path = output / "teragram_candidates.jsonl"
         category_paths = {
@@ -1099,41 +1058,27 @@ def scan_teragram_dataset(
             row = current.result()
             row["teragram_chat_id"] = current_source_chat_id
 
-            historical = historical_root_info.get(
-                current_source_chat_id
-            )
+            historical = historical_root_info.get(current_source_chat_id)
 
             if historical is not None:
                 row["historical_root"] = historical
                 row["signals"]["historical_180d"] = historical
 
-                classes = set(
-                    row.get("classifications") or []
-                )
+                classes = set(row.get("classifications") or [])
                 classes.add("crypto")
 
-                if (
-                    historical["solana_messages"] > 0
-                    or historical["native_messages"] > 0
-                ):
+                if historical["solana_messages"] > 0 or historical["native_messages"] > 0:
                     classes.add("solana")
 
                 if historical["memecoin_messages"] > 0:
                     classes.add("memecoin")
 
-                if (
-                    "solana" in classes
-                    and "memecoin" in classes
-                ):
+                if "solana" in classes and "memecoin" in classes:
                     classes.add("solana_memecoin")
 
                 row["classifications"] = sorted(classes)
 
-                historical_floor = (
-                    55.0
-                    if historical["admission_path"] == "native"
-                    else 45.0
-                )
+                historical_floor = 55.0 if historical["admission_path"] == "native" else 45.0
 
                 row["seed_score"] = round(
                     max(
@@ -1235,7 +1180,9 @@ def scan_teragram_dataset(
                 "availability and relevance before use."
             ),
         }
-        seed_path.write_text(json.dumps(seed_document, ensure_ascii=False, indent=2), encoding="utf-8")
+        seed_path.write_text(
+            json.dumps(seed_document, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         summary = {
             "generated_at": utcnow_iso(),

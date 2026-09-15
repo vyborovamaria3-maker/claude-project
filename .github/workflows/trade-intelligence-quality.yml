@@ -16,7 +16,7 @@ permissions:
 jobs:
   backend:
     name: Backend checks 1-4
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
     defaults:
       run:
@@ -84,7 +84,7 @@ jobs:
 
   frontend:
     name: Frontend checks 5-7
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 35
     defaults:
       run:
@@ -128,7 +128,7 @@ jobs:
 
   qwen:
     name: Qwen checks 8-10
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 25
     defaults:
       run:

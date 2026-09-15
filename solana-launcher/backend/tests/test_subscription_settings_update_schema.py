@@ -1,9 +1,8 @@
 from decimal import Decimal
 
 import pytest
-from pydantic import ValidationError
-
 from app.schemas.subscription import SubscriptionSettingsUpdate
+from pydantic import ValidationError
 
 
 def test_subscription_settings_update_accepts_admin_values():

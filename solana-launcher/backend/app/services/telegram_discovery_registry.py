@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 import hashlib
+from collections import Counter
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -11,20 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.social_intelligence import TelegramChannel
 from app.services.telegram_parser import normalize_telegram_target
 
-
 _REGISTRY_PAGE_SIZE = 5000
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _aware(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -40,7 +39,7 @@ def _parse_time(value: Any) -> datetime | None:
 
 
 def _public_channel_id(username: str) -> int:
-    digest = hashlib.sha256(f"telegram-public:{username.lower()}".encode("utf-8")).digest()
+    digest = hashlib.sha256(f"telegram-public:{username.lower()}".encode()).digest()
     value = int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
     return -(value or 1)
 
@@ -111,7 +110,9 @@ async def _load_registry_channels(
                         .offset(offset)
                         .limit(_REGISTRY_PAGE_SIZE)
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             rows.extend(page)
             if len(page) < _REGISTRY_PAGE_SIZE:

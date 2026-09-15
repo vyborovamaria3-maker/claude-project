@@ -9,9 +9,10 @@ on:
 permissions:
   contents: read
 
+# Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   accessibility-and-performance:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
     defaults:
       run:
@@ -31,15 +32,19 @@ jobs:
       - name: Install app dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Install Playwright Chromium for Lighthouse
+        run: npx playwright install chromium
 
       - name: Build frontend from locked app dependencies
         run: npm run build
 
       - name: Start frontend
         run: |
-          npm start -- -p 3000 > /tmp/potapoff-quality-next.log 2>&1 &
+          rm -rf .next/standalone/public .next/standalone/.next/static
+          mkdir -p .next/standalone/.next
+          test ! -d public || cp -R public .next/standalone/public
+          cp -R .next/static .next/standalone/.next/static
+          PORT=3000 HOSTNAME=127.0.0.1 node .next/standalone/server.js > /tmp/potapoff-quality-next.log 2>&1 &
           echo $! > /tmp/potapoff-quality-next.pid
           for i in {1..60}; do
             if curl --fail --silent http://127.0.0.1:3000/login >/dev/null; then
@@ -51,9 +56,13 @@ jobs:
           exit 1
 
       - name: Cross-browser smoke
-        env:
-          BASE_URL: http://127.0.0.1:3000
-        run: node tests/cross-browser-smoke.mjs
+        run: |
+          docker run --rm --network host --ipc=host \
+            -e BASE_URL=http://127.0.0.1:3000 \
+            -v "$PWD:/work" \
+            -w /work \
+            mcr.microsoft.com/playwright:v1.60.0-noble \
+            node tests/cross-browser-smoke.mjs
 
       - name: Install isolated quality tools
         run: |
@@ -94,6 +103,7 @@ jobs:
       - name: Upload quality reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
         with:
           name: frontend-quality-reports
           path: solana-launcher/test-results
