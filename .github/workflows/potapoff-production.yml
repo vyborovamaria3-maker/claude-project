@@ -196,6 +196,7 @@ jobs:
             -czf "$archive" admin-site
 
           "${SSH[@]}" 'mkdir -p /opt/claude-project'
+          "${SSH[@]}" "rm -f '$archive'"
           "${SCP[@]}" "$archive" "$SERVER_USER@$SERVER_HOST:$archive"
           "${SSH[@]}" "set -euo pipefail
             root=/opt/claude-project
