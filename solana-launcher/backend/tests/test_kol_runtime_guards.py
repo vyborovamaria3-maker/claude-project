@@ -98,3 +98,48 @@ def test_refresh_metrics_releases_lock_after_success(monkeypatch):
     assert result == {"wallets": 2, "metrics": 6}
     assert lock.released is True
     assert redis.closed is True
+
+
+def test_trade_sync_skips_when_distributed_lock_is_held(monkeypatch):
+    lock = _FakeLock(acquired=False)
+    redis = _FakeRedis(lock)
+    monkeypatch.setattr(kol_tasks.Redis, "from_url", lambda *_args, **_kwargs: redis)
+
+    async def must_not_run():
+        raise AssertionError("trade sync body must not run without the distributed lock")
+
+    monkeypatch.setattr(kol_tasks, "_run_trade_sync", must_not_run)
+    result = kol_tasks.sync_trade_events.run()
+
+    assert result == {
+        "wallets": 0,
+        "events": 0,
+        "failures": 0,
+        "status": "skipped",
+        "skipped": 1,
+    }
+    assert lock.released is False
+    assert redis.closed is True
+
+
+def test_trade_sync_releases_lock_after_success(monkeypatch):
+    lock = _FakeLock(acquired=True)
+    redis = _FakeRedis(lock)
+    monkeypatch.setattr(kol_tasks.Redis, "from_url", lambda *_args, **_kwargs: redis)
+
+    async def fake_sync():
+        return {
+            "wallets": 1,
+            "events": 4,
+            "failures": 0,
+            "backfillPending": 1,
+            "status": "ok",
+        }
+
+    monkeypatch.setattr(kol_tasks, "_run_trade_sync", fake_sync)
+    result = kol_tasks.sync_trade_events.run()
+
+    assert result["events"] == 4
+    assert result["status"] == "ok"
+    assert lock.released is True
+    assert redis.closed is True
