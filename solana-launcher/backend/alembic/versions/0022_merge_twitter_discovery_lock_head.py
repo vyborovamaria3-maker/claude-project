@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-revision = "0022_merge_twitter_discovery_lock_head"
+revision = "0022_merge_discovery_lock"
 down_revision = (
     "0021_twitter_run_singleton",
     "0015_twitter_discovery_run_lock",
