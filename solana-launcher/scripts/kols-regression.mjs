@@ -22,12 +22,14 @@ const metrics = read("backend/app/services/kol_metrics.py");
 const intelligence = read("backend/app/services/kol_intelligence.py");
 const backtest = read("backend/app/services/kol_backtest.py");
 const advanced = read("backend/app/api/v1/advanced_intelligence.py");
+const kolTask = read("backend/app/tasks/kols.py");
 const compose = read("docker-compose.production.yml");
 const localCompose = read("docker-compose.yml");
 const envExample = read(".env.example");
 const backendEnvExample = read("backend/.env.example");
 const tests = read("backend/tests/test_kol_intelligence.py");
 const backtestTests = read("backend/tests/test_kol_backtest.py");
+const runtimeGuardTests = read("backend/tests/test_kol_runtime_guards.py");
 const siteDesign = read("lib/siteDesign.ts");
 const sidebar = read("components/SidebarNav.tsx");
 const responsive = read("app/responsive.css");
@@ -37,6 +39,11 @@ const paidBlock = proxy.match(/const PAID_ROUTE_PREFIXES = \[([\s\S]*?)\];/)?.[1
 const heavyBlock = proxy.match(/const HEAVY_ROUTE_PREFIXES = \[([\s\S]*?)\];/)?.[1] ?? "";
 assert(paidBlock.includes('"/api/kols"'), "/api/kols must stay behind paid authentication");
 assert(heavyBlock.includes('"/api/kols"'), "/api/kols must stay behind the heavy-route rate limit");
+assert(
+  proxy.includes('{ prefix: "/api/kols/backtest", limit: 3 }')
+    && proxy.includes("VERY_HEAVY_ROUTE_LIMITS"),
+  "expensive KOL backtests must keep their stricter per-minute rate limit",
+);
 
 assert(
   siteDesign.includes('{ href: "/trade/kols-twitter", labelKey: "nav.xAnalysis", icon: "twitter", tag: "nav.kols_twitter" }'),
@@ -116,6 +123,11 @@ assert(
   "internal KOL backend endpoints must require the scoped KOL key",
 );
 assert(
+  internalApi.includes("len(expected) < 32")
+    && internalApi.includes("hmac.compare_digest(expected, backend_key)"),
+  "production KOL internal key must be strong and distinct from the backend master key",
+);
+assert(
   internalApi.includes("best_by_trade"),
   "live KOL trades must deduplicate a shared wallet to one canonical attribution",
 );
@@ -126,6 +138,12 @@ assert(
 assert(
   metrics.includes(".outerjoin(") && metrics.includes('"stale_cleared": trade_count == 0'),
   "KOL metric refresh must include inactive wallets and clear stale windows",
+);
+assert(
+  kolTask.includes("_REFRESH_LOCK_KEY")
+    && kolTask.includes("lock.acquire(blocking=False)")
+    && kolTask.includes("_REFRESH_LOCK_TTL_SECONDS"),
+  "scheduled KOL metric refresh must use a distributed lock to prevent overlapping workers",
 );
 assert(
   advanced.includes("_safe_kol_intelligence") && advanced.includes('"status": "unavailable"'),
@@ -223,6 +241,13 @@ assert(
 assert(
   tests.includes("test_internal_sync_requires_scoped_key"),
   "backend tests must cover scoped internal KOL authentication",
+);
+assert(
+  runtimeGuardTests.includes("test_production_kol_key_rejects_short_secret")
+    && runtimeGuardTests.includes("test_production_kol_key_must_differ_from_backend_master")
+    && runtimeGuardTests.includes("test_refresh_metrics_skips_when_distributed_lock_is_held")
+    && runtimeGuardTests.includes("test_refresh_metrics_releases_lock_after_success"),
+  "runtime guard tests must cover scoped-key hardening and distributed refresh locking",
 );
 assert(
   backtestTests.includes("test_backtest_builds_signal_without_future_price_leakage"),
