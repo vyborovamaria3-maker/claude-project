@@ -192,18 +192,22 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
             unpriced_sell_events = 0
             wins = 0
             losses = 0
-            volume = 0.0
-            valued_events = 0
             last_trade_at: datetime | None = None
+            transaction_values: dict[str, float] = {}
+            transaction_signatures: set[str] = set()
 
             for event in recent:
+                transaction_signatures.add(event.tx_signature)
                 occurred_at = _as_utc(event.occurred_at)
                 if occurred_at and (last_trade_at is None or occurred_at > last_trade_at):
                     last_trade_at = occurred_at
                 value = event.value_usd
                 if value is not None and float(value) >= 0:
-                    volume += float(value)
-                    valued_events += 1
+                    parsed_value = float(value)
+                    previous = transaction_values.get(event.tx_signature)
+                    transaction_values[event.tx_signature] = (
+                        parsed_value if previous is None else max(previous, parsed_value)
+                    )
                 if event.side != "sell":
                     continue
                 profit = realized_map.get(event.id)
@@ -223,6 +227,7 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
                 timeframe_days=days,
             )
             closed = wins + losses
+            volume = sum(transaction_values.values())
             metric.pnl_value = None
             metric.pnl_currency = None
             metric.realized_pnl_usd = realized_total if realized_sell_events else None
@@ -230,15 +235,17 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
             metric.win_rate = (wins / closed * 100) if closed else None
             metric.wins = wins if closed else None
             metric.losses = losses if closed else None
-            metric.volume_usd = volume if valued_events else None
-            metric.trade_count = len(recent)
+            metric.volume_usd = volume if transaction_values else None
+            metric.trade_count = len(transaction_signatures)
             metric.last_trade_at = last_trade_at
             metric.raw_payload = {
                 "method": "fifo_kol_trade_events",
                 "window_days": days,
                 "realized_sell_events": realized_sell_events,
                 "unpriced_or_unmatched_sell_events": unpriced_sell_events,
-                "valued_events": valued_events,
+                "valued_transactions": len(transaction_values),
+                "event_count": len(recent),
+                "transaction_count": len(transaction_signatures),
                 "history_event_count": len(events),
                 "stale_cleared": len(recent) == 0,
             }
