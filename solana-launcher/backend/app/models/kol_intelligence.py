@@ -130,6 +130,73 @@ class KOLWalletMetric(Base):
     wallet: Mapped[KOLWalletAttribution] = relationship(back_populates="metrics")
 
 
+class KOLTradeEvent(Base):
+    """One normalized on-chain swap leg for an attributed Solana wallet.
+
+    This event ledger is intentionally separate from the legacy WalletTrade position
+    model. A single swap can produce a sell leg, a buy leg, or both for token-to-token
+    swaps. The provider transaction signature plus event_index makes ingestion
+    idempotent across retries and Celery workers.
+    """
+
+    __tablename__ = "kol_trade_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "analytics_wallet_id",
+            "tx_signature",
+            "event_index",
+            name="uq_kol_trade_event_wallet_tx_index",
+        ),
+        Index("ix_kol_trade_events_wallet_time", "analytics_wallet_id", "occurred_at"),
+        Index("ix_kol_trade_events_mint_time", "mint_address", "occurred_at"),
+        Index("ix_kol_trade_events_side_time", "side", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    analytics_wallet_id: Mapped[int] = mapped_column(
+        ForeignKey("wallets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    chain: Mapped[str] = mapped_column(String(32), nullable=False, default="solana")
+    address: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    tx_signature: Mapped[str] = mapped_column(String(128), nullable=False)
+    event_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    mint_address: Mapped[str] = mapped_column(String(128), nullable=False)
+    token_symbol: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    token_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    price_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    value_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    counterparty_mint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    counterparty_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    program: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source: Mapped[str] = mapped_column(String(120), nullable=False, default="solana_tracker")
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class KOLTradeSyncState(Base):
+    __tablename__ = "kol_trade_sync_states"
+    __table_args__ = (
+        UniqueConstraint("analytics_wallet_id", name="uq_kol_trade_sync_wallet"),
+        Index("ix_kol_trade_sync_last_attempt", "last_attempt_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    analytics_wallet_id: Mapped[int] = mapped_column(
+        ForeignKey("wallets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String(120), nullable=False, default="solana_tracker")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    events_seen: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class KOLSourceSync(Base):
     __tablename__ = "kol_source_syncs"
     __table_args__ = (UniqueConstraint("source", name="uq_kol_source_sync_source"),)
