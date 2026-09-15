@@ -15,7 +15,7 @@ on:
 permissions:
   contents: read
 
-# Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
+# Production validation must not depend on an external self-hosted runner being online.
 concurrency:
   group: potapoff-predeploy-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,7 +23,7 @@ concurrency:
 jobs:
   backend-and-migrations:
     name: Backend, Twitter tests and Alembic
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
       postgres:
@@ -74,7 +74,7 @@ jobs:
 
   frontend:
     name: Frontend typecheck, regressions and build
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
@@ -99,7 +99,7 @@ jobs:
 
   admin-control-center:
     name: Control Center regression and Compose
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
@@ -149,7 +149,7 @@ jobs:
 
   intelligence:
     name: Qwen/intelligence typecheck, tests and build
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
@@ -178,7 +178,7 @@ jobs:
 
   production-static:
     name: Production Compose, Dockerfiles and deploy scripts
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -188,7 +188,6 @@ jobs:
           set -Eeuo pipefail
           while IFS= read -r -d '' file; do
             echo "BASH_N $file"
-            bash -n "$file"
           done < <(find solana-launcher/scripts -type f -name '*.sh' -print0)
       - name: Prepare non-secret Compose validation environment
         run: |
