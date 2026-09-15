@@ -17,20 +17,51 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
-# docker-compose.production.yml injects this server-only secret into the
-# frontend so Mini App API routes can authenticate to FastAPI. Resolve the
-# same value as the backend without exposing the rest of backend.env.
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
-fi
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
-fi
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
+resolve_env_value() {
+  local key="$1"
+  local value="${!key:-}"
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file .env.server "$key")"
+  fi
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file backend.env "$key")"
+  fi
+  printf '%s' "$value"
+}
+
+# Compose interpolation happens before env_file is injected into containers.
+# Resolve only the selected server-side values needed to render the production
+# stack, without exposing the rest of backend.env to the frontend.
+BACKEND_API_KEY="$(resolve_env_value BACKEND_API_KEY)"
+if [[ -z "$BACKEND_API_KEY" ]]; then
   echo "BACKEND_API_KEY is required in .env.server or backend.env" >&2
   exit 1
 fi
 export BACKEND_API_KEY
+
+KOL_INTERNAL_KEY="$(resolve_env_value KOL_INTERNAL_KEY)"
+if [[ -z "$KOL_INTERNAL_KEY" ]]; then
+  echo "KOL_INTERNAL_KEY is required in .env.server or backend.env" >&2
+  exit 1
+fi
+if (( ${#KOL_INTERNAL_KEY} < 32 )); then
+  echo "KOL_INTERNAL_KEY must be at least 32 characters" >&2
+  exit 1
+fi
+if [[ "$KOL_INTERNAL_KEY" == "$BACKEND_API_KEY" ]]; then
+  echo "KOL_INTERNAL_KEY must be different from BACKEND_API_KEY" >&2
+  exit 1
+fi
+export KOL_INTERNAL_KEY
+
+SOLANA_TRACKER_API_KEY="$(resolve_env_value SOLANA_TRACKER_API_KEY)"
+SOLANA_TRACKER_API_BASE="$(resolve_env_value SOLANA_TRACKER_API_BASE)"
+KOL_TRADE_SYNC_INTERVAL_SECONDS="$(resolve_env_value KOL_TRADE_SYNC_INTERVAL_SECONDS)"
+KOL_TRADE_SYNC_WALLETS_PER_RUN="$(resolve_env_value KOL_TRADE_SYNC_WALLETS_PER_RUN)"
+export SOLANA_TRACKER_API_KEY
+export SOLANA_TRACKER_API_BASE="${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}"
+export KOL_TRADE_SYNC_INTERVAL_SECONDS="${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}"
+export KOL_TRADE_SYNC_WALLETS_PER_RUN="${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}"
 
 COMPOSE=(
   docker compose
@@ -44,6 +75,7 @@ REQUIRED_SERVICES=(
   rabbitmq
   backend
   celery-worker
+  celery-beat
   frontend
   nginx
   prometheus
@@ -89,7 +121,15 @@ check_telegram_webhook() {
 
   # Exercise the real production nginx -> application webhook route locally.
   # This intentionally avoids external DNS/TLS dependencies on the VPS.
-  curl     --connect-timeout 3     --max-time 8     -fsS     -H "Host: $webhook_host"     -H "x-webhook-secret: $webhook_secret"     "http://127.0.0.1$webhook_path"     | grep -Fq '"status":"ok"'     || return 1
+  curl \
+    --connect-timeout 3 \
+    --max-time 8 \
+    -fsS \
+    -H "Host: $webhook_host" \
+    -H "x-webhook-secret: $webhook_secret" \
+    "http://127.0.0.1$webhook_path" \
+    | grep -Fq '"status":"ok"' \
+    || return 1
 
   container_id="$(
     "${COMPOSE[@]}" --profile telegram ps -q telegram-bot 2>/dev/null || true
@@ -179,16 +219,17 @@ for attempt in $(seq 1 45); do
   build_info="$(curl -fsS http://127.0.0.1/api/build-info 2>/dev/null || true)"
   miniapp_config="$(curl -fsS http://127.0.0.1/api/miniapp/config 2>/dev/null || true)"
 
-    admin_ok=0
-    if curl \
-      --connect-timeout 3 \
-      --max-time 8 \
-      -fsS \
-      -H 'Host: admin.potapoff.fun' \
-      http://127.0.0.1/ \
-      >/dev/null 2>&1; then
-      admin_ok=1
-    fi
+  admin_ok=0
+  if curl \
+    --connect-timeout 3 \
+    --max-time 8 \
+    -fsS \
+    -H 'Host: admin.potapoff.fun' \
+    http://127.0.0.1/ \
+    >/dev/null 2>&1; then
+    admin_ok=1
+  fi
+
   telegram_ok=1
   if telegram_bot_enabled \
     && [[ "${SKIP_TELEGRAM_BOT_HEALTH:-0}" != "1" ]] \
@@ -202,7 +243,7 @@ for attempt in $(seq 1 45); do
     && curl -fsS http://127.0.0.1/trade/analysis/social >/dev/null \
     && curl -fsS http://127.0.0.1/fastapi/health >/dev/null \
     && printf '%s' "$miniapp_config" | grep -Fq '"monthlyPriceSol"' \
-      && [[ "$admin_ok" -eq 1 ]] \
+    && [[ "$admin_ok" -eq 1 ]] \
     && [[ "$telegram_ok" -eq 1 ]] \
     && printf '%s' "$build_info" | grep -Fq "\"buildSha\":\"$IMAGE_TAG\""; then
     endpoints_ok=1
@@ -211,7 +252,12 @@ for attempt in $(seq 1 45); do
   bad_services="$(check_services)"
 
   if [[ "$endpoints_ok" -eq 1 && -z "$bad_services" ]]; then
-    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok frontend_build=verified"
+    if [[ -n "$SOLANA_TRACKER_API_KEY" ]]; then
+      kol_ingestion="enabled"
+    else
+      kol_ingestion="disabled"
+    fi
+    echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok frontend_build=verified celery_beat=ok kol_ingestion=$kol_ingestion"
     exit 0
   fi
 
@@ -232,6 +278,7 @@ echo "Mini App config: ${miniapp_config:-unavailable}" >&2
   rabbitmq \
   backend \
   celery-worker \
+  celery-beat \
   frontend \
   nginx \
   prometheus || true
