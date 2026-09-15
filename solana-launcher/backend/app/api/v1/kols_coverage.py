@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,17 +43,41 @@ async def internal_kol_trade_coverage(
     wallets_with_history = (
         await session.execute(
             select(func.count(func.distinct(KOLTradeEvent.analytics_wallet_id)))
+            .join(
+                KOLWalletAttribution,
+                KOLWalletAttribution.analytics_wallet_id == KOLTradeEvent.analytics_wallet_id,
+            )
+            .where(KOLWalletAttribution.chain == "solana")
         )
     ).scalar_one()
     event_rows = (
-        await session.execute(select(func.count(func.distinct(KOLTradeEvent.id))))
+        await session.execute(
+            select(func.count(func.distinct(KOLTradeEvent.id)))
+            .join(
+                KOLWalletAttribution,
+                KOLWalletAttribution.analytics_wallet_id == KOLTradeEvent.analytics_wallet_id,
+            )
+            .where(KOLWalletAttribution.chain == "solana")
+        )
     ).scalar_one()
     latest_event_at = (
-        await session.execute(select(func.max(KOLTradeEvent.occurred_at)))
+        await session.execute(
+            select(func.max(KOLTradeEvent.occurred_at))
+            .join(
+                KOLWalletAttribution,
+                KOLWalletAttribution.analytics_wallet_id == KOLTradeEvent.analytics_wallet_id,
+            )
+            .where(KOLWalletAttribution.chain == "solana")
+        )
     ).scalar_one_or_none()
     sync_states = (
         await session.execute(
-            select(KOLTradeSyncState.status, func.count(KOLTradeSyncState.id))
+            select(KOLTradeSyncState.status, func.count(func.distinct(KOLTradeSyncState.id)))
+            .join(
+                KOLWalletAttribution,
+                KOLWalletAttribution.analytics_wallet_id == KOLTradeSyncState.analytics_wallet_id,
+            )
+            .where(KOLWalletAttribution.chain == "solana")
             .group_by(KOLTradeSyncState.status)
         )
     ).all()
@@ -65,7 +91,8 @@ async def internal_kol_trade_coverage(
     covered = int(wallets_with_history or 0)
     rows = int(event_rows or 0)
     ratio = covered / attributed if attributed else 0.0
-    provider_status = source.status if source else "unknown"
+    provider_configured = bool(os.getenv("SOLANA_TRACKER_API_KEY", "").strip())
+    provider_status = source.status if source else ("not_started" if provider_configured else "disabled")
 
     if attributed == 0:
         coverage_status = "no_attributed_wallets"
@@ -85,6 +112,7 @@ async def internal_kol_trade_coverage(
         "status": coverage_status,
         "provider": {
             "source": _SOURCE,
+            "configured": provider_configured,
             "status": provider_status,
             "detail": source.detail if source else None,
             "lastSuccessAt": source.last_success_at.isoformat() if source and source.last_success_at else None,
@@ -95,10 +123,10 @@ async def internal_kol_trade_coverage(
         "walletsAttempted": attempted,
         "syncStates": state_counts,
         "eventRows": rows,
-        "coverageRatio": round(ratio, 4),
+        "coverageRatio": round(min(1.0, ratio), 4),
         "latestEventAt": latest_event_at.isoformat() if latest_event_at else None,
         "note": (
-            "Coverage measures locally ingested kol_trade_events. Missing local history must not be "
-            "interpreted as evidence that a KOL did not trade."
+            "Coverage measures locally ingested kol_trade_events for currently attributed Solana wallets. "
+            "Missing local history must not be interpreted as evidence that a KOL did not trade."
         ),
     }
