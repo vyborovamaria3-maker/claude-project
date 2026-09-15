@@ -188,6 +188,7 @@ jobs:
           set -Eeuo pipefail
           while IFS= read -r -d '' file; do
             echo "BASH_N $file"
+            bash -n "$file"
           done < <(find solana-launcher/scripts -type f -name '*.sh' -print0)
       - name: Prepare non-secret Compose validation environment
         run: |
