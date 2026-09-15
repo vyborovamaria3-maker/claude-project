@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.analytics import WalletTrade
-from app.models.kol_intelligence import KOLWalletAttribution, KOLWalletMetric
+from app.models.kol_intelligence import KOLTradeEvent, KOLWalletAttribution, KOLWalletMetric
+
+_METRIC_SOURCE = "internal_kol_events"
 
 
 def utcnow() -> datetime:
@@ -22,11 +24,11 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-def trade_value(amount: float | None, price: float | None) -> float | None:
-    if amount is None or price is None:
+def _positive(value: float | None) -> float | None:
+    if value is None:
         return None
-    value = float(amount) * float(price)
-    return value if value >= 0 else None
+    parsed = float(value)
+    return parsed if parsed > 0 else None
 
 
 async def _get_or_create_internal_metric(
@@ -40,7 +42,7 @@ async def _get_or_create_internal_metric(
             select(KOLWalletMetric).where(
                 KOLWalletMetric.wallet_id == wallet_id,
                 KOLWalletMetric.timeframe_days == timeframe_days,
-                KOLWalletMetric.source == "internal_wallet_trades",
+                KOLWalletMetric.source == _METRIC_SOURCE,
             ).limit(1)
         )
     ).scalar_one_or_none()
@@ -50,7 +52,7 @@ async def _get_or_create_internal_metric(
     candidate = KOLWalletMetric(
         wallet_id=wallet_id,
         timeframe_days=timeframe_days,
-        source="internal_wallet_trades",
+        source=_METRIC_SOURCE,
     )
     try:
         async with session.begin_nested():
@@ -63,7 +65,7 @@ async def _get_or_create_internal_metric(
                 select(KOLWalletMetric).where(
                     KOLWalletMetric.wallet_id == wallet_id,
                     KOLWalletMetric.timeframe_days == timeframe_days,
-                    KOLWalletMetric.source == "internal_wallet_trades",
+                    KOLWalletMetric.source == _METRIC_SOURCE,
                 ).limit(1)
             )
         ).scalar_one_or_none()
@@ -72,80 +74,148 @@ async def _get_or_create_internal_metric(
         return metric
 
 
+def _fifo_realized(events: list[KOLTradeEvent]) -> dict[int, float | None]:
+    """Return realized USD PnL for fully costed sell events.
+
+    Lots are maintained per token. A sell only receives a realized PnL value when
+    its entire amount can be matched to earlier buys and every matched buy plus the
+    sell itself has a USD price. This prevents partial history/price coverage from
+    silently understating cost basis.
+    """
+    lots: dict[str, deque[list[float | None]]] = defaultdict(deque)
+    realized_by_event: dict[int, float | None] = {}
+    epsilon = 1e-12
+
+    for event in events:
+        amount = _positive(event.amount)
+        if amount is None:
+            if event.side == "sell":
+                realized_by_event[event.id] = None
+            continue
+        price = _positive(event.price_usd)
+        if event.side == "buy":
+            lots[event.mint_address].append([amount, price])
+            continue
+        if event.side != "sell":
+            continue
+
+        remaining = amount
+        matched = 0.0
+        priced = 0.0
+        profit = 0.0
+        queue = lots[event.mint_address]
+        while remaining > epsilon and queue:
+            lot = queue[0]
+            lot_amount = float(lot[0] or 0.0)
+            lot_price = lot[1]
+            if lot_amount <= epsilon:
+                queue.popleft()
+                continue
+            used = min(remaining, lot_amount)
+            matched += used
+            if price is not None and lot_price is not None:
+                profit += used * (price - float(lot_price))
+                priced += used
+            remaining -= used
+            lot_amount -= used
+            if lot_amount <= epsilon:
+                queue.popleft()
+            else:
+                lot[0] = lot_amount
+
+        fully_matched = matched + epsilon >= amount
+        fully_priced = priced + epsilon >= amount
+        realized_by_event[event.id] = profit if fully_matched and fully_priced else None
+
+    return realized_by_event
+
+
 async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
     now = utcnow()
-    cutoff = now - timedelta(days=30)
-    rows = list(
+    attributions = list(
         (
             await session.execute(
-                select(KOLWalletAttribution, WalletTrade)
-                .outerjoin(
-                    WalletTrade,
-                    and_(
-                        WalletTrade.wallet_id == KOLWalletAttribution.analytics_wallet_id,
-                        or_(
-                            WalletTrade.buy_timestamp >= cutoff,
-                            WalletTrade.sell_timestamp >= cutoff,
-                        ),
-                    ),
-                )
-                .where(
+                select(KOLWalletAttribution).where(
                     KOLWalletAttribution.chain == "solana",
                     KOLWalletAttribution.analytics_wallet_id.is_not(None),
                 )
             )
-        ).all()
+        ).scalars().all()
+    )
+    wallet_ids = sorted(
+        {
+            int(attribution.analytics_wallet_id)
+            for attribution in attributions
+            if attribution.analytics_wallet_id is not None
+        }
     )
 
-    grouped: dict[int, tuple[KOLWalletAttribution, list[WalletTrade]]] = {}
-    for attribution, trade in rows:
-        if attribution.id not in grouped:
-            grouped[attribution.id] = (attribution, [])
-        if trade is not None:
-            grouped[attribution.id][1].append(trade)
+    events_by_wallet: dict[int, list[KOLTradeEvent]] = {wallet_id: [] for wallet_id in wallet_ids}
+    if wallet_ids:
+        events = list(
+            (
+                await session.execute(
+                    select(KOLTradeEvent)
+                    .where(KOLTradeEvent.analytics_wallet_id.in_(wallet_ids))
+                    .order_by(
+                        KOLTradeEvent.analytics_wallet_id.asc(),
+                        KOLTradeEvent.occurred_at.asc(),
+                        KOLTradeEvent.id.asc(),
+                    )
+                )
+            ).scalars().all()
+        )
+        for event in events:
+            events_by_wallet.setdefault(event.analytics_wallet_id, []).append(event)
+
+    realized_by_wallet = {
+        wallet_id: _fifo_realized(events)
+        for wallet_id, events in events_by_wallet.items()
+    }
 
     refreshed = 0
-    for attribution, trades in grouped.values():
+    for attribution in attributions:
+        analytics_wallet_id = attribution.analytics_wallet_id
+        if analytics_wallet_id is None:
+            continue
+        events = events_by_wallet.get(int(analytics_wallet_id), [])
+        realized_map = realized_by_wallet.get(int(analytics_wallet_id), {})
         for days in (1, 7, 30):
             start = now - timedelta(days=days)
-            realized = 0.0
+            recent = [
+                event
+                for event in events
+                if (_as_utc(event.occurred_at) or datetime.min.replace(tzinfo=timezone.utc)) >= start
+            ]
+            realized_total = 0.0
+            realized_sell_events = 0
+            unpriced_sell_events = 0
             wins = 0
             losses = 0
             volume = 0.0
-            has_realized = False
-            has_volume = False
-            trade_count = 0
+            valued_events = 0
             last_trade_at: datetime | None = None
 
-            for trade in trades:
-                buy_timestamp = _as_utc(trade.buy_timestamp)
-                sell_timestamp = _as_utc(trade.sell_timestamp)
-                buy_recent = bool(buy_timestamp and buy_timestamp >= start)
-                sell_recent = bool(sell_timestamp and sell_timestamp >= start)
-                if not buy_recent and not sell_recent:
+            for event in recent:
+                occurred_at = _as_utc(event.occurred_at)
+                if occurred_at and (last_trade_at is None or occurred_at > last_trade_at):
+                    last_trade_at = occurred_at
+                value = event.value_usd
+                if value is not None and float(value) >= 0:
+                    volume += float(value)
+                    valued_events += 1
+                if event.side != "sell":
                     continue
-                trade_count += 1
-                activity = sell_timestamp or buy_timestamp
-                if activity and (last_trade_at is None or activity > last_trade_at):
-                    last_trade_at = activity
-                if buy_recent:
-                    value = trade_value(trade.amount_buy, trade.avg_buy_price)
-                    if value is not None:
-                        volume += value
-                        has_volume = True
-                if sell_recent:
-                    value = trade_value(trade.amount_sold, trade.avg_sell_price)
-                    if value is not None:
-                        volume += value
-                        has_volume = True
-                    if trade.realized_profit_usd is not None:
-                        profit = float(trade.realized_profit_usd)
-                        realized += profit
-                        has_realized = True
-                        if profit > 0:
-                            wins += 1
-                        elif profit < 0:
-                            losses += 1
+                profit = realized_map.get(event.id)
+                if profit is None:
+                    unpriced_sell_events += 1
+                    continue
+                realized_total += profit
+                realized_sell_events += 1
+                if profit > 0:
+                    wins += 1
+                elif profit < 0:
+                    losses += 1
 
             metric = await _get_or_create_internal_metric(
                 session,
@@ -155,20 +225,24 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
             closed = wins + losses
             metric.pnl_value = None
             metric.pnl_currency = None
-            metric.realized_pnl_usd = realized if has_realized else None
+            metric.realized_pnl_usd = realized_total if realized_sell_events else None
             metric.unrealized_pnl_usd = None
             metric.win_rate = (wins / closed * 100) if closed else None
             metric.wins = wins if closed else None
             metric.losses = losses if closed else None
-            metric.volume_usd = volume if has_volume else None
-            metric.trade_count = trade_count
+            metric.volume_usd = volume if valued_events else None
+            metric.trade_count = len(recent)
             metric.last_trade_at = last_trade_at
             metric.raw_payload = {
-                "method": "existing_wallet_trades",
+                "method": "fifo_kol_trade_events",
                 "window_days": days,
-                "stale_cleared": trade_count == 0,
+                "realized_sell_events": realized_sell_events,
+                "unpriced_or_unmatched_sell_events": unpriced_sell_events,
+                "valued_events": valued_events,
+                "history_event_count": len(events),
+                "stale_cleared": len(recent) == 0,
             }
             metric.calculated_at = now
             refreshed += 1
 
-    return {"wallets": len(grouped), "metrics": refreshed}
+    return {"wallets": len(wallet_ids), "metrics": refreshed}
