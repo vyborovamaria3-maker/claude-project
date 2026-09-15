@@ -4,6 +4,7 @@ out/
 build/
 
 # Python / FastAPI backend
+.venv*/
 backend/.env
 backend/.venv/
 backend/__pycache__/
