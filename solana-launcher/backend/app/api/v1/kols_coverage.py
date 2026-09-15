@@ -6,10 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.kols_internal import _require_kol_internal_key
 from app.db.session import get_db
-from app.models.analytics import WalletTrade
-from app.models.kol_intelligence import KOLWalletAttribution
+from app.models.kol_intelligence import (
+    KOLSourceSync,
+    KOLTradeEvent,
+    KOLTradeSyncState,
+    KOLWalletAttribution,
+)
 
 router = APIRouter()
+_SOURCE = "solana_tracker_trades"
 
 
 @router.get("/internal/trade-coverage")
@@ -18,11 +23,10 @@ async def internal_kol_trade_coverage(
     session: AsyncSession = Depends(get_db),
     x_kol_internal_key: str | None = Header(default=None, alias="X-KOL-Internal-Key"),
 ) -> dict:
-    """Describe how much of the attributed Solana KOL universe has local trade history.
+    """Describe actual local event-ledger coverage for attributed Solana wallets.
 
-    This endpoint intentionally does not pretend that an empty wallet_trades table
-    means a KOL was inactive. It lets the frontend distinguish missing ingestion
-    from genuine no-activity results.
+    Empty local history is explicitly treated as an ingestion/coverage fact, never as
+    evidence that a KOL did not trade.
     """
     _require_kol_internal_key(request, x_kol_internal_key)
 
@@ -34,63 +38,67 @@ async def internal_kol_trade_coverage(
             )
         )
     ).scalar_one()
-
     wallets_with_history = (
         await session.execute(
-            select(func.count(func.distinct(WalletTrade.wallet_id)))
-            .join(
-                KOLWalletAttribution,
-                KOLWalletAttribution.analytics_wallet_id == WalletTrade.wallet_id,
-            )
-            .where(KOLWalletAttribution.chain == "solana")
+            select(func.count(func.distinct(KOLTradeEvent.analytics_wallet_id)))
         )
     ).scalar_one()
-
-    trade_rows = (
-        await session.execute(
-            select(func.count(func.distinct(WalletTrade.id)))
-            .join(
-                KOLWalletAttribution,
-                KOLWalletAttribution.analytics_wallet_id == WalletTrade.wallet_id,
-            )
-            .where(KOLWalletAttribution.chain == "solana")
-        )
+    event_rows = (
+        await session.execute(select(func.count(func.distinct(KOLTradeEvent.id))))
     ).scalar_one()
-
-    latest_trade_at = (
+    latest_event_at = (
+        await session.execute(select(func.max(KOLTradeEvent.occurred_at)))
+    ).scalar_one_or_none()
+    sync_states = (
         await session.execute(
-            select(func.max(func.coalesce(WalletTrade.sell_timestamp, WalletTrade.buy_timestamp)))
-            .join(
-                KOLWalletAttribution,
-                KOLWalletAttribution.analytics_wallet_id == WalletTrade.wallet_id,
-            )
-            .where(KOLWalletAttribution.chain == "solana")
+            select(KOLTradeSyncState.status, func.count(KOLTradeSyncState.id))
+            .group_by(KOLTradeSyncState.status)
+        )
+    ).all()
+    source = (
+        await session.execute(
+            select(KOLSourceSync).where(KOLSourceSync.source == _SOURCE).limit(1)
         )
     ).scalar_one_or_none()
 
     attributed = int(attributed_wallets or 0)
     covered = int(wallets_with_history or 0)
-    rows = int(trade_rows or 0)
+    rows = int(event_rows or 0)
     ratio = covered / attributed if attributed else 0.0
+    provider_status = source.status if source else "unknown"
 
     if attributed == 0:
-        status = "no_attributed_wallets"
+        coverage_status = "no_attributed_wallets"
+    elif provider_status == "disabled" and covered == 0:
+        coverage_status = "ingestion_disabled"
     elif covered == 0:
-        status = "ingestion_missing"
+        coverage_status = "ingestion_missing"
     elif covered < attributed:
-        status = "partial"
+        coverage_status = "partial"
     else:
-        status = "covered"
+        coverage_status = "covered"
+
+    state_counts = {str(state): int(count or 0) for state, count in sync_states}
+    attempted = sum(state_counts.values())
 
     return {
-        "status": status,
+        "status": coverage_status,
+        "provider": {
+            "source": _SOURCE,
+            "status": provider_status,
+            "detail": source.detail if source else None,
+            "lastSuccessAt": source.last_success_at.isoformat() if source and source.last_success_at else None,
+            "lastErrorAt": source.last_error_at.isoformat() if source and source.last_error_at else None,
+        },
         "attributedSolanaWallets": attributed,
         "walletsWithTradeHistory": covered,
-        "tradeRows": rows,
+        "walletsAttempted": attempted,
+        "syncStates": state_counts,
+        "eventRows": rows,
         "coverageRatio": round(ratio, 4),
-        "latestTradeAt": latest_trade_at.isoformat() if latest_trade_at else None,
+        "latestEventAt": latest_event_at.isoformat() if latest_event_at else None,
         "note": (
-            "Coverage measures locally ingested wallet_trades. Missing history must not be "
+            "Coverage measures locally ingested kol_trade_events. Missing local history must not be "
             "interpreted as evidence that a KOL did not trade."
         ),
     }
