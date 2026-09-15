@@ -190,6 +190,8 @@ class KOLTradeSyncState(Base):
     source: Mapped[str] = mapped_column(String(120), nullable=False, default="solana_tracker")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     events_seen: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_cursor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    backfill_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
