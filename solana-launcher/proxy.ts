@@ -73,7 +73,7 @@ function buildCsp(nonce: string): string {
     "font-src 'self' data:",
     `connect-src ${connectSources.join(" ")}`,
     "frame-src 'self' https://t.me",
-    "frame-ancestors 'none'",
+    "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'",
     "object-src 'none'",
