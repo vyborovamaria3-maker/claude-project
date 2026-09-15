@@ -23,9 +23,12 @@ type TradeEvent = {
   priceUsd?: number | null;
   valueUsd?: number | null;
   realizedProfitUsd?: number | null;
+  txSignature?: string;
+  program?: string | null;
+  source?: string;
 };
 
-type FeedResponse = { items?: TradeEvent[]; error?: string };
+type FeedResponse = { items?: TradeEvent[]; source?: string; error?: string };
 
 function money(value?: number | null) {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -47,6 +50,7 @@ function since(value: string) {
 
 export default function KOLLiveTradeFeed() {
   const [items, setItems] = useState<TradeEvent[]>([]);
+  const [source, setSource] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +62,7 @@ export default function KOLLiveTradeFeed() {
       const payload = (await response.json()) as FeedResponse;
       if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
       setItems(payload.items ?? []);
+      setSource(payload.source ?? null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Live feed unavailable");
     } finally {
@@ -77,7 +82,9 @@ export default function KOLLiveTradeFeed() {
         <div className="flex items-center justify-between gap-3 border-b border-bg-border px-4 py-3">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-content"><Radio className="h-4 w-4 text-emerald-300" /> Live KOL Trades</div>
-            <div className="mt-0.5 text-[10px] text-content-muted">Обновление раз в минуту из локальных wallet_trades.</div>
+            <div className="mt-0.5 text-[10px] text-content-muted">
+              On-chain KOL event ledger · обновление раз в минуту{source ? ` · ${source}` : ""}.
+            </div>
           </div>
           <button type="button" onClick={() => void load()} className={siteDesign.controls.iconButtonClassName} aria-label="Refresh KOL trades">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -86,7 +93,9 @@ export default function KOLLiveTradeFeed() {
 
         {error ? <div className="px-4 py-3 text-xs text-danger">{error}</div> : null}
         {!error && !loading && items.length === 0 ? (
-          <div className="px-4 py-6 text-center text-xs text-content-muted">Пока нет сделок атрибутированных KOL-wallets в локальной базе.</div>
+          <div className="px-4 py-6 text-center text-xs text-content-muted">
+            В локальном event ledger пока нет событий. Проверь статус KOL trade ingestion выше: отсутствие истории не означает, что KOL не торговал.
+          </div>
         ) : null}
         {items.length ? (
           <div className="max-h-[360px] divide-y divide-bg-border overflow-y-auto">
