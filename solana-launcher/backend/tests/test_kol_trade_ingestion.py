@@ -77,6 +77,21 @@ def test_normalize_token_to_token_preserves_both_legs():
     ]
 
 
+def test_symbol_spoof_does_not_turn_unknown_mint_into_base_asset():
+    events = normalize_solana_tracker_trade(
+        wallet_id=7,
+        wallet_address=WALLET,
+        trade=_trade(
+            _asset(TOKEN_A, 10, "USDC", 2.0),
+            _asset(WSOL, 0.16, "SOL", 125.0),
+            tx="spoof-usdc-symbol",
+        ),
+    )
+    assert len(events) == 1
+    assert events[0]["side"] == "sell"
+    assert events[0]["mint_address"] == TOKEN_A
+
+
 def test_normalizer_rejects_trade_without_stable_identity_or_timestamp():
     invalid_tx = _trade(_asset(WSOL, 1, "SOL"), _asset(TOKEN_A, 1, "AAA"))
     invalid_tx["tx"] = ""
