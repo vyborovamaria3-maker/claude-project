@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import httpx
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import Wallet
@@ -181,17 +182,30 @@ async def fetch_solana_tracker_wallet_trades(
     *,
     api_key: str,
     base_url: str = _DEFAULT_BASE_URL,
+    cursor: str | None = None,
     timeout_seconds: float = 15.0,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     url = f"{base_url.rstrip('/')}/wallet/{quote(address, safe='')}/trades"
+    params = {"cursor": cursor} if cursor else None
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        response = await client.get(url, headers={"x-api-key": api_key, "accept": "application/json"})
+        response = await client.get(
+            url,
+            params=params,
+            headers={"x-api-key": api_key, "accept": "application/json"},
+        )
         response.raise_for_status()
         payload = response.json()
     if not isinstance(payload, dict):
-        return []
-    trades = payload.get("trades")
-    return [item for item in trades if isinstance(item, dict)] if isinstance(trades, list) else []
+        return {"trades": [], "nextCursor": None, "hasNextPage": False}
+    raw_trades = payload.get("trades")
+    trades = [item for item in raw_trades if isinstance(item, dict)] if isinstance(raw_trades, list) else []
+    raw_cursor = payload.get("nextCursor")
+    next_cursor = str(raw_cursor) if raw_cursor not in (None, "") else None
+    return {
+        "trades": trades,
+        "nextCursor": next_cursor,
+        "hasNextPage": bool(payload.get("hasNextPage")) and next_cursor is not None,
+    }
 
 
 async def _source_sync(session: AsyncSession) -> KOLSourceSync:
@@ -214,7 +228,12 @@ async def _sync_state(session: AsyncSession, wallet_id: int) -> KOLTradeSyncStat
         )
     ).scalar_one_or_none()
     if row is None:
-        row = KOLTradeSyncState(analytics_wallet_id=wallet_id, source=_SOURCE, status="pending")
+        row = KOLTradeSyncState(
+            analytics_wallet_id=wallet_id,
+            source=_SOURCE,
+            status="pending",
+            backfill_complete=False,
+        )
         session.add(row)
         await session.flush()
     return row
@@ -280,17 +299,25 @@ async def sync_kol_trade_events(
     inserted = 0
     failures = 0
     seen_provider_rows = 0
+    backfill_pending = 0
 
     for wallet in wallets:
         state = await _sync_state(session, wallet.id)
         state.last_attempt_at = now
         state.updated_at = now
+        # Before the first complete traversal, persist the provider cursor and
+        # consume one historical page per scheduled wallet turn. Once the backfill
+        # reaches the end, later turns always poll the newest page only.
+        request_cursor = None if state.backfill_complete else state.next_cursor
+        mode = "latest" if state.backfill_complete else "backfill"
         try:
-            provider_rows = await fetch_solana_tracker_wallet_trades(
+            page = await fetch_solana_tracker_wallet_trades(
                 wallet.wallet_address,
                 api_key=key,
                 base_url=resolved_base_url,
+                cursor=request_cursor,
             )
+            provider_rows = page["trades"]
             seen_provider_rows += len(provider_rows)
             normalized: list[dict[str, Any]] = []
             for provider_trade in provider_rows:
@@ -324,15 +351,31 @@ async def sync_kol_trade_events(
                 if key_tuple in existing or key_tuple in dedupe:
                     continue
                 dedupe.add(key_tuple)
-                session.add(KOLTradeEvent(**item))
-                wallet_inserted += 1
-            if wallet_inserted:
-                await session.flush()
+                try:
+                    async with session.begin_nested():
+                        session.add(KOLTradeEvent(**item))
+                        await session.flush()
+                    wallet_inserted += 1
+                except IntegrityError:
+                    # Another worker/manual refresh won the same unique event race.
+                    # The DB constraint is the final idempotency boundary.
+                    pass
             inserted += wallet_inserted
+
+            if not state.backfill_complete:
+                if page["hasNextPage"] and page["nextCursor"]:
+                    state.next_cursor = str(page["nextCursor"])
+                    backfill_pending += 1
+                else:
+                    state.next_cursor = None
+                    state.backfill_complete = True
             state.status = "ok"
             state.events_seen = len(normalized)
             state.last_success_at = now
-            state.detail = f"providerTrades={len(provider_rows)} normalizedEvents={len(normalized)} inserted={wallet_inserted}"
+            state.detail = (
+                f"mode={mode} providerTrades={len(provider_rows)} normalizedEvents={len(normalized)} "
+                f"inserted={wallet_inserted} backfillComplete={state.backfill_complete}"
+            )
         except Exception as exc:  # provider failures must not block rotation to other wallets
             failures += 1
             state.status = "error"
@@ -349,15 +392,22 @@ async def sync_kol_trade_events(
         source.status = "partial"
         source.last_success_at = now
         source.last_error_at = now
-        source.detail = f"wallets={len(wallets)} failures={failures} insertedEvents={inserted}"
+        source.detail = (
+            f"wallets={len(wallets)} failures={failures} insertedEvents={inserted} "
+            f"backfillPending={backfill_pending}"
+        )
     else:
         source.status = "ok"
         source.last_success_at = now
-        source.detail = f"wallets={len(wallets)} providerTrades={seen_provider_rows} insertedEvents={inserted}"
+        source.detail = (
+            f"wallets={len(wallets)} providerTrades={seen_provider_rows} insertedEvents={inserted} "
+            f"backfillPending={backfill_pending}"
+        )
 
     return {
         "wallets": len(wallets),
         "events": inserted,
         "failures": failures,
+        "backfillPending": backfill_pending,
         "status": source.status,
     }
