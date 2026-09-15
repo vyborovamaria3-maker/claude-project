@@ -40,6 +40,7 @@ type TradeCoverageResponse = {
   latestEventAt?: string | null;
   provider?: {
     source?: string;
+    configured?: boolean;
     status?: string;
     detail?: string | null;
     lastSuccessAt?: string | null;
@@ -194,9 +195,12 @@ async function mergeTradeCoverage(payload: KolListResponse) {
     if (!response.ok) throw new Error(`trade coverage HTTP ${response.status}`);
     const data = (await response.json()) as TradeCoverageResponse;
     const status = data.status || "unknown";
+    const providerStatus = data.provider?.status || "unknown";
+    const coverageHealthy = status === "covered" || status === "partial" || status === "no_attributed_wallets";
+    const providerHealthy = providerStatus !== "error" && providerStatus !== "disabled";
     payload.sourceStatus.push({
       source: "KOL trade ingestion",
-      ok: status === "covered" || status === "partial" || status === "no_attributed_wallets",
+      ok: coverageHealthy && providerHealthy,
       detail: coverageDetail(data),
     });
   } catch (error) {
