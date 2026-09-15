@@ -54,7 +54,26 @@ async def test_trade_coverage_requires_scoped_key(client):
 
 
 @pytest.mark.asyncio
-async def test_trade_coverage_distinguishes_missing_ingestion_from_covered_history(client, test_app):
+async def test_trade_coverage_reports_disabled_provider_before_first_worker_run(client, monkeypatch):
+    monkeypatch.delenv("SOLANA_TRACKER_API_KEY", raising=False)
+    synced = await client.post(
+        "/api/v1/kols/sync",
+        json=_sync_payload(),
+        headers=BACKEND_HEADERS,
+    )
+    assert synced.status_code == 200, synced.text
+
+    response = await client.get("/api/v1/kols/internal/trade-coverage", headers=KOL_HEADERS)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "ingestion_disabled"
+    assert payload["provider"]["configured"] is False
+    assert payload["walletsWithTradeHistory"] == 0
+
+
+@pytest.mark.asyncio
+async def test_trade_coverage_distinguishes_missing_ingestion_from_covered_history(client, test_app, monkeypatch):
+    monkeypatch.setenv("SOLANA_TRACKER_API_KEY", "configured-test-key")
     synced = await client.post(
         "/api/v1/kols/sync",
         json=_sync_payload(),
@@ -66,6 +85,7 @@ async def test_trade_coverage_distinguishes_missing_ingestion_from_covered_histo
     assert missing.status_code == 200, missing.text
     missing_payload = missing.json()
     assert missing_payload["status"] == "ingestion_missing"
+    assert missing_payload["provider"]["configured"] is True
     assert missing_payload["attributedSolanaWallets"] == 1
     assert missing_payload["walletsWithTradeHistory"] == 0
     assert missing_payload["eventRows"] == 0
