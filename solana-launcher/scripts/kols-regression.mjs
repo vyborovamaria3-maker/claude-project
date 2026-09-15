@@ -23,6 +23,8 @@ const intelligence = read("backend/app/services/kol_intelligence.py");
 const backtest = read("backend/app/services/kol_backtest.py");
 const advanced = read("backend/app/api/v1/advanced_intelligence.py");
 const compose = read("docker-compose.production.yml");
+const localCompose = read("docker-compose.yml");
+const envExample = read(".env.example");
 const tests = read("backend/tests/test_kol_intelligence.py");
 const backtestTests = read("backend/tests/test_kol_backtest.py");
 const siteDesign = read("lib/siteDesign.ts");
@@ -157,12 +159,41 @@ assert(
   backtest.includes("current KOL attribution snapshot is applied to historical trades"),
   "backtest must disclose current-attribution selection bias",
 );
+assert(
+  backtest.includes("canonical_events") && backtest.includes("first_seen_at = _aware(attribution.first_seen_at)"),
+  "backtest strict mode must choose attribution at each historical buy/sell event time",
+);
 
 const frontendService = compose.match(/\n  frontend:\n([\s\S]*?)\n  telegram-bot:\n/)?.[1] ?? "";
 const backendService = compose.match(/\n  backend:\n([\s\S]*?)\n  celery-worker:\n/)?.[1] ?? "";
 assert(frontendService.includes("KOL_INTERNAL_KEY"), "frontend server must receive the scoped KOL key");
 assert(!frontendService.includes("BACKEND_API_KEY"), "frontend must not receive the backend master key");
 assert(backendService.includes("KOL_INTERNAL_KEY"), "backend must receive the scoped KOL key");
+assert(
+  compose.includes("\n  celery-beat:\n")
+    && compose.includes('"beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"'),
+  "production Compose must run Celery Beat so KOL refresh schedules actually execute",
+);
+
+const localBackendService = localCompose.match(/\n  backend:\n([\s\S]*?)\n  celery-worker:\n/)?.[1] ?? "";
+const localFrontendService = localCompose.match(/\n  frontend:\n([\s\S]*?)\n  nginx:\n/)?.[1] ?? "";
+assert(
+  localBackendService.includes("KOL_INTERNAL_KEY"),
+  "local Compose backend must receive the scoped KOL key in production-mode containers",
+);
+assert(
+  localFrontendService.includes("KOL_INTERNAL_KEY"),
+  "local Compose frontend server must receive the scoped KOL key",
+);
+assert(
+  localCompose.includes("\n  celery-beat:\n")
+    && localCompose.includes('"beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"'),
+  "local Compose must run Celery Beat so scheduled KOL refresh is testable",
+);
+assert(
+  envExample.includes("KOL_INTERNAL_KEY=") && !envExample.includes("KOL_INTERNAL_KEY=dev-"),
+  "Compose env example must document a required blank scoped KOL key without a source-controlled default",
+);
 
 assert(
   tests.includes("test_shared_wallet_trade_is_counted_once"),
