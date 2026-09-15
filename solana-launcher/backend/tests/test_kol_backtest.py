@@ -8,8 +8,9 @@ from sqlalchemy import delete, select
 from app.models.analytics import Token, TokenMetric, Wallet
 from app.models.kol_intelligence import KOLProfile, KOLTradeEvent, KOLWalletAttribution
 from app.services.kol_backtest import backtest_kol_signals
+from tests.conftest import TEST_KOL_INTERNAL_KEY
 
-KOL_HEADERS = {"X-KOL-Internal-Key": "test-backend-api-key-2026"}
+KOL_HEADERS = {"X-KOL-Internal-Key": TEST_KOL_INTERNAL_KEY}
 
 
 async def _seed_accumulation_case(test_app):
