@@ -25,6 +25,7 @@ const advanced = read("backend/app/api/v1/advanced_intelligence.py");
 const compose = read("docker-compose.production.yml");
 const localCompose = read("docker-compose.yml");
 const envExample = read(".env.example");
+const backendEnvExample = read("backend/.env.example");
 const tests = read("backend/tests/test_kol_intelligence.py");
 const backtestTests = read("backend/tests/test_kol_backtest.py");
 const siteDesign = read("lib/siteDesign.ts");
@@ -88,6 +89,13 @@ assert(
   resolver.includes("signal: AbortSignal.timeout(6_000)")
     && resolver.includes("signal: AbortSignal.timeout(8_000)"),
   "external identity/data providers must stay bounded by timeouts",
+);
+assert(
+  resolver.includes("resolveFromFireflyWallet")
+    && resolver.includes('"walletAddress"')
+    && resolver.includes('"solanaAddress"')
+    && resolver.includes("twitterProfiles"),
+  "wallet search must perform Firefly reverse resolution for both EVM and Solana addresses",
 );
 
 assert(
@@ -193,6 +201,11 @@ assert(
 assert(
   envExample.includes("KOL_INTERNAL_KEY=") && !envExample.includes("KOL_INTERNAL_KEY=dev-"),
   "Compose env example must document a required blank scoped KOL key without a source-controlled default",
+);
+assert(
+  backendEnvExample.includes("KOL_INTERNAL_KEY=")
+    && !backendEnvExample.includes("KOL_INTERNAL_KEY=dev-"),
+  "backend env template must document the scoped KOL key for standalone/server configuration",
 );
 
 assert(
