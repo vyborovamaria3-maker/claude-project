@@ -20,10 +20,10 @@ from app.models.kol_intelligence import (
 
 _SOURCE = "solana_tracker_trades"
 _DEFAULT_BASE_URL = "https://data.solanatracker.io"
-_BASE_SYMBOLS = {"SOL", "WSOL", "USDC", "USDT"}
 _BASE_MINTS = {
     "So11111111111111111111111111111111111111112",  # wrapped SOL
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # native USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # native USDT
 }
 
 
@@ -59,10 +59,10 @@ def _asset(raw: Any) -> dict[str, Any]:
 
 
 def _is_base_asset(asset: dict[str, Any]) -> bool:
+    # Never trust token symbol/name for direction classification: an arbitrary
+    # token can spoof SOL/USDC/USDT. Only known canonical mint addresses qualify.
     mint = str(asset.get("address") or "").strip()
-    token = asset.get("token") if isinstance(asset.get("token"), dict) else {}
-    symbol = str(token.get("symbol") or "").strip().upper()
-    return mint in _BASE_MINTS or symbol in _BASE_SYMBOLS
+    return mint in _BASE_MINTS
 
 
 def _normalized_leg(
@@ -119,9 +119,9 @@ def normalize_solana_tracker_trade(
 ) -> list[dict[str, Any]]:
     """Convert one provider swap into zero, one or two asset-side events.
 
-    SOL/stable -> token is a buy, token -> SOL/stable is a sell. Token-to-token
-    swaps intentionally produce both a sell and a buy leg, preserving the actual
-    event semantics instead of compressing them into a position model.
+    Canonical base mint -> token is a buy, token -> canonical base mint is a sell.
+    Token-to-token swaps intentionally produce both a sell and a buy leg, preserving
+    actual event semantics instead of compressing them into a position model.
     """
     tx_signature = str(trade.get("tx") or "").strip()
     occurred_at = _event_time(trade.get("time"))
@@ -209,34 +209,51 @@ async def fetch_solana_tracker_wallet_trades(
 
 
 async def _source_sync(session: AsyncSession) -> KOLSourceSync:
-    row = (
-        await session.execute(select(KOLSourceSync).where(KOLSourceSync.source == _SOURCE).limit(1))
-    ).scalar_one_or_none()
-    if row is None:
-        row = KOLSourceSync(source=_SOURCE, status="unknown", records_seen=0)
-        session.add(row)
-        await session.flush()
-    return row
+    query = select(KOLSourceSync).where(KOLSourceSync.source == _SOURCE).limit(1).with_for_update()
+    row = (await session.execute(query)).scalar_one_or_none()
+    if row is not None:
+        return row
+
+    candidate = KOLSourceSync(source=_SOURCE, status="unknown", records_seen=0)
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        row = (await session.execute(query)).scalar_one_or_none()
+        if row is None:
+            raise
+        return row
 
 
 async def _sync_state(session: AsyncSession, wallet_id: int) -> KOLTradeSyncState:
-    row = (
-        await session.execute(
-            select(KOLTradeSyncState)
-            .where(KOLTradeSyncState.analytics_wallet_id == wallet_id)
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        row = KOLTradeSyncState(
-            analytics_wallet_id=wallet_id,
-            source=_SOURCE,
-            status="pending",
-            backfill_complete=False,
-        )
-        session.add(row)
-        await session.flush()
-    return row
+    query = (
+        select(KOLTradeSyncState)
+        .where(KOLTradeSyncState.analytics_wallet_id == wallet_id)
+        .limit(1)
+        .with_for_update()
+    )
+    row = (await session.execute(query)).scalar_one_or_none()
+    if row is not None:
+        return row
+
+    candidate = KOLTradeSyncState(
+        analytics_wallet_id=wallet_id,
+        source=_SOURCE,
+        status="pending",
+        backfill_complete=False,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        row = (await session.execute(query)).scalar_one_or_none()
+        if row is None:
+            raise
+        return row
 
 
 async def _wallet_batch(session: AsyncSession, limit: int) -> list[Wallet]:
@@ -278,6 +295,9 @@ async def sync_kol_trade_events(
     base_url: str | None = None,
     max_wallets: int | None = None,
 ) -> dict[str, int | str]:
+    # The source row is locked for the duration of the run. This is a database-level
+    # serialization boundary that also protects manual API refreshes, while Celery's
+    # Redis lock remains the fast distributed guard for scheduled workers.
     source = await _source_sync(session)
     key = (api_key if api_key is not None else os.getenv("SOLANA_TRACKER_API_KEY", "")).strip()
     resolved_base_url = (base_url or os.getenv("SOLANA_TRACKER_API_BASE", _DEFAULT_BASE_URL)).strip() or _DEFAULT_BASE_URL
