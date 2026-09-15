@@ -2,24 +2,50 @@ name: POTAPoff production deploy
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - POTAPoff release images
+    types:
+      - completed
 
 permissions:
   contents: read
 
 jobs:
   require-main:
-    name: Require main branch
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    name: Require released main SHA
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Reject non-main production dispatches
+      - name: Reject non-main or drifting production deploys
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
           set -Eeuo pipefail
           if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "Production deploys must be dispatched from main; got $GITHUB_REF" >&2
+            echo "Production deploys must target main; got $GITHUB_REF" >&2
             exit 1
           fi
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            if [[ "$RELEASE_CONCLUSION" != "success" || "$RELEASE_HEAD_BRANCH" != "main" ]]; then
+              echo "Production deploy requires a successful release-images run from main" >&2
+              exit 1
+            fi
+            if [[ "$RELEASE_HEAD_SHA" != "$GITHUB_SHA" ]]; then
+              echo "Release SHA $RELEASE_HEAD_SHA does not match production workflow SHA $GITHUB_SHA; refusing drift" >&2
+              exit 1
+            fi
+          fi
+          echo "PRODUCTION_SOURCE_OK sha=$GITHUB_SHA event=$EVENT_NAME"
 
   predeploy:
     name: Predeploy validation
@@ -30,7 +56,7 @@ jobs:
     needs:
       - require-main
       - predeploy
-    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
 
