@@ -26,6 +26,8 @@ from app.models.intelligence_memory import (
 from app.models.kol_intelligence import (
     KOLProfile,
     KOLSourceSync,
+    KOLTradeEvent,
+    KOLTradeSyncState,
     KOLWalletAttribution,
     KOLWalletEvidence,
     KOLWalletMetric,
@@ -79,5 +81,7 @@ __all__ = [
     "KOLWalletAttribution",
     "KOLWalletEvidence",
     "KOLWalletMetric",
+    "KOLTradeEvent",
+    "KOLTradeSyncState",
     "KOLSourceSync",
 ]
