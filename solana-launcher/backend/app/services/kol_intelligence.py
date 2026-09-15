@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import Token, Wallet, WalletLink, WalletTrade
-from app.models.kol_intelligence import KOLProfile, KOLWalletAttribution
+from app.models.kol_intelligence import KOLProfile, KOLTradeEvent, KOLWalletAttribution
 
 
 def utcnow() -> datetime:
@@ -22,13 +22,6 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-def _trade_value(amount: float | None, price: float | None) -> float | None:
-    if amount is None or price is None:
-        return None
-    value = float(amount) * float(price)
-    return value if value >= 0 else None
-
-
 def _attribution_rank(
     attribution: KOLWalletAttribution,
     profile: KOLProfile,
@@ -41,62 +34,52 @@ def _attribution_rank(
     )
 
 
-def canonical_kol_trade_rows(
-    rows: list[tuple[WalletTrade, Wallet, KOLWalletAttribution, KOLProfile]],
-) -> list[tuple[WalletTrade, Wallet, KOLWalletAttribution, KOLProfile]]:
-    """Return one canonical KOL attribution per WalletTrade.
-
-    A single analytics wallet can be linked to multiple KOL profiles. Counting the same
-    WalletTrade once per attribution inflates volume/net-flow and can create false
-    accumulation signals. Prefer verified/high-confidence attribution deterministically.
-    """
-    best_by_trade: dict[int, tuple[WalletTrade, Wallet, KOLWalletAttribution, KOLProfile]] = {}
+def canonical_kol_event_rows(
+    rows: list[tuple[KOLTradeEvent, Wallet, KOLWalletAttribution, KOLProfile]],
+) -> list[tuple[KOLTradeEvent, Wallet, KOLWalletAttribution, KOLProfile]]:
+    """Return one canonical identity attribution per blockchain event."""
+    best_by_event: dict[int, tuple[KOLTradeEvent, Wallet, KOLWalletAttribution, KOLProfile]] = {}
     for row in rows:
-        trade, _wallet, attribution, profile = row
-        existing = best_by_trade.get(trade.id)
+        event, _wallet, attribution, profile = row
+        existing = best_by_event.get(event.id)
         if existing is None or _attribution_rank(attribution, profile) > _attribution_rank(
             existing[2], existing[3]
         ):
-            best_by_trade[trade.id] = row
-    return list(best_by_trade.values())
+            best_by_event[event.id] = row
+    return list(best_by_event.values())
 
 
 async def build_kol_token_intelligence(
     session: AsyncSession,
     mint_address: str,
 ) -> dict[str, Any]:
-    token = (
-        await session.execute(
-            select(Token).where(Token.mint_address == mint_address).limit(1)
-        )
-    ).scalar_one_or_none()
-    if token is None:
-        return {
-            "status": "no_local_token_history",
-            "mint": mint_address,
-            "ownership_claim": False,
-            "windows": {},
-            "actors": [],
-        }
-
     raw_rows = list(
         (
             await session.execute(
-                select(WalletTrade, Wallet, KOLWalletAttribution, KOLProfile)
-                .join(Wallet, Wallet.id == WalletTrade.wallet_id)
+                select(KOLTradeEvent, Wallet, KOLWalletAttribution, KOLProfile)
+                .join(Wallet, Wallet.id == KOLTradeEvent.analytics_wallet_id)
                 .join(
                     KOLWalletAttribution,
                     KOLWalletAttribution.analytics_wallet_id == Wallet.id,
                 )
                 .join(KOLProfile, KOLProfile.id == KOLWalletAttribution.kol_id)
                 .where(
-                    WalletTrade.token_id == token.id,
+                    KOLTradeEvent.mint_address == mint_address,
+                    KOLWalletAttribution.chain == "solana",
                     KOLWalletAttribution.confidence >= 50,
                 )
             )
         ).all()
     )
-    rows = canonical_kol_trade_rows(raw_rows)
+    rows = canonical_kol_event_rows(raw_rows)
+    if not rows:
+        return {
+            "status": "no_local_trade_history",
+            "mint": mint_address,
+            "ownership_claim": False,
+            "windows": {},
+            "actors": [],
+        }
 
     now = utcnow()
     windows: dict[str, Any] = {}
@@ -114,22 +97,22 @@ async def build_kol_token_intelligence(
         valued_sells = 0
         high_confidence_buyers: set[str] = set()
 
-        for trade, _wallet, attribution, profile in rows:
+        for event, _wallet, attribution, profile in rows:
+            occurred_at = _as_utc(event.occurred_at)
+            if occurred_at is None or occurred_at < cutoff:
+                continue
             handle = profile.twitter_handle
-            buy_timestamp = _as_utc(trade.buy_timestamp)
-            sell_timestamp = _as_utc(trade.sell_timestamp)
-            if buy_timestamp and buy_timestamp >= cutoff:
+            value = float(event.value_usd) if event.value_usd is not None else None
+            if event.side == "buy":
                 buyers.add(handle)
                 if attribution.confidence >= 90:
                     high_confidence_buyers.add(handle)
-                value = _trade_value(trade.amount_buy, trade.avg_buy_price)
-                if value is not None:
+                if value is not None and value >= 0:
                     buy_value += value
                     valued_buys += 1
-            if sell_timestamp and sell_timestamp >= cutoff:
+            elif event.side == "sell":
                 sellers.add(handle)
-                value = _trade_value(trade.amount_sold, trade.avg_sell_price)
-                if value is not None:
+                if value is not None and value >= 0:
                     sell_value += value
                     valued_sells += 1
 
@@ -145,13 +128,13 @@ async def build_kol_token_intelligence(
             "net_flow_usd": round(net_flow, 2) if net_flow is not None else None,
             "handles": sorted(buyers | sellers)[:50],
             "valuation_coverage": {
-                "buy_trades": valued_buys,
-                "sell_trades": valued_sells,
+                "buy_events": valued_buys,
+                "sell_events": valued_sells,
             },
         }
 
     actor_map: dict[str, dict[str, Any]] = {}
-    for trade, wallet, attribution, profile in rows:
+    for event, wallet, attribution, profile in rows:
         actor = actor_map.setdefault(
             profile.twitter_handle,
             {
@@ -166,7 +149,7 @@ async def build_kol_token_intelligence(
         )
         actor["wallets"].add(wallet.wallet_address)
         actor["trades"] += 1
-        activity = _as_utc(trade.sell_timestamp or trade.buy_timestamp)
+        activity = _as_utc(event.occurred_at)
         if activity and (
             actor["last_activity_at"] is None
             or activity > actor["last_activity_at"]
@@ -211,12 +194,46 @@ async def build_kol_token_intelligence(
         "signal": signal,
         "ownership_claim": False,
         "attribution_note": (
-            "Each WalletTrade is counted once using the strongest stored KOL attribution. "
+            "Each on-chain KOLTradeEvent is counted once using the strongest stored identity attribution. "
             "Behavioral or related-wallet links are not treated as proof of ownership."
         ),
+        "event_source": "kol_trade_events",
         "windows": windows,
         "actors": actors[:30],
     }
+
+
+async def _token_participation(
+    session: AsyncSession,
+    wallet_ids: set[int],
+) -> dict[int, set[str]]:
+    token_sets: dict[int, set[str]] = {wallet_id: set() for wallet_id in wallet_ids}
+    if not wallet_ids:
+        return token_sets
+
+    event_rows = (
+        await session.execute(
+            select(KOLTradeEvent.analytics_wallet_id, KOLTradeEvent.mint_address)
+            .where(KOLTradeEvent.analytics_wallet_id.in_(wallet_ids))
+            .distinct()
+        )
+    ).all()
+    for wallet_id, mint in event_rows:
+        token_sets.setdefault(int(wallet_id), set()).add(str(mint))
+
+    missing = {wallet_id for wallet_id, tokens in token_sets.items() if not tokens}
+    if missing:
+        legacy_rows = (
+            await session.execute(
+                select(WalletTrade.wallet_id, Token.mint_address)
+                .join(Token, Token.id == WalletTrade.token_id)
+                .where(WalletTrade.wallet_id.in_(missing))
+                .distinct()
+            )
+        ).all()
+        for wallet_id, mint in legacy_rows:
+            token_sets.setdefault(int(wallet_id), set()).add(str(mint))
+    return token_sets
 
 
 async def related_wallet_candidates(
@@ -225,13 +242,11 @@ async def related_wallet_candidates(
     *,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Return behavioral wallet candidates with a bounded 0..1 similarity score.
+    """Return behavioral wallet candidates using bounded Jaccard token overlap.
 
-    The legacy wallet_links ETL increments stored shared-token counters on repeated
-    refreshes, so those counters cannot be trusted as a current similarity metric.
-    We use wallet_links only to discover candidates, then recompute unique token
-    participation from wallet_trades and rank by Jaccard overlap. This remains a
-    behavioral relationship only and is never an ownership claim.
+    Event-ledger overlap is primary. Legacy wallet_links remains a candidate source
+    only, because its stored counters historically inflated across refreshes. No
+    behavioral candidate is presented as an ownership claim.
     """
     wallet = (
         await session.execute(
@@ -242,8 +257,29 @@ async def related_wallet_candidates(
         return []
 
     requested_limit = max(1, min(limit, 100))
-    candidate_limit = min(500, max(50, requested_limit * 5))
-    rows = list(
+    candidate_limit = min(500, max(50, requested_limit * 8))
+    source_tokens = (await _token_participation(session, {wallet.id})).get(wallet.id, set())
+    if not source_tokens:
+        return []
+
+    overlap_rows = (
+        await session.execute(
+            select(
+                KOLTradeEvent.analytics_wallet_id,
+                func.count(func.distinct(KOLTradeEvent.mint_address)).label("shared"),
+            )
+            .where(
+                KOLTradeEvent.analytics_wallet_id != wallet.id,
+                KOLTradeEvent.mint_address.in_(source_tokens),
+            )
+            .group_by(KOLTradeEvent.analytics_wallet_id)
+            .order_by(func.count(func.distinct(KOLTradeEvent.mint_address)).desc())
+            .limit(candidate_limit)
+        )
+    ).all()
+    candidate_ids = {int(wallet_id) for wallet_id, _shared in overlap_rows}
+
+    legacy_links = list(
         (
             await session.execute(
                 select(WalletLink).where(
@@ -257,40 +293,24 @@ async def related_wallet_candidates(
             )
         ).scalars().all()
     )
-    other_ids = {
-        row.wallet_b_id if row.wallet_a_id == wallet.id else row.wallet_a_id
-        for row in rows
-    }
-    if not other_ids:
-        return []
+    legacy_by_other: dict[int, WalletLink] = {}
+    for link in legacy_links:
+        other_id = link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
+        candidate_ids.add(other_id)
+        legacy_by_other[other_id] = link
 
+    if not candidate_ids:
+        return []
     others = {
         item.id: item
         for item in (
-            await session.execute(select(Wallet).where(Wallet.id.in_(other_ids)))
+            await session.execute(select(Wallet).where(Wallet.id.in_(candidate_ids)))
         ).scalars().all()
     }
-
-    token_sets: dict[int, set[int]] = {wallet.id: set()}
-    for other_id in other_ids:
-        token_sets[other_id] = set()
-    participation_rows = (
-        await session.execute(
-            select(WalletTrade.wallet_id, WalletTrade.token_id)
-            .where(WalletTrade.wallet_id.in_([wallet.id, *other_ids]))
-            .distinct()
-        )
-    ).all()
-    for wallet_id, token_id in participation_rows:
-        token_sets.setdefault(int(wallet_id), set()).add(int(token_id))
-
-    source_tokens = token_sets.get(wallet.id, set())
-    if not source_tokens:
-        return []
+    token_sets = await _token_participation(session, {wallet.id, *candidate_ids})
 
     result: list[dict[str, Any]] = []
-    for link in rows:
-        other_id = link.wallet_b_id if link.wallet_a_id == wallet.id else link.wallet_a_id
+    for other_id in candidate_ids:
         other = others.get(other_id)
         if other is None:
             continue
@@ -300,6 +320,7 @@ async def related_wallet_candidates(
             continue
         union_tokens = source_tokens | other_tokens
         similarity = len(shared_tokens) / len(union_tokens) if union_tokens else 0.0
+        link = legacy_by_other.get(other_id)
         result.append(
             {
                 "address": other.wallet_address,
@@ -307,13 +328,15 @@ async def related_wallet_candidates(
                 "shared_tokens_count": len(shared_tokens),
                 "first_interaction_date": (
                     link.first_interaction_date.isoformat()
-                    if link.first_interaction_date
+                    if link and link.first_interaction_date
                     else None
                 ),
                 "details": {
-                    **(link.details or {}),
+                    **((link.details or {}) if link else {}),
                     "method": "jaccard_unique_token_participation",
-                    "stored_shared_tokens_count": link.shared_tokens_count,
+                    "event_ledger_primary": True,
+                    "legacy_graph_candidate": link is not None,
+                    "stored_shared_tokens_count": link.shared_tokens_count if link else None,
                 },
                 "classification": "possible_related_wallet",
                 "ownership_claim": False,
