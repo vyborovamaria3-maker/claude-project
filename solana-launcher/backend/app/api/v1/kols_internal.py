@@ -6,17 +6,24 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.kols import KOLSyncRequest, sync_kols
 from app.db.session import get_db
-from app.models.analytics import Token, Wallet, WalletTrade
-from app.models.kol_intelligence import KOLProfile, KOLWalletAttribution, KOLWalletMetric
+from app.models.analytics import Wallet
+from app.models.kol_intelligence import (
+    KOLProfile,
+    KOLTradeEvent,
+    KOLWalletAttribution,
+    KOLWalletMetric,
+)
 from app.services.kol_intelligence import (
     build_kol_token_intelligence,
     related_wallet_candidates,
 )
+from app.services.kol_metrics import refresh_kol_metrics
+from app.services.kol_trade_ingestion import sync_kol_trade_events
 from app.services.telegram_parser import is_solana_address
 
 router = APIRouter()
@@ -94,6 +101,30 @@ async def internal_sync_kols(
         session,
         request.app.state.settings.backend_api_key,
     )
+
+
+@router.post("/internal/sync-trades")
+async def internal_sync_trade_events(
+    request: Request,
+    wallets: int = Query(default=1, ge=1, le=5),
+    session: AsyncSession = Depends(get_db),
+    x_kol_internal_key: str | None = Header(default=None, alias="X-KOL-Internal-Key"),
+) -> dict[str, Any]:
+    """Run a small provider sync immediately for diagnostics/manual refresh.
+
+    Celery Beat remains the normal ingestion path. This endpoint is intentionally
+    scoped and capped so a browser-side caller can never burn an unbounded provider
+    quota even if the internal route is invoked repeatedly during testing.
+    """
+    _require_kol_internal_key(request, x_kol_internal_key)
+    try:
+        ingestion = await sync_kol_trade_events(session, max_wallets=wallets)
+        metrics = await refresh_kol_metrics(session)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    return {"ingestion": ingestion, "metrics": metrics}
 
 
 @router.get("/internal/token/{mint_address}")
@@ -187,7 +218,7 @@ async def internal_kol_metrics(
                 .where(
                     KOLWalletAttribution.chain == "solana",
                     KOLWalletAttribution.address.in_(addresses),
-                    KOLWalletMetric.source == "internal_wallet_trades",
+                    KOLWalletMetric.source == "internal_kol_events",
                 )
             )
         ).all()
@@ -236,80 +267,59 @@ async def internal_live_trades(
     raw_rows = list(
         (
             await session.execute(
-                select(WalletTrade, Token, Wallet, KOLWalletAttribution, KOLProfile)
-                .join(Token, Token.id == WalletTrade.token_id)
-                .join(Wallet, Wallet.id == WalletTrade.wallet_id)
+                select(KOLTradeEvent, Wallet, KOLWalletAttribution, KOLProfile)
+                .join(Wallet, Wallet.id == KOLTradeEvent.analytics_wallet_id)
                 .join(
                     KOLWalletAttribution,
                     KOLWalletAttribution.analytics_wallet_id == Wallet.id,
                 )
                 .join(KOLProfile, KOLProfile.id == KOLWalletAttribution.kol_id)
-                .where(KOLWalletAttribution.confidence >= 50)
-                .order_by(
-                    func.coalesce(WalletTrade.sell_timestamp, WalletTrade.buy_timestamp).desc()
+                .where(
+                    KOLWalletAttribution.chain == "solana",
+                    KOLWalletAttribution.confidence >= 50,
                 )
+                .order_by(KOLTradeEvent.occurred_at.desc(), KOLTradeEvent.id.desc())
                 .limit(min(limit * 4, 800))
             )
         ).all()
     )
 
-    best_by_trade: dict[int, tuple[WalletTrade, Token, Wallet, KOLWalletAttribution, KOLProfile]] = {}
+    best_by_event: dict[int, tuple[KOLTradeEvent, Wallet, KOLWalletAttribution, KOLProfile]] = {}
     for row in raw_rows:
-        trade, _token, _wallet, attribution, profile = row
-        existing = best_by_trade.get(trade.id)
+        event, _wallet, attribution, profile = row
+        existing = best_by_event.get(event.id)
         if existing is None or _attribution_rank(attribution, profile) > _attribution_rank(
-            existing[3], existing[4]
+            existing[2], existing[3]
         ):
-            best_by_trade[trade.id] = row
+            best_by_event[event.id] = row
 
     events: list[dict[str, Any]] = []
-    for trade, token, wallet, attribution, profile in best_by_trade.values():
-        common = {
-            "handle": profile.twitter_handle,
-            "name": profile.display_name,
-            "profileConfidence": profile.confidence,
-            "walletConfidence": attribution.confidence,
-            "verified": attribution.verified,
-            "wallet": wallet.wallet_address,
-            "mint": token.mint_address,
-            "symbol": token.symbol,
-            "tokenName": token.name,
-            "tradeId": trade.id,
-        }
-        if trade.buy_timestamp:
-            events.append(
-                {
-                    **common,
-                    "eventId": f"{trade.id}:buy",
-                    "side": "buy",
-                    "timestamp": trade.buy_timestamp.isoformat(),
-                    "amount": trade.amount_buy,
-                    "priceUsd": trade.avg_buy_price,
-                    "valueUsd": (
-                        float(trade.amount_buy) * float(trade.avg_buy_price)
-                        if trade.avg_buy_price is not None
-                        else None
-                    ),
-                }
-            )
-        if trade.sell_timestamp:
-            events.append(
-                {
-                    **common,
-                    "eventId": f"{trade.id}:sell",
-                    "side": "sell",
-                    "timestamp": trade.sell_timestamp.isoformat(),
-                    "amount": trade.amount_sold,
-                    "priceUsd": trade.avg_sell_price,
-                    "valueUsd": (
-                        float(trade.amount_sold) * float(trade.avg_sell_price)
-                        if trade.avg_sell_price is not None
-                        else None
-                    ),
-                    "realizedProfitUsd": trade.realized_profit_usd,
-                }
-            )
+    for event, wallet, attribution, profile in best_by_event.values():
+        events.append(
+            {
+                "eventId": f"kol-event:{event.id}",
+                "tradeId": event.id,
+                "handle": profile.twitter_handle,
+                "name": profile.display_name,
+                "profileConfidence": profile.confidence,
+                "walletConfidence": attribution.confidence,
+                "verified": attribution.verified,
+                "wallet": wallet.wallet_address,
+                "mint": event.mint_address,
+                "symbol": event.token_symbol,
+                "tokenName": event.token_name,
+                "side": event.side,
+                "timestamp": event.occurred_at.isoformat(),
+                "amount": event.amount,
+                "priceUsd": event.price_usd,
+                "valueUsd": event.value_usd,
+                "realizedProfitUsd": None,
+                "txSignature": event.tx_signature,
+                "program": event.program,
+                "source": event.source,
+            }
+        )
 
     events.sort(key=lambda item: item["timestamp"], reverse=True)
     selected = events[:limit]
-    return {"items": selected, "total": len(selected)}
+    return {"items": selected, "total": len(selected), "source": "kol_trade_events"}
