@@ -173,7 +173,7 @@ assert(
   "normalizer must preserve both sides of token-to-token swaps",
 );
 assert(
-  ingestion.includes('"Es9vMFrzaCERmJfrF4H2FYDk6wN1nZ6rB7bQm1WfTjK"')
+  ingestion.includes('"Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"')
     && !ingestion.includes("_BASE_SYMBOLS"),
   "base-asset classification must use canonical mints instead of spoofable symbols",
 );
@@ -202,8 +202,8 @@ assert(
   "FIFO PnL must reject partial or unpriced sell cost basis",
 );
 assert(
-  metrics.includes("transactions = {}")
-    && metrics.includes('metric.trade_count = len(transactions)')
+  metrics.includes("transaction_values: dict[str, float] = {}")
+    && metrics.includes("metric.trade_count = len(transaction_signatures)")
     && metrics.includes('"event_count": len(recent)'),
   "wallet metrics must count one transaction/notional per signature while retaining event granularity",
 );
@@ -357,7 +357,7 @@ assert(
     && runtimeGuardTests.includes("test_production_kol_key_must_differ_from_backend_master")
     && runtimeGuardTests.includes("test_refresh_metrics_skips_when_distributed_lock_is_held")
     && runtimeGuardTests.includes("test_refresh_metrics_releases_lock_after_success")
-    && runtimeGuardTests.includes("test_sync_trade_events_skips_when_distributed_lock_is_held"),
+    && runtimeGuardTests.includes("test_trade_sync_skips_when_distributed_lock_is_held"),
   "runtime guard tests must cover scoped-key hardening and both distributed KOL locks",
 );
 assert(
