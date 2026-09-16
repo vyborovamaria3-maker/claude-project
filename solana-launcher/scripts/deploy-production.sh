@@ -38,6 +38,18 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
+resolve_env_value() {
+  local key="$1"
+  local value="${!key:-}"
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file .env.server "$key")"
+  fi
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file backend.env "$key")"
+  fi
+  printf '%s' "$value"
+}
+
 set_env_value() {
   local file="$1"
   local key="$2"
@@ -88,17 +100,44 @@ ensure_twitter_crawler_admin_secret() {
 }
 
 resolve_backend_api_key() {
-  if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-    BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
-  fi
-  if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-    BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
-  fi
+  BACKEND_API_KEY="$(resolve_env_value BACKEND_API_KEY)"
   if [[ -z "${BACKEND_API_KEY:-}" ]]; then
     echo "BACKEND_API_KEY is required in .env.server or backend.env" >&2
     return 1
   fi
   export BACKEND_API_KEY
+}
+
+resolve_kol_runtime() {
+  KOL_INTERNAL_KEY="$(resolve_env_value KOL_INTERNAL_KEY)"
+  if [[ -z "$KOL_INTERNAL_KEY" ]]; then
+    echo "KOL_INTERNAL_KEY is required in .env.server or backend.env" >&2
+    return 1
+  fi
+  if (( ${#KOL_INTERNAL_KEY} < 32 )); then
+    echo "KOL_INTERNAL_KEY must be at least 32 characters" >&2
+    return 1
+  fi
+  if [[ "$KOL_INTERNAL_KEY" == "$BACKEND_API_KEY" ]]; then
+    echo "KOL_INTERNAL_KEY must be different from BACKEND_API_KEY" >&2
+    return 1
+  fi
+  export KOL_INTERNAL_KEY
+
+  SOLANA_TRACKER_API_KEY="$(resolve_env_value SOLANA_TRACKER_API_KEY)"
+  SOLANA_TRACKER_API_BASE="$(resolve_env_value SOLANA_TRACKER_API_BASE)"
+  KOL_TRADE_SYNC_INTERVAL_SECONDS="$(resolve_env_value KOL_TRADE_SYNC_INTERVAL_SECONDS)"
+  KOL_TRADE_SYNC_WALLETS_PER_RUN="$(resolve_env_value KOL_TRADE_SYNC_WALLETS_PER_RUN)"
+  export SOLANA_TRACKER_API_KEY
+  export SOLANA_TRACKER_API_BASE="${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}"
+  export KOL_TRADE_SYNC_INTERVAL_SECONDS="${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}"
+  export KOL_TRADE_SYNC_WALLETS_PER_RUN="${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}"
+
+  if [[ -n "$SOLANA_TRACKER_API_KEY" ]]; then
+    echo "KOL trade ingestion provider: enabled"
+  else
+    echo "KOL trade ingestion provider: disabled (SOLANA_TRACKER_API_KEY is not configured)"
+  fi
 }
 
 resolve_subscription_admin_key() {
@@ -227,6 +266,14 @@ stop_telegram() {
 stop_twitter_discovery() {
   "${COMPOSE[@]}" stop twitter-discovery >/dev/null 2>&1 || true
   "${COMPOSE[@]}" rm -f twitter-discovery >/dev/null 2>&1 || true
+}
+
+stop_celery_runtime() {
+  "${COMPOSE[@]}" stop celery-worker celery-beat >/dev/null 2>&1 || true
+}
+
+start_celery_runtime() {
+  "${COMPOSE[@]}" up -d celery-worker celery-beat
 }
 
 sync_telegram_bot() {
@@ -373,10 +420,10 @@ rollback() {
 
   stop_telegram
   stop_twitter_discovery
-  "${COMPOSE[@]}" stop celery-worker >/dev/null 2>&1 || true
+  stop_celery_runtime
   start_core_services
   start_admin
-  "${COMPOSE[@]}" up -d celery-worker
+  start_celery_runtime
   start_twitter_discovery_rollback
   restart_nginx
   sync_telegram_bot
@@ -399,6 +446,7 @@ verify_release_images "$NEW_TAG"
 activate_admin_source
 ensure_twitter_crawler_admin_secret
 resolve_backend_api_key
+resolve_kol_runtime
 resolve_subscription_admin_key
 
 docker network inspect potapoff-shared >/dev/null 2>&1 || docker network create potapoff-shared >/dev/null
@@ -419,7 +467,7 @@ prepare_forward_images
 # completed successfully.
 stop_telegram
 stop_twitter_discovery
-"${COMPOSE[@]}" stop celery-worker >/dev/null 2>&1 || true
+stop_celery_runtime
 
 # Run the new image as a one-shot migration container against the already-live
 # database. This prevents new application code from seeing a pre-migration
@@ -434,7 +482,7 @@ sync_telegram_bot
 sync_telegram_intelligence
 
 verify_twitter_admin_backend
-"${COMPOSE[@]}" up -d celery-worker
+start_celery_runtime
 start_twitter_discovery_required
 
 "$HEALTH_SCRIPT"
