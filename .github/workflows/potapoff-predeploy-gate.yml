@@ -68,9 +68,9 @@ jobs:
           printf '%s\n' "$heads"
           test "$(printf '%s\n' "$heads" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
           alembic current | grep -Fq '0024_kol_trade_events'
-      - name: Run Twitter and migration regression tests
+      - name: Run Twitter, KOL and migration regression tests
         working-directory: solana-launcher/backend
-        run: pytest -q tests/test_twitter*.py tests/test_alembic_revision_ids.py
+        run: pytest -q tests/test_twitter*.py tests/test_kol*.py tests/test_alembic_revision_ids.py
 
   frontend:
     name: Frontend typecheck, regressions and build
@@ -92,6 +92,8 @@ jobs:
         run: npm ci --legacy-peer-deps
       - name: Security regression
         run: npm run security:test
+      - name: KOL regression
+        run: npm run kols:test
       - name: TypeScript typecheck
         run: npx tsc --noEmit
       - name: Production build
