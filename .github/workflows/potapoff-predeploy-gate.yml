@@ -67,7 +67,7 @@ jobs:
           heads="$(alembic heads)"
           printf '%s\n' "$heads"
           test "$(printf '%s\n' "$heads" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
-          alembic current | grep -Fq '0022_merge_discovery_lock'
+          alembic current | grep -Fq '0024_kol_trade_events'
       - name: Run Twitter and migration regression tests
         working-directory: solana-launcher/backend
         run: pytest -q tests/test_twitter*.py tests/test_alembic_revision_ids.py
@@ -198,6 +198,7 @@ jobs:
           RABBITMQ_PASSWORD=ci-rabbitmq-password
           SECRET_KEY=ci-signing-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           BACKEND_API_KEY=ci-backend-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
+          KOL_INTERNAL_KEY=ci-kol-internal-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           SUBSCRIPTION_INTERNAL_KEY=ci-subscription-internal-abcdefghijklmnopqrstuvwxyz
           SUBSCRIPTION_ADMIN_KEY=ci-subscription-admin-abcdefghijklmnopqrstuvwxyz
           TELEGRAM_BOT_TOKEN=ci-compose-bot-token
