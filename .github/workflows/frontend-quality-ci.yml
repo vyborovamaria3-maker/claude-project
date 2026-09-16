@@ -29,6 +29,29 @@ jobs:
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
 
+      - name: Prepare isolated quality runtime
+        run: |
+          set -Eeuo pipefail
+          quality_tmp="${RUNNER_TEMP}/potapoff-quality-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          rm -rf "$quality_tmp"
+          mkdir -p "$quality_tmp/tools"
+          quality_port="$(node - <<'NODE'
+          const net = require('net');
+          const server = net.createServer();
+          server.listen(0, '127.0.0.1', () => {
+            console.log(server.address().port);
+            server.close();
+          });
+          NODE
+          )"
+          {
+            echo "QUALITY_TMP=$quality_tmp"
+            echo "QUALITY_LOG=$quality_tmp/next.log"
+            echo "QUALITY_PID=$quality_tmp/next.pid"
+            echo "QUALITY_TOOLS=$quality_tmp/tools"
+            echo "QUALITY_PORT=$quality_port"
+          } >> "$GITHUB_ENV"
+
       - name: Install app dependencies
         run: npm ci --legacy-peer-deps
 
@@ -40,25 +63,26 @@ jobs:
 
       - name: Start frontend
         run: |
+          set -Eeuo pipefail
           rm -rf .next/standalone/public .next/standalone/.next/static
           mkdir -p .next/standalone/.next
           test ! -d public || cp -R public .next/standalone/public
           cp -R .next/static .next/standalone/.next/static
-          PORT=3000 HOSTNAME=127.0.0.1 node .next/standalone/server.js > /tmp/potapoff-quality-next.log 2>&1 &
-          echo $! > /tmp/potapoff-quality-next.pid
+          PORT="$QUALITY_PORT" HOSTNAME=127.0.0.1 node .next/standalone/server.js > "$QUALITY_LOG" 2>&1 &
+          echo $! > "$QUALITY_PID"
           for i in {1..60}; do
-            if curl --fail --silent http://127.0.0.1:3000/login >/dev/null; then
+            if curl --fail --silent "http://127.0.0.1:${QUALITY_PORT}/login" >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          cat /tmp/potapoff-quality-next.log
+          cat "$QUALITY_LOG"
           exit 1
 
       - name: Cross-browser smoke
         run: |
           docker run --rm --network host --ipc=host \
-            -e BASE_URL=http://127.0.0.1:3000 \
+            -e "BASE_URL=http://127.0.0.1:${QUALITY_PORT}" \
             -v "$PWD:/work" \
             -w /work \
             mcr.microsoft.com/playwright:v1.60.0-noble \
@@ -66,24 +90,25 @@ jobs:
 
       - name: Install isolated quality tools
         run: |
-          rm -rf /tmp/potapoff-quality-tools
-          mkdir -p /tmp/potapoff-quality-tools
-          cd /tmp/potapoff-quality-tools
+          set -Eeuo pipefail
+          rm -rf "$QUALITY_TOOLS"
+          mkdir -p "$QUALITY_TOOLS"
+          cd "$QUALITY_TOOLS"
           npm init -y >/dev/null
           npm install --no-package-lock axe-core@4.10.2 lighthouse@12.8.2
 
       - name: Axe WCAG regression
-        env:
-          BASE_URL: http://127.0.0.1:3000
-          AXE_SOURCE_PATH: /tmp/potapoff-quality-tools/node_modules/axe-core/axe.min.js
-        run: node tests/a11y-regression.mjs
+        run: |
+          BASE_URL="http://127.0.0.1:${QUALITY_PORT}" \
+          AXE_SOURCE_PATH="$QUALITY_TOOLS/node_modules/axe-core/axe.min.js" \
+          node tests/a11y-regression.mjs
 
       - name: Lighthouse mobile report
         run: |
           mkdir -p test-results/lighthouse
           CHROME_PATH="$(node -e "const { chromium } = require('playwright'); process.stdout.write(chromium.executablePath())")"
           export CHROME_PATH
-          /tmp/potapoff-quality-tools/node_modules/.bin/lighthouse http://127.0.0.1:3000/login \
+          "$QUALITY_TOOLS/node_modules/.bin/lighthouse" "http://127.0.0.1:${QUALITY_PORT}/login" \
             --quiet \
             --chrome-flags="--headless --no-sandbox --disable-gpu" \
             --only-categories=performance,accessibility,best-practices,seo \
@@ -111,4 +136,13 @@ jobs:
 
       - name: Print frontend log on failure
         if: failure()
-        run: cat /tmp/potapoff-quality-next.log || true
+        run: cat "$QUALITY_LOG" || true
+
+      - name: Stop isolated frontend
+        if: always()
+        run: |
+          if [[ -f "$QUALITY_PID" ]]; then
+            pid="$(cat "$QUALITY_PID")"
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          fi
