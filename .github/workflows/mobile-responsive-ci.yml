@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: mobile-responsive-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   mobile-user-smoke:
@@ -29,6 +33,27 @@ jobs:
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
 
+      - name: Prepare isolated mobile runtime
+        run: |
+          set -Eeuo pipefail
+          mobile_tmp="${RUNNER_TEMP}/potapoff-mobile-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          rm -rf "$mobile_tmp"
+          mkdir -p "$mobile_tmp"
+          mobile_port="$(node - <<'NODE'
+          const net = require('net');
+          const server = net.createServer();
+          server.listen(0, '127.0.0.1', () => {
+            console.log(server.address().port);
+            server.close();
+          });
+          NODE
+          )"
+          {
+            echo "MOBILE_LOG=$mobile_tmp/next.log"
+            echo "MOBILE_PID=$mobile_tmp/next.pid"
+            echo "MOBILE_PORT=$mobile_port"
+          } >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
@@ -41,23 +66,30 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Start frontend
+      - name: Start production-equivalent frontend
         run: |
-          npm start -- -p 3000 > /tmp/potapoff-next.log 2>&1 &
-          echo $! > /tmp/potapoff-next.pid
+          set -Eeuo pipefail
+          rm -rf .next/standalone/public .next/standalone/.next/static
+          mkdir -p .next/standalone/.next .next/standalone/node_modules
+          test ! -d public || cp -R public .next/standalone/public
+          cp -R .next/static .next/standalone/.next/static
+          rm -rf .next/standalone/node_modules/playwright .next/standalone/node_modules/playwright-core
+          cp -R node_modules/playwright .next/standalone/node_modules/playwright
+          cp -R node_modules/playwright-core .next/standalone/node_modules/playwright-core
+          test -f .next/standalone/node_modules/playwright-core/browsers.json
+          PORT="$MOBILE_PORT" HOSTNAME=127.0.0.1 node .next/standalone/server.js > "$MOBILE_LOG" 2>&1 &
+          echo $! > "$MOBILE_PID"
           for i in {1..60}; do
-            if curl --fail --silent http://127.0.0.1:3000/login >/dev/null; then
+            if curl --fail --silent "http://127.0.0.1:${MOBILE_PORT}/login" >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          cat /tmp/potapoff-next.log
+          cat "$MOBILE_LOG"
           exit 1
 
       - name: Walk site across phone and tablet widths
-        env:
-          BASE_URL: http://127.0.0.1:3000
-        run: node tests/mobile-regression.mjs
+        run: BASE_URL="http://127.0.0.1:${MOBILE_PORT}" node tests/mobile-regression.mjs
 
       - name: Upload responsive screenshots
         if: always()
@@ -70,4 +102,13 @@ jobs:
 
       - name: Print frontend log on failure
         if: failure()
-        run: cat /tmp/potapoff-next.log || true
+        run: cat "$MOBILE_LOG" || true
+
+      - name: Stop isolated frontend
+        if: always()
+        run: |
+          if [[ -f "$MOBILE_PID" ]]; then
+            pid="$(cat "$MOBILE_PID")"
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          fi

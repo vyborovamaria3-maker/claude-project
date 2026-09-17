@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: full-backtest-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   frontend-audit:
@@ -25,6 +29,29 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
+      - name: Prepare isolated frontend audit runtime
+        run: |
+          set -Eeuo pipefail
+          audit_tmp="${RUNNER_TEMP}/potapoff-full-audit-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          rm -rf "$audit_tmp"
+          mkdir -p "$audit_tmp"
+          pick_port() {
+            node - <<'NODE'
+          const net = require('net');
+          const server = net.createServer();
+          server.listen(0, '127.0.0.1', () => {
+            console.log(server.address().port);
+            server.close();
+          });
+          NODE
+          }
+          {
+            echo "AUDIT_TMP=$audit_tmp"
+            echo "AUDIT_MOBILE_LOG=$audit_tmp/mobile-next.log"
+            echo "AUDIT_ROUTES_LOG=$audit_tmp/routes-next.log"
+            echo "AUDIT_MOBILE_PORT=$(pick_port)"
+            echo "AUDIT_ROUTES_PORT=$(pick_port)"
+          } >> "$GITHUB_ENV"
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps
       - name: Install Chromium
@@ -66,17 +93,21 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf .next/standalone/public .next/standalone/.next/static
-          mkdir -p .next/standalone/.next
+          mkdir -p .next/standalone/.next .next/standalone/node_modules
           test ! -d public || cp -R public .next/standalone/public
           cp -R .next/static .next/standalone/.next/static
-          PORT=3000 HOSTNAME=127.0.0.1 node .next/standalone/server.js > /tmp/audit-next.log 2>&1 &
+          rm -rf .next/standalone/node_modules/playwright .next/standalone/node_modules/playwright-core
+          cp -R node_modules/playwright .next/standalone/node_modules/playwright
+          cp -R node_modules/playwright-core .next/standalone/node_modules/playwright-core
+          test -f .next/standalone/node_modules/playwright-core/browsers.json
+          PORT="$AUDIT_MOBILE_PORT" HOSTNAME=127.0.0.1 node .next/standalone/server.js > "$AUDIT_MOBILE_LOG" 2>&1 &
           pid=$!
-          trap 'kill $pid 2>/dev/null || true' EXIT
+          trap 'kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true' EXIT
           for i in {1..60}; do
-            curl --fail --silent http://127.0.0.1:3000/login >/dev/null && break
+            curl --fail --silent "http://127.0.0.1:${AUDIT_MOBILE_PORT}/login" >/dev/null && break
             sleep 1
           done
-          BASE_URL=http://127.0.0.1:3000 node tests/mobile-regression.mjs
+          BASE_URL="http://127.0.0.1:${AUDIT_MOBILE_PORT}" node tests/mobile-regression.mjs
       - id: routes
         name: Exhaustive desktop and iPhone static route audit
         if: steps.build.outcome == 'success'
@@ -85,21 +116,29 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf .next/standalone/public .next/standalone/.next/static
-          mkdir -p .next/standalone/.next
+          mkdir -p .next/standalone/.next .next/standalone/node_modules
           test ! -d public || cp -R public .next/standalone/public
           cp -R .next/static .next/standalone/.next/static
-          PORT=3001 HOSTNAME=127.0.0.1 node .next/standalone/server.js > /tmp/audit-next-routes.log 2>&1 &
+          rm -rf .next/standalone/node_modules/playwright .next/standalone/node_modules/playwright-core
+          cp -R node_modules/playwright .next/standalone/node_modules/playwright
+          cp -R node_modules/playwright-core .next/standalone/node_modules/playwright-core
+          test -f .next/standalone/node_modules/playwright-core/browsers.json
+          PORT="$AUDIT_ROUTES_PORT" HOSTNAME=127.0.0.1 node .next/standalone/server.js > "$AUDIT_ROUTES_LOG" 2>&1 &
           pid=$!
-          trap 'kill $pid 2>/dev/null || true' EXIT
+          trap 'kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true' EXIT
           for i in {1..60}; do
-            curl --fail --silent http://127.0.0.1:3001/login >/dev/null && break
+            curl --fail --silent "http://127.0.0.1:${AUDIT_ROUTES_PORT}/login" >/dev/null && break
             sleep 1
           done
-          BASE_URL=http://127.0.0.1:3001 node tests/full-route-audit.mjs
+          BASE_URL="http://127.0.0.1:${AUDIT_ROUTES_PORT}" node tests/full-route-audit.mjs
       - id: audit
         name: Production dependency vulnerability audit
         continue-on-error: true
-        run: npm run audit:security-policy
+        env:
+          ALLOW_BIGINT_BUFFER_UNTIL: "2026-10-01"
+        run: |
+          npm audit --omit=dev --json > "$RUNNER_TEMP/frontend-full-audit.json" || true
+          node ../security/audit/npm-audit-policy.mjs "$RUNNER_TEMP/frontend-full-audit.json"
 
       - name: Frontend audit summary
         if: always()
@@ -112,6 +151,7 @@ jobs:
           echo "mobile=${{ steps.mobile.outcome }}"
           echo "routes=${{ steps.routes.outcome }}"
           echo "npm_audit=${{ steps.audit.outcome }}"
+          test "${{ steps.lint.outcome }}" = success
           test "${{ steps.typecheck.outcome }}" = success
           test "${{ steps.syntax.outcome }}" = success
           test "${{ steps.build.outcome }}" = success
@@ -139,7 +179,7 @@ jobs:
           POSTGRES_USER: potapoff
           POSTGRES_PASSWORD: ci_backtest_2026
         ports:
-          - 5432:5432
+          - 55435:5432
         options: >-
           --health-cmd "pg_isready -U potapoff -d potapoff"
           --health-interval 5s
@@ -148,7 +188,7 @@ jobs:
       redis:
         image: redis:7-alpine
         ports:
-          - 6379:6379
+          - 56379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
@@ -156,9 +196,9 @@ jobs:
           --health-retries 20
     env:
       SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
-      DATABASE_URL: postgresql+asyncpg://potapoff:ci_backtest_2026@127.0.0.1:5432/potapoff
-      REDIS_URL: redis://127.0.0.1:6379/0
-      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+      DATABASE_URL: postgresql+asyncpg://potapoff:ci_backtest_2026@127.0.0.1:55435/potapoff
+      REDIS_URL: redis://127.0.0.1:56379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:56379/1
       ENVIRONMENT: test
       DEBUG: "false"
     defaults:
@@ -171,6 +211,25 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: solana-launcher/backend/pyproject.toml
+      - name: Prepare isolated API audit runtime
+        run: |
+          set -Eeuo pipefail
+          api_port="$(python - <<'PY'
+          import socket
+          sock = socket.socket()
+          sock.bind(("127.0.0.1", 0))
+          print(sock.getsockname()[1])
+          sock.close()
+          PY
+          )"
+          audit_tmp="${RUNNER_TEMP}/potapoff-backend-audit-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          rm -rf "$audit_tmp"
+          mkdir -p "$audit_tmp"
+          {
+            echo "AUDIT_API_PORT=$api_port"
+            echo "AUDIT_API_LOG=$audit_tmp/uvicorn.log"
+            echo "AUDIT_OPENAPI=$audit_tmp/openapi.json"
+          } >> "$GITHUB_ENV"
       - name: Install backend and audit tools
         run: |
           python -m pip install -e ".[dev]"
@@ -223,24 +282,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/audit-uvicorn.log 2>&1 &
+          python -m uvicorn app.main:app --host 127.0.0.1 --port "$AUDIT_API_PORT" > "$AUDIT_API_LOG" 2>&1 &
           pid=$!
-          trap 'kill $pid 2>/dev/null || true' EXIT
+          trap 'kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true' EXIT
           for i in {1..60}; do
-            curl --fail --silent http://127.0.0.1:8000/health >/dev/null && break
+            curl --fail --silent "http://127.0.0.1:${AUDIT_API_PORT}/health" >/dev/null && break
             sleep 1
           done
-          curl --fail --show-error http://127.0.0.1:8000/health
-          curl --fail --show-error http://127.0.0.1:8000/ready
-          curl --fail --show-error http://127.0.0.1:8000/openapi.json -o /tmp/openapi.json
+          curl --fail --show-error "http://127.0.0.1:${AUDIT_API_PORT}/health"
+          curl --fail --show-error "http://127.0.0.1:${AUDIT_API_PORT}/ready"
+          curl --fail --show-error "http://127.0.0.1:${AUDIT_API_PORT}/openapi.json" -o "$AUDIT_OPENAPI"
           python - <<'PY'
           import json
-          data = json.load(open('/tmp/openapi.json'))
-          paths = data.get('paths', {})
+          import os
+
+          with open(os.environ["AUDIT_OPENAPI"], encoding="utf-8") as handle:
+              data = json.load(handle)
+          paths = data.get("paths", {})
           assert len(paths) >= 20, len(paths)
-          assert '/api/v1/social/token/{mint}' in paths
-          assert '/api/v1/telegram/token/{mint}' in paths
-          print('OPENAPI_PATHS', len(paths))
+          assert "/api/v1/social/token/{mint}" in paths
+          assert "/api/v1/telegram/token/{mint}" in paths
+          print("OPENAPI_PATHS", len(paths))
           PY
       - id: pipaudit
         name: Python dependency vulnerability audit
@@ -263,9 +325,12 @@ jobs:
           echo "pip_audit=${{ steps.pipaudit.outcome }}"
           test "${{ steps.pipcheck.outcome }}" = success
           test "${{ steps.compile.outcome }}" = success
+          test "${{ steps.ruff.outcome }}" = success
+          test "${{ steps.mypy.outcome }}" = success
           test "${{ steps.pytest.outcome }}" = success
           test "${{ steps.heads.outcome }}" = success
           test "${{ steps.migrate.outcome }}" = success
+          test "${{ steps.downgrade.outcome }}" = success
           test "${{ steps.api.outcome }}" = success
           test "${{ steps.pipaudit.outcome }}" = success
 
@@ -299,12 +364,13 @@ jobs:
           POSTGRES_PASSWORD: test-postgres
           RABBITMQ_PASSWORD: test-rabbit
           SECRET_KEY: a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9
+          KOL_INTERNAL_KEY: ci-kol-internal-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
           SUBSCRIPTION_INTERNAL_KEY: ci-subscription-internal-abcdefghijklmnopqrstuvwxyz
           TELEGRAM_BOT_TOKEN: test-token
           TELEGRAM_WEBHOOK_URL: https://example.invalid/api/telegram/webhook
           TELEGRAM_WEBHOOK_SECRET: ci-webhook-key-abcdefghijklmnopqrstuvwxyz-zyxwvutsrqponm
         run: |
-          docker compose -f docker-compose.production.yml config >/tmp/compose.yml
+          docker compose -f docker-compose.production.yml config > "$RUNNER_TEMP/compose-${GITHUB_RUN_ID}-${GITHUB_JOB}.yml"
           docker compose -f docker-compose.production.yml config --services
       - id: nginx
         name: Nginx config syntax in official image

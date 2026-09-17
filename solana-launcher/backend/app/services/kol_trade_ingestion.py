@@ -1,0 +1,433 @@
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.analytics import Wallet
+from app.models.kol_intelligence import (
+    KOLSourceSync,
+    KOLTradeEvent,
+    KOLTradeSyncState,
+    KOLWalletAttribution,
+)
+
+_SOURCE = "solana_tracker_trades"
+_DEFAULT_BASE_URL = "https://data.solanatracker.io"
+_BASE_MINTS = {
+    "So11111111111111111111111111111111111111112",  # wrapped SOL
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # native USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # native USDT
+}
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed or parsed in {float("inf"), float("-inf")}:
+        return None
+    return parsed
+
+
+def _event_time(value: Any) -> datetime | None:
+    parsed = _safe_float(value)
+    if parsed is None or parsed <= 0:
+        return None
+    # Solana Tracker currently documents milliseconds, but tolerate seconds so
+    # a provider-side representation change does not create year-50000 rows.
+    seconds = parsed / 1000.0 if parsed > 10_000_000_000 else parsed
+    try:
+        return datetime.fromtimestamp(seconds, tz=timezone.utc)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _asset(raw: Any) -> dict[str, Any]:
+    return raw if isinstance(raw, dict) else {}
+
+
+def _is_base_asset(asset: dict[str, Any]) -> bool:
+    # Never trust token symbol/name for direction classification: an arbitrary
+    # token can spoof SOL/USDC/USDT. Only known canonical mint addresses qualify.
+    mint = str(asset.get("address") or "").strip()
+    return mint in _BASE_MINTS
+
+
+def _normalized_leg(
+    *,
+    wallet_id: int,
+    wallet_address: str,
+    tx_signature: str,
+    event_index: int,
+    side: str,
+    asset: dict[str, Any],
+    counterparty: dict[str, Any],
+    occurred_at: datetime,
+    program: str | None,
+    fallback_value_usd: float | None,
+    raw_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    mint = str(asset.get("address") or "").strip()
+    if not mint:
+        return None
+    amount = _safe_float(asset.get("amount"))
+    if amount is None or amount <= 0:
+        return None
+    token = asset.get("token") if isinstance(asset.get("token"), dict) else {}
+    price_usd = _safe_float(asset.get("priceUsd"))
+    value_usd = amount * price_usd if price_usd is not None and price_usd >= 0 else fallback_value_usd
+    counterparty_amount = _safe_float(counterparty.get("amount"))
+    return {
+        "analytics_wallet_id": wallet_id,
+        "chain": "solana",
+        "address": wallet_address,
+        "tx_signature": tx_signature,
+        "event_index": event_index,
+        "side": side,
+        "mint_address": mint,
+        "token_symbol": str(token.get("symbol") or "").strip() or None,
+        "token_name": str(token.get("name") or "").strip() or None,
+        "amount": amount,
+        "price_usd": price_usd,
+        "value_usd": value_usd,
+        "counterparty_mint": str(counterparty.get("address") or "").strip() or None,
+        "counterparty_amount": counterparty_amount,
+        "program": program,
+        "source": _SOURCE,
+        "occurred_at": occurred_at,
+        "raw_payload": raw_payload,
+    }
+
+
+def normalize_solana_tracker_trade(
+    *,
+    wallet_id: int,
+    wallet_address: str,
+    trade: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Convert one provider swap into zero, one or two asset-side events.
+
+    Canonical base mint -> token is a buy, token -> canonical base mint is a sell.
+    Token-to-token swaps intentionally produce both a sell and a buy leg, preserving
+    actual event semantics instead of compressing them into a position model.
+    """
+    tx_signature = str(trade.get("tx") or "").strip()
+    occurred_at = _event_time(trade.get("time"))
+    if not tx_signature or occurred_at is None:
+        return []
+
+    from_asset = _asset(trade.get("from"))
+    to_asset = _asset(trade.get("to"))
+    if not from_asset or not to_asset:
+        return []
+
+    volume = trade.get("volume") if isinstance(trade.get("volume"), dict) else {}
+    fallback_value_usd = _safe_float(volume.get("usd"))
+    program = str(trade.get("program") or "").strip() or None
+    from_is_base = _is_base_asset(from_asset)
+    to_is_base = _is_base_asset(to_asset)
+    legs: list[dict[str, Any]] = []
+
+    if not from_is_base:
+        sell = _normalized_leg(
+            wallet_id=wallet_id,
+            wallet_address=wallet_address,
+            tx_signature=tx_signature,
+            event_index=0,
+            side="sell",
+            asset=from_asset,
+            counterparty=to_asset,
+            occurred_at=occurred_at,
+            program=program,
+            fallback_value_usd=fallback_value_usd,
+            raw_payload=trade,
+        )
+        if sell is not None:
+            legs.append(sell)
+
+    if not to_is_base:
+        buy = _normalized_leg(
+            wallet_id=wallet_id,
+            wallet_address=wallet_address,
+            tx_signature=tx_signature,
+            event_index=1,
+            side="buy",
+            asset=to_asset,
+            counterparty=from_asset,
+            occurred_at=occurred_at,
+            program=program,
+            fallback_value_usd=fallback_value_usd,
+            raw_payload=trade,
+        )
+        if buy is not None:
+            legs.append(buy)
+
+    return legs
+
+
+async def fetch_solana_tracker_wallet_trades(
+    address: str,
+    *,
+    api_key: str,
+    base_url: str = _DEFAULT_BASE_URL,
+    cursor: str | None = None,
+    timeout_seconds: float = 15.0,
+) -> dict[str, Any]:
+    url = f"{base_url.rstrip('/')}/wallet/{quote(address, safe='')}/trades"
+    params = {"cursor": cursor} if cursor else None
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        response = await client.get(
+            url,
+            params=params,
+            headers={"x-api-key": api_key, "accept": "application/json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    if not isinstance(payload, dict):
+        return {"trades": [], "nextCursor": None, "hasNextPage": False}
+    raw_trades = payload.get("trades")
+    trades = [item for item in raw_trades if isinstance(item, dict)] if isinstance(raw_trades, list) else []
+    raw_cursor = payload.get("nextCursor")
+    next_cursor = str(raw_cursor) if raw_cursor not in (None, "") else None
+    return {
+        "trades": trades,
+        "nextCursor": next_cursor,
+        "hasNextPage": bool(payload.get("hasNextPage")) and next_cursor is not None,
+    }
+
+
+async def _source_sync(session: AsyncSession) -> KOLSourceSync:
+    query = select(KOLSourceSync).where(KOLSourceSync.source == _SOURCE).limit(1).with_for_update()
+    row = (await session.execute(query)).scalar_one_or_none()
+    if row is not None:
+        return row
+
+    candidate = KOLSourceSync(source=_SOURCE, status="unknown", records_seen=0)
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        row = (await session.execute(query)).scalar_one_or_none()
+        if row is None:
+            raise
+        return row
+
+
+async def _sync_state(session: AsyncSession, wallet_id: int) -> KOLTradeSyncState:
+    query = (
+        select(KOLTradeSyncState)
+        .where(KOLTradeSyncState.analytics_wallet_id == wallet_id)
+        .limit(1)
+        .with_for_update()
+    )
+    row = (await session.execute(query)).scalar_one_or_none()
+    if row is not None:
+        return row
+
+    candidate = KOLTradeSyncState(
+        analytics_wallet_id=wallet_id,
+        source=_SOURCE,
+        status="pending",
+        backfill_complete=False,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(candidate)
+            await session.flush()
+        return candidate
+    except IntegrityError:
+        row = (await session.execute(query)).scalar_one_or_none()
+        if row is None:
+            raise
+        return row
+
+
+async def _wallet_batch(session: AsyncSession, limit: int) -> list[Wallet]:
+    # One blockchain wallet may be attributed to several profiles. Fetch it once,
+    # prioritising never-synced/oldest-synced wallets and then stronger attribution.
+    rows = (
+        await session.execute(
+            select(Wallet, func.max(KOLWalletAttribution.confidence).label("max_confidence"))
+            .join(
+                KOLWalletAttribution,
+                KOLWalletAttribution.analytics_wallet_id == Wallet.id,
+            )
+            .outerjoin(
+                KOLTradeSyncState,
+                KOLTradeSyncState.analytics_wallet_id == Wallet.id,
+            )
+            .where(
+                KOLWalletAttribution.chain == "solana",
+                KOLWalletAttribution.analytics_wallet_id.is_not(None),
+                KOLWalletAttribution.confidence >= 50,
+            )
+            .group_by(Wallet.id, KOLTradeSyncState.last_attempt_at)
+            .order_by(
+                case((KOLTradeSyncState.last_attempt_at.is_(None), 0), else_=1).asc(),
+                KOLTradeSyncState.last_attempt_at.asc(),
+                func.max(KOLWalletAttribution.confidence).desc(),
+                Wallet.id.asc(),
+            )
+            .limit(limit)
+        )
+    ).all()
+    return [wallet for wallet, _confidence in rows]
+
+
+async def sync_kol_trade_events(
+    session: AsyncSession,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    max_wallets: int | None = None,
+) -> dict[str, int | str]:
+    # The source row is locked for the duration of the run. This is a database-level
+    # serialization boundary that also protects manual API refreshes, while Celery's
+    # Redis lock remains the fast distributed guard for scheduled workers.
+    source = await _source_sync(session)
+    key = (api_key if api_key is not None else os.getenv("SOLANA_TRACKER_API_KEY", "")).strip()
+    resolved_base_url = (base_url or os.getenv("SOLANA_TRACKER_API_BASE", _DEFAULT_BASE_URL)).strip() or _DEFAULT_BASE_URL
+    if max_wallets is None:
+        try:
+            max_wallets = int(os.getenv("KOL_TRADE_SYNC_WALLETS_PER_RUN", "1"))
+        except ValueError:
+            max_wallets = 1
+    max_wallets = max(1, min(25, int(max_wallets)))
+
+    if not key:
+        source.status = "disabled"
+        source.detail = "SOLANA_TRACKER_API_KEY is not configured; KOL trade ingestion is disabled"
+        source.updated_at = utcnow()
+        return {"wallets": 0, "events": 0, "failures": 0, "status": "disabled"}
+
+    wallets = await _wallet_batch(session, max_wallets)
+    now = utcnow()
+    inserted = 0
+    failures = 0
+    seen_provider_rows = 0
+    backfill_pending = 0
+
+    for wallet in wallets:
+        state = await _sync_state(session, wallet.id)
+        state.last_attempt_at = now
+        state.updated_at = now
+        # Before the first complete traversal, persist the provider cursor and
+        # consume one historical page per scheduled wallet turn. Once the backfill
+        # reaches the end, later turns always poll the newest page only.
+        request_cursor = None if state.backfill_complete else state.next_cursor
+        mode = "latest" if state.backfill_complete else "backfill"
+        try:
+            page = await fetch_solana_tracker_wallet_trades(
+                wallet.wallet_address,
+                api_key=key,
+                base_url=resolved_base_url,
+                cursor=request_cursor,
+            )
+            provider_rows = page["trades"]
+            seen_provider_rows += len(provider_rows)
+            normalized: list[dict[str, Any]] = []
+            for provider_trade in provider_rows:
+                normalized.extend(
+                    normalize_solana_tracker_trade(
+                        wallet_id=wallet.id,
+                        wallet_address=wallet.wallet_address,
+                        trade=provider_trade,
+                    )
+                )
+
+            signatures = {item["tx_signature"] for item in normalized}
+            existing: set[tuple[str, int]] = set()
+            if signatures:
+                existing = {
+                    (str(signature), int(event_index))
+                    for signature, event_index in (
+                        await session.execute(
+                            select(KOLTradeEvent.tx_signature, KOLTradeEvent.event_index).where(
+                                KOLTradeEvent.analytics_wallet_id == wallet.id,
+                                KOLTradeEvent.tx_signature.in_(signatures),
+                            )
+                        )
+                    ).all()
+                }
+
+            dedupe: set[tuple[str, int]] = set()
+            wallet_inserted = 0
+            for item in normalized:
+                key_tuple = (str(item["tx_signature"]), int(item["event_index"]))
+                if key_tuple in existing or key_tuple in dedupe:
+                    continue
+                dedupe.add(key_tuple)
+                try:
+                    async with session.begin_nested():
+                        session.add(KOLTradeEvent(**item))
+                        await session.flush()
+                    wallet_inserted += 1
+                except IntegrityError:
+                    # Another worker/manual refresh won the same unique event race.
+                    # The DB constraint is the final idempotency boundary.
+                    pass
+            inserted += wallet_inserted
+
+            if not state.backfill_complete:
+                if page["hasNextPage"] and page["nextCursor"]:
+                    state.next_cursor = str(page["nextCursor"])
+                    backfill_pending += 1
+                else:
+                    state.next_cursor = None
+                    state.backfill_complete = True
+            state.status = "ok"
+            state.events_seen = len(normalized)
+            state.last_success_at = now
+            state.detail = (
+                f"mode={mode} providerTrades={len(provider_rows)} normalizedEvents={len(normalized)} "
+                f"inserted={wallet_inserted} backfillComplete={state.backfill_complete}"
+            )
+        except Exception as exc:  # provider failures must not block rotation to other wallets
+            failures += 1
+            state.status = "error"
+            state.last_error_at = now
+            state.detail = str(exc)[:1000]
+
+    source.records_seen = seen_provider_rows
+    source.updated_at = now
+    if failures and failures == len(wallets):
+        source.status = "error"
+        source.last_error_at = now
+        source.detail = f"all {failures} wallet sync(s) failed"
+    elif failures:
+        source.status = "partial"
+        source.last_success_at = now
+        source.last_error_at = now
+        source.detail = (
+            f"wallets={len(wallets)} failures={failures} insertedEvents={inserted} "
+            f"backfillPending={backfill_pending}"
+        )
+    else:
+        source.status = "ok"
+        source.last_success_at = now
+        source.detail = (
+            f"wallets={len(wallets)} providerTrades={seen_provider_rows} insertedEvents={inserted} "
+            f"backfillPending={backfill_pending}"
+        )
+
+    return {
+        "wallets": len(wallets),
+        "events": inserted,
+        "failures": failures,
+        "backfillPending": backfill_pending,
+        "status": source.status,
+    }
