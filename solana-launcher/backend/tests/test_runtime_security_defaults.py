@@ -1,11 +1,13 @@
 import pytest
-from app.core.config import Settings
 from pydantic import ValidationError
+
+from app.core.config import Settings
 
 SECRET = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
 
 
-def test_nonproduction_defaults_do_not_embed_service_or_admin_credentials():
+def test_nonproduction_defaults_do_not_embed_service_or_admin_credentials(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     settings = Settings(secret_key=SECRET, environment="test")
     legacy_db_credential = ":".join(("potapoff", "potapoff"))
     legacy_broker_credential = ":".join(("guest", "guest"))
