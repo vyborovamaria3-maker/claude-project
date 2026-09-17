@@ -89,9 +89,7 @@ jobs:
           exit 1
 
       - name: Walk site across phone and tablet widths
-        env:
-          BASE_URL: http://127.0.0.1:${{ env.MOBILE_PORT }}
-        run: node tests/mobile-regression.mjs
+        run: BASE_URL="http://127.0.0.1:${MOBILE_PORT}" node tests/mobile-regression.mjs
 
       - name: Upload responsive screenshots
         if: always()
