@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -11,15 +11,15 @@ from app.models.kol_intelligence import KOLProfile, KOLTradeEvent, KOLWalletAttr
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _attribution_rank(
@@ -69,7 +69,9 @@ async def build_kol_token_intelligence(
                     KOLWalletAttribution.confidence >= 50,
                 )
             )
-        ).all()
+        )
+        .tuples()
+        .all()
     )
     rows = canonical_kol_event_rows(raw_rows)
     if not rows:
@@ -134,7 +136,7 @@ async def build_kol_token_intelligence(
         }
 
     actor_map: dict[str, dict[str, Any]] = {}
-    for event, wallet, attribution, profile in rows:
+    for event, wallet, _attribution, profile in rows:
         actor = actor_map.setdefault(
             profile.twitter_handle,
             {
@@ -151,8 +153,7 @@ async def build_kol_token_intelligence(
         actor["trades"] += 1
         activity = _as_utc(event.occurred_at)
         if activity and (
-            actor["last_activity_at"] is None
-            or activity > actor["last_activity_at"]
+            actor["last_activity_at"] is None or activity > actor["last_activity_at"]
         ):
             actor["last_activity_at"] = activity
 
@@ -163,9 +164,7 @@ async def build_kol_token_intelligence(
                 **actor,
                 "wallets": sorted(actor["wallets"]),
                 "last_activity_at": (
-                    actor["last_activity_at"].isoformat()
-                    if actor["last_activity_at"]
-                    else None
+                    actor["last_activity_at"].isoformat() if actor["last_activity_at"] else None
                 ),
             }
         )
@@ -179,9 +178,17 @@ async def build_kol_token_intelligence(
 
     one_hour = windows["1h"]
     net = one_hour.get("net_flow_usd")
-    if one_hour["buyers"] >= 3 and one_hour["buyer_seller_ratio"] >= 2 and (net is None or net > 0):
+    if (
+        one_hour["buyers"] >= 3
+        and one_hour["buyer_seller_ratio"] >= 2
+        and (net is None or net > 0)
+    ):
         signal = "kol_accumulation"
-    elif one_hour["sellers"] >= 3 and one_hour["sellers"] > one_hour["buyers"] and (net is None or net < 0):
+    elif (
+        one_hour["sellers"] >= 3
+        and one_hour["sellers"] > one_hour["buyers"]
+        and (net is None or net < 0)
+    ):
         signal = "kol_distribution"
     elif one_hour["buyers"] or one_hour["sellers"]:
         signal = "mixed_kol_activity"
@@ -194,8 +201,9 @@ async def build_kol_token_intelligence(
         "signal": signal,
         "ownership_claim": False,
         "attribution_note": (
-            "Each on-chain KOLTradeEvent is counted once using the strongest stored identity attribution. "
-            "Behavioral or related-wallet links are not treated as proof of ownership."
+            "Each on-chain KOLTradeEvent is counted once using the strongest stored "
+            "identity attribution. Behavioral or related-wallet links are not treated "
+            "as proof of ownership."
         ),
         "event_source": "kol_trade_events",
         "windows": windows,
@@ -320,23 +328,25 @@ async def related_wallet_candidates(
             continue
         union_tokens = source_tokens | other_tokens
         similarity = len(shared_tokens) / len(union_tokens) if union_tokens else 0.0
-        link = legacy_by_other.get(other_id)
+        legacy_link = legacy_by_other.get(other_id)
         result.append(
             {
                 "address": other.wallet_address,
                 "similarity_score": round(max(0.0, min(1.0, similarity)), 6),
                 "shared_tokens_count": len(shared_tokens),
                 "first_interaction_date": (
-                    link.first_interaction_date.isoformat()
-                    if link and link.first_interaction_date
+                    legacy_link.first_interaction_date.isoformat()
+                    if legacy_link and legacy_link.first_interaction_date
                     else None
                 ),
                 "details": {
-                    **((link.details or {}) if link else {}),
+                    **((legacy_link.details or {}) if legacy_link else {}),
                     "method": "jaccard_unique_token_participation",
                     "event_ledger_primary": True,
-                    "legacy_graph_candidate": link is not None,
-                    "stored_shared_tokens_count": link.shared_tokens_count if link else None,
+                    "legacy_graph_candidate": legacy_link is not None,
+                    "stored_shared_tokens_count": (
+                        legacy_link.shared_tokens_count if legacy_link else None
+                    ),
                 },
                 "classification": "possible_related_wallet",
                 "ownership_claim": False,
@@ -344,7 +354,11 @@ async def related_wallet_candidates(
         )
 
     result.sort(
-        key=lambda item: (item["similarity_score"], item["shared_tokens_count"], item["address"]),
+        key=lambda item: (
+            item["similarity_score"],
+            item["shared_tokens_count"],
+            item["address"],
+        ),
         reverse=True,
     )
     return result[:requested_limit]
