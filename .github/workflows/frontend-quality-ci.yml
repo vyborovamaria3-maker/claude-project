@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: frontend-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   accessibility-and-performance:
@@ -61,13 +65,17 @@ jobs:
       - name: Build frontend from locked app dependencies
         run: npm run build
 
-      - name: Start frontend
+      - name: Start production-equivalent frontend
         run: |
           set -Eeuo pipefail
           rm -rf .next/standalone/public .next/standalone/.next/static
-          mkdir -p .next/standalone/.next
+          mkdir -p .next/standalone/.next .next/standalone/node_modules
           test ! -d public || cp -R public .next/standalone/public
           cp -R .next/static .next/standalone/.next/static
+          rm -rf .next/standalone/node_modules/playwright .next/standalone/node_modules/playwright-core
+          cp -R node_modules/playwright .next/standalone/node_modules/playwright
+          cp -R node_modules/playwright-core .next/standalone/node_modules/playwright-core
+          test -f .next/standalone/node_modules/playwright-core/browsers.json
           PORT="$QUALITY_PORT" HOSTNAME=127.0.0.1 node .next/standalone/server.js > "$QUALITY_LOG" 2>&1 &
           echo $! > "$QUALITY_PID"
           for i in {1..60}; do
