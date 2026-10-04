@@ -1,4 +1,4 @@
-import { q, q1 } from "./pg";
+import { q } from "./pg";
 
 export async function buildTrainingData(horizon = 6, step = 12): Promise<number> {
   const r = await q<{ build_training_data: number }>(`SELECT build_training_data($1, $2)`, [horizon, step]);

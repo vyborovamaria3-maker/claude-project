@@ -64,7 +64,7 @@ export async function rebuildClusters(minWeight = 2): Promise<number> {
 
     for (let offset = 0; offset < clusterRows.length; offset += 500) {
       const batch = clusterRows.slice(offset, offset + 500);
-      const values: any[] = [];
+      const values: unknown[] = [];
       const placeholders = batch.map(([id, label, clusterSize], row) => {
         const base = row * 4;
         values.push(id, label, clusterSize, now);

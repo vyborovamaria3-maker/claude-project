@@ -21,7 +21,25 @@ npm run x-collector:search-mints -- --input data\solana-mints.txt --limit 100 --
 npm run x-collector:worker
 ~~~
 
+Quality checks (no database required):
+
+~~~powershell
+npm run x-collector:typecheck
+npm run x-collector:lint
+npm run x-collector:test
+~~~
+
 The mint file accepts one Solana address per line; blank lines and lines starting with # are ignored. The importer validates and deduplicates addresses, then queues one X search per mint. Start scheduler, dashboard and outbox publisher in separate terminals with x-collector:scheduler, x-collector:dashboard and x-collector:publisher.
+
+Quality checks are wired up from the repository root:
+
+~~~powershell
+npm run x-collector:typecheck   # tsc --noEmit
+npm run x-collector:lint        # eslint
+npm run x-collector:test        # node:test via tsx (tests/**.test.ts)
+~~~
+
+Unit tests cover the shared parsing/CSV/auth/advisory helpers and do not require a database or a running collector.
 
 Dashboard and metrics bind to loopback by default. External binds require Basic Auth and TLS at a reverse proxy. X login restrictions, captcha challenges and rate limits are surfaced as failures; the collector does not rotate identities to evade a platform restriction. Results are bounded by X search availability and configured limits, so the collector cannot guarantee every account or historical post.
 

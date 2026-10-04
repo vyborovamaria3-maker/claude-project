@@ -198,16 +198,7 @@ export async function getMintFullReport(mint: string, days = 30): Promise<MintFu
   return { summary, dailyFunnel, bursts, topTweets, topAuthors, coordinated, overlap };
 }
 
-export function toCSV<T extends Record<string, unknown>>(rows: T[]): string {
-  if (rows.length === 0) return "";
-  const headers = Object.keys(rows[0]);
-  const escape = (v: unknown): string => {
-    if (v == null) return "";
-    const s = String(v).replace(/"/g, '""');
-    return /[",\n]/.test(s) ? `"${s}"` : s;
-  };
-  return [headers.join(","), ...rows.map((r) => headers.map((h) => escape(r[h])).join(","))].join("\n");
-}
+export { toCSV } from "./csv";
 
 export function toJSON<T>(rows: T[]): string { return JSON.stringify(rows, null, 2); }
 

@@ -3,11 +3,19 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "Node",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["node"],
     "strict": true,
+    "noImplicitOverride": true,
+    "forceConsistentCasingInFileNames": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "outDir": "dist"
+    "sourceMap": true,
+    "declaration": false,
+    "noEmitOnError": true
   },
-  "include": ["lib/**/*.ts", "scripts/**/*.ts"]
+  "include": ["lib/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

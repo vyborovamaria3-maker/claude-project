@@ -1,6 +1,12 @@
 import http from "node:http";
 import { q } from "../lib/trade/pg";
-import { log } from "../lib/trade/logger";
+import { log, closeLogger } from "../lib/trade/logger";
+import { isLoopbackHost, enforceBasicAuth } from "../lib/trade/http-auth";
+import { intParam } from "../lib/trade/num";
+import {
+  applySecurityHeaders, checkOrigin, createRateLimiter, clientIp,
+} from "../lib/trade/http-security";
+import { httpRequests, httpRequestDuration } from "../lib/trade/metrics";
 import {
   getDailyDigest, getTopShillers, getRisingAuthors, getTrendingWords,
   getCashtagTrends, getCoordinatedAccounts, getMintOverlap,
@@ -14,43 +20,54 @@ import {
 } from "../lib/trade/analytics-events";
 import { getAuthorReputation, getTopKOLs, getSuspiciousAuthors, getAuthorBehavior, getKOLsForMint } from "../lib/trade/analytics-kol";
 import { listClusters, getClusterMembers, getAuthorCluster } from "../lib/trade/analytics-clusters";
-import { getMintMetrics, getMintAnomalies, getMintTrend, getAuthorMetrics } from "../lib/trade/analytics-timeseries";
+import { getMintMetrics, getMintAnomalies, getMintTrend } from "../lib/trade/analytics-timeseries";
 import {
   getTopHype, getHypeRisers, getHypeFallers, getEarlySignals,
   getSimilarMints, getLeadAuthors, getWeightedSentiment,
   getTopWeightedSentiment, getTopPageRank, listBacktests, getBacktestTrades, rebuildHypeScores,
+  rebuildUltraScores,
 } from "../lib/trade/analytics-advanced";
 import {
   buildTrainingData, trainModel, listModels, predictMint,
   getCrossMintSignals, getSentimentDivergence, getTopUltra,
 } from "../lib/trade/analytics-predictive";
-import { getAuthorPageRank, rebuildUltraScores } from "../lib/trade/analytics-advanced";
 
 const PORT = Number(process.env.DASHBOARD_PORT ?? 3001);
 const HOST = process.env.DASHBOARD_HOST ?? "127.0.0.1";
 const AUTH_USER = process.env.DASHBOARD_USER;
 const AUTH_PASS = process.env.DASHBOARD_PASS;
+const DASHBOARD_ORIGIN = process.env.DASHBOARD_ORIGIN;
+const RATE_LIMIT = Number(process.env.DASHBOARD_RATE_LIMIT ?? 120);
 if (Boolean(AUTH_USER) !== Boolean(AUTH_PASS)) {
   throw new Error("DASHBOARD_USER and DASHBOARD_PASS must be set together");
 }
-if (HOST !== "127.0.0.1" && HOST !== "::1" && (!AUTH_USER || !AUTH_PASS)) {
+if (!isLoopbackHost(HOST) && (!AUTH_USER || !AUTH_PASS)) {
   throw new Error("Dashboard auth is required when binding to a non-loopback host");
 }
+if (!isLoopbackHost(HOST) && !DASHBOARD_ORIGIN) {
+  throw new Error("DASHBOARD_ORIGIN is required when binding to a non-loopback host");
+}
 const MUTATING_ROUTES = new Set(["/api/hype/rebuild", "/api/ultra/rebuild", "/api/ml/train"]);
+const allowRequest = createRateLimiter(RATE_LIMIT);
 
-type Handler = (req: { url: URL; method: string }) => Promise<any>;
+const limitParam = (url: URL, def = 50, max = 1000) =>
+  intParam(url.searchParams.get("limit"), def, 1, max);
+const daysParam = (url: URL, def = 30) =>
+  intParam(url.searchParams.get("days"), def, 1, 3650);
+
+type Handler = (req: { url: URL; method: string }) => Promise<unknown>;
 const routes: Record<string, Handler> = {
   "/api/health": async () => { await q(`SELECT 1`); return { ok: true, ts: Date.now() }; },
   "/api/digest": async (req) => getDailyDigest(req.url.searchParams.get("day") ?? undefined),
   "/api/tasks": async () => ({ queue: await queueStats(), dlq: (await dlqStats())?.n ?? 0 }),
   "/api/workers": async () => getWorkerEfficiency(),
   "/api/accounts": async () => getAccountHealth(),
-  "/api/shillers": async (req) => getTopShillers(Number(req.url.searchParams.get("limit") ?? 50)),
-  "/api/rising": async (req) => getRisingAuthors(Number(req.url.searchParams.get("limit") ?? 30)),
-  "/api/trending": async (req) => getTrendingWords(Number(req.url.searchParams.get("limit") ?? 50)),
-  "/api/cashtags": async (req) => getCashtagTrends(Number(req.url.searchParams.get("limit") ?? 50)),
-  "/api/coordinated": async (req) => getCoordinatedAccounts(Number(req.url.searchParams.get("limit") ?? 50)),
-  "/api/overlap": async (req) => getMintOverlap(5, Number(req.url.searchParams.get("limit") ?? 50)),
+  "/api/shillers": async (req) => getTopShillers(limitParam(req.url)),
+  "/api/rising": async (req) => getRisingAuthors(limitParam(req.url, 30)),
+  "/api/trending": async (req) => getTrendingWords(limitParam(req.url)),
+  "/api/cashtags": async (req) => getCashtagTrends(limitParam(req.url)),
+  "/api/coordinated": async (req) => getCoordinatedAccounts(limitParam(req.url)),
+  "/api/overlap": async (req) => getMintOverlap(5, limitParam(req.url)),
   "/api/mint/summary": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
@@ -59,7 +76,7 @@ const routes: Record<string, Handler> = {
   "/api/mint/funnel": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
-    return getMintDailyFunnel(mint, Number(req.url.searchParams.get("days") ?? 30));
+    return getMintDailyFunnel(mint, daysParam(req.url));
   },
   "/api/mint/bursts": async (req) => {
     const mint = req.url.searchParams.get("mint");
@@ -69,12 +86,12 @@ const routes: Record<string, Handler> = {
   "/api/mint/timeseries": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
-    return getMintTimeseries(mint, Number(req.url.searchParams.get("interval") ?? 3600000));
+    return getMintTimeseries(mint, intParam(req.url.searchParams.get("interval"), 3600000, 60000, 604800000));
   },
   "/api/mint/tweets": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
-    return getTopTweetsForMint(mint, Number(req.url.searchParams.get("limit") ?? 20));
+    return getTopTweetsForMint(mint, limitParam(req.url, 20));
   },
   "/api/mint/full": async (req) => {
     const mint = req.url.searchParams.get("mint");
@@ -102,8 +119,8 @@ const routes: Record<string, Handler> = {
       firstVerified: await getMintFirstVerified(mint),
     };
   },
-  "/api/kol/top": async (req) => getTopKOLs(Number(req.url.searchParams.get("limit") ?? 50), 60),
-  "/api/kol/suspicious": async (req) => getSuspiciousAuthors(Number(req.url.searchParams.get("limit") ?? 100)),
+  "/api/kol/top": async (req) => getTopKOLs(limitParam(req.url), 60),
+  "/api/kol/suspicious": async (req) => getSuspiciousAuthors(limitParam(req.url, 100)),
   "/api/kol/mint": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
@@ -118,8 +135,8 @@ const routes: Record<string, Handler> = {
       cluster: await getAuthorCluster(h),
     };
   },
-  "/api/clusters": async (req) => listClusters(Number(req.url.searchParams.get("min-size") ?? 3)),
-  "/api/cluster/members": async (req) => getClusterMembers(Number(req.url.searchParams.get("id"))),
+  "/api/clusters": async (req) => listClusters(intParam(req.url.searchParams.get("min-size"), 3, 1, 1000)),
+  "/api/cluster/members": async (req) => getClusterMembers(intParam(req.url.searchParams.get("id"), 1, 1, 2147483647)),
   "/api/timeseries/mint": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
@@ -132,46 +149,46 @@ const routes: Record<string, Handler> = {
   "/api/timeseries/trend": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
-    return getMintTrend(mint, Number(req.url.searchParams.get("hours") ?? 24));
+    return getMintTrend(mint, intParam(req.url.searchParams.get("hours"), 24, 1, 8760));
   },
   "/api/anomalies": async (req) => getMintAnomalies(
     req.url.searchParams.get("mint") ?? undefined,
-    Number(req.url.searchParams.get("limit") ?? 100)
+    limitParam(req.url, 100)
   ),
-  "/api/hype/top": async (req) => getTopHype(Number(req.url.searchParams.get("limit") ?? 30), 40),
-  "/api/hype/risers": async (req) => getHypeRisers(Number(req.url.searchParams.get("limit") ?? 30)),
-  "/api/hype/fallers": async (req) => getHypeFallers(Number(req.url.searchParams.get("limit") ?? 30)),
+  "/api/hype/top": async (req) => getTopHype(limitParam(req.url, 30), 40),
+  "/api/hype/risers": async (req) => getHypeRisers(limitParam(req.url, 30)),
+  "/api/hype/fallers": async (req) => getHypeFallers(limitParam(req.url, 30)),
   "/api/hype/rebuild": async () => ({ rebuilt: await rebuildHypeScores() }),
   "/api/signals": async (req) => getEarlySignals(
-    Number(req.url.searchParams.get("limit") ?? 30),
-    Number(req.url.searchParams.get("min-strength") ?? 30)
+    limitParam(req.url, 30),
+    intParam(req.url.searchParams.get("min-strength"), 30, 0, 100)
   ),
   "/api/similar": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
-    return getSimilarMints(mint, Number(req.url.searchParams.get("limit") ?? 20));
+    return getSimilarMints(mint, limitParam(req.url, 20));
   },
-  "/api/leaders": async (req) => getLeadAuthors(Number(req.url.searchParams.get("limit") ?? 50)),
+  "/api/leaders": async (req) => getLeadAuthors(limitParam(req.url, 50)),
   "/api/sentiment/weighted": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (mint) return getWeightedSentiment(mint);
-    return getTopWeightedSentiment(Number(req.url.searchParams.get("limit") ?? 30));
+    return getTopWeightedSentiment(limitParam(req.url, 30));
   },
-  "/api/pagerank": async (req) => getTopPageRank(Number(req.url.searchParams.get("limit") ?? 50)),
+  "/api/pagerank": async (req) => getTopPageRank(limitParam(req.url, 50)),
   "/api/backtest/list": async () => listBacktests(20),
-  "/api/backtest/trades": async (req) => getBacktestTrades(Number(req.url.searchParams.get("id")), 200),
-  "/api/ultra/top": async (req) => getTopUltra(Number(req.url.searchParams.get("limit") ?? 30)),
+  "/api/backtest/trades": async (req) => getBacktestTrades(intParam(req.url.searchParams.get("id"), 1, 1, 2147483647), 200),
+  "/api/ultra/top": async (req) => getTopUltra(limitParam(req.url, 30)),
   "/api/ultra/rebuild": async () => ({ rebuilt: await rebuildUltraScores() }),
-  "/api/cross-mint": async (req) => getCrossMintSignals(Number(req.url.searchParams.get("limit") ?? 30)),
-  "/api/divergence": async (req) => getSentimentDivergence(Number(req.url.searchParams.get("limit") ?? 30)),
+  "/api/cross-mint": async (req) => getCrossMintSignals(limitParam(req.url, 30)),
+  "/api/divergence": async (req) => getSentimentDivergence(limitParam(req.url, 30)),
   "/api/ml/models": async () => listModels(20),
   "/api/ml/predict": async (req) => {
     const mint = req.url.searchParams.get("mint");
     if (!mint) throw new Error("mint required");
-    return predictMint(mint, Number(req.url.searchParams.get("horizon") ?? 6));
+    return predictMint(mint, intParam(req.url.searchParams.get("horizon"), 6, 1, 720));
   },
   "/api/ml/train": async (req) => {
-    const horizon = Number(req.url.searchParams.get("horizon") ?? 6);
+    const horizon = intParam(req.url.searchParams.get("horizon"), 6, 1, 720);
     await buildTrainingData(horizon, 12);
     const modelId = await trainModel(`manual-h${horizon}-${Date.now()}`, horizon);
     return { modelId };
@@ -179,12 +196,12 @@ const routes: Record<string, Handler> = {
   "/api/recent-mints": async (req) => q(
     `SELECT mint, total_tweets, unique_authors, total_views, last_mention_at
      FROM v_mint_summary ORDER BY last_mention_at DESC LIMIT $1`,
-    [Number(req.url.searchParams.get("limit") ?? 30)]
+    [limitParam(req.url, 30)]
   ),
   "/api/recent-tweets": async (req) => q(
     `SELECT tweet_id, handle, text, url, views, likes, retweets, posted_at
      FROM twitter_tweets ORDER BY first_seen_at DESC LIMIT $1`,
-    [Number(req.url.searchParams.get("limit") ?? 50)]
+    [limitParam(req.url, 50)]
   ),
 };
 
@@ -421,53 +438,83 @@ createApp({
 
 const server = http.createServer(async (req, res) => {
   const start = Date.now();
+  const pathname = (() => {
+    try { return new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).pathname; }
+    catch { return "/invalid"; }
+  })();
 
-  if (AUTH_USER && AUTH_PASS) {
-    const auth = req.headers.authorization;
-    if (!auth?.startsWith("Basic ")) {
-      res.setHeader("WWW-Authenticate", 'Basic realm="dashboard"');
-      res.statusCode = 401; res.end("Unauthorized"); return;
-    }
-    const decoded = Buffer.from(auth.slice(6), "base64").toString();
-    const colon = decoded.indexOf(":");
-    if (decoded.slice(0, colon) !== AUTH_USER || decoded.slice(colon + 1) !== AUTH_PASS) {
-      res.statusCode = 401; res.end("Unauthorized"); return;
-    }
+  const finish = (status: number) => {
+    httpRequests.inc({ service: "dashboard", route: pathname, status: String(status) });
+    httpRequestDuration.observe({ service: "dashboard", route: pathname }, (Date.now() - start) / 1000);
+  };
+
+  // Security headers применяются ко всем ответам, включая 401/429.
+  applySecurityHeaders(res, { allowUnsafeEval: true });
+
+  if (!allowRequest(clientIp(req))) {
+    res.statusCode = 429;
+    res.setHeader("Retry-After", "60");
+    res.end(JSON.stringify({ error: "too many requests" }));
+    finish(429);
+    return;
+  }
+
+  if (!enforceBasicAuth(req, res, AUTH_USER, AUTH_PASS, "dashboard")) {
+    finish(401);
+    return;
   }
 
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-    if (MUTATING_ROUTES.has(url.pathname) && req.method !== "POST") {
+    const route = routes[url.pathname];
+    const mutating = MUTATING_ROUTES.has(url.pathname);
+    if (mutating) {
+      const origin = checkOrigin(req, DASHBOARD_ORIGIN);
+      if (!origin.ok) {
+        res.statusCode = 403;
+        res.end(JSON.stringify({ error: origin.reason }));
+        finish(403);
+        return;
+      }
+    }
+    if (mutating && req.method !== "POST") {
       res.statusCode = 405;
       res.setHeader("Allow", "POST");
       res.end(JSON.stringify({ error: "POST required" }));
+      finish(405);
       return;
     }
-    if (!MUTATING_ROUTES.has(url.pathname) && req.method !== "GET" && req.method !== "HEAD") {
+    if (!mutating && req.method !== "GET" && req.method !== "HEAD") {
       res.statusCode = 405;
       res.setHeader("Allow", "GET, HEAD");
       res.end(JSON.stringify({ error: "method not allowed" }));
+      finish(405);
       return;
     }
     if (url.pathname === "/" || url.pathname === "/index.html") {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.end(HTML); return;
+      res.end(HTML);
+      finish(200);
+      return;
     }
-    const handler = routes[url.pathname];
-    if (handler) {
-      const data = await handler({ url, method: req.method ?? "GET" });
+    if (route) {
+      const data = await route({ url, method: req.method ?? "GET" });
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify(data));
       log.debug("api", { path: url.pathname, ms: Date.now() - start });
+      finish(200);
       return;
     }
     res.statusCode = 404; res.end(JSON.stringify({ error: "not found" }));
+    finish(404);
   } catch (e) {
+    // Логируем подробности серверу, клиенту отдаём только общий текст.
     const msg = e instanceof Error ? e.message : String(e);
     log.error("dashboard error", { error: msg });
     res.statusCode = 500;
     res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify({ error: msg }));
+    res.end(JSON.stringify({ error: "internal server error" }));
+    finish(500);
   }
 });
 
@@ -477,5 +524,13 @@ server.listen(PORT, HOST, () => {
   console.log(`\n🌐 Dashboard: http://${HOST}:${PORT}\n`);
 });
 
-process.on("SIGINT", () => { log.info("shutting down dashboard"); server.close(() => process.exit(0)); });
+function shutdown(signal: string) {
+  log.info("shutting down dashboard", { signal });
+  server.close(() => {
+    closeLogger();
+    process.exit(0);
+  });
+}
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 

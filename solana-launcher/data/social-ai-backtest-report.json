@@ -1,0 +1,127 @@
+﻿[
+    {
+        "name":  "container:potapoff-frontend",
+        "status":  "PASS",
+        "detail":  "running"
+    },
+    {
+        "name":  "container:potapoff-backend",
+        "status":  "PASS",
+        "detail":  "running"
+    },
+    {
+        "name":  "source-health",
+        "status":  "PASS",
+        "detail":  "endpoint reachable"
+    },
+    {
+        "name":  "x-auth",
+        "status":  "PASS",
+        "detail":  "storage-state mounted"
+    },
+    {
+        "name":  "x-chromium",
+        "status":  "PASS",
+        "detail":  "Chromium present"
+    },
+    {
+        "name":  "telegram-backend",
+        "status":  "PASS",
+        "detail":  "monitor/status reachable"
+    },
+    {
+        "name":  "telegram-collector-config",
+        "status":  "PASS",
+        "detail":  "mode=public_web"
+    },
+    {
+        "name":  "telegram-scheduler",
+        "status":  "PASS",
+        "detail":  "background loop running"
+    },
+    {
+        "name":  "telegram-ingest-path",
+        "status":  "PASS",
+        "detail":  "public_web=True; session=False"
+    },
+    {
+        "name":  "telegram-last-error",
+        "status":  "PASS",
+        "detail":  "none"
+    },
+    {
+        "name":  "ai-status",
+        "status":  "PASS",
+        "detail":  "status endpoint reachable"
+    },
+    {
+        "name":  "ai-enabled",
+        "status":  "PASS",
+        "detail":  "enabled"
+    },
+    {
+        "name":  "ai-provider-config",
+        "status":  "PASS",
+        "detail":  "provider=tooken; model=claude-sonnet-5"
+    },
+    {
+        "name":  "ai-provider-reachable",
+        "status":  "PASS",
+        "detail":  "reachable"
+    },
+    {
+        "name":  "telegram-token-data",
+        "status":  "PASS",
+        "detail":  "mentions=1; timeline=1"
+    },
+    {
+        "name":  "x-playwright-runtime",
+        "status":  "PASS",
+        "detail":  "tweets=20; strategy=playwright"
+    },
+    {
+        "name":  "x-token-data",
+        "status":  "PASS",
+        "detail":  "tweets=20; strategy=playwright"
+    },
+    {
+        "name":  "ai-bridge-inference",
+        "status":  "PASS",
+        "detail":  "provider=tooken; model=claude-sonnet-5; summary=present"
+    },
+    {
+        "name":  "tab:overview",
+        "status":  "PASS",
+        "detail":  "HTTP 200"
+    },
+    {
+        "name":  "tab:blockchain",
+        "status":  "PASS",
+        "detail":  "HTTP 200"
+    },
+    {
+        "name":  "tab:telegram",
+        "status":  "PASS",
+        "detail":  "HTTP 200"
+    },
+    {
+        "name":  "tab:twitter",
+        "status":  "PASS",
+        "detail":  "HTTP 200"
+    },
+    {
+        "name":  "tab:kols",
+        "status":  "PASS",
+        "detail":  "HTTP 200"
+    },
+    {
+        "name":  "tab:ai",
+        "status":  "PASS",
+        "detail":  "HTTP 200"
+    },
+    {
+        "name":  "gmgn-regression",
+        "status":  "FAIL",
+        "detail":  ""
+    }
+]

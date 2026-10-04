@@ -3,12 +3,10 @@ import { listAccounts } from "../lib/trade/account-manager";
 import { listWorkers, activeWorkerCount } from "../lib/trade/worker-registry";
 import { queueStats, dlqStats } from "../lib/trade/tasks";
 import {
-  getMintSummary, getMintDailyFunnel, getMintBursts, getMintTimeseries,
   getTopTweetsForMint, getMintFullReport, getTopShillers, getRisingAuthors,
-  getTopAuthorsByViews, getCoordinatedClusters, getCoordinatedAccounts,
+  getTopAuthorsByViews, getCoordinatedAccounts,
   getAuthorGraph, getMintOverlap, getTrendingWords, getCashtagTrends,
-  getWorkerEfficiency, getAccountHealth, getPipelineDaily, getDailyDigest,
-  getAuthorProfile, toCSV, toJSON,
+  getDailyDigest, getAuthorProfile, toCSV, toJSON,
 } from "../lib/trade/analytics";
 import { loadGraph, toGEXF, toGraphML, toDOT, toNodesCSV, toEdgesCSV } from "./graph-export";
 import * as fs from "node:fs";
@@ -149,16 +147,16 @@ async function main() {
   if (has("export") && arg("format") && arg("kind")) {
     const kind = arg("kind")!;
     const fmt = arg("format")!;
-    let data: any[];
+    let data: Array<Record<string, unknown>>;
     switch (kind) {
       case "tweets":
         if (!mintArg) { console.error("--mint нужен"); return; }
-        data = await getTopTweetsForMint(mintArg, 1000);
+        data = (await getTopTweetsForMint(mintArg, 1000)) as unknown as Array<Record<string, unknown>>;
         break;
-      case "authors": data = await getTopAuthorsByViews(1000); break;
-      case "shillers": data = await getTopShillers(1000); break;
-      case "trending": data = await getTrendingWords(500); break;
-      case "cooccurrence": data = await getMintOverlap(1, 1000); break;
+      case "authors": data = (await getTopAuthorsByViews(1000)) as unknown as Array<Record<string, unknown>>; break;
+      case "shillers": data = (await getTopShillers(1000)) as unknown as Array<Record<string, unknown>>; break;
+      case "trending": data = (await getTrendingWords(500)) as unknown as Array<Record<string, unknown>>; break;
+      case "cooccurrence": data = (await getMintOverlap(1, 1000)) as unknown as Array<Record<string, unknown>>; break;
       default: console.error(`unknown kind: ${kind}`); return;
     }
     if (fmt === "csv") console.log(toCSV(data));

@@ -1,9 +1,10 @@
 import { q, q1, closePool } from "../lib/trade/pg";
+import { toCSV } from "../lib/trade/csv";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 interface BacktestRun {
-  id: string; name: string; params: any; metric_basis: string; notes: string | null;
+  id: string; name: string; params: unknown; metric_basis: string; notes: string | null;
   started_at: string; finished_at: string | null;
   signals_count: number; avg_views_change_pct: string; median_views_change_pct: string;
   positive_attention_rate: string; min_views_change_pct: string;
@@ -12,6 +13,12 @@ interface BacktestRun {
 interface BacktestTrade {
   mint: string; signal_at: string; entry_score: string;
   entry_views: string; exit_views: string; views_change_pct: string; hold_hours: number;
+}
+
+interface SweepResult {
+  threshold: number; hold: number; signals: number;
+  avg_views_change: number; positive_attention_rate: number;
+  min_views_change: number; run_id: number;
 }
 
 function parseArgs() {
@@ -106,7 +113,7 @@ async function showRun(runId: number) {
 async function sweep(strategy: string, thresholds: number[], holds: number[], days: number) {
   console.log(`\n🔬 SOCIAL-ATTENTION SWEEP strategy=${strategy} thresholds=[${thresholds.join(",")}] holds=[${holds.join(",")}] days=${days}\n`);
   console.log("⚠️  Измеряется изменение просмотров только в собранном наборе постов; это не рыночная доходность.");
-  const results: any[] = [];
+  const results: SweepResult[] = [];
 
   for (const hold of holds) {
     for (const thr of thresholds) {
@@ -190,11 +197,8 @@ async function exportRun(runId: number, format: "csv" | "json") {
   fs.mkdirSync(outDir, { recursive: true });
 
   if (format === "csv") {
-    const headers = ["mint", "signal_at", "entry_score", "entry_views", "exit_views", "views_change_pct", "hold_hours"];
-    const lines = [headers.join(",")];
-    for (const t of trades) lines.push(headers.map((h) => String((t as any)[h] ?? "")).join(","));
     const file = path.join(outDir, `backtest-${runId}.csv`);
-    fs.writeFileSync(file, lines.join("\n"));
+    fs.writeFileSync(file, toCSV(trades as unknown as Array<Record<string, unknown>>));
     console.log(`✓ ${file} (${trades.length} строк)`);
   } else {
     const file = path.join(outDir, `backtest-${runId}.json`);
@@ -227,7 +231,10 @@ async function trainML(horizon: number) {
   );
   const modelId = Number(model?.train_logistic_regression);
 
-  const m = await q1<any>(
+  const m = await q1<{
+    name: string; train_samples: number; train_accuracy: string; train_logloss: string;
+    test_samples: number; test_accuracy: string; test_logloss: string;
+  }>(
     `SELECT name, train_samples, train_accuracy::text, train_logloss::text,
             test_samples, test_accuracy::text, test_logloss::text
      FROM ml_models WHERE id = $1`, [modelId]
@@ -236,9 +243,11 @@ async function trainML(horizon: number) {
   console.log(`   Train: ${m?.train_samples} snapshots, accuracy=${m?.train_accuracy}`);
   console.log(`   Test:  ${m?.test_samples} snapshots, accuracy=${m?.test_accuracy}`);
 
-  const coefs = await q1<any>(`SELECT feature_names, coefficients FROM ml_models WHERE id = $1`, [modelId]);
+  const coefs = await q1<{ feature_names: string[]; coefficients: number[] }>(
+    `SELECT feature_names, coefficients FROM ml_models WHERE id = $1`, [modelId]
+  );
   console.log("\nКоэффициенты:");
-  const pairs = (coefs.feature_names as string[]).map((n, i) => ({ feature: n, coef: Number(coefs.coefficients[i]) }));
+  const pairs = (coefs?.feature_names ?? []).map((n, i) => ({ feature: n, coef: Number(coefs?.coefficients[i]) }));
   pairs.sort((a, b) => Math.abs(b.coef) - Math.abs(a.coef));
   for (const p of pairs) console.log(`   ${p.coef > 0 ? "↑" : "↓"} ${p.feature.padEnd(20)} ${p.coef.toFixed(4)}`);
 }

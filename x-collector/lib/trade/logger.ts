@@ -1,10 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getConfig } from "./config";
 
 type Level = "debug" | "info" | "warn" | "error";
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
+const PROCESS_TOKEN = `${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}`;
+const SENSITIVE_KEY = /(token|password|secret|session|cookie|authorization|master.?key|api.?key)/i;
 
 export interface LogContext {
   taskId?: number;
@@ -26,50 +29,95 @@ export function setContext(patch: LogContext) {
 }
 export function getContext(): LogContext { return als.getStore() ?? {}; }
 
-let stream: fs.WriteStream | null = null;
-let bytes = 0;
+let fd: number | null = null;
 let currentPath = "";
+let currentDate = "";
+let bytesWritten = 0;
 
-function ensureStream(): fs.WriteStream {
-  if (stream) return stream;
-  const cfg = getConfig();
-  const dir = path.join(process.cwd(), cfg.logging.dir);
-  fs.mkdirSync(dir, { recursive: true });
-  const date = new Date().toISOString().slice(0, 10);
-  currentPath = path.join(dir, `app-${date}.log`);
-  bytes = fs.existsSync(currentPath) ? fs.statSync(currentPath).size : 0;
-  stream = fs.createWriteStream(currentPath, { flags: "a" });
-  return stream;
+/** Вырезает поля, похожие на секреты, и ограничивает глубину/длину значений. */
+export function scrub(value: unknown, key = "", depth = 0): unknown {
+  if (SENSITIVE_KEY.test(key)) return "[REDACTED]";
+  if (depth > 6) return "[DEPTH_LIMIT]";
+  if (Array.isArray(value)) return value.map((item) => scrub(item, key, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => [k, scrub(v, k, depth + 1)]));
+  }
+  if (typeof value === "string") return value.length > 20_000 ? `${value.slice(0, 20_000)}…[TRUNCATED]` : value;
+  return value;
 }
 
-function rotate() {
+function logPath(date: string): string {
+  return path.join(process.cwd(), getConfig().logging.dir, `app-${date}-${PROCESS_TOKEN}.log`);
+}
+
+function ensureFile() {
   const cfg = getConfig();
-  if (bytes < cfg.logging.rotateMaxBytes) return;
-  stream?.end();
-  stream = null;
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  try { fs.renameSync(currentPath, `${currentPath}.${ts}`); } catch {}
-  bytes = 0;
+  const date = new Date().toISOString().slice(0, 10);
+  if (fd !== null && date === currentDate) return;
+  if (fd !== null) fs.closeSync(fd);
+  const dir = path.join(process.cwd(), cfg.logging.dir);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  currentDate = date;
+  currentPath = logPath(date);
+  fd = fs.openSync(currentPath, "a", 0o600);
+  bytesWritten = fs.fstatSync(fd).size;
+}
+
+function rotateIfNeeded(incomingBytes: number) {
+  ensureFile();
+  if (fd === null) return;
+  const cfg = getConfig();
+  const onDiskBytes = fs.fstatSync(fd).size;
+  bytesWritten = Math.max(bytesWritten, onDiskBytes);
+  if (bytesWritten + incomingBytes <= cfg.logging.rotateMaxBytes) return;
+
+  const oldPath = currentPath;
+  fs.closeSync(fd);
+  fd = null;
+  try {
+    fs.renameSync(oldPath, `${oldPath}.${Date.now()}.${randomUUID().slice(0, 8)}`);
+  } catch (error) {
+    process.stderr.write(`[logger] rotation failed: ${String(error)}\n`);
+  }
+  fd = fs.openSync(currentPath, "a", 0o600);
+  bytesWritten = fs.fstatSync(fd).size;
 }
 
 function emit(level: Level, msg: string, meta?: Record<string, unknown>) {
   const cfg = getConfig();
   if (LEVELS[level] < LEVELS[(cfg.logging.level as Level) ?? "info"]) return;
-  const entry = { ts: new Date().toISOString(), level, msg, ...getContext(), ...(meta ?? {}) };
+  const safeMeta = meta ? scrub(meta) as Record<string, unknown> : undefined;
+  const safeContext = scrub(getContext()) as LogContext;
+  const entry = { ts: new Date().toISOString(), level, msg, ...safeContext, ...(safeMeta ?? {}) };
   const line = JSON.stringify(entry) + "\n";
-  ensureStream().write(line);
-  bytes += line.length;
-  rotate();
+  try {
+    rotateIfNeeded(Buffer.byteLength(line));
+    if (fd === null) ensureFile();
+    if (fd !== null) {
+      fs.writeSync(fd, line, undefined, "utf8");
+      bytesWritten = fs.fstatSync(fd).size;
+    }
+  } catch (error) {
+    process.stderr.write(`[logger] file write failed: ${String(error)}\n`);
+  }
 
   const colors: Record<Level, string> = {
     debug: "\x1b[90m", info: "\x1b[36m", warn: "\x1b[33m", error: "\x1b[31m",
   };
   const reset = "\x1b[0m";
-  const ctx = getContext();
-  const ctxStr = [ctx.taskId && `task=${ctx.taskId}`, ctx.handle && `@${ctx.handle}`, ctx.workerId && `w=${ctx.workerId}`]
+  const ctxStr = [safeContext.taskId && `task=${safeContext.taskId}`, safeContext.handle && `@${safeContext.handle}`, safeContext.workerId && `w=${safeContext.workerId}`]
     .filter(Boolean).join(" ");
-  const metaStr = meta && Object.keys(meta).length ? " " + JSON.stringify(meta) : "";
+  const metaStr = safeMeta && Object.keys(safeMeta).length ? " " + JSON.stringify(safeMeta) : "";
   process.stderr.write(`${colors[level]}[${level}]${reset}${ctxStr ? " " + ctxStr : ""} ${msg}${metaStr}\n`);
+}
+
+/** Закрывает файловый дескриптор лога (используется при graceful shutdown). */
+export function closeLogger() {
+  if (fd !== null) {
+    fs.closeSync(fd);
+    fd = null;
+  }
 }
 
 export const log = {
@@ -78,4 +126,3 @@ export const log = {
   warn: (m: string, meta?: Record<string, unknown>) => emit("warn", m, meta),
   error: (m: string, meta?: Record<string, unknown>) => emit("error", m, meta),
 };
-

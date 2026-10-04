@@ -27,7 +27,7 @@ async function main() {
   console.log(`[x-login] аккаунт: ${accountName}`);
   console.log("[x-login] запускаю браузер...");
 
-  let encryptedSession: Buffer | null = null;
+  let encryptedSession: Buffer | null;
   const browser = await chromium.launch({ headless: false, slowMo: 50 });
   try {
     const context = await browser.newContext({

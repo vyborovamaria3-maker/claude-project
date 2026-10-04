@@ -1,6 +1,8 @@
-import { enqueueTask } from "../lib/trade/tasks";
-import { q, tx } from "../lib/trade/pg";
+import { enqueueTasks } from "../lib/trade/tasks";
+import { q, tx, closePool } from "../lib/trade/pg";
 import { log } from "../lib/trade/logger";
+import { withAdvisoryLock } from "../lib/trade/advisory";
+import { schedulerTicks, schedulerDuration, schedulerRunning } from "../lib/trade/metrics";
 import { scoreSentimentForRecent, scoreToxicityForRecent, extractEntitiesForRecent } from "../lib/trade/analytics-nlp";
 import { rebuildAuthorReputation, rebuildAuthorBehavior } from "../lib/trade/analytics-kol";
 import { rebuildClusters } from "../lib/trade/analytics-clusters";
@@ -21,6 +23,8 @@ interface TaskDef {
 }
 
 const runningTasks = new Set<string>();
+let shuttingDown = false;
+const timers: NodeJS.Timeout[] = [];
 
 const tasks: TaskDef[] = [
   {
@@ -43,16 +47,16 @@ const tasks: TaskDef[] = [
          LIMIT 300`,
         [now - 30 * 86_400_000, now - 86_400_000]
       );
-      for (const r of rows) {
-        await enqueueTask({
-          kind: "timeline",
-          payload: { handle: r.handle, limit: 200 },
-          handle: r.handle, mint: r.mint, priority: 1, dedup: true,
-          // One refresh per handle/mint per UTC day; a completed task can be enqueued again tomorrow.
-          idempotencyKey: `timeline:${r.mint}:${r.handle}:${Math.floor(Date.now() / 86400000)}`,
-        });
-      }
-      log.info("enqueued timelines", { n: rows.length });
+      // Un solo INSERT por lote en vez de N round-trips secuenciales.
+      const day = Math.floor(Date.now() / 86400000);
+      const result = await enqueueTasks(rows.map((r) => ({
+        kind: "timeline" as const,
+        payload: { handle: r.handle, limit: 200 },
+        handle: r.handle, mint: r.mint, priority: 1, dedup: true,
+        // One refresh per handle/mint per UTC day; a completed task can be enqueued again tomorrow.
+        idempotencyKey: `timeline:${r.mint}:${r.handle}:${day}`,
+      })));
+      log.info("enqueued timelines", { n: rows.length, queued: result.queued, duplicates: result.duplicates });
     },
   },
   {
@@ -249,16 +253,26 @@ const tasks: TaskDef[] = [
 
 async function tick(t: TaskDef) {
   if (runningTasks.has(t.name)) {
-    log.warn("tick skipped — already running", { task: t.name });
+    log.warn("tick skipped — already running in this process", { task: t.name });
     return;
   }
   runningTasks.add(t.name);
   const t0 = Date.now();
   try {
-    log.info("tick start", { task: t.name });
-    await t.run();
-    log.info("tick done", { task: t.name, dur: Date.now() - t0 });
+    // Advisory lock: evita que dos instancias del scheduler (o dashboard y scheduler)
+    // ejecuten la misma tarea pesada a la vez. Si el lock está tomado, se omite el tick.
+    const outcome = await withAdvisoryLock(`x-collector:scheduler:${t.name}`, () => t.run());
+    const dur = Date.now() - t0;
+    schedulerDuration.observe({ task: t.name }, dur / 1000);
+    if (outcome.acquired) {
+      schedulerTicks.inc({ task: t.name, result: "ok" });
+      log.info("tick done", { task: t.name, dur });
+    } else {
+      schedulerTicks.inc({ task: t.name, result: "skipped" });
+      log.warn("tick skipped — advisory lock held by another process", { task: t.name });
+    }
   } catch (e) {
+    schedulerTicks.inc({ task: t.name, result: "error" });
     log.error("tick failed", { task: t.name, error: String(e) });
   } finally {
     runningTasks.delete(t.name);
@@ -268,13 +282,26 @@ async function tick(t: TaskDef) {
 async function main() {
   log.info("scheduler started", { tasks: tasks.length });
   for (const t of tasks) {
-    setTimeout(() => tick(t), 5000);
-    setInterval(() => tick(t), t.intervalMs);
+    const kickoff = setTimeout(() => { void tick(t); }, 5000);
+    const interval = setInterval(() => { void tick(t); }, t.intervalMs);
+    timers.push(kickoff, interval);
   }
 }
+
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log.warn("scheduler shutting down", { signal });
+  for (const timer of timers) clearTimeout(timer as NodeJS.Timeout);
+  schedulerRunning.set(0);
+  await closePool().catch(() => {});
+  process.exit(0);
+}
+
+process.on("SIGINT", () => { void shutdown("SIGINT"); });
+process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
 
 main().catch((e) => {
   log.error("scheduler fatal", { error: String(e) });
   process.exit(1);
 });
-

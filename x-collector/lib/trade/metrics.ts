@@ -3,7 +3,7 @@ import { q, q1 } from "./pg";
 import { activeWorkerCount } from "./worker-registry";
 
 export const registry = new Registry();
-try { collectDefaultMetrics({ register: registry, prefix: "collector_" }); } catch {}
+try { collectDefaultMetrics({ register: registry, prefix: "collector_" }); } catch { /* metrics are best-effort */ }
 
 export const tasksTotal = new Counter({
   name: "x_tasks_total", help: "Всего задач по результату",
@@ -36,6 +36,40 @@ export const accountStatus = new Gauge({
 
 export const redisFallback = new Counter({
   name: "x_redis_fallback_total", help: "Сколько раз свалились на Postgres", registers: [registry],
+});
+
+export const schedulerTicks = new Counter({
+  name: "x_scheduler_ticks_total", help: "Тики планировщика по задаче и результату",
+  labelNames: ["task", "result"] as const, registers: [registry],
+});
+
+export const schedulerDuration = new Histogram({
+  name: "x_scheduler_task_duration_seconds", help: "Длительность фоновой задачи планировщика",
+  labelNames: ["task"] as const,
+  buckets: [1, 5, 15, 30, 60, 120, 300, 900, 3600], registers: [registry],
+});
+
+export const schedulerRunning = new Gauge({
+  name: "x_scheduler_running", help: "1 если планировщик работает, 0 при завершении", registers: [registry],
+});
+
+schedulerRunning.set(1);
+
+export const httpRequests = new Counter({
+  name: "x_http_requests_total", help: "HTTP-запросы дашборда/метрик",
+  labelNames: ["service", "route", "status"] as const, registers: [registry],
+});
+
+export const httpRequestDuration = new Histogram({
+  name: "x_http_request_duration_seconds", help: "Длительность HTTP-запросов",
+  labelNames: ["service", "route"] as const,
+  buckets: [0.005, 0.025, 0.1, 0.5, 1, 3, 10], registers: [registry],
+});
+
+export const scrapeDuration = new Histogram({
+  name: "x_scrape_duration_seconds", help: "Длительность сбора (Playwright) по виду задачи",
+  labelNames: ["kind"] as const,
+  buckets: [1, 5, 15, 30, 60, 120, 300], registers: [registry],
 });
 
 export function sanitizeLabel(v: string): string {

@@ -1,4 +1,4 @@
-import { chromium, Page } from "playwright";
+import { chromium, Page, BrowserContextOptions } from "playwright";
 import { getConfig } from "./config";
 
 export interface RawTweet {
@@ -8,9 +8,12 @@ export interface RawTweet {
   isVerified: boolean; postedAt: number | null;
 }
 
+/** Формат in-memory storage state, который принимает Playwright. */
+export type ScrapeAuthState = Exclude<BrowserContextOptions["storageState"], string>;
+
 export interface ScrapeOptions {
   // Playwright accepts an in-memory storage state; do not write decrypted cookies to disk.
-  authState: any;
+  authState: ScrapeAuthState;
   proxy?: { server: string; username?: string; password?: string };
   userAgent?: string;
   timezone?: string;
@@ -39,6 +42,7 @@ function detectError(pageUrl: string, pageText: string): string | null {
 async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T>): Promise<T> {
   const cfg = getConfig();
   const headless = opts.headless ?? cfg.twitter.headless;
+  const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
   const browser = await chromium.launch({ headless, slowMo: headless ? 0 : 80 });
   try {
     const context = await browser.newContext({
@@ -55,18 +59,35 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
       return route.continue();
     });
     const page = await context.newPage();
-    return await fn(page);
+    page.setDefaultTimeout(Math.max(5_000, Math.min(cfg.twitter.requestTimeoutMs, deadline - Date.now())));
+    // Общий дедлайн стратегии: даже если отдельные waitForSelector зависли,
+    // вся операция укладывается в collectionDeadlineMs.
+    return await Promise.race([
+      fn(page),
+      new Promise<T>((_, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("collection deadline exceeded")),
+          Math.max(1, deadline - Date.now()),
+        );
+        timer.unref?.();
+      }),
+    ]);
   } finally {
     await browser.close();
   }
 }
 
-async function collectArticles(page: Page, limit: number): Promise<RawTweet[]> {
+async function collectArticles(page: Page, limit: number, deadlineMs: number): Promise<RawTweet[]> {
   const seen = new Set<string>();
   const tweets: RawTweet[] = [];
   let stale = 0;
 
   while (tweets.length < limit && stale < 3) {
+    // Общий дедлайн на весь скролл: страница не может «залипнуть» навсегда.
+    if (Date.now() > deadlineMs) {
+      if (tweets.length === 0) throw new Error("scrape deadline exceeded before any tweets were collected");
+      break;
+    }
     const batch = await page.locator('article[data-testid="tweet"]').evaluateAll(
       (articles) => articles.map((article): RawTweet | null => {
         const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() || '';
@@ -123,6 +144,16 @@ async function collectArticles(page: Page, limit: number): Promise<RawTweet[]> {
   return tweets;
 }
 
+async function waitForTweetsOrEmpty(page: Page, timeoutMs: number): Promise<void> {
+  // Таймаут не глотаем молча: если ни твитов, ни emptyState — страница, скорее
+  // всего, не догрузилась, и это нужно отличить от «твитов действительно нет».
+  try {
+    await page.waitForSelector('article[data-testid="tweet"], [data-testid="emptyState"]', { timeout: timeoutMs });
+  } catch {
+    /* решает вызывающий код через состояние страницы */
+  }
+}
+
 export async function searchTweets(
   query: string,
   opts: ScrapeOptions & { limit?: number; sort?: "top" | "latest" }
@@ -134,12 +165,18 @@ export async function searchTweets(
   const url = `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=${mode}`;
 
   return withBrowser(opts, async (page) => {
+    const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
-    await page.waitForSelector('article[data-testid="tweet"], [data-testid="emptyState"]', { timeout: 15_000 }).catch(() => {});
+    await waitForTweetsOrEmpty(page, Math.min(15_000, cfg.twitter.requestTimeoutMs));
     const text = await page.locator("body").innerText().catch(() => "");
     const err = detectError(page.url(), text);
     if (err) throw new Error(err);
-    return collectArticles(page, limit);
+    const tweets = await collectArticles(page, limit, deadline);
+    if (tweets.length === 0) {
+      const hasEmptyState = await page.locator('[data-testid="emptyState"]').count() > 0;
+      if (!hasEmptyState) throw new Error("search results did not load — no tweets and no empty state");
+    }
+    return tweets;
   });
 }
 
@@ -152,12 +189,13 @@ export async function fetchUserTimeline(
   const url = `https://x.com/${handle}`;
 
   return withBrowser(opts, async (page) => {
+    const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
-    await page.waitForSelector('article[data-testid="tweet"]', { timeout: 15_000 }).catch(() => {});
+    await waitForTweetsOrEmpty(page, Math.min(15_000, cfg.twitter.requestTimeoutMs));
     const text = await page.locator("body").innerText().catch(() => "");
     const err = detectError(page.url(), text);
     if (err) throw new Error(err);
-    const tweets = await collectArticles(page, limit);
+    const tweets = await collectArticles(page, limit, deadline);
     if (tweets.length === 0) {
       const hasEmptyState = await page.locator('[data-testid="emptyState"]').count() > 0;
       if (!hasEmptyState) throw new Error("empty timeline — possibly shadowbanned session");

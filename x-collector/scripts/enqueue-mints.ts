@@ -1,28 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PublicKey } from "@solana/web3.js";
-import { enqueueTask } from "../lib/trade/tasks";
+import { enqueueTasks } from "../lib/trade/tasks";
 import { closePool } from "../lib/trade/pg";
+import { parseArgv, intFlag, enumFlag } from "../lib/trade/cli";
 
 function parseArgs(argv: string[]) {
-  const flags = new Map<string, string>();
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (!arg.startsWith("--")) throw new Error("Unexpected argument: " + arg);
-    const [key, ...inline] = arg.slice(2).split("=");
-    const value = inline.length
-      ? inline.join("=")
-      : argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : "true";
-    flags.set(key, value);
-  }
-  const input = flags.get("input") ?? flags.get("i");
+  const { flags } = parseArgv(argv);
+  const input = flags.input ?? flags.i;
   if (!input) throw new Error("Usage: npm run x-collector:search-mints -- --input path\\to\\mints.txt [--limit 50] [--sort latest|top]");
-  const limit = Number(flags.get("limit") ?? 50);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("--limit must be an integer from 1 to 500");
-  const sort = flags.get("sort") ?? "latest";
-  if (sort !== "latest" && sort !== "top") throw new Error("--sort must be latest or top");
-  const priority = Number(flags.get("priority") ?? 0);
-  if (!Number.isInteger(priority) || priority < -100 || priority > 100) throw new Error("--priority must be an integer from -100 to 100");
+  const limit = intFlag(flags, "limit", 50, 1, 500);
+  const sort = enumFlag(flags, "sort", "latest", ["latest", "top"] as const);
+  const priority = intFlag(flags, "priority", 0, -100, 100);
   return { inputPath: path.resolve(process.cwd(), input), limit, sort, priority };
 }
 
@@ -47,22 +36,27 @@ function readMints(filePath: string): string[] {
   return [...mints];
 }
 
+const BATCH = 500;
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const mints = readMints(options.inputPath);
   let queued = 0;
   let alreadyQueued = 0;
-  for (const [index, mint] of mints.entries()) {
-    const id = await enqueueTask({
-      kind: "search",
+
+  // Пакетная вставка: один round-trip на BATCH минтов вместо одного на минт.
+  for (let offset = 0; offset < mints.length; offset += BATCH) {
+    const chunk = mints.slice(offset, offset + BATCH);
+    const r = await enqueueTasks(chunk.map((mint) => ({
+      kind: "search" as const,
       payload: { query: mint, limit: options.limit, sort: options.sort },
       mint,
       priority: options.priority,
       dedup: true,
-    });
-    if (id == null) alreadyQueued += 1;
-    else queued += 1;
-    console.log("[x-collector] " + (index + 1) + "/" + mints.length + " " + mint + ": " + (id == null ? "already queued" : "task " + id));
+    })));
+    queued += r.queued;
+    alreadyQueued += r.duplicates;
+    console.log(`[x-collector] ${Math.min(offset + BATCH, mints.length)}/${mints.length} queued=${r.queued} alreadyQueued=${r.duplicates}`);
   }
   console.log("[x-collector] done: queued=" + queued + ", alreadyQueued=" + alreadyQueued + ", total=" + mints.length);
 }

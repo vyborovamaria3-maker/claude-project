@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TGIngest</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+--bg:#05050a;--surface:rgba(255,255,255,.03);--surface2:rgba(255,255,255,.06);--surface3:rgba(255,255,255,.09);
+--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);
+--text:#fff;--text2:rgba(255,255,255,.6);--text3:rgba(255,255,255,.3);
+--c1:#6366f1;--c2:#8b5cf6;--c3:#a78bfa;--c4:#c4b5fd;
+--g1:#06b6d4;--g2:#22d3ee;--g3:#67e8f9;
+--p1:#f43f5e;--p2:#fb7185;
+--y1:#f59e0b;--y2:#fbbf24;
+--gr1:#10b981;--gr2:#34d399;
+}
+html{font-size:14px}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+::selection{background:var(--c1)}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
+
+/* Animated background */
+.bg{position:fixed;top:0;left:0;right:0;bottom:0;z-index:-1;overflow:hidden}
+.bg-orb{position:absolute;border-radius:50%;filter:blur(120px);opacity:.15;animation:float 20s ease-in-out infinite}
+.bg-orb:nth-child(1){width:600px;height:600px;background:var(--c1);top:-200px;left:-100px;animation-delay:0s}
+.bg-orb:nth-child(2){width:500px;height:500px;background:var(--g1);bottom:-150px;right:-100px;animation-delay:-7s}
+.bg-orb:nth-child(3){width:400px;height:400px;background:var(--p1);top:50%;left:50%;transform:translate(-50%,-50%);animation-delay:-14s}
+@keyframes float{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(50px,-30px) scale(1.1)}66%{transform:translate(-30px,50px) scale(.9)}}
+
+/* Grid pattern */
+.grid-bg{position:fixed;top:0;left:0;right:0;bottom:0;z-index:-1;background-image:linear-gradient(rgba(255,255,255,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.02) 1px,transparent 1px);background-size:60px 60px}
+
+/* Layout */
+.app{display:grid;grid-template-columns:280px 1fr;min-height:100vh;position:relative}
+
+/* Sidebar */
+.sidebar{background:rgba(10,10,20,.8);backdrop-filter:blur(40px);border-right:1px solid var(--border);padding:28px 20px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:10}
+.logo{display:flex;align-items:center;gap:12px;margin-bottom:36px;padding:0 4px}
+.logo-icon{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--c1),var(--g1));display:flex;align-items:center;justify-content:center;font-weight:900;font-size:20px;color:#fff;box-shadow:0 8px 32px rgba(99,102,241,.3)}
+.logo-text{font-size:22px;font-weight:800;background:linear-gradient(135deg,#fff 0%,rgba(255,255,255,.6) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+
+.nav-section{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--text3);padding:0 12px;margin:24px 0 12px}
+.nav-item{display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:12px;color:var(--text2);cursor:pointer;transition:all .2s;font-size:14px;font-weight:500;position:relative;margin-bottom:2px}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:linear-gradient(135deg,rgba(99,102,241,.15),rgba(6,182,212,.1));color:#fff;box-shadow:inset 0 0 0 1px rgba(99,102,241,.2)}
+.nav-item.active::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:20px;border-radius:0 4px 4px 0;background:linear-gradient(180deg,var(--c1),var(--g1))}
+.nav-icon{width:20px;height:20px;opacity:.7}
+.nav-item.active .nav-icon{opacity:1}
+.nav-badge{margin-left:auto;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:linear-gradient(135deg,var(--c1),var(--g1));color:#fff}
+
+.sidebar-footer{margin-top:auto;padding-top:20px;border-top:1px solid var(--border)}
+.user-card{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:var(--surface);cursor:pointer;transition:.2s}
+.user-card:hover{background:var(--surface2)}
+.user-avatar{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--c2),var(--g1));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.user-info{flex:1}.user-name{font-size:13px;font-weight:600}.user-role{font-size:11px;color:var(--text3)}
+
+/* Main */
+.main{display:flex;flex-direction:column;min-height:100vh}
+.topbar{padding:20px 40px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:rgba(5,5,10,.6);backdrop-filter:blur(40px);position:sticky;top:0;z-index:5}
+.topbar-title{font-size:24px;font-weight:800;background:linear-gradient(135deg,#fff 0%,var(--c4) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.topbar-actions{display:flex;gap:12px;align-items:center}
+.status{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:10px;background:var(--surface);font-size:12px;font-weight:600}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--gr1);box-shadow:0 0 12px var(--gr1);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.9)}}
+.btn{padding:10px 20px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px;font-family:inherit}
+.btn:hover{background:var(--surface2);border-color:var(--border2);transform:translateY(-1px)}
+.btn-glow{background:linear-gradient(135deg,var(--c1),var(--g1));border:none;color:#fff;box-shadow:0 4px 24px rgba(99,102,241,.3)}
+.btn-glow:hover{box-shadow:0 8px 32px rgba(99,102,241,.4);transform:translateY(-2px)}
+
+.content{flex:1;padding:32px 40px}
+.page{display:none;animation:fadeUp .4s}.page.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+
+/* Cards */
+.card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:20px;padding:28px;margin-bottom:20px;backdrop-filter:blur(20px);transition:all .3s;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.1),transparent)}
+.card:hover{border-color:var(--border2);transform:translateY(-2px);box-shadow:0 16px 48px rgba(0,0,0,.3)}
+.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.card-title{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text2)}
+.badge{padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;background:linear-gradient(135deg,var(--c1),var(--g1));color:#fff}
+.badge.success{background:linear-gradient(135deg,var(--gr1),#059669)}
+.badge.warning{background:linear-gradient(135deg,var(--y1),#d97706)}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+.stat{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:16px;padding:24px;position:relative;overflow:hidden;transition:all .3s;cursor:default}
+.stat::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;opacity:0;transition:.3s}
+.stat:nth-child(1)::after{background:linear-gradient(90deg,var(--c1),var(--c2))}
+.stat:nth-child(2)::after{background:linear-gradient(90deg,var(--gr1),var(--g1))}
+.stat:nth-child(3)::after{background:linear-gradient(90deg,var(--g1),var(--c1))}
+.stat:nth-child(4)::after{background:linear-gradient(90deg,var(--y1),var(--p1))}
+.stat:hover{transform:translateY(-4px);box-shadow:0 12px 40px rgba(0,0,0,.3)}
+.stat:hover::after{opacity:1}
+.stat-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.stat-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:18px}
+.stat-icon.purple{background:rgba(99,102,241,.15);color:var(--c3)}
+.stat-icon.green{background:rgba(16,185,129,.15);color:var(--gr2)}
+.stat-icon.cyan{background:rgba(6,182,212,.15);color:var(--g2)}
+.stat-icon.orange{background:rgba(245,158,11,.15);color:var(--y2)}
+.stat-change{font-size:11px;font-weight:700;padding:4px 8px;border-radius:6px;display:flex;align-items:center;gap:4px}
+.stat-change.up{background:rgba(16,185,129,.1);color:var(--gr2)}
+.stat-change.down{background:rgba(244,63,94,.1);color:var(--p2)}
+.stat-value{font-size:36px;font-weight:900;letter-spacing:-1px;margin-bottom:4px;background:linear-gradient(135deg,#fff 0%,rgba(255,255,255,.5) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.stat-label{font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:600}
+
+/* Charts */
+.charts{display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-bottom:28px}
+.chart-wrap{position:relative;height:220px}
+.chart-bars{display:flex;align-items:flex-end;gap:8px;height:100%;padding:0 8px}
+.chart-bar{flex:1;border-radius:8px 8px 0 0;transition:all .3s;cursor:pointer;position:relative;min-width:0}
+.chart-bar:hover{filter:brightness(1.2);transform:scaleY(1.03);transform-origin:bottom}
+.chart-bar .tip{position:absolute;top:-36px;left:50%;transform:translateX(-50%);background:var(--surface3);border:1px solid var(--border2);padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;white-space:nowrap;opacity:0;pointer-events:none;transition:.2s}
+.chart-bar:hover .tip{opacity:1}
+.chart-labels{display:flex;justify-content:space-between;margin-top:12px;padding:0 8px}
+.chart-label{font-size:11px;color:var(--text3);font-weight:500}
+
+/* Donut */
+.donut-box{display:flex;align-items:center;gap:28px}
+.donut{position:relative;width:140px;height:140px}
+.donut canvas{width:140px;height:140px}
+.donut-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.donut-center .val{font-size:28px;font-weight:900;background:linear-gradient(135deg,#fff,var(--c4));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.donut-center .lbl{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px}
+.legend{display:flex;flex-direction:column;gap:12px}
+.legend-item{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500}
+.legend-dot{width:12px;height:12px;border-radius:4px}
+.legend-val{margin-left:auto;font-weight:700;color:var(--text2)}
+
+/* Table */
+.table{width:100%;border-collapse:separate;border-spacing:0}
+.table th{padding:14px 20px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)}
+.table td{padding:14px 20px;font-size:13px;border-bottom:1px solid var(--border)}
+.table tr:last-child td{border-bottom:none}
+.table tr:hover td{background:var(--surface)}
+.table .tag{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:8px;font-size:11px;font-weight:700}
+.tag.green{background:rgba(16,185,129,.1);color:var(--gr2)}
+.tag.red{background:rgba(244,63,94,.1);color:var(--p2)}
+.tag.yellow{background:rgba(245,158,11,.1);color:var(--y2)}
+.tag.blue{background:rgba(99,102,241,.1);color:var(--c3)}
+
+/* Form */
+.form-group{margin-bottom:20px}
+.form-label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:8px}
+.input{width:100%;padding:12px 16px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;transition:all .2s}
+.input:focus{outline:none;border-color:var(--c1);box-shadow:0 0 0 4px rgba(99,102,241,.1)}
+.input::placeholder{color:var(--text3)}
+textarea.input{resize:vertical;min-height:80px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+
+/* Progress */
+.progress{height:8px;background:var(--surface2);border-radius:4px;overflow:hidden}
+.progress-bar{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--c1),var(--g1));transition:width .5s ease}
+
+/* Toast */
+.toast-box{position:fixed;top:24px;right:24px;z-index:1000;display:flex;flex-direction:column;gap:8px}
+.toast{padding:14px 20px;border-radius:14px;background:rgba(20,20,30,.95);border:1px solid var(--border2);backdrop-filter:blur(20px);box-shadow:0 16px 48px rgba(0,0,0,.4);display:flex;align-items:center;gap:12px;animation:toastIn .3s;min-width:300px}
+.toast.ok{border-color:var(--gr1)}.toast.err{border-color:var(--p1)}
+@keyframes toastIn{from{opacity:0;transform:translateX(80px)}to{opacity:1;transform:translateX(0)}}
+.toast-icon{font-size:18px}.toast-msg{font-size:13px;font-weight:500;flex:1}
+
+/* Activity */
+.activity{display:flex;flex-direction:column;gap:4px}
+.act-item{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border-radius:12px;transition:.2s}
+.act-item:hover{background:var(--surface)}
+.act-dot{width:10px;height:10px;border-radius:50%;margin-top:5px;flex-shrink:0}
+.act-dot.green{background:var(--gr1);box-shadow:0 0 8px var(--gr1)}
+.act-dot.blue{background:var(--g1);box-shadow:0 0 8px var(--g1)}
+.act-dot.yellow{background:var(--y1);box-shadow:0 0 8px var(--y1)}
+.act-dot.red{background:var(--p1);box-shadow:0 0 8px var(--p1)}
+.act-text{font-size:13px;color:var(--text2);line-height:1.5}
+.act-time{font-size:11px;color:var(--text3);margin-top:2px}
+
+/* Tabs */
+.tabs{display:flex;gap:4px;margin-bottom:24px;padding:4px;background:var(--surface);border-radius:14px;border:1px solid var(--border)}
+.tab{padding:10px 20px;border-radius:10px;font-size:13px;font-weight:600;color:var(--text3);cursor:pointer;transition:all .2s}
+.tab:hover{color:var(--text2)}
+.tab.active{background:linear-gradient(135deg,var(--c1),var(--g1));color:#fff;box-shadow:0 4px 16px rgba(99,102,241,.3)}
+
+/* Import card */
+.import-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.import-result{padding:24px;background:var(--surface);border-radius:16px;border:1px solid var(--border)}
+.import-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+.import-stat{text-align:center;padding:16px;background:var(--surface2);border-radius:12px}
+.import-stat .val{font-size:24px;font-weight:900}
+.import-stat .lbl{font-size:11px;color:var(--text3);margin-top:4px}
+
+/* Empty */
+.empty{text-align:center;padding:48px;color:var(--text3)}
+.empty-icon{font-size:48px;margin-bottom:16px;opacity:.3}
+
+/* Source items */
+.source-item{transition:.2s}
+.source-item:hover{background:var(--surface2)!important}
+.source-item input{cursor:default}
+.source-item input:focus{outline:none}
+
+/* Filter tabs */
+.ftab{animation:fadeUp .3s}
+.ftab.active{display:block}
+
+/* Import grid */
+.import-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+
+/* Code block */
+.code{padding:16px 20px;background:var(--surface);border:1px solid var(--border);border-radius:12px;font-family:'Fira Code',monospace;font-size:13px;line-height:1.7;color:var(--c4);overflow-x:auto}
+
+/* Animations */
+.fade-in{animation:fadeUp .4s}
+.slide-in{animation:slideIn .3s}
+@keyframes slideIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+
+<div class="bg">
+  <div class="bg-orb"></div>
+  <div class="bg-orb"></div>
+  <div class="bg-orb"></div>
+</div>
+<div class="grid-bg"></div>
+
+<div class="app">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">T</div>
+      <div class="logo-text">TGIngest</div>
+    </div>
+
+    <div class="nav-section">Main</div>
+    <div class="nav-item active" data-page="dashboard" onclick="go('dashboard')">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      Dashboard
+    </div>
+    <div class="nav-item" data-page="channels" onclick="go('channels')">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72"/></svg>
+      Channels
+      <span class="nav-badge">4</span>
+    </div>
+    <div class="nav-item" data-page="messages" onclick="go('messages')">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Messages
+    </div>
+    <div class="nav-item" data-page="import" onclick="go('import')">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Import
+    </div>
+
+    <div class="nav-section">Intelligence</div>
+    <div class="nav-item" data-page="ai" onclick="go('ai')">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      AI Analytics
+    </div>
+
+    <div class="nav-section">System</div>
+    <div class="nav-item" data-page="settings" onclick="go('settings')">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="user-card">
+        <div class="user-avatar">D</div>
+        <div class="user-info">
+          <div class="user-name">Admin</div>
+          <div class="user-role">Full Access</div>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="page-title">Dashboard</div>
+      <div class="topbar-actions">
+        <div class="status">
+          <div class="status-dot"></div>
+          System Online
+        </div>
+        <button class="btn btn-glow" onclick="toast('Synced!')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Sync
+        </button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- DASHBOARD -->
+      <div class="page active" id="page-dashboard">
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-top">
+              <div class="stat-icon purple"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+              <div class="stat-change up"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg> +12.5%</div>
+            </div>
+            <div class="stat-value">12,847</div>
+            <div class="stat-label">Messages Collected</div>
+          </div>
+          <div class="stat">
+            <div class="stat-top">
+              <div class="stat-icon green"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+              <div class="stat-change up"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg> +8.3%</div>
+            </div>
+            <div class="stat-value">3,456</div>
+            <div class="stat-label">Members Imported</div>
+          </div>
+          <div class="stat">
+            <div class="stat-top">
+              <div class="stat-icon cyan"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72"/></svg></div>
+            </div>
+            <div class="stat-value">4</div>
+            <div class="stat-label">Active Channels</div>
+          </div>
+          <div class="stat">
+            <div class="stat-top">
+              <div class="stat-icon orange"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+            </div>
+            <div class="stat-value">42</div>
+            <div class="stat-label">AI Analyses</div>
+          </div>
+        </div>
+
+        <div class="charts">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Messages Over Time</span>
+              <span class="badge">7 Days</span>
+            </div>
+            <div class="chart-wrap">
+              <div class="chart-bars" id="chart"></div>
+            </div>
+            <div class="chart-labels" id="chart-labels"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Sentiment</span>
+            </div>
+            <div class="donut-box">
+              <div class="donut"><canvas id="donut" width="140" height="140"></canvas>
+                <div class="donut-center"><div class="val">68%</div><div class="lbl">Positive</div></div>
+              </div>
+              <div class="legend">
+                <div class="legend-item"><div class="legend-dot" style="background:var(--gr1)"></div>Positive<span class="legend-val" id="lp">68%</span></div>
+                <div class="legend-item"><div class="legend-dot" style="background:var(--y1)"></div>Neutral<span class="legend-val" id="ln">24%</span></div>
+                <div class="legend-item"><div class="legend-dot" style="background:var(--p1)"></div>Negative<span class="legend-val" id="lne">8%</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Recent Activity</span>
+            <button class="btn" onclick="toast('Refreshed')">Refresh</button>
+          </div>
+          <div class="activity">
+            <div class="act-item"><div class="act-dot green"></div><div><div class="act-text">Imported <strong>245 members</strong> from @crypto_community</div><div class="act-time">5 minutes ago</div></div></div>
+            <div class="act-item"><div class="act-dot blue"></div><div><div class="act-text">AI analysis completed for <strong>@tech_updates</strong></div><div class="act-time">12 minutes ago</div></div></div>
+            <div class="act-item"><div class="act-dot yellow"></div><div><div class="act-text">Flood wait detected — pausing for <strong>30s</strong></div><div class="act-time">18 minutes ago</div></div></div>
+            <div class="act-item"><div class="act-dot green"></div><div><div class="act-text">Collected <strong>89 new messages</strong> from @dev_community</div><div class="act-time">25 minutes ago</div></div></div>
+            <div class="act-item"><div class="act-dot red"></div><div><div class="act-text">Channel <strong>@old_channel</strong> became unavailable</div><div class="act-time">1 hour ago</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHANNELS -->
+      <div class="page" id="page-channels">
+        <div class="stats" style="margin-bottom:24px">
+          <div class="stat"><div class="stat-top"><div class="stat-icon green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div></div><div class="stat-value">3</div><div class="stat-label">Active</div></div>
+          <div class="stat"><div class="stat-top"><div class="stat-icon yellow"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg></div></div><div class="stat-value">1</div><div class="stat-label">Paused</div></div>
+          <div class="stat"><div class="stat-top"><div class="stat-icon purple"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div></div><div class="stat-value">847</div><div class="stat-label">Messages Today</div></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Monitored Channels</span>
+            <button class="btn btn-glow" onclick="toast('Add channel')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add Channel</button>
+          </div>
+          <table class="table">
+            <thead><tr><th>Channel</th><th>Status</th><th>Messages</th><th>Last Sync</th><th>Actions</th></tr></thead>
+            <tbody>
+              <tr><td><strong>@crypto_news</strong><br><span style="color:var(--text3);font-size:11px">Crypto & Blockchain</span></td><td><span class="tag green">Active</span></td><td>4,291</td><td>2 min ago</td><td><button class="btn" style="padding:6px 12px">Pause</button></td></tr>
+              <tr><td><strong>@tech_updates</strong><br><span style="color:var(--text3);font-size:11px">Technology News</span></td><td><span class="tag green">Active</span></td><td>2,847</td><td>5 min ago</td><td><button class="btn" style="padding:6px 12px">Pause</button></td></tr>
+              <tr><td><strong>@dev_community</strong><br><span style="color:var(--text3);font-size:11px">Developers</span></td><td><span class="tag green">Active</span></td><td>5,709</td><td>1 min ago</td><td><button class="btn" style="padding:6px 12px">Pause</button></td></tr>
+              <tr><td><strong>@old_archive</strong><br><span style="color:var(--text3);font-size:11px">Archived</span></td><td><span class="tag yellow">Paused</span></td><td>1,023</td><td>3 days ago</td><td><button class="btn" style="padding:6px 12px">Resume</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- MESSAGES -->
+      <div class="page" id="page-messages">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Message Browser</span>
+            <div style="display:flex;gap:8px">
+              <select class="input" style="width:auto;padding:8px 32px 8px 12px"><option>All Channels</option><option>@crypto_news</option><option>@tech_updates</option></select>
+              <select class="input" style="width:auto;padding:8px 32px 8px 12px"><option>Newest</option><option>Oldest</option></select>
+            </div>
+          </div>
+          <table class="table">
+            <thead><tr><th>#</th><th>Channel</th><th>Message</th><th>Sentiment</th><th>Time</th></tr></thead>
+            <tbody>
+              <tr><td>1042</td><td>@crypto_news</td><td>BTC вырос до $95,000! Новый ATH...</td><td><span class="tag green">Positive</span></td><td>2 min</td></tr>
+              <tr><td>1041</td><td>@tech_updates</td><td>Apple представила MacBook Pro с M4...</td><td><span class="tag yellow">Neutral</span></td><td>5 min</td></tr>
+              <tr><td>1040</td><td>@dev_community</td><td>Python 3.13 с поддержкой JIT...</td><td><span class="tag green">Positive</span></td><td>8 min</td></tr>
+              <tr><td>1039</td><td>@crypto_news</td><td>Ethereum gas fees снова выросли...</td><td><span class="tag red">Negative</span></td><td>12 min</td></tr>
+              <tr><td>1038</td><td>@tech_updates</td><td>Google анонсировал Gemini 2.0...</td><td><span class="tag green">Positive</span></td><td>15 min</td></tr>
+              <tr><td>1037</td><td>@dev_community</td><td>Rust 2024 edition вышел...</td><td><span class="tag green">Positive</span></td><td>18 min</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- IMPORT -->
+      <div class="page" id="page-import">
+        <!-- Step 1: Select Target -->
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <span class="card-title">Step 1: Target Channel (Your Channel)</span>
+            <span class="badge success">Admin Required</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Select or enter target channel</label>
+            <div style="display:flex;gap:8px">
+              <select class="input" id="target-select" style="flex:1;padding:12px 36px 12px 16px" onchange="document.getElementById('target-input').value=this.value">
+                <option value="">-- Select saved channel --</option>
+                <option value="@my_crypto_channel">@my_crypto_channel</option>
+                <option value="@my_tech_channel">@my_tech_channel</option>
+                <option value="@my_community">@my_community</option>
+              </select>
+              <input class="input" id="target-input" placeholder="Or type @channel_name or channel ID" style="flex:2">
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Select Sources -->
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <span class="card-title">Step 2: Source Channels (Where to get users)</span>
+            <div style="display:flex;gap:8px">
+              <button class="btn" onclick="document.getElementById('file-input').click()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Import File
+              </button>
+              <input type="file" id="file-input" accept=".json,.txt,.csv,.xlsx" style="display:none" onchange="handleFileImport(event)">
+            </div>
+          </div>
+
+          <!-- Source list -->
+          <div id="source-list" style="margin-bottom:16px">
+            <div class="source-item" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--surface);border-radius:12px;margin-bottom:8px">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <input class="input" value="@crypto_news" style="flex:1;background:transparent;border:none;padding:0;font-weight:600" readonly>
+              <span class="tag green">Public</span>
+              <span style="font-size:12px;color:var(--text3)">~4,291 members</span>
+              <button class="btn" style="padding:6px 10px;color:var(--p2)" onclick="this.closest('.source-item').remove()">✕</button>
+            </div>
+          </div>
+
+          <!-- Add source -->
+          <div style="display:flex;gap:8px;margin-bottom:16px">
+            <input class="input" id="new-source" placeholder="Add @channel or numeric ID" style="flex:1">
+            <select class="input" id="source-type" style="width:120px;padding:12px 36px 12px 16px">
+              <option value="public">Public</option>
+              <option value="group">Group</option>
+              <option value="supergroup">Supergroup</option>
+            </select>
+            <button class="btn btn-glow" onclick="addSource()">Add</button>
+          </div>
+
+          <!-- File import preview -->
+          <div id="file-preview" style="display:none">
+            <div style="padding:12px;background:var(--surface);border-radius:12px;border:1px dashed var(--border2)">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-size:12px;font-weight:600;color:var(--text2)" id="file-name">channels.json</span>
+                <span style="font-size:12px;color:var(--text3)" id="file-count">12 channels found</span>
+              </div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Preview:</div>
+              <div style="font-family:monospace;font-size:11px;color:var(--c4);max-height:100px;overflow-y:auto;background:var(--bg);padding:8px;border-radius:8px" id="file-content"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Filters -->
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <span class="card-title">Step 3: User Filters (Activity Analysis)</span>
+            <span class="badge">Smart Filter</span>
+          </div>
+
+          <div class="tabs" style="margin-bottom:20px">
+            <div class="tab active" onclick="filterTab('activity',this)">Activity</div>
+            <div class="tab" onclick="filterTab('quality',this)">Quality</div>
+            <div class="tab" onclick="filterTab('limits',this)">Limits</div>
+            <div class="tab" onclick="filterTab('stealth',this)">Stealth</div>
+          </div>
+
+          <!-- Activity Filter -->
+          <div class="ftab active" id="ftab-activity">
+            <div style="padding:16px;background:var(--surface);border-radius:12px;margin-bottom:16px">
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--gr1)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <div>
+                  <div style="font-weight:700;font-size:14px">Activity Analysis</div>
+                  <div style="font-size:12px;color:var(--text3)">Only invite users who posted in the last N days</div>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Active in last (days)</label>
+                  <input class="input" id="filter-days" type="number" value="30" min="1" max="365">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Min messages in source</label>
+                  <input class="input" id="filter-min-msgs" type="number" value="5" min="0">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quality Filter -->
+          <div class="ftab" id="ftab-quality" style="display:none">
+            <div style="padding:16px;background:var(--surface);border-radius:12px;margin-bottom:16px">
+              <div style="font-weight:700;font-size:14px;margin-bottom:16px">User Quality Filters</div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Min account age (days)</label>
+                  <input class="input" type="number" value="30" min="0">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Max account age (days)</label>
+                  <input class="input" type="number" value="0" min="0" placeholder="0 = no limit">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Min subscriber count</label>
+                  <input class="input" type="number" value="0" min="0">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Require profile photo</label>
+                  <select class="input" style="padding:12px 36px 12px 16px"><option>No</option><option>Yes</option></select>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Exclude bots</label>
+                  <select class="input" style="padding:12px 36px 12px 16px"><option>Yes</option><option>No</option></select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Exclude premium users</label>
+                  <select class="input" style="padding:12px 36px 12px 16px"><option>No</option><option>Yes</option></select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Limits -->
+          <div class="ftab" id="ftab-limits" style="display:none">
+            <div style="padding:16px;background:var(--surface);border-radius:12px;margin-bottom:16px">
+              <div style="font-weight:700;font-size:14px;margin-bottom:16px">Import Limits</div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Total limit (0 = all)</label>
+                  <input class="input" id="filter-total" type="number" value="500" min="0">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Per-batch limit</label>
+                  <input class="input" id="filter-batch" type="number" value="50" min="1" max="200">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Daily limit</label>
+                  <input class="input" type="number" value="200" min="0" placeholder="0 = unlimited">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Invite priority</label>
+                  <select class="input" style="padding:12px 36px 12px 16px"><option>Most active first</option><option>Random</option><option>Newest accounts first</option><option>Oldest accounts first</option></select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stealth -->
+          <div class="ftab" id="ftab-stealth" style="display:none">
+            <div style="padding:16px;background:var(--surface);border-radius:12px;margin-bottom:16px">
+              <div style="font-weight:700;font-size:14px;margin-bottom:16px">Stealth Settings</div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Delay between invites (ms)</label>
+                  <input class="input" id="stealth-delay" type="number" value="100" min="0" max="5000">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Jitter (random ± ms)</label>
+                  <input class="input" type="number" value="50" min="0" max="1000">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Pause after N invites</label>
+                  <input class="input" type="number" value="10" min="1" max="100">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Pause duration (seconds)</label>
+                  <input class="input" type="number" value="10" min="1" max="300">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Flood cooldown (seconds)</label>
+                  <input class="input" type="number" value="30" min="10" max="600">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Humanize behavior</label>
+                  <select class="input" style="padding:12px 36px 12px 16px"><option>Enabled</option><option>Disabled</option></select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: Summary & Start -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Step 4: Import Summary</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+            <div style="padding:16px;background:var(--surface);border-radius:12px;text-align:center">
+              <div style="font-size:24px;font-weight:900;color:var(--c3)" id="sum-sources">1</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:4px">Sources</div>
+            </div>
+            <div style="padding:16px;background:var(--surface);border-radius:12px;text-align:center">
+              <div style="font-size:24px;font-weight:900;color:var(--gr2)" id="sum-total">4,291</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:4px">Total Users</div>
+            </div>
+            <div style="padding:16px;background:var(--surface);border-radius:12px;text-align:center">
+              <div style="font-size:24px;font-weight:900;color:var(--y2)" id="sum-active">~2,145</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:4px">Active (~50%)</div>
+            </div>
+            <div style="padding:16px;background:var(--surface);border-radius:12px;text-align:center">
+              <div style="font-size:24px;font-weight:900;color:var(--p2)" id="sum-limit">500</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:4px">Import Limit</div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:12px">
+            <button class="btn" onclick="previewImport()" style="flex:1;justify-content:center;padding:14px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              Preview Users
+            </button>
+            <button class="btn btn-glow" onclick="startSmartImport()" style="flex:2;justify-content:center;padding:14px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Start Smart Import
+            </button>
+          </div>
+        </div>
+
+        <!-- Progress -->
+        <div class="card" id="import-active" style="display:none;margin-top:20px">
+          <div class="card-header"><span class="card-title">Import Progress</span><span class="badge" id="imp-pct">0%</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:16px">
+            <div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:4px">Current Phase</div>
+              <div style="font-size:14px;font-weight:600" id="imp-phase">Analyzing users...</div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:4px">ETA</div>
+              <div style="font-size:14px;font-weight:600" id="imp-eta">~5 min</div>
+            </div>
+          </div>
+          <div class="progress"><div class="progress-bar" id="imp-bar" style="width:0%"></div></div>
+          <div class="import-stats" style="margin-top:16px">
+            <div class="import-stat"><div class="val" style="color:var(--gr2)" id="imp-analyzed">0</div><div class="lbl">Analyzed</div></div>
+            <div class="import-stat"><div class="val" style="color:var(--c3)" id="imp-qualified">0</div><div class="lbl">Qualified</div></div>
+            <div class="import-stat"><div class="val" style="color:var(--gr2)" id="imp-inv">0</div><div class="lbl">Invited</div></div>
+            <div class="import-stat"><div class="val" style="color:var(--y2)" id="imp-skip">0</div><div class="lbl">Skipped</div></div>
+            <div class="import-stat"><div class="val" style="color:var(--p2)" id="imp-fail">0</div><div class="lbl">Failed</div></div>
+          </div>
+          <div style="margin-top:16px">
+            <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Log</div>
+            <div style="padding:12px;background:var(--bg);border-radius:8px;max-height:120px;overflow-y:auto;font-family:monospace;font-size:11px;color:var(--text2);line-height:1.8" id="imp-log">
+              <div style="color:var(--gr2)">[00:00] Starting import...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- History -->
+        <div class="card" style="margin-top:20px">
+          <div class="card-header"><span class="card-title">Import History</span></div>
+          <table class="table">
+            <thead><tr><th>Source</th><th>Target</th><th>Analyzed</th><th>Invited</th><th>Duration</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>@crypto_community</td><td>@my_channel</td><td>4,291</td><td>1,247</td><td>12m 34s</td><td><span class="tag green">Completed</span></td></tr>
+              <tr><td>@dev_groups</td><td>@my_channel</td><td>2,847</td><td>856</td><td>8m 21s</td><td><span class="tag green">Completed</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- AI -->
+      <div class="page" id="page-ai">
+        <div class="tabs">
+          <div class="tab active" onclick="aitab('sentiment',this)">Sentiment</div>
+          <div class="tab" onclick="aitab('summary',this)">Summary</div>
+          <div class="tab" onclick="aitab('topics',this)">Topics</div>
+          <div class="tab" onclick="aitab('report',this)">Report</div>
+          <div class="tab" onclick="aitab('extract',this)">Extract</div>
+        </div>
+        <div class="aitab active" id="at-sentiment">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Analyze Sentiment</span></div>
+            <div class="form-group"><label class="form-label">Text</label><textarea class="input" rows="4" placeholder="Enter text to analyze..."></textarea></div>
+            <button class="btn btn-glow" onclick="toast('Analyzed: Positive (0.87)')">Analyze</button>
+          </div>
+        </div>
+        <div class="aitab" id="at-summary" style="display:none">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Channel Summary</span></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">Channel</label><input class="input" placeholder="@channel"></div>
+              <div class="form-group"><label class="form-label">Messages</label><input class="input" type="number" value="100"></div>
+            </div>
+            <button class="btn btn-glow" onclick="toast('Summary generated')">Generate</button>
+          </div>
+        </div>
+        <div class="aitab" id="at-topics" style="display:none">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Topic Extraction</span></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">Channel</label><input class="input" placeholder="@channel"></div>
+              <div class="form-group"><label class="form-label">Top N</label><input class="input" type="number" value="10"></div>
+            </div>
+            <button class="btn btn-glow" onclick="toast('Extracted 5 topics')">Extract</button>
+          </div>
+        </div>
+        <div class="aitab" id="at-report" style="display:none">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Full Report</span></div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">Channel</label><input class="input" placeholder="@channel"></div>
+              <div class="form-group"><label class="form-label">Messages</label><input class="input" type="number" value="200"></div>
+            </div>
+            <button class="btn btn-glow" onclick="toast('Report generated')">Generate Report</button>
+          </div>
+        </div>
+        <div class="aitab" id="at-extract" style="display:none">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Entity Extraction</span></div>
+            <div class="form-group"><label class="form-label">Text</label><textarea class="input" rows="4" placeholder="Paste text with $TICKERS, @mentions, #hashtags..."></textarea></div>
+            <button class="btn btn-glow" onclick="toast('Extracted: 3 tickers, 2 mentions')">Extract</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="page" id="page-settings">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Telegram API</span></div>
+          <div class="form-group"><label class="form-label">API ID</label><input class="input" placeholder="From my.telegram.org" type="number"></div>
+          <div class="form-group"><label class="form-label">API Hash</label><input class="input" placeholder="Your API hash" type="password"></div>
+          <button class="btn btn-glow" onclick="toast('Saved')">Save</button>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">AI Provider</span></div>
+          <div class="form-group"><label class="form-label">Provider</label><select class="input" style="padding:12px 36px 12px 16px"><option>Stub (Testing)</option><option>OpenAI</option><option>Anthropic</option><option>Ollama</option></select></div>
+          <div class="form-group"><label class="form-label">API Key</label><input class="input" placeholder="sk-..." type="password"></div>
+          <button class="btn btn-glow" onclick="toast('Saved')">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-box" id="toasts"></div>
+
+<script>
+function go(p){
+  document.querySelectorAll('.page').forEach(e=>e.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(e=>e.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  document.querySelector('[data-page="'+p+'"]')?.classList.add('active');
+  const titles={dashboard:'Dashboard',channels:'Channels',messages:'Messages',import:'Import Members',ai:'AI Analytics',settings:'Settings'};
+  document.getElementById('page-title').textContent=titles[p]||p;
+}
+
+function aitab(id,el){
+  document.querySelectorAll('.aitab').forEach(e=>e.style.display='none');
+  document.querySelectorAll('.tabs .tab').forEach(e=>e.classList.remove('active'));
+  document.getElementById('at-'+id).style.display='block';
+  el.classList.add('active');
+}
+
+function toast(msg,type='ok'){
+  const t=document.createElement('div');
+  t.className='toast '+type;
+  t.innerHTML='<span class="toast-icon">'+(type==='ok'?'✓':'✗')+'</span><span class="toast-msg">'+msg+'</span>';
+  document.getElementById('toasts').appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(80px)';setTimeout(()=>t.remove(),300)},3000);
+}
+
+// Import functions
+let sources=['@crypto_news'];
+
+function addSource(){
+  const input=document.getElementById('new-source');
+  const ch=input.value.trim();
+  if(!ch)return;
+  if(sources.includes(ch)){toast('Already added','err');return}
+  sources.push(ch);
+  renderSources();
+  input.value='';
+  toast('Added '+ch);
+}
+
+function renderSources(){
+  const list=document.getElementById('source-list');
+  list.innerHTML=sources.map(s=>'<div class="source-item" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--surface);border-radius:12px;margin-bottom:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><input class="input" value="'+s+'" style="flex:1;background:transparent;border:none;padding:0;font-weight:600" readonly><span class="tag green">Public</span><span style="font-size:12px;color:var(--text3)">~'+(Math.floor(Math.random()*5000)+500).toLocaleString()+' members</span><button class="btn" style="padding:6px 10px;color:var(--p2)" onclick="removeSource(\''+s+'\')">✕</button></div>').join('');
+  document.getElementById('sum-sources').textContent=sources.length;
+  updateSummary();
+}
+
+function removeSource(ch){
+  sources=sources.filter(s=>s!==ch);
+  renderSources();
+}
+
+function handleFileImport(e){
+  const file=e.target.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=function(ev){
+    const content=ev.target.result;
+    const name=file.name;
+    let channels=[];
+    try{
+      if(name.endsWith('.json')){
+        const data=JSON.parse(content);
+        channels=Array.isArray(data)?data:(data.channels||data.source||[]);
+      }else if(name.endsWith('.csv')){
+        channels=content.split('\n').filter(l=>l.trim()).map(l=>l.split(',')[0].trim()).filter(l=>l.startsWith('@')||/^\d+$/.test(l));
+      }else{
+        channels=content.split('\n').filter(l=>l.trim()).map(l=>l.replace(/^[-*]\s*/,'').trim()).filter(l=>l.startsWith('@')||/^\d+$/.test(l));
+      }
+    }catch(err){
+      channels=content.split('\n').filter(l=>l.trim()).map(l=>l.trim()).filter(l=>l.startsWith('@')||/^\d+$/.test(l));
+    }
+    const unique=[...new Set(channels)];
+    unique.forEach(ch=>{if(!sources.includes(ch))sources.push(ch)});
+    renderSources();
+    document.getElementById('file-preview').style.display='block';
+    document.getElementById('file-name').textContent=name;
+    document.getElementById('file-count').textContent=unique.length+' channels found';
+    document.getElementById('file-content').textContent=unique.slice(0,10).join('\n')+(unique.length>10?'\n... and '+(unique.length-10)+' more':'');
+    toast('Imported '+unique.length+' channels from '+name);
+  };
+  reader.readAsText(file);
+  e.target.value='';
+}
+
+function filterTab(id,el){
+  document.querySelectorAll('.ftab').forEach(e=>e.style.display='none');
+  document.querySelectorAll('.tabs .tab').forEach(e=>e.classList.remove('active'));
+  document.getElementById('ftab-'+id).style.display='block';
+  el.classList.add('active');
+}
+
+function updateSummary(){
+  const total=sources.length*(Math.floor(Math.random()*3000)+1000);
+  const activeRate=.5;
+  const limit=parseInt(document.getElementById('filter-total')?.value)||500;
+  document.getElementById('sum-total').textContent=total.toLocaleString();
+  document.getElementById('sum-active').textContent='~'+Math.floor(total*activeRate).toLocaleString();
+  document.getElementById('sum-limit').textContent=limit.toLocaleString();
+}
+
+function previewImport(){
+  toast('Preview: Analyzing '+sources.length+' channels...');
+}
+
+function startSmartImport(){
+  const target=document.getElementById('target-input').value.trim();
+  if(!target){toast('Select target channel','err');return}
+  if(!sources.length){toast('Add source channels','err');return}
+
+  document.getElementById('import-active').style.display='block';
+  let analyzed=0,qualified=0,invited=0,skipped=0,failed=0;
+  const total=500;
+  const log=document.getElementById('imp-log');
+  log.innerHTML='<div style="color:var(--gr2)">[00:00] Starting smart import...</div>';
+
+  const phases=[
+    {msg:'Connecting to Telegram...',dur:500},
+    {msg:'Resolving source channels...',dur:800},
+    {msg:'Fetching participants...',dur:1200},
+    {msg:'Analyzing user activity...',dur:2000},
+    {msg:'Filtering active users...',dur:1000},
+    {msg:'Starting invite process...',dur:500},
+  ];
+
+  let phaseIdx=0;
+  const phaseTimer=setInterval(()=>{
+    if(phaseIdx>=phases.length){clearInterval(phaseTimer);return}
+    const p=phases[phaseIdx];
+    document.getElementById('imp-phase').textContent=p.msg;
+    log.innerHTML+='<div style="color:var(--g2)">['+String(phaseIdx).padStart(2,'0')+':00] '+p.msg+'</div>';
+    log.scrollTop=log.scrollHeight;
+    phaseIdx++;
+  },800);
+
+  let n=0;
+  const iv=setInterval(()=>{
+    n+=Math.floor(Math.random()*8)+2;
+    if(n>=total){
+      n=total;clearInterval(iv);clearInterval(phaseTimer);
+      document.getElementById('imp-phase').textContent='Completed!';
+      document.getElementById('imp-eta').textContent='Done';
+      log.innerHTML+='<div style="color:var(--gr2)">[05:00] Import completed! '+invited+' users invited.</div>';
+      toast('Import completed: '+invited+' users invited');
+    }
+    analyzed=Math.min(n,total);
+    qualified=Math.floor(analyzed*.65);
+    invited=Math.floor(qualified*.92);
+    skipped=qualified-invited;
+    failed=Math.floor(analyzed*.02);
+
+    const pct=Math.round(analyzed/total*100);
+    document.getElementById('imp-bar').style.width=pct+'%';
+    document.getElementById('imp-pct').textContent=pct+'%';
+    document.getElementById('imp-analyzed').textContent=analyzed.toLocaleString();
+    document.getElementById('imp-qualified').textContent=qualified.toLocaleString();
+    document.getElementById('imp-inv').textContent=invited.toLocaleString();
+    document.getElementById('imp-skip').textContent=skipped.toLocaleString();
+    document.getElementById('imp-fail').textContent=failed.toLocaleString();
+
+    const remaining=Math.ceil((total-analyzed)/((analyzed||1)/((Date.now()%10000)/1000)));
+    document.getElementById('imp-eta').textContent='~'+Math.max(1,Math.round(remaining/60))+' min';
+
+    if(analyzed%50===0&&analyzed>0){
+      log.innerHTML+='<div style="color:var(--text3)">['+String(Math.floor(analyzed/100)).padStart(2,'0')+':00] Analyzed '+analyzed+' users, '+invited+' invited</div>';
+      log.scrollTop=log.scrollHeight;
+    }
+  },100);
+}
+
+// Chart
+const data=[120,180,95,210,165,88,142];
+const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const mx=Math.max(...data);
+document.getElementById('chart').innerHTML=data.map((v,i)=>'<div class="chart-bar" style="height:'+v/mx*100+'%;background:linear-gradient(180deg,var(--c1),var(--g1))"><span class="tip">'+days[i]+': '+v+'</span></div>').join('');
+document.getElementById('chart-labels').innerHTML=days.map(d=>'<span class="chart-label">'+d+'</span>').join('');
+
+// Donut
+const canvas=document.getElementById('donut'),ctx=canvas.getContext('2d');
+const slices=[{v:68,c:'#10b981'},{v:24,c:'#f59e0b'},{v:8,c:'#f43f5e'}];
+let start=-Math.PI/2;
+slices.forEach(s=>{const a=s.v/100*Math.PI*2;ctx.beginPath();ctx.arc(70,70,58,start,start+a);ctx.strokeStyle=s.c;ctx.lineWidth=10;ctx.stroke();start+=a});
+</script>
+</body>
+</html>

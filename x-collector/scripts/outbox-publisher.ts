@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { q, closePool } from "../lib/trade/pg";
 import { log } from "../lib/trade/logger";
-import { notify } from "../lib/trade/notifications";
+import { notify, PermanentNotificationError } from "../lib/trade/notifications";
 
 const workerId = `outbox-${randomUUID()}`;
 const LEASE_MS = 5 * 60_000;
@@ -10,7 +10,7 @@ let shuttingDown = false;
 process.on("SIGINT", () => { shuttingDown = true; });
 process.on("SIGTERM", () => { shuttingDown = true; });
 
-async function dispatch(topic: string, payload: any) {
+async function dispatch(topic: string, payload: unknown) {
   switch (topic) {
     case "tweet.collected":
       // Extension point for enrichment and alerting; acknowledging is intentional until a consumer is added.
@@ -33,7 +33,7 @@ async function claimBatch() {
        AND (claimed_at IS NULL OR claimed_at <= $3)`,
     [now, MAX_ATTEMPTS, now - LEASE_MS]
   );
-  return q<{ id: string; topic: string; payload: any; attempts: number }>(
+  return q<{ id: string; topic: string; payload: unknown; attempts: number }>(
     `WITH picked AS (
        SELECT id FROM outbox
        WHERE published_at IS NULL AND failed_at IS NULL
@@ -64,15 +64,18 @@ async function acknowledge(id: string) {
 
 async function recordFailure(id: string, attempts: number, error: unknown) {
   const now = Date.now();
-  const retryDelay = Math.min(5 * 60_000, 1000 * (2 ** Math.min(attempts, 8)));
   const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+  // Постоянная ошибка (например, невалидная разметка сообщения) не стоит ретраить:
+  // сообщение сразу уходит в dead-letter.
+  const maxAttempts = error instanceof PermanentNotificationError ? 0 : MAX_ATTEMPTS;
+  const retryDelay = Math.min(5 * 60_000, 1000 * (2 ** Math.min(attempts, 8)));
   await q(
     `UPDATE outbox
      SET last_error=$1, claimed_at=NULL, claimed_by=NULL,
          available_at=CASE WHEN attempts >= $2 THEN available_at ELSE $3 END,
          failed_at=CASE WHEN attempts >= $2 THEN $4 ELSE NULL END
      WHERE id=$5 AND claimed_by=$6 AND published_at IS NULL`,
-    [message, MAX_ATTEMPTS, now + retryDelay, now, id, workerId]
+    [message, maxAttempts, now + retryDelay, now, id, workerId]
   );
 }
 

@@ -82,3 +82,15 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Repair backups and browser profiles (may contain session cookies)
+.repair-backups/
+*.repair-backups/
+**/.repair-backups/
+**/.tmp-*/
+
+# Oversized raw datasets (GB-scale, GitHub rejects >100MB files)
+solana-launcher/backend/data/tgdataset/
+
+# Windows reserved device name
+NUL

@@ -1,6 +1,5 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { isIP } from "node:net";
 import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../lib/trade/tasks";
 import {
   pickAccount, recordSuccess, recordError, getAccountDelay,
@@ -8,15 +7,17 @@ import {
 } from "../lib/trade/account-manager";
 import { WorkerRegistry, reapDeadWorkers } from "../lib/trade/worker-registry";
 import { decryptBuffer } from "../lib/trade/crypto";
-import { searchTweets, fetchUserTimeline, fetchAccountProfile } from "../lib/trade/twitter-scraper";
+import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState } from "../lib/trade/twitter-scraper";
 import { TweetSchema, ProfileSchema, parseTaskPayload } from "../lib/trade/schemas";
-import { q, exec, closePool } from "../lib/trade/pg";
-import { withContext, log } from "../lib/trade/logger";
+import { q, exec, closePool, tx } from "../lib/trade/pg";
+import { log, withContext, closeLogger } from "../lib/trade/logger";
 import {
-  registry as promRegistry, tasksTotal, taskDuration,
-  startMetricsCollector,
+  registry as promRegistry, tasksTotal, taskDuration, scrapeDuration,
+  startMetricsCollector, httpRequests, httpRequestDuration,
 } from "../lib/trade/metrics";
 import { getConfig } from "../lib/trade/config";
+import { checkBasicAuth, isLoopbackHost } from "../lib/trade/http-auth";
+import { applySecurityHeaders, clientIp, createRateLimiter } from "../lib/trade/http-security";
 
 const workerId = process.env.WORKER_ID || `w-${randomUUID().slice(0, 8)}`;
 const METRICS_HOST = process.env.METRICS_HOST ?? "127.0.0.1";
@@ -26,16 +27,14 @@ const METRICS_PASS = process.env.METRICS_PASS;
 if (Boolean(METRICS_USER) !== Boolean(METRICS_PASS)) {
   throw new Error("METRICS_USER and METRICS_PASS must be set together");
 }
-const isLoopbackMetricsHost = METRICS_HOST === "127.0.0.1" || METRICS_HOST === "::1" ||
-  (METRICS_HOST.toLowerCase() === "localhost") ||
-  (isIP(METRICS_HOST) === 6 && METRICS_HOST.toLowerCase() === "::ffff:127.0.0.1");
 if (!Number.isInteger(METRICS_PORT) || METRICS_PORT < 1 || METRICS_PORT > 65535) {
   throw new Error("METRICS_PORT must be an integer from 1 to 65535");
 }
-if (!isLoopbackMetricsHost && (!METRICS_USER || !METRICS_PASS)) {
+if (!isLoopbackHost(METRICS_HOST) && (!METRICS_USER || !METRICS_PASS)) {
   throw new Error("Metrics Basic Auth is required when binding to a non-loopback host");
 }
 const registry = new WorkerRegistry(workerId);
+const allowMetricsRequest = createRateLimiter(Number(process.env.METRICS_RATE_LIMIT ?? 600));
 let shuttingDown = false;
 
 process.on("SIGINT", () => { log.warn("SIGINT — graceful shutdown"); shuttingDown = true; });
@@ -65,45 +64,49 @@ async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery
 
   for (let i = 0; i < valid.length; i += BATCH) {
     const chunk = valid.slice(i, i + BATCH);
-    const values: any[] = [];
-    const placeholders = chunk.map((t, j) => {
-      const off = j * 13;
-      values.push(
-        t.id, t.authorHandle.toLowerCase(), t.text, t.url,
-        t.views, t.likes, t.retweets, t.replies,
-        t.isVerified, t.postedAt, now, now, sourceQuery
-      );
-      return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13})`;
-    }).join(",");
-
-    await q(
-      `INSERT INTO twitter_tweets
-         (tweet_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
-       VALUES ${placeholders}
-       ON CONFLICT (tweet_id) DO UPDATE SET
-         views    = GREATEST(twitter_tweets.views,    EXCLUDED.views),
-         likes    = GREATEST(twitter_tweets.likes,    EXCLUDED.likes),
-         retweets = GREATEST(twitter_tweets.retweets, EXCLUDED.retweets),
-         replies  = GREATEST(twitter_tweets.replies,  EXCLUDED.replies),
-         source_query = COALESCE(EXCLUDED.source_query, twitter_tweets.source_query),
-         updated_at = EXCLUDED.updated_at
-       WHERE EXCLUDED.updated_at > twitter_tweets.updated_at`,
-      values
-    );
-
-    if (mint) {
-      const linkVals: any[] = [];
-      const linkPh = chunk.map((t, j) => {
-        const off = j * 4;
-        linkVals.push(t.id, mint, t.authorHandle.toLowerCase(), now);
-        return `($${off + 1},$${off + 2},$${off + 3},$${off + 4})`;
+    // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
+    // no deja tweets sin su link (ni viceversa).
+    await tx(async (client) => {
+      const values: unknown[] = [];
+      const placeholders = chunk.map((t, j) => {
+        const off = j * 13;
+        values.push(
+          t.id, t.authorHandle.toLowerCase(), t.text, t.url,
+          t.views, t.likes, t.retweets, t.replies,
+          t.isVerified, t.postedAt, now, now, sourceQuery
+        );
+        return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13})`;
       }).join(",");
-      await q(
-        `INSERT INTO tweet_token_links (tweet_id, mint, handle, linked_at)
-         VALUES ${linkPh} ON CONFLICT (tweet_id, mint) DO NOTHING`,
-        linkVals
+
+      await client.query(
+        `INSERT INTO twitter_tweets
+           (tweet_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
+         VALUES ${placeholders}
+         ON CONFLICT (tweet_id) DO UPDATE SET
+           views    = GREATEST(twitter_tweets.views,    EXCLUDED.views),
+           likes    = GREATEST(twitter_tweets.likes,    EXCLUDED.likes),
+           retweets = GREATEST(twitter_tweets.retweets, EXCLUDED.retweets),
+           replies  = GREATEST(twitter_tweets.replies,  EXCLUDED.replies),
+           source_query = COALESCE(EXCLUDED.source_query, twitter_tweets.source_query),
+           updated_at = EXCLUDED.updated_at
+         WHERE EXCLUDED.updated_at > twitter_tweets.updated_at`,
+        values
       );
-    }
+
+      if (mint) {
+        const linkVals: unknown[] = [];
+        const linkPh = chunk.map((t, j) => {
+          const off = j * 4;
+          linkVals.push(t.id, mint, t.authorHandle.toLowerCase(), now);
+          return `($${off + 1},$${off + 2},$${off + 3},$${off + 4})`;
+        }).join(",");
+        await client.query(
+          `INSERT INTO tweet_token_links (tweet_id, mint, handle, linked_at)
+           VALUES ${linkPh} ON CONFLICT (tweet_id, mint) DO NOTHING`,
+          linkVals
+        );
+      }
+    });
   }
 }
 
@@ -137,7 +140,7 @@ async function persistProfile(p: unknown) {
 async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number]): Promise<string> {
   const cfg = getConfig();
 
-  let payload: any;
+  let payload: ReturnType<typeof parseTaskPayload>;
   try {
     payload = parseTaskPayload(task.kind, task.payloadJson);
   } catch (e) {
@@ -181,9 +184,9 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
 
   try {
     const decryptedSession = decryptBuffer(acc.session_encrypted);
-    let authState: any;
+    let authState: ScrapeAuthState | undefined;
     try {
-      authState = JSON.parse(decryptedSession.toString("utf8"));
+      authState = JSON.parse(decryptedSession.toString("utf8")) as ScrapeAuthState;
       if (!authState || !Array.isArray(authState.cookies)) {
         throw new Error("invalid encrypted browser storage state");
       }
@@ -197,13 +200,17 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
 
       if (kind === "search") {
         const p = payload as { query: string; limit: number; sort: "top" | "latest" };
+        const t0 = Date.now();
         const tweets = await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
+        scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
         await persistTweets(task.mint, tweets, p.query);
         assertLeases();
       } else if (kind === "timeline") {
         const p = payload as { handle: string; limit: number };
+        const t0 = Date.now();
         const tweets = await fetchUserTimeline(p.handle, { ...scrapeOpts, limit: p.limit });
+        scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
         // A timeline task is scheduled because the author once mentioned a mint;
         // that does not make every post in the author's timeline about that mint.
@@ -211,7 +218,9 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
         assertLeases();
       } else {
         const p = payload as { handle: string };
+        const t0 = Date.now();
         const profile = await fetchAccountProfile(p.handle, scrapeOpts);
+        scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
         await persistProfile(profile);
         assertLeases();
@@ -300,41 +309,54 @@ async function loop() {
   });
   await closePool();
   log.info("worker stopped", { workerId });
+  closeLogger();
   process.exit(0);
 }
 
 const healthServer = http.createServer(async (req, res) => {
+  const start = Date.now();
+  const pathname = (() => {
+    try { return new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).pathname; }
+    catch { return "/invalid"; }
+  })();
+  const finish = (status: number) => {
+    httpRequests.inc({ service: "worker", route: pathname, status: String(status) });
+    httpRequestDuration.observe({ service: "worker", route: pathname }, (Date.now() - start) / 1000);
+  };
+
+  applySecurityHeaders(res);
+
   try {
+    if (!allowMetricsRequest(clientIp(req))) {
+      res.statusCode = 429; res.setHeader("Retry-After", "60"); res.end("Too Many Requests");
+      finish(429); return;
+    }
     if (METRICS_USER && METRICS_PASS) {
       const auth = req.headers.authorization;
-      if (!auth?.startsWith("Basic ")) {
+      if (checkBasicAuth(typeof auth === "string" ? auth : undefined, METRICS_USER, METRICS_PASS) !== "ok") {
         res.setHeader("WWW-Authenticate", 'Basic realm="worker-metrics"');
-        res.statusCode = 401; res.end("Unauthorized"); return;
-      }
-      const decoded = Buffer.from(auth.slice(6), "base64").toString();
-      const colon = decoded.indexOf(":");
-      if (decoded.slice(0, colon) !== METRICS_USER || decoded.slice(colon + 1) !== METRICS_PASS) {
-        res.statusCode = 401; res.end("Unauthorized"); return;
+        res.statusCode = 401; res.end("Unauthorized"); finish(401); return;
       }
     }
     if (req.method !== "GET" && req.method !== "HEAD") {
-      res.statusCode = 405; res.setHeader("Allow", "GET, HEAD"); res.end(); return;
+      res.statusCode = 405; res.setHeader("Allow", "GET, HEAD"); res.end(); finish(405); return;
     }
-    const pathname = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).pathname;
     if (pathname === "/metrics") {
       res.setHeader("Content-Type", promRegistry.contentType);
       res.end(await promRegistry.metrics());
-      return;
+      finish(200); return;
     }
     if (pathname === "/health") {
       await q(`SELECT 1`);
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ ok: true, workerId }));
-      return;
+      finish(200); return;
     }
-    res.statusCode = 404; res.end();
+    res.statusCode = 404; res.end(); finish(404);
   } catch (e) {
-    res.statusCode = 500; res.end(String(e));
+    // El detalle de la excepción va al log, no al cliente.
+    log.error("health server request failed", { error: String(e) });
+    res.statusCode = 500; res.end("Internal Server Error"); finish(500);
   }
 });
 healthServer.on("error", (e) => log.error("health server error", { error: String(e) }));
