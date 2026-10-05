@@ -363,5 +363,10 @@
   "database.records": "Records",
   "db.reportPurpose": "Generate database report",
   "db.auditPurpose": "Run integrity and foreign key checks",
-  "db.importPurpose": "Import XLSX migration files"
+  "db.importPurpose": "Import XLSX migration files",
+  "analysis.translation.showTranslation": "Show translation",
+  "analysis.translation.showOriginal": "Show original",
+  "analysis.translation.translating": "Translating…",
+  "analysis.translation.translated": "Translated",
+  "analysis.translation.unavailable": "Translation unavailable"
 }

@@ -340,5 +340,10 @@
   "database.startedAt": "Запущено",
   "database.finishedAt": "Завершено",
   "database.datasetId": "ID датасета",
-  "database.records": "Записи"
+  "database.records": "Записи",
+  "analysis.translation.showTranslation": "Показать перевод",
+  "analysis.translation.showOriginal": "Показать оригинал",
+  "analysis.translation.translating": "Переводим…",
+  "analysis.translation.translated": "Переведено",
+  "analysis.translation.unavailable": "Перевод недоступен"
 }

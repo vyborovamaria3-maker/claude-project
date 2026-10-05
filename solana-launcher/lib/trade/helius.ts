@@ -3,6 +3,14 @@
 // Docs: https://docs.helius.dev/solana-apis/enhanced-transactions-api
 
 import { appendHeliusApiKey, getHeliusApiKeys, isHeliusRetryableStatus } from "./helius-rotation";
+import type { RawTrade } from "./chain/types";
+
+// Re-export the canonical trade model so legacy importers keep working while
+// there is exactly one RawTrade definition (see chain/types.ts).
+export type { RawTrade } from "./chain/types";
+export { WRAPPED_SOL_MINT } from "./chain/types";
+
+export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 const HELIUS_RPC =
   process.env.NEXT_PUBLIC_HELIUS_RPC_URL ||
@@ -12,19 +20,7 @@ const HELIUS_RPC =
 
 const HELIUS_API_KEYS = getHeliusApiKeys();
 
-export interface RawTrade {
-  signature: string;
-  timestamp: number; // unix seconds
-  trader: string;
-  type: "buy" | "sell" | "transfer" | "unknown";
-  amountSol: number;
-  amountTokens: number;
-  priceSol: number; // SOL per token
-  fee?: number;
-  source?: string; // PUMP_FUN / RAYDIUM etc
-}
-
-interface HeliusEnrichedTx {
+export interface HeliusEnrichedTx {
   signature: string;
   timestamp: number;
   type?: string;
@@ -55,13 +51,24 @@ interface HeliusEnrichedTx {
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
 /**
- * Fetch enriched parsed transactions for an address (mint) from Helius.
+ * Fetch enriched parsed transactions for an address (mint) from Helius,
+ * with coverage metadata so callers can grade evidence provenance.
  * Returns up to `maxTxs` transactions (paginates by `before`).
  */
-export async function fetchEnrichedTxsForMint(
+export type EnrichedTxMeta = {
+  transactions: HeliusEnrichedTx[];
+  /** Oldest fetched timestamp (unix seconds); null when nothing was fetched. */
+  oldestTimestamp: number | null;
+  /** True when pagination ended because the API reported no further history. */
+  exhausted: boolean;
+  /** True when the `maxTxs` bound stopped pagination before history ended. */
+  truncated: boolean;
+};
+
+export async function fetchEnrichedTxsForMintWithMeta(
   mint: string,
   maxTxs: number = 1000
-): Promise<HeliusEnrichedTx[]> {
+): Promise<EnrichedTxMeta> {
   const keys = HELIUS_API_KEYS.length > 0 ? HELIUS_API_KEYS : [];
   if (keys.length === 0) {
     throw new Error("Helius API key not configured (set NEXT_PUBLIC_HELIUS_RPC_URL with ?api-key=...)");
@@ -70,6 +77,7 @@ export async function fetchEnrichedTxsForMint(
   const all: HeliusEnrichedTx[] = [];
   let before: string | undefined;
   const pageSize = 100; // Helius max
+  let exhausted = false;
 
   while (all.length < maxTxs) {
     let page: HeliusEnrichedTx[] | null = null;
@@ -98,12 +106,41 @@ export async function fetchEnrichedTxsForMint(
       break;
     }
 
-    if (!page || !Array.isArray(page) || page.length === 0) break;
+    if (!page || !Array.isArray(page) || page.length === 0) {
+      exhausted = true;
+      break;
+    }
     all.push(...page);
+    if (page.length < pageSize) {
+      exhausted = true;
+      break;
+    }
     before = page[page.length - 1]?.signature;
-    if (page.length < pageSize) break;
   }
-  return all.slice(0, maxTxs);
+
+  const truncated = !exhausted && all.length >= maxTxs;
+  const bounded = all.slice(0, maxTxs);
+  const oldestTimestamp = bounded.reduce<number | null>(
+    (oldest, tx) => {
+      const ts = tx.timestamp;
+      if (!Number.isFinite(ts)) return oldest;
+      return oldest == null || ts < oldest ? ts : oldest;
+    },
+    null,
+  );
+  return { transactions: bounded, oldestTimestamp, exhausted, truncated };
+}
+
+/**
+ * Fetch enriched parsed transactions for an address (mint) from Helius.
+ * Returns up to `maxTxs` transactions (paginates by `before`).
+ */
+export async function fetchEnrichedTxsForMint(
+  mint: string,
+  maxTxs: number = 1000
+): Promise<HeliusEnrichedTx[]> {
+  const result = await fetchEnrichedTxsForMintWithMeta(mint, maxTxs);
+  return result.transactions;
 }
 
 /**
