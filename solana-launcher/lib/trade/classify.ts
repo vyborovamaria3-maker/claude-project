@@ -119,6 +119,8 @@ export function calcFifoPnL(trades: RawTrade[], currentPriceSol: number): PnLRes
 export interface BundleAssignment {
   bundleId: string; // "Bundle1", "Bundle2", …
   wallets: string[];
+  /** Trade signatures that formed this bundle (for exact per-slot verification). */
+  signatures: string[];
   startTs: number;
   totalVolumeSol: number;
   avgBuySol: number;
@@ -167,6 +169,7 @@ export function detectBundles(
       bundles.push({
         bundleId: id,
         wallets: Array.from(seenWallets),
+        signatures: cluster.map((t) => t.signature),
         startTs: seed.timestamp,
         totalVolumeSol: cluster.reduce((s, t) => s + t.amountSol, 0),
         avgBuySol: cluster.reduce((s, t) => s + t.amountSol, 0) / cluster.length,
