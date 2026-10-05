@@ -1,10 +1,6 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest_asyncio
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
-
 from app.db.base import Base
 from app.models.twitter_intelligence import (
     TwitterAccount,
@@ -21,6 +17,9 @@ from app.services.twitter_discovery import (
     promote_candidate,
 )
 from app.services.twitter_discovery_sources import extract_x_handles
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 
 @pytest_asyncio.fixture
@@ -62,12 +61,8 @@ async def test_candidate_deduplicates_across_sources(session: AsyncSession):
     assert second.priority == 80
     assert second.relevance_hint == 70
 
-    candidate_count = await session.scalar(
-        select(func.count(TwitterDiscoveryCandidate.id))
-    )
-    evidence_count = await session.scalar(
-        select(func.count(TwitterDiscoveryEvidence.id))
-    )
+    candidate_count = await session.scalar(select(func.count(TwitterDiscoveryCandidate.id)))
+    evidence_count = await session.scalar(select(func.count(TwitterDiscoveryEvidence.id)))
     assert candidate_count == 1
     assert evidence_count == 2
 
@@ -89,7 +84,7 @@ async def test_resolved_id_reuses_username_candidate_and_promotes(session: Async
         bio="Solana, crypto and memecoin market news",
         followers_count=120_000,
         source="x_api_profile",
-        x_created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        x_created_at=datetime(2020, 1, 1, tzinfo=UTC),
     )
     accepted, account_id, score = await promote_candidate(
         session,
@@ -120,7 +115,7 @@ async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
     canonical = await enqueue_discovery_candidate(
         session,
         twitter_id="777777",
-        username="canonical_alpha",
+        username="canonalpha",
         relevance_hint=80,
         source_type="curated_seed",
         source_ref="seed.json",
@@ -128,7 +123,7 @@ async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
     )
     duplicate = await enqueue_discovery_candidate(
         session,
-        username="old_alpha_handle",
+        username="oldalphahandle",
         relevance_hint=70,
         source_type="public_web",
         source_ref="project-site",
@@ -136,7 +131,7 @@ async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
     )
     profile = ResolvedTwitterProfile(
         twitter_id="777777",
-        username="current_alpha",
+        username="currentalpha",
         display_name="Alpha Caller",
         bio="Solana memecoin alpha trader",
         followers_count=10_000,
@@ -161,18 +156,18 @@ async def test_resolved_duplicate_merges_evidence_into_canonical_candidate(
     )
     assert evidence_count == 2
     assert canonical.relevance_hint >= 80
-    assert canonical.username == "current_alpha"
+    assert canonical.username == "currentalpha"
 
     rediscovered = await enqueue_discovery_candidate(
         session,
-        username="old_alpha_handle",
+        username="oldalphahandle",
         relevance_hint=75,
         source_type="x_search",
         source_ref="tweet:999",
         discovery_reason="token_search_tweet",
     )
     assert rediscovered.id == canonical.id
-    assert canonical.username == "current_alpha"
+    assert canonical.username == "currentalpha"
     evidence_count = await session.scalar(
         select(func.count(TwitterDiscoveryEvidence.id)).where(
             TwitterDiscoveryEvidence.candidate_id == canonical.id
@@ -245,7 +240,7 @@ async def test_resolved_profile_roundtrip():
         twitter_id="123",
         username="solana_signal",
         bio="solana memecoin research",
-        x_created_at=datetime(2024, 2, 1, tzinfo=timezone.utc),
+        x_created_at=datetime(2024, 2, 1, tzinfo=UTC),
     )
     restored = profile_from_meta({"resolved_profile": profile_to_meta(profile)})
     assert restored is not None

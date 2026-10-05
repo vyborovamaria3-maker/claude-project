@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +12,7 @@ from app.services.twitter_discovery_scoring import rescore_discovery_candidate
 
 
 def _timestamp(value: Any) -> datetime:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if value is None:
         return now
     try:
@@ -22,7 +22,7 @@ def _timestamp(value: Any) -> datetime:
     if number > 10_000_000_000:
         number /= 1000.0
     try:
-        return datetime.fromtimestamp(number, tz=timezone.utc)
+        return datetime.fromtimestamp(number, tz=UTC)
     except (OverflowError, OSError, ValueError):
         return now
 
@@ -108,13 +108,7 @@ async def ingest_dev_twitter_stats(
         author = _safe_username(raw.get("author"))
         tweet_id = str(raw.get("id") or "").strip()
         text = str(raw.get("text") or "").strip()
-        if (
-            not author
-            or not tweet_id
-            or len(tweet_id) > 32
-            or not tweet_id.isdigit()
-            or not text
-        ):
+        if not author or not tweet_id or len(tweet_id) > 32 or not tweet_id.isdigit() or not text:
             skipped += 1
             continue
 
@@ -158,8 +152,7 @@ async def ingest_dev_twitter_stats(
                 "last_tweet_mint": clean_mint,
                 "last_tweet_symbol": clean_symbol,
                 "last_tweet_collector": strategy,
-                "last_tweet_engagement": _metric(raw.get("likes"))
-                + _metric(raw.get("retweets")),
+                "last_tweet_engagement": _metric(raw.get("likes")) + _metric(raw.get("retweets")),
                 "last_tweet_suspicious": bool(raw.get("isSuspicious")),
                 "last_account_bot": bool(shiller.get("isBot")) if shiller else False,
             },

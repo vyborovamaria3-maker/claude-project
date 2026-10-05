@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import platform
+import shutil
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -101,9 +102,9 @@ class ControlStore:
 
 def runtime_metrics(started_at: float) -> dict[str, Any]:
     load = os.getloadavg() if hasattr(os, "getloadavg") else (0.0, 0.0, 0.0)
-    disk = os.statvfs("/")
-    total = disk.f_blocks * disk.f_frsize
-    free = disk.f_bavail * disk.f_frsize
+    disk = shutil.disk_usage("/")
+    total = disk.total
+    free = disk.free
     return {
         "hostname": platform.node(),
         "python": platform.python_version(),

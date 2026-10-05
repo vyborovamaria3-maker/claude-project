@@ -145,6 +145,10 @@ def build_outcome_windows(
         # Prefer market cap only when the actual horizon close has a market-cap observation.
         # Otherwise fall back to price when both the call and horizon close have price data.
         # A cap seen only in an earlier sample must not erase a usable close-price return.
+        baseline_kind: Literal["market_cap", "price"] | None
+        close_value: float | None
+        peak_value: float | None
+        baseline_value: float | None
         if baseline_cap is not None and close_cap is not None:
             baseline_kind = "market_cap"
             close_value = close_cap

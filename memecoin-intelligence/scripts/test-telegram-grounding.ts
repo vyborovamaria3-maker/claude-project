@@ -72,7 +72,7 @@ assert.throws(
   /At least one real message is required/,
 );
 
-assert.equal(TELEGRAM_PROMPT_VERSION, 'intelligence-qwen-v10-grounded-entry');
+assert.equal(TELEGRAM_PROMPT_VERSION, 'intelligence-qwen-v11-compact-local');
 const analystPrompt = buildTelegramPrompt([message], fullContext);
 assert.match(analystPrompt.system, /marketStale/);
 assert.match(analystPrompt.user, /supportingFeatureKeys/);

@@ -3,14 +3,26 @@ FROM node:20-bookworm-slim AS dependencies
 WORKDIR /app
 
 ENV PYTHON=/usr/bin/python3 \
-    npm_config_python=/usr/bin/python3
+    npm_config_python=/usr/bin/python3 \
+    npm_config_fetch_retries=5 \
+    npm_config_fetch_retry_mintimeout=20000 \
+    npm_config_fetch_retry_maxtimeout=120000 \
+    npm_config_maxsockets=5
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps
+RUN set -eux; \
+    for attempt in 1 2 3; do \
+      if npm ci --legacy-peer-deps; then \
+        exit 0; \
+      fi; \
+      echo "npm ci failed (attempt ${attempt}/3); retrying" >&2; \
+      sleep $((attempt * 20)); \
+    done; \
+    exit 1
 
 FROM dependencies AS builder
 

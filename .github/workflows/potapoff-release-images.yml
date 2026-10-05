@@ -1,0 +1,127 @@
+name: POTAPoff release images
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: potapoff-release-images-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  require-main:
+    name: Require main branch
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    timeout-minutes: 5
+    steps:
+      - name: Reject non-main image publication
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production images may only be published from main; got $GITHUB_REF" >&2
+            exit 1
+          fi
+
+  predeploy:
+    name: Validate release source
+    needs: require-main
+    uses: ./.github/workflows/potapoff-predeploy-gate.yml
+
+  publish:
+    name: Build and publish immutable SHA images
+    needs:
+      - require-main
+      - predeploy
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    timeout-minutes: 60
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAMESPACE: ghcr.io/vyborovamaria3-maker/claude-project
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./solana-launcher/backend
+          file: ./solana-launcher/backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: true
+          sbom: true
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/backend:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=potapoff-backend
+          cache-to: type=gha,mode=max,scope=potapoff-backend
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./solana-launcher
+          file: ./solana-launcher/Dockerfile.frontend.prod
+          platforms: linux/amd64
+          push: true
+          provenance: true
+          sbom: true
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/frontend:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_APP_URL=https://potapoff.fun
+            NEXT_PUBLIC_FRONTEND_URL=https://potapoff.fun
+            NEXT_PUBLIC_BACKEND_URL=https://potapoff.fun/fastapi
+            NEXT_PUBLIC_TELEGRAM_BOT_URL=https://t.me/Soft777bot
+            NEXT_PUBLIC_BUILD_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=potapoff-frontend
+          cache-to: type=gha,mode=max,scope=potapoff-frontend
+
+      - name: Build and push Telegram bot
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./solana-launcher
+          file: ./solana-launcher/Dockerfile.telegram-bot
+          platforms: linux/amd64
+          push: true
+          provenance: true
+          sbom: true
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/telegram-bot:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=potapoff-telegram-bot
+          cache-to: type=gha,mode=max,scope=potapoff-telegram-bot
+
+      - name: Verify published manifests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for image in backend frontend telegram-bot; do
+            docker buildx imagetools inspect "${IMAGE_NAMESPACE}/${image}:${GITHUB_SHA}" >/dev/null
+          done
+          echo "RELEASE_IMAGES_PUBLISHED sha=${GITHUB_SHA}"

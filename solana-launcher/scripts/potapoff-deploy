@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SOURCE_ROOT="${POTAPOFF_SOURCE_ROOT:-/opt/claude-project}"
+export POTAPOFF_DEPLOY_WRAPPER=1
+export POTAPOFF_SOURCE_ROOT="$SOURCE_ROOT"
+
+exec "$SOURCE_ROOT/solana-launcher/scripts/deploy-production-local.sh" "$@"

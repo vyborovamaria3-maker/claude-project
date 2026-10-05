@@ -16,6 +16,9 @@ const WEBAPP_URL = requireEnv('WEBAPP_URL');
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
+let lastPollingErrorLog = 0;
+const POLLING_ERROR_THROTTLE_MS = 60_000;
+
 console.log('🤖 Bot started');
 console.log('📱 WebApp URL:', WEBAPP_URL);
 
@@ -111,7 +114,11 @@ bot.on('message', async (msg) => {
 });
 
 bot.on('polling_error', (error) => {
-  console.error('Polling error:', error);
+  const now = Date.now();
+  if (now - lastPollingErrorLog > POLLING_ERROR_THROTTLE_MS) {
+    console.error('Polling error:', error);
+    lastPollingErrorLog = now;
+  }
 });
 
 process.on('SIGINT', () => {

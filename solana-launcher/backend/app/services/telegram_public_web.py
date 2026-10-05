@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -25,13 +25,27 @@ from app.services.social_intelligence import nearest_token_snapshot, upsert_chan
 from app.services.social_relations import upsert_social_relation
 from app.services.telegram_parser import normalize_telegram_target, parse_telegram_message
 
-
 _METRIC_RE = re.compile(r"^\s*([0-9]+(?:[.,][0-9]+)?)\s*([KMB])?\s*$", re.I)
 _MAX_RESPONSE_BYTES = 3 * 1024 * 1024
 _MAX_PAGES_PER_CHANNEL = 20
 _REQUEST_INTERVAL_SECONDS = 0.35
 _RETRY_DELAYS_SECONDS = (0.6, 1.5)
-_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+_VOID_TAGS = {
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+}
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151 Safari/537.36"
@@ -39,7 +53,7 @@ _USER_AGENT = (
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -50,8 +64,8 @@ def _parse_datetime(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def parse_metric_count(value: str | None) -> int | None:
@@ -69,7 +83,7 @@ def parse_metric_count(value: str | None) -> int | None:
 def _public_channel_id(username: str) -> int:
     # Telegram channel IDs are positive. A stable negative ID lets public-web rows live in
     # the same schema until MTProto later resolves the real ID; the MTProto upsert merges it.
-    digest = hashlib.sha256(f"telegram-public:{username.lower()}".encode("utf-8")).digest()
+    digest = hashlib.sha256(f"telegram-public:{username.lower()}".encode()).digest()
     value = int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
     return -(value or 1)
 
@@ -81,7 +95,7 @@ def _clean_text(parts: list[str]) -> str:
     return text.strip()
 
 
-def _message_evidence(message: "PublicTelegramMessage") -> str:
+def _message_evidence(message: PublicTelegramMessage) -> str:
     parts = [message.text, *message.links]
     return "\n".join(part.strip() for part in parts if part and part.strip())
 
@@ -243,7 +257,10 @@ class TelegramPublicWebCollector:
 
     @property
     def configured_channels(self) -> list[str]:
-        raw = self.settings.telegram_public_web_channels.strip() or self.settings.telegram_monitor_channels.strip()
+        raw = (
+            self.settings.telegram_public_web_channels.strip()
+            or self.settings.telegram_monitor_channels.strip()
+        )
         result: list[str] = []
         for item in raw.split(","):
             normalized = normalize_telegram_target(item)
@@ -254,7 +271,9 @@ class TelegramPublicWebCollector:
     def status(self) -> dict[str, Any]:
         return {
             "enabled": bool(self.settings.telegram_public_web_enabled),
-            "configured": bool(self.settings.telegram_public_web_enabled and self.configured_channels),
+            "configured": bool(
+                self.settings.telegram_public_web_enabled and self.configured_channels
+            ),
             "running": self._running,
             "channels": list(self._channels or self.configured_channels),
             "last_scan_at": self._last_scan_at.isoformat() if self._last_scan_at else None,
@@ -302,11 +321,15 @@ class TelegramPublicWebCollector:
                 async with self._semaphore:
                     final_url, html = await asyncio.to_thread(self._fetch_sync, url, timeout)
                 if not final_url.startswith("https://t.me/s/"):
-                    raise TelegramPublicWebUnavailable("Telegram public page redirected outside public preview")
+                    raise TelegramPublicWebUnavailable(
+                        "Telegram public page redirected outside public preview"
+                    )
                 return html
             except HTTPError as exc:
                 if exc.code in {401, 403, 404}:
-                    raise TelegramPublicWebUnavailable(f"Telegram public page unavailable ({exc.code})") from exc
+                    raise TelegramPublicWebUnavailable(
+                        f"Telegram public page unavailable ({exc.code})"
+                    ) from exc
                 if exc.code != 429 and exc.code < 500:
                     raise TelegramPublicWebError(f"Telegram public page HTTP {exc.code}") from exc
                 if attempt >= attempts - 1:
@@ -327,10 +350,16 @@ class TelegramPublicWebCollector:
             if before is not None:
                 url += f"?before={before}"
             html = await self._fetch(url)
-            page = [item for item in parse_public_telegram_html(html) if item.channel_username == username]
+            page = [
+                item
+                for item in parse_public_telegram_html(html)
+                if item.channel_username == username
+            ]
             if not page:
                 if page_index == 0:
-                    raise TelegramPublicWebUnavailable("Telegram public preview exposed no messages")
+                    raise TelegramPublicWebUnavailable(
+                        "Telegram public preview exposed no messages"
+                    )
                 break
             new_count = 0
             for item in page:
@@ -349,7 +378,9 @@ class TelegramPublicWebCollector:
     async def _upsert_channel(self, session: AsyncSession, username: str) -> TelegramChannel:
         row = (
             await session.execute(
-                select(TelegramChannel).where(func.lower(TelegramChannel.username) == username.lower()).limit(1)
+                select(TelegramChannel)
+                .where(func.lower(TelegramChannel.username) == username.lower())
+                .limit(1)
             )
         ).scalar_one_or_none()
         now = utcnow()
@@ -416,7 +447,9 @@ class TelegramPublicWebCollector:
             "raw": raw,
         }
         if stored is None:
-            stored = TelegramMessage(channel_id=channel.id, telegram_message_id=message.message_id, **values)
+            stored = TelegramMessage(
+                channel_id=channel.id, telegram_message_id=message.message_id, **values
+            )
             session.add(stored)
         else:
             for key, value in values.items():
@@ -479,10 +512,14 @@ class TelegramPublicWebCollector:
                 mention.is_explicit_call = mention.is_explicit_call or parsed.explicit_call
 
             call = (
-                await session.execute(select(TelegramCall).where(TelegramCall.mention_id == mention.id))
+                await session.execute(
+                    select(TelegramCall).where(TelegramCall.mention_id == mention.id)
+                )
             ).scalar_one_or_none()
             if call is None and parsed.explicit_call:
-                price, market_cap = await nearest_token_snapshot(session, mint, message.published_at)
+                price, market_cap = await nearest_token_snapshot(
+                    session, mint, message.published_at
+                )
                 session.add(
                     TelegramCall(
                         mention_id=mention.id,
@@ -555,11 +592,15 @@ class TelegramPublicWebCollector:
         await session.flush()
         return created
 
-    async def scan_channel(self, username: str, *, history_limit: int | None = None) -> dict[str, Any]:
+    async def scan_channel(
+        self, username: str, *, history_limit: int | None = None
+    ) -> dict[str, Any]:
         normalized = normalize_telegram_target(username)
         if not normalized:
             raise ValueError("A public Telegram channel username is required")
-        limit = max(1, min(int(history_limit or self.settings.telegram_public_web_history_limit), 500))
+        limit = max(
+            1, min(int(history_limit or self.settings.telegram_public_web_history_limit), 500)
+        )
         messages = await self._load_channel(normalized, limit)
         saved = matches = 0
         async with self.sessionmaker() as session:
@@ -570,7 +611,9 @@ class TelegramPublicWebCollector:
                 matches += await self._save_message(session, channel, message)
                 saved += 1
             if saved == 0:
-                raise TelegramPublicWebUnavailable("Telegram public preview had no timestamped messages")
+                raise TelegramPublicWebUnavailable(
+                    "Telegram public preview had no timestamped messages"
+                )
             if matches:
                 await upsert_channel_score(session, channel.id)
             channel.last_scanned_at = utcnow()
@@ -605,6 +648,7 @@ class TelegramPublicWebCollector:
         self._last_scan_at = None
         results: list[dict[str, Any]] = []
         try:
+
             async def run_one(channel: str) -> dict[str, Any]:
                 try:
                     return await self.scan_channel(channel, history_limit=history_limit)
@@ -613,7 +657,9 @@ class TelegramPublicWebCollector:
 
             results = await asyncio.gather(*(run_one(channel) for channel in cleaned))
             self._last_scan_messages = sum(int(row.get("posts_saved") or 0) for row in results)
-            self._last_scan_matches = sum(int(row.get("token_mentions_created") or 0) for row in results)
+            self._last_scan_matches = sum(
+                int(row.get("token_mentions_created") or 0) for row in results
+            )
             successful = [row for row in results if not row.get("error")]
             errors = [str(row.get("error")) for row in results if row.get("error")]
             self._last_error = errors[0] if errors and not successful else None

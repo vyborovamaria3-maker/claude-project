@@ -1,4 +1,5 @@
 import { loadEnvConfig } from '@next/env';
+import type { Agent } from 'node:http';
 import dotenv from 'dotenv';
 import { Telegraf } from 'telegraf';
 import { setupAgentHandlers } from './handlers/agents';
@@ -7,6 +8,11 @@ import { setupStatusHandlers } from './handlers/status';
 import { setupSubscriptionHandlers } from './handlers/subscription';
 import { loggingMiddleware } from './middleware/logging';
 import { sessionMiddleware } from './middleware/session';
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { SocksProxyAgent } = require('socks-proxy-agent') as {
+  SocksProxyAgent: new (url: string) => Agent;
+};
 
 loadEnvConfig(process.cwd());
 dotenv.config({ path: '.env', override: false });
@@ -24,11 +30,18 @@ function getBot(): Telegraf {
   }
 
   const proxyUrl = process.env.TELEGRAM_PROXY_URL?.trim();
+  const bot = proxyUrl
+    ? new Telegraf(token, {
+        telegram: {
+          agent: new SocksProxyAgent(proxyUrl),
+        },
+      })
+    : new Telegraf(token);
+
   if (proxyUrl) {
-    console.warn('TELEGRAM_PROXY_URL is set, but proxy transport is disabled in ts-node dev mode.');
+    console.log(`Telegram proxy enabled (${new URL(proxyUrl).protocol})`);
   }
 
-  const bot = new Telegraf(token);
   bot.use(loggingMiddleware);
   bot.use(sessionMiddleware);
   setupAgentHandlers(bot);
@@ -83,8 +96,13 @@ async function startBot() {
     // Telegram sends updates to the Next.js webhook route. Keep this service
     // alive so Compose can monitor configuration/auth failures and restart it.
     await new Promise<void>((resolve) => {
-      process.once('SIGINT', resolve);
-      process.once('SIGTERM', resolve);
+      const keepAlive = setInterval(() => undefined, 60_000);
+      const stop = () => {
+        clearInterval(keepAlive);
+        resolve();
+      };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
     });
   } else {
     console.log('Starting Telegram bot in polling mode...');

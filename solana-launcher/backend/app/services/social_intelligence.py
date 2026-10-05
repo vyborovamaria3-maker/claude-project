@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from statistics import mean
 from typing import Any
 
@@ -22,15 +22,11 @@ CALL_BASELINE_LOOKBACK = timedelta(minutes=90)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _aware(value: datetime) -> datetime:
-    return (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -54,11 +50,7 @@ def score_channel_metrics(
     rug_rate = rugs / evaluated if evaluated else 0.0
     early_rate = early / calls
     roi_component = min(max(avg_roi, 0.0) / 10.0, 1.0)
-    performance = (
-        win_rate * 45.0
-        + roi_component * 20.0
-        - rug_rate * 35.0
-    ) * evaluation_confidence
+    performance = (win_rate * 45.0 + roi_component * 20.0 - rug_rate * 35.0) * evaluation_confidence
     raw = experience * 10.0 + early_rate * 15.0 + performance
     return round(_clamp(raw), 2)
 
@@ -103,26 +95,19 @@ async def upsert_channel_score(
                     TelegramCall.is_explicit_call.is_(True),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     evaluated_rows = [call for call in calls if call.outcome != "pending"]
-    wins = sum(
-        1 for call in evaluated_rows if call.outcome in {"win", "win_then_rug"}
-    )
-    rugs = sum(
-        1 for call in evaluated_rows if call.outcome in {"rug", "win_then_rug"}
-    )
+    wins = sum(1 for call in evaluated_rows if call.outcome in {"win", "win_then_rug"})
+    rugs = sum(1 for call in evaluated_rows if call.outcome in {"rug", "win_then_rug"})
     early = sum(
         1
         for call in calls
-        if call.call_market_cap_usd is not None
-        and call.call_market_cap_usd <= 50_000
+        if call.call_market_cap_usd is not None and call.call_market_cap_usd <= 50_000
     )
-    roi_values = [
-        call.roi_multiple
-        for call in evaluated_rows
-        if call.roi_multiple is not None
-    ]
+    roi_values = [call.roi_multiple for call in evaluated_rows if call.roi_multiple is not None]
     avg_roi = mean(roi_values) if roi_values else 0.0
     score_value = score_channel_metrics(
         calls=len(calls),
@@ -197,7 +182,9 @@ async def evaluate_calls(
                 .order_by(TelegramCall.called_at.desc())
                 .limit(max(1, min(limit, 5000)))
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     touched_channels: set[int] = set()
     processed = 0
@@ -205,9 +192,7 @@ async def evaluate_calls(
     pending = 0
     for call in rows:
         token = (
-            await session.execute(
-                select(Token).where(Token.mint_address == call.mint_address)
-            )
+            await session.execute(select(Token).where(Token.mint_address == call.mint_address))
         ).scalar_one_or_none()
         if token is None:
             continue
@@ -235,7 +220,9 @@ async def evaluate_calls(
                     )
                     .order_by(TokenMetric.timestamp.asc())
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         if not metrics:
             continue
@@ -261,10 +248,7 @@ async def evaluate_calls(
         call.roi_multiple = roi
 
         observed_hours = max(
-            (
-                _aware(metrics[-1].timestamp) - _aware(call.called_at)
-            ).total_seconds()
-            / 3600.0,
+            (_aware(metrics[-1].timestamp) - _aware(call.called_at)).total_seconds() / 3600.0,
             0.0,
         )
         final_to_peak = None
@@ -286,8 +270,7 @@ async def evaluate_calls(
             "final_to_peak": final_to_peak,
             "loss_requires_full_horizon": True,
             "causal_call_baseline": bool(
-                call.call_price_usd is not None
-                or call.call_market_cap_usd is not None
+                call.call_price_usd is not None or call.call_market_cap_usd is not None
             ),
         }
         call.evaluated_at = _utcnow()
@@ -318,9 +301,7 @@ async def list_channels(
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], int]:
     total = int(
-        (
-            await session.execute(select(func.count()).select_from(TelegramChannel))
-        ).scalar_one()
+        (await session.execute(select(func.count()).select_from(TelegramChannel))).scalar_one()
     )
     rows = (
         await session.execute(
@@ -384,9 +365,7 @@ async def list_calls(
     total = int((await session.execute(count_stmt)).scalar_one())
     rows = (
         await session.execute(
-            data_stmt.order_by(TelegramCall.called_at.desc())
-            .offset(offset)
-            .limit(limit)
+            data_stmt.order_by(TelegramCall.called_at.desc()).offset(offset).limit(limit)
         )
     ).all()
     return [
@@ -424,7 +403,9 @@ async def top_callers(
                     TelegramCall.is_explicit_call.is_(True),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     grouped: dict[str, list[TelegramCall]] = defaultdict(list)
     for call in calls:
@@ -432,23 +413,14 @@ async def top_callers(
     result = []
     for username, grouped_calls in grouped.items():
         evaluated = [row for row in grouped_calls if row.outcome != "pending"]
-        wins = sum(
-            1 for row in evaluated if row.outcome in {"win", "win_then_rug"}
-        )
-        rugs = sum(
-            1 for row in evaluated if row.outcome in {"rug", "win_then_rug"}
-        )
-        rois = [
-            row.roi_multiple
-            for row in evaluated
-            if row.roi_multiple is not None
-        ]
+        wins = sum(1 for row in evaluated if row.outcome in {"win", "win_then_rug"})
+        rugs = sum(1 for row in evaluated if row.outcome in {"rug", "win_then_rug"})
+        rois = [row.roi_multiple for row in evaluated if row.roi_multiple is not None]
         avg_roi = mean(rois) if rois else 0.0
         early = sum(
             1
             for row in grouped_calls
-            if row.call_market_cap_usd is not None
-            and row.call_market_cap_usd <= 50_000
+            if row.call_market_cap_usd is not None and row.call_market_cap_usd <= 50_000
         )
         result.append(
             {
@@ -484,7 +456,9 @@ async def token_timeline(
                 .where(SocialEvent.mint_address == mint_address)
                 .order_by(SocialEvent.occurred_at.asc())
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     platforms: dict[str, int] = defaultdict(int)
     timeline = []
@@ -528,12 +502,8 @@ async def ingest_x_events(
             continue
         posted_at_raw = tweet.get("posted_at")
         if isinstance(posted_at_raw, (int, float)):
-            seconds = (
-                posted_at_raw / 1000
-                if posted_at_raw > 10_000_000_000
-                else posted_at_raw
-            )
-            occurred_at = datetime.fromtimestamp(seconds, tz=timezone.utc)
+            seconds = posted_at_raw / 1000 if posted_at_raw > 10_000_000_000 else posted_at_raw
+            occurred_at = datetime.fromtimestamp(seconds, tz=UTC)
         else:
             skipped_missing_timestamp += 1
             continue
@@ -687,9 +657,7 @@ async def list_social_relations(
     stmt = select(SocialRelation)
     filters = []
     if source_handle:
-        filters.append(
-            SocialRelation.source_handle == source_handle.lower().lstrip("@")
-        )
+        filters.append(SocialRelation.source_handle == source_handle.lower().lstrip("@"))
     if platform:
         filters.append(SocialRelation.source_platform == platform.lower())
     if filters:
@@ -702,7 +670,9 @@ async def list_social_relations(
                     SocialRelation.last_seen_at.desc(),
                 ).limit(max(1, min(limit, 1000)))
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     return [
         {

@@ -1,7 +1,5 @@
 import pytest
-
-from tests.conftest import TEST_BACKEND_API_KEY
-
+from tests.conftest import TEST_SUBSCRIPTION_INTERNAL_KEY
 
 pytestmark = pytest.mark.asyncio
 
@@ -32,7 +30,7 @@ async def test_registered_user_without_subscription_cannot_access_paid_probe(cli
 async def _create_paid_user(client, *, telegram_id: int, login_name: str, password: str) -> str:
     provision = await client.post(
         "/api/v1/auth/register-password",
-        headers={"X-API-Key": TEST_BACKEND_API_KEY},
+        headers={"X-API-Key": TEST_SUBSCRIPTION_INTERNAL_KEY},
         json={
             "telegram_id": telegram_id,
             "login": login_name,

@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 
 def _aware(value: datetime) -> datetime:
-    return (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -30,12 +26,7 @@ def normalize_social_source(value: str) -> str:
         if normalized.startswith(prefix):
             normalized = normalized[len(prefix) :]
             break
-    return (
-        normalized.strip("/")
-        .split("/", 1)[0]
-        .split("?", 1)[0]
-        .split("#", 1)[0]
-    )
+    return normalized.strip("/").split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
 
 
 def social_event_engagement(item: dict[str, Any]) -> int:
@@ -76,19 +67,14 @@ def filter_timeline_payload(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     normalized_sources = {
-        normalize_social_source(value)
-        for value in (sources or set())
-        if value.strip()
+        normalize_social_source(value) for value in (sources or set()) if value.strip()
     }
     scores = {
-        normalize_social_source(key): float(value)
-        for key, value in (channel_scores or {}).items()
+        normalize_social_source(key): float(value) for key, value in (channel_scores or {}).items()
     }
     cutoff = None
     if hours is not None:
-        cutoff = _aware(now or datetime.now(timezone.utc)) - timedelta(
-            hours=max(hours, 1)
-        )
+        cutoff = _aware(now or datetime.now(UTC)) - timedelta(hours=max(hours, 1))
 
     items: list[dict[str, Any]] = []
     for raw in payload.get("timeline") or []:
@@ -122,23 +108,16 @@ def filter_timeline_payload(
         items.append(item)
 
     items.sort(
-        key=lambda row: _parse_datetime(row.get("occurred_at"))
-        or datetime.min.replace(tzinfo=timezone.utc)
+        key=lambda row: _parse_datetime(row.get("occurred_at")) or datetime.min.replace(tzinfo=UTC)
     )
     matched_before_limit = len(items)
-    matched_platforms = Counter(
-        str(item.get("platform") or "unknown").lower() for item in items
-    )
+    matched_platforms = Counter(str(item.get("platform") or "unknown").lower() for item in items)
     matched_sources = {
-        normalize_social_source(
-            str(item.get("source_handle") or item.get("source_name") or "")
-        )
+        normalize_social_source(str(item.get("source_handle") or item.get("source_name") or ""))
         for item in items
         if item.get("source_handle") or item.get("source_name")
     }
-    explicit_telegram_calls = sum(
-        is_explicit_telegram_call(item) for item in items
-    )
+    explicit_telegram_calls = sum(is_explicit_telegram_call(item) for item in items)
     first_matched_at = items[0].get("occurred_at") if items else None
     last_matched_at = items[-1].get("occurred_at") if items else None
 
@@ -146,13 +125,8 @@ def filter_timeline_payload(
     truncated = matched_before_limit > max_items
     retained = items[-max_items:] if truncated else items
 
-    platforms = Counter(
-        str(item.get("platform") or "unknown").lower() for item in retained
-    )
-    ranked = [
-        {**item, "rank": index + 1}
-        for index, item in enumerate(retained)
-    ]
+    platforms = Counter(str(item.get("platform") or "unknown").lower() for item in retained)
+    ranked = [{**item, "rank": index + 1} for index, item in enumerate(retained)]
     return {
         "mint_address": payload.get("mint_address"),
         "mentions": len(ranked),

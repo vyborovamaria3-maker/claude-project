@@ -203,11 +203,7 @@ async def research_context(
             detail="Invalid Solana mint address",
         )
     allowed_prefixes = ("wallet:", "x_account:", "tg_channel:", "token:")
-    invalid = [
-        key
-        for key in payload.entity_keys
-        if not key.startswith(allowed_prefixes)
-    ]
+    invalid = [key for key in payload.entity_keys if not key.startswith(allowed_prefixes)]
     if invalid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

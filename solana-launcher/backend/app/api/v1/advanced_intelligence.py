@@ -142,7 +142,9 @@ async def investigation_view(
                 .order_by(IntelligenceSnapshot.created_at.desc())
                 .limit(snapshot_limit)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     snapshot_ids = [row.snapshot_id for row in snapshots]
     fingerprints = []
@@ -155,7 +157,9 @@ async def investigation_view(
                         CampaignFingerprint.snapshot_id.in_(snapshot_ids)
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         outcomes = list(
             (
@@ -164,7 +168,9 @@ async def investigation_view(
                         IntelligenceOutcome.snapshot_id.in_(snapshot_ids)
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
     hypothesis_rows = list(
         (
@@ -174,7 +180,9 @@ async def investigation_view(
                 .order_by(IntelligenceHypothesisState.updated_at.desc())
                 .limit(100)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     return {
         "mint": mint,

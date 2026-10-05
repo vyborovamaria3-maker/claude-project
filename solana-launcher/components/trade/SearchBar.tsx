@@ -57,7 +57,8 @@ export default function SearchBar({ onSearch, isLoading, initialValue = "" }: Pr
     onSearch(trimmed);
   };
 
-  // Hidden textarea for clipboard fallback
+  // Off-screen textarea for clipboard fallback. It can receive programmatic
+  // focus, so keep it out of the tab order but not hidden from accessibility APIs.
   const clipboardRef = useRef<HTMLTextAreaElement>(null);
 
   const pasteFromClipboard = async () => {
@@ -100,11 +101,12 @@ export default function SearchBar({ onSearch, isLoading, initialValue = "" }: Pr
 
   return (
     <div className="relative w-full" data-tag="trade.search_bar">
-      {/* Hidden textarea for clipboard operations */}
+      {/* Off-screen clipboard fallback; programmatic focus is restored to the visible input. */}
       <textarea
         ref={clipboardRef}
         style={{ position: 'absolute', left: '-9999px', opacity: 0 }}
-        aria-hidden="true"
+        tabIndex={-1}
+        aria-label="Буфер обмена для вставки"
       />
       <div className="flex gap-2">
         <div className="relative flex-1">

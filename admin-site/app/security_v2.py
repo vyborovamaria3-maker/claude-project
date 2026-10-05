@@ -322,6 +322,9 @@ def install_security(app: FastAPI) -> None:
         request.state.admin_security_row = row
         return row
 
+    def limiter_key(kind: str, request: Request, payload: dict[str, Any]) -> str:
+        return f"{kind}:{_effective_client_ip(request)}:{payload.get('sub', 'unknown')}"
+
     @router.get("/api/security/session")
     def security_session(request: Request) -> dict[str, Any]:
         payload = signed_payload(request)
@@ -341,9 +344,22 @@ def install_security(app: FastAPI) -> None:
     def verify_mfa(body: MfaBody, request: Request) -> dict[str, Any]:
         payload = signed_payload(request)
         validated_session_row(request, payload)
+        limiter = app.state.login_limiter
+        key = limiter_key("mfa", request, payload)
+        if not limiter.allow(key):
+            app.state.audit.record(
+                action="mfa",
+                success=False,
+                username=payload["sub"],
+                ip_address=_effective_client_ip(request),
+                details={"reason": "rate_limited"},
+            )
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts")
         if policy.require_mfa and not verify_totp(policy.totp_secret, body.code):
+            limiter.record_failure(key)
             app.state.audit.record(action="mfa", success=False, username=payload["sub"], ip_address=_effective_client_ip(request))
             raise HTTPException(status_code=401, detail="Invalid MFA code")
+        limiter.clear(key)
         store.mark_mfa(str(payload["nonce"]))
         app.state.audit.record(action="mfa", success=True, username=payload["sub"], ip_address=_effective_client_ip(request))
         return {"ok": True, "mfa_required": policy.require_mfa}
@@ -354,10 +370,25 @@ def install_security(app: FastAPI) -> None:
         row = validated_session_row(request, payload)
         if policy.require_mfa and not row.get("mfa_verified_at"):
             raise HTTPException(status_code=428, detail="MFA verification required first")
+
+        limiter = app.state.login_limiter
+        key = limiter_key("reauth", request, payload)
+        if not limiter.allow(key):
+            app.state.audit.record(
+                action="reauth",
+                success=False,
+                username=payload["sub"],
+                ip_address=_effective_client_ip(request),
+                details={"reason": "rate_limited"},
+            )
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many attempts")
+
         if not check_admin_password(app.state.settings, payload["sub"], body.password):
+            limiter.record_failure(key)
             app.state.audit.record(action="reauth", success=False, username=payload["sub"], ip_address=_effective_client_ip(request))
             raise HTTPException(status_code=401, detail="Invalid credentials")
         if policy.require_mfa and not verify_totp(policy.totp_secret, body.code):
+            limiter.record_failure(key)
             app.state.audit.record(
                 action="reauth",
                 success=False,
@@ -366,6 +397,7 @@ def install_security(app: FastAPI) -> None:
                 details={"reason": "mfa"},
             )
             raise HTTPException(status_code=401, detail="Invalid MFA code")
+        limiter.clear(key)
         until = int(time.time()) + policy.reauth_ttl_seconds
         store.mark_reauth(str(payload["nonce"]), until)
         app.state.audit.record(

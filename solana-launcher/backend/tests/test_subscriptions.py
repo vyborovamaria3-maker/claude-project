@@ -4,10 +4,9 @@ from app.core.security import verify_password
 from app.models.subscription_order import SubscriptionOrder
 from app.models.user import User
 from sqlalchemy import select
+from tests.conftest import TEST_SUBSCRIPTION_INTERNAL_KEY
 
-from tests.conftest import TEST_BACKEND_API_KEY
-
-INTERNAL_HEADERS = {"X-API-Key": TEST_BACKEND_API_KEY}
+INTERNAL_HEADERS = {"X-API-Key": TEST_SUBSCRIPTION_INTERNAL_KEY}
 RECIPIENT = "11111111111111111111111111111111"
 
 

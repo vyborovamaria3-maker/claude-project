@@ -1,6 +1,6 @@
 import type { TelegramAnalysisContext, TelegramMessageInput } from './schemas.js';
 
-export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v10-grounded-entry';
+export const TELEGRAM_PROMPT_VERSION = 'intelligence-qwen-v11-compact-local';
 const DEFAULT_CONTEXT: TelegramAnalysisContext = { analysisMode: 'telegram_only', analysisRole: 'analyst' };
 
 const systemPrompt = `You are the evidence-first intelligence analyst for a memecoin research platform.
@@ -65,6 +65,33 @@ const outputShape = {
     confidence: '0..1',
   },
   reasoningSummary: ['short evidence-based conclusion'],
+  overallConfidence: 'number 0..1',
+};
+
+const telegramOnlyOutputShape = {
+  summary: 'Russian concise evidence-based summary',
+  sentiment: { label: 'very_negative|negative|neutral|positive|very_positive|mixed', score: 'number -1..1', confidence: 'number 0..1' },
+  dominantIntent: 'discussion|promotion|warning|news|question|scam|mixed|unknown',
+  mentionedTokens: [],
+  entities: [],
+  claims: [],
+  relationships: [],
+  coordinationSignals: [],
+  campaignHypothesis: {
+    label: 'organic|mixed|coordinated|insufficient_data',
+    confidence: 'number 0..1',
+    likelyOriginators: [],
+    amplifiers: [],
+    narrative: 'Russian cautious campaign interpretation',
+    evidenceMessageIds: [],
+  },
+  risks: [],
+  featureAssessments: [],
+  discoveredRelationships: [],
+  anomalies: [],
+  contradictions: [],
+  whatWouldChangeConclusion: ['Russian specific missing evidence'],
+  reasoningSummary: ['Russian short evidence-based conclusion'],
   overallConfidence: 'number 0..1',
 };
 
@@ -154,6 +181,6 @@ export function buildTelegramPrompt(messages: TelegramMessageInput[], context: T
     ? 'Independently audit and try to falsify the prior conclusion. Use only supplied evidence/features, identify unsupported leaps and alternative explanations, downgrade claims that are not independently supported, and state what survives the critique. In full_intelligence explicitly audit entryAssessment and each sourceAssessments block.'
     : fullMode
       ? 'Analyze the complete memecoin intelligence snapshot. Assess supplied core features, compare current evidence with memory.* priors without treating priors as proof, use research.* observations with stated limitations, discover evidence-backed relationships, identify anomalies/contradictions, challenge deterministic scores, return all sourceAssessments, and return a grounded entryAssessment separating token strength from current entry timing.'
-      : 'Analyze Telegram memecoin discussion and cross-channel relationships.';
-  return { system: systemPrompt, user: JSON.stringify({ task, context: analysisContext, outputSchema: outputShape, messages: compact }) };
+      : 'Analyze Telegram memecoin discussion. Return compact valid JSON only. Prefer empty arrays over invented evidence. Do not repeat the schema text.';
+  return { system: systemPrompt, user: JSON.stringify({ task, context: analysisContext, outputSchema: fullMode ? outputShape : telegramOnlyOutputShape, messages: compact }) };
 }

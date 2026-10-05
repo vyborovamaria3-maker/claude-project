@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -36,13 +36,18 @@ def _confidence(value: Any) -> float:
 
 
 def _observation_status(value: str) -> str:
-    return value if value in {
-        "hypothesis",
-        "supported",
-        "strengthened",
-        "contradicted",
-        "rejected",
-    } else "hypothesis"
+    return (
+        value
+        if value
+        in {
+            "hypothesis",
+            "supported",
+            "strengthened",
+            "contradicted",
+            "rejected",
+        }
+        else "hypothesis"
+    )
 
 
 def _aggregate_observations(
@@ -83,9 +88,7 @@ async def persist_advanced_intelligence_state(
     fingerprint = report["layers"]["campaign_fingerprint"]
     existing = (
         await session.execute(
-            select(CampaignFingerprint).where(
-                CampaignFingerprint.snapshot_id == snapshot_id
-            )
+            select(CampaignFingerprint).where(CampaignFingerprint.snapshot_id == snapshot_id)
         )
     ).scalar_one_or_none()
     if existing is None:
@@ -105,8 +108,7 @@ async def persist_advanced_intelligence_state(
         memory = (
             await session.execute(
                 select(IntelligenceNarrativeMemory).where(
-                    IntelligenceNarrativeMemory.narrative_key
-                    == narrative["primary_key"]
+                    IntelligenceNarrativeMemory.narrative_key == narrative["primary_key"]
                 )
             )
         ).scalar_one_or_none()
@@ -124,13 +126,11 @@ async def persist_advanced_intelligence_state(
             )
         else:
             mints = list(dict.fromkeys([*(memory.token_mints or []), mint]))[:500]
-            actors = list(
-                dict.fromkeys([*(memory.actor_keys or []), *actor_keys])
-            )[:500]
+            actors = list(dict.fromkeys([*(memory.actor_keys or []), *actor_keys]))[:500]
             memory.occurrence_count = len(mints)
             memory.token_mints = mints
             memory.actor_keys = actors
-            memory.last_seen_at = datetime.now(timezone.utc)
+            memory.last_seen_at = datetime.now(UTC)
 
     for discovery in (ai_result or {}).get("discoveredRelationships") or []:
         source = str(discovery.get("source") or "") or None
@@ -150,9 +150,7 @@ async def persist_advanced_intelligence_state(
                 )
             )
         ).scalar_one_or_none()
-        status = _observation_status(
-            str(discovery.get("status") or "hypothesis")
-        )
+        status = _observation_status(str(discovery.get("status") or "hypothesis"))
         confidence = _confidence(discovery.get("confidence"))
         evidence = [
             *(discovery.get("evidenceMessageIds") or []),
@@ -163,13 +161,11 @@ async def persist_advanced_intelligence_state(
             "role": role,
             "status": status,
             "confidence": confidence,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
         if row is None:
             observations = {mint: observation}
-            support, contradictions, mean, aggregate = _aggregate_observations(
-                observations
-            )
+            support, contradictions, mean, aggregate = _aggregate_observations(observations)
             session.add(
                 IntelligenceHypothesisState(
                     hypothesis_key=key,
@@ -198,18 +194,14 @@ async def persist_advanced_intelligence_state(
             or existing_observation.get("role") != "critic"
         ):
             observations[mint] = observation
-        support, contradictions, mean, aggregate = _aggregate_observations(
-            observations
-        )
+        support, contradictions, mean, aggregate = _aggregate_observations(observations)
         row.observations = observations
         row.support_count = support
         row.contradiction_count = contradictions
         row.confidence = mean
         row.status = aggregate
-        row.evidence = list(
-            dict.fromkeys([*(row.evidence or []), *evidence])
-        )[-200:]
+        row.evidence = list(dict.fromkeys([*(row.evidence or []), *evidence]))[-200:]
         row.payload = discovery
-        row.updated_at = datetime.now(timezone.utc)
+        row.updated_at = datetime.now(UTC)
 
     await session.commit()

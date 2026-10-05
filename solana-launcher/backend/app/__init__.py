@@ -1,0 +1,3 @@
+from app.core.twitter_settings_compat import install_x_api_settings_compat
+
+install_x_api_settings_compat()

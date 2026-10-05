@@ -54,6 +54,8 @@
 
 # Local security-scan evidence may contain URLs, headers, payloads or session context.
 security/audit/reports/
+security/strix/reports/
+strix_runs/
 
 # Generated deployment snapshots and temporary exports
 .deploy/
@@ -72,8 +74,11 @@ temp/
 
 # Nested repositories and temporary clones
 repo/
-work/free-test-deploy/
-work/logs/
+work/
+cockpit-tools/
+_tmp-vnc/
+.playwright-mcp/
+turbopack-*/
 
 # OS/editor noise
 .DS_Store
@@ -94,3 +99,7 @@ solana-launcher/backend/data/tgdataset/
 
 # Windows reserved device name
 NUL
+
+# Local admin-site configuration
+admin-site/sources.json
+admin-site/logs.json

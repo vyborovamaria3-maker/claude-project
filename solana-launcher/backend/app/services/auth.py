@@ -6,7 +6,7 @@ import hmac
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qsl
 from uuid import UUID
@@ -31,20 +31,22 @@ class LoginResult:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _ensure_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def generate_nonce() -> int:
     return secrets.randbelow(90_000_000) + 10_000_000
 
 
-def build_phantom_message(*, app_name: str, wallet_address: str, nonce: int, expires_at: datetime) -> str:
+def build_phantom_message(
+    *, app_name: str, wallet_address: str, nonce: int, expires_at: datetime
+) -> str:
     expires_text = _ensure_utc(expires_at).isoformat()
     return (
         f"{app_name} wants you to sign in with your Solana wallet.\n\n"
@@ -81,7 +83,9 @@ def verify_phantom_signature(*, public_key: str, message: str, signature: str) -
 
 
 def build_telegram_secret(bot_token: str) -> bytes:
-    return hmac.new(key=b"WebAppData", msg=bot_token.encode("utf-8"), digestmod=hashlib.sha256).digest()
+    return hmac.new(
+        key=b"WebAppData", msg=bot_token.encode("utf-8"), digestmod=hashlib.sha256
+    ).digest()
 
 
 def parse_telegram_init_data(init_data: str) -> dict[str, str]:
@@ -91,7 +95,9 @@ def parse_telegram_init_data(init_data: str) -> dict[str, str]:
     return items
 
 
-def verify_telegram_init_data(*, init_data: str, bot_token: str, max_age_hours: int) -> tuple[dict[str, Any], dict[str, str]]:
+def verify_telegram_init_data(
+    *, init_data: str, bot_token: str, max_age_hours: int
+) -> tuple[dict[str, Any], dict[str, str]]:
     if not bot_token:
         raise ValueError("Telegram bot token is not configured")
     items = parse_telegram_init_data(init_data)
@@ -103,7 +109,7 @@ def verify_telegram_init_data(*, init_data: str, bot_token: str, max_age_hours: 
     if auth_date_raw is None:
         raise ValueError("Missing auth_date")
     try:
-        auth_date = datetime.fromtimestamp(int(auth_date_raw), tz=timezone.utc)
+        auth_date = datetime.fromtimestamp(int(auth_date_raw), tz=UTC)
     except (TypeError, ValueError) as exc:
         raise ValueError("Invalid auth_date") from exc
 
@@ -112,7 +118,9 @@ def verify_telegram_init_data(*, init_data: str, bot_token: str, max_age_hours: 
 
     data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(items.items()))
     secret = build_telegram_secret(bot_token)
-    calculated_hash = hmac.new(secret, data_check_string.encode("utf-8"), digestmod=hashlib.sha256).hexdigest()
+    calculated_hash = hmac.new(
+        secret, data_check_string.encode("utf-8"), digestmod=hashlib.sha256
+    ).hexdigest()
     if not hmac.compare_digest(calculated_hash, received_hash):
         raise ValueError("Invalid Telegram hash")
 
@@ -175,14 +183,21 @@ async def create_auth_log(
     return log
 
 
-async def create_or_update_email_user(session: AsyncSession, *, email: str, full_name: str | None, password: str) -> User:
+async def create_or_update_email_user(
+    session: AsyncSession, *, email: str, full_name: str | None, password: str
+) -> User:
     existing_user = await get_user_by_email(session, email)
     if existing_user is not None:
         raise ValueError("User with this email already exists")
 
     from app.core.security import get_password_hash
 
-    user = User(email=email, full_name=full_name, hashed_password=get_password_hash(password), is_active=True)
+    user = User(
+        email=email,
+        full_name=full_name,
+        hashed_password=get_password_hash(password),
+        is_active=True,
+    )
     session.add(user)
     await session.commit()
     await session.refresh(user)
@@ -193,7 +208,11 @@ async def authenticate_user(session: AsyncSession, email: str, password: str) ->
     from app.core.security import verify_password
 
     user = await get_user_by_email(session, email)
-    if user is None or not user.hashed_password or not verify_password(password, user.hashed_password):
+    if (
+        user is None
+        or not user.hashed_password
+        or not verify_password(password, user.hashed_password)
+    ):
         return None
     return user
 
@@ -253,12 +272,22 @@ async def sync_login_metadata(
 def can_merge_accounts(source: User, target: User) -> bool:
     source_identity_count = sum(
         1
-        for value in (source.email, source.wallet_address, source.telegram_id, source.hashed_password)
+        for value in (
+            source.email,
+            source.wallet_address,
+            source.telegram_id,
+            source.hashed_password,
+        )
         if value
     )
     target_identity_count = sum(
         1
-        for value in (target.email, target.wallet_address, target.telegram_id, target.hashed_password)
+        for value in (
+            target.email,
+            target.wallet_address,
+            target.telegram_id,
+            target.hashed_password,
+        )
         if value
     )
     return source_identity_count <= 1 and target_identity_count >= 1
@@ -296,7 +325,9 @@ def merge_user_records(target: User, source: User) -> User:
     return target
 
 
-async def issue_token_for_user(session: AsyncSession, user: User, settings: Settings) -> LoginResult:
+async def issue_token_for_user(
+    session: AsyncSession, user: User, settings: Settings
+) -> LoginResult:
     expires = timedelta(minutes=settings.access_token_expire_minutes)
     token = create_access_token(subject=str(user.id), settings=settings, expires_delta=expires)
     return LoginResult(user=user, access_token=token, expires_in=int(expires.total_seconds()))

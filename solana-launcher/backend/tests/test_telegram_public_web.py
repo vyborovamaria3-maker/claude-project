@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-
 from app.services.telegram_parser import parse_telegram_message
 from app.services.telegram_public_web import (
     TelegramPublicWebCollector,
@@ -14,11 +13,14 @@ from app.services.telegram_public_web import (
 ADDR = "3jX8p8QumtfccakGib95yi4pPDNgQnDJEMmwjk1Upump"
 
 
-def _message_html(message_id: int, text: str, views: str = "1.2K", extra_link: str | None = None) -> str:
+def _message_html(
+    message_id: int, text: str, views: str = "1.2K", extra_link: str | None = None
+) -> str:
     link = f'<a href="{extra_link}">source</a>' if extra_link else ""
     return f"""
     <div class="tgme_widget_message_wrap js-widget_message_wrap">
-      <div class="tgme_widget_message text_not_supported_wrap js-widget_message" data-post="alpha_calls/{message_id}">
+      <div class="tgme_widget_message text_not_supported_wrap js-widget_message"
+           data-post="alpha_calls/{message_id}">
         <div class="tgme_widget_message_text js-message_text" dir="auto">{text}<br/>{link}</div>
         <div class="tgme_widget_message_footer compact js-message_footer">
           <span class="tgme_widget_message_views">{views}</span>
@@ -31,7 +33,9 @@ def _message_html(message_id: int, text: str, views: str = "1.2K", extra_link: s
     """
 
 
-def _settings(*, enabled: bool = True, public_channels: str = "alpha_calls", monitor_channels: str = ""):
+def _settings(
+    *, enabled: bool = True, public_channels: str = "alpha_calls", monitor_channels: str = ""
+):
     class StubSettings:
         telegram_public_web_enabled = enabled
         telegram_public_web_channels = public_channels
@@ -109,7 +113,9 @@ def test_private_or_empty_preview_is_unavailable_not_zero_coverage() -> None:
 
 def test_public_channels_fall_back_to_monitor_channel_list() -> None:
     collector = TelegramPublicWebCollector(
-        _settings(public_channels="", monitor_channels="@Alpha_Calls, https://t.me/BetaCalls,alpha_calls"),
+        _settings(
+            public_channels="", monitor_channels="@Alpha_Calls, https://t.me/BetaCalls,alpha_calls"
+        ),
         None,  # type: ignore[arg-type]
     )
     assert collector.configured_channels == ["alpha_calls", "betacalls"]
@@ -128,7 +134,9 @@ def test_empty_public_web_channel_config_is_rejected() -> None:
 
 
 def test_all_failed_public_scan_does_not_claim_successful_coverage() -> None:
-    collector = TelegramPublicWebCollector(_settings(public_channels="alpha_calls,beta_calls"), None)  # type: ignore[arg-type]
+    collector = TelegramPublicWebCollector(
+        _settings(public_channels="alpha_calls,beta_calls"), None
+    )  # type: ignore[arg-type]
 
     async def fail_channel(username: str, *, history_limit: int | None = None):
         raise TelegramPublicWebError("network error")

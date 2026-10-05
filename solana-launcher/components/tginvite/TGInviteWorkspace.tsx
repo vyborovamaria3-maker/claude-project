@@ -62,6 +62,9 @@ import GoalTracking from "@/components/tginvite/GoalTracking";
 import ABTesting from "@/components/tginvite/ABTesting";
 import { tgInviteService, ImportJobConfig, ImportProgress } from "@/lib/tginvite-service";
 import { tginviteEvents, TGEvent } from "@/lib/tginvite-events";
+import TeraGramInviteSource from "@/components/tginvite/TeraGramInviteSource";
+import TeraGramScannerControl from "@/components/tginvite/TeraGramScannerControl";
+import { TeraGramLiveValidation } from "@/components/tginvite/TeraGramLiveValidation";
 
 interface Channel {
   id: string;
@@ -268,7 +271,7 @@ export default function TGInvitePage() {
 function TGInvitePageInner() {
   const { success, error: toastError, warning, info } = useToast();
   const { call } = useApi();
-  const [activeTab, setActiveTab] = useState<"dashboard" | "parser" | "import" | "channels" | "schedule" | "analytics" | "settings" | "ai" | "users" | "goals" | "abtest" | "templates" | "accounts" | "webhooks" | "monitor">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "data" | "parser" | "import" | "channels" | "schedule" | "analytics" | "settings" | "ai" | "users" | "goals" | "abtest" | "templates" | "accounts" | "webhooks" | "monitor">("dashboard");
   const [channels, setChannels] = useState<Channel[]>(() => channelsStorage.getAll().map(ch => ({ ...ch, selected: ch.selected ?? false })));
   const [channelGroups, setChannelGroups] = useState<ChannelGroup[]>(() =>
     storage.get<ChannelGroup[]>("channelGroups", [])
@@ -795,6 +798,68 @@ function TGInvitePageInner() {
     success("Source added", `@${username} added to TGInvite sources`);
   }, [channels, success, warning]);
 
+  const importTeraGramSources = useCallback(
+    async (usernames: string[]) => {
+      const normalized = Array.from(
+        new Set(
+          usernames
+            .map((value) => parseUsername(value) || value.replace(/^@/, "").trim())
+            .filter(Boolean)
+            .map((value) => value.toLowerCase())
+        )
+      );
+
+      if (normalized.length === 0) {
+        warning("No TeraGram sources", "TeraGram did not return valid source channels");
+        return;
+      }
+
+      const added: Channel[] = [];
+
+      setChannels((prev) => {
+        const existing = new Set(
+          prev.map((channel) => channel.username.replace(/^@/, "").trim().toLowerCase())
+        );
+
+        const fresh = normalized
+          .filter((username) => !existing.has(username))
+          .map((username, index): Channel => {
+            const channel = {
+              id: `teragram-${Date.now()}-${index}`,
+              name: `@${username}`,
+              username,
+              members: 0,
+              selected: true,
+              status: "active",
+              type: "teragram_candidate",
+              addedAt: new Date().toISOString(),
+            } satisfies Channel;
+
+            added.push(channel);
+            return channel;
+          });
+
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+
+      if (added.length > 0) {
+        setSelectedChannels((prev) => {
+          const next = new Set(prev);
+          added.forEach((channel) => next.add(channel.id));
+          return next;
+        });
+
+        success(
+          "TeraGram sources added",
+          `${added.length.toLocaleString()} source channels added to TG Invite`
+        );
+      } else {
+        info("TeraGram sources", "All returned source channels are already in TG Invite");
+      }
+    },
+    [info, success, warning]
+  );
+
   const exportParsedMembers = useCallback((format: "json" | "csv") => {
     if (!parserResult) return;
     const members = parserVisibleMembers;
@@ -1216,7 +1281,7 @@ function TGInvitePageInner() {
 
       {/* Tabs */}
       <div className={siteDesign.tabsShared.listClassName}>
-        {(["dashboard", "parser", "analytics", "monitor", "import", "channels", "ai", "users", "goals", "abtest", "schedule", "templates", "accounts", "webhooks", "settings"] as const).map((tab) => (
+        {(["dashboard", "data", "parser", "analytics", "monitor", "import", "channels", "ai", "users", "goals", "abtest", "schedule", "templates", "accounts", "webhooks", "settings"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1225,6 +1290,7 @@ function TGInvitePageInner() {
             }`}
           >
             {tab === "dashboard" && <Activity className="h-3.5 w-3.5" />}
+            {tab === "data" && <Layers className="h-3.5 w-3.5" />}
             {tab === "parser" && <Search className="h-3.5 w-3.5" />}
             {tab === "analytics" && <BarChart3 className="h-3.5 w-3.5" />}
             {tab === "monitor" && <Radio className="h-3.5 w-3.5" />}
@@ -1239,13 +1305,173 @@ function TGInvitePageInner() {
             {tab === "accounts" && <User className="h-3.5 w-3.5" />}
             {tab === "webhooks" && <Webhook className="h-3.5 w-3.5" />}
             {tab === "settings" && <Settings className="h-3.5 w-3.5" />}
-            <span className="capitalize">{tab}</span>
+            <span className="capitalize">
+              {tab === "data" ? "Data Set TG" : tab}
+            </span>
           </button>
         ))}
       </div>
 
       {/* Dashboard Tab - EnhancedDashboard */}
       {activeTab === "dashboard" && <EnhancedDashboard />}
+
+      {/* Data Set TG Tab */}
+      {activeTab === "data" && (
+        <div className="space-y-6">
+          <div className={siteDesign.page.panelClassName}>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Layers className="h-5 w-5 text-[color:var(--theme-primary)]" />
+                  <h2 className="text-xl font-bold text-content">Data Set TG</h2>
+                </div>
+                <p className="mt-2 max-w-3xl text-sm text-content-muted">
+                  Telegram source intelligence database. Find Solana, memecoin and caller
+                  channels, review dataset signals and send selected sources directly into
+                  the TG Invite pipeline.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="rounded-xl border border-bg-border bg-bg-elevated px-3 py-2">
+                  <div className="font-semibold text-content">TeraGram</div>
+                  <div className="text-content-muted">Dataset</div>
+                </div>
+                <div className="rounded-xl border border-bg-border bg-bg-elevated px-3 py-2">
+                  <div className="font-semibold text-content">DuckDB</div>
+                  <div className="text-content-muted">Scanner</div>
+                </div>
+                <div className="rounded-xl border border-bg-border bg-bg-elevated px-3 py-2">
+                  <div className="font-semibold text-content">TG Invite</div>
+                  <div className="text-content-muted">Sources</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <TeraGramScannerControl />
+
+
+          <TeraGramInviteSource onImportSources={importTeraGramSources} />
+
+          <TeraGramLiveValidation onAddSources={importTeraGramSources} />
+
+          <div className={siteDesign.page.panelClassName}>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-content">Solana Meme Source Candidates</h3>
+                <p className="text-sm text-content-muted">Sorted TGDataset matches. Revalidate each source with MTProto before parsing or opt-in campaigns.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadSourceCandidates()}
+                disabled={sourceCandidatesLoading}
+                className={`${siteDesign.controls.actionButtonClassName} disabled:opacity-50`}
+              >
+                {sourceCandidatesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {sourceCandidatesLoading ? "Loading..." : "Load Sources"}
+              </button>
+            </div>
+
+            {sourceCandidates.length > 0 && (
+              <div className="mt-4 overflow-hidden rounded-xl border border-bg-border">
+                <div className="max-h-80 divide-y divide-bg-border overflow-y-auto">
+                  {sourceCandidates.slice(0, 50).map((candidate) => {
+                    const username = candidate.username.replace(/^@/, "");
+                    return (
+                      <div key={username} className="grid gap-3 bg-bg-elevated p-3 md:grid-cols-[1fr_auto] md:items-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setParserInput(`@${username}`);
+                            setActiveTab("parser");
+                          }}
+                          className="min-w-0 text-left"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-content">@{username}</span>
+                            <span className="rounded-full border border-green-500/30 px-2 py-0.5 text-xs text-green-300">
+                              {candidate.parser_priority || "medium"}
+                            </span>
+                            <span className="text-xs text-content-muted">
+                              essence {Number(candidate.essence_score || 0).toFixed(1)}
+                            </span>
+                          </div>
+                          <div className="mt-1 truncate text-sm text-content-muted">{candidate.title || "Untitled source"}</div>
+                          <div className="mt-2 flex flex-wrap gap-3 text-xs text-content-muted">
+                            <span>{Number(candidate.n_subscribers || 0).toLocaleString()} subs</span>
+                            <span>{candidate.signals?.recent_100?.unique_solana_mints || 0} recent SOL mints</span>
+                            <span>{candidate.signals?.recent_100?.explicit_call_messages || 0} recent calls</span>
+                            <span>{candidate.signals?.recent_100?.memecoin_messages || 0} recent meme msgs</span>
+                          </div>
+                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setParserInput(`@${username}`);
+                              setActiveTab("parser");
+                            }}
+                            className={siteDesign.controls.actionButtonClassName}
+                          >
+                            <Search className="h-4 w-4" />
+                            Parse
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => addSourceCandidate(candidate)}
+                            className={siteDesign.controls.primaryActionClassName}
+                          >
+                            <Plus className="h-4 w-4" />
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className={siteDesign.page.panelClassName}>
+            <h3 className="text-lg font-semibold text-content">Dataset pipeline</h3>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
+              {[
+                ["01", "TeraGram", "Telegram dataset"],
+                ["02", "Scanner", "Crypto / SOL / meme signals"],
+                ["03", "Sources", "Qualified TG channels"],
+                ["04", "TG Invite", "Parse & invite workflow"],
+              ].map(([step, title, description]) => (
+                <div
+                  key={step}
+                  className="rounded-xl border border-bg-border bg-bg-elevated p-4"
+                >
+                  <div className="text-xs font-bold text-[color:var(--theme-primary)]">
+                    {step}
+                  </div>
+                  <div className="mt-2 font-semibold text-content">{title}</div>
+                  <div className="mt-1 text-xs text-content-muted">{description}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-bg-border bg-bg-elevated p-4">
+              <div className="flex items-start gap-3">
+                <Shield className="mt-0.5 h-5 w-5 text-green-400" />
+                <div>
+                  <div className="font-semibold text-content">Scanner execution</div>
+                  <p className="mt-1 text-sm text-content-muted">
+                    Dataset scans run as a backend job. The browser reads scan status and
+                    results instead of processing the full Telegram dataset in memory.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeTab === "parser" && (
         <div className="space-y-6">

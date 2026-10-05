@@ -1,19 +1,24 @@
 import os
 
-os.environ["ENVIRONMENT"] = "test"
-
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
-
-from app.core.config import Settings
-from app.db.base import Base
-from app.main import create_app
-
-
 TEST_SECRET_KEY = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
 TEST_BACKEND_API_KEY = "test-backend-api-key-2026"
+TEST_SUBSCRIPTION_INTERNAL_KEY = (
+    "test-subscription-internal-key-2026-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+)
+TEST_SUBSCRIPTION_ADMIN_KEY = (
+    "test-subscription-admin-key-2026-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
+
+os.environ["ENVIRONMENT"] = "test"
+os.environ.setdefault("SECRET_KEY", TEST_SECRET_KEY)
+
+import pytest_asyncio  # noqa: E402
+from app.core.config import Settings  # noqa: E402
+from app.db.base import Base  # noqa: E402
+from app.main import create_app  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
 
 
 @pytest_asyncio.fixture
@@ -24,6 +29,8 @@ async def test_app():
         debug=True,
         secret_key=TEST_SECRET_KEY,
         backend_api_key=TEST_BACKEND_API_KEY,
+        subscription_internal_key=TEST_SUBSCRIPTION_INTERNAL_KEY,
+        subscription_admin_key=TEST_SUBSCRIPTION_ADMIN_KEY,
         admin_session_secret="test-admin-session-secret",
         admin_username="admin@example.com",
         admin_password="password123",

@@ -20,9 +20,10 @@ on:
 permissions:
   contents: read
 
+# Runner selection is controlled centrally by POTAPOFF_RUNNER; self-hosted is the default.
 jobs:
   intelligence-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
 
     services:
@@ -79,6 +80,7 @@ jobs:
           POTAPOFF_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/intelligence
           POTAPOFF_TEST_POSTGRES_READONLY_DSN: postgresql://intelligence_readonly:readonly@127.0.0.1:5432/intelligence
           ADMIN_STATE_DB_PASSWORD: ci-intelligence-compose-password
+          SUBSCRIPTION_ADMIN_KEY: ci-subscription-admin-key
         run: >-
           python scripts/verify_intelligence.py --full
           --image-tag potapoff-intelligence:${{ github.sha }}

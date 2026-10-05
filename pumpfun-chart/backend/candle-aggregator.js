@@ -1,4 +1,4 @@
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3Nzk0NDk2Njk4NjgsImVtYWlsIjoicG90YXBvdmRpbWEzNTRAZ21haWwuY29tIiwiYWN0aW9uIjoidG9rZW4tYXBpIiwiYXBpVmVyc2lvbiI6InYyIiwiaWF0IjoxNzc5NDQ5NjY5fQ.N8dYxEQfrBcKKhQP3GdOFFof3DpfA9yLiFlEChj9Id4/**
+/**
  * CandleAggregator - Aggregates raw trades into OHLCV candles
  * Supports timeframes: 1s, 5s, 15s, 1m, 5m, 15m, 1h
  */

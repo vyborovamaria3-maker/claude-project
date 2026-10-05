@@ -1,6 +1,5 @@
 from app.services.solana_funding_verifier import _incoming_system_transfers
 
-
 WALLET = "11111111111111111111111111111112"
 SOURCE = "11111111111111111111111111111113"
 

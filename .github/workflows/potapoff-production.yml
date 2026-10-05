@@ -1,90 +1,62 @@
-name: POTAPoff production
+name: POTAPoff production deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "solana-launcher/**"
-      - "admin-site/**"
-      - ".github/workflows/potapoff-production.yml"
   workflow_dispatch:
-  workflow_call:
+  workflow_run:
+    workflows:
+      - POTAPoff release images
+    types:
+      - completed
 
 permissions:
   contents: read
-  packages: write
-
-concurrency:
-  group: potapoff-production
-  cancel-in-progress: false
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/claude-project
 
 jobs:
-  build:
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: backend
-            context: solana-launcher/backend
-            dockerfile: solana-launcher/backend/Dockerfile
-          - service: frontend
-            context: solana-launcher
-            dockerfile: solana-launcher/Dockerfile.frontend.prod
-          - service: telegram-bot
-            context: solana-launcher
-            dockerfile: solana-launcher/Dockerfile.telegram-bot
-
+  require-main:
+    name: Require released main SHA
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Verify Docker build files
+      - name: Reject non-main or drifting production deploys
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
-          set -euo pipefail
-          test -f solana-launcher/backend/Dockerfile
-          test -f solana-launcher/Dockerfile.frontend.prod
-          test -f solana-launcher/Dockerfile.telegram-bot
-          test -f solana-launcher/components/PublicLandingPage.tsx
-          test -f solana-launcher/components/landing/landingContent.ts
-          grep -q 'PublicLandingPage' solana-launcher/app/page.tsx
-          grep -q 'pathname === "/"' solana-launcher/components/AppShell.tsx
-          grep -q 'window.location.href = "/dashboard"' solana-launcher/components/PasswordLoginForm.tsx
-          git diff --check
-          echo "SOURCES_OK"
+          set -Eeuo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production deploys must target main; got $GITHUB_REF" >&2
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            if [[ "$RELEASE_CONCLUSION" != "success" || "$RELEASE_HEAD_BRANCH" != "main" ]]; then
+              echo "Production deploy requires a successful release-images run from main" >&2
+              exit 1
+            fi
+            if [[ "$RELEASE_HEAD_SHA" != "$GITHUB_SHA" ]]; then
+              echo "Release SHA $RELEASE_HEAD_SHA does not match production workflow SHA $GITHUB_SHA; refusing drift" >&2
+              exit 1
+            fi
+          fi
+          echo "PRODUCTION_SOURCE_OK sha=$GITHUB_SHA event=$EVENT_NAME"
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: ${{ github.workspace }}/${{ matrix.context }}
-          file: ${{ github.workspace }}/${{ matrix.dockerfile }}
-          push: true
-          tags: |
-            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
-            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-          build-args: |
-            NEXT_PUBLIC_APP_URL=https://potapoff.fun
-            NEXT_PUBLIC_FRONTEND_URL=https://potapoff.fun
-            NEXT_PUBLIC_BACKEND_URL=https://potapoff.fun/fastapi
-            NEXT_PUBLIC_TELEGRAM_BOT_URL=https://t.me/Soft777bot
-            NEXT_PUBLIC_BUILD_SHA=${{ github.sha }}
+  predeploy:
+    name: Predeploy validation
+    needs: require-main
+    uses: ./.github/workflows/potapoff-predeploy-gate.yml
 
   deploy:
-    needs: build
-    runs-on: [self-hosted, Linux, X64]
+    needs:
+      - require-main
+      - predeploy
+    runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
     timeout-minutes: 20
     environment: production
 
@@ -111,71 +83,6 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
           ssh-keygen -F "$SERVER_HOST" -f ~/.ssh/known_hosts >/dev/null \
             || { echo "SERVER_SSH_KNOWN_HOSTS does not contain SERVER_HOST" >&2; exit 1; }
-
-      - name: Validate production environment
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" 'bash -se' <<'REMOTE'
-          set -euo pipefail
-          cd /opt/potapoff-deploy
-          test -r .env.server
-          test -r backend.env
-
-          configured() {
-            local key="$1"
-            grep -hsEq "^[[:space:]]*${key}=.+$" .env.server backend.env
-          }
-
-          report() {
-            local name="$1"
-            shift
-            if "$@"; then
-              printf "%s configured: True\n" "$name"
-            else
-              printf "%s configured: False\n" "$name"
-            fi
-          }
-
-          backend_url() {
-            grep -Fq "NEXT_PUBLIC_BACKEND_URL: https://potapoff.fun/fastapi" docker-compose.production.yml
-          }
-          database() { configured POSTGRES_PASSWORD; }
-          redis() { configured REDIS_PASSWORD; }
-          solana() { configured HELIUS_RPC_URL || configured SOLANA_RPC_URL; }
-          telegram_mtproto() {
-            configured TG_API_ID && configured TG_API_HASH && configured TG_SESSION_STRING
-          }
-          telegram_public_web() { configured TG_PUBLIC_WEB_ENABLED; }
-          qwen_provider_model() {
-            configured TELEGRAM_AI_MODE && configured TELEGRAM_AI_MODEL
-          }
-
-          report "BACKEND_URL" backend_url
-          report "DATABASE" database
-          report "REDIS" redis
-          report "SECRET_KEY" configured SECRET_KEY
-          report "BACKEND_API_KEY" configured BACKEND_API_KEY
-          report "SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY" configured SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY
-          report "SOLANA_HELIUS" solana
-          report "MEMECOIN_INTELLIGENCE_URL" configured MEMECOIN_INTELLIGENCE_URL
-          report "QWEN_PROVIDER_MODEL" qwen_provider_model
-          report "TELEGRAM_MTPROTO_COLLECTOR" telegram_mtproto
-          report "TELEGRAM_PUBLIC_WEB_FALLBACK" telegram_public_web
-
-          backend_url
-          database
-          redis
-          configured RABBITMQ_PASSWORD
-          configured SECRET_KEY
-          configured BACKEND_API_KEY
-          configured SUBSCRIPTION_PASSWORD_ENCRYPTION_KEY
-          configured ADMIN_PASSWORD
-          configured ADMIN_SESSION_SECRET
-          REMOTE
 
       - name: Upload deployment configuration
         env:
@@ -240,32 +147,7 @@ jobs:
             'chmod 700 /opt/potapoff-deploy/scripts/*.sh &&
              chmod 755 /opt/potapoff-deploy/nginx &&
              chmod 644 /opt/potapoff-deploy/nginx/nginx.conf &&
-              test -r /opt/potapoff-deploy/prometheus/prometheus.yml'
-
-      - name: Upload admin Control Center sources
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_PORT: ${{ secrets.SERVER_PORT }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-        run: |
-          set -euo pipefail
-          SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
-          SCP=(scp -i ~/.ssh/deploy_key -P "$SERVER_PORT")
-          archive="/tmp/potapoff-admin-${GITHUB_SHA}.tar.gz"
-
-          tar \
-            --exclude='admin-site/.env' \
-            --exclude='admin-site/.env.*' \
-            --exclude='admin-site/sources.json' \
-            --exclude='admin-site/logs.json' \
-            --exclude='admin-site/__pycache__' \
-            --exclude='admin-site/**/__pycache__' \
-            -czf "$archive" admin-site
-
-          "${SSH[@]}" 'mkdir -p /opt/claude-project'
-          "${SCP[@]}" "$archive" "$SERVER_USER@$SERVER_HOST:$archive"
-          "${SSH[@]}" "tar -xzf '$archive' -C /opt/claude-project && rm -f '$archive'"
-          rm -f "$archive"
+             test -r /opt/potapoff-deploy/prometheus/prometheus.yml'
 
       - name: Login server to GHCR
         env:
@@ -280,6 +162,54 @@ jobs:
             ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
               "docker login ghcr.io -u '$GHCR_USERNAME' --password-stdin"
 
+      - name: Verify required release images exist
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
+          "${SSH[@]}" "set -euo pipefail
+            docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/backend:${GITHUB_SHA}' >/dev/null
+            docker manifest inspect 'ghcr.io/vyborovamaria3-maker/claude-project/frontend:${GITHUB_SHA}' >/dev/null
+            echo RELEASE_IMAGES_OK"
+
+      - name: Stage admin Control Center release
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
+          SCP=(scp -i ~/.ssh/deploy_key -P "$SERVER_PORT")
+          local_archive="potapoff-admin-${GITHUB_SHA}.tar.gz"
+          remote_archive="/tmp/potapoff-admin-${GITHUB_SHA}.tar.gz"
+
+          tar \
+            --exclude='admin-site/.env' \
+            --exclude='admin-site/.env.*' \
+            --exclude='admin-site/sources.json' \
+            --exclude='admin-site/logs.json' \
+            --exclude='admin-site/__pycache__' \
+            --exclude='admin-site/**/__pycache__' \
+            -czf "$local_archive" admin-site
+
+          "${SSH[@]}" 'mkdir -p /opt/claude-project'
+          "${SSH[@]}" "rm -f '$remote_archive'"
+          "${SCP[@]}" "$local_archive" "$SERVER_USER@$SERVER_HOST:$remote_archive"
+          "${SSH[@]}" "set -euo pipefail
+            root=/opt/claude-project
+            stage=\"\$root/.admin-site-stage-${GITHUB_SHA}\"
+            rm -rf \"\$stage\"
+            mkdir -p \"\$stage\"
+            tar -xzf '$remote_archive' -C \"\$stage\"
+            rm -f '$remote_archive'
+            test -r \"\$stage/admin-site/docker-compose.yml\"
+            echo ADMIN_RELEASE_STAGED"
+          rm -f "$local_archive"
+
       - name: Deploy with backup and rollback
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
@@ -287,7 +217,6 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST" \
-            "/opt/potapoff-deploy/scripts/deploy-production.sh '${GITHUB_SHA}'"
-
-# manual production redeploy 2026-08-09T12:29:00Z
+          SSH=(ssh -i ~/.ssh/deploy_key -p "$SERVER_PORT" "$SERVER_USER@$SERVER_HOST")
+          "${SSH[@]}" \
+            "cd /opt/potapoff-deploy && bash scripts/deploy-production.sh '${GITHUB_SHA}'"

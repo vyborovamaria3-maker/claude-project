@@ -239,6 +239,171 @@ export async function POST(request: Request) {
       }
     }
 
+    if (action === "validateCandidates") {
+      const existingClient = getClient();
+
+      if (!existingClient) {
+        return NextResponse.json(
+          {
+            error: "MTProto client is not connected",
+            code: "NOT_CONNECTED",
+          },
+          { status: 400 }
+        );
+      }
+
+      const rawCandidates = Array.isArray(body.candidates)
+        ? body.candidates
+        : [];
+
+      const candidates = rawCandidates
+        .map((candidate: unknown) => {
+          if (!candidate || typeof candidate !== "object") {
+            return null;
+          }
+
+          const row = candidate as {
+            username?: unknown;
+            historicalDiscoveryScore?: unknown;
+          };
+
+          const username = String(row.username || "").trim().replace(/^@/, "");
+          if (!username) return null;
+
+          const historicalDiscoveryScore =
+            typeof row.historicalDiscoveryScore === "number"
+              ? row.historicalDiscoveryScore
+              : Number(row.historicalDiscoveryScore || 0);
+
+          return {
+            username,
+            historicalDiscoveryScore: Number.isFinite(historicalDiscoveryScore)
+              ? historicalDiscoveryScore
+              : 0,
+          };
+        })
+        .filter(
+          (candidate: { username: string; historicalDiscoveryScore: number } | null): candidate is { username: string; historicalDiscoveryScore: number } =>
+            Boolean(candidate)
+        );
+
+      if (!candidates.length) {
+        return NextResponse.json(
+          { error: "No valid candidates supplied", code: "NO_CANDIDATES" },
+          { status: 400 }
+        );
+      }
+
+      const MAX_CANDIDATES = 100;
+      if (candidates.length > MAX_CANDIDATES) {
+        return NextResponse.json(
+          {
+            error: `Too many candidates. Maximum is ${MAX_CANDIDATES}.`,
+            code: "TOO_MANY_CANDIDATES",
+          },
+          { status: 400 }
+        );
+      }
+
+      const results: Array<{
+        username: string;
+        historicalDiscoveryScore: number;
+        alive: boolean;
+        accepted: boolean;
+        review: boolean;
+        disposition: "accepted" | "review" | "discarded" | "failed";
+        analysis?: Awaited<ReturnType<typeof analyzeChannelRecentMessages>>;
+        error?: string;
+      }> = [];
+
+      let checked = 0;
+      let alive = 0;
+      let accepted = 0;
+      let review = 0;
+      let discarded = 0;
+      let failed = 0;
+
+      for (const candidate of candidates) {
+        try {
+          const analysis = await analyzeChannelRecentMessages(
+            existingClient,
+            candidate.username,
+            { limit: 100 }
+          );
+
+          checked += 1;
+          alive += 1;
+
+          const isAccepted = analysis.verdict === "strong" || analysis.verdict === "medium";
+          const needsReview = analysis.verdict === "weak";
+
+          if (isAccepted) accepted += 1;
+          else if (needsReview) review += 1;
+          else discarded += 1;
+
+          results.push({
+            username: candidate.username,
+            historicalDiscoveryScore: candidate.historicalDiscoveryScore,
+            alive: true,
+            accepted: isAccepted,
+            review: needsReview,
+            disposition: isAccepted ? "accepted" : needsReview ? "review" : "discarded",
+            analysis,
+          });
+        } catch (error: unknown) {
+          checked += 1;
+          failed += 1;
+
+          const message = error instanceof Error ? error.message : String(error);
+          const mapped = parserError(message);
+
+          results.push({
+            username: candidate.username,
+            historicalDiscoveryScore: candidate.historicalDiscoveryScore,
+            alive: false,
+            accepted: false,
+            review: false,
+            disposition: "failed",
+            error: mapped.body.error,
+          });
+
+          if (mapped.body.status === "flood_wait") {
+            return NextResponse.json(
+              {
+                status: "rate_limited",
+                total: candidates.length,
+                checked,
+                alive,
+                accepted,
+                review,
+                discarded,
+                failed,
+                results,
+                error: mapped.body.error,
+                code: mapped.body.status,
+              },
+              { status: 429 }
+            );
+          }
+        }
+
+        // Small spacing between Telegram history requests.
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+
+      return NextResponse.json({
+        status: "validated",
+        total: candidates.length,
+        checked,
+        alive,
+        accepted,
+        review,
+        discarded,
+        failed,
+        results,
+      });
+    }
+
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
     const error = err as { message?: string };

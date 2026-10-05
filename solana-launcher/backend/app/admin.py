@@ -2,6 +2,8 @@ from sqladmin import Admin, ModelView
 from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
 
+from app.admin_twitter import TWITTER_ADMIN_VIEWS
+from app.admin_twitter_settings import TwitterCrawlerSettingsAdmin
 from app.core.config import Settings
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
@@ -60,8 +62,8 @@ class UserAdmin(ModelView, model=User):
 
 
 class SubscriptionSettingsAdmin(ModelView, model=SubscriptionSettings):
-    name = "Subscription settings"
-    name_plural = "Subscription settings"
+    name = "Настройки подписки"
+    name_plural = "Настройки подписки"
     icon = "fa-solid fa-credit-card"
     column_list = [
         "monthly_price_sol",
@@ -79,11 +81,12 @@ class SubscriptionSettingsAdmin(ModelView, model=SubscriptionSettings):
         "solana_recipient_wallet",
     ]
     column_labels = {
-        "monthly_price_sol": "Monthly price, SOL",
-        "monthly_price_usdt": "Monthly price, USDT (Solana)",
-        "free_demo_enabled": "Free demo enabled",
-        "demo_days": "Free demo days",
-        "solana_recipient_wallet": "Recipient Solana wallet",
+        "monthly_price_sol": "Цена за месяц, SOL",
+        "monthly_price_usdt": "Цена за месяц, USDT",
+        "free_demo_enabled": "Тестовый режим — бесплатный вход",
+        "demo_days": "Срок тестового доступа, дней",
+        "solana_recipient_wallet": "Кошелёк для оплаты (Solana)",
+        "updated_at": "Обновлено",
     }
     can_create = False
     can_edit = True
@@ -129,4 +132,7 @@ def setup_admin(app, engine, settings: Settings) -> Admin:
     admin.add_view(UserAdmin)
     admin.add_view(SubscriptionSettingsAdmin)
     admin.add_view(SubscriptionOrderAdmin)
+    admin.add_view(TwitterCrawlerSettingsAdmin)
+    for view in TWITTER_ADMIN_VIEWS:
+        admin.add_view(view)
     return admin

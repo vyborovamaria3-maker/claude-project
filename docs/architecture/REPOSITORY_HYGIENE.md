@@ -32,3 +32,17 @@ The check rejects tracked:
 ## Repository policy
 
 Keep source, configuration templates, fixtures, and reproducible build inputs in Git. Store release bundles and generated artifacts outside ordinary Git history. Never commit real environment files or captured browser/auth state.
+
+## Pre-commit hooks
+
+A `pre-commit` configuration exists at `solana-launcher/pre-commit-config.yaml` (note: **no leading dot** — the `pre-commit` tool does not auto-discover it). Run explicitly with:
+
+```bash
+cd solana-launcher && pre-commit run --all-files -c pre-commit-config.yaml
+```
+
+CI invokes ruff/mypy directly in three workflows (`full-backtest-audit.yml`, `telegram-intelligence-v19-ci.yml`, `trade-intelligence-quality.yml`) scoped to the `backend` directory.
+
+## W-refs
+
+This document is maintained as part of the architecture audit (W0.10, W1.5, W2.4).

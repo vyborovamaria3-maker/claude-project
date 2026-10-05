@@ -257,6 +257,7 @@ class ControlCenterTest(unittest.TestCase):
                 "ADMIN_PASSWORD_HASH":hash_password("correct-password"),
                 "ADMIN_TRUST_PROXY":"true",
                 "ADMIN_TRUSTED_PROXY_HOPS":"1",
+                "ADMIN_INTELLIGENCE_DB": str(Path(self.tmp.name) / "intelligence.sqlite3"),
                 "SOLANA_RPC_URL":"https://api.mainnet-beta.solana.com",
             })
             forwarded = "127.0.0.1, 127.0.0.1"

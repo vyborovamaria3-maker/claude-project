@@ -1,11 +1,7 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
-
 from app.db.base import Base
 from app.models.twitter_intelligence import TwitterAccount, TwitterAccountSnapshot, TwitterPostToken
 from app.services.twitter_account_registry import (
@@ -15,6 +11,9 @@ from app.services.twitter_account_registry import (
     upsert_twitter_account_score,
     upsert_twitter_post,
 )
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 
 @pytest_asyncio.fixture
@@ -35,7 +34,7 @@ async def db_session():
 async def test_account_upsert_uses_stable_twitter_id_and_records_history(
     db_session: AsyncSession,
 ):
-    observed = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
+    observed = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
     account = await upsert_twitter_account(
         db_session,
         twitter_id="123456789",
@@ -70,7 +69,7 @@ async def test_account_upsert_uses_stable_twitter_id_and_records_history(
 
 
 async def test_post_token_and_score_upserts_are_idempotent(db_session: AsyncSession):
-    published_at = datetime(2026, 9, 12, 12, 30, tzinfo=timezone.utc)
+    published_at = datetime(2026, 9, 12, 12, 30, tzinfo=UTC)
     account = await upsert_twitter_account(
         db_session,
         twitter_id="987654321",
@@ -124,9 +123,7 @@ async def test_post_token_and_score_upserts_are_idempotent(db_session: AsyncSess
         model_version="twitter-reputation-v1",
     )
 
-    token_link_count = await db_session.scalar(
-        select(func.count()).select_from(TwitterPostToken)
-    )
+    token_link_count = await db_session.scalar(select(func.count()).select_from(TwitterPostToken))
 
     assert same_post.id == post.id
     assert same_post.likes == 25

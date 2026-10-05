@@ -50,10 +50,10 @@ services:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 20s
-      timeout: 10s
+      interval: 30s
+      timeout: 30s
       retries: 10
-      start_period: 30s
+      start_period: 180s
     logging: *default-logging
 
   backend:
@@ -73,6 +73,14 @@ services:
       FRONTEND_URL: https://potapoff.fun
       FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
+      SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
+      REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
+      SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:-}
+      REQUIRE_SUBSCRIPTION_ADMIN_KEY: "true"
+    # Production migrations are owned by deploy-production.sh. Overriding the
+    # image CMD keeps rollback compatible after a newer Alembic revision has
+    # already been recorded in the database.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,9 +91,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 15s
-      timeout: 5s
+      timeout: 10s
       retries: 10
-      start_period: 30s
+      start_period: 60s
     logging: *default-logging
 
   celery-worker:
@@ -103,6 +111,26 @@ services:
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *default-logging
+
+  twitter-discovery:
+    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    env_file:
+      - backend.env
+      - .env.server
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    command: ["python", "-m", "app.cli.twitter_discovery_daemon", "--public-interval", "900", "--cycle-interval", "1800"]
     depends_on:
       backend:
         condition: service_healthy
@@ -137,40 +165,41 @@ services:
   frontend:
     image: ghcr.io/vyborovamaria3-maker/claude-project/frontend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
-    env_file:
-      - .env.server
     environment:
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
+      SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_BACKEND_URL: https://potapoff.fun/fastapi
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?TELEGRAM_WEBHOOK_SECRET is required}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
     volumes:
       - ./data:/app/data
     depends_on:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/miniapp').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 15s
-      timeout: 5s
+      test: ["CMD", "node", "-e", "Promise.all([fetch('http://127.0.0.1:3000/miniapp'),fetch('http://127.0.0.1:3000/api/miniapp/config')]).then(rs=>{if(rs.some(r=>!r.ok))process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 20s
       retries: 10
-      start_period: 30s
+      start_period: 60s
     logging: *default-logging
 
   telegram-bot:
     profiles: ["telegram"]
     image: ghcr.io/vyborovamaria3-maker/claude-project/telegram-bot:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
-    env_file:
-      - backend.env
-      - .env.server
     environment:
       NODE_ENV: production
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:?TELEGRAM_WEBHOOK_URL is required}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?TELEGRAM_WEBHOOK_SECRET is required}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
+      FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun
       NEXT_PUBLIC_FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_TELEGRAM_BOT_URL: ${NEXT_PUBLIC_TELEGRAM_BOT_URL:-https://t.me/Soft777bot}
@@ -196,9 +225,10 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
-      interval: 15s
-      timeout: 5s
+      interval: 20s
+      timeout: 10s
       retries: 10
+      start_period: 30s
     logging: *default-logging
 
   prometheus:

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { env } from '@/server/config/env.js';
 import { cacheGet, cacheSet } from '@/server/cache/redis.js';
-import { buildTelegramPrompt, TELEGRAM_PROMPT_VERSION } from './prompts.js';
+import { buildTelegramPrompt, promptVisibleFeatureKeys, TELEGRAM_PROMPT_VERSION } from './prompts.js';
 import { mockTelegramAnalysis } from './mock.js';
 import { telegramAiResultSchema, type TelegramAiResult, type TelegramAnalysisContext, type TelegramMessageInput } from './schemas.js';
 import { groundMockFullIntelligence, validateTelegramAiResult } from './validation.js';
@@ -78,6 +78,89 @@ function parseResult(raw: string, messages: TelegramMessageInput[], context: Tel
   return validateTelegramAiResult(telegramAiResultSchema.parse(parseJsonObject(raw)), messages, context);
 }
 
+function fallbackSummary(raw: string) {
+  const cleaned = raw
+    .replace(/<\/?think>/gi, '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  if (!cleaned) return 'Qwen returned an invalid JSON response, so the service produced a cautious fallback analysis.';
+  return cleaned.slice(0, 900);
+}
+
+function fallbackSourceAssessment(source: 'x' | 'telegram' | 'chain', featureKeys: string[]) {
+  const sourceName = source === 'x' ? 'X' : source === 'telegram' ? 'Telegram' : 'chain';
+  return {
+    currentSituation: `${sourceName}: данных недостаточно для надежной интерпретации в этом fallback-ответе.`,
+    interpretation: `${sourceName}: исходный ответ локальной модели не прошел JSON-проверку, поэтому вывод по источнику оставлен осторожным.`,
+    entryImpact: `${sourceName}: влияние на текущий тезис о входе не подтверждено достаточно надежно.`,
+    supportingFeatureKeys: featureKeys,
+    confidence: 0.1,
+  };
+}
+
+function fallbackResult(raw: string, context: TelegramAnalysisContext): TelegramAiResult {
+  const featureKeys = [...promptVisibleFeatureKeys(context)].slice(0, 6);
+  const result: TelegramAiResult = {
+    summary: fallbackSummary(raw),
+    sentiment: { label: 'mixed', score: 0, confidence: 0.1 },
+    dominantIntent: 'unknown',
+    mentionedTokens: [],
+    entities: [],
+    claims: [],
+    relationships: [],
+    coordinationSignals: [],
+    campaignHypothesis: {
+      label: 'insufficient_data',
+      confidence: 0.1,
+      likelyOriginators: [],
+      amplifiers: [],
+      narrative: 'Локальная модель ответила, но JSON был поврежден; нужен повторный анализ или более крупная модель для уверенного вывода.',
+      evidenceMessageIds: [],
+    },
+    risks: [],
+    featureAssessments: [],
+    discoveredRelationships: [],
+    anomalies: [{
+      type: 'invalid_llm_json',
+      severity: 'low',
+      confidence: 1,
+      explanation: 'OpenAI-compatible локальная модель вернула синтаксически некорректный JSON; сервис вернул безопасный fallback вместо ошибки 500.',
+      relatedFeatureKeys: [],
+      evidenceMessageIds: [],
+    }],
+    contradictions: [],
+    whatWouldChangeConclusion: [
+      'Повторный валидный JSON-ответ локальной модели.',
+      'Более крупная critic-модель или дополнительная post-processing проверка JSON.',
+    ],
+    reasoningSummary: [
+      'Связь с локальной моделью работает, но этот ответ был понижен до fallback из-за ошибки JSON-формата.',
+    ],
+    overallConfidence: 0.1,
+  };
+  if (context.analysisMode === 'full_intelligence' && context.intelligenceSnapshot) {
+    result.sourceAssessments = {
+      x: fallbackSourceAssessment('x', featureKeys),
+      telegram: fallbackSourceAssessment('telegram', featureKeys),
+      chain: fallbackSourceAssessment('chain', featureKeys),
+    };
+    result.entryAssessment = {
+      priceState: 'unknown',
+      entryAction: 'wait_confirmation',
+      oneLineVerdict: 'Вход не стоит оценивать по этому ответу: локальная модель не вернула валидный JSON, поэтому нужен повторный анализ.',
+      whyNow: [],
+      alreadyPricedIn: [],
+      missingConfirmation: ['Валидный структурированный ответ модели.', 'Свежие подтверждения по social, market и chain источникам.'],
+      invalidation: ['Повторный ответ снова ломает JSON или противоречит входным данным.'],
+      supportingFeatureKeys: featureKeys,
+      evidenceMessageIds: [],
+      confidence: 0.1,
+    };
+  }
+  return validateTelegramAiResult(telegramAiResultSchema.parse(result), [], context);
+}
+
 function endpointUrl() {
   return new URL('chat/completions', env.TELEGRAM_AI_BASE_URL.endsWith('/') ? env.TELEGRAM_AI_BASE_URL : `${env.TELEGRAM_AI_BASE_URL}/`);
 }
@@ -89,6 +172,7 @@ async function requestCompletion(messages: OpenAiMessage[], options: CompletionO
     temperature: options.temperature,
     max_tokens: options.maxTokens,
     stream: false,
+    chat_template_kwargs: { enable_thinking: false },
   };
   if (options.jsonMode) body.response_format = { type: 'json_object' };
 
@@ -135,7 +219,11 @@ async function callOpenAiCompatible(messages: TelegramMessageInput[], context: T
       { role: 'assistant', content: first.raw.slice(0, 12_000) },
       { role: 'user', content: `The previous answer failed JSON schema validation: ${validation}. Return a corrected JSON object only. Do not add markdown or explanations.` },
     ], { jsonMode: true, temperature: 0, maxTokens });
-    result = parseResult(repaired.raw, messages, context);
+    try {
+      result = parseResult(repaired.raw, messages, context);
+    } catch {
+      result = fallbackResult(repaired.raw || first.raw, context);
+    }
     inputTokens = inputTokens === null || repaired.inputTokens === null ? null : inputTokens + repaired.inputTokens;
     outputTokens = outputTokens === null || repaired.outputTokens === null ? null : outputTokens + repaired.outputTokens;
   }

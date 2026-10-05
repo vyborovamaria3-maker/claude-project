@@ -25,5 +25,23 @@
   "devDependencies": {
     "concurrently": "^9.2.0",
     "typescript": "^5.8.3"
+  },
+  "overrides": {
+    "nanoid": "6.0.1",
+    "deepmerge-ts": "8.0.2",
+    "shell-quote": "1.10.0",
+    "valibot": "1.5.0",
+    "@prisma/config": {
+      "deepmerge-ts": "8.0.2"
+    },
+    "@telegram-apps/bridge": {
+      "valibot": "1.5.0"
+    },
+    "@telegram-apps/sdk": {
+      "valibot": "1.5.0"
+    },
+    "@telegram-apps/transformers": {
+      "valibot": "1.5.0"
+    }
   }
 }

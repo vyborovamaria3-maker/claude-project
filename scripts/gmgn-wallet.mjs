@@ -21,6 +21,5 @@ if (!gmgnArgs) {
   process.exit(1);
 }
 
-const result = spawnSync('gmgn-cli', gmgnArgs, { stdio: 'inherit', shell: true });
+const result = spawnSync('gmgn-cli', gmgnArgs, { stdio: 'inherit', shell: false });
 process.exit(result.status ?? 1);
-

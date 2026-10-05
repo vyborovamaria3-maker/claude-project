@@ -43,25 +43,60 @@ async function evaluateStable(page) {
     try {
       await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => {});
       await page.waitForTimeout(350);
-      return await page.evaluate(() => ({
-        viewport: document.documentElement.clientWidth,
-        htmlWidth: document.documentElement.scrollWidth,
-        bodyWidth: document.body?.scrollWidth || 0,
-        text: document.body?.innerText?.slice(0, 10000) || "",
-        href: location.href,
-        badHrefs: Array.from(document.querySelectorAll("a[href]"))
-          .map((node) => node.getAttribute("href") || "")
-          .filter((href) => /(^|[/?#])(undefined|null)([/?#]|$)/i.test(href)),
-        controlsOutsideViewport: Array.from(document.querySelectorAll("input, select, textarea, button"))
-          .filter((node) => {
-            const rect = node.getBoundingClientRect();
-            const style = getComputedStyle(node);
-            if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) return false;
-            return rect.left < -2 || rect.right > document.documentElement.clientWidth + 2;
-          })
-          .slice(0, 20)
-          .map((node) => `${node.tagName.toLowerCase()}#${node.id || ""}.${node.className || ""}`),
-      }));
+      return await page.evaluate(() => {
+        function isIntentionallyClippedOrScrollable(node) {
+          let parent = node.parentElement;
+          while (parent && parent !== document.documentElement) {
+            const style = getComputedStyle(parent);
+            if (
+              parent.getAttribute("aria-hidden") === "true"
+              || parent.hasAttribute("inert")
+              || style.display === "none"
+              || style.visibility === "hidden"
+              || style.pointerEvents === "none"
+              || Number.parseFloat(style.opacity || "1") === 0
+            ) return true;
+
+            const overflowX = style.overflowX;
+            if (
+              ["auto", "scroll", "hidden", "clip"].includes(overflowX)
+              && parent.scrollWidth > parent.clientWidth + 2
+            ) return true;
+            parent = parent.parentElement;
+          }
+          return false;
+        }
+
+        return {
+          viewport: document.documentElement.clientWidth,
+          htmlWidth: document.documentElement.scrollWidth,
+          bodyWidth: document.body?.scrollWidth || 0,
+          text: document.body?.innerText?.slice(0, 10000) || "",
+          href: location.href,
+          badHrefs: Array.from(document.querySelectorAll("a[href]"))
+            .map((node) => node.getAttribute("href") || "")
+            .filter((href) => /(^|[/?#])(undefined|null)([/?#]|$)/i.test(href)),
+          controlsOutsideViewport: Array.from(document.querySelectorAll("input, select, textarea, button"))
+            .filter((node) => {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              if (
+                style.display === "none"
+                || style.visibility === "hidden"
+                || style.pointerEvents === "none"
+                || Number.parseFloat(style.opacity || "1") === 0
+                || node.getAttribute("aria-hidden") === "true"
+                || node.hasAttribute("inert")
+                || rect.width === 0
+                || rect.height === 0
+              ) return false;
+              if (isIntentionallyClippedOrScrollable(node)) return false;
+              return rect.left < -2 || rect.right > document.documentElement.clientWidth + 2;
+            })
+            .slice(0, 20)
+            .map((node) => `${node.tagName.toLowerCase()}#${node.id || ""}.${node.className || ""}`),
+        };
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const redirectRace = /Execution context was destroyed|Target page, context or browser has been closed/i.test(message);

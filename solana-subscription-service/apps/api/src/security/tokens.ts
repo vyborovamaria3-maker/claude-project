@@ -1,5 +1,5 @@
+import { randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
-import { nanoid } from "nanoid";
 import { env } from "../config/env";
 import { redis } from "../lib/redis";
 
@@ -11,8 +11,13 @@ export interface JwtPayload {
 
 const JWT_ALGORITHM = "HS256" as const;
 
+function randomId(length: number): string {
+  const bytes = Math.ceil((length * 3) / 4);
+  return randomBytes(bytes).toString("base64url").slice(0, length);
+}
+
 export function signAccessToken(userId: string, telegramId: string) {
-  const payload: JwtPayload = { sub: userId, telegramId, jti: nanoid(18) };
+  const payload: JwtPayload = { sub: userId, telegramId, jti: randomId(18) };
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
     algorithm: JWT_ALGORITHM,
     expiresIn: env.ACCESS_TOKEN_TTL_SECONDS
@@ -20,7 +25,7 @@ export function signAccessToken(userId: string, telegramId: string) {
 }
 
 export async function signRefreshToken(userId: string, telegramId: string) {
-  const jti = nanoid(24);
+  const jti = randomId(24);
   const payload: JwtPayload = { sub: userId, telegramId, jti };
   const token = jwt.sign(payload, env.JWT_REFRESH_SECRET, {
     algorithm: JWT_ALGORITHM,

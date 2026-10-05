@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.services.social_filters import (
     filter_timeline_payload,
@@ -27,8 +27,7 @@ def test_solana_address_parser() -> None:
 
 def test_telegram_parser_extracts_cross_platform_links_and_call() -> None:
     parsed = parse_telegram_message(
-        f"100x gem $TEST CA {ADDR} mirror "
-        "https://t.me/rqcrypt and https://x.com/solana"
+        f"100x gem $TEST CA {ADDR} mirror https://t.me/rqcrypt and https://x.com/solana"
     )
     assert parsed.addresses == [ADDR]
     assert parsed.tickers == ["TEST"]
@@ -81,41 +80,42 @@ def test_score_does_not_overtrust_unevaluated_calls() -> None:
 
 def test_social_source_normalizes_telegram_urls() -> None:
     assert normalize_social_source("@Alpha_Calls") == "alpha_calls"
-    assert (
-        normalize_social_source("https://t.me/Alpha_Calls/12345?single#post")
-        == "alpha_calls"
-    )
+    assert normalize_social_source("https://t.me/Alpha_Calls/12345?single#post") == "alpha_calls"
 
 
 def test_social_event_engagement_uses_platform_metrics() -> None:
-    assert social_event_engagement(
-        {
-            "platform": "telegram",
-            "metrics": {
-                "reactions": 4,
-                "forwards": 3,
-                "replies": 2,
-                "views": 999,
-            },
-        }
-    ) == 9
-    assert social_event_engagement(
-        {
-            "platform": "x",
-            "metrics": {
-                "likes": 4,
-                "retweets": 3,
-                "replies": 2,
-                "views": 999,
-            },
-        }
-    ) == 9
+    assert (
+        social_event_engagement(
+            {
+                "platform": "telegram",
+                "metrics": {
+                    "reactions": 4,
+                    "forwards": 3,
+                    "replies": 2,
+                    "views": 999,
+                },
+            }
+        )
+        == 9
+    )
+    assert (
+        social_event_engagement(
+            {
+                "platform": "x",
+                "metrics": {
+                    "likes": 4,
+                    "retweets": 3,
+                    "replies": 2,
+                    "views": 999,
+                },
+            }
+        )
+        == 9
+    )
 
 
 def test_explicit_call_detection_accepts_all_supported_encodings() -> None:
-    assert is_explicit_telegram_call(
-        {"platform": "telegram", "metrics": {"explicit_call": True}}
-    )
+    assert is_explicit_telegram_call({"platform": "telegram", "metrics": {"explicit_call": True}})
     assert is_explicit_telegram_call(
         {"platform": "telegram", "metrics": {"is_explicit_call": True}}
     )
@@ -128,7 +128,7 @@ def test_explicit_call_detection_accepts_all_supported_encodings() -> None:
 
 
 def test_timeline_filters_by_window_source_score_and_explicit_call() -> None:
-    now = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
     payload = {
         "mint_address": ADDR,
         "timeline": [

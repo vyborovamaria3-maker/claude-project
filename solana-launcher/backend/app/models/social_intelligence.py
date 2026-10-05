@@ -1,15 +1,27 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class TelegramChannel(Base):
@@ -28,8 +40,12 @@ class TelegramChannel(Base):
     participants: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     about: Mapped[str] = mapped_column(Text, nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -45,23 +61,33 @@ class TelegramUser(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class TelegramMessage(Base):
     __tablename__ = "telegram_messages"
     __table_args__ = (
-        UniqueConstraint("channel_id", "telegram_message_id", name="uq_telegram_messages_channel_message"),
+        UniqueConstraint(
+            "channel_id", "telegram_message_id", name="uq_telegram_messages_channel_message"
+        ),
         Index("ix_telegram_messages_channel_date", "channel_id", "published_at"),
         Index("ix_telegram_messages_sender", "sender_telegram_id", "published_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    channel_id: Mapped[int] = mapped_column(ForeignKey("telegram_channels.id", ondelete="CASCADE"), nullable=False)
+    channel_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_channels.id", ondelete="CASCADE"), nullable=False
+    )
     telegram_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    sender_id: Mapped[int | None] = mapped_column(ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True)
+    sender_id: Mapped[int | None] = mapped_column(
+        ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True
+    )
     sender_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sender_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sender_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -78,14 +104,20 @@ class TelegramMessage(Base):
 class TelegramTokenMention(Base):
     __tablename__ = "telegram_token_mentions"
     __table_args__ = (
-        UniqueConstraint("message_id", "mint_address", name="uq_telegram_token_mentions_message_mint"),
+        UniqueConstraint(
+            "message_id", "mint_address", name="uq_telegram_token_mentions_message_mint"
+        ),
         Index("ix_telegram_token_mentions_mint_date", "mint_address", "first_seen_at"),
         Index("ix_telegram_token_mentions_channel", "channel_id", "first_seen_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    message_id: Mapped[int] = mapped_column(ForeignKey("telegram_messages.id", ondelete="CASCADE"), nullable=False)
-    channel_id: Mapped[int] = mapped_column(ForeignKey("telegram_channels.id", ondelete="CASCADE"), nullable=False)
+    message_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    channel_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_channels.id", ondelete="CASCADE"), nullable=False
+    )
     mint_address: Mapped[str] = mapped_column(String(64), nullable=False)
     ticker: Mapped[str | None] = mapped_column(String(32), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -104,9 +136,15 @@ class TelegramCall(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    mention_id: Mapped[int] = mapped_column(ForeignKey("telegram_token_mentions.id", ondelete="CASCADE"), nullable=False, unique=True)
-    channel_id: Mapped[int] = mapped_column(ForeignKey("telegram_channels.id", ondelete="CASCADE"), nullable=False)
-    message_id: Mapped[int] = mapped_column(ForeignKey("telegram_messages.id", ondelete="CASCADE"), nullable=False)
+    mention_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_token_mentions.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    channel_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_channels.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_messages.id", ondelete="CASCADE"), nullable=False
+    )
     mint_address: Mapped[str] = mapped_column(String(64), nullable=False)
     caller_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     caller_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -125,7 +163,9 @@ class TelegramCall(Base):
 class TelegramChannelScore(Base):
     __tablename__ = "telegram_channel_scores"
 
-    channel_id: Mapped[int] = mapped_column(ForeignKey("telegram_channels.id", ondelete="CASCADE"), primary_key=True)
+    channel_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_channels.id", ondelete="CASCADE"), primary_key=True
+    )
     calls_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     evaluated_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     successful_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -135,7 +175,9 @@ class TelegramChannelScore(Base):
     rug_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     avg_roi: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
 
 
 class SocialRelation(Base):
@@ -160,15 +202,25 @@ class SocialRelation(Base):
     target_handle: Mapped[str] = mapped_column(String(128), nullable=False)
     relation_type: Mapped[str] = mapped_column(String(32), nullable=False, default="mention")
     count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
     evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class SocialEvent(Base):
     __tablename__ = "social_events"
     __table_args__ = (
-        UniqueConstraint("platform", "event_type", "external_id", "mint_address", name="uq_social_events_external_mint"),
+        UniqueConstraint(
+            "platform",
+            "event_type",
+            "external_id",
+            "mint_address",
+            name="uq_social_events_external_mint",
+        ),
         Index("ix_social_events_mint_time", "mint_address", "occurred_at"),
         Index("ix_social_events_platform_time", "platform", "occurred_at"),
         Index("ix_social_events_source", "source_handle", "occurred_at"),
@@ -187,4 +239,6 @@ class SocialEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )

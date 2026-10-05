@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +46,7 @@ class IntelligenceViewStore:
 
     def summary(self) -> dict[str, Any]:
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 job_rows = connection.execute(
                     "SELECT status, COUNT(*) AS count FROM intelligence_jobs GROUP BY status"
                 ).fetchall()
@@ -66,7 +66,7 @@ class IntelligenceViewStore:
     def recent_jobs(self, limit: int) -> list[dict[str, Any]]:
         _validate_limit(limit)
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 rows = connection.execute(
                     """
                     SELECT id, status, created_at, started_at, finished_at,
@@ -84,7 +84,7 @@ class IntelligenceViewStore:
     def recent_documents(self, limit: int) -> list[dict[str, Any]]:
         _validate_limit(limit)
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 rows = connection.execute(
                     """
                     SELECT id, source, provider, author, published_at,

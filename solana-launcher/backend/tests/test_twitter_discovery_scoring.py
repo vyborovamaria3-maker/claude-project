@@ -1,9 +1,6 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
-
 from app.db.base import Base
 from app.models.twitter_intelligence import TwitterAccountTokenStat
 from app.services.twitter_account_registry import (
@@ -16,6 +13,8 @@ from app.services.twitter_discovery import (
     promote_candidate,
 )
 from app.services.twitter_discovery_scoring import rescore_discovery_candidate
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 
 @pytest_asyncio.fixture
@@ -36,7 +35,7 @@ async def session():
 async def test_source_diversity_increases_discovery_score(session: AsyncSession):
     candidate = await enqueue_discovery_candidate(
         session,
-        username="multi_source_alpha",
+        username="multialpha",
         relevance_hint=60,
         source_type="curated_seed",
         source_ref="seed.json",
@@ -48,7 +47,7 @@ async def test_source_diversity_increases_discovery_score(session: AsyncSession)
 
     await enqueue_discovery_candidate(
         session,
-        username="multi_source_alpha",
+        username="multialpha",
         relevance_hint=60,
         source_type="x_search",
         source_ref="solana memecoin",
@@ -56,7 +55,7 @@ async def test_source_diversity_increases_discovery_score(session: AsyncSession)
     )
     await enqueue_discovery_candidate(
         session,
-        username="multi_source_alpha",
+        username="multialpha",
         relevance_hint=60,
         source_type="public_web",
         source_ref="https://example.com/research",
@@ -124,6 +123,22 @@ async def test_early_call_history_lifts_priority(session: AsyncSession):
         source_ref="solana alpha",
         discovery_reason="search",
     )
+    await enqueue_discovery_candidate(
+        session,
+        username="early_caller",
+        relevance_hint=80,
+        source_type="curated_seed",
+        source_ref="seed.json",
+        discovery_reason="seed",
+    )
+    await enqueue_discovery_candidate(
+        session,
+        username="early_caller",
+        relevance_hint=80,
+        source_type="public_web",
+        source_ref="https://example.com/early-caller",
+        discovery_reason="official_social_link",
+    )
     profile = ResolvedTwitterProfile(
         twitter_id="333",
         username="early_caller",
@@ -133,7 +148,7 @@ async def test_early_call_history_lifts_priority(session: AsyncSession):
         following_count=900,
         tweet_count=12_000,
         source="test",
-        x_created_at=datetime(2021, 1, 1, tzinfo=timezone.utc),
+        x_created_at=datetime(2021, 1, 1, tzinfo=UTC),
     )
     accepted, account_id, _ = await promote_candidate(
         session,
@@ -172,3 +187,34 @@ async def test_early_call_history_lifts_priority(session: AsyncSession):
     assert score.early_signal_score >= 85
     assert score.confidence >= 70
     assert candidate.priority == round(score.discovery_score)
+
+
+async def test_rescore_does_not_rewrite_shared_candidate_metadata(session: AsyncSession):
+    candidate = await enqueue_discovery_candidate(
+        session,
+        username="metasafealpha",
+        relevance_hint=72,
+        source_type="x_search",
+        source_ref="metadata safety",
+        discovery_reason="search",
+    )
+    original_meta = {
+        "resolved_profile": {
+            "twitter_id": "444",
+            "username": "metasafealpha",
+            "followers_count": 12345,
+            "following_count": 321,
+            "tweet_count": 4567,
+            "verified": False,
+        },
+        "resolver_marker": "must-survive-rescore",
+    }
+    candidate.meta = original_meta.copy()
+    await session.flush()
+
+    score = await rescore_discovery_candidate(session, candidate)
+
+    assert candidate.meta == original_meta
+    assert score.components is not None
+    assert score.components["score_version"] == "discovery-score-v1"
+    assert score.components["resolved_profile"] is True
