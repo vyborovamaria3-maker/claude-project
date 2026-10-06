@@ -3,6 +3,24 @@ import path from "node:path";
 import net from "node:net";
 import { spawn } from "node:child_process";
 
+// Register exit handlers to ensure all managed processes are cleaned up
+process.on("beforeExit", () => {
+  console.log("X Collector: cleaning up managed processes on beforeExit");
+  cleanupManagedProcesses();
+});
+process.on("SIGINT", () => {
+  console.log("X Collector: cleaning up managed processes on SIGINT");
+  cleanupManagedProcesses();
+  setTimeout(() => process.exit(0), 1000);
+});
+process.on("SIGTERM", () => {
+  console.log("X Collector: cleaning up managed processes on SIGTERM");
+  cleanupManagedProcesses();
+  setTimeout(() => process.exit(0), 1000);
+});
+
+
+
 const SOLANA_LAUNCHER_DIR = process.cwd();
 const X_COLLECTOR_DIR_REL = path.join(SOLANA_LAUNCHER_DIR, "..", "x-collector");
 
@@ -81,32 +99,6 @@ function parseDbHostPort(databaseUrl: string): { host: string; port: number } | 
   }
 }
 
-async function probeDb(databaseUrl: string | undefined): Promise<{ reachable: boolean; detail: string }> {
-  if (!databaseUrl) return { reachable: false, detail: "DATABASE_URL не задан" };
-  const target = parseDbHostPort(databaseUrl);
-  if (!target) return { reachable: false, detail: "Не удалось разобрать DATABASE_URL" };
-
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    const timer = setTimeout(() => {
-      socket.destroy();
-      resolve({ reachable: false, detail: `${target.host}:${target.port} — таймаут (3с)` });
-    }, 3000);
-
-    socket.on("connect", () => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve({ reachable: true, detail: `${target.host}:${target.port}` });
-    });
-    socket.on("error", (error) => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve({ reachable: false, detail: `${target.host}:${target.port} — ${error.message}` });
-    });
-    socket.connect(target.port, target.host);
-  });
-}
-
 function parseEnvFile(envPath: string): Record<string, string> {
   if (!fs.existsSync(envPath)) return {};
   const content = fs.readFileSync(envPath, "utf-8");
@@ -114,10 +106,13 @@ function parseEnvFile(envPath: string): Record<string, string> {
   content.split("\n").forEach((line) => {
     line = line.trim();
     if (!line || line.startsWith("#") || line.startsWith(";")) return;
-    const [key, ...rest] = line.split("=");
-    if (key && rest.length > 0) {
-      env[key.trim()] = rest.join("=").trim().replace(/^["']|["']$/g, "");
-    }
+    // Skip export prefix if present
+    line = line.replace(/^export\s+/, "");
+    const index = line.indexOf("=");
+    if (index === -1) return;
+    const key = line.slice(0, index).trim();
+    const value = line.slice(index + 1).trim().replace(/^["']|["']$/g, "");
+    if (key) env[key] = value;
   });
   return env;
 }
@@ -181,12 +176,17 @@ function stopXProcess(name: "worker" | "scheduler" | "dashboard") {
   return true;
 }
 
-async function probeHttp(url: string, timeoutMs = 2500): Promise<{ reachable: boolean; detail: string }> {
+async function probeHttp(url: string, timeoutMs = 2500, signal?: AbortSignal): Promise<{ reachable: boolean; detail: string }> {
+  if (signal) {
+    // Use provided signal if available
+    const result = await fetch(url, { cache: "no-store", signal });
+    return { reachable: result.ok, detail: `HTTP ${result.status}` };
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
-    return { reachable: response.ok, detail: `HTTP ${response.status}` };
+    const result = await fetch(url, { cache: "no-store", signal: controller.signal });
+    return { reachable: result.ok, detail: `HTTP ${result.status}` };
   } catch (error) {
     return { reachable: false, detail: error instanceof Error ? error.message : "недоступен" };
   } finally {
@@ -218,11 +218,21 @@ export async function getXCollectorSummary(): Promise<XCollectorSummary> {
   const dashboardHost = "127.0.0.1";
   const dashboardPort = Number(process.env.X_COLLECTOR_DASHBOARD_PORT || process.env.DASHBOARD_PORT || 3001);
 
-  const [workerHealth, dashboardHealth, dbHealth] = await Promise.all([
-    probeHttp(`http://${workerHost}:${workerPort}/health`),
-    probeHttp(`http://${dashboardHost}:${dashboardPort}/api/health`),
-    probeDb(databaseUrlForProbe),
+  // Use a combined timeout to avoid slow UI (max 5s for all three probes)
+  const controller = new AbortController();
+  const combinedTimeout = setTimeout(() => controller.abort(), 5000);
+
+  const [workerHealth, dashboardHealth, dbHealth] = await Promise.allSettled([
+    probeHttp(`http://${workerHost}:${workerPort}/health`, 2000, controller.signal),
+    probeHttp(`http://${dashboardHost}:${dashboardPort}/api/health`, 2000, controller.signal),
+    probeDb(databaseUrlForProbe, 2000, controller.signal),
   ]);
+
+  const okWorker = workerHealth.status === "fulfilled" ? (workerHealth.value as any) : { reachable: false, detail: "timeout" };
+  const okDashboard = dashboardHealth.status === "fulfilled" ? (dashboardHealth.value as any) : { reachable: false, detail: "timeout" };
+  const okDb = dbHealth.status === "fulfilled" ? (dbHealth.value as any) : { reachable: false, detail: "timeout" };
+
+  clearTimeout(combinedTimeout);
 
   return {
     installed: dirExists && nodeModulesPresent,
@@ -243,13 +253,50 @@ export async function getXCollectorSummary(): Promise<XCollectorSummary> {
       dashboard: managedProcesses.get("dashboard") ?? null,
     },
     health: {
-      worker: { url: `http://${workerHost}:${workerPort}/health`, ...workerHealth },
-      dashboard: { url: `http://${dashboardHost}:${dashboardPort}/api/health`, ...dashboardHealth },
+      worker: { url: `http://${workerHost}:${workerPort}/health`, ...okWorker },
+      dashboard: { url: `http://${dashboardHost}:${dashboardPort}/api/health`, ...okDashboard },
     },
-    db: dbHealth,
+    db: okDb,
   };
 }
 
+
+async function probeDb(databaseUrl: string | undefined, timeoutMs = 3000, signal?: AbortSignal): Promise<{ reachable: boolean; detail: string }> {
+  if (!databaseUrl) return { reachable: false, detail: "DATABASE_URL не задан" };
+  const target = parseDbHostPort(databaseUrl);
+  if (!target) return { reachable: false, detail: "Не удалось разобрать DATABASE_URL" };
+
+  return new Promise((resolve) => {
+    if (signal) {
+      if (signal.aborted) {
+        resolve({ reachable: false, detail: "cancelled" });
+        return;
+      }
+      (signal as any).once("abort", () => {
+        socket.destroy();
+        resolve({ reachable: false, detail: "cancelled" });
+      });
+    }
+
+    const socket = new net.Socket();
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve({ reachable: false, detail: `${target.host}:${target.port} — таймаут (${timeoutMs}ms)` });
+    }, timeoutMs);
+
+    socket.on("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve({ reachable: true, detail: `${target.host}:${target.port}` });
+    });
+    socket.on("error", (error) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve({ reachable: false, detail: `${target.host}:${target.port} — ${error.message}` });
+    });
+    socket.connect(target.port, target.host);
+  });
+}
 export async function runXCollectorAction(action: XCollectorAction) {
   switch (action) {
     case "worker-start":
@@ -308,4 +355,16 @@ function runOneShot(action: "migrate" | "migrate-status" | "login"): Promise<{ o
       }
     }, 60_000);
   });
+}
+
+// Called on launcher shutdown to clean up managed processes
+export function cleanupManagedProcesses() {
+  for (const [name, record] of managedProcesses.entries()) {
+    try {
+      process.kill(record.pid, "SIGTERM");
+    } catch {
+      // already terminated
+    }
+  }
+  managedProcesses.clear();
 }
