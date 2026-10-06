@@ -9,8 +9,9 @@ import QuickActionsTab from "./QuickActionsTab";
 import ActivityTab from "./ActivityTab";
 import DiagnosticsTab from "./DiagnosticsTab";
 import ApifyTab from "./ApifyTab";
+import XCollectorTab from "./XCollectorTab";
 
-type Tab = "account" | "quick-actions" | "activity" | "colors" | "diagnostics" | "apify";
+type Tab = "account" | "quick-actions" | "activity" | "colors" | "diagnostics" | "apify" | "xcollector";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "account",       label: "Account" },
@@ -18,15 +19,17 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "activity",      label: "Activity" },
   { id: "diagnostics",   label: "Diagnostics" },
   { id: "apify",         label: "Apify" },
+  { id: "xcollector",    label: "X Collector" },
   { id: "colors",        label: "Colors" },
 ];
 
-const TAB_LABEL_KEYS: Record<Tab, "settings.tab.account" | "settings.tab.quickActions" | "settings.tab.activity" | "settings.tab.diagnostics" | "settings.tab.apify" | "settings.tab.colors"> = {
+const TAB_LABEL_KEYS: Record<Tab, "settings.tab.account" | "settings.tab.quickActions" | "settings.tab.activity" | "settings.tab.diagnostics" | "settings.tab.apify" | "settings.tab.xCollector" | "settings.tab.colors"> = {
   account: "settings.tab.account",
   "quick-actions": "settings.tab.quickActions",
   activity: "settings.tab.activity",
   diagnostics: "settings.tab.diagnostics",
   apify: "settings.tab.apify",
+  xcollector: "settings.tab.xCollector",
   colors: "settings.tab.colors",
 };
 
@@ -82,6 +85,7 @@ export default function SettingsPage() {
                       {tabItem.id === "activity" && "Recent events and usage history."}
                       {tabItem.id === "diagnostics" && "Health checks and runtime signals."}
                       {tabItem.id === "apify" && "Collector and sync integrations."}
+                      {tabItem.id === "xcollector" && "X (Twitter) collection pipeline for Solana memecoins."}
                       {tabItem.id === "colors" && "Theme families, gradients, and palette controls."}
                     </div>
                   </div>
@@ -104,6 +108,7 @@ export default function SettingsPage() {
         {tab === "activity" && <ActivityTab />}
         {tab === "diagnostics" && <DiagnosticsTab />}
         {tab === "apify" && <ApifyTab />}
+        {tab === "xcollector" && <XCollectorTab />}
         {tab === "colors" && <ColorsTab />}
       </section>
     </div>
