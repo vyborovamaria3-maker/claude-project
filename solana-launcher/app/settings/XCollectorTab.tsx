@@ -220,8 +220,11 @@ export default function XCollectorTab() {
         </div>
       </div>
 
-      <div>
-        <h3 className="text-lg font-semibold text-white mb-3">Активные процессы</h3>
+      <div className="glass rounded-xl border border-bg-border p-5 space-y-4">
+        <div className="flex items-center gap-2 text-white">
+          <TerminalSquare className="w-4 h-4 text-neon-green" />
+          <p className="font-semibold">Активные процессы</p>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {["worker", "scheduler", "dashboard"].map((name) => (
             <ProcessCard 
@@ -253,3 +256,4 @@ export default function XCollectorTab() {
     </div>
   );
 }
+
