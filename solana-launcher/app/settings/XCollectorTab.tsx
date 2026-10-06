@@ -176,6 +176,25 @@ export default function XCollectorTab() {
     }
   }
 
+  // Mapping modules to sections
+  const moduleSectionMapping: Record<string, string> = {
+    "Аккаунты": "accounts",
+    "Прокси": "proxies",
+    "Кампании": "campaigns",
+    "AI генерация": "ai",
+    "Anti-detection": "security",
+  };
+
+  const handleModuleClick = (feature: string) => {
+    const section = moduleSectionMapping[feature];
+    if (section) {
+      window.location.href = `#${section}`;
+    } else {
+      // Not implemented yet
+      alert(`Модуль "${feature}" находится в разработке`);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -246,12 +265,43 @@ export default function XCollectorTab() {
         <h3 className="text-lg font-semibold text-white mb-4">Модули системы</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {["Аккаунты", "Прокси", "Кампании", "AI генерация", "RAG", "Rate limiting", "Anti-detection", "Telegram-бот"].map((feature) => (
-            <div key={feature} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white/70">
+            <button
+              key={feature}
+              onClick={() => handleModuleClick(feature)}
+              type="button"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white/70 hover:bg-white/10 transition cursor-pointer w-full text-left"
+            >
               <CheckCircle2 className="w-4 h-4" />
               <span>{feature}</span>
-            </div>
+            </button>
           ))}
         </div>
+      </div>
+
+      {/* Секции с id для якорной навигации */}
+      <div id="overview" className="space-y-6">
+        <h2 className="text-2xl font-bold text-white">Обзор</h2>
+        <p className="text-sm text-white/40">Главная панель мониторинга.</p>
+      </div>
+      <div id="accounts" className="space-y-6">
+        <h2 className="text-2xl font-bold text-white">Аккаунты</h2>
+        <p className="text-sm text-white/40">Управление X-аккаунтами.</p>
+      </div>
+      <div id="proxies" className="space-y-6">
+        <h2 className="text-2xl font-bold text-white">Прокси</h2>
+        <p className="text-sm text-white/40">Настройки прокси-серверов.</p>
+      </div>
+      <div id="campaigns" className="space-y-6">
+        <h2 className="text-2xl font-bold text-white">Кампании</h2>
+        <p className="text-sm text-white/40">Управление кампаниями.</p>
+      </div>
+      <div id="ai" className="space-y-6">
+        <h2 className="text-2xl font-bold text-white">AI генерация</h2>
+        <p className="text-sm text-white/40">Настройки LLM.</p>
+      </div>
+      <div id="security" className="space-y-6">
+        <h2 className="text-2xl font-bold text-white">Безопасность</h2>
+        <p className="text-sm text-white/40">Anti-detection и rate limiting.</p>
       </div>
     </div>
   );
