@@ -299,7 +299,7 @@ export default function XCollectorTab() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="p-6">
         {/* OVERVIEW SECTION */}
         {activeSection === "overview" && (
           <div className="space-y-6">
