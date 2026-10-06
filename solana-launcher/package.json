@@ -49,6 +49,7 @@
     "bs58": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dotenv": "^18.0.6",
     "framer-motion": "^11.11.17",
     "idb-keyval": "^6.2.2",
     "immer": "^11.1.8",
