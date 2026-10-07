@@ -45,18 +45,18 @@ async function main() {
       throw new Error("Другой процесс уже выполняет миграции; повторный запуск отклонён");
     }
     try {
-      await pool.query("CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())");
-
       if (statusOnly) {
-        const applied = new Set(
-          (await pool.query<{ filename: string }>("SELECT filename FROM schema_migrations")).rows
-            .map((r) => r.filename)
-        );
+        const exists = await pool.query<{ present: boolean }>("SELECT to_regclass('schema_migrations') IS NOT NULL AS present");
+        const applied = new Set(exists.rows[0]?.present
+          ? (await pool.query<{ filename: string }>("SELECT filename FROM schema_migrations")).rows.map(r => r.filename)
+          : []);
         for (const filename of REQUIRED) {
           console.log(`${applied.has(filename) ? "[applied]" : "[pending]"} ${filename}`);
         }
         return;
       }
+
+      await pool.query("CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())");
 
       for (const filename of REQUIRED) {
         const alreadyApplied = await pool.query("SELECT 1 FROM schema_migrations WHERE filename = $1", [filename]);

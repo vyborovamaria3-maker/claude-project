@@ -1,0 +1,31 @@
+name: X Collector quality
+on:
+  pull_request:
+    paths:
+      - 'x-collector/**'
+      - '.github/workflows/x-collector-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'x-collector/**'
+      - '.github/workflows/x-collector-ci.yml'
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: x-collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: x-collector/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

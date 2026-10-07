@@ -2,9 +2,9 @@
 
 This is the PostgreSQL X collector from fixed_project.zip, integrated as an isolated subsystem. It does not replace the existing SQLite collector inside solana-launcher.
 
-## Migration chain is incomplete
+## Migration chain and provenance
 
-The supplied archive is missing migrations/003_performance.sql. The migration command checks for the complete 001–011 chain before opening a database connection and stops without changing the database while 003 is missing. Do not substitute memecoin-intelligence/db/migrations/003_performance.sql: it belongs to a different schema. Restore the exact collector migration from its original source before migrating.
+The repository contains the complete numbered 001–011 chain. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state.
 
 ## Setup
 
@@ -39,10 +39,12 @@ npm run x-collector:lint        # eslint
 npm run x-collector:test        # node:test via tsx (tests/**.test.ts)
 ~~~
 
-Unit tests cover the shared parsing/CSV/auth/advisory helpers and do not require a database or a running collector.
+Tests cover shared helpers, browser navigation under CSP, partial API failures, encrypted sessions, and actual queue/account SQL against disposable PGlite. No external database or X credentials are required. The bundled test Chromium targets Linux; on other systems install a compatible Chromium and set TEST_CHROMIUM_PATH to its executable. PGlite tests do not replace multi-process integration checks on a dedicated PostgreSQL server.
 
 Dashboard and metrics bind to loopback by default. External binds require Basic Auth and TLS at a reverse proxy. X login restrictions, captcha challenges and rate limits are surfaced as failures; the collector does not rotate identities to evade a platform restriction. Results are bounded by X search availability and configured limits, so the collector cannot guarantee every account or historical post.
 
 Timeline refreshes store posts without linking every post to the mint that originally led to the account. Only search results explicitly queued for a mint create tweet-to-mint links.
 
 The archive report is retained as FIX_REPORT_RU.md. It describes the supplied source snapshot and its verification limits.
+
+See [DEVELOPMENT_REPORT_RU.md](DEVELOPMENT_REPORT_RU.md) for verified behavior and remaining integrations.

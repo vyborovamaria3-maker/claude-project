@@ -197,7 +197,7 @@ export async function failTask(
       `UPDATE x_tasks
        SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'pending' END,
            claimed_by=NULL, claimed_at=NULL, lease_expires_at=NULL,
-           available_at = CASE WHEN attempts >= max_attempts THEN available_at ELSE $1 + $3 END,
+           available_at = CASE WHEN attempts >= max_attempts THEN available_at ELSE $1::bigint + $3::bigint END,
            last_error=$2, updated_at=$1
        WHERE id=$4 AND claimed_by=$5 AND status='claimed'
        RETURNING attempts, max_attempts, kind, payload_json, mint, handle,
@@ -220,7 +220,7 @@ export async function deferTask(
     `UPDATE x_tasks
      SET status='pending', attempts=GREATEST(attempts - 1, 0),
          claimed_by=NULL, claimed_at=NULL, lease_expires_at=NULL,
-         available_at=$1 + $2, last_error=$3, updated_at=$1
+         available_at=$1::bigint + $2::bigint, last_error=$3, updated_at=$1
      WHERE id=$4 AND claimed_by=$5 AND status='claimed'`,
     [now, delayMs, reason.slice(0, 1000), taskId, workerId]
   ));

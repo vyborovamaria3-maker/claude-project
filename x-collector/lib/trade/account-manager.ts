@@ -129,7 +129,7 @@ export async function recordError(name: string, kind: "rate_limit" | "captcha" |
            WHEN $2 = 'rate_limit' THEN 'cooldown'
            ELSE status
          END,
-         cooldown_until = CASE WHEN $3 > 0 THEN $1 + $3 ELSE cooldown_until END,
+         cooldown_until = CASE WHEN $3 > 0 THEN $1::bigint + $3::bigint ELSE cooldown_until END,
          updated_at = $1
      WHERE name = $4`,
     [now, kind, cooldownMs, name]

@@ -119,7 +119,7 @@ export async function getTopAuthorsByViews(limit = 50): Promise<Array<{
 
 export async function getCoordinatedClusters(mint: string, minAuthors = 3): Promise<CoordinatedCluster[]> {
   return q<CoordinatedCluster>(
-    `SELECT $1::text AS mint, text_hash, authors, author_cnt, sample FROM detect_coordination($1, $2)`,
+    `SELECT $1::text AS mint, text_hash, authors AS handles, author_cnt AS author_count, sample AS sample_text FROM detect_coordination($1, $2)`,
     [mint, minAuthors]
   );
 }
