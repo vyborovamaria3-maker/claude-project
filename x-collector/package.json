@@ -30,7 +30,8 @@
     "reply:telegram": "tsx scripts/reply/telegram.ts",
     "reply:token": "tsx scripts/reply/token.ts",
     "reply:rotate-key": "tsx scripts/reply/rotate-key.ts",
-    "test:postgres": "tsx scripts/reply/integration.ts"
+    "test:postgres": "tsx scripts/reply/integration.ts",
+    "archive": "tsx scripts/archive/main.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",

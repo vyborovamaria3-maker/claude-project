@@ -6,6 +6,7 @@ import { Pool } from "pg";
 import { closePool, getPool, q } from "../../lib/trade/pg";
 import { enqueueTask, claimTasks, finishTask } from "../../lib/trade/tasks";
 import { pickAccount, releaseAccount } from "../../lib/trade/account-manager";
+import { checkArchiveNative } from "../archive/native-check";
 import { benchmarkReplyDatabase } from "./db-benchmark";
 async function main() {
   const raw = process.env.REPLY_TEST_DATABASE_URL;
@@ -78,6 +79,7 @@ async function main() {
       false,
     );
     assert.equal(await releaseAccount("fixture", owner), true);
+    await checkArchiveNative();
     await benchmarkReplyDatabase(async (sql,params)=>(await getPool().query(sql,params)).rows);
     console.log(
       "PostgreSQL integration passed: migrations, SKIP LOCKED, parallel account leases, ownership",

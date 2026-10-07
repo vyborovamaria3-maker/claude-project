@@ -1,4 +1,5 @@
 import http from "node:http";
+import { handleArchiveRequest } from "../lib/archive/http";
 import { handleReplyRequest } from "../lib/reply/http";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -253,6 +254,7 @@ export const HTML = `<!DOCTYPE html>
   <header>
     <h1>🔍 X Collector</h1>
     <nav>
+      <a href="/archive" style="padding:8px;color:#58a6ff">Archive</a>
       <a href="/reply" style="padding:8px;color:#58a6ff">Reply Guy</a>
       <button v-for="t in tabs" :key="t.id" @click="active = t.id" :class="{active: active === t.id}">{{ t.label }}</button>
     </nav>
@@ -509,6 +511,7 @@ export const server = http.createServer(async (req, res) => {
       finish(res.statusCode);
       return;
     }
+    if (await handleArchiveRequest(req,res)) { finish(res.statusCode); return; }
     const route = routes[url.pathname];
     const mutating = MUTATING_ROUTES.has(url.pathname);
     if (mutating) {

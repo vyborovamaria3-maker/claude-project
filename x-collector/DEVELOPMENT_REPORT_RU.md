@@ -1,3 +1,7 @@
+## Архив X / Solana
+
+Найден существующий Playwright scraper и добавлен bridge в архив. Добавлены migration 014, окно/cursor full-archive collector, stream import с checksum/checkpoint, отдельная Archive страница и обработка partial coverage. Реально скачаны SOLMEMES и token snapshots Solana Memecoin Dataset, проверены hash и все записи в disposable PGlite. Неизвестные метрики сохраняются NULL; future-return labels отделены от features. Подробнее: ARCHIVE_RU.md и config/archive-datasets.json. На компьютере пользователя база не заполнена; нужен запуск команд и доступ full-archive X. Полнота всего X не обещается, production база не менялась.
+
 ## Оптимизация PostgreSQL
 
 Добавлена additive миграция 013: индексы tenant/FK/очереди/квот/алертов. Статистика использует конкретные предикаты после проверки владельца. Уменьшен default pool для отдельных workers (3), supervisor (2), Telegram (3); сохранена явная настройка PG_POOL_MAX. Все 52 локальных теста прошли, включая EXPLAIN ANALYZE до/после на 50k черновиков и 200k квот. Typecheck/lint/build прошли. Подробности и границы измерений: DATABASE_PERFORMANCE_RU.md. Нативный benchmark также прошёл в CI PostgreSQL 16 (run 37700644370): shared buffers очередь 661→4, квоты 1274→131. Production база не изменялась.

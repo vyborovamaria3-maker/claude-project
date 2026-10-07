@@ -6,11 +6,11 @@ import fs from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 const { pg_trgm } = load('@electric-sql/pglite/contrib/pg_trgm') as { pg_trgm: import('@electric-sql/pglite').Extension };
 
-test('001–013 migration chain executes on disposable PostgreSQL engine', async () => {
+test('001–014 migration chain executes on disposable PostgreSQL engine', async () => {
   const db = new PGlite({ extensions: { pg_trgm } });
   try {
     const files = (await fs.readdir('migrations')).filter(f => f.endsWith('.sql')).sort();
-    assert.equal(files.length, 13);
+    assert.equal(files.length, 14);
     for (const file of files) {
       try { await db.exec(await fs.readFile('migrations/' + file, 'utf8')); }
       catch (error) { throw new Error(file + ': ' + String(error), { cause: error }); }

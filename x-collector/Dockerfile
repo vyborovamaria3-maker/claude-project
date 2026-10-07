@@ -16,6 +16,6 @@ COPY package.json ./
 COPY migrations ./migrations
 COPY config ./config
 COPY public ./public
-RUN mkdir -p /app/logs && chown node:node /app/logs
+RUN mkdir -p /app/logs /app/data && chown node:node /app/logs /app/data
 USER node
 CMD ["node", "dist/scripts/reply/api.js"]
