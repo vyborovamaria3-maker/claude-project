@@ -120,6 +120,8 @@ npm run build
 REPLY_TEST_DATABASE_URL=postgresql://.../x_collector_test npm run test:postgres
 ```
 
+Проверено: локально typecheck, lint, build и 51 тест; в GitHub Actions дополнительно успешно прошёл test:postgres на PostgreSQL 16 (run 37699216710).
+
 Native integration создаёт уникальную тестовую схему и удаляет только её. Проверяет все миграции, конкурентный SKIP LOCKED и account leases. Не указывайте production БД.
 
 Unit/PGlite/browser suite проверяет фильтры, sleep, прокси-парсер, шифрование/ротацию, X payload/pagination/error handling, tenant ownership, JWT revoke, RAG/vision payload, rate budget, неопределённую публикацию и интерфейс. X/LLM ответы в тестах контролируются fixtures; production код вызывает реальные сервисы и не подставляет тестовые результаты.

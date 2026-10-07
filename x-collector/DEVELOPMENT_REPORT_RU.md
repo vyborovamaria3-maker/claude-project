@@ -2,7 +2,7 @@
 
 Добавлен модуль Reply Guy внутри X Collector: OAuth аккаунты и зашифрованные прокси, personas и embeddings/RAG/Vision, кампании и источники Search/List, фильтры, черновики, согласия, квоты, отдельные account workers, supervisor, JWT API, Telegram управление/алерты, web UI и Docker конфигурация. Все изменения схемы находятся в additive миграции 012. Подробное сопоставление плана и настройки: REPLY_GUY_RU.md.
 
-Проверено локально: typecheck, lint, build, 51 тест (включая Chromium, всю цепочку 001–012 в PGlite и production SQL/API с управляемыми внешними ответами), git diff --check. Добавлена CI проверка на настоящем PostgreSQL 16: миграции, SKIP LOCKED, конкурентные account leases. Её статус нужно смотреть в PR; локального PostgreSQL/Docker здесь нет.
+Проверено локально: typecheck, lint, build, 51 тест (включая Chromium, всю цепочку 001–012 в PGlite и production SQL/API с управляемыми внешними ответами), git diff --check. Добавлена CI проверка на настоящем PostgreSQL 16: миграции, SKIP LOCKED, конкурентные account leases. GitHub Actions успешно выполнил все шаги, включая test:postgres на PostgreSQL 16 (run 37699216710). Локального PostgreSQL/Docker здесь нет.
 
 Исправления во время проверки: неверная SQL подстановка/типы, изоляция tenant/JWT, остановка после смены прокси, неопределённый результат POST без автоматического повторения, сохранение водяных меток, ошибочный since_id для List и поддержка текущих post.fields с legacy переключателем.
 
