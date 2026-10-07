@@ -14,6 +14,17 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: collector
+          POSTGRES_PASSWORD: isolated_ci_fixture
+          POSTGRES_DB: x_collector_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U collector -d x_collector_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     defaults:
       run:
         working-directory: x-collector
@@ -29,3 +40,6 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npm run test:postgres
+        env:
+          REPLY_TEST_DATABASE_URL: postgresql://collector:isolated_ci_fixture@127.0.0.1:5432/x_collector_test

@@ -1,0 +1,55 @@
+name: x-collector-reply
+x-service: &service
+  build: .
+  init: true
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql://collector:${REPLY_DB_PASSWORD:?set REPLY_DB_PASSWORD}@postgres:5432/x_collector
+    REPLY_API_HOST: 0.0.0.0
+  depends_on:
+    postgres:
+      condition: service_healthy
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: collector
+      POSTGRES_PASSWORD: ${REPLY_DB_PASSWORD:?set REPLY_DB_PASSWORD}
+      POSTGRES_DB: x_collector
+    volumes: [reply_pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U collector -d x_collector"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *service
+    restart: "no"
+    command: [node, dist/scripts/migrate.js]
+    profiles: [setup]
+  api:
+    <<: *service
+    ports: ["127.0.0.1:3002:3002"]
+    command: [node, dist/scripts/reply/api.js]
+  supervisor:
+    <<: *service
+    command: [node, dist/scripts/reply/supervisor.js]
+    stop_grace_period: 90s
+  telegram:
+    <<: *service
+    profiles: [telegram]
+    network_mode: service:api
+    environment:
+      DATABASE_URL: postgresql://collector:${REPLY_DB_PASSWORD:?set REPLY_DB_PASSWORD}@postgres:5432/x_collector
+      REPLY_API_URL: http://127.0.0.1:3002
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    command: [node, dist/scripts/reply/telegram.js]
+    stop_grace_period: 45s
+volumes:
+  reply_pg:

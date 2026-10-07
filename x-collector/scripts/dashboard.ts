@@ -1,4 +1,5 @@
 import http from "node:http";
+import { handleReplyRequest } from "../lib/reply/http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { q } from "../lib/trade/pg";
@@ -252,6 +253,7 @@ export const HTML = `<!DOCTYPE html>
   <header>
     <h1>🔍 X Collector</h1>
     <nav>
+      <a href="/reply" style="padding:8px;color:#58a6ff">Reply Guy</a>
       <button v-for="t in tabs" :key="t.id" @click="active = t.id" :class="{active: active === t.id}">{{ t.label }}</button>
     </nav>
   </header>
@@ -502,6 +504,11 @@ export const server = http.createServer(async (req, res) => {
 
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    if (url.pathname === '/reply' || url.pathname === '/reply.js' || url.pathname.startsWith('/api/reply/')) {
+      await handleReplyRequest(req, res);
+      finish(res.statusCode);
+      return;
+    }
     const route = routes[url.pathname];
     const mutating = MUTATING_ROUTES.has(url.pathname);
     if (mutating) {
