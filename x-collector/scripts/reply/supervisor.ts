@@ -1,5 +1,6 @@
 import "dotenv/config";
 // Each process owns its pool. Avoid 20 connections per account worker.
+const workerPoolMax = process.env.PG_POOL_MAX ?? "3";
 process.env.PG_POOL_MAX ??= "2";
 import { fork, ChildProcess } from "node:child_process";
 import path from "node:path";
@@ -21,7 +22,7 @@ async function tick() {
     const child = fork(
       path.join(__dirname, "worker" + path.extname(__filename)),
       [id],
-      { stdio: "inherit" },
+      { stdio: "inherit", env: { ...process.env, PG_POOL_MAX: workerPoolMax } },
     );
     children.set(id, child);
     const cleanup = () => {

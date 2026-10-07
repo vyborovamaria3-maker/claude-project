@@ -1,6 +1,6 @@
 ## Оптимизация PostgreSQL
 
-Добавлена additive миграция 013: индексы tenant/FK/очереди/квот/алертов. Статистика использует конкретные предикаты после проверки владельца. Уменьшен default pool для отдельных workers (3), supervisor (2), Telegram (3); сохранена явная настройка PG_POOL_MAX. Все 52 локальных теста прошли, включая EXPLAIN ANALYZE до/после на 50k черновиков и 200k квот. Typecheck/lint/build прошли. Подробности и границы измерений: DATABASE_PERFORMANCE_RU.md. Нативный benchmark добавлен в CI; production база не изменялась.
+Добавлена additive миграция 013: индексы tenant/FK/очереди/квот/алертов. Статистика использует конкретные предикаты после проверки владельца. Уменьшен default pool для отдельных workers (3), supervisor (2), Telegram (3); сохранена явная настройка PG_POOL_MAX. Все 52 локальных теста прошли, включая EXPLAIN ANALYZE до/после на 50k черновиков и 200k квот. Typecheck/lint/build прошли. Подробности и границы измерений: DATABASE_PERFORMANCE_RU.md. Нативный benchmark также прошёл в CI PostgreSQL 16 (run 37700644370): shared buffers очередь 661→4, квоты 1274→131. Production база не изменялась.
 
 ## Оптимизация после реализации плана
 
