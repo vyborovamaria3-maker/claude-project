@@ -1,4 +1,6 @@
 import "dotenv/config";
+// Each process owns its pool. Avoid 20 connections per account worker.
+process.env.PG_POOL_MAX ??= "2";
 import { fork, ChildProcess } from "node:child_process";
 import path from "node:path";
 import { q, closePool } from "../../lib/trade/pg";

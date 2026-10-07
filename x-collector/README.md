@@ -4,7 +4,7 @@ This is the PostgreSQL X collector from fixed_project.zip, integrated as an isol
 
 ## Migration chain and provenance
 
-The repository contains the complete numbered 001–012 chain. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state.
+The repository contains the complete numbered 001–013 chain. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state.
 
 ## Setup
 
@@ -52,3 +52,5 @@ See [DEVELOPMENT_REPORT_RU.md](DEVELOPMENT_REPORT_RU.md) for verified behavior a
 ## AI Reply Guy
 
 The integrated reply module is available at `/reply` in the dashboard or via `npm run reply:api`. See [REPLY_GUY_RU.md](REPLY_GUY_RU.md) for the plan mapping, official API credentials, Telegram, workers, deployment and verified limits. Migration 012 is additive and must be applied before enabling the module.
+
+Migration 013 adds Reply Guy queue/tenant/budget/alert indexes. See DATABASE_PERFORMANCE_RU.md for measured fixture plans and deployment guidance.

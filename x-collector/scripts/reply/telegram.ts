@@ -1,4 +1,6 @@
 import "dotenv/config";
+// Each process owns its pool. Avoid 20 connections per account worker.
+process.env.PG_POOL_MAX ??= "3";
 import { createHash } from "node:crypto";
 import { q, q1, getPool, closePool } from "../../lib/trade/pg";
 import { issueToken } from "../../lib/reply/auth";

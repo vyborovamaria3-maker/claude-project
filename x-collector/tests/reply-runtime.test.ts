@@ -265,6 +265,12 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
     await publishNext(account);
     assert.equal((await api("/drafts")).data[0].status, "published");
     assert.equal(publishMock.mock.callCount(), 1);
+    const campaignStats = await api("/campaigns/"+campaignId+"/stats");
+    const accountStats = await api("/accounts/"+accountId+"/stats");
+    assert.deepEqual(campaignStats.data,[{status:"published",count:1}]);
+    assert.deepEqual(accountStats.data,campaignStats.data);
+    assert.equal((await api("/campaigns/"+campaignId+"/stats","GET",undefined,otherJwt)).status,404);
+
     const prompt = llmCalls.find(
       (v) => (v as { messages?: unknown[] }).messages,
     ) as { messages: Array<{ content: unknown }> };

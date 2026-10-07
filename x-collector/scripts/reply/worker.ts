@@ -1,4 +1,6 @@
 import "dotenv/config";
+// Each process owns its pool. Avoid 20 connections per account worker.
+process.env.PG_POOL_MAX ??= "3";
 import { getPool, q1, q, closePool } from "../../lib/trade/pg";
 import { Account, Campaign, Settings, sleeping } from "../../lib/reply/model";
 import {
@@ -20,6 +22,8 @@ async function main() {
   const id = process.argv[2];
   if (!id || !/^\d+$/.test(id))
     throw new Error("usage: reply:worker ACCOUNT_ID");
+  if (!Number.isInteger(Number(process.env.PG_POOL_MAX)) || Number(process.env.PG_POOL_MAX) < 2)
+    throw new Error("Reply worker requires PG_POOL_MAX >= 2 (lock + queries)");
   // One long-lived DB session owns one account for the lifetime of this process.
   const lock = await getPool().connect();
   const key = "reply-worker:" + id;

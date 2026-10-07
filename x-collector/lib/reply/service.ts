@@ -438,8 +438,18 @@ export async function approveDraft(user: string, id: string, raw: unknown) {
 export async function stats(user: string, campaign?: string, account?: string) {
   if (campaign) await campaignFor(user, campaign);
   if (account) await accountFor(user, account);
+  // Ownership has been checked above. Use a concrete predicate instead of nullable ORs.
+  if (campaign && account) return q(
+    "SELECT status,COUNT(*)::int count FROM reply_drafts WHERE campaign_id=$1 AND account_id=$2 GROUP BY status",[campaign,account],
+  );
+  if (campaign) return q(
+    "SELECT status,COUNT(*)::int count FROM reply_drafts WHERE campaign_id=$1 GROUP BY status",[campaign],
+  );
+  if (account) return q(
+    "SELECT status,COUNT(*)::int count FROM reply_drafts WHERE account_id=$1 GROUP BY status",[account],
+  );
   return q(
-    "SELECT d.status,COUNT(*)::int count FROM reply_drafts d JOIN reply_campaigns c ON c.id=d.campaign_id WHERE c.user_id=$1 AND ($2::bigint IS NULL OR c.id=$2) AND ($3::bigint IS NULL OR c.account_id=$3) GROUP BY d.status",
-    [user, campaign ?? null, account ?? null],
+    "SELECT d.status,COUNT(*)::int count FROM reply_drafts d JOIN reply_campaigns c ON c.id=d.campaign_id WHERE c.user_id=$1 GROUP BY d.status",
+    [user],
   );
 }
