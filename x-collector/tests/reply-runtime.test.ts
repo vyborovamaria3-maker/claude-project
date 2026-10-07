@@ -353,6 +353,44 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
       (await db.query("SELECT * FROM reply_campaigns")).rows.length,
       0,
     );
+    // Controlled workload: ten accounts, fifty candidates each; no live X/LLM calls.
+    const workload: Array<{account: Awaited<ReturnType<typeof accountFor>>; campaign: Awaited<ReturnType<typeof campaignFor>>}> = [];
+    for (let i = 0; i < 10; i++) {
+      const a = await db.query<{id: string}>(
+        "INSERT INTO reply_accounts(user_id,x_user_id,credentials_encrypted,status) VALUES(1,$1,'fixture','ready') RETURNING id",
+        ["load-" + i],
+      );
+      const c = await db.query<{id: string}>(
+        "INSERT INTO reply_campaigns(user_id,account_id,lore_id,status,settings_json,filters_json) VALUES(1,$1,$2,'running',$3::jsonb,$4::jsonb) RETURNING id",
+        [a.rows[0].id, lore.data.id, JSON.stringify({sleep_enabled:false,hourly_limit:2}), JSON.stringify({})],
+      );
+      for (let j = 0; j < 50; j++) await db.query(
+        "INSERT INTO reply_drafts(campaign_id,account_id,tweet_id,author_id,tweet_json) VALUES($1,$2,$3,'900',$4::jsonb)",
+        [c.rows[0].id,a.rows[0].id,String(10000+i*100+j),JSON.stringify({...sample,id:String(10000+i*100+j)})],
+      );
+      workload.push({account:await accountFor("1",String(a.rows[0].id)),campaign:await campaignFor("1",String(c.rows[0].id))});
+    }
+    const before = llmCalls.length;
+    const started = performance.now();
+    await Promise.all(workload.map(({campaign,account})=>draftReplies(campaign,account)));
+    assert.equal(llmCalls.length-before,40); // 20 drafts, each embedding + generation.
+    assert.equal((await db.query("SELECT id FROM reply_drafts WHERE status='review'")).rows.length,20);
+    await Promise.all(workload.map(({campaign,account})=>draftReplies(campaign,account)));
+    assert.equal(llmCalls.length-before,40); // Existing backlog causes zero extra LLM calls.
+    await db.query("INSERT INTO reply_rate_limits(account_id,hour_epoch,count) VALUES($1,$2,2)",
+      [workload[0].account.id,Math.floor(Date.now()/3600000)]);
+    await db.query("UPDATE reply_drafts SET status='rejected' WHERE account_id=$1",[workload[0].account.id]);
+    await draftReplies(workload[0].campaign,workload[0].account);
+    assert.equal(llmCalls.length-before,40); // Exhausted quota also blocks paid work.
+    await db.query("UPDATE reply_rate_limits SET count=0 WHERE account_id=$1",[workload[0].account.id]);
+    await db.query(
+      "INSERT INTO reply_drafts(campaign_id,account_id,tweet_id,author_id,tweet_json) VALUES($1,$2,'expiry-check','900',$3::jsonb)",
+      [workload[0].campaign.id,workload[0].account.id,JSON.stringify({...sample,created_at:new Date(Date.now()-9.9*60000).toISOString()})],
+    );
+    await db.query("UPDATE reply_drafts SET status='rejected' WHERE account_id=$1 AND tweet_id<>'expiry-check'",[workload[0].account.id]);
+    await draftReplies(workload[0].campaign,{...workload[0].account,next_reply_at:new Date(Date.now()+60000).toISOString()});
+    assert.equal(llmCalls.length-before,40); // No paid draft that expires before its queue slot.
+    console.log(`Controlled 10-account workload: 500 candidates, 20 drafts, 40 LLM requests, repeated cycle 0 additional requests; ${Math.round(performance.now()-started)}ms (PGlite fixtures)`);
   } finally {
     await browser?.close();
     if (server.listening)

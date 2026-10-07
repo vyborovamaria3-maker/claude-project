@@ -87,6 +87,7 @@ export interface Account {
   proxy_status: string;
   proxy_country: string | null;
   cooldown_until: string | null;
+  next_reply_at: string | null;
 }
 export interface Campaign {
   id: string;

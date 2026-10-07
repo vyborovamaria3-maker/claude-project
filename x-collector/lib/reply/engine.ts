@@ -229,19 +229,13 @@ export async function collect(
         source.next_token,
       );
       await tx(async (c) => {
-        for (const tweet of page.tweets) {
-          if (tweet.author_id === account.x_user_id) continue;
-          await c.query(
-            "INSERT INTO reply_drafts(campaign_id,account_id,tweet_id,author_id,tweet_json) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(account_id,tweet_id) DO NOTHING",
-            [
-              campaign.id,
-              account.id,
-              tweet.id,
-              tweet.author_id,
-              JSON.stringify(tweet),
-            ],
-          );
-        }
+        const tweets = page.tweets.filter(tweet => tweet.author_id !== account.x_user_id);
+        if (tweets.length) await c.query(
+          `INSERT INTO reply_drafts(campaign_id,account_id,tweet_id,author_id,tweet_json)
+           SELECT $1,$2,t->>'id',t->>'author_id',t FROM jsonb_array_elements($3::jsonb) t
+           ON CONFLICT(account_id,tweet_id) DO NOTHING`,
+          [campaign.id,account.id,JSON.stringify(tweets)],
+        );
         const newest =
           source.page_newest_id ?? page.newestId ?? source.since_id;
         await c.query(
@@ -273,10 +267,32 @@ export async function draftReplies(
 ): Promise<void> {
   const filters = Filters.parse(campaign.filters_json),
     settings = Settings.parse(campaign.settings_json);
+  if (campaign.status !== "running" || account.status !== "ready" ||
+      sleeping(settings, account.timezone) ||
+      (account.cooldown_until && Date.parse(account.cooldown_until) > Date.now())) return;
+  const now = Date.now();
+  const hour = Math.floor(now / 3600000), day = Math.floor(hour / 24) * 24;
+  const usage = await q1<{hour_count: number; day_count: number; global_day: number}>(
+    `SELECT COALESCE(SUM(count) FILTER (WHERE account_id=$1 AND hour_epoch=$2),0)::int hour_count,
+     COALESCE(SUM(count) FILTER (WHERE account_id=$1),0)::int day_count,
+     COALESCE(SUM(count),0)::int global_day FROM reply_rate_limits WHERE hour_epoch >= $3`,
+    [account.id, hour, day],
+  );
+  const quota = Math.max(0, Math.min(settings.hourly_limit - (usage?.hour_count ?? 0),
+    settings.daily_limit - (usage?.day_count ?? 0), 1000 - (usage?.global_day ?? 0)));
+  // Bound paid work even in draft-only mode. Publication still reserves its own atomic quota.
+  if (!quota) return;
   const blacklist = await q<{ type: string; value: string }>(
     "SELECT type,value FROM reply_blacklists WHERE campaign_id=$1",
     [campaign.id],
   );
+  const backlog = await q<{tweet_json: Tweet}>(
+    "SELECT tweet_json FROM reply_drafts WHERE account_id=$1 AND status IN ('review','approved','publishing') ORDER BY created_at DESC LIMIT 100",
+    [account.id],
+  );
+  const queued = backlog.filter(row => !filterTweet(row.tweet_json, filters, blacklist)).length;
+  const capacity = Math.max(0, Math.min(3, quota) - queued);
+  if (!capacity) return;
   const lore = await q1<Lore>(
     "SELECT * FROM reply_lore WHERE id=$1 AND user_id=$2",
     [campaign.lore_id, campaign.user_id],
@@ -299,7 +315,11 @@ export async function draftReplies(
       );
       continue;
     }
-    if (generated >= 3) break;
+    if (generated >= capacity) break;
+    // Avoid paying for a draft whose earliest queue slot is already past its expiry.
+    const earliest = Math.max(Date.now(), account.next_reply_at ? Date.parse(account.next_reply_at) : 0) +
+      (queued + generated) * settings.delay_seconds * 1000;
+    if (earliest >= Date.parse(row.tweet_json.created_at) + filters.max_age * 60000) continue;
     try {
       const text = await generateReply(lore, row.tweet_json);
       generated++;
