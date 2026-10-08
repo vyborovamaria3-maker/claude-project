@@ -1,3 +1,4 @@
+import { persistTweets, persistProfile } from "../lib/trade/collector-store";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../lib/trade/tasks";
@@ -8,8 +9,8 @@ import {
 import { WorkerRegistry, reapDeadWorkers } from "../lib/trade/worker-registry";
 import { decryptBuffer } from "../lib/trade/crypto";
 import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState } from "../lib/trade/twitter-scraper";
-import { TweetSchema, ProfileSchema, parseTaskPayload } from "../lib/trade/schemas";
-import { q, exec, closePool, tx } from "../lib/trade/pg";
+import { parseTaskPayload } from "../lib/trade/schemas";
+import { q, closePool } from "../lib/trade/pg";
 import { log, withContext, closeLogger } from "../lib/trade/logger";
 import {
   registry as promRegistry, tasksTotal, taskDuration, scrapeDuration,
@@ -46,95 +47,6 @@ function buildProxy(acc: XAccount) {
     const p = JSON.parse(acc.proxy_json);
     return p?.server ? p : undefined;
   } catch { return undefined; }
-}
-
-async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null) {
-  const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
-  let rejected = 0;
-  for (const raw of tweets) {
-    const parsed = TweetSchema.safeParse(raw);
-    if (parsed.success) valid.push(parsed.data);
-    else rejected++;
-  }
-  if (rejected > 0) log.warn("tweets rejected by schema", { rejected });
-  if (valid.length === 0) return;
-
-  const now = Date.now();
-  const BATCH = 200;
-
-  for (let i = 0; i < valid.length; i += BATCH) {
-    const chunk = valid.slice(i, i + BATCH);
-    // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
-    // no deja tweets sin su link (ni viceversa).
-    await tx(async (client) => {
-      const values: unknown[] = [];
-      const placeholders = chunk.map((t, j) => {
-        const off = j * 13;
-        values.push(
-          t.id, t.authorHandle.toLowerCase(), t.text, t.url,
-          t.views, t.likes, t.retweets, t.replies,
-          t.isVerified, t.postedAt, now, now, sourceQuery
-        );
-        return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13})`;
-      }).join(",");
-
-      await client.query(
-        `INSERT INTO twitter_tweets
-           (tweet_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
-         VALUES ${placeholders}
-         ON CONFLICT (tweet_id) DO UPDATE SET
-           views    = GREATEST(twitter_tweets.views,    EXCLUDED.views),
-           likes    = GREATEST(twitter_tweets.likes,    EXCLUDED.likes),
-           retweets = GREATEST(twitter_tweets.retweets, EXCLUDED.retweets),
-           replies  = GREATEST(twitter_tweets.replies,  EXCLUDED.replies),
-           source_query = COALESCE(EXCLUDED.source_query, twitter_tweets.source_query),
-           updated_at = EXCLUDED.updated_at
-         WHERE EXCLUDED.updated_at > twitter_tweets.updated_at`,
-        values
-      );
-
-      if (mint) {
-        const linkVals: unknown[] = [];
-        const linkPh = chunk.map((t, j) => {
-          const off = j * 4;
-          linkVals.push(t.id, mint, t.authorHandle.toLowerCase(), now);
-          return `($${off + 1},$${off + 2},$${off + 3},$${off + 4})`;
-        }).join(",");
-        await client.query(
-          `INSERT INTO tweet_token_links (tweet_id, mint, handle, linked_at)
-           VALUES ${linkPh} ON CONFLICT (tweet_id, mint) DO NOTHING`,
-          linkVals
-        );
-      }
-    });
-  }
-}
-
-async function persistProfile(p: unknown) {
-  const parsed = ProfileSchema.safeParse(p);
-  if (!parsed.success) {
-    log.warn("profile rejected by schema", { error: parsed.error.message });
-    return;
-  }
-  const d = parsed.data;
-  const now = Date.now();
-  await exec(
-    `INSERT INTO twitter_profiles
-       (handle, display_name, bio, followers, following, posts_count, is_verified, joined_at, avatar_url, first_seen_at, last_seen_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
-     ON CONFLICT (handle) DO UPDATE SET
-       display_name = COALESCE(EXCLUDED.display_name, twitter_profiles.display_name),
-       bio          = COALESCE(EXCLUDED.bio, twitter_profiles.bio),
-       followers    = COALESCE(EXCLUDED.followers, twitter_profiles.followers),
-       following    = COALESCE(EXCLUDED.following, twitter_profiles.following),
-       posts_count  = COALESCE(EXCLUDED.posts_count, twitter_profiles.posts_count),
-       is_verified  = EXCLUDED.is_verified OR twitter_profiles.is_verified,
-       joined_at    = COALESCE(EXCLUDED.joined_at, twitter_profiles.joined_at),
-       avatar_url   = COALESCE(EXCLUDED.avatar_url, twitter_profiles.avatar_url),
-       last_seen_at = EXCLUDED.last_seen_at`,
-    [d.handle.toLowerCase(), d.displayName, d.bio, d.followers, d.following, d.postsCount,
-     d.isVerified, d.joinedAt, d.avatarUrl, now]
-  );
 }
 
 async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number]): Promise<string> {

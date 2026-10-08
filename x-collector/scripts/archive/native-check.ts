@@ -1,3 +1,4 @@
+import { persistTweets, persistProfile } from "../../lib/trade/collector-store";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -40,6 +41,11 @@ export async function checkArchiveNative() {
         }>("SELECT * FROM archive_posts WHERE id='9000000000000000002'");
         assert.equal(post.author_id, null);
         assert.equal(post.author_handle, "legacy");
+        await persistTweets(null,[{id:"9000000000000000003",text:"native @alice",authorHandle:"native",authorDisplayName:null,url:"https://x.com/native/status/9000000000000000003",views:null,likes:7,retweets:null,replies:0,isVerified:false,postedAt:1735689600000,observedAt:Date.now(),mentions:["alice"]}]);
+        assert.equal((await q<{views:null}>("SELECT views FROM twitter_tweets WHERE tweet_id='9000000000000000003'"))[0].views,null);
+        assert.equal((await q("SELECT * FROM twitter_entity_links WHERE tweet_id='9000000000000000003'")).length,1);
+        await persistProfile({handle:"native",displayName:null,bio:null,followers:3,following:null,postsCount:null,isVerified:false,joinedAt:null,avatarUrl:null});
+        assert.equal((await q("SELECT * FROM twitter_profile_observations WHERE handle='native'")).length,1);
         console.log("PostgreSQL archive checks passed: metadata, NULL metrics, multi-snapshot prices, label separation, legacy bridge checkpoint");
     }
     finally {

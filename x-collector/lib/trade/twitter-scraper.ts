@@ -4,7 +4,9 @@ import { getConfig } from "./config";
 export interface RawTweet {
   id: string; text: string; authorHandle: string;
   authorDisplayName: string | null; url: string;
-  views: number; likes: number; retweets: number; replies: number;
+  views: number | null; likes: number | null; retweets: number | null; replies: number | null;
+  observedAt: number; links: string[]; mentions: string[]; hashtags: string[];
+  media: {type:"photo"|"video";url:string|null}[]; relatedPostIds: string[];
   isVerified: boolean; postedAt: number | null;
 }
 
@@ -60,21 +62,72 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
     });
     const page = await context.newPage();
     page.setDefaultTimeout(Math.max(5_000, Math.min(cfg.twitter.requestTimeoutMs, deadline - Date.now())));
+    let deadlineTimer: NodeJS.Timeout | undefined;
+    try {
     // Общий дедлайн стратегии: даже если отдельные waitForSelector зависли,
     // вся операция укладывается в collectionDeadlineMs.
     return await Promise.race([
       fn(page),
       new Promise<T>((_, reject) => {
-        const timer = setTimeout(
+        deadlineTimer = setTimeout(
           () => reject(new Error("collection deadline exceeded")),
           Math.max(1, deadline - Date.now()),
         );
-        timer.unref?.();
+        deadlineTimer.unref?.();
       }),
     ]);
+    } finally { if (deadlineTimer) clearTimeout(deadlineTimer); }
   } finally {
     await browser.close();
   }
+}
+
+export function extractTweetArticles(articles: Element[]): RawTweet[] {
+  return articles.map((article): RawTweet | null => {
+        const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() || '';
+
+        const links = Array.from(article.querySelectorAll('a[href*="/status/"]'));
+        const href = article.querySelector('time')?.closest('a[href*="/status/"]')?.getAttribute('href') || '';
+        const id = (href.match(/\/status\/(\d+)/) || [])[1] || '';
+        if (!id) return null;
+        const metricParser = { parse(t: string | null | undefined): number | null {
+          if (!t) return null;
+          const m = String(t).replace(/\s+/g, '').match(/([0-9][0-9.,]*)([KMBКМБ]?)/i);
+          if (!m) return null;
+          const s = (m[2] || '').toUpperCase();
+          const v = Number(s ? m[1].replace(',', '.') : m[1].replace(/[.,]/g, ''));
+          if (!isFinite(v)) return null;
+          if (s === 'K' || s === 'К') return Math.round(v * 1e3);
+          if (s === 'M' || s === 'М') return Math.round(v * 1e6);
+          if (s === 'B' || s === 'Б') return Math.round(v * 1e9);
+          return Math.round(v);
+        } };
+        const parseMetric = metricParser.parse;
+        const analyticsAria = article.querySelector('a[href$="/analytics"]')?.getAttribute('aria-label') || '';
+        const fullText = article.textContent || '';
+        const viewsMatch = analyticsAria.match(/([0-9.,]+[KMBКМБ]?)\s*(?:Views|просмотр)/i)
+          || fullText.match(/([0-9.,]+[KMBКМБ]?)\s*(?:Views|просмотр|просмотров)/i);
+        const allLinks = Array.from(article.querySelectorAll('a[href]')).map(a=>a.getAttribute('href')!).filter(Boolean);
+        const controls = { metric(selector:string) { const el=article.querySelector(selector); return parseMetric(el?.getAttribute('aria-label') || el?.textContent); } };
+        const timeAttr = article.querySelector('time')?.getAttribute('datetime') || null;
+        return {
+          id, text, observedAt:Date.now(),
+          links:[...new Set(allLinks.filter(h=>/^https?:\/\//.test(h)))],
+          mentions:[...new Set(Array.from(text.matchAll(/(?:^|\s)@([A-Za-z0-9_]{1,15})\b/g),m=>m[1]))],
+          hashtags:[...new Set(Array.from(text.matchAll(/(?:^|\s)#([\p{L}\p{N}_]+)/gu),m=>m[1]))],
+          relatedPostIds:[...new Set(links.map(a=>a.getAttribute('href')?.match(/\/status\/(\d+)/)?.[1]).filter((v):v is string=>Boolean(v)&&v!==id))],
+          media:Array.from(article.querySelectorAll('[data-testid="tweetPhoto"] img,video')).map(el=>({type:el.tagName==='VIDEO'?'video' as const:'photo' as const,url:el.getAttribute('src')||el.getAttribute('poster')||null})),
+          authorHandle: href.split('/').filter(Boolean)[0] || 'unknown',
+          authorDisplayName: article.querySelector('[data-testid="User-Name"] span')?.textContent?.trim() || null,
+          url: `https://x.com${href.split('/analytics')[0]}`,
+          views: parseMetric(viewsMatch?.[1]),
+          likes: controls.metric('[data-testid="like"], [data-testid="unlike"]'),
+          retweets: controls.metric('[data-testid="retweet"], [data-testid="unretweet"]'),
+          replies: controls.metric('[data-testid="reply"]'),
+          isVerified: !!article.querySelector('[data-testid="icon-verified"]'),
+          postedAt: timeAttr ? Date.parse(timeAttr) : null,
+        };
+      }).filter((t): t is RawTweet => t !== null);
 }
 
 async function collectArticles(page: Page, limit: number, deadlineMs: number): Promise<RawTweet[]> {
@@ -88,44 +141,10 @@ async function collectArticles(page: Page, limit: number, deadlineMs: number): P
       if (tweets.length === 0) throw new Error("scrape deadline exceeded before any tweets were collected");
       break;
     }
+    const pageError = detectError(page.url(), await page.locator("body").innerText().catch(()=>""));
+    if (pageError) throw new Error(pageError);
     const batch = await page.locator('article[data-testid="tweet"]').evaluateAll(
-      (articles) => articles.map((article): RawTweet | null => {
-        const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() || '';
-        if (!text) return null;
-        const links = Array.from(article.querySelectorAll('a[href*="/status/"]'));
-        const href = links.map((a) => a.getAttribute('href') || '').find((h) => /\/status\/\d+/.test(h)) || '';
-        const id = (href.match(/\/status\/(\d+)/) || [])[1] || '';
-        if (!id) return null;
-        const parseMetric = (t: string | null | undefined): number => {
-          if (!t) return 0;
-          const m = String(t).replace(/\s+/g, '').match(/([0-9]+(?:[.,][0-9]+)?)([KMBКМБ]?)/i);
-          if (!m) return 0;
-          const s = (m[2] || '').toUpperCase();
-          const v = Number(s ? m[1].replace(',', '.') : m[1].replace(/[.,]/g, ''));
-          if (!isFinite(v)) return 0;
-          if (s === 'K' || s === 'К') return Math.round(v * 1e3);
-          if (s === 'M' || s === 'М') return Math.round(v * 1e6);
-          if (s === 'B' || s === 'Б') return Math.round(v * 1e9);
-          return Math.round(v);
-        };
-        const analyticsAria = article.querySelector('a[href$="/analytics"]')?.getAttribute('aria-label') || '';
-        const fullText = article.textContent || '';
-        const viewsMatch = analyticsAria.match(/([0-9.,]+[KMBКМБ]?)\s*(?:Views|просмотр)/i)
-          || fullText.match(/([0-9.,]+[KMBКМБ]?)\s*(?:Views|просмотр|просмотров)/i);
-        const timeAttr = article.querySelector('time')?.getAttribute('datetime') || null;
-        return {
-          id, text,
-          authorHandle: href.split('/').filter(Boolean)[0] || 'unknown',
-          authorDisplayName: article.querySelector('[data-testid="User-Name"] span')?.textContent?.trim() || null,
-          url: `https://x.com${href.split('/analytics')[0]}`,
-          views: parseMetric(viewsMatch?.[1]),
-          likes: parseMetric(article.querySelector('[data-testid="like"]')?.textContent),
-          retweets: parseMetric(article.querySelector('[data-testid="retweet"]')?.textContent),
-          replies: parseMetric(article.querySelector('[data-testid="reply"]')?.textContent),
-          isVerified: !!article.querySelector('[data-testid="icon-verified"]'),
-          postedAt: timeAttr ? Date.parse(timeAttr) : null,
-        };
-      }).filter((t): t is RawTweet => t !== null)
+      extractTweetArticles
     );
 
     const before = tweets.length;
@@ -216,13 +235,15 @@ export async function fetchAccountProfile(
   const cfg = getConfig();
   return withBrowser(opts, async (page) => {
     await page.goto(`https://x.com/${handle}`, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
-    await page.waitForTimeout(3000);
+    await page.waitForSelector('[data-testid="UserName"], [data-testid="emptyState"], [data-testid="error-detail"]', {timeout:Math.min(15000,cfg.twitter.requestTimeoutMs)}).catch(()=>{});
     const err = detectError(page.url(), await page.locator("body").innerText().catch(() => ""));
     if (err) throw new Error(err);
 
+    if (!await page.locator('[data-testid="UserName"]').count()) throw new Error("profile did not load or is unavailable");
     return page.evaluate((h) => {
-      const text = (sel: string) => document.querySelector(sel)?.textContent?.trim() ?? null;
-      const parseNum = (s: string | null): number | null => {
+      const dom = { text(sel:string) { return document.querySelector(sel)?.textContent?.trim() ?? null; } };
+      const text = dom.text;
+      const numbers = { parse(s: string | null): number | null {
         if (!s) return null;
         const m = s.replace(/\s/g, "").match(/([0-9][0-9.,]*)([KMBКМБ]?)/i);
         if (!m) return null;
@@ -233,7 +254,8 @@ export async function fetchAccountProfile(
         if (suf === "M" || suf === "М") return Math.round(v * 1e6);
         if (suf === "B" || suf === "Б") return Math.round(v * 1e9);
         return Math.round(v);
-      };
+      } };
+      const parseNum = numbers.parse;
       const followersLink = document.querySelector(`a[href="/${h}/verified_followers"], a[href="/${h}/followers"]`);
       const followingLink = document.querySelector(`a[href="/${h}/following"]`);
       const joined = text('[data-testid="UserProfileHeader_Items"] a[href*="/joined"]');

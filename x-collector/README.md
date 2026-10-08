@@ -4,7 +4,7 @@ This is the PostgreSQL X collector from fixed_project.zip, integrated as an isol
 
 ## Migration chain and provenance
 
-The repository contains the complete numbered 001–014 chain. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state.
+The repository contains the complete numbered 001–015 chain. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state.
 
 ## Setup
 
@@ -56,3 +56,5 @@ The integrated reply module is available at `/reply` in the dashboard or via `np
 Migration 013 adds Reply Guy queue/tenant/budget/alert indexes. See DATABASE_PERFORMANCE_RU.md for measured fixture plans and deployment guidance.
 
 Archive backfill/import and Solana datasets: see ARCHIVE_RU.md. Existing Playwright scraper remains in lib/trade/twitter-scraper.ts.
+
+Сборщик браузера сохраняет снимки метрик и профилей, ссылки/упоминания/медиа и передаёт новые публикации в Archive. Неизвестные счётчики — NULL; migration 015 сохраняет старые нули без попытки восстановить их происхождение. Подробнее: [COLLECTOR_RU.md](COLLECTOR_RU.md).

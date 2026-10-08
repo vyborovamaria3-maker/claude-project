@@ -19,6 +19,7 @@ const REQUIRED = [
   "012_reply_guy.sql",
   "013_reply_performance.sql",
   "014_archive.sql",
+  "015_collector_observations.sql",
 ];
 const LOCK_KEY = "x-collector:migrate";
 
