@@ -1,3 +1,4 @@
+import { checkCollectorNative } from "../collector/native-check";
 import "dotenv/config";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -79,7 +80,9 @@ async function main() {
       false,
     );
     assert.equal(await releaseAccount("fixture", owner), true);
+    assert.equal(await finishTask(claimed.id,"other-worker"),true);
     await checkArchiveNative();
+    await checkCollectorNative();
     await benchmarkReplyDatabase(async (sql,params)=>(await getPool().query(sql,params)).rows);
     console.log(
       "PostgreSQL integration passed: migrations, SKIP LOCKED, parallel account leases, ownership",

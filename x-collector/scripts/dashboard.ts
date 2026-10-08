@@ -1,3 +1,5 @@
+import { handleCollectorRequest } from "../lib/collector/http";
+import { stopManagedWorker } from "../lib/collector/runtime";
 import http from "node:http";
 import { handleArchiveRequest } from "../lib/archive/http";
 import { handleReplyRequest } from "../lib/reply/http";
@@ -254,6 +256,7 @@ export const HTML = `<!DOCTYPE html>
   <header>
     <h1>🔍 X Collector</h1>
     <nav>
+      <a href="/collector" style="padding:8px;color:#58a6ff">Начать парсинг</a>
       <a href="/archive" style="padding:8px;color:#58a6ff">Archive</a>
       <a href="/reply" style="padding:8px;color:#58a6ff">Reply Guy</a>
       <button v-for="t in tabs" :key="t.id" @click="active = t.id" :class="{active: active === t.id}">{{ t.label }}</button>
@@ -511,6 +514,7 @@ export const server = http.createServer(async (req, res) => {
       finish(res.statusCode);
       return;
     }
+    if (await handleCollectorRequest(req,res,DASHBOARD_ORIGIN ?? `http://${HOST}:${PORT}`)) {finish(res.statusCode);return;}
     if (await handleArchiveRequest(req,res)) { finish(res.statusCode); return; }
     const route = routes[url.pathname];
     const mutating = MUTATING_ROUTES.has(url.pathname);
@@ -594,12 +598,15 @@ if (require.main === module) server.listen(PORT, HOST, () => {
   console.log(`\n🌐 Dashboard: http://${HOST}:${PORT}\n`);
 });
 
-function shutdown(signal: string) {
+async function shutdown(signal: string) {
   log.info("shutting down dashboard", { signal });
-  server.close(() => {
+  const closed = new Promise<void>(resolve=>server.close(()=>resolve()));
+  await stopManagedWorker();
+  await closed;
+  {
     closeLogger();
     process.exit(0);
-  });
+  }
 }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

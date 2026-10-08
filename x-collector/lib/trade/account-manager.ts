@@ -46,7 +46,7 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string): Promis
     await c.query(
       `UPDATE x_accounts
        SET status='active', cooldown_until=0, consecutive_errors=0, updated_at=$1
-       WHERE status IN ('cooldown','captcha') AND cooldown_until < $1`,
+       WHERE status='cooldown' AND cooldown_until < $1`,
       [now]
     );
     const r = await c.query<XAccount>(
@@ -163,6 +163,7 @@ export async function registerAccount(
      VALUES ($1,$2,$3,'active',$4,$5,$5,$5,$6)
      ON CONFLICT(name) DO UPDATE SET
        session_encrypted = EXCLUDED.session_encrypted,
+       status='active', cooldown_until=0, consecutive_errors=0,
        updated_at = EXCLUDED.updated_at,
        proxy_json = COALESCE(EXCLUDED.proxy_json, x_accounts.proxy_json)`,
     [name, sessionEncrypted, tier, quota, now, proxyJson ?? null]

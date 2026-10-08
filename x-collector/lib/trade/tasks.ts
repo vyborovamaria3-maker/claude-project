@@ -147,7 +147,7 @@ export async function extendLease(taskId: number, workerId: string, extraMs: num
 export async function finishTask(taskId: number, workerId: string): Promise<boolean> {
   const r = await tx((c) => c.query(
     `UPDATE x_tasks
-     SET status='done', claimed_by=NULL, claimed_at=NULL, lease_expires_at=NULL, updated_at=$1
+     SET status='done', claimed_by=NULL, claimed_at=NULL, lease_expires_at=NULL, last_error=NULL, updated_at=$1
      WHERE id=$2 AND claimed_by=$3 AND status='claimed'`,
     [Date.now(), taskId, workerId]
   ));

@@ -28,8 +28,8 @@ const METRICS_PASS = process.env.METRICS_PASS;
 if (Boolean(METRICS_USER) !== Boolean(METRICS_PASS)) {
   throw new Error("METRICS_USER and METRICS_PASS must be set together");
 }
-if (!Number.isInteger(METRICS_PORT) || METRICS_PORT < 1 || METRICS_PORT > 65535) {
-  throw new Error("METRICS_PORT must be an integer from 1 to 65535");
+if (!Number.isInteger(METRICS_PORT) || METRICS_PORT < 0 || METRICS_PORT > 65535) {
+  throw new Error("METRICS_PORT must be an integer from 0 to 65535");
 }
 if (!isLoopbackHost(METRICS_HOST) && (!METRICS_USER || !METRICS_PASS)) {
   throw new Error("Metrics Basic Auth is required when binding to a non-loopback host");
@@ -37,9 +37,10 @@ if (!isLoopbackHost(METRICS_HOST) && (!METRICS_USER || !METRICS_PASS)) {
 const registry = new WorkerRegistry(workerId);
 const allowMetricsRequest = createRateLimiter(Number(process.env.METRICS_RATE_LIMIT ?? 600));
 let shuttingDown = false;
+const cancellation=new AbortController();
 
-process.on("SIGINT", () => { log.warn("SIGINT — graceful shutdown"); shuttingDown = true; });
-process.on("SIGTERM", () => { log.warn("SIGTERM — graceful shutdown"); shuttingDown = true; });
+process.on("SIGINT", () => { log.warn("SIGINT — graceful shutdown"); shuttingDown = true; cancellation.abort(); });
+process.on("SIGTERM", () => { log.warn("SIGTERM — graceful shutdown"); shuttingDown = true; cancellation.abort(); });
 
 function buildProxy(acc: XAccount) {
   if (!acc.proxy_json) return undefined;
@@ -104,6 +105,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
       }
       const scrapeOpts = {
         authState,
+        signal:cancellation.signal,
         proxy: buildProxy(acc),
         userAgent: acc.user_agent ?? undefined,
         timezone: acc.timezone ?? undefined,
@@ -116,7 +118,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
         const tweets = await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
-        await persistTweets(task.mint, tweets, p.query);
+        await persistTweets(task.mint, tweets, p.query, task.id);
         assertLeases();
       } else if (kind === "timeline") {
         const p = payload as { handle: string; limit: number };
@@ -126,7 +128,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
         assertLeases();
         // A timeline task is scheduled because the author once mentioned a mint;
         // that does not make every post in the author's timeline about that mint.
-        await persistTweets(null, tweets);
+        await persistTweets(null, tweets, null, task.id);
         assertLeases();
       } else {
         const p = payload as { handle: string };
@@ -134,7 +136,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
         const profile = await fetchAccountProfile(p.handle, scrapeOpts);
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
-        await persistProfile(profile);
+        await persistProfile(profile, task.id);
         assertLeases();
       }
     } finally {
@@ -161,11 +163,11 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
     else if (/captcha/i.test(msg)) kindErr = "captcha";
     else if (/login required|auth session expired/i.test(msg)) kindErr = "ban";
 
-    if (!leaseLost) await recordError(acc.name, kindErr).catch(() => {});
-    const result = await failTask(task.id, workerId, msg).catch(() => "lost" as const);
+    if (!leaseLost && !shuttingDown) await recordError(acc.name, kindErr).catch(() => {});
+    const result = shuttingDown ? await deferTask(task.id,workerId,5000,"worker shutdown").then(ok=>ok?"requeued" as const:"lost" as const) : await failTask(task.id, workerId, msg).catch(() => "lost" as const);
     if (result === "dlq") tasksTotal.inc({ kind, result: "dlq" });
     else if (result === "requeued") tasksTotal.inc({ kind, result: "retry" });
-    registry.incrementFailed();
+    if(!shuttingDown)registry.incrementFailed();
     log.warn("task failed", { taskId: task.id, error: msg, classification: kindErr, result });
     return "failed";
   } finally {
@@ -180,6 +182,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
 async function loop() {
   await registry.register();
   registry.start();
+  process.send?.({ ready: true });
   const stopMetrics = startMetricsCollector();
   log.info("worker started", { workerId, pid: process.pid });
 

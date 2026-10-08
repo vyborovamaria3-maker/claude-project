@@ -3,7 +3,7 @@ import { tx } from "./pg";
 import { log } from "./logger";
 import { source, rawPage, storePage } from "../archive/store";
 import { Page } from "../archive/model";
-export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null) {
+export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number) {
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
   let rejected = 0;
@@ -54,6 +54,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         values
       );
 
+      if (taskId !== undefined) await client.query("INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",[taskId,chunk.map(t=>t.id)]);
       const snapshots = chunk.map(t => ({ id:t.id, observed_at:new Date(t.observedAt ?? now).toISOString(), raw:t }));
       await client.query(`INSERT INTO twitter_tweet_observations(tweet_id,observed_at,raw)
         SELECT x.id,x.observed_at,x.raw FROM jsonb_to_recordset($1::jsonb) AS x(id text,observed_at timestamptz,raw jsonb)
@@ -93,7 +94,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   }
 }
 
-export async function persistProfile(p: unknown) {
+export async function persistProfile(p: unknown, taskId?: number) {
   const parsed = ProfileSchema.safeParse(p);
   if (!parsed.success) {
     log.warn("profile rejected by schema", { error: parsed.error.message });
@@ -119,6 +120,7 @@ export async function persistProfile(p: unknown) {
     [d.handle.toLowerCase(), d.displayName, d.bio, d.followers, d.following, d.postsCount,
      d.isVerified, d.joinedAt, d.avatarUrl, now]
   );
+  if (taskId !== undefined) await client.query("INSERT INTO x_task_profiles(task_id,handle) VALUES($1,$2) ON CONFLICT DO NOTHING",[taskId,d.handle.toLowerCase()]);
   await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(d)]);
   });
 }

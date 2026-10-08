@@ -16,6 +16,7 @@ export type ScrapeAuthState = Exclude<BrowserContextOptions["storageState"], str
 export interface ScrapeOptions {
   // Playwright accepts an in-memory storage state; do not write decrypted cookies to disk.
   authState: ScrapeAuthState;
+  signal?: AbortSignal;
   proxy?: { server: string; username?: string; password?: string };
   userAgent?: string;
   timezone?: string;
@@ -42,10 +43,11 @@ function detectError(pageUrl: string, pageText: string): string | null {
 }
 
 async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T>): Promise<T> {
+  if(opts.signal?.aborted)throw new Error("collection cancelled");
   const cfg = getConfig();
   const headless = opts.headless ?? cfg.twitter.headless;
   const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
-  const browser = await chromium.launch({ headless, slowMo: headless ? 0 : 80 });
+  const browser = await chromium.launch({ headless, executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, slowMo: headless ? 0 : 80 });
   try {
     const context = await browser.newContext({
       storageState: opts.authState,
@@ -63,11 +65,13 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
     const page = await context.newPage();
     page.setDefaultTimeout(Math.max(5_000, Math.min(cfg.twitter.requestTimeoutMs, deadline - Date.now())));
     let deadlineTimer: NodeJS.Timeout | undefined;
+    let abortHandler: (()=>void)|undefined;
     try {
     // Общий дедлайн стратегии: даже если отдельные waitForSelector зависли,
     // вся операция укладывается в collectionDeadlineMs.
     return await Promise.race([
       fn(page),
+      new Promise<T>((_,reject)=>{abortHandler=()=>reject(new Error("collection cancelled"));opts.signal?.addEventListener("abort",abortHandler,{once:true});if(opts.signal?.aborted)abortHandler();}),
       new Promise<T>((_, reject) => {
         deadlineTimer = setTimeout(
           () => reject(new Error("collection deadline exceeded")),
@@ -76,7 +80,7 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
         deadlineTimer.unref?.();
       }),
     ]);
-    } finally { if (deadlineTimer) clearTimeout(deadlineTimer); }
+    } finally { if (deadlineTimer) clearTimeout(deadlineTimer); if(abortHandler)opts.signal?.removeEventListener("abort",abortHandler); }
   } finally {
     await browser.close();
   }
