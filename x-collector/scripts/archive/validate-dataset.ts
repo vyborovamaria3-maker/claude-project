@@ -16,6 +16,7 @@ async function main() {
     const db = new PGlite();
     try {
         await db.exec(await fs.readFile("migrations/014_archive.sql", "utf8"));
+        await db.exec(await fs.readFile("migrations/018_ai_foundation.sql", "utf8"));
         const url = manifest.source, id = sourceId(url, manifest.license, "tokens");
         await db.query("INSERT INTO archive_sources(id,name,url,license,kind) VALUES($1,$2,$3,$4,'tokens')", [id, manifest.name, url, manifest.license]);
         const client = { query: async (sql: string, params: unknown[] = []) => { const r = await db.query(sql, params); return { rows: r.rows, rowCount: r.affectedRows }; } } as unknown as PoolClient;

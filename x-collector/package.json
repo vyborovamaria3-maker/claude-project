@@ -32,7 +32,8 @@
     "reply:token": "tsx scripts/reply/token.ts",
     "reply:rotate-key": "tsx scripts/reply/rotate-key.ts",
     "test:postgres": "tsx scripts/reply/integration.ts",
-    "archive": "tsx scripts/archive/main.ts"
+    "archive": "tsx scripts/archive/main.ts",
+    "ai:export": "node --import tsx scripts/ai/export.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",

@@ -31,7 +31,7 @@ test('collector writes nullable current metrics, decreasing observations, archiv
  const query=async(sql:string,params:unknown[]=[])=>{const r=await db.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};};
  const a=mock.method(Pool.prototype,'query',query),b=mock.method(Pool.prototype,'connect',async()=>({query,release(){},on(){}}));
  try{
- for(const f of ['001_init.sql','014_archive.sql','015_collector_observations.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+ for(const f of ['001_init.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
  const base={id:'1234567890123456789',text:'Solana',mentions:['Bob'],relatedPostIds:['9999999999999999999'],authorHandle:'alice',authorDisplayName:null,url:'https://x.com/alice/status/1234567890123456789',views:null,likes:5,retweets:null,replies:0,isVerified:false,postedAt:Date.parse('2025-01-01')};
  await persistTweets(null,[{...base,observedAt:Date.parse('2025-01-02')}]);
  await persistTweets(null,[{...base,likes:2,observedAt:Date.parse('2025-01-03')}]);

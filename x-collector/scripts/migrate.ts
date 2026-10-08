@@ -22,6 +22,7 @@ const REQUIRED = [
   "015_collector_observations.sql",
   "016_collector_task_results.sql",
   "017_collector_live.sql",
+  "018_ai_foundation.sql",
 ];
 const LOCK_KEY = "x-collector:migrate";
 

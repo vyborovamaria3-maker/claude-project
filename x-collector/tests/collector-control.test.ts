@@ -42,7 +42,7 @@ test('Start button reaches queue, real storage and task results; retries and set
  const browser=await chromium.launch({headless:true,executablePath,args:bundled.args.filter(arg=>arg!=="--disable-web-security")});
  try{
  assert.equal((await readiness()).ready,false);
- for(const f of ['001_init.sql','014_archive.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+ for(const f of ['001_init.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
  await db.exec('ALTER TABLE x_accounts ADD COLUMN IF NOT EXISTS account_claimed_by text');
  assert.equal((await readiness()).ready,false);
  const blob=encryptBuffer(Buffer.from(JSON.stringify({cookies:[{name:'auth_token',value:'controlled-fixture',domain:'.x.com',expires:-1}],origins:[]})));

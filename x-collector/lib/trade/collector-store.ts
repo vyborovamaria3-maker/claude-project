@@ -17,11 +17,11 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
 
   const now = Date.now();
   const BATCH = 200;
+  const sourceKey = await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
 
   for (let i = 0; i < valid.length; i += BATCH) {
     const chunk = valid.slice(i, i + BATCH);
     const received = new Date(now);
-    const sourceKey = await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
     const raw = await rawPage({ tweets: chunk, sourceQuery, received_at: received.toISOString() });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
