@@ -2,9 +2,9 @@
 
 This is the PostgreSQL X collector from fixed_project.zip, integrated as an isolated subsystem. It does not replace the existing SQLite collector inside solana-launcher.
 
-## Migration chain is incomplete
+## Migrations
 
-The supplied archive is missing migrations/003_performance.sql. The migration command checks for the complete 001–011 chain before opening a database connection and stops without changing the database while 003 is missing. Do not substitute memecoin-intelligence/db/migrations/003_performance.sql: it belongs to a different schema. Restore the exact collector migration from its original source before migrating.
+The complete 001–011 migration chain is included. Migration 003_performance.sql was reconstructed from the collector's surviving query patterns; it adds indexes and is not a byte-for-byte recovery of the missing original. Do not substitute migrations from other subsystems. The runner validates the chain and prevents concurrent migration runs. Use `npm run x-collector:migrate -- --status` to inspect migration status.
 
 ## Setup
 
@@ -46,3 +46,5 @@ Dashboard and metrics bind to loopback by default. External binds require Basic 
 Timeline refreshes store posts without linking every post to the mint that originally led to the account. Only search results explicitly queued for a mint create tweet-to-mint links.
 
 The archive report is retained as FIX_REPORT_RU.md. It describes the supplied source snapshot and its verification limits.
+
+Dashboard CSP permits only the pinned Vue and Chart.js CDN script URLs used by its HTML. Internet access to these CDNs is required. HTTP rate limits use the socket peer address and ignore untrusted forwarded headers. Behind a reverse proxy, the application limit is shared by requests from that proxy; configure per-client limits at the proxy too.

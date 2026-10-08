@@ -210,7 +210,7 @@ const HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>Solana X Collector</title>
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; }
@@ -449,7 +449,13 @@ const server = http.createServer(async (req, res) => {
   };
 
   // Security headers применяются ко всем ответам, включая 401/429.
-  applySecurityHeaders(res, { allowUnsafeEval: true });
+  applySecurityHeaders(res, {
+    allowUnsafeEval: true,
+    scriptSources: [
+      "https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js",
+      "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js",
+    ],
+  });
 
   if (!allowRequest(clientIp(req))) {
     res.statusCode = 429;

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { q, closePool } from "../lib/trade/pg";
 import { log } from "../lib/trade/logger";
-import { notify, PermanentNotificationError } from "../lib/trade/notifications";
+import { notify, PermanentNotificationError, notificationRetryDelayMs } from "../lib/trade/notifications";
 
 const workerId = `outbox-${randomUUID()}`;
 const LEASE_MS = 5 * 60_000;
@@ -68,7 +68,7 @@ async function recordFailure(id: string, attempts: number, error: unknown) {
   // Постоянная ошибка (например, невалидная разметка сообщения) не стоит ретраить:
   // сообщение сразу уходит в dead-letter.
   const maxAttempts = error instanceof PermanentNotificationError ? 0 : MAX_ATTEMPTS;
-  const retryDelay = Math.min(5 * 60_000, 1000 * (2 ** Math.min(attempts, 8)));
+  const retryDelay = notificationRetryDelayMs(attempts, error);
   await q(
     `UPDATE outbox
      SET last_error=$1, claimed_at=NULL, claimed_by=NULL,
@@ -91,7 +91,7 @@ async function loop() {
             await acknowledge(row.id);
           } catch (e) {
             await recordFailure(row.id, row.attempts, e);
-            if (row.attempts >= MAX_ATTEMPTS) {
+            if (e instanceof PermanentNotificationError || row.attempts >= MAX_ATTEMPTS) {
               log.error("outbox message dead-lettered", { id: row.id, topic: row.topic, error: String(e) });
             } else {
               log.warn("outbox dispatch failed; will retry", { id: row.id, topic: row.topic, attempt: row.attempts, error: String(e) });
