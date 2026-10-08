@@ -1,3 +1,4 @@
+import { closeLive } from "../lib/collector/live";
 import { handleCollectorRequest } from "../lib/collector/http";
 import { stopManagedWorker } from "../lib/collector/runtime";
 import http from "node:http";
@@ -600,6 +601,7 @@ if (require.main === module) server.listen(PORT, HOST, () => {
 
 async function shutdown(signal: string) {
   log.info("shutting down dashboard", { signal });
+  closeLive();
   const closed = new Promise<void>(resolve=>server.close(()=>resolve()));
   await stopManagedWorker();
   await closed;

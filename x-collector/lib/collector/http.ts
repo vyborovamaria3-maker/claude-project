@@ -1,3 +1,4 @@
+import { subscribeLive } from "./live";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { IncomingMessage, ServerResponse } from "node:http";
@@ -17,6 +18,7 @@ export async function handleCollectorRequest(req:IncomingMessage,res:ServerRespo
   if(url.pathname.endsWith("/resume")){if(typeof data!=="object"||data===null||!("id" in data)||typeof data.id!=="string"){json(400,{error:"ID задания обязателен"});return true;}json(202,await services.resumeCollection(data.id));}else json(202,await services.startCollection(data));return true;
  }
  if(req.method!=="GET"){res.setHeader("Allow","GET");json(405,{error:"GET required"});return true;}
+ if(url.pathname==="/api/collector/live"){subscribeLive(res);return true;}
  if(url.pathname==="/api/collector/status"){json(200,await services.readiness());return true;}
  const match=url.pathname.match(/^\/api\/collector\/tasks\/(\d+)$/);
  if(match){const data=await services.taskDetails(match[1]);json(data?200:404,data??{error:"Задание не найдено"});return true;}

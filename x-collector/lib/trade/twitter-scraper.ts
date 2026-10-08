@@ -1,3 +1,4 @@
+import type { Progress } from "../collector/live";
 import { chromium, Page, BrowserContextOptions } from "playwright";
 import { getConfig } from "./config";
 
@@ -17,6 +18,8 @@ export interface ScrapeOptions {
   // Playwright accepts an in-memory storage state; do not write decrypted cookies to disk.
   authState: ScrapeAuthState;
   signal?: AbortSignal;
+  onProgress?: (progress:Progress)=>Promise<void>;
+  onBatch?: (tweets:RawTweet[])=>Promise<void>;
   proxy?: { server: string; username?: string; password?: string };
   userAgent?: string;
   timezone?: string;
@@ -47,6 +50,7 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
   const cfg = getConfig();
   const headless = opts.headless ?? cfg.twitter.headless;
   const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
+  let running:Promise<T>|undefined;
   const browser = await chromium.launch({ headless, executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, slowMo: headless ? 0 : 80 });
   try {
     const context = await browser.newContext({
@@ -70,7 +74,7 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
     // Общий дедлайн стратегии: даже если отдельные waitForSelector зависли,
     // вся операция укладывается в collectionDeadlineMs.
     return await Promise.race([
-      fn(page),
+      running=fn(page),
       new Promise<T>((_,reject)=>{abortHandler=()=>reject(new Error("collection cancelled"));opts.signal?.addEventListener("abort",abortHandler,{once:true});if(opts.signal?.aborted)abortHandler();}),
       new Promise<T>((_, reject) => {
         deadlineTimer = setTimeout(
@@ -83,6 +87,8 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
     } finally { if (deadlineTimer) clearTimeout(deadlineTimer); if(abortHandler)opts.signal?.removeEventListener("abort",abortHandler); }
   } finally {
     await browser.close();
+    // Drain an in-flight persistence callback before the caller requeues a timed-out task.
+    await running?.catch(()=>{});
   }
 }
 
@@ -121,7 +127,7 @@ export function extractTweetArticles(articles: Element[]): RawTweet[] {
           hashtags:[...new Set(Array.from(text.matchAll(/(?:^|\s)#([\p{L}\p{N}_]+)/gu),m=>m[1]))],
           relatedPostIds:[...new Set(links.map(a=>a.getAttribute('href')?.match(/\/status\/(\d+)/)?.[1]).filter((v):v is string=>Boolean(v)&&v!==id))],
           media:Array.from(article.querySelectorAll('[data-testid="tweetPhoto"] img,video')).map(el=>({type:el.tagName==='VIDEO'?'video' as const:'photo' as const,url:el.getAttribute('src')||el.getAttribute('poster')||null})),
-          authorHandle: href.split('/').filter(Boolean)[0] || 'unknown',
+          authorHandle: Array.from(article.querySelectorAll('[data-testid="User-Name"] a[href]')).map(a=>a.getAttribute('href')?.match(/^\/([A-Za-z0-9_]{1,15})$/)?.[1]).find(Boolean) || href.match(/^\/([A-Za-z0-9_]{1,15})\/status\//)?.[1] || 'unknown',
           authorDisplayName: article.querySelector('[data-testid="User-Name"] span')?.textContent?.trim() || null,
           url: `https://x.com${href.split('/analytics')[0]}`,
           views: parseMetric(viewsMatch?.[1]),
@@ -134,7 +140,7 @@ export function extractTweetArticles(articles: Element[]): RawTweet[] {
       }).filter((t): t is RawTweet => t !== null);
 }
 
-async function collectArticles(page: Page, limit: number, deadlineMs: number): Promise<RawTweet[]> {
+export async function collectArticles(page: Page, limit: number, deadlineMs: number, onProgress?:ScrapeOptions["onProgress"], onBatch?:ScrapeOptions["onBatch"]): Promise<RawTweet[]> {
   const seen = new Set<string>();
   const tweets: RawTweet[] = [];
   let stale = 0;
@@ -159,7 +165,9 @@ async function collectArticles(page: Page, limit: number, deadlineMs: number): P
       if (tweets.length >= limit) break;
     }
     stale = tweets.length === before ? stale + 1 : 0;
+    await onProgress?.({phase:"collecting",found:tweets.length,limit,authors:[...new Set(tweets.map(t=>t.authorHandle))],currentAuthor:tweets.at(-1)?.authorHandle??null});
 
+    if(tweets.length>before)await onBatch?.(tweets.slice(before));
     if (tweets.length >= limit) break;
     await page.mouse.wheel(0, 1800);
     await page.waitForTimeout(500 + Math.random() * 500);
@@ -189,12 +197,13 @@ export async function searchTweets(
 
   return withBrowser(opts, async (page) => {
     const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
+    await opts.onProgress?.({phase:"opening",limit});
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
     await waitForTweetsOrEmpty(page, Math.min(15_000, cfg.twitter.requestTimeoutMs));
     const text = await page.locator("body").innerText().catch(() => "");
     const err = detectError(page.url(), text);
     if (err) throw new Error(err);
-    const tweets = await collectArticles(page, limit, deadline);
+    const tweets = await collectArticles(page, limit, deadline, opts.onProgress,opts.onBatch);
     if (tweets.length === 0) {
       const hasEmptyState = await page.locator('[data-testid="emptyState"]').count() > 0;
       if (!hasEmptyState) throw new Error("search results did not load — no tweets and no empty state");
@@ -213,12 +222,13 @@ export async function fetchUserTimeline(
 
   return withBrowser(opts, async (page) => {
     const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
+    await opts.onProgress?.({phase:"opening",limit});
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
     await waitForTweetsOrEmpty(page, Math.min(15_000, cfg.twitter.requestTimeoutMs));
     const text = await page.locator("body").innerText().catch(() => "");
     const err = detectError(page.url(), text);
     if (err) throw new Error(err);
-    const tweets = await collectArticles(page, limit, deadline);
+    const tweets = await collectArticles(page, limit, deadline, opts.onProgress,opts.onBatch);
     if (tweets.length === 0) {
       const hasEmptyState = await page.locator('[data-testid="emptyState"]').count() > 0;
       if (!hasEmptyState) throw new Error("empty timeline — possibly shadowbanned session");
@@ -238,6 +248,7 @@ export async function fetchAccountProfile(
 ): Promise<AccountProfileData> {
   const cfg = getConfig();
   return withBrowser(opts, async (page) => {
+    await opts.onProgress?.({phase:"profile",currentAuthor:handle});
     await page.goto(`https://x.com/${handle}`, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
     await page.waitForSelector('[data-testid="UserName"], [data-testid="emptyState"], [data-testid="error-detail"]', {timeout:Math.min(15000,cfg.twitter.requestTimeoutMs)}).catch(()=>{});
     const err = detectError(page.url(), await page.locator("body").innerText().catch(() => ""));

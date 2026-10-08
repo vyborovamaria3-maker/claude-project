@@ -1,3 +1,4 @@
+import { recordProgress, Progress } from "../lib/collector/live";
 import { persistTweets, persistProfile } from "../lib/trade/collector-store";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
@@ -8,7 +9,7 @@ import {
 } from "../lib/trade/account-manager";
 import { WorkerRegistry, reapDeadWorkers } from "../lib/trade/worker-registry";
 import { decryptBuffer } from "../lib/trade/crypto";
-import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState } from "../lib/trade/twitter-scraper";
+import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState, RawTweet } from "../lib/trade/twitter-scraper";
 import { parseTaskPayload } from "../lib/trade/schemas";
 import { q, closePool } from "../lib/trade/pg";
 import { log, withContext, closeLogger } from "../lib/trade/logger";
@@ -52,12 +53,16 @@ function buildProxy(acc: XAccount) {
 
 async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number]): Promise<string> {
   const cfg = getConfig();
+  let progress:Progress={phase:"selecting",found:0,startedAt:Date.now()};
+  const publish=async(p:Progress)=>{progress={...progress,...p};if(!await recordProgress(task.id,workerId,task.attempts,progress))throw new Error("task lease lost during progress update");};
+  await publish({phase:"selecting"});
 
   let payload: ReturnType<typeof parseTaskPayload>;
   try {
     payload = parseTaskPayload(task.kind, task.payloadJson);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    await publish({phase:"failed"}).catch(()=>{});
     await failTask(task.id, workerId, `schema: ${msg}`).catch(() => {});
     return "invalid-payload";
   }
@@ -74,6 +79,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
   }
 
   if (!account) {
+    await publish({phase:"waiting"}).catch(()=>{});
     await deferTask(task.id, workerId, 60_000, "no available account").catch(() => false);
     return "no-account";
   }
@@ -96,6 +102,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
   }, Math.floor(cfg.sessions.leaseMs / 2));
 
   try {
+    await publish({phase:"opening",account:acc.name});
     const decryptedSession = decryptBuffer(acc.session_encrypted);
     let authState: ScrapeAuthState | undefined;
     try {
@@ -106,6 +113,13 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
       const scrapeOpts = {
         authState,
         signal:cancellation.signal,
+        onProgress:publish,
+        onBatch:async(tweets:RawTweet[])=>{
+          assertLeases();await publish({phase:"saving"});
+          const query=kind==="search"?(payload as {query:string}).query:null;
+          await persistTweets(kind==="search"?task.mint:null,tweets,query,task.id);
+          assertLeases();await publish({phase:"collecting"});
+        },
         proxy: buildProxy(acc),
         userAgent: acc.user_agent ?? undefined,
         timezone: acc.timezone ?? undefined,
@@ -115,27 +129,24 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
       if (kind === "search") {
         const p = payload as { query: string; limit: number; sort: "top" | "latest" };
         const t0 = Date.now();
-        const tweets = await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
+        await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
-        await persistTweets(task.mint, tweets, p.query, task.id);
-        assertLeases();
+
       } else if (kind === "timeline") {
         const p = payload as { handle: string; limit: number };
         const t0 = Date.now();
-        const tweets = await fetchUserTimeline(p.handle, { ...scrapeOpts, limit: p.limit });
+        await fetchUserTimeline(p.handle, { ...scrapeOpts, limit: p.limit });
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
-        // A timeline task is scheduled because the author once mentioned a mint;
-        // that does not make every post in the author's timeline about that mint.
-        await persistTweets(null, tweets, null, task.id);
-        assertLeases();
+
       } else {
         const p = payload as { handle: string };
         const t0 = Date.now();
         const profile = await fetchAccountProfile(p.handle, scrapeOpts);
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
+        await publish({phase:"saving"});
         await persistProfile(profile, task.id);
         assertLeases();
       }
@@ -145,6 +156,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
     }
 
     assertLeases();
+    await publish({phase:"finishing"});
     await recordSuccess(acc.name);
     assertLeases();
     const ok = await finishTask(task.id, workerId);
@@ -158,6 +170,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
     return "done";
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    await publish({phase:shuttingDown?"waiting":"failed"}).catch(()=>{});
     let kindErr: "rate_limit" | "captcha" | "ban" | "other" = "other";
     if (/rate limit|429|temporarily limited/i.test(msg)) kindErr = "rate_limit";
     else if (/captcha/i.test(msg)) kindErr = "captcha";

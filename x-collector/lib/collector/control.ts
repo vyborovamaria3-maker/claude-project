@@ -21,11 +21,11 @@ export async function readiness() {
  if(!process.env.DATABASE_URL)return {ready:false,checks:[{name:"database",ok:false,message:"Настройте DATABASE_URL в .env"}],runtime:runtimeStatus()};
  try { await q("SELECT 1");checks.push({name:"database",ok:true,message:"PostgreSQL доступен"}); }
  catch { return {ready:false,checks:[{name:"database",ok:false,message:"Нет подключения к PostgreSQL; проверьте .env и службу базы"}],runtime:runtimeStatus()}; }
- const required=["x_tasks","x_accounts","x_workers","archive_posts","twitter_tweet_observations","twitter_entity_links","x_task_tweets","x_task_profiles","twitter_profiles","twitter_profile_observations","archive_metrics","archive_users","archive_raw_pages","archive_sources","archive_token_links","archive_edges"];
+ const required=["x_tasks","x_accounts","x_workers","archive_posts","twitter_tweet_observations","twitter_entity_links","x_task_progress","x_task_tweets","x_task_profiles","twitter_profiles","twitter_profile_observations","archive_metrics","archive_users","archive_raw_pages","archive_sources","archive_token_links","archive_edges"];
  const tables=await q<{name:string;present:boolean}>("SELECT name,to_regclass(name) IS NOT NULL present FROM unnest($1::text[]) AS name",[required]);
  const missing=tables.filter(t=>!t.present).map(t=>t.name);
  if(!missing.includes("x_accounts")&&(await q("SELECT attname FROM pg_attribute WHERE attrelid='x_accounts'::regclass AND attname='account_claimed_by' AND NOT attisdropped")).length===0)missing.push("account lease migration 011");
- checks.push({name:"schema",ok:missing.length===0,message:missing.length?"Примените миграции: npm run migrate (нужна 016)":"Схема сборщика готова"});
+ checks.push({name:"schema",ok:missing.length===0,message:missing.length?"Примените миграции: npm run migrate (нужна 017)":"Схема сборщика готова"});
  if(missing.length)return {ready:false,checks,runtime:runtimeStatus()};
  const accounts=await q<{session_encrypted:Buffer}>("SELECT session_encrypted FROM x_accounts WHERE tier!='retired' AND status IN ('active','cooldown') ORDER BY name LIMIT 20");
  let valid=false;

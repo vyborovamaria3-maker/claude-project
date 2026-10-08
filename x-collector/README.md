@@ -4,7 +4,7 @@ This is the PostgreSQL X collector from fixed_project.zip, integrated as an isol
 
 ## Migration chain and provenance
 
-The repository contains the complete numbered 001–016 chain. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state.
+The repository contains the complete numbered 001–017 chain. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state.
 
 ## Setup
 
@@ -62,3 +62,5 @@ Archive backfill/import and Solana datasets: see ARCHIVE_RU.md. Existing Playwri
 ## Запуск кнопкой
 
 После настройки базы, MASTER_KEY, миграций и входа `npm run login -- main` запустите `npm start` и откройте http://127.0.0.1:3001/collector. Задайте запрос и нажмите «Начать парсинг»: worker запускается автоматически, прогресс и результаты обновляются. См. [COLLECTOR_RU.md](COLLECTOR_RU.md).
+
+На странице парсинга есть SSE-мониторинг: сессии X, цели/авторы, этапы, найденные и сохранённые записи, нагрузка аккаунтов и ожидание. Нужна миграция 017. Подробности в COLLECTOR_RU.md.

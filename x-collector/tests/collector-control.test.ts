@@ -1,3 +1,5 @@
+import { recordProgress,liveSnapshot,closeLive } from "../lib/collector/live";
+import { WorkerRegistry } from "../lib/trade/worker-registry";
 import { test,mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -13,9 +15,9 @@ import { handleCollectorRequest } from '../lib/collector/http';
 import { hasXSession } from '../lib/trade/x-session';
 import { encryptBuffer,clearKeyCache } from '../lib/trade/crypto';
 import { closePool } from '../lib/trade/pg';
-import { claimTasks,finishTask } from '../lib/trade/tasks';
+import { claimTasks,finishTask,failTask } from '../lib/trade/tasks';
 import { persistTweets,persistProfile } from '../lib/trade/collector-store';
-import { extractTweetArticles } from '../lib/trade/twitter-scraper';
+import { collectArticles } from '../lib/trade/twitter-scraper';
 import { registerAccount,pickAccount } from '../lib/trade/account-manager';
 import { applySecurityHeaders } from '../lib/trade/http-security';
 import { enforceBasicAuth } from '../lib/trade/http-auth';
@@ -39,7 +41,7 @@ test('Start button reaches queue, real storage and task results; retries and set
  const browser=await chromium.launch({headless:true,executablePath,args:bundled.args.filter(arg=>arg!=="--disable-web-security")});
  try{
  assert.equal((await readiness()).ready,false);
- for(const f of ['001_init.sql','014_archive.sql','015_collector_observations.sql','016_collector_task_results.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+ for(const f of ['001_init.sql','014_archive.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
  await db.exec('ALTER TABLE x_accounts ADD COLUMN IF NOT EXISTS account_claimed_by text');
  assert.equal((await readiness()).ready,false);
  const blob=encryptBuffer(Buffer.from(JSON.stringify({cookies:[{name:'auth_token',value:'controlled-fixture',domain:'.x.com',expires:-1}],origins:[]})));
@@ -57,13 +59,25 @@ test('Start button reaches queue, real storage and task results; retries and set
  await assert.rejects(startCollection({...retry,payload:{query:'changed'}},startWorker),/requestId/);
  const csrf=await fetch(origin+'/api/collector/start',{method:'POST',headers:{Authorization:'Basic '+Buffer.from('fixture:fixture').toString('base64'),Origin:'https://evil.invalid'},body:JSON.stringify(retry)});assert.equal(csrf.status,403);
  const [claimed]=await claimTasks('controlled-worker',1,60000);assert.equal(Number(claimed.id),Number(id));
+ await new WorkerRegistry('controlled-worker').register();
+ await db.query('UPDATE x_tasks SET lease_expires_at=0 WHERE id=$1',[id]);assert.equal(await recordProgress(Number(id),'controlled-worker',claimed.attempts,{phase:'collecting',found:999}),false);await db.query('UPDATE x_tasks SET lease_expires_at=$2 WHERE id=$1',[id,Date.now()+60000]);
+ assert.equal(await recordProgress(Number(id),'stale-worker',claimed.attempts,{phase:'collecting',found:999}),false);
  const fixture=await context.newPage();await fixture.setContent('<article data-testid="tweet"><a href="/alice/status/1234567890123456789"><time datetime="2025-01-01"></time></a><div data-testid="tweetText">Solana @bob</div><button data-testid="like" aria-label="4 Likes"></button></article>');
- const tweets=await fixture.locator('article').evaluateAll(extractTweetArticles);await persistTweets(null,tweets,null,Number(id));assert.equal(await finishTask(Number(id),'controlled-worker'),true);
+ await collectArticles(fixture,1,Date.now()+10000,async progress=>{assert(await recordProgress(Number(id),'controlled-worker',claimed.attempts,{...progress,account:'fixture',startedAt:Date.now()}));},async tweets=>{await persistTweets(null,tweets,null,Number(id));});
+ assert.equal(Number((await liveSnapshot()).jobs.find(j=>String(j.id)===String(id))?.saved_tweets),1);
+ await page.waitForFunction(()=>document.getElementById('live-jobs')?.textContent?.includes('1 постов'));
+ assert.match(await page.locator('#live-jobs').innerText(),/alice/);assert.equal(await finishTask(Number(id),'controlled-worker'),true);
  await page.locator('#refresh').click();await page.waitForFunction(()=>document.getElementById('progress')?.textContent?.includes('Сбор завершён'));assert.equal(await page.locator('#tweets tr').count(),1);assert.match(await page.locator('#tweets').innerText(),/alice/);assert.match(await page.locator('#tweets').innerText(),/—/);
  const profile=await startCollection({kind:'profile',payload:{handle:'alice'},requestId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'},startWorker);const [profileTask]=await claimTasks('controlled-worker',1,60000);
  await persistProfile({handle:'alice',displayName:'Alice',bio:'Solana',followers:10,following:null,postsCount:null,isVerified:false,joinedAt:null,avatarUrl:null},Number(profile.id));await finishTask(profileTask.id,'controlled-worker');assert.equal(Number((await taskDetails(String(profile.id)))!.counts!.profiles),1);
+ const partial=await startCollection({kind:'timeline',payload:{handle:'alice',limit:5},requestId:'cccccccc-cccc-4ccc-8ccc-cccccccccccc'},startWorker);
+ const [partialTask]=await claimTasks('controlled-worker',1,60000);
+ await assert.rejects(collectArticles(fixture,5,Date.now()+10000,undefined,async batch=>{await persistTweets(null,batch,null,Number(partial.id));throw new Error('controlled interruption');}),/controlled interruption/);
+ assert.equal(Number((await taskDetails(String(partial.id)))!.counts!.tweets),1);
+ assert.equal(await failTask(partialTask.id,'controlled-worker','controlled interruption'),'requeued');
+ assert.equal(await recordProgress(Number(id),'controlled-worker',claimed.attempts,{phase:'collecting',found:999}),false);
  await db.query("UPDATE x_accounts SET status='captcha',cooldown_until=0");assert.equal((await readiness()).ready,false);assert.equal(await pickAccount('search','blocked-fixture'),null);
  await page.locator('#check').click();await page.waitForFunction(()=>(document.getElementById('start') as HTMLButtonElement).disabled);assert.match(await page.locator('#checks').innerText(),/CAPTCHA/);
  await registerAccount('fixture',blob);assert(await pickAccount('profile','renewed-fixture'));
- }finally{await browser.close();await new Promise<void>(resolve=>server.close(()=>resolve()));await closePool();a.mock.restore();b.mock.restore();await db.close();await fs.rm(root,{recursive:true,force:true});clearKeyCache();for(const [n,v] of Object.entries(old)){if(v===undefined)delete process.env[n];else process.env[n]=v;}}
+ }finally{await browser.close();closeLive();await new Promise<void>(resolve=>server.close(()=>resolve()));await closePool();a.mock.restore();b.mock.restore();await db.close();await fs.rm(root,{recursive:true,force:true});clearKeyCache();for(const [n,v] of Object.entries(old)){if(v===undefined)delete process.env[n];else process.env[n]=v;}}
 });
