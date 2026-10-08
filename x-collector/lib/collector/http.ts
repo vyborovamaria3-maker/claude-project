@@ -1,3 +1,4 @@
+import { CollectorActionError } from "./errors";
 import { subscribeLive } from "./live";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -25,5 +26,9 @@ export async function handleCollectorRequest(req:IncomingMessage,res:ServerRespo
  if(url.pathname.startsWith("/api/")){json(404,{error:"Маршрут не найден"});return true;}
  res.setHeader("Content-Type",url.pathname.endsWith(".js")?"application/javascript; charset=utf-8":"text/html; charset=utf-8");
  res.end(await fs.readFile(path.join(process.cwd(),"public",url.pathname.endsWith(".js")?"collector.js":"collector.html")));return true;
- } catch(error) {json(error instanceof ZodError?400:409,{error:error instanceof ZodError?"Проверьте запрос, handle, лимит и тип сбора":"Не удалось выполнить действие. "+(error instanceof Error&& !/(postgres|password|SELECT|INSERT|connection|ECONN)/i.test(error.message)?error.message:"Проверьте доступность базы и журнал сервера")});return true;}
+ } catch(error) {
+  const status=error instanceof ZodError?400:error instanceof CollectorActionError?409:503;
+  const message=error instanceof ZodError?"Проверьте запрос, handle, лимит и тип сбора":error instanceof CollectorActionError?error.message:"Не удалось выполнить действие. Проверьте доступность базы и журнал сервера";
+  json(status,{error:message});return true;
+ }
 }

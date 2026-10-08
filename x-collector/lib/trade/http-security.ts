@@ -1,3 +1,4 @@
+import { isLoopbackHost } from "./http-auth";
 /**
  * HTTP-защита для dashboard и metrics-сервера: security headers, проверка
  * same-origin для изменяющих методов и in-memory per-IP rate limit.
@@ -121,4 +122,19 @@ export function clientIp(req: RequestLike): string {
   const forwarded = headerValue(req, "x-forwarded-for");
   if (forwarded) return forwarded.split(",")[0].trim();
   return req.socket?.remoteAddress ?? "unknown";
+}
+
+/** Local host aliases are accepted only on the bound port; explicit origins stay strict. */
+export function dashboardRequestOrigin(req: RequestLike, configured: string | undefined, host: string, port: number): string {
+  if (configured) return configured;
+  const authority = host.includes(":") ? `[${host}]` : host;
+  const fallback = `http://${authority}:${port}`;
+  if (!isLoopbackHost(host)) return fallback;
+  try {
+    const requested = new URL(`http://${headerValue(req, "host") ?? ""}`);
+    if (isLoopbackHost(requested.hostname.replace(/^\[|\]$/g, "")) &&
+        Number(requested.port || 80) === port && requested.username === "" && requested.password === "" &&
+        requested.pathname === "/" && !requested.search && !requested.hash) return requested.origin;
+  } catch { /* Invalid Host never determines the allowed origin. */ }
+  return fallback;
 }

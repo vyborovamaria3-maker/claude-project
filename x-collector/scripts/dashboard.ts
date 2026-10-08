@@ -12,7 +12,7 @@ import { isLoopbackHost, enforceBasicAuth } from "../lib/trade/http-auth";
 import { SolanaMint, Handle } from "../lib/trade/schemas";
 import { intParam } from "../lib/trade/num";
 import {
-  applySecurityHeaders, checkOrigin, createRateLimiter, clientIp,
+  applySecurityHeaders, checkOrigin, createRateLimiter, clientIp, dashboardRequestOrigin,
 } from "../lib/trade/http-security";
 import { httpRequests, httpRequestDuration } from "../lib/trade/metrics";
 import {
@@ -515,12 +515,12 @@ export const server = http.createServer(async (req, res) => {
       finish(res.statusCode);
       return;
     }
-    if (await handleCollectorRequest(req,res,DASHBOARD_ORIGIN ?? `http://${HOST}:${PORT}`)) {finish(res.statusCode);return;}
+    if (await handleCollectorRequest(req,res,dashboardRequestOrigin(req, DASHBOARD_ORIGIN, HOST, PORT))) {finish(res.statusCode);return;}
     if (await handleArchiveRequest(req,res)) { finish(res.statusCode); return; }
     const route = routes[url.pathname];
     const mutating = MUTATING_ROUTES.has(url.pathname);
     if (mutating) {
-      const origin = checkOrigin(req, DASHBOARD_ORIGIN ?? `http://${HOST}:${PORT}`);
+      const origin = checkOrigin(req, dashboardRequestOrigin(req, DASHBOARD_ORIGIN, HOST, PORT));
       if (!origin.ok) {
         res.statusCode = 403;
         res.end(JSON.stringify({ error: origin.reason }));

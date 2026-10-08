@@ -1,3 +1,4 @@
+import { CollectorActionError } from "../lib/collector/errors";
 import { recordProgress,liveSnapshot,closeLive } from "../lib/collector/live";
 import { WorkerRegistry } from "../lib/trade/worker-registry";
 import { test,mock } from 'node:test';
@@ -45,7 +46,11 @@ test('Start button reaches queue, real storage and task results; retries and set
  await db.exec('ALTER TABLE x_accounts ADD COLUMN IF NOT EXISTS account_claimed_by text');
  assert.equal((await readiness()).ready,false);
  const blob=encryptBuffer(Buffer.from(JSON.stringify({cookies:[{name:'auth_token',value:'controlled-fixture',domain:'.x.com',expires:-1}],origins:[]})));
+ const invalid=encryptBuffer(Buffer.from(JSON.stringify({cookies:[],origins:[]})));
+ for(let n=0;n<21;n++)await registerAccount('a'+String(n).padStart(2,'0'),invalid);
+ assert.equal((await readiness()).ready,false);
  await registerAccount('fixture',blob);assert.equal((await readiness()).ready,true);
+ await db.query("UPDATE x_accounts SET tier='retired' WHERE name LIKE 'a%'");
  await assert.rejects(startCollection({kind:'search',payload:{query:'fixture'},requestId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},async()=>{throw new Error('startup fixture failure');}),/startup fixture/);assert.equal((await db.query('SELECT * FROM x_tasks')).rows.length,0);
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');origin='http://127.0.0.1:'+address.port;
  const context=await browser.newContext({httpCredentials:{username:'fixture',password:'fixture'}}),page=await context.newPage();
@@ -80,4 +85,19 @@ test('Start button reaches queue, real storage and task results; retries and set
  await page.locator('#check').click();await page.waitForFunction(()=>(document.getElementById('start') as HTMLButtonElement).disabled);assert.match(await page.locator('#checks').innerText(),/CAPTCHA/);
  await registerAccount('fixture',blob);assert(await pickAccount('profile','renewed-fixture'));
  }finally{await browser.close();closeLive();await new Promise<void>(resolve=>server.close(()=>resolve()));await closePool();a.mock.restore();b.mock.restore();await db.close();await fs.rm(root,{recursive:true,force:true});clearKeyCache();for(const [n,v] of Object.entries(old)){if(v===undefined)delete process.env[n];else process.env[n]=v;}}
+});
+
+test('collector HTTP hides internal failures but preserves authored action errors',async()=>{
+ let failure:Error=new Error('sensitive fixture session-token and private host');
+ const services={readiness:async()=>{throw failure;},taskDetails,startCollection,resumeCollection};
+ const server=http.createServer(async(req,res)=>{await handleCollectorRequest(req,res,'http://localhost',services);});
+ try{
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const address=server.address();assert(address&&typeof address!=='string');
+  const url=`http://127.0.0.1:${address.port}/api/collector/status`;
+  const internal=await fetch(url);assert.equal(internal.status,503);
+  assert.doesNotMatch(await internal.text(),/sensitive|session-token|private host/);
+  failure=new CollectorActionError('Установите браузер');
+  const actionable=await fetch(url);assert.equal(actionable.status,409);assert.match(await actionable.text(),/Установите браузер/);
+ }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
