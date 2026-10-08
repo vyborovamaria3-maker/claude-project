@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx scripts/test.ts",
     "migrate": "tsx scripts/migrate.ts",
     "install-browser": "playwright install chromium",
     "login": "tsx scripts/x-login.ts",
