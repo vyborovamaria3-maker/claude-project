@@ -221,6 +221,7 @@
   "settings.tab.activity": "Activity",
   "settings.tab.diagnostics": "Diagnostics",
   "settings.tab.apify": "Apify",
+  "settings.tab.xCollector": "X Collector",
   "settings.tab.colors": "Colors",
   "settings.account.title": "Account",
   "settings.account.description": "Your wallet is your identity in this app.",

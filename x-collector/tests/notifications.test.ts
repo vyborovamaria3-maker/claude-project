@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  notify, escapeHtml, PermanentNotificationError, RetryableNotificationError,
+  notify, escapeHtml, PermanentNotificationError, RetryableNotificationError, notificationRetryDelayMs,
 } from "../lib/trade/notifications";
 import { getConfig, resetConfigCache, type AppConfig } from "../lib/trade/config";
 
@@ -87,4 +87,11 @@ test("partial success is acknowledged without retrying the failed channel", asyn
     globalThis.fetch = originalFetch;
     restore();
   }
+});
+
+test("publisher respects Retry-After even above its normal backoff cap", () => {
+  assert.equal(notificationRetryDelayMs(1, new RetryableNotificationError("429", 600_000)), 600_000);
+  assert.equal(notificationRetryDelayMs(3, new RetryableNotificationError("429", 1000)), 8000);
+  assert.equal(notificationRetryDelayMs(10, new Error("transport")), 256_000);
+  assert.equal(notificationRetryDelayMs(1, new RetryableNotificationError("bad", NaN)), 2000);
 });

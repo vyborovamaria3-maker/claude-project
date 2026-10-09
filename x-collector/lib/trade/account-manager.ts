@@ -52,7 +52,7 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string): Promis
     const r = await c.query<XAccount>(
       `WITH picked AS (
          SELECT name FROM x_accounts
-         WHERE status='active' AND tier != 'retired'
+         WHERE role='collector' AND status='active' AND tier != 'retired'
            AND COALESCE(account_busy_until, 0) <= $2
            AND weight_used_this_hour + $1 <= weight_quota_per_hour
          ORDER BY CASE tier WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'new' THEN 2 ELSE 3 END,

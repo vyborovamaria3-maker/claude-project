@@ -63,8 +63,8 @@ test("rate limiter with zero limit is a no-op", () => {
   for (let i = 0; i < 100; i++) assert.equal(allow("x", 0), true);
 });
 
-test("clientIp prefers x-forwarded-for and falls back to socket address", () => {
-  assert.equal(clientIp({ headers: { "x-forwarded-for": "9.9.9.9, 10.0.0.1" }, socket: { remoteAddress: "1.1.1.1" } }), "9.9.9.9");
+test("clientIp ignores spoofed forwarded headers and uses socket address", () => {
+  assert.equal(clientIp({ headers: { "x-forwarded-for": "9.9.9.9, 10.0.0.1" }, socket: { remoteAddress: "1.1.1.1" } }), "1.1.1.1");
   assert.equal(clientIp({ headers: {}, socket: { remoteAddress: "1.1.1.1" } }), "1.1.1.1");
   assert.equal(clientIp({ headers: {} }), "unknown");
 });
@@ -79,4 +79,11 @@ test("local dashboard aliases preserve port and explicit origin restrictions", (
   assert.equal(dashboardRequestOrigin({headers:{host}},undefined,"127.0.0.1",3001),"http://127.0.0.1:3001");
  assert.equal(dashboardRequestOrigin({headers:{host:"localhost:3001"}},"https://configured.example","127.0.0.1",3001),"https://configured.example");
  assert.equal(dashboardRequestOrigin({headers:{host:"localhost:3001"}},undefined,"0.0.0.0",3001),"http://0.0.0.0:3001");
+});
+
+test("dashboard CSP stays self-only and does not allow external hosts", () => {
+  const res = fakeRes();
+  applySecurityHeaders(res, { allowUnsafeEval: true });
+  assert.match(res.headers["content-security-policy"], /script-src 'self' 'unsafe-inline' 'unsafe-eval'/);
+  assert.doesNotMatch(res.headers["content-security-policy"], /https:\/\//);
 });

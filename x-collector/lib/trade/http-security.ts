@@ -11,6 +11,7 @@ export interface HttpSecurityOptions {
   rateLimitPerMinute?: number;
   /** Разрешить выполнение inline-скриптов/оценку (Vue runtime compiler). */
   allowUnsafeEval?: boolean;
+  scriptSources?: readonly string[];
 }
 
 export interface RequestLike {
@@ -40,9 +41,10 @@ export function applySecurityHeaders(res: ResponseLike, options: HttpSecurityOpt
   const scriptSrc = options.allowUnsafeEval
     ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
     : "script-src 'self' 'unsafe-inline'";
+  const scripts = [scriptSrc, ...(options.scriptSources ?? [])].join(" ");
   res.setHeader("Content-Security-Policy", [
     "default-src 'self'",
-    scriptSrc,
+    scripts,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "connect-src 'self'",
@@ -119,8 +121,7 @@ export function createRateLimiter(limitPerMinute: number) {
 }
 
 export function clientIp(req: RequestLike): string {
-  const forwarded = headerValue(req, "x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
+  // Forwarded headers are untrusted without an explicitly configured proxy boundary.
   return req.socket?.remoteAddress ?? "unknown";
 }
 

@@ -493,7 +493,9 @@ export const server = http.createServer(async (req, res) => {
   };
 
   // Security headers применяются ко всем ответам, включая 401/429.
-  applySecurityHeaders(res, { allowUnsafeEval: true });
+  applySecurityHeaders(res, {
+    allowUnsafeEval: true,
+  });
 
   if (!allowRequest(clientIp(req))) {
     res.statusCode = 429;

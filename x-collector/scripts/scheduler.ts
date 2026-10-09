@@ -16,6 +16,8 @@ import {
   rebuildUltraScores,
 } from "../lib/trade/analytics-advanced";
 
+import { runMonitoringCycle } from "../lib/trade/graph-monitoring";
+
 interface TaskDef {
   name: string;
   intervalMs: number;
@@ -27,6 +29,9 @@ let shuttingDown = false;
 const timers: NodeJS.Timeout[] = [];
 
 const tasks: TaskDef[] = [
+  { name: "graph-monitoring", intervalMs: 5 * 60_000, run: async () => {
+    log.info("graph monitoring cycle", { ...await runMonitoringCycle() });
+  } },
   {
     name: "enqueue-timelines",
     intervalMs: 30 * 60_000,
