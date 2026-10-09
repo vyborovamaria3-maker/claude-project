@@ -1,0 +1,492 @@
+import { createHash } from 'node:crypto';
+import { env } from '@/server/config/env.js';
+import { cacheGet, cacheSet } from '@/server/cache/redis.js';
+import { buildTelegramPrompt, promptVisibleFeatureKeys, TELEGRAM_PROMPT_VERSION } from './prompts.js';
+import { mockTelegramAnalysis } from './mock.js';
+import { telegramAiResultSchema, type TelegramAiResult, type TelegramAnalysisContext, type TelegramMessageInput } from './schemas.js';
+import { groundMockFullIntelligence, validateTelegramAiResult } from './validation.js';
+
+export const FULL_INTELLIGENCE_MIN_OUTPUT_TOKENS = 3_200;
+const DEFAULT_CONTEXT: TelegramAnalysisContext = { analysisMode: 'telegram_only', analysisRole: 'analyst' };
+
+type TelegramAiProvider = 'mock' | 'tooken' | 'qwen' | 'openai-compatible';
+type RemoteTelegramAiProvider = Exclude<TelegramAiProvider, 'mock'>;
+
+export type TelegramAiCompletion = {
+  result: TelegramAiResult;
+  provider: TelegramAiProvider;
+  model: string;
+  latencyMs: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cache: 'hit' | 'miss' | 'shared';
+};
+
+type OpenAiMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+type OpenAiChoice = { message?: { content?: string | Array<{ type?: string; text?: string }> } };
+type OpenAiResponse = {
+  choices?: OpenAiChoice[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number; input_tokens?: number; output_tokens?: number };
+  error?: { message?: string };
+  detail?: string;
+  message?: string;
+};
+type ModelListResponse = {
+  data?: Array<{ id?: string; object?: string; [key: string]: unknown }>;
+  models?: Array<string | { id?: string; [key: string]: unknown }>;
+  error?: { message?: string };
+  detail?: string;
+};
+type RawCompletion = { raw: string; model: string; inputTokens: number | null; outputTokens: number | null };
+type CompletionOptions = { jsonMode: boolean; temperature: number; maxTokens: number; tokenParam?: 'max_tokens' | 'max_completion_tokens' };
+type ProviderConfig = { provider: RemoteTelegramAiProvider; baseUrl: string; apiKey: string; configuredModel: string };
+
+const inFlight = new Map<string, Promise<Omit<TelegramAiCompletion, 'cache'>>>();
+let tookenDiscoveredModelPromise: Promise<string> | null = null;
+
+function isFullIntelligence(context: TelegramAnalysisContext) {
+  return context.analysisMode === 'full_intelligence' && Boolean(context.intelligenceSnapshot);
+}
+
+export function completionTokenBudget(context: TelegramAnalysisContext) {
+  return isFullIntelligence(context)
+    ? Math.max(env.TELEGRAM_AI_MAX_TOKENS, FULL_INTELLIGENCE_MIN_OUTPUT_TOKENS)
+    : env.TELEGRAM_AI_MAX_TOKENS;
+}
+
+function providerConfig(provider: RemoteTelegramAiProvider): ProviderConfig {
+  if (provider === 'tooken') {
+    return { provider, baseUrl: env.TOOKEN_BASE_URL, apiKey: env.TOOKEN_API_KEY, configuredModel: env.TOOKEN_MODEL.trim() };
+  }
+  if (provider === 'qwen') {
+    return {
+      provider,
+      baseUrl: env.QWEN_BASE_URL,
+      apiKey: env.QWEN_API_KEY || env.TELEGRAM_AI_API_KEY,
+      configuredModel: env.QWEN_MODEL,
+    };
+  }
+  return {
+    provider,
+    baseUrl: env.TELEGRAM_AI_BASE_URL,
+    apiKey: env.TELEGRAM_AI_API_KEY,
+    configuredModel: env.TELEGRAM_AI_MODEL,
+  };
+}
+
+function providerCacheIdentity(provider = env.TELEGRAM_AI_PROVIDER): string {
+  if (provider === 'mock') return 'mock:deterministic-telegram-mock';
+  const config = providerConfig(provider);
+  return `${provider}:${config.configuredModel || 'auto'}:${config.baseUrl}`;
+}
+
+function stableInput(messages: TelegramMessageInput[], context: TelegramAnalysisContext) {
+  return JSON.stringify({
+    promptVersion: TELEGRAM_PROMPT_VERSION,
+    provider: env.TELEGRAM_AI_PROVIDER,
+    providerIdentity: providerCacheIdentity(),
+    fallbackProvider: env.TELEGRAM_AI_FALLBACK_PROVIDER,
+    maxTokens: completionTokenBudget(context),
+    temperature: env.TELEGRAM_AI_TEMPERATURE,
+    context,
+    messages: [...messages].sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt) || a.id.localeCompare(b.id)),
+  });
+}
+
+export function telegramAiInputHash(messages: TelegramMessageInput[], context: TelegramAnalysisContext) {
+  return createHash('sha256').update(stableInput(messages, context)).digest('hex');
+}
+
+function baseUrlWithSlash(baseUrl: string) {
+  return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+}
+
+function providerUrl(config: ProviderConfig, path: string) {
+  return new URL(path.replace(/^\//, ''), baseUrlWithSlash(config.baseUrl));
+}
+
+function authorizationHeaders(apiKey: string): Record<string, string> {
+  return apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+}
+
+function contentText(choice: OpenAiChoice | undefined): string {
+  const raw = choice?.message?.content;
+  if (typeof raw === 'string') return raw;
+  if (Array.isArray(raw)) return raw.map((part) => part.text ?? '').join('');
+  return '';
+}
+
+function parseJsonObject(raw: string): unknown {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  try { return JSON.parse(cleaned); } catch { /* extract the outermost object */ }
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('AI provider returned no JSON object');
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
+
+function parseResult(raw: string, messages: TelegramMessageInput[], context: TelegramAnalysisContext): TelegramAiResult {
+  return validateTelegramAiResult(telegramAiResultSchema.parse(parseJsonObject(raw)), messages, context);
+}
+
+function fallbackSummary(raw: string) {
+  const cleaned = raw
+    .replace(/<\/?think>/gi, '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  if (!cleaned) return 'AI provider returned an invalid JSON response, so the service produced a cautious fallback analysis.';
+  return cleaned.slice(0, 900);
+}
+
+function fallbackSourceAssessment(source: 'x' | 'telegram' | 'chain', featureKeys: string[]) {
+  const sourceName = source === 'x' ? 'X' : source === 'telegram' ? 'Telegram' : 'chain';
+  return {
+    currentSituation: `${sourceName}: данных недостаточно для надежной интерпретации в этом fallback-ответе.`,
+    interpretation: `${sourceName}: исходный ответ AI-провайдера не прошел JSON-проверку, поэтому вывод по источнику оставлен осторожным.`,
+    entryImpact: `${sourceName}: влияние на текущий тезис о входе не подтверждено достаточно надежно.`,
+    supportingFeatureKeys: featureKeys,
+    confidence: 0.1,
+  };
+}
+
+function fallbackResult(raw: string, context: TelegramAnalysisContext): TelegramAiResult {
+  const featureKeys = [...promptVisibleFeatureKeys(context)].slice(0, 6);
+  const result: TelegramAiResult = {
+    summary: fallbackSummary(raw),
+    sentiment: { label: 'mixed', score: 0, confidence: 0.1 },
+    dominantIntent: 'unknown',
+    mentionedTokens: [],
+    entities: [],
+    claims: [],
+    relationships: [],
+    coordinationSignals: [],
+    campaignHypothesis: {
+      label: 'insufficient_data',
+      confidence: 0.1,
+      likelyOriginators: [],
+      amplifiers: [],
+      narrative: 'AI-провайдер ответил, но JSON был поврежден; нужен повторный анализ или другая модель для уверенного вывода.',
+      evidenceMessageIds: [],
+    },
+    risks: [],
+    featureAssessments: [],
+    discoveredRelationships: [],
+    anomalies: [{
+      type: 'invalid_llm_json',
+      severity: 'low',
+      confidence: 1,
+      explanation: 'AI-провайдер вернул синтаксически некорректный JSON; сервис вернул безопасный fallback вместо ошибки 500.',
+      relatedFeatureKeys: [],
+      evidenceMessageIds: [],
+    }],
+    contradictions: [],
+    whatWouldChangeConclusion: [
+      'Повторный валидный JSON-ответ AI-провайдера.',
+      'Другая critic-модель или дополнительная post-processing проверка JSON.',
+    ],
+    reasoningSummary: [
+      'Связь с AI-провайдером работает, но этот ответ был понижен до fallback из-за ошибки JSON-формата.',
+    ],
+    overallConfidence: 0.1,
+  };
+  if (context.analysisMode === 'full_intelligence' && context.intelligenceSnapshot) {
+    result.sourceAssessments = {
+      x: fallbackSourceAssessment('x', featureKeys),
+      telegram: fallbackSourceAssessment('telegram', featureKeys),
+      chain: fallbackSourceAssessment('chain', featureKeys),
+    };
+    result.entryAssessment = {
+      priceState: 'unknown',
+      entryAction: 'wait_confirmation',
+      oneLineVerdict: 'Вход не стоит оценивать по этому ответу: AI-провайдер не вернул валидный JSON, поэтому нужен повторный анализ.',
+      whyNow: [],
+      alreadyPricedIn: [],
+      missingConfirmation: ['Валидный структурированный ответ модели.', 'Свежие подтверждения по social, market и chain источникам.'],
+      invalidation: ['Повторный ответ снова ломает JSON или противоречит входным данным.'],
+      supportingFeatureKeys: featureKeys,
+      evidenceMessageIds: [],
+      confidence: 0.1,
+    };
+  }
+  return validateTelegramAiResult(telegramAiResultSchema.parse(result), [], context);
+}
+
+function modelIds(payload: ModelListResponse) {
+  const ids = [
+    ...(payload.data || []).map((entry) => entry?.id),
+    ...(payload.models || []).map((entry) => typeof entry === 'string' ? entry : entry?.id),
+  ];
+  return ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim());
+}
+
+function preferredChatModel(ids: string[]) {
+  const excluded = /(?:image|vision-only|embedding|embed|tts|speech|audio|whisper|moderation)/i;
+  const preferred = /(?:claude|gpt|gemini|qwen|deepseek|llama|mistral|chat)/i;
+  const usable = ids.filter((id) => !excluded.test(id));
+  const preferredUsable = usable.find((id) => preferred.test(id));
+  return preferredUsable || usable[0] || ids[0] || '';
+}
+
+async function discoverTookenModel(config: ProviderConfig): Promise<string> {
+  if (config.configuredModel) return config.configuredModel;
+  if (!config.apiKey) throw new Error('TOOKEN_API_KEY is required for Tooken AI');
+  if (!tookenDiscoveredModelPromise) {
+    tookenDiscoveredModelPromise = (async () => {
+      const response = await fetch(providerUrl(config, 'models'), {
+        headers: { accept: 'application/json', ...authorizationHeaders(config.apiKey) },
+        signal: AbortSignal.timeout(Math.min(10_000, env.TELEGRAM_AI_TIMEOUT_MS)),
+      });
+      const payload = await response.json().catch(() => ({})) as ModelListResponse;
+      if (!response.ok) {
+        throw new Error(payload.error?.message || payload.detail || `Tooken models request failed (HTTP ${response.status})`);
+      }
+      const model = preferredChatModel(modelIds(payload));
+      if (!model) throw new Error('Tooken returned no usable models; set TOOKEN_MODEL explicitly');
+      return model;
+    })().catch((error) => {
+      tookenDiscoveredModelPromise = null;
+      throw error;
+    });
+  }
+  return tookenDiscoveredModelPromise;
+}
+
+async function resolveModel(config: ProviderConfig) {
+  if (config.provider === 'tooken') return discoverTookenModel(config);
+  if (!config.configuredModel) throw new Error(`${config.provider} model is not configured`);
+  return config.configuredModel;
+}
+
+function providerDisplayName(provider: RemoteTelegramAiProvider) {
+  if (provider === 'tooken') return 'Tooken';
+  if (provider === 'qwen') return 'Qwen';
+  return 'OpenAI-compatible provider';
+}
+
+async function requestCompletion(
+  config: ProviderConfig,
+  messages: OpenAiMessage[],
+  options: CompletionOptions,
+): Promise<RawCompletion> {
+  const model = await resolveModel(config);
+  const tokenParam = options.tokenParam || 'max_tokens';
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: options.temperature,
+    [tokenParam]: options.maxTokens,
+    stream: false,
+  };
+  if (config.provider === 'qwen') body.chat_template_kwargs = { enable_thinking: false };
+  if (options.jsonMode) body.response_format = { type: 'json_object' };
+
+  const response = await fetch(providerUrl(config, 'chat/completions'), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...authorizationHeaders(config.apiKey),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(env.TELEGRAM_AI_TIMEOUT_MS),
+  });
+  const payload = await response.json().catch(() => ({})) as OpenAiResponse;
+  if (!response.ok) {
+    const name = providerDisplayName(config.provider);
+    const message = payload.error?.message || payload.detail || payload.message || `${name} inference failed (HTTP ${response.status})`;
+    if (options.jsonMode && response.status === 400 && /response[_ ]?format|json mode|unsupported/i.test(message)) {
+      return requestCompletion(config, messages, { ...options, jsonMode: false });
+    }
+    if (tokenParam === 'max_tokens' && response.status === 400 && /max[_ ]?tokens|max_completion_tokens|unsupported parameter/i.test(message)) {
+      return requestCompletion(config, messages, { ...options, tokenParam: 'max_completion_tokens' });
+    }
+    throw new Error(message);
+  }
+  const raw = contentText(payload.choices?.[0]);
+  if (!raw.trim()) throw new Error(`${providerDisplayName(config.provider)} returned an empty completion`);
+  return {
+    raw,
+    model,
+    inputTokens: payload.usage?.prompt_tokens ?? payload.usage?.input_tokens ?? null,
+    outputTokens: payload.usage?.completion_tokens ?? payload.usage?.output_tokens ?? null,
+  };
+}
+
+async function callRemoteProvider(
+  provider: RemoteTelegramAiProvider,
+  messages: TelegramMessageInput[],
+  context: TelegramAnalysisContext,
+): Promise<Omit<TelegramAiCompletion, 'cache'>> {
+  const config = providerConfig(provider);
+  if (provider === 'tooken' && !config.apiKey) throw new Error('TOOKEN_API_KEY is required for Tooken AI');
+  const prompt = buildTelegramPrompt(messages, context);
+  const started = performance.now();
+  const maxTokens = completionTokenBudget(context);
+  const baseMessages: OpenAiMessage[] = [
+    { role: 'system', content: prompt.system },
+    { role: 'user', content: prompt.user },
+  ];
+  const first = await requestCompletion(config, baseMessages, { jsonMode: true, temperature: env.TELEGRAM_AI_TEMPERATURE, maxTokens });
+  let result: TelegramAiResult;
+  let inputTokens = first.inputTokens;
+  let outputTokens = first.outputTokens;
+  try {
+    result = parseResult(first.raw, messages, context);
+  } catch (error) {
+    const validation = error instanceof Error ? error.message.slice(0, 2_000) : 'Invalid JSON schema';
+    const repaired = await requestCompletion(config, [
+      ...baseMessages,
+      { role: 'assistant', content: first.raw.slice(0, 12_000) },
+      { role: 'user', content: `The previous answer failed JSON schema validation: ${validation}. Return a corrected JSON object only. Do not add markdown or explanations.` },
+    ], { jsonMode: true, temperature: 0, maxTokens });
+    try {
+      result = parseResult(repaired.raw, messages, context);
+    } catch {
+      result = fallbackResult(repaired.raw || first.raw, context);
+    }
+    inputTokens = inputTokens === null || repaired.inputTokens === null ? null : inputTokens + repaired.inputTokens;
+    outputTokens = outputTokens === null || repaired.outputTokens === null ? null : outputTokens + repaired.outputTokens;
+  }
+  return { result, provider, model: first.model, latencyMs: performance.now() - started, inputTokens, outputTokens };
+}
+
+async function execute(messages: TelegramMessageInput[], context: TelegramAnalysisContext): Promise<Omit<TelegramAiCompletion, 'cache'>> {
+  const provider = env.TELEGRAM_AI_PROVIDER;
+  if (provider === 'mock') {
+    const started = performance.now();
+    const parsed = telegramAiResultSchema.parse(mockTelegramAnalysis(messages, context));
+    const grounded = groundMockFullIntelligence(parsed, context);
+    return {
+      result: validateTelegramAiResult(grounded, messages, context),
+      provider: 'mock',
+      model: 'deterministic-telegram-mock',
+      latencyMs: performance.now() - started,
+      inputTokens: null,
+      outputTokens: null,
+    };
+  }
+  try {
+    return await callRemoteProvider(provider, messages, context);
+  } catch (error) {
+    const fallbackProvider = env.TELEGRAM_AI_FALLBACK_PROVIDER;
+    if (fallbackProvider !== 'none' && fallbackProvider !== provider) {
+      return callRemoteProvider(fallbackProvider, messages, context);
+    }
+    throw error;
+  }
+}
+
+export async function runTelegramAi(
+  messages: TelegramMessageInput[],
+  context: TelegramAnalysisContext = DEFAULT_CONTEXT,
+  options: { bypassCache?: boolean } = {},
+): Promise<TelegramAiCompletion> {
+  if (!env.TELEGRAM_AI_ENABLED) throw new Error('Telegram AI is disabled');
+  const hash = telegramAiInputHash(messages, context);
+  const cacheKey = `telegram-ai:${TELEGRAM_PROMPT_VERSION}:${providerCacheIdentity()}:${hash}`;
+  if (!options.bypassCache) {
+    const cached = await cacheGet<Omit<TelegramAiCompletion, 'cache'>>(cacheKey);
+    if (cached) {
+      try {
+        const parsed = telegramAiResultSchema.parse(cached.result);
+        const result = cached.provider === 'mock' ? groundMockFullIntelligence(parsed, context) : parsed;
+        return { ...cached, result: validateTelegramAiResult(result, messages, context), cache: 'hit' };
+      } catch {
+        // Treat stale/corrupt cache entries as misses instead of returning invalid AI data.
+      }
+    }
+  }
+  const existing = inFlight.get(cacheKey);
+  if (existing) return { ...(await existing), cache: 'shared' };
+  const promise = execute(messages, context);
+  inFlight.set(cacheKey, promise);
+  try {
+    const completion = await promise;
+    if (!options.bypassCache) await cacheSet(cacheKey, completion, env.TELEGRAM_AI_CACHE_SECONDS);
+    return { ...completion, cache: 'miss' };
+  } finally {
+    inFlight.delete(cacheKey);
+  }
+}
+
+type AiHealth = {
+  configured: boolean;
+  reachable: boolean | null;
+  provider: TelegramAiProvider;
+  mode: string;
+  model: string;
+  baseUrl: string | null;
+  fallbackProvider: string;
+  error?: string;
+};
+
+async function remoteHealth(provider: RemoteTelegramAiProvider): Promise<AiHealth> {
+  const config = providerConfig(provider);
+  const fallbackProvider = env.TELEGRAM_AI_FALLBACK_PROVIDER;
+  if (provider === 'tooken' && !config.apiKey) {
+    return { configured: false, reachable: null, provider, mode: provider, model: config.configuredModel || 'auto', baseUrl: config.baseUrl, fallbackProvider, error: 'TOOKEN_API_KEY is not set' };
+  }
+  try {
+    if (provider === 'qwen') {
+      const endpoint = new URL('health', config.baseUrl.replace(/\/v1\/?$/, '/'));
+      const response = await fetch(endpoint, {
+        headers: { ...authorizationHeaders(config.apiKey) },
+        signal: AbortSignal.timeout(Math.min(5_000, env.TELEGRAM_AI_TIMEOUT_MS)),
+      });
+      return {
+        configured: true,
+        reachable: response.ok,
+        provider,
+        mode: provider,
+        model: config.configuredModel,
+        baseUrl: config.baseUrl,
+        fallbackProvider,
+        ...(!response.ok ? { error: `HTTP ${response.status}` } : {}),
+      };
+    }
+
+    const endpoint = providerUrl(config, 'models');
+    const response = await fetch(endpoint, {
+      headers: { accept: 'application/json', ...authorizationHeaders(config.apiKey) },
+      signal: AbortSignal.timeout(Math.min(8_000, env.TELEGRAM_AI_TIMEOUT_MS)),
+    });
+    const payload = await response.json().catch(() => ({})) as ModelListResponse;
+    const discovered = response.ok ? preferredChatModel(modelIds(payload)) : '';
+    return {
+      configured: true,
+      reachable: response.ok,
+      provider,
+      mode: provider,
+      model: config.configuredModel || discovered || 'auto',
+      baseUrl: config.baseUrl,
+      fallbackProvider,
+      ...(!response.ok ? { error: payload.error?.message || payload.detail || `HTTP ${response.status}` } : {}),
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      reachable: false,
+      provider,
+      mode: provider,
+      model: config.configuredModel || 'auto',
+      baseUrl: config.baseUrl,
+      fallbackProvider,
+      error: error instanceof Error ? error.message : 'Health check failed',
+    };
+  }
+}
+
+export async function aiHealth(): Promise<AiHealth> {
+  const provider = env.TELEGRAM_AI_PROVIDER;
+  if (!env.TELEGRAM_AI_ENABLED) {
+    return { configured: false, reachable: null, provider, mode: provider, model: provider === 'mock' ? 'deterministic-telegram-mock' : providerCacheIdentity(provider), baseUrl: null, fallbackProvider: env.TELEGRAM_AI_FALLBACK_PROVIDER };
+  }
+  if (provider === 'mock') {
+    return { configured: true, reachable: true, provider, mode: provider, model: 'deterministic-telegram-mock', baseUrl: null, fallbackProvider: env.TELEGRAM_AI_FALLBACK_PROVIDER };
+  }
+  return remoteHealth(provider);
+}
+
+// Backward-compatible name used by older callers. It now reports whichever
+// provider is primary, not only the local Qwen service.
+export const qwenHealth = aiHealth;

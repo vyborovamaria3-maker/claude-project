@@ -204,6 +204,7 @@
   "settings.tab.activity": "Активность",
   "settings.tab.diagnostics": "Диагностика",
   "settings.tab.apify": "Apify",
+  "settings.tab.xCollector": "X Collector",
   "settings.tab.colors": "Цвета",
   "settings.account.title": "Аккаунт",
   "settings.account.description": "Ваш кошелёк — это ваша идентичность в этом приложении.",
@@ -340,5 +341,10 @@
   "database.startedAt": "Запущено",
   "database.finishedAt": "Завершено",
   "database.datasetId": "ID датасета",
-  "database.records": "Записи"
+  "database.records": "Записи",
+  "analysis.translation.showTranslation": "Показать перевод",
+  "analysis.translation.showOriginal": "Показать оригинал",
+  "analysis.translation.translating": "Переводим…",
+  "analysis.translation.translated": "Переведено",
+  "analysis.translation.unavailable": "Перевод недоступен"
 }

@@ -1,44 +1,81 @@
-# POTAPoff Backend
+# AI Reply Guy Backend
 
-FastAPI backend for the solana-launcher project.
+[Быстрая 감독ировка]
 
-## Stack
-- FastAPI
-- PostgreSQL
-- SQLAlchemy 2.x + Alembic
-- JWT auth
-- SQLAdmin
-- Redis
-- Celery + RabbitMQ
-- Prometheus metrics
-- pytest
-- Ruff + Mypy + pre-commit
+## Быстрый старт
 
-## Local development
 ```bash
-cp .env.example .env
-pip install -e .[dev]
-alembic upgrade head
+# Инициализация
+cd backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Установка
+pip install -r requirements.txt
+
+# Запуск
 uvicorn app.main:app --reload --port 8000
 ```
 
-## Key endpoints
-- `GET /health`
-- `GET /ready`
-- `POST /api/v1/auth/register`
-- `POST /api/v1/auth/login`
-- `POST /api/v1/auth/login-json`
-- `POST /api/v1/auth/phantom/nonce`
-- `POST /api/v1/auth/phantom/verify`
-- `POST /api/v1/auth/telegram/verify`
-- `POST /api/v1/auth/link`
-- `GET /api/v1/users/me`
-- `POST /api/v1/tasks/demo-notification`
-- `GET /metrics`
+## Структура
+- `app/main.py` - основной Entry Point
+- `app/api/` - API endpoints
+- `app/models/` - SQLAlchemy модели
+- `app/schemas/` - Pydantic схемы
+- `app/services/` - бизнес-логика
+- `app/db/` - database session
+- `app/auth/` - JWT Auth
 
-## Hybrid auth notes
-- `users.id` is now a UUID primary key.
-- Phantom login uses a nonce issued by `/api/v1/auth/phantom/nonce` and verified by `/api/v1/auth/phantom/verify`.
-- Telegram Mini App login is verified server-side via `/api/v1/auth/telegram/verify`.
-- Account linking is handled by `/api/v1/auth/link` while preserving existing email/password login.
-- Run `alembic upgrade head` after pulling the latest schema changes.
+## Ключевые API
+
+### Accounts
+- `POST /api/accounts` - Подключить X-аккаунт
+- `GET /api/accounts` - Список аккаунтов
+- `DELETE /api/accounts/{id}` - Удалить аккаунт
+
+### Campaigns
+- `POST /api/campaigns` - Создать кампанию
+- `GET /api/campaigns` - Список кампаний
+- `PATCH /api/campaigns/{id}` - Обновить кампанию
+
+### Lore
+- `POST /api/lore` - Создать персонажа
+- `GET /api/lore` - Список персонажей
+- `POST /api/lore/{id}/examples` - Добавить примеры RAG
+
+### Proxies
+- `POST /api/accounts/{id}/proxy` - Подключить прокси
+- `GET /api/accounts/{id}/proxy/status` - Статус прокси
+
+### Stats
+- `GET /api/campaigns/{id}/stats` - Статистика
+- `GET /api/accounts/{id}/stats` - Статистика аккаунта
+
+### Alerts
+- `GET /api/alerts` - Получение уведомлений
+
+## .env конфигурация
+```
+DATABASE_URL=postgresql://user:pass@localhost:5432/ai_reply_guy
+REDIS_URL=redis://localhost:6379/0
+ENCRYPTION_KEY=32-byte-encryption-key-here
+JWT_SECRET=your-jwt-secret
+TELEGRAM_BOT_TOKEN=123:ABC
+LLM_API_KEY=sk-...
+LLM_PROVIDER=openai
+```
+
+## Безопасность
+- Fernet шифрование cookies/proxy
+- JWT аутентификация
+- Rate limiting
+- Изоляция аккаунтов (отдельный воркер на каждый)
+- Telegram alerts при проблемах
+- Просто без секретов в логах
+
+## Структура воркера аккаунта
+- Каждый аккаунт = отдельный процесс
+- Цикл: check sources → filter → generate → post  
+- Anti-detection (14 слоев)
+- Rate limiting
+- Sleep mode

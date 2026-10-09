@@ -1,0 +1,33 @@
+{
+  "twitter": {
+    "strategy": "playwright",
+    "headless": true,
+    "searchLimit": 100,
+    "timelineLimit": 300,
+    "requestTimeoutMs": 60000,
+    "collectionDeadlineMs": 180000,
+    "maxAttempts": 5,
+    "backoffBaseMs": 2000,
+    "userAgents": ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"]
+  },
+  "sessions": {
+    "maxRequestsPerHour": 60,
+    "cooldownAfterRateLimitMs": 1200000,
+    "cooldownAfterCaptchaMs": 3600000,
+    "banAfterConsecutiveErrors": 3,
+    "leaseMs": 300000
+  },
+  "queue": { "accountTtlMs": 86400000, "maxAttempts": 3 },
+  "logging": { "level": "info", "dir": "logs", "rotateMaxBytes": 10485760 },
+  "db": {
+    "vacuumAfterRuns": 10,
+    "archiveAfterDays": 90,
+    "retryAttempts": 3,
+    "retryBaseMs": 100,
+    "retryMaxMs": 2000
+  },
+  "notifications": {
+    "telegram": { "enabled": false, "botToken": "", "chatId": "" },
+    "webhook": { "enabled": false, "url": "" }
+  }
+}

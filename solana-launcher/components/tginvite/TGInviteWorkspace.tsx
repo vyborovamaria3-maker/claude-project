@@ -1609,6 +1609,78 @@ function TGInvitePageInner() {
             </div>
           )}
 
+          <div className={siteDesign.page.panelClassName}>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-content">Solana Meme Source Candidates</h3>
+                <p className="text-sm text-content-muted">Sorted TGDataset matches. Revalidate each source with MTProto before parsing or opt-in campaigns.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadSourceCandidates()}
+                disabled={sourceCandidatesLoading}
+                className={`${siteDesign.controls.actionButtonClassName} disabled:opacity-50`}
+              >
+                {sourceCandidatesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {sourceCandidatesLoading ? "Loading..." : "Load Sources"}
+              </button>
+            </div>
+
+            {sourceCandidates.length > 0 && (
+              <div className="mt-4 overflow-hidden rounded-xl border border-bg-border">
+                <div className="max-h-80 divide-y divide-bg-border overflow-y-auto">
+                  {sourceCandidates.slice(0, 50).map((candidate) => {
+                    const username = candidate.username.replace(/^@/, "");
+                    return (
+                      <div key={username} className="grid gap-3 bg-bg-elevated p-3 md:grid-cols-[1fr_auto] md:items-center">
+                        <button
+                          type="button"
+                          onClick={() => setParserInput(`@${username}`)}
+                          className="min-w-0 text-left"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-content">@{username}</span>
+                            <span className="rounded-full border border-green-500/30 px-2 py-0.5 text-xs text-green-300">
+                              {candidate.parser_priority || "medium"}
+                            </span>
+                            <span className="text-xs text-content-muted">
+                              essence {Number(candidate.essence_score || 0).toFixed(1)}
+                            </span>
+                          </div>
+                          <div className="mt-1 truncate text-sm text-content-muted">{candidate.title || "Untitled source"}</div>
+                          <div className="mt-2 flex flex-wrap gap-3 text-xs text-content-muted">
+                            <span>{Number(candidate.n_subscribers || 0).toLocaleString()} subs</span>
+                            <span>{candidate.signals?.recent_100?.unique_solana_mints || 0} recent SOL mints</span>
+                            <span>{candidate.signals?.recent_100?.explicit_call_messages || 0} recent calls</span>
+                            <span>{candidate.signals?.recent_100?.memecoin_messages || 0} recent meme msgs</span>
+                          </div>
+                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setParserInput(`@${username}`)}
+                            className={siteDesign.controls.actionButtonClassName}
+                          >
+                            <Search className="h-4 w-4" />
+                            Parse
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => addSourceCandidate(candidate)}
+                            className={siteDesign.controls.primaryActionClassName}
+                          >
+                            <Plus className="h-4 w-4" />
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           {parserResult && (
             <>
               {parserResult.partial && (

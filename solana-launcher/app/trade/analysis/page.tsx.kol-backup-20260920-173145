@@ -1,0 +1,252 @@
+"use client";
+// data-tag: app.trade.analysis
+
+import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Loader2, AlertTriangle, TrendingUp, RefreshCw } from "lucide-react";
+import SearchBar from "@/components/trade/SearchBar";
+import { loadPageState, savePageState } from "@/lib/pageState";
+
+const DevAnalysis = dynamic(() => import("@/components/trade/DevAnalysis"), {
+  loading: () => <div className="glass rounded-xl border border-bg-border p-6 text-sm text-white/40">Загружаю DEV анализ…</div>,
+});
+const SocialIntelligencePanel = dynamic(() => import("@/components/trade/SocialIntelligencePanel"), {
+  loading: () => <div className="glass rounded-xl border border-bg-border p-6 text-sm text-white/40">Загружаю Telegram, X и AI анализ…</div>,
+});
+const PumpFunChart = dynamic(() => import("@/components/PumpFunChart"), {
+  ssr: false,
+  loading: () => <div className="glass rounded-xl border border-bg-border h-[520px] flex items-center justify-center text-sm text-white/40">Загружаю график…</div>,
+});
+
+interface AnalysisData {
+  mint: string;
+}
+
+const ANALYSIS_PAGE_STATE_KEY = "trade.analysis.page.v1";
+
+interface TradeAnalysisPageState {
+  mint: string;
+  data: AnalysisData | null;
+  error: string | null;
+}
+
+
+export default function TradeAnalysisPage() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const initialMint = params.get("mint") || "";
+
+  const [mint, setMint] = useState(initialMint);
+  const [data, setData] = useState<AnalysisData | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ phase: string; fetched: number; page: number } | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState(0);
+  const [hasRestoredState, setHasRestoredState] = useState(false);
+
+  useEffect(() => {
+    const restored = loadPageState<TradeAnalysisPageState | null>(ANALYSIS_PAGE_STATE_KEY, null);
+    if (restored && (!initialMint || !restored.mint || restored.mint === initialMint)) {
+      if (restored.mint) setMint(restored.mint);
+      if (restored.data) setData(restored.data);
+      if (restored.error) setError(restored.error);
+    }
+    setHasRestoredState(true);
+  }, [initialMint]);
+
+  useEffect(() => {
+    if (!hasRestoredState) return;
+    savePageState<TradeAnalysisPageState>(ANALYSIS_PAGE_STATE_KEY, {
+      mint,
+      data,
+      error,
+    });
+  }, [hasRestoredState, mint, data, error]);
+
+  // 1s tick while loading so ETA updates live
+  useEffect(() => {
+    if (!isLoading) return;
+    const id = setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [isLoading]);
+
+  const runAnalysis = useCallback(async (m: string, refresh = false) => {
+    setMint(m);
+    setIsLoading(true);
+    setError(null);
+    setProgress(null);
+    setData(null);
+    setStartedAt(Date.now());
+    try {
+      const r = await fetch(
+        `/api/trade/analyze-stream?mint=${encodeURIComponent(m)}${refresh ? "&refresh=1" : ""}`,
+        { cache: "no-store" }
+      );
+      if (!r.ok || !r.body) {
+        const txt = await r.text().catch(() => "");
+        throw new Error(txt || `HTTP ${r.status}`);
+      }
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let evt: { type: string; [k: string]: unknown };
+          try { evt = JSON.parse(line); } catch { continue; }
+          if (evt.type === "progress") {
+            setProgress({ phase: String(evt.phase), fetched: Number(evt.fetched), page: Number(evt.page) });
+          } else if (evt.type === "final") {
+            const { type: _t, ...rest } = evt;
+            void _t;
+            setData(rest as unknown as AnalysisData);
+          } else if (evt.type === "error") {
+            throw new Error(String(evt.message));
+          }
+        }
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Ошибка анализа");
+      setData(null);
+    } finally {
+      setIsLoading(false);
+      setProgress(null);
+      setStartedAt(null);
+    }
+    router.replace(`/trade/analysis?mint=${encodeURIComponent(m)}`);
+  }, [router]);
+
+  useEffect(() => {
+    if (!initialMint) return;
+    const restored = loadPageState<TradeAnalysisPageState | null>(ANALYSIS_PAGE_STATE_KEY, null);
+    const canReuseRestored = !!restored?.data && restored.mint === initialMint;
+    if (!canReuseRestored) runAnalysis(initialMint);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="space-y-5" data-tag="trade.analysis_page">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <div className="w-9 h-9 rounded-lg bg-neon-purple/15 border border-neon-purple/30 flex items-center justify-center">
+          <TrendingUp className="w-5 h-5 text-neon-purple" />
+        </div>
+        <div>
+          <h1 className="text-lg font-semibold text-white">Trade · Analysis</h1>
+          <p className="text-xs text-white/40">
+            Глубокий анализ трейдов, кошельков и DEV-активности по Pump.fun токенам
+          </p>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="flex gap-2 items-stretch">
+        <div className="flex-1">
+          <SearchBar onSearch={runAnalysis} isLoading={isLoading} initialValue={mint} />
+        </div>
+        {mint && (
+          <button
+            type="button"
+            onClick={() => runAnalysis(mint, true)}
+            disabled={isLoading}
+            title="Сбросить кеш и переанализировать"
+            className="px-3 py-3 rounded-lg bg-white/5 border border-bg-border text-white/70 hover:text-white disabled:opacity-40 flex items-center"
+            data-tag="trade.refresh"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+          </button>
+        )}
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-neon-red/10 border border-neon-red/30 text-sm">
+          <AlertTriangle className="w-4 h-4 text-neon-red mt-0.5" />
+          <div>
+            <div className="text-neon-red font-semibold">Ошибка анализа</div>
+            <div className="text-white/60 text-xs mt-0.5">{error}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state — show live pump.fun feed */}
+      {!data && !isLoading && !error && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-center py-12 glass rounded-xl border border-bg-border">
+            <p className="text-sm text-white/40">
+              Введи mint адрес токена выше, чтобы начать анализ
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Loading */}
+      {isLoading && (
+        <div className="flex flex-col items-center justify-center py-24 glass rounded-xl border border-bg-border gap-3">
+          <Loader2 className="w-7 h-7 animate-spin text-neon-purple" />
+          <div className="text-center">
+            <div className="text-sm text-white/80 font-medium">
+              {progress?.phase === "fetching" && `Загружаю историю токена… ${progress.fetched.toLocaleString()} трейдов`}
+              {progress?.phase === "classifying" && `Классифицирую кошельки… (${progress.fetched.toLocaleString()} трейдов)`}
+              {progress?.phase === "enriching" && "Получаю балансы и статус кошельков…"}
+              {!progress && "Подключаюсь к Pump.fun…"}
+            </div>
+            {/* Elapsed time + ETA */}
+            {startedAt && (() => {
+              void nowTick; // re-render every second
+              const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+              const fetched = progress?.fetched ?? 0;
+              const target = 3000;
+              let etaText = "";
+              if (progress?.phase === "fetching" && fetched > 50 && fetched < target) {
+                const rate = fetched / Math.max(1, elapsedSec); // trades/sec
+                const etaSec = Math.ceil((target - fetched) / rate);
+                etaText = ` · осталось ~${etaSec}с`;
+              }
+              const mins = Math.floor(elapsedSec / 60);
+              const secs = elapsedSec % 60;
+              const elapsedText = mins > 0 ? `${mins}м ${secs}с` : `${secs}с`;
+              return (
+                <div className="mt-1 text-[11px] text-white/40">
+                  Прошло {elapsedText}{etaText}
+                </div>
+              );
+            })()}
+            {progress?.phase === "fetching" && (
+              <div className="mt-2 w-64 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-neon-purple transition-all"
+                  style={{ width: `${Math.min(100, (progress.fetched / 3000) * 100)}%` }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      {data && !isLoading && <AnalysisResults data={data} />}
+    </div>
+  );
+}
+
+
+function AnalysisResults({ data }: { data: AnalysisData }) {
+  return (
+    <div className="space-y-4" data-tag="trade.analysis.unified">
+      <PumpFunChart mint={data.mint} />
+
+      <div className="grid gap-4 xl:grid-cols-[0.9fr_2.1fr]">
+        <DevAnalysis mint={data.mint} compact />
+        <SocialIntelligencePanel mintOverride={data.mint} compact />
+      </div>
+    </div>
+  );
+}

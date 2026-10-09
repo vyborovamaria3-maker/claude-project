@@ -1,0 +1,375 @@
+"use client";
+import { useI18n } from "@/components/providers/I18nProvider";
+// data-tag: app.trade.analysis.tabs.v2
+
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  Activity,
+  BrainCircuit,
+  LayoutDashboard,
+  RefreshCw,
+  Send,
+  TrendingUp,
+  Twitter,
+  Users,
+} from "lucide-react";
+import SearchBar from "@/components/trade/SearchBar";
+
+const DevAnalysis = dynamic(() => import("@/components/trade/DevAnalysis"), {
+  loading: () => <PanelLoading text="Загружаю blockchain-анализ…" />,
+});
+
+const DevHistoryV2 = dynamic(() => import("@/components/trade/DevHistoryV2"), {
+  loading: () => <PanelLoading text="Загружаю историю предыдущих запусков DEV…" />,
+});
+
+const BlockchainAiReportPanel = dynamic(() => import("@/components/trade/BlockchainAiReportPanel"), {
+  loading: () => <PanelLoading text="AI собирает blockchain snapshot…" />,
+});
+
+const BlockchainAnalyticsDashboard = dynamic(() => import("@/components/trade/BlockchainAnalyticsDashboard"), {
+  loading: () => <PanelLoading text="Загружаю V3.4 / V3.5 blockchain analytics…" />,
+});
+
+const SocialIntelligencePanel = dynamic(() => import("@/components/trade/SocialIntelligencePanel"), {
+  loading: () => <PanelLoading text="Загружаю intelligence…" />,
+});
+
+const KolIntelligencePanel = dynamic(() => import("@/components/trade/KolIntelligencePanel"), {
+  loading: () => <PanelLoading text="Загружаю KOL / Smart Money…" />,
+});
+
+const KolAiAnalysis = dynamic(() => import("@/components/trade/KolAiAnalysis"), {
+  loading: () => <PanelLoading text="AI анализирует KOL / Smart Money…" />,
+});
+
+const PumpFunChart = dynamic(() => import("@/components/PumpFunChart"), {
+  ssr: false,
+  loading: () => <PanelLoading text="Загружаю график…" tall />,
+});
+
+type AnalysisTab = "overview" | "blockchain" | "telegram" | "twitter" | "kols" | "ai";
+
+type KolOverviewResponse = {
+  available?: boolean;
+  configured?: boolean;
+  kolTrades?: Array<{ side?: string; amountUsd?: number | null; maker?: string | null }>;
+  smartMoneyTrades?: Array<{ side?: string; amountUsd?: number | null; maker?: string | null }>;
+  errors?: string[];
+};
+
+const TABS: Array<{
+  id: AnalysisTab;
+  label: string;
+  shortLabel: string;
+  subtitle: string;
+  icon: typeof LayoutDashboard;
+}> = [
+  { id: "overview", label: "Обзор", shortLabel: "Обзор", subtitle: "Сводка", icon: LayoutDashboard },
+  { id: "blockchain", label: "Блокчейн", shortLabel: "Chain", subtitle: "V3.4 · V3.5 · DEV · AI", icon: Activity },
+  { id: "telegram", label: "Telegram", shortLabel: "TG", subtitle: "Каналы · Calls", icon: Send },
+  { id: "twitter", label: "X / Twitter", shortLabel: "X", subtitle: "Posts · KOLs", icon: Twitter },
+  { id: "kols", label: "KOLs / Smart Money", shortLabel: "KOLs", subtitle: "GMGN", icon: Users },
+  { id: "ai", label: "AI / EE", shortLabel: "AI", subtitle: "Cross-source", icon: BrainCircuit },
+];
+
+function normalizeTab(value: string | null): AnalysisTab {
+  return TABS.some((tab) => tab.id === value) ? (value as AnalysisTab) : "overview";
+}
+
+function buildAnalysisUrl(mint: string, tab: AnalysisTab) {
+  const query = new URLSearchParams();
+  if (mint.trim()) query.set("mint", mint.trim());
+  query.set("tab", tab);
+  return `/trade/analysis?${query.toString()}`;
+}
+
+export default function TradeAnalysisPage() {
+  const { locale: analysisLocale, t: analysisT } = useI18n();
+  const router = useRouter();
+  const params = useSearchParams();
+  const urlMint = params.get("mint")?.trim() || "";
+  const activeTab = normalizeTab(params.get("tab"));
+  const [mint, setMint] = useState(urlMint);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    setMint(urlMint);
+  }, [urlMint]);
+
+  const runSearch = (nextMint: string) => {
+    const normalized = nextMint.trim();
+    setMint(normalized);
+    router.replace(buildAnalysisUrl(normalized, activeTab), { scroll: false });
+  };
+
+  const changeTab = (tab: AnalysisTab) => {
+    router.replace(buildAnalysisUrl(mint, tab), { scroll: false });
+  };
+
+  return (
+    <div className="space-y-4" data-tag="trade.analysis.tabs.page.v2">
+      <header className="overflow-hidden rounded-2xl border border-bg-border bg-gradient-to-r from-bg-card via-bg-card to-primary/5">
+        <div className="flex flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/10">
+              <TrendingUp className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-base font-semibold text-content sm:text-lg">{analysisT("analysis.auto.1a2b7398f859")}</h1>
+              <p className="mt-1 text-[11px] leading-5 text-content-faint">
+                {analysisT("analysis.auto.6ff7304c2036")}
+              </p>
+            </div>
+          </div>
+          {mint && (
+            <div className="rounded-lg border border-bg-border bg-bg-card/70 px-3 py-2 font-mono text-[10px] text-content-faint">
+              {mint.slice(0, 8)}…{mint.slice(-7)}
+            </div>
+          )}
+        </div>
+      </header>
+
+      <div className="flex items-stretch gap-2">
+        <div className="min-w-0 flex-1">
+          <SearchBar onSearch={runSearch} isLoading={false} initialValue={mint} />
+        </div>
+        {mint && (
+          <button
+            type="button"
+            onClick={() => setRefreshKey((value) => value + 1)}
+            title={analysisT("analysis.auto.e28f42ae12bc")}
+            className="flex items-center rounded-xl border border-bg-border bg-bg-card px-3 text-content-muted transition hover:border-primary/20 hover:bg-primary/5 hover:text-content"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      <AnalysisTabs activeTab={activeTab} onChange={changeTab} disabled={!mint} />
+
+      {!mint ? (
+        <div className="glass rounded-2xl border border-bg-border py-20 text-center text-sm text-content-faint">
+          {analysisT("analysis.auto.bb3c386a4f3e")}
+        </div>
+      ) : (
+        <main key={`${activeTab}:${mint}:${refreshKey}`} className="space-y-4">
+          {activeTab === "overview" && <OverviewTab mint={mint} />}
+          {activeTab === "blockchain" && <BlockchainTab mint={mint} />}
+          {activeTab === "telegram" && (
+            <SocialIntelligencePanel mintOverride={mint} compact compactMode="telegram" />
+          )}
+          {activeTab === "twitter" && (
+            <SocialIntelligencePanel mintOverride={mint} compact compactMode="twitter" />
+          )}
+          {activeTab === "kols" && <KolsTab mint={mint} />}
+          {activeTab === "ai" && (
+            <SocialIntelligencePanel mintOverride={mint} compact compactMode="ai" />
+          )}
+        </main>
+      )}
+    </div>
+  );
+}
+
+function AnalysisTabs({
+  activeTab,
+  onChange,
+  disabled,
+}: {
+  activeTab: AnalysisTab;
+  onChange: (tab: AnalysisTab) => void;
+  disabled: boolean;
+}) {
+  const { locale: analysisLocale, t: analysisT } = useI18n();
+  return (
+    <nav
+      className="grid grid-cols-2 gap-2 rounded-2xl border border-bg-border bg-bg-card/70 p-2 md:grid-cols-3 xl:grid-cols-6"
+      aria-label={analysisT("analysis.auto.b7f48bd7a8b6")}
+      data-tag="trade.analysis.tabs.v2"
+    >
+      {TABS.map((tab) => {
+        const Icon = tab.icon;
+        const active = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(tab.id)}
+            aria-current={active ? "page" : undefined}
+            className={`group relative min-w-0 overflow-hidden rounded-xl border px-3 py-2.5 text-left transition ${
+              active
+                ? "border-primary/35 bg-gradient-to-br from-primary/15 to-primary/5 text-content shadow-sm"
+                : "border-transparent bg-bg-elevated/30 text-content-muted hover:border-bg-border hover:bg-bg-elevated/70 hover:text-content"
+            } disabled:cursor-not-allowed disabled:opacity-40`}
+          >
+            {active && <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary" />}
+            <div className="flex items-center gap-2">
+              <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${active ? "bg-primary/15 text-primary" : "bg-white/5 text-content-faint group-hover:text-content-muted"}`}>
+                <Icon className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-[11px] font-semibold sm:text-xs">
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className="sm:hidden">{tab.shortLabel}</span>
+                </div>
+                <div className="hidden truncate text-[9px] text-content-faint lg:block">{tab.subtitle}</div>
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function OverviewTab({ mint }: { mint: string }) {
+  return (
+    <div className="space-y-4" data-tag="trade.analysis.tab.overview">
+      <PumpFunChart mint={mint} />
+      <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+        <DevAnalysis mint={mint} compact />
+        <KolOverviewCard mint={mint} />
+      </div>
+      <SocialIntelligencePanel mintOverride={mint} compact compactMode="all" />
+    </div>
+  );
+}
+
+function BlockchainTab({ mint }: { mint: string }) {
+  const { locale: analysisLocale, t: analysisT } = useI18n();
+  return (
+    <div className="space-y-4" data-tag="trade.analysis.tab.blockchain">
+      <SourceSectionTitle
+        icon={<Activity />}
+        title={analysisT("analysis.auto.efe3fbaa6db3")}
+        subtitle={analysisT("analysis.auto.8ab7c931a3c7")}
+      />
+      <PumpFunChart mint={mint} />
+      <BlockchainAnalyticsDashboard mint={mint} />
+      <DevHistoryV2 mint={mint} />
+      <SocialIntelligencePanel mintOverride={mint} compact compactMode="blockchain" />
+      <BlockchainAiReportPanel mint={mint} />
+    </div>
+  );
+}
+
+function KolsTab({ mint }: { mint: string }) {
+  const { locale: analysisLocale, t: analysisT } = useI18n();
+  return (
+    <div className="space-y-4" data-tag="trade.analysis.tab.kols">
+      <SourceSectionTitle
+        icon={<Users />}
+        title={analysisT("analysis.auto.2ec2fefa6484")}
+        subtitle={analysisT("analysis.auto.e8e49a94d34e")}
+      />
+      <KolIntelligencePanel mint={mint} />
+      <KolAiAnalysis mint={mint} />
+    </div>
+  );
+}
+
+function SourceSectionTitle({ icon, title, subtitle }: { icon: ReactNode; title: string; subtitle: string }) {
+  return (
+    <div className="flex items-start gap-3 rounded-2xl border border-bg-border bg-bg-card/60 p-4">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary [&>svg]:h-4 [&>svg]:w-4">{icon}</div>
+      <div><h2 className="text-sm font-semibold text-content">{title}</h2><p className="mt-1 text-[11px] leading-5 text-content-faint">{subtitle}</p></div>
+    </div>
+  );
+}
+
+function KolOverviewCard({ mint }: { mint: string }) {
+  const { locale: analysisLocale, t: analysisT } = useI18n();
+  const [data, setData] = useState<KolOverviewResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/trade/kols?mint=${encodeURIComponent(mint)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const json = (await response.json()) as KolOverviewResponse;
+        if (!cancelled) setData(json);
+      })
+      .catch(() => {
+        if (!cancelled) setData(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mint]);
+
+  const summary = useMemo(() => {
+    const kol = data?.kolTrades ?? [];
+    const smart = data?.smartMoneyTrades ?? [];
+    const net = (rows: typeof kol) =>
+      rows.reduce((sum, row) => {
+        const amount = Number(row.amountUsd || 0);
+        return sum + (row.side === "buy" ? amount : row.side === "sell" ? -amount : 0);
+      }, 0);
+    const unique = (rows: typeof kol) => new Set(rows.map((row) => row.maker).filter(Boolean)).size;
+    return {
+      kolCount: kol.length,
+      smartCount: smart.length,
+      kolNet: net(kol),
+      smartNet: net(smart),
+      kolWallets: unique(kol),
+      smartWallets: unique(smart),
+    };
+  }, [data]);
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-bg-border bg-bg-card/60" data-tag="trade.analysis.overview.kols">
+      <div className="flex items-center justify-between gap-3 border-b border-bg-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Users className="h-4 w-4 text-primary" />
+          <div><h2 className="text-sm font-semibold text-content">{analysisT("analysis.auto.6cf081f691be")}</h2><p className="text-[10px] text-content-faint">{analysisT("analysis.auto.5ff3967707d0")}</p></div>
+        </div>
+        <span className="text-[10px] text-content-faint">{loading ? "loading" : data?.configured ? analysisT("analysis.auto.d57a1fd55230") : analysisT("analysis.auto.b0af633e603d")}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 p-4 md:grid-cols-4">
+        <MiniMetric label={analysisT("analysis.auto.5ff7b75c4f96")} value={loading ? "…" : String(summary.kolCount)} />
+        <MiniMetric label={analysisT("analysis.auto.dc58a7c475be")} value={loading ? "…" : String(summary.kolWallets)} />
+        <MiniMetric label={analysisT("analysis.auto.4acc6fc73cb3")} value={loading ? "…" : String(summary.smartCount)} />
+        <MiniMetric label={analysisT("analysis.auto.2a864301333b")} value={loading ? "…" : String(summary.smartWallets)} />
+        <div className="col-span-2"><MiniMetric label={analysisT("analysis.auto.4bcb7d8433c0")} value={loading ? "…" : formatUsd(summary.kolNet)} /></div>
+        <div className="col-span-2"><MiniMetric label={analysisT("analysis.auto.c75cf98d1a0d")} value={loading ? "…" : formatUsd(summary.smartNet)} /></div>
+      </div>
+      {!loading && summary.kolCount === 0 && summary.smartCount === 0 && (
+        <div className="mx-4 mb-4 rounded-xl border border-dashed border-bg-border px-3 py-3 text-[11px] text-content-faint">
+          {analysisT("analysis.auto.21e5318147e0")}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-bg-border bg-bg-elevated/35 px-3 py-2.5">
+      <div className="text-[9px] uppercase tracking-wide text-content-faint">{label}</div>
+      <div className="mt-1 font-mono text-sm font-semibold text-content">{value}</div>
+    </div>
+  );
+}
+
+function formatUsd(value: number) {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}$${Math.abs(value).toLocaleString(undefined, {
+    maximumFractionDigits: Math.abs(value) >= 1000 ? 0 : 2,
+  })}`;
+}
+
+function PanelLoading({ text, tall = false }: { text: string; tall?: boolean }) {
+  return (
+    <div className={`glass flex items-center justify-center rounded-2xl border border-bg-border text-sm text-content-faint ${tall ? "h-[520px]" : "min-h-28 p-6"}`}>
+      {text}
+    </div>
+  );
+}

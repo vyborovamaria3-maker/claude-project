@@ -101,7 +101,7 @@ def _audit_settings_update(
 
 
 def _backend_settings_url() -> str:
-    base = os.getenv("ADMIN_TWITTER_BACKEND_URL", "http://backend:8000").strip().rstrip("/")
+    base = (os.getenv("ADMIN_TWITTER_BACKEND_URL") or os.getenv("POTAPOFF_BACKEND_URL", "http://backend:8000")).strip().rstrip("/")
     if not base:
         raise RuntimeError("ADMIN_TWITTER_BACKEND_URL is not configured")
     return f"{base}/api/v1/twitter/admin/crawler-settings"

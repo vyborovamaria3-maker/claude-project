@@ -3,6 +3,10 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import type { WalletTokenHistory } from "./chain/types";
+import type { ChainQualityHistoryPoint } from "./chain/quality";
+import type { PersistedClusterHistory, TemporalSignalSnapshot, WalletClusterPersistence } from "./chain/quality-v3";
+import type { RecurringDevWalletInput } from "./dev-history";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -118,6 +122,13 @@ function init(db: Database.Database) {
       amount_sol     REAL NOT NULL,
       amount_tokens  REAL NOT NULL,
       price_sol      REAL NOT NULL,
+      slot           INTEGER,
+      quote_mint     TEXT,
+      quote_amount   REAL,
+      quote_decimals INTEGER,
+      quote_usd_value REAL,
+      fee            REAL,
+      jito_tip_lamports INTEGER,
       source         TEXT,
       inserted_at    INTEGER NOT NULL,
       PRIMARY KEY (mint, signature)
@@ -451,7 +462,57 @@ function init(db: Database.Database) {
       payload_json TEXT NOT NULL,
       computed_at INTEGER NOT NULL
     );
+
+    -- ── Chain analysis snapshots (V3.4/V3.5 temporal persistence) ──
+    CREATE TABLE IF NOT EXISTS chain_quality_snapshots (
+      mint        TEXT NOT NULL,
+      observed_at INTEGER NOT NULL,
+      payload     TEXT NOT NULL,   -- JSON ChainQualityHistoryPoint
+      PRIMARY KEY (mint, observed_at)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chain_quality_mint ON chain_quality_snapshots(mint, observed_at DESC);
+
+    CREATE TABLE IF NOT EXISTS chain_temporal_snapshots (
+      mint        TEXT NOT NULL,
+      observed_at INTEGER NOT NULL,
+      payload     TEXT NOT NULL,   -- JSON TemporalSignalSnapshot
+      PRIMARY KEY (mint, observed_at)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chain_temporal_mint ON chain_temporal_snapshots(mint, observed_at DESC);
+
+    CREATE TABLE IF NOT EXISTS chain_wallet_clusters (
+      mint          TEXT NOT NULL,
+      cluster_id    TEXT NOT NULL,
+      observations  INTEGER NOT NULL DEFAULT 0,
+      first_seen_at INTEGER,
+      last_seen_at  INTEGER,
+      updated_at    INTEGER NOT NULL,
+      wallets       TEXT,          -- JSON array of member wallets
+      payload       TEXT NOT NULL, -- JSON WalletClusterPersistence
+      PRIMARY KEY (mint, cluster_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chain_clusters_mint ON chain_wallet_clusters(mint, updated_at DESC);
   `);
+
+  // ── Migration: extend token_trades with V3.4 quote/slot columns ──
+  // CREATE TABLE IF NOT EXISTS never alters an existing table, so legacy
+  // databases get the columns here (each ALTER fails harmlessly when present).
+  const tokenTradeColumnMigrations: Array<[string, string]> = [
+    ["slot", "INTEGER"],
+    ["quote_mint", "TEXT"],
+    ["quote_amount", "REAL"],
+    ["quote_decimals", "INTEGER"],
+    ["quote_usd_value", "REAL"],
+    ["fee", "REAL"],
+    ["jito_tip_lamports", "INTEGER"],
+  ];
+  for (const [name, type] of tokenTradeColumnMigrations) {
+    try {
+      db.exec(`ALTER TABLE token_trades ADD COLUMN ${name} ${type}`);
+    } catch {
+      // Column already exists — ignore
+    }
+  }
 }
 
 export function getDb(): Database.Database {
@@ -625,6 +686,14 @@ export interface StoredTokenTrade {
   amountSol: number;
   amountTokens: number;
   priceSol: number;
+  /** null = column present but unknown; undefined = not selected. */
+  slot?: number | null;
+  quoteMint?: string | null;
+  quoteAmount?: number | null;
+  quoteDecimals?: number | null;
+  quoteUsdValue?: number | null;
+  fee?: number | null;
+  jitoTipLamports?: number | null;
   source?: string;
 }
 
@@ -633,7 +702,10 @@ export function getTokenTrades(mint: string, limit = 10_000): StoredTokenTrade[]
     .prepare(
       `SELECT signature, timestamp, trader, type,
               amount_sol AS amountSol, amount_tokens AS amountTokens,
-              price_sol AS priceSol, source
+              price_sol AS priceSol, slot,
+              quote_mint AS quoteMint, quote_amount AS quoteAmount,
+              quote_decimals AS quoteDecimals, quote_usd_value AS quoteUsdValue,
+              fee, jito_tip_lamports AS jitoTipLamports, source
        FROM token_trades
        WHERE mint = ?
        ORDER BY timestamp DESC
@@ -649,8 +721,10 @@ export function persistTokenTrades(mint: string, trades: StoredTokenTrade[]) {
   const now = Date.now();
   const stmt = db.prepare(
     `INSERT INTO token_trades
-      (mint, signature, timestamp, trader, type, amount_sol, amount_tokens, price_sol, source, inserted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (mint, signature, timestamp, trader, type, amount_sol, amount_tokens, price_sol,
+       slot, quote_mint, quote_amount, quote_decimals, quote_usd_value, fee, jito_tip_lamports,
+       source, inserted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(mint, signature) DO UPDATE SET
        timestamp = excluded.timestamp,
        trader = excluded.trader,
@@ -658,6 +732,13 @@ export function persistTokenTrades(mint: string, trades: StoredTokenTrade[]) {
        amount_sol = excluded.amount_sol,
        amount_tokens = excluded.amount_tokens,
        price_sol = excluded.price_sol,
+       slot = excluded.slot,
+       quote_mint = excluded.quote_mint,
+       quote_amount = excluded.quote_amount,
+       quote_decimals = excluded.quote_decimals,
+       quote_usd_value = excluded.quote_usd_value,
+       fee = excluded.fee,
+       jito_tip_lamports = excluded.jito_tip_lamports,
        source = excluded.source`
   );
 
@@ -672,6 +753,13 @@ export function persistTokenTrades(mint: string, trades: StoredTokenTrade[]) {
         t.amountSol,
         t.amountTokens,
         t.priceSol,
+        t.slot ?? null,
+        t.quoteMint ?? null,
+        t.quoteAmount ?? null,
+        t.quoteDecimals ?? null,
+        t.quoteUsdValue ?? null,
+        t.fee ?? null,
+        t.jitoTipLamports ?? null,
         t.source ?? null,
         now
       );
@@ -865,6 +953,46 @@ export function getWalletTokens(address: string): Array<{
       bundleId: string | null; updatedAt: number;
     }>;
   return rows.map((r) => ({ ...r, isFresh: !!r.isFresh, isWash: !!r.isWash }));
+}
+
+/** Batch variant of getWalletTokens: one query for many wallet addresses. */
+export function getWalletTokensBatch(addresses: string[]): Map<string, WalletTokenHistory[]> {
+  const out = new Map<string, WalletTokenHistory[]>();
+  if (addresses.length === 0) return out;
+  const unique = [...new Set(addresses.filter(Boolean))];
+  if (unique.length === 0) return out;
+  const placeholders = unique.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT address, mint, buys, sells, volume_sol AS volumeSol, pnl_sol AS pnlSol,
+              pnl_percent AS pnlPercent, is_fresh AS isFresh, is_wash AS isWash,
+              bundle_id AS bundleId, updated_at AS updatedAt
+       FROM wallet_token_stats
+       WHERE address IN (${placeholders})
+       ORDER BY updated_at DESC`
+    )
+    .all(...unique) as Array<{
+      address: string; mint: string; buys: number; sells: number; volumeSol: number;
+      pnlSol: number; pnlPercent: number; isFresh: number; isWash: number;
+      bundleId: string | null; updatedAt: number;
+    }>;
+  for (const row of rows) {
+    const list = out.get(row.address) ?? [];
+    list.push({
+      mint: row.mint,
+      buys: row.buys,
+      sells: row.sells,
+      volumeSol: row.volumeSol,
+      pnlSol: row.pnlSol,
+      pnlPercent: row.pnlPercent,
+      isFresh: !!row.isFresh,
+      isWash: !!row.isWash,
+      bundleId: row.bundleId,
+      updatedAt: row.updatedAt,
+    });
+    out.set(row.address, list);
+  }
+  return out;
 }
 
 // ── Dev wallet persistence ─────────────────────────────────────
@@ -1966,4 +2094,295 @@ export function listMigrationWalletRows(filePath?: string, limit = 500): Migrati
     raw: row.rawJson ? JSON.parse(row.rawJson) : null,
     importedAt: row.importedAt,
   })) as MigrationWalletRow[];
+}
+
+// ── Chain analysis snapshot persistence (V3.4/V3.5) ─────────
+// Snapshots are immutable JSON observations keyed by (mint, observed_at);
+// readers filter/parse defensively so a corrupt row degrades to "no history"
+// instead of failing the whole chain-full response.
+
+function parseJson<T>(raw: unknown): T | null {
+  if (typeof raw !== "string") return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function persistChainQualitySnapshot(mint: string, snapshot: ChainQualityHistoryPoint) {
+  if (!mint || !snapshot || !Number.isFinite(snapshot.observedAt)) return;
+  getDb()
+    .prepare(
+      `INSERT INTO chain_quality_snapshots (mint, observed_at, payload) VALUES (?, ?, ?)
+       ON CONFLICT(mint, observed_at) DO UPDATE SET payload = excluded.payload`
+    )
+    .run(mint, snapshot.observedAt, JSON.stringify(snapshot));
+}
+
+/** Quality history for a mint since `sinceMs`, oldest-first (time-series order). */
+export function listChainQualitySnapshots(mint: string, sinceMs: number, limit = 2_000): ChainQualityHistoryPoint[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT payload FROM chain_quality_snapshots
+       WHERE mint = ? AND observed_at >= ?
+       ORDER BY observed_at DESC
+       LIMIT ?`
+    )
+    .all(mint, sinceMs, limit) as Array<{ payload: string }>;
+  const out: ChainQualityHistoryPoint[] = [];
+  for (const row of rows) {
+    const parsed = parseJson<ChainQualityHistoryPoint>(row.payload);
+    if (parsed && Number.isFinite(parsed.observedAt)) out.push(parsed);
+  }
+  return out.reverse();
+}
+
+export function persistChainTemporalSnapshot(mint: string, snapshot: TemporalSignalSnapshot) {
+  if (!mint || !snapshot || !Number.isFinite(snapshot.observedAt)) return;
+  getDb()
+    .prepare(
+      `INSERT INTO chain_temporal_snapshots (mint, observed_at, payload) VALUES (?, ?, ?)
+       ON CONFLICT(mint, observed_at) DO UPDATE SET payload = excluded.payload`
+    )
+    .run(mint, snapshot.observedAt, JSON.stringify(snapshot));
+}
+
+/** Temporal V3.5 snapshots for a mint since `sinceMs`, oldest-first. */
+export function listChainTemporalSnapshots(mint: string, sinceMs: number, limit = 10_500): TemporalSignalSnapshot[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT payload FROM chain_temporal_snapshots
+       WHERE mint = ? AND observed_at >= ?
+       ORDER BY observed_at DESC
+       LIMIT ?`
+    )
+    .all(mint, sinceMs, limit) as Array<{ payload: string }>;
+  const out: TemporalSignalSnapshot[] = [];
+  for (const row of rows) {
+    const parsed = parseJson<TemporalSignalSnapshot>(row.payload);
+    if (parsed && Number.isFinite(parsed.observedAt)) out.push(parsed);
+  }
+  return out.reverse();
+}
+
+export interface ChainTemporalLookupTarget {
+  key: string;
+  mint: string;
+  targetAt: number;
+  toleranceMs: number;
+  /** When true the observation must not predate the target instant. */
+  notBeforeTarget?: boolean;
+}
+
+/**
+ * For each target, the temporal snapshot nearest to `targetAt` inside the
+ * tolerance window. Missing/in-window-absent targets are simply omitted —
+ * outcome analytics exclude them instead of substituting zeros.
+ */
+export function getNearestChainTemporalSnapshots(
+  targets: ChainTemporalLookupTarget[],
+): Array<{ key: string; snapshot: TemporalSignalSnapshot }> {
+  const out: Array<{ key: string; snapshot: TemporalSignalSnapshot }> = [];
+  if (targets.length === 0) return out;
+  const stmt = getDb().prepare(
+    `SELECT payload FROM chain_temporal_snapshots
+     WHERE mint = ? AND observed_at >= ? AND observed_at <= ?
+     ORDER BY ABS(observed_at - ?) ASC
+     LIMIT 1`
+  );
+  for (const target of targets) {
+    if (!target || !target.mint || !Number.isFinite(target.targetAt) || !Number.isFinite(target.toleranceMs) || target.toleranceMs < 0) continue;
+    const minAt = target.notBeforeTarget ? target.targetAt : target.targetAt - target.toleranceMs;
+    const maxAt = target.targetAt + target.toleranceMs;
+    const row = stmt.get(target.mint, minAt, maxAt, target.targetAt) as { payload: string } | undefined;
+    if (!row) continue;
+    const snapshot = parseJson<TemporalSignalSnapshot>(row.payload);
+    if (snapshot && Number.isFinite(snapshot.observedAt)) out.push({ key: target.key, snapshot });
+  }
+  return out;
+}
+
+/**
+ * Latest temporal snapshot per previous token of a creator (used to recover
+ * proven migration timestamps for DEV outcome replay).
+ */
+export function getLatestDevTemporalSnapshots(
+  creator: string,
+  mint: string | null,
+  sinceMs: number,
+): Array<{ mint: string; snapshot: TemporalSignalSnapshot }> {
+  if (!creator) return [];
+  const excludeCurrent = mint ? " AND t.mint != ?" : "";
+  const params: Array<string | number> = [creator, sinceMs];
+  if (mint) params.push(mint);
+  const rows = getDb()
+    .prepare(
+      `SELECT t.mint AS mint, t.payload AS payload
+       FROM chain_temporal_snapshots t
+       JOIN dev_tokens d ON d.mint = t.mint
+       WHERE d.creator = ? AND t.observed_at >= ?${excludeCurrent}
+       ORDER BY t.mint, t.observed_at DESC`
+    )
+    .all(...params) as Array<{ mint: string; payload: string }>;
+  const out: Array<{ mint: string; snapshot: TemporalSignalSnapshot }> = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.mint)) continue; // ORDER BY gives newest first per mint
+    seen.add(row.mint);
+    const snapshot = parseJson<TemporalSignalSnapshot>(row.payload);
+    if (snapshot && Number.isFinite(snapshot.observedAt)) out.push({ mint: row.mint, snapshot });
+  }
+  return out;
+}
+
+export interface DevRecurringWalletsResult {
+  recurringWallets: RecurringDevWalletInput[];
+  /** Creator previous tokens that have locally persisted trade history. */
+  coveredTokens: number;
+}
+
+/**
+ * Wallets (other than the creator) that traded at least two of the creator's
+ * previous tokens — the "recurring network" input for DEV history analytics.
+ */
+export function getDevRecurringWallets(creator: string, mint: string | null, limit = 20): DevRecurringWalletsResult {
+  if (!creator) return { recurringWallets: [], coveredTokens: 0 };
+  const db = getDb();
+  const excludeCurrent = mint ? " AND mint != ?" : "";
+  const tokenParams: string[] = [creator];
+  if (mint) tokenParams.push(mint);
+  const tokenRows = db
+    .prepare(`SELECT mint FROM dev_tokens WHERE creator = ?${excludeCurrent}`)
+    .all(...tokenParams) as Array<{ mint: string }>;
+  const mints = [...new Set(tokenRows.map((row) => row.mint).filter(Boolean))];
+  if (mints.length === 0) return { recurringWallets: [], coveredTokens: 0 };
+
+  const placeholders = mints.map(() => "?").join(",");
+  const covered = db
+    .prepare(`SELECT COUNT(DISTINCT mint) AS cnt FROM wallet_token_stats WHERE mint IN (${placeholders})`)
+    .get(...mints) as { cnt: number } | undefined;
+  const coveredTokens = Math.min(mints.length, Math.max(0, covered?.cnt ?? 0));
+
+  const rows = db
+    .prepare(
+      `SELECT wts.address AS wallet,
+              COUNT(DISTINCT wts.mint) AS tokenCount,
+              SUM(wts.buys + wts.sells) AS tradeCount,
+              SUM(wts.volume_sol) AS volumeSol,
+              ws.first_seen AS firstSeen,
+              MAX(wts.updated_at) AS lastSeen
+       FROM wallet_token_stats wts
+       LEFT JOIN wallet_stats ws ON ws.address = wts.address
+       WHERE wts.mint IN (${placeholders}) AND wts.address != ?
+       GROUP BY wts.address
+       HAVING COUNT(DISTINCT wts.mint) >= 2
+       ORDER BY tokenCount DESC, volumeSol DESC
+       LIMIT ?`
+    )
+    .all(...mints, creator, limit) as Array<{
+      wallet: string;
+      tokenCount: number;
+      tradeCount: number | null;
+      volumeSol: number | null;
+      firstSeen: number | null;
+      lastSeen: number | null;
+    }>;
+
+  const recurringWallets: RecurringDevWalletInput[] = rows.map((row) => ({
+    wallet: row.wallet,
+    tokenCount: row.tokenCount,
+    tradeCount: row.tradeCount ?? 0,
+    volumeSol: typeof row.volumeSol === "number" && Number.isFinite(row.volumeSol) ? row.volumeSol : null,
+    firstSeen: typeof row.firstSeen === "number" && Number.isFinite(row.firstSeen) ? row.firstSeen : null,
+    lastSeen: typeof row.lastSeen === "number" && Number.isFinite(row.lastSeen) ? row.lastSeen : null,
+  }));
+  return { recurringWallets, coveredTokens };
+}
+
+export interface DevForensicsLatest {
+  analyzedAt: number;
+  payload: unknown;
+}
+
+/** Most recent persisted DEV forensics analysis for a creator, if any. */
+export function getLatestDevForensicsAnalysis(creator: string): DevForensicsLatest | null {
+  if (!creator) return null;
+  const row = getDb()
+    .prepare(
+      `SELECT payload, analyzed_at AS analyzedAt
+       FROM dev_forensics_analyses
+       WHERE creator = ?
+       ORDER BY analyzed_at DESC
+       LIMIT 1`
+    )
+    .get(creator) as { payload: string; analyzedAt: number } | undefined;
+  if (!row) return null;
+  return { analyzedAt: row.analyzedAt, payload: parseJson<unknown>(row.payload) };
+}
+
+/**
+ * Upsert the merged cluster state for a mint. The payload already carries the
+ * merged first/last-seen and observation counts (clusters are recomputed with
+ * persisted history as input), so the newest write wins.
+ */
+export function upsertChainWalletClusters(mint: string, clusters: WalletClusterPersistence[], observedAt: number) {
+  if (!mint || !Array.isArray(clusters) || clusters.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(
+    `INSERT INTO chain_wallet_clusters
+       (mint, cluster_id, observations, first_seen_at, last_seen_at, updated_at, wallets, payload)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(mint, cluster_id) DO UPDATE SET
+       observations = excluded.observations,
+       first_seen_at = excluded.first_seen_at,
+       last_seen_at = excluded.last_seen_at,
+       updated_at = excluded.updated_at,
+       wallets = excluded.wallets,
+       payload = excluded.payload`
+  );
+  const updatedAt = Number.isFinite(observedAt) ? observedAt : Date.now();
+  const tx = db.transaction((rows: WalletClusterPersistence[]) => {
+    for (const cluster of rows) {
+      if (!cluster || typeof cluster.clusterId !== "string" || !cluster.clusterId) continue;
+      stmt.run(
+        mint,
+        cluster.clusterId,
+        typeof cluster.observationCount === "number" && Number.isFinite(cluster.observationCount) ? cluster.observationCount : 0,
+        cluster.persistedFirstSeenAt ?? cluster.firstSeenTs ?? null,
+        cluster.persistedLastSeenAt ?? cluster.lastSeenTs ?? null,
+        updatedAt,
+        JSON.stringify(Array.isArray(cluster.wallets) ? cluster.wallets : []),
+        JSON.stringify(cluster),
+      );
+    }
+  });
+  tx(clusters);
+}
+
+/** Known wallet clusters for a mint, newest-updated first. */
+export function listChainWalletClusters(mint: string, limit = 500): PersistedClusterHistory[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT payload, updated_at AS updatedAt
+       FROM chain_wallet_clusters
+       WHERE mint = ?
+       ORDER BY updated_at DESC
+       LIMIT ?`
+    )
+    .all(mint, limit) as Array<{ payload: string; updatedAt: number | null }>;
+  const out: PersistedClusterHistory[] = [];
+  for (const row of rows) {
+    const payload = parseJson<WalletClusterPersistence>(row.payload);
+    if (!payload || typeof payload.clusterId !== "string" || !payload.clusterId) continue;
+    out.push({
+      clusterId: payload.clusterId,
+      observations: typeof payload.observationCount === "number" && Number.isFinite(payload.observationCount) ? payload.observationCount : 0,
+      firstSeenAt: payload.persistedFirstSeenAt ?? payload.firstSeenTs ?? null,
+      lastSeenAt: payload.persistedLastSeenAt ?? payload.lastSeenTs ?? null,
+      updatedAt: typeof row.updatedAt === "number" && Number.isFinite(row.updatedAt) ? row.updatedAt : null,
+      wallets: Array.isArray(payload.wallets) ? payload.wallets : undefined,
+    });
+  }
+  return out;
 }
