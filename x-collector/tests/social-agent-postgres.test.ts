@@ -6,6 +6,7 @@ import type { PoolClient } from "pg";
 import { PGlite } from "@electric-sql/pglite";
 import { executeAgentCycle } from "../lib/trade/social-agent-cycle";
 import { previewProvider } from "../lib/trade/social-agent";
+import { executeAgentCommand } from "../lib/trade/social-agent-commands";
 import { executeDiscoveryCycle } from "../lib/trade/social-discovery";
 import { CLAIM_COLLECTOR_ACCOUNT_SQL } from "../lib/trade/account-manager";
 test("PostgreSQL agent: roles, stop switch, simulation, dedup and daily budget",async()=>{
@@ -28,6 +29,12 @@ test("PostgreSQL agent: roles, stop switch, simulation, dedup and daily budget",
     assert.equal((await db.query(CLAIM_COLLECTOR_ACCOUNT_SQL,[1,100000,110000,"test-worker-2"])).rows.length,0);
     assert.equal(await executeDiscoveryCycle(client,100000),3);
     assert.equal(await executeDiscoveryCycle(client,100001),0);
+    await db.exec("INSERT INTO social_agent_commands(kind,created_at) VALUES('discover',100000)");
+    await assert.rejects(db.exec("INSERT INTO social_agent_commands(kind,created_at) VALUES('discover',100001)"),/duplicate/);
+    await db.exec("BEGIN");
+    assert.equal((await executeAgentCommand(client))?.status,"done");
+    await db.exec("COMMIT");
+    assert.equal((await db.query<{status:string}>("SELECT status FROM social_agent_commands")).rows[0].status,"done");
     await db.exec("INSERT INTO twitter_tweets(tweet_id,handle,text,posted_at,first_seen_at,updated_at) VALUES('123','source','Solana memecoin discussion',99000,99000,99000)");
     await assert.rejects(db.exec("INSERT INTO social_agent_actions(account_name,kind,tweet_id,status,reason,evidence,provider,created_at) VALUES('reader','post','123','simulated','reason','{}','test',100000)"),/publisher/);
     const result=await cycle();assert.equal(result.status,"preview");assert.equal(result.actions,1);

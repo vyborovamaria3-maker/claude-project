@@ -152,3 +152,24 @@ trigger, source filtering, untrusted instructions, provider output validation,
 discovery deduplication, default stop behavior and daily budgets. CI runs migrations
 001–013 and agent CLI smoke checks on PostgreSQL 17. Live posting is deferred until
 provider, official X API credentials and permitted action scope are configured.
+
+## Admin agent tab (migration 014)
+
+The dedicated **Агент Solana** tab shows preview status, daily budget, account roles,
+settings, decisions and source links. It provides start/stop, typed limit editing,
+account-role changes and queued run/discover buttons. Busy or stale accounts cannot
+be reassigned; stale settings cannot overwrite newer changes. API access requires
+admin authentication; session secrets are never returned. Mutation audit entries
+are recorded after the collector transaction commits.
+
+Apply migration 014 and run the upgraded scheduler before using immediate commands.
+`social_agent_commands` stores pending/done/failed commands. The scheduler handles
+one command at a time every ten seconds and atomically saves its result. Duplicate
+pending commands are rejected. Stopping does not cancel existing collector tasks;
+a queued preview command observes the stopped setting and performs no new actions.
+If a command waits for more than a minute, verify that the scheduler is running.
+
+The tab refreshes while commands wait, unless the user is editing settings. Source
+text is escaped, never rendered as HTML. Mobile layout stays within the viewport;
+horizontal scrolling is restricted to navigation. CLI and UI use the same settings
+and preview pipeline. No live X transport or model has been connected.

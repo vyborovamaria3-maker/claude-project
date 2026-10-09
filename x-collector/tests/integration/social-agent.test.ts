@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { Pool } from "pg";
 import { executeAgentCycle } from "../../lib/trade/social-agent-cycle";
 import { previewProvider } from "../../lib/trade/social-agent";
+import { executeAgentCommand } from "../../lib/trade/social-agent-commands";
 import { CLAIM_COLLECTOR_ACCOUNT_SQL } from "../../lib/trade/account-manager";
 
 test("PostgreSQL server: separate roles and social preview transaction", { skip: !process.env.TEST_DATABASE_URL }, async () => {
@@ -24,6 +25,9 @@ test("PostgreSQL server: separate roles and social preview transaction", { skip:
     const rows=await client.query<{account_name:string;status:string}>("SELECT account_name,status FROM social_agent_actions WHERE tweet_id=$1",[tweet]);
     assert.equal(rows.rows[0].account_name,writer);assert.equal(rows.rows[0].status,"simulated");
     assert.equal((await executeAgentCycle(client,previewProvider,now)).actions,0);
+    await client.query("INSERT INTO social_agent_commands(kind,created_at) VALUES('run',$1)",[now]);
+    assert.equal((await executeAgentCommand(client))?.status,"done");
+    assert.equal((await client.query("SELECT status FROM social_agent_commands WHERE kind='run'")).rows[0].status,"done");
     await client.query("UPDATE social_agent_settings SET stopped=true WHERE id=1");
     assert.equal((await executeAgentCycle(client,previewProvider,now)).status,"stopped");
     await client.query("ROLLBACK");

@@ -18,6 +18,7 @@ const REQUIRED = [
   "011_runtime_hardening.sql",
   "012_graph_monitoring.sql",
   "013_social_agent.sql",
+  "014_social_agent_commands.sql",
 ];
 const LOCK_KEY = "x-collector:migrate";
 
