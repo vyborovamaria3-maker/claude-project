@@ -7,7 +7,7 @@ const state = {
 };
 
 const titles = {
-  socialAgent: "Агент Solana", xCollector: "X Collector", overview: "Обзор системы", database: "Базы данных", blockchain: "Блокчейн и Solana",
+  xCollector: "X Collector", overview: "Обзор системы", database: "Базы данных", blockchain: "Блокчейн и Solana",
   telegram: "Telegram", x: "X / Twitter", users: "Пользователи", logs: "Логи сервисов",
   search: "Глобальный поиск", graph: "Граф связей", queues: "Очереди и задания",
   monitoring: "Мониторинг", control: "Control Center", audit: "Аудит администратора",
@@ -85,7 +85,7 @@ async function renderControl() { loading(); const [flags, alerts, inv, integrati
 
 async function renderCurrentView() {
   $("#viewTitle").textContent = titles[state.view]; document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === state.view));
-  try { const renderers = { socialAgent: () => window.SocialAgent?.render(), xCollector: () => window.XCollector.render(), overview: renderOverview, database: renderDatabase, blockchain: renderBlockchain, telegram: renderTelegram, x: renderX, users: renderUsers, logs: renderLogs, search: renderSearch, graph: renderGraph, queues: renderQueues, monitoring: renderMonitoring, control: renderControl, audit: renderAudit }; await renderers[state.view]?.(); }
+  try { const renderers = { xCollector: () => window.XCollector.render(), overview: renderOverview, database: renderDatabase, blockchain: renderBlockchain, telegram: renderTelegram, x: renderX, users: renderUsers, logs: renderLogs, search: renderSearch, graph: renderGraph, queues: renderQueues, monitoring: renderMonitoring, control: renderControl, audit: renderAudit }; await renderers[state.view]?.(); }
   catch (error) { content.innerHTML = `<div class="empty"><strong>Не удалось загрузить данные</strong><p>${escapeHtml(error.message)}</p></div>`; toast(error.message, true); }
 }
 async function bootstrap() { try { state.me = await api("/api/me"); showApp(); await renderCurrentView(); } catch { showLogin(); } }

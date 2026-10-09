@@ -11,6 +11,10 @@ const fixture={settings:{stopped:true,max_actions_per_cycle:3,max_actions_per_da
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('http://preview.test/**',async route=>{
   const u=new URL(route.request().url());
+  if(u.pathname.startsWith('/api/x-collector/tables')){
+   const table={name:'twitter_tweets',label:'Твиты',description:'Собранные обсуждения',editable:false,columns:[{name:'text',type:'text'}]};
+   return route.fulfill({json:u.pathname.endsWith('/tables')?{tables:[table]}:{table,rows:[{text:'Solana memecoin'}],total:1}});
+  }
   if(u.pathname.startsWith('/api/social-agent')){
    if(route.request().method()!=='GET'){
     const body=route.request().postDataJSON();
@@ -23,11 +27,18 @@ const fixture={settings:{stopped:true,max_actions_per_cycle:3,max_actions_per_da
   }
   if(u.pathname.startsWith('/static/')){const p=root+'/'+u.pathname.split('/').pop();return route.fulfill({body:fs.readFileSync(p),contentType:p.endsWith('.css')?'text/css':'text/javascript'});}
   let html=fs.readFileSync(root+'/index.html','utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'');
-  html=html.replace('</body>','<script src="/static/social-agent-ui.js"></script><script>document.querySelector("#loginView").classList.add("hidden");document.querySelector("#appView").classList.remove("hidden");window.SocialAgent.render();</script></body>');
+  html=html.replace('</body>','<script src="/static/x-collector-ui.js"></script><script src="/static/social-agent-ui.js"></script><script>document.querySelector("#loginView").classList.add("hidden");document.querySelector("#appView").classList.remove("hidden");window.XCollector.render();</script></body>');
   return route.fulfill({body:html,contentType:'text/html'});
  });
- await page.goto('http://preview.test');await page.getByRole('heading',{name:'Обсуждения → решения агента'}).waitFor();
+ await page.goto('http://preview.test');await page.locator('#xcTable').waitFor();
+ assert.equal(await page.locator('#socialAgentNav').count(),0);
+ await page.locator('#xcAgentTab').click();await page.getByRole('heading',{name:'Обсуждения → решения агента'}).waitFor();
  assert.equal(await page.locator('#saRun').isDisabled(),true);
+ assert.equal(await page.locator('#viewTitle').textContent(),'X Collector');
+ assert.equal(await page.locator('#xCollectorNav').evaluate(el=>el.classList.contains('active')),true);
+ await page.locator('#xcDatabaseTab').click();await page.locator('#xcTable').waitFor();
+ await page.locator('#xcAgentTab').click();await page.locator('#saRun').waitFor();
+ assert.equal(await page.locator('#xcAgentTab').getAttribute('aria-selected'),'true');
  await page.screenshot({path:'/tmp/social-agent-desktop.png',fullPage:true});
  await page.locator('#saStart').click();await page.getByText('Тестовый режим включён.',{exact:true}).waitFor();
  await page.locator('#saCycle').fill('5');await page.locator('#saDay').fill('20');await page.locator('#saLimits button').click();await page.getByText('Сохранено',{exact:true}).waitFor();assert.equal(fixture.settings.max_actions_per_cycle,5);

@@ -1,6 +1,7 @@
 (() => {
-  const nav = document.querySelector('#socialAgentNav'), host = document.querySelector('#content');
-  if (!nav || !host) return;
+  const nav = document.querySelector('#xCollectorNav');
+  let host;
+  if (!nav) return;
   let active = false, generation = 0, page = 1, filter = 'all', data, dirty = false, pending = false;
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const date = v => v ? new Date(Number(v)).toLocaleString('ru-RU') : '—';
@@ -14,11 +15,13 @@
     return body;
   }
   function message(text, bad=false) {const el=host.querySelector('#saMessage');if(el){el.textContent=text;el.classList.toggle('sa-error',bad);}}
-  async function render() {
+  async function render(panel = host) {
+    host=panel;
+    if(!host) return;
     active=true;dirty=false;pending=false;
     document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el===nav));
     const ticket=++generation;
-    document.querySelector('#viewTitle').textContent='Агент Solana';
+    document.querySelector('#viewTitle').textContent='X Collector';
     host.innerHTML='<div class="sa-wrap"><section class="section"><h3>Агент Solana</h3><p role="status">Загружаем настройки и решения…</p></section></div>';
     await load(ticket);
   }
@@ -27,7 +30,7 @@
       const result=await request(`/state?status=${filter}&page=${page}`);
       if(!active||ticket!==generation)return;
       data=result;draw();
-    } catch(e) {if(active&&ticket===generation)host.innerHTML=`<section class="section"><h3>Не удалось подключиться к агенту</h3><p role="alert">${esc(e.message)}</p><p class="muted">Проверьте подключение X Collector и миграции до 014. Аккаунты и настройки не изменены.</p><button id="saRetry" class="secondary">Повторить</button></section>`;host.querySelector('#saRetry')?.addEventListener('click',render);}
+    } catch(e) {if(active&&ticket===generation)host.innerHTML=`<section class="section"><h3>Не удалось подключиться к агенту</h3><p role="alert">${esc(e.message)}</p><p class="muted">Проверьте подключение X Collector и миграции до 014. Аккаунты и настройки не изменены.</p><button id="saRetry" class="secondary">Повторить</button></section>`;host.querySelector('#saRetry')?.addEventListener('click',()=>void render());}
   }
   async function mutate(path,body,method='PUT',success='Сохранено') {
     if(pending)return;
@@ -64,7 +67,7 @@
     host.querySelector('#saFilter').onchange=e=>{filter=e.target.value;page=1;void load();};
     host.querySelector('#saPrev').onclick=()=>{page--;void load();};host.querySelector('#saNext').onclick=()=>{page++;void load();};
   }
-  window.SocialAgent=Object.freeze({render});
+  window.SocialAgent=Object.freeze({render,deactivate:()=>{active=false;++generation;}});
   document.querySelector('#navigation').addEventListener('click',e=>{if(e.target.closest('button')!==nav){active=false;++generation;}});
   document.querySelector('#logoutButton').addEventListener('click',()=>{active=false;++generation;},true);
   document.querySelector('#refreshButton').addEventListener('click',e=>{if(active){e.stopImmediatePropagation();dirty=false;void load();}},true);

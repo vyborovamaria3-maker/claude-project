@@ -3,3 +3,5 @@
 .sa-wrap .section-head{flex-wrap:wrap}.sa-wrap>*,.sa-columns>*{min-width:0}
 
 .sa-stop{padding:11px 16px;border-radius:10px;min-height:42px;font-weight:600}
+
+.xc-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}.xc-tabs button{padding:10px 16px;border:1px solid var(--border,#d6dbe4);border-radius:10px}.xc-tabs button[aria-selected="true"]{background:#2563eb;color:#fff;border-color:#2563eb}#xcPanel{min-width:0}
