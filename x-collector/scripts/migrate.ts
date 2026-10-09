@@ -17,6 +17,8 @@ const REQUIRED = [
   "010_predictive.sql",
   "011_runtime_hardening.sql",
   "012_graph_monitoring.sql",
+  "013_intelligence.sql",
+  "014_signals_engine.sql",
 ];
 const LOCK_KEY = "x-collector:migrate";
 

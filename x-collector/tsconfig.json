@@ -16,6 +16,6 @@
     "declaration": false,
     "noEmitOnError": true
   },
-  "include": ["lib/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "include": ["lib/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -18,6 +18,8 @@ import {
 import { getConfig } from "../lib/trade/config";
 import { checkBasicAuth, isLoopbackHost } from "../lib/trade/http-auth";
 import { applySecurityHeaders, clientIp, createRateLimiter } from "../lib/trade/http-security";
+import { handleSearchTask } from "../src/x/task-handler";
+import { normalizeTweets } from "../src/x/normalize";
 
 const workerId = process.env.WORKER_ID || `w-${randomUUID().slice(0, 8)}`;
 const METRICS_HOST = process.env.METRICS_HOST ?? "127.0.0.1";
@@ -35,6 +37,9 @@ if (!isLoopbackHost(METRICS_HOST) && (!METRICS_USER || !METRICS_PASS)) {
 }
 const registry = new WorkerRegistry(workerId);
 const allowMetricsRequest = createRateLimiter(Number(process.env.METRICS_RATE_LIMIT ?? 600));
+// Новый X Collector (src/x) для search-задач; по умолчанию выключен —
+// production-путь searchTweets не затрагивается.
+const USE_X_COLLECTOR = process.env.X_COLLECTOR === "src";
 let shuttingDown = false;
 
 process.on("SIGINT", () => { log.warn("SIGINT — graceful shutdown"); shuttingDown = true; });
@@ -147,6 +152,50 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
     const msg = e instanceof Error ? e.message : String(e);
     await failTask(task.id, workerId, `schema: ${msg}`).catch(() => {});
     return "invalid-payload";
+  }
+
+  // Ветка нового X Collector (src/x). Стоит до pickAccount: аккаунт, сессия и
+  // прокси берутся внутри handleSearchTask, иначе единственная учётка была бы
+  // занята воркером и getCollectorAccount не вернул бы её. Lease/retry/defer —
+  // те же функции очереди, что и в основном пути.
+  if (task.kind === "search" && USE_X_COLLECTOR) {
+    const startMs = Date.now();
+    const leaseMs = cfg.sessions.leaseMs;
+    let branchLeaseLost = false;
+    const leaseTimer = setInterval(() => {
+      extendLease(task.id, workerId, leaseMs)
+        .then((ok) => { if (!ok) { branchLeaseLost = true; log.warn("task lease lost", { taskId: task.id }); } })
+        .catch((e) => { branchLeaseLost = true; log.warn("extend task lease failed", { taskId: task.id, error: String(e) }); });
+    }, Math.floor(leaseMs / 2));
+    try {
+      if (branchLeaseLost) throw new Error("task lease lost");
+      const t0 = Date.now();
+      const tweets = await handleSearchTask(task);
+      scrapeDuration.observe({ kind: "search" }, (Date.now() - t0) / 1000);
+      if (branchLeaseLost) throw new Error("task lease lost");
+      await persistTweets(task.mint, normalizeTweets(tweets), (payload as { query: string }).query);
+      if (branchLeaseLost) throw new Error("task lease lost");
+      const ok = await finishTask(task.id, workerId);
+      if (!ok) throw new Error("task lease lost before completion");
+      registry.incrementDone();
+      tasksTotal.inc({ kind: "search", result: "done" });
+      taskDuration.observe({ kind: "search" }, (Date.now() - startMs) / 1000);
+      return "done";
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/no available collector account/i.test(msg)) {
+        await deferTask(task.id, workerId, 60_000, "no available account").catch(() => false);
+        return "no-account";
+      }
+      const result = await failTask(task.id, workerId, msg).catch(() => "lost" as const);
+      if (result === "dlq") tasksTotal.inc({ kind: "search", result: "dlq" });
+      else if (result === "requeued") tasksTotal.inc({ kind: "search", result: "retry" });
+      registry.incrementFailed();
+      log.warn("task failed", { taskId: task.id, error: msg, result, collector: "src" });
+      return "failed";
+    } finally {
+      clearInterval(leaseTimer);
+    }
   }
 
   const accountLeaseOwner = `${workerId.slice(0, 150)}:${task.id}:${randomUUID().slice(0, 8)}`;
