@@ -25,7 +25,8 @@
     "backtest": "tsx scripts/backtest.ts",
     "graph-export": "tsx scripts/graph-export.ts",
     "monitor": "tsx scripts/monitor.ts",
-    "test:db": "node --import tsx --test tests/integration/*.test.ts"
+    "test:db": "node --import tsx --test tests/integration/*.test.ts",
+    "agent": "tsx scripts/social-agent.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",

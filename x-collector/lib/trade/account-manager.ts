@@ -2,6 +2,8 @@ import { q, q1, exec, tx } from "./pg";
 import { log } from "./logger";
 import { getConfig } from "./config";
 
+export type AccountRole = "collector" | "publisher";
+
 export type AccountTier = "new" | "warm" | "hot" | "retired";
 export type AccountStatus = "active" | "cooldown" | "captcha" | "banned";
 export type RequestKind = "search" | "profile" | "timeline";
@@ -30,29 +32,9 @@ export interface XAccount {
   account_claimed_by: string;
 }
 
-export async function pickAccount(kind: RequestKind, leaseOwner: string): Promise<XAccount | null> {
-  if (!leaseOwner || leaseOwner.length > 200) throw new Error("Invalid account lease owner");
-  const weight = WEIGHTS[kind];
-  const now = Date.now();
-  const hourAgo = now - 3600_000;
-  const leaseMs = getConfig().sessions.leaseMs;
-
-  return tx(async (c) => {
-    await c.query(
-      `UPDATE x_accounts SET weight_used_this_hour = 0, hour_window_start = $1
-       WHERE hour_window_start < $2`,
-      [now, hourAgo]
-    );
-    await c.query(
-      `UPDATE x_accounts
-       SET status='active', cooldown_until=0, consecutive_errors=0, updated_at=$1
-       WHERE status IN ('cooldown','captcha') AND cooldown_until < $1`,
-      [now]
-    );
-    const r = await c.query<XAccount>(
-      `WITH picked AS (
+export const CLAIM_COLLECTOR_ACCOUNT_SQL = `WITH picked AS (
          SELECT name FROM x_accounts
-         WHERE status='active' AND tier != 'retired'
+         WHERE role='collector' AND status='active' AND tier != 'retired'
            AND COALESCE(account_busy_until, 0) <= $2
            AND weight_used_this_hour + $1 <= weight_quota_per_hour
          ORDER BY CASE tier WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'new' THEN 2 ELSE 3 END,
@@ -73,7 +55,29 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string): Promis
                  x_accounts.session_encrypted, x_accounts.proxy_json,
                  x_accounts.user_agent, x_accounts.timezone,
                  x_accounts.weight_used_this_hour, x_accounts.weight_quota_per_hour,
-                 x_accounts.account_busy_until, x_accounts.account_claimed_by`,
+                 x_accounts.account_busy_until, x_accounts.account_claimed_by`;
+
+export async function pickAccount(kind: RequestKind, leaseOwner: string): Promise<XAccount | null> {
+  if (!leaseOwner || leaseOwner.length > 200) throw new Error("Invalid account lease owner");
+  const weight = WEIGHTS[kind];
+  const now = Date.now();
+  const hourAgo = now - 3600_000;
+  const leaseMs = getConfig().sessions.leaseMs;
+
+  return tx(async (c) => {
+    await c.query(
+      `UPDATE x_accounts SET weight_used_this_hour = 0, hour_window_start = $1
+       WHERE role='collector' AND hour_window_start < $2`,
+      [now, hourAgo]
+    );
+    await c.query(
+      `UPDATE x_accounts
+       SET status='active', cooldown_until=0, consecutive_errors=0, updated_at=$1
+       WHERE role='collector' AND status IN ('cooldown','captcha') AND cooldown_until < $1`,
+      [now]
+    );
+    const r = await c.query<XAccount>(
+      CLAIM_COLLECTOR_ACCOUNT_SQL,
       [weight, now, now + leaseMs, leaseOwner]
     );
     return r.rows[0] ?? null;
@@ -152,21 +156,24 @@ export function getAccountDelay(tier: AccountTier): number {
 }
 
 export async function registerAccount(
-  name: string, sessionEncrypted: Buffer, tier: AccountTier = "new", proxyJson?: string
+  name: string, sessionEncrypted: Buffer, tier: AccountTier = "new", proxyJson?: string, role: AccountRole = "collector"
 ) {
+  if (role !== "collector" && role !== "publisher") throw new Error("Invalid account role");
   const now = Date.now();
   const quota = TIER_QUOTA[tier];
-  await exec(
+  const changed = await exec(
     `INSERT INTO x_accounts
        (name, session_encrypted, tier, status, weight_quota_per_hour,
-        hour_window_start, created_at, updated_at, proxy_json)
-     VALUES ($1,$2,$3,'active',$4,$5,$5,$5,$6)
+        hour_window_start, created_at, updated_at, proxy_json, role)
+     VALUES ($1,$2,$3,'active',$4,$5,$5,$5,$6,$7)
      ON CONFLICT(name) DO UPDATE SET
        session_encrypted = EXCLUDED.session_encrypted,
        updated_at = EXCLUDED.updated_at,
-       proxy_json = COALESCE(EXCLUDED.proxy_json, x_accounts.proxy_json)`,
-    [name, sessionEncrypted, tier, quota, now, proxyJson ?? null]
+       proxy_json = COALESCE(EXCLUDED.proxy_json, x_accounts.proxy_json)
+     WHERE x_accounts.role=EXCLUDED.role`,
+    [name, sessionEncrypted, tier, quota, now, proxyJson ?? null, role]
   );
+  if (!changed) throw new Error("Account name already belongs to another role; use a separate account name");
 }
 
 export async function promoteTier(name: string, tier: AccountTier) {
@@ -177,14 +184,14 @@ export async function promoteTier(name: string, tier: AccountTier) {
 }
 
 export interface AccountRow {
-  name: string; tier: string; status: string; quota: string;
+  name: string; role: AccountRole; tier: string; status: string; quota: string;
   total_requests: string; total_errors: string;
   consecutive_errors: number; cooldown_sec: string;
 }
 
 export async function listAccounts(): Promise<AccountRow[]> {
   return q<AccountRow>(
-    `SELECT name, tier, status,
+    `SELECT name, role, tier, status,
             weight_used_this_hour || '/' || weight_quota_per_hour AS quota,
             total_requests, total_errors, consecutive_errors,
             GREATEST(0, cooldown_until - $1) / 1000 AS cooldown_sec

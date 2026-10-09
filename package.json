@@ -34,6 +34,7 @@
     "security:strix:standard": "bash scripts/strix-scan.sh --mode standard --budget 10",
     "security:strix:deep": "bash scripts/strix-scan.sh --mode deep --budget 25",
     "security:strix:diff": "bash scripts/strix-scan.sh --mode quick --scope diff --diff-base main --budget 10",
-    "x-collector:monitor": "npm --prefix x-collector run monitor"
+    "x-collector:monitor": "npm --prefix x-collector run monitor",
+    "x-collector:agent": "npm --prefix x-collector run agent --"
   }
 }

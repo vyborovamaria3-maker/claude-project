@@ -11,6 +11,7 @@ from .analysis_editor import LiveAnalysisProfileStore
 from .analysis_editor_api import build_analysis_editor_router
 from .auth import require_admin
 from .database_inventory import build_database_inventory
+from .social_agent_api import build_social_agent_router
 from .integration_status import build_integration_router
 from .intelligence_view import build_intelligence_router
 from .intelligence_view_factory import build_intelligence_view_store
@@ -187,6 +188,7 @@ def create_app() -> FastAPI:
     app.include_router(build_intelligence_router())
     app.include_router(build_subscription_admin_router())
     app.include_router(build_x_collector_router())
+    app.include_router(build_social_agent_router())
     app.include_router(build_integration_router())
     app.include_router(build_twitter_monitoring_router())
     if shared_security is None:

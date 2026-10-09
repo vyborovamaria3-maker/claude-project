@@ -1,7 +1,8 @@
 (() => {
   const nav = document.querySelector('#xCollectorNav');
-  const content = document.querySelector('#content');
-  if (!nav || !content) return;
+  const root = document.querySelector('#content');
+  let content = root, section = 'database';
+  if (!nav || !root) return;
   let active = false, table = '', tables = [], data = null, offset = 0, generation = 0;
   let search = '', sort = '', filterColumn = '', filterValue = '', descending = true;
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -23,7 +24,16 @@
     return body;
   }
   function error(message) { const el = content.querySelector('#xcStatus'); if (el) el.textContent = message; }
+  function deactivate() { active=false; ++generation; window.SocialAgent?.deactivate(); }
   async function render() {
+    deactivate();
+    root.innerHTML = `<div class="xc-tabs" role="tablist" aria-label="Разделы X Collector"><button id="xcDatabaseTab" role="tab" aria-controls="xcPanel" aria-selected="${section==='database'}">Данные коллектора</button><button id="xcAgentTab" role="tab" aria-controls="xcPanel" aria-selected="${section==='agent'}">Агент Solana</button></div><div id="xcPanel" role="tabpanel" aria-labelledby="${section==='database'?'xcDatabaseTab':'xcAgentTab'}"></div>`;
+    content=root.querySelector('#xcPanel');
+    root.querySelector('#xcDatabaseTab').onclick=()=>{section='database';void render();};
+    root.querySelector('#xcAgentTab').onclick=()=>{section='agent';void render();};
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n === nav));
+    document.querySelector('#viewTitle').textContent = 'X Collector';
+    if(section==='agent') { await window.SocialAgent.render(content); return; }
     active = true;
     const ticket = ++generation;
     document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n === nav));
@@ -102,7 +112,7 @@
     host.querySelector('#xcDelete')?.addEventListener('click',()=>void save('DELETE'));
   }
   window.XCollector = Object.freeze({render});
-  document.querySelector('#navigation').addEventListener('click',e=>{if(e.target.closest('button')!==nav){active=false;++generation;}});
-  document.querySelector('#logoutButton').addEventListener('click',()=>{active=false;++generation;},true);
+  document.querySelector('#navigation').addEventListener('click',e=>{if(e.target.closest('button')!==nav){deactivate();}});
+  document.querySelector('#logoutButton').addEventListener('click',()=>{deactivate();},true);
   document.querySelector('#refreshButton').addEventListener('click',e=>{if(active){e.stopImmediatePropagation();void render();}},true);
 })();

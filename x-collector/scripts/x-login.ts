@@ -1,12 +1,15 @@
 import { chromium } from "playwright";
 import readline from "node:readline";
 import { encryptBuffer } from "../lib/trade/crypto";
-import { registerAccount } from "../lib/trade/account-manager";
+import { registerAccount, type AccountRole } from "../lib/trade/account-manager";
 import { closePool } from "../lib/trade/pg";
 
 const accountName = process.argv[2];
+const requestedRole = process.argv[3] ?? "collector";
+if (requestedRole !== "collector" && requestedRole !== "publisher") throw new Error("Role must be collector or publisher");
+const role: AccountRole = requestedRole;
 if (!accountName) {
-  console.error("Usage: npx ts-node scripts/x-login.ts <account-name>");
+  console.error("Usage: npx ts-node scripts/x-login.ts <account-name> [collector|publisher]");
   process.exit(1);
 }
 if (!/^[a-zA-Z0-9_-]{1,40}$/.test(accountName)) {
@@ -66,7 +69,7 @@ async function main() {
 
   try {
     if (!encryptedSession) throw new Error("encrypted session was not captured");
-    await registerAccount(accountName, encryptedSession, "new");
+    await registerAccount(accountName, encryptedSession, "new", undefined, role);
     console.log(`[x-login] ✓ аккаунт "${accountName}" зарегистрирован в БД`);
   } finally {
     await closePool().catch(() => {});

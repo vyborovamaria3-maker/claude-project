@@ -92,3 +92,84 @@ The admin X Collector explorer automatically lists both graph tables after migra
 012, with Russian labels and explanations of scores and priorities.
 
 GitHub Actions `X Collector monitoring` provisions PostgreSQL 17, checks the build, applies the full migration chain twice, runs the two-connection integration test, and executes the one-cycle monitor on an empty database. It uses disposable test credentials and does not access production.
+
+## Solana social agent foundation (migration 013)
+
+Apply migrations before upgrading workers. Existing accounts default to `collector`.
+Login with `npm run login -- reader1 collector` or `npm run login -- writer1 publisher`.
+Use distinct actual X accounts, not two aliases for the same identity. The role
+separates account selection; it does not detect two logins to the same X identity.
+A name already registered for another role cannot be silently overwritten on login.
+The collector claim query excludes publishers, and a database trigger prevents
+social actions being assigned to collector accounts. X browser sessions remain
+encrypted. A future live publisher needs its own official API credential adapter.
+
+From the repository root:
+```sh
+npm run x-collector:agent -- status
+npm run x-collector:agent -- start
+npm run x-collector:agent -- discover
+npm run x-collector:agent -- run
+npm run x-collector:agent -- stop
+```
+
+The agent starts stopped. `start` enables discovery and **simulation only**, with
+no per-action confirmation. The scheduler queues three bounded Solana/memecoin
+searches hourly and runs a preview cycle every ten minutes. Search tasks go to the
+existing worker and collector accounts. Pending searches and hourly idempotency
+keys prevent backlog duplication. Collection still requires working collector
+sessions and a running worker; no accounts need to be supplied as discovery seeds.
+
+Candidates come from the last 24 hours of stored tweets, explicitly linked Solana
+mint addresses or Solana/memecoin topic evidence. Keyword matching is a relevance
+heuristic, not a token authenticity check. It ranks by author reputation and time,
+then passes at most 100 candidates to a provider. The current `deterministic-preview`
+adapter is **not AI**; the provider interface is ready for the later model choice.
+Providers return a strictly validated list of action types, known source tweet IDs
+and reasons. They cannot invoke tools, add target IDs or set limits. A 15-second
+timeout aborts planning. Tweet text is untrusted input and is never executed.
+
+Trusted post templates only link to source discussions. They do not repeat
+unverified return claims. Reply generation and free-text model writing are not yet
+connected. Post and repost choices are recorded as `simulated`; like, follow and
+reply choices are `blocked`. Nothing in this module sends requests to X. Current X
+rules prohibit automated likes/proactive following; AI replies require X permission
+and recipient consent conditions. Policy source: https://help.x.com/en/rules-and-policies/x-automation
+
+`social_agent_settings` stores the stop switch and limits (default 3 decisions per
+cycle, 12 per UTC day across publishers). `social_agent_actions` stores the assigned
+publisher, source evidence, provider and reason. All recorded decisions consume
+the daily budget. Unique (kind,tweet_id) keys prevent duplicate actions across
+accounts. Previously processed source tweets are excluded from later cycles.
+All writes are transactional; invalid provider output leaves no partial actions.
+The stop switch serializes with in-progress cycles, and takes effect once a running
+planning transaction finishes (provider timeout is 15 seconds). Collector tasks
+already queued are not cancelled by stop. These tables are available in the admin
+X Collector explorer; `stopped=true` is the stop control.
+
+Tests verify the actual collector claim SQL excludes publishers, the database role
+trigger, source filtering, untrusted instructions, provider output validation,
+discovery deduplication, default stop behavior and daily budgets. CI runs migrations
+001–013 and agent CLI smoke checks on PostgreSQL 17. Live posting is deferred until
+provider, official X API credentials and permitted action scope are configured.
+
+## Admin agent tab (migration 014)
+
+The dedicated **Агент Solana** tab shows preview status, daily budget, account roles,
+settings, decisions and source links. It provides start/stop, typed limit editing,
+account-role changes and queued run/discover buttons. Busy or stale accounts cannot
+be reassigned; stale settings cannot overwrite newer changes. API access requires
+admin authentication; session secrets are never returned. Mutation audit entries
+are recorded after the collector transaction commits.
+
+Apply migration 014 and run the upgraded scheduler before using immediate commands.
+`social_agent_commands` stores pending/done/failed commands. The scheduler handles
+one command at a time every ten seconds and atomically saves its result. Duplicate
+pending commands are rejected. Stopping does not cancel existing collector tasks;
+a queued preview command observes the stopped setting and performs no new actions.
+If a command waits for more than a minute, verify that the scheduler is running.
+
+The tab refreshes while commands wait, unless the user is editing settings. Source
+text is escaped, never rendered as HTML. Mobile layout stays within the viewport;
+horizontal scrolling is restricted to navigation. CLI and UI use the same settings
+and preview pipeline. No live X transport or model has been connected.

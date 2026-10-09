@@ -44,6 +44,8 @@ LABELS.update({
     'mint_attention_snapshots': 'История внимания к токенам', 'signal_history': 'История сигналов',
     'graph_signal_history': 'История графовых сигналов',
     'graph_priority_events': 'Приоритетные события графа',
+    'social_agent_settings': 'Настройки и остановка агента',
+    'social_agent_actions': 'Решения агента (тестовый режим)',
     'mint_metrics_1m': 'Метрики токенов по минутам', 'mint_metrics_1h': 'Метрики токенов по часам',
     'mint_metrics_1d': 'Метрики токенов по дням', 'mint_metrics_1w': 'Метрики токенов по неделям',
     'author_metrics_1d': 'Метрики авторов по дням',
