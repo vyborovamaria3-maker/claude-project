@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import subprocess
 import sys
@@ -131,6 +132,15 @@ def scan_history(findings: set[tuple[str, str]]) -> None:
             continue
         if not line.startswith("+") or line.startswith("+++"):
             continue
+        # Ignore only the verified synthetic Rust test value, not other keys in this file.
+        if current_path == "cockpit-tools/src-tauri/src/modules/codex_account.rs":
+            line = re.sub(
+                r"\bsk-[A-Za-z0-9_-]{20,}\b",
+                lambda match: "fixture" if hashlib.sha256(match[0].encode()).hexdigest()
+                == "13f7e1d8306cc3e62c4ba13234c9a0441816f85067c8d83e448cc216fcbd9243"
+                else match[0],
+                line,
+            )
         scan_line(current_path, line[1:], findings)
     stderr = proc.stderr.read() if proc.stderr is not None else ""
     code = proc.wait()

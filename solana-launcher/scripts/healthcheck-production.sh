@@ -16,20 +16,51 @@ env_value_from_file() {
   printf '%s' "${value%$'\r'}"
 }
 
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file .env.server BACKEND_API_KEY)"
-fi
-if [[ -z "${BACKEND_API_KEY:-}" ]]; then
-  BACKEND_API_KEY="$(env_value_from_file backend.env BACKEND_API_KEY)"
-fi
+resolve_env_value() {
+  local key="$1"
+  local value="${!key:-}"
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file .env.server "$key")"
+  fi
+  if [[ -z "$value" ]]; then
+    value="$(env_value_from_file backend.env "$key")"
+  fi
+  printf '%s' "$value"
+}
+
+BACKEND_API_KEY="$(resolve_env_value BACKEND_API_KEY)"
 if [[ -z "${BACKEND_API_KEY:-}" ]]; then
   echo "BACKEND_API_KEY is required in .env.server or backend.env" >&2
   exit 1
 fi
 export BACKEND_API_KEY
 
+KOL_INTERNAL_KEY="$(resolve_env_value KOL_INTERNAL_KEY)"
+if [[ -z "$KOL_INTERNAL_KEY" ]]; then
+  echo "KOL_INTERNAL_KEY is required in .env.server or backend.env" >&2
+  exit 1
+fi
+if (( ${#KOL_INTERNAL_KEY} < 32 )); then
+  echo "KOL_INTERNAL_KEY must be at least 32 characters" >&2
+  exit 1
+fi
+if [[ "$KOL_INTERNAL_KEY" == "$BACKEND_API_KEY" ]]; then
+  echo "KOL_INTERNAL_KEY must be different from BACKEND_API_KEY" >&2
+  exit 1
+fi
+export KOL_INTERNAL_KEY
+
+SOLANA_TRACKER_API_KEY="$(resolve_env_value SOLANA_TRACKER_API_KEY)"
+SOLANA_TRACKER_API_BASE="$(resolve_env_value SOLANA_TRACKER_API_BASE)"
+KOL_TRADE_SYNC_INTERVAL_SECONDS="$(resolve_env_value KOL_TRADE_SYNC_INTERVAL_SECONDS)"
+KOL_TRADE_SYNC_WALLETS_PER_RUN="$(resolve_env_value KOL_TRADE_SYNC_WALLETS_PER_RUN)"
+export SOLANA_TRACKER_API_KEY
+export SOLANA_TRACKER_API_BASE="${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}"
+export KOL_TRADE_SYNC_INTERVAL_SECONDS="${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}"
+export KOL_TRADE_SYNC_WALLETS_PER_RUN="${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}"
+
 COMPOSE=(docker compose --env-file .env.server -f "$COMPOSE_FILE")
-REQUIRED_SERVICES=(postgres redis rabbitmq backend celery-worker frontend nginx prometheus)
+REQUIRED_SERVICES=(postgres redis rabbitmq backend celery-worker celery-beat frontend nginx prometheus)
 if [[ "${SKIP_TWITTER_DISCOVERY_HEALTH:-0}" != "1" ]]; then
   REQUIRED_SERVICES+=(twitter-discovery)
 fi
@@ -124,8 +155,6 @@ with httpx.Client(timeout=5.0, trust_env=False) as client:
         payload = read_payload(client)
         write = client.put(url, headers=headers, json=payload)
         if write.status_code == 409 and attempt == 0:
-            # A real admin may have saved between our GET and PUT. Re-read once
-            # instead of rolling back an otherwise healthy release.
             continue
         write.raise_for_status()
         written = write.json()
@@ -138,8 +167,6 @@ with httpx.Client(timeout=5.0, trust_env=False) as client:
         if written_settings.get(field) != payload[field]:
             raise SystemExit(f"Twitter crawler settings smoke changed {field} unexpectedly")
 
-    # Reusing the successfully consumed version token must be rejected even if
-    # another admin writes after our no-op update.
     stale = client.put(url, headers=headers, json=payload)
     if stale.status_code != 409:
         raise SystemExit(
@@ -232,7 +259,12 @@ for attempt in $(seq 1 45); do
       fi
     fi
     if [[ "$twitter_settings_status" != "failed" ]]; then
-      echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok twitter_discovery=$discovery_status twitter_settings=$twitter_settings_status frontend_build=verified"
+      if [[ -n "$SOLANA_TRACKER_API_KEY" ]]; then
+        kol_ingestion="enabled"
+      else
+        kol_ingestion="disabled"
+      fi
+      echo "HEALTHCHECK_OK image_tag=$IMAGE_TAG social_analysis=ok miniapp_config=ok twitter_discovery=$discovery_status twitter_settings=$twitter_settings_status frontend_build=verified celery_beat=ok kol_ingestion=$kol_ingestion"
       exit 0
     fi
   fi
@@ -244,7 +276,7 @@ echo "Bad services: ${bad_services:-unknown}" >&2
 echo "Build info: ${build_info:-unavailable}" >&2
 echo "Mini App config: ${miniapp_config:-unavailable}" >&2
 "${COMPOSE[@]}" ps || true
-"${COMPOSE[@]}" logs --tail 120 postgres redis rabbitmq backend celery-worker twitter-discovery frontend nginx prometheus || true
+"${COMPOSE[@]}" logs --tail 120 postgres redis rabbitmq backend celery-worker celery-beat twitter-discovery frontend nginx prometheus || true
 if telegram_intelligence_enabled; then
   "${COMPOSE[@]}" --profile telegram-intelligence logs --tail 120 telegram-intelligence || true
 fi

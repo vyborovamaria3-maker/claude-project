@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "security:test": "node scripts/security-regression.mjs",
     "landing:test": "node scripts/landing-regression.mjs",
-    "analysis:test": "node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs",
+    "kols:test": "node scripts/kols-regression.mjs",
+    "analysis:test": "node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/kols-regression.mjs",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",
@@ -67,7 +68,8 @@
     "telegraf": "^4.16.3",
     "telegram": "^2.26.22",
     "ws": "^8.20.1",
-    "zustand": "^5.0.13"
+    "zustand": "^5.0.13",
+    "bigint-buffer": "file:./scripts/bigint-safe-package"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.6",
@@ -87,9 +89,10 @@
     "typescript": "^5.5.3",
     "vite": "^8.2.2",
     "vitest": "^5.0.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:./scripts/xlsx-safe-package"
   },
   "overrides": {
-    "toml": "^5.0.0"
+    "toml": "^5.0.0",
+    "bigint-buffer": "$bigint-buffer"
   }
 }

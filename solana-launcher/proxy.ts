@@ -3,6 +3,7 @@ import { requireProdAuth } from "@/lib/routeAuth";
 
 const PAID_ROUTE_PREFIXES = [
   "/api/trade",
+  "/api/kols",
 ];
 
 const PRIVATE_PRODUCTION_PREFIXES = [
@@ -16,7 +17,12 @@ const HEAVY_ROUTE_PREFIXES = [
   "/api/trade/creator-fee",
   "/api/miniapp/create-invoice",
   "/api/miniapp/verify-payment",
+  "/api/kols",
 ];
+
+const VERY_HEAVY_ROUTE_LIMITS = [
+  { prefix: "/api/kols/backtest", limit: 3 },
+] as const;
 
 const HEAVY_LIMIT = 30;
 const HEAVY_WINDOW_MS = 60_000;
@@ -102,10 +108,14 @@ function clientIp(request: NextRequest): string {
 }
 
 function checkHeavyRateLimit(request: NextRequest, pathname: string): NextResponse | null {
-  const bucket = HEAVY_ROUTE_PREFIXES.find(
+  const strictPolicy = VERY_HEAVY_ROUTE_LIMITS.find(
+    ({ prefix }) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+  const bucket = strictPolicy?.prefix ?? HEAVY_ROUTE_PREFIXES.find(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
   if (!bucket) return null;
+  const requestLimit = strictPolicy?.limit ?? HEAVY_LIMIT;
 
   const now = Date.now();
   const ip = clientIp(request);
@@ -127,7 +137,7 @@ function checkHeavyRateLimit(request: NextRequest, pathname: string): NextRespon
     return null;
   }
 
-  if (current.count >= HEAVY_LIMIT) {
+  if (current.count >= requestLimit) {
     const retryAfter = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
     return NextResponse.json(
       { error: "Too many requests", retryAfter },

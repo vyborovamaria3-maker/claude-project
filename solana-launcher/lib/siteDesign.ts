@@ -129,6 +129,7 @@ export const siteDesign = {
     trade: [
       { href: "/trade-dashboard", labelKey: "nav.tradeDashboard", icon: "layoutDashboard", tag: "nav.trade_dashboard" },
       { href: "/trade/analysis", labelKey: "nav.tradeAnalysis", icon: "search", tag: "nav.trade_analysis" },
+      { href: "/trade/kols-twitter", labelKey: "nav.xAnalysis", icon: "twitter", tag: "nav.kols_twitter" },
       { href: "/trade/leaderboard", labelKey: "nav.tradeLeaderboard", icon: "trophy", tag: "nav.trade_leaderboard" },
       { href: "/trade/history", labelKey: "nav.tradeHistory", icon: "history", tag: "nav.trade_history" },
       { href: "/tginvite", labelKey: "nav.tgInvite", icon: "userPlus", tag: "nav.tg_invite" },

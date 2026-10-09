@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -22,9 +23,11 @@ from app.services.advanced_intelligence_persistence import (
     persist_advanced_intelligence_state,
 )
 from app.services.intelligence_outcomes import persist_outcome_values
+from app.services.kol_intelligence import build_kol_token_intelligence
 from app.services.telegram_parser import is_solana_address
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class AdvancedReportRequest(BaseModel):
@@ -59,6 +62,26 @@ def _require_backend_key(request: Request, supplied: str | None) -> None:
         )
 
 
+async def _safe_kol_intelligence(session: AsyncSession, mint: str) -> dict:
+    try:
+        async with session.begin_nested():
+            return await build_kol_token_intelligence(session, mint)
+    except Exception:
+        logger.exception("Optional KOL intelligence enrichment failed for mint %s", mint)
+        return {
+            "status": "unavailable",
+            "mint": mint,
+            "signal": "unknown",
+            "ownership_claim": False,
+            "windows": {},
+            "actors": [],
+            "attribution_note": (
+                "KOL intelligence is temporarily unavailable. "
+                "The base advanced-intelligence report remains valid."
+            ),
+        }
+
+
 @router.post("/report")
 async def advanced_report(
     payload: AdvancedReportRequest,
@@ -86,6 +109,9 @@ async def advanced_report(
             snapshot=payload.snapshot,
             report=report,
         )
+        # KOL intelligence is optional top-level enrichment and must not break
+        # the base advanced-intelligence report if its providers are unavailable.
+        report["kol_intelligence"] = await _safe_kol_intelligence(session, mint)
     if payload.persist:
         await persist_advanced_intelligence_state(
             session,
@@ -184,6 +210,7 @@ async def investigation_view(
         .scalars()
         .all()
     )
+    kol_intelligence = await _safe_kol_intelligence(session, mint)
     return {
         "mint": mint,
         "snapshots": [
@@ -230,4 +257,5 @@ async def investigation_view(
             }
             for row in outcomes
         ],
+        "kol_intelligence": kol_intelligence,
     }
