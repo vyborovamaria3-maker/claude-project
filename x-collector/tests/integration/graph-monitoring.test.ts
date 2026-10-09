@@ -19,7 +19,7 @@ test("PostgreSQL: real writes, deduplication, lock contention and rollback", { s
       CREATE TABLE author_reputation(handle text PRIMARY KEY,reputation_score numeric);`);
     await client.query(await fs.readFile(path.resolve("migrations/012_graph_monitoring.sql"), "utf8"));
     for (let i=0;i<20;i++) {
-      await client.query("INSERT INTO twitter_tweets VALUES($1,$1,9500)",[String(i)]);
+      await client.query("INSERT INTO twitter_tweets VALUES($1,$1,9750)",[String(i)]);
       await client.query("INSERT INTO tweet_token_links VALUES($1,'mint-a')",[String(i)]);
       await client.query("INSERT INTO author_reputation VALUES($1,100)",[String(i)]);
     }
@@ -36,7 +36,9 @@ test("PostgreSQL: real writes, deduplication, lock contention and rollback", { s
     await client.query("COMMIT");
     assert.equal((await client.query("SELECT count(*)::int AS n FROM graph_signal_history")).rows[0].n,1);
     await client.query("BEGIN");
-    await executeMonitoringCycle(client,10500,500);
+    const rolledBack = await executeMonitoringCycle(client,10000,500);
+    assert.equal(rolledBack.signals,1);
+    assert.equal(rolledBack.events,1);
     await client.query("ROLLBACK");
     assert.equal((await client.query("SELECT count(*)::int AS n FROM graph_signal_history")).rows[0].n,1);
   } finally {

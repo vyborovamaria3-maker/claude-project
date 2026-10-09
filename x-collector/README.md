@@ -82,3 +82,13 @@ SELECT * FROM graph_priority_events ORDER BY priority DESC, created_at DESC LIMI
 ```
 
 Real PostgreSQL integration check: set TEST_DATABASE_URL to a dedicated test database, then run `npm run test:db` inside x-collector. It creates and removes an isolated schema and checks persistence, duplicate protection, concurrent locking and rollback. Without TEST_DATABASE_URL the check is skipped.
+
+The standard `npm test` also uses the embedded PostgreSQL engine PGlite to apply
+the complete migration chain 001–012 and verify actual SQL writes, deduplication,
+rollback, and an injected failure during the event INSERT. This runs without an
+external database; it does not verify concurrency between server connections.
+The separate `test:db` check verifies that on PostgreSQL using two connections.
+The admin X Collector explorer automatically lists both graph tables after migration
+012, with Russian labels and explanations of scores and priorities.
+
+GitHub Actions `X Collector monitoring` provisions PostgreSQL 17, checks the build, applies the full migration chain twice, runs the two-connection integration test, and executes the one-cycle monitor on an empty database. It uses disposable test credentials and does not access production.

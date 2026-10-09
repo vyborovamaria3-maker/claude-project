@@ -42,6 +42,8 @@ LABELS.update({
     'sentiment_lexicon': 'Словарь тональности', 'kol_tiers': 'Уровни влиятельных авторов',
     'cluster_members': 'Участники групп авторов', 'author_behavior': 'Поведение авторов',
     'mint_attention_snapshots': 'История внимания к токенам', 'signal_history': 'История сигналов',
+    'graph_signal_history': 'История графовых сигналов',
+    'graph_priority_events': 'Приоритетные события графа',
     'mint_metrics_1m': 'Метрики токенов по минутам', 'mint_metrics_1h': 'Метрики токенов по часам',
     'mint_metrics_1d': 'Метрики токенов по дням', 'mint_metrics_1w': 'Метрики токенов по неделям',
     'author_metrics_1d': 'Метрики авторов по дням',
@@ -70,6 +72,10 @@ for prefix in ('v_', 'mv_'):
 
 
 def description(table):
+    if table == 'graph_signal_history':
+        return 'Сигналы за завершённые окна: score от 0 до 100, level — LOW, MEDIUM, HIGH или CRITICAL. payload содержит число твитов, авторов, связанных сущностей и составляющие оценки.'
+    if table == 'graph_priority_events':
+        return 'Сохранённые события графа: priority 2 — HIGH, 3 — CRITICAL. Уникальный ключ защищает от дублей. Внешняя отправка уведомлений для этих событий не подключена.'
     if table.startswith(('v_', 'mv_')):
         return 'Вычисленная сводка исходных данных. Представления нельзя редактировать; материализованные сводки обновляет планировщик.'
     if table in ('x_tasks', 'x_tasks_dlq', 'outbox'):
