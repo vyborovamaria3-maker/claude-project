@@ -62,8 +62,15 @@ test("rate limiter with zero limit is a no-op", () => {
   for (let i = 0; i < 100; i++) assert.equal(allow("x", 0), true);
 });
 
-test("clientIp prefers x-forwarded-for and falls back to socket address", () => {
-  assert.equal(clientIp({ headers: { "x-forwarded-for": "9.9.9.9, 10.0.0.1" }, socket: { remoteAddress: "1.1.1.1" } }), "9.9.9.9");
+test("clientIp ignores spoofed forwarded headers and uses socket address", () => {
+  assert.equal(clientIp({ headers: { "x-forwarded-for": "9.9.9.9, 10.0.0.1" }, socket: { remoteAddress: "1.1.1.1" } }), "1.1.1.1");
   assert.equal(clientIp({ headers: {}, socket: { remoteAddress: "1.1.1.1" } }), "1.1.1.1");
   assert.equal(clientIp({ headers: {} }), "unknown");
+});
+
+test("dashboard CSP permits its pinned dependencies without allowing other hosts", () => {
+  const res = fakeRes();
+  applySecurityHeaders(res, { scriptSources: ["https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"] });
+  assert.match(res.headers["content-security-policy"], /script-src 'self' 'unsafe-inline' https:\/\/unpkg.com\/vue@3.5.13\/dist\/vue.global.prod.js/);
+  assert.doesNotMatch(res.headers["content-security-policy"], /https:;/);
 });
