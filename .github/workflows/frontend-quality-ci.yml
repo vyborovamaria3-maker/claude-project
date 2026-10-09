@@ -89,11 +89,12 @@ jobs:
 
       - name: Cross-browser smoke
         run: |
+          PLAYWRIGHT_VERSION="$(node -p 'require("playwright/package.json").version')"
           docker run --rm --network host --ipc=host \
             -e "BASE_URL=http://127.0.0.1:${QUALITY_PORT}" \
             -v "$PWD:/work" \
             -w /work \
-            mcr.microsoft.com/playwright:v1.60.0-noble \
+            "mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble" \
             node tests/cross-browser-smoke.mjs
 
       - name: Install isolated quality tools
