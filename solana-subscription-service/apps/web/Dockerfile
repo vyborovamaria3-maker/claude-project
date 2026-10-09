@@ -13,8 +13,6 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-COPY packages/bigint-safe packages/bigint-safe
-COPY packages/braces-safe packages/braces-safe
 RUN npm run build -w @solsub/web
 
 FROM node:22-alpine AS runner
