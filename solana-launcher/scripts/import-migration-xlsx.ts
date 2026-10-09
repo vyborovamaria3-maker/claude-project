@@ -368,8 +368,7 @@ function extractWorkbook(filePath: string): ParsedWorkbook {
         if (formatted !== undefined && formatted !== null && formatted !== "") {
           value = formatted;
         } else if (cell.v !== undefined && cell.v !== null) {
-          if (cell.v instanceof Date) value = cell.v.toISOString();
-          else value = cell.v as string | number | boolean;
+          value = cell.v;
         }
         if (value === null) continue;
         cells.push({ ref, value });
