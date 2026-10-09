@@ -43,6 +43,12 @@
     "security:strix:standard": "bash scripts/strix-scan.sh --mode standard --budget 10",
     "security:strix:deep": "bash scripts/strix-scan.sh --mode deep --budget 25",
     "security:strix:diff": "bash scripts/strix-scan.sh --mode quick --scope diff --diff-base main --budget 10",
-    "x-collector:monitor": "npm --prefix x-collector run monitor"
+    "x-collector:monitor": "npm --prefix x-collector run monitor",
+    "x-collector:reply:api": "npm --prefix x-collector run reply:api",
+    "x-collector:reply:supervisor": "npm --prefix x-collector run reply:supervisor",
+    "x-collector:reply:worker": "npm --prefix x-collector run reply:worker --",
+    "x-collector:reply:telegram": "npm --prefix x-collector run reply:telegram",
+    "x-collector:reply:token": "npm --prefix x-collector run reply:token --",
+    "x-collector:reply:rotate-key": "npm --prefix x-collector run reply:rotate-key"
   }
 }

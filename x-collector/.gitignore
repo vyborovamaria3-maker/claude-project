@@ -3,3 +3,10 @@ node_modules/
 dist/
 logs/
 *.log
+
+.encryption_key
+.encryption_key.*
+
+data/
+
+__pycache__/

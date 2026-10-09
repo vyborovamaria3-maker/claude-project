@@ -1,0 +1,56 @@
+{
+  "downloaded_and_verified": [
+    {
+      "name": "SOLMEMES",
+      "source": "https://huggingface.co/datasets/rucyfer/solmemes/resolve/main/pump_swap_final_with_metadata.parquet",
+      "license": "Apache-2.0",
+      "attribution": "Bruno Rucy Carneiro Alves de Lima; Victor Henrique Cabral Pinheiro. SOLMEMES (AICCC 2025), doi:10.1145/3789982.3790023",
+      "sha256": "1ac22b5cf496ca1aba7132a3b87b4384c98e5fc300b08fa4ef238227a918d0ef",
+      "jsonl_sha256": "d535c07250e13e98d208e0b868f79c849e3bc415724f3f2a3e540c095f40632d",
+      "rows": 8960,
+      "created_at_min": "2024-01-20T05:02:34+00:00",
+      "created_at_max": "2025-04-19T23:16:38+00:00",
+      "kind": "token metadata and 15 minute price/trade samples; not tweets",
+      "bias": "graduated tokens only; not an unbiased population sample",
+      "validation": {
+        "dataset": "SOLMEMES",
+        "rows": 8960,
+        "counts": {
+          "tokens": 7965,
+          "original_records": 8934,
+          "price_samples": 128770,
+          "missing_creation_dates": 119
+        },
+        "database": "disposable PGlite",
+        "production_import": false
+      }
+    },
+    {
+      "name": "Solana Memecoin Dataset — token snapshots",
+      "source": "https://raw.githubusercontent.com/ian05012/solana-memecoin-dataset/main/data/tokens.parquet",
+      "license": "MIT",
+      "attribution": "ian05012/solana-memecoin-dataset, README and LICENSE; research dataset",
+      "git_blob_sha1": "dcd5bb767194781916214bd05399eae162b5f322",
+      "sha256": "b791b100d9605a4219dd62ecbe03c72abd059e2985ef926defee790748944e2b",
+      "jsonl_sha256": "fba2303caa7cc0d849418e8ae1001f170fcbe3ab40168725b44ffb050acc418b",
+      "rows": 44460,
+      "captured_at_min": "2026-06-10T08:36:46.154180+00:00",
+      "captured_at_max": "2026-06-29T20:01:59.337164+00:00",
+      "kind": "token snapshot features and forward-return labels; not tweets",
+      "bias": "detected tokens, June 2026 regime; forward-return labels must never enter feature inputs",
+      "validation": {
+        "dataset": "Solana Memecoin Dataset — token snapshots",
+        "rows": 44460,
+        "counts": {
+          "tokens": 31013,
+          "original_records": 44460,
+          "price_samples": 0,
+          "missing_creation_dates": 31013
+        },
+        "database": "disposable PGlite",
+        "production_import": false
+      }
+    }
+  ],
+  "production_database_changed": false
+}

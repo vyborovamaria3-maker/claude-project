@@ -7,7 +7,7 @@ import { getConfig } from "./config";
 type Level = "debug" | "info" | "warn" | "error";
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 const PROCESS_TOKEN = `${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}`;
-const SENSITIVE_KEY = /(token|password|secret|session|cookie|authorization|master.?key|api.?key)/i;
+const SENSITIVE_KEY = /(token|password|secret|session|cookie|authorization|master.?key|api.?key|credentials|proxy|jwt|encryption.?key)/i;
 
 export interface LogContext {
   taskId?: number;

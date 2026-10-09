@@ -1,12 +1,12 @@
 // Visible, isolated browser login. Passwords and plaintext cookies stay out of files and IPC.
-const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const fs=require('node:fs'),path=require('node:path'),nodeCrypto=require('node:crypto');
 const {chromium}=require('playwright');const {launchLoginBrowser,attachLoginDiagnostics}=require('./login-browser.cjs');const {Client}=require('pg');const dotenv=require('dotenv');
 const env=dotenv.parse(fs.readFileSync(process.env.X_COLLECTOR_ENV?path.resolve(process.env.X_COLLECTOR_ENV):path.resolve('.env')));
 const [name,role]=process.argv.slice(2);
 let browser,context,saving=false,ended=false;
 function report(status,message){if(process.connected)process.send({status,message});}
 async function close(){ended=true;await browser?.close().catch(()=>{});if(process.connected)process.disconnect();}
-function encrypt(plain){const raw=env.MASTER_KEY||process.env.X_COLLECTOR_MASTER_KEY;if(!raw)throw Error('key');const key=/^[a-f0-9]{64}$/i.test(raw)?Buffer.from(raw,'hex'):Buffer.from(raw,'base64');if(key.length!==32)throw Error('key');try{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv),encrypted=Buffer.concat([c.update(plain,'utf8'),c.final()]);return Buffer.concat([iv,c.getAuthTag(),encrypted]);}finally{key.fill(0);}}
+function encrypt(plain){const raw=env.MASTER_KEY||process.env.X_COLLECTOR_MASTER_KEY;if(!raw)throw Error('key');const key=/^[a-f0-9]{64}$/i.test(raw)?Buffer.from(raw,'hex'):Buffer.from(raw,'base64');if(key.length!==32)throw Error('key');try{const iv=nodeCrypto.randomBytes(12),c=nodeCrypto.createCipheriv('aes-256-gcm',key,iv),encrypted=Buffer.concat([c.update(plain,'utf8'),c.final()]);return Buffer.concat([iv,c.getAuthTag(),encrypted]);}finally{key.fill(0);}}
 async function finish(){if(saving||ended)return;saving=true;report('saving','Проверяем вход…');let client,encrypted;
 try{
  const page=context.pages().find(p=>/https:\/\/(?:www\.)?(?:x\.com|twitter\.com)\//.test(p.url()));

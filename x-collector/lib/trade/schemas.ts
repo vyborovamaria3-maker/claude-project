@@ -20,16 +20,22 @@ export const ProfilePayload = z.object({
 
 export const TweetSchema = z.object({
   id: z.string().regex(/^\d{15,25}$/),
-  text: z.string().min(1).max(50_000),
+  text: z.string().max(50_000),
   authorHandle: z.string().min(1).max(50),
   authorDisplayName: z.string().max(200).nullable(),
   url: z.union([z.string().url(), z.literal(""), z.null()]).transform((v) => v || null),
-  views: z.number().int().nonnegative(),
-  likes: z.number().int().nonnegative(),
-  retweets: z.number().int().nonnegative(),
-  replies: z.number().int().nonnegative(),
+  views: z.number().int().nonnegative().nullable(),
+  likes: z.number().int().nonnegative().nullable(),
+  retweets: z.number().int().nonnegative().nullable(),
+  replies: z.number().int().nonnegative().nullable(),
   isVerified: z.boolean(),
-  postedAt: z.number().int().nullable(),
+  postedAt: z.number().int().min(0).max(8640000000000000).nullable(),
+  observedAt: z.number().int().min(0).max(8640000000000000).optional(),
+  links: z.array(z.string()).optional(),
+  mentions: z.array(Handle).optional(),
+  hashtags: z.array(z.string()).optional(),
+  media: z.array(z.object({type:z.enum(["photo","video"]),url:z.string().url().nullable()})).optional(),
+  relatedPostIds: z.array(z.string().regex(/^\d+$/)).optional(),
 });
 
 export const ProfileSchema = z.object({

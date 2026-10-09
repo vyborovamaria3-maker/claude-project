@@ -19,7 +19,8 @@ test("scrub redacts nested secret fields inside objects and arrays", () => {
     list: [{ secret: "leak3" }],
   }) as Record<string, unknown>;
   assert.equal(result.handle, "alice");
-  assert.deepEqual(result.credentials, { botToken: "[REDACTED]", nested: { password: "[REDACTED]" } });
+  assert.equal(result.credentials, "[REDACTED]");
+  assert.equal(scrub("http://user:pass@host", "proxy"), "[REDACTED]");
   assert.deepEqual(result.list, [{ secret: "[REDACTED]" }]);
 });
 

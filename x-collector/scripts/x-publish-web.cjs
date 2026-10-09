@@ -1,4 +1,4 @@
-const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const fs=require('node:fs'),path=require('node:path'),nodeCrypto=require('node:crypto');
 const {Client}=require('pg'),{chromium}=require('playwright'),dotenv=require('dotenv');
 const {launchLoginBrowser}=require('./test-publish-browser.cjs');
 async function main(){
@@ -17,7 +17,7 @@ async function main(){
  if(key.length!==32)throw Error('Invalid MASTER_KEY.');
  const encrypted=row.session_encrypted;
  if(!Buffer.isBuffer(encrypted)||encrypted.length<29)throw Error('Invalid encrypted session.');
- const decipher=crypto.createDecipheriv('aes-256-gcm',key,encrypted.subarray(0,12));decipher.setAuthTag(encrypted.subarray(12,28));
+ const decipher=nodeCrypto.createDecipheriv('aes-256-gcm',key,encrypted.subarray(0,12));decipher.setAuthTag(encrypted.subarray(12,28));
  plain=Buffer.concat([decipher.update(encrypted.subarray(28)),decipher.final()]);
  const state=JSON.parse(plain.toString('utf8'));
  const opened=await launchLoginBrowser(chromium,{...process.env,X_LOGIN_BROWSER:env.X_LOGIN_BROWSER||process.env.X_LOGIN_BROWSER});browser=opened.browser;
@@ -36,10 +36,9 @@ async function main(){
  const id=response?.body?.data?.create_tweet?.tweet_results?.result?.rest_id;
  if(!response?.ok||!/^\d+$/.test(id||''))throw Error('Publication not confirmed. Check the profile before running again; the tweet may already exist.');
  process.send?.({status:'done',message:'Твит опубликован',url:'https://x.com/'+handle+'/status/'+id});
- }catch(e){
+ }catch(_e){
  if(attempted)console.error('Do not retry automatically: check the X profile first.');
  // Never print raw database, decryption, or browser errors: they may contain secrets.
- const safe=/^(Usage:|Account must|Invalid MASTER_KEY|Invalid encrypted|Logged-in account|Publication not confirmed)/.test(e.message||'');
  process.send?.({status:attempted?'uncertain':'failed',message:attempted?'Результат отправки неизвестен. Проверьте профиль X перед повтором.':'Не удалось отправить. Проверьте имя профиля, сессию и настройки X Collector.'});process.exitCode=1;
  }finally{plain?.fill(0);key?.fill(0);await browser?.close().catch(()=>{});await client.end().catch(()=>{});if(process.connected)process.disconnect();}
 }

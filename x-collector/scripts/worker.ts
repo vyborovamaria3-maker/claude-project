@@ -1,3 +1,5 @@
+import { recordProgress, Progress } from "../lib/collector/live";
+import { persistTweets, persistProfile } from "../lib/trade/collector-store";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../lib/trade/tasks";
@@ -7,9 +9,9 @@ import {
 } from "../lib/trade/account-manager";
 import { WorkerRegistry, reapDeadWorkers } from "../lib/trade/worker-registry";
 import { decryptBuffer } from "../lib/trade/crypto";
-import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState } from "../lib/trade/twitter-scraper";
-import { TweetSchema, ProfileSchema, parseTaskPayload } from "../lib/trade/schemas";
-import { q, exec, closePool, tx } from "../lib/trade/pg";
+import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState, RawTweet } from "../lib/trade/twitter-scraper";
+import { parseTaskPayload } from "../lib/trade/schemas";
+import { q, closePool } from "../lib/trade/pg";
 import { log, withContext, closeLogger } from "../lib/trade/logger";
 import {
   registry as promRegistry, tasksTotal, taskDuration, scrapeDuration,
@@ -29,8 +31,8 @@ const METRICS_PASS = process.env.METRICS_PASS;
 if (Boolean(METRICS_USER) !== Boolean(METRICS_PASS)) {
   throw new Error("METRICS_USER and METRICS_PASS must be set together");
 }
-if (!Number.isInteger(METRICS_PORT) || METRICS_PORT < 1 || METRICS_PORT > 65535) {
-  throw new Error("METRICS_PORT must be an integer from 1 to 65535");
+if (!Number.isInteger(METRICS_PORT) || METRICS_PORT < 0 || METRICS_PORT > 65535) {
+  throw new Error("METRICS_PORT must be an integer from 0 to 65535");
 }
 if (!isLoopbackHost(METRICS_HOST) && (!METRICS_USER || !METRICS_PASS)) {
   throw new Error("Metrics Basic Auth is required when binding to a non-loopback host");
@@ -41,9 +43,10 @@ const allowMetricsRequest = createRateLimiter(Number(process.env.METRICS_RATE_LI
 // production-путь searchTweets не затрагивается.
 const USE_X_COLLECTOR = process.env.X_COLLECTOR === "src";
 let shuttingDown = false;
+const cancellation=new AbortController();
 
-process.on("SIGINT", () => { log.warn("SIGINT — graceful shutdown"); shuttingDown = true; });
-process.on("SIGTERM", () => { log.warn("SIGTERM — graceful shutdown"); shuttingDown = true; });
+process.on("SIGINT", () => { log.warn("SIGINT — graceful shutdown"); shuttingDown = true; cancellation.abort(); });
+process.on("SIGTERM", () => { log.warn("SIGTERM — graceful shutdown"); shuttingDown = true; cancellation.abort(); });
 
 function buildProxy(acc: XAccount) {
   if (!acc.proxy_json) return undefined;
@@ -53,103 +56,18 @@ function buildProxy(acc: XAccount) {
   } catch { return undefined; }
 }
 
-async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null) {
-  const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
-  let rejected = 0;
-  for (const raw of tweets) {
-    const parsed = TweetSchema.safeParse(raw);
-    if (parsed.success) valid.push(parsed.data);
-    else rejected++;
-  }
-  if (rejected > 0) log.warn("tweets rejected by schema", { rejected });
-  if (valid.length === 0) return;
-
-  const now = Date.now();
-  const BATCH = 200;
-
-  for (let i = 0; i < valid.length; i += BATCH) {
-    const chunk = valid.slice(i, i + BATCH);
-    // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
-    // no deja tweets sin su link (ni viceversa).
-    await tx(async (client) => {
-      const values: unknown[] = [];
-      const placeholders = chunk.map((t, j) => {
-        const off = j * 13;
-        values.push(
-          t.id, t.authorHandle.toLowerCase(), t.text, t.url,
-          t.views, t.likes, t.retweets, t.replies,
-          t.isVerified, t.postedAt, now, now, sourceQuery
-        );
-        return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13})`;
-      }).join(",");
-
-      await client.query(
-        `INSERT INTO twitter_tweets
-           (tweet_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
-         VALUES ${placeholders}
-         ON CONFLICT (tweet_id) DO UPDATE SET
-           views    = GREATEST(twitter_tweets.views,    EXCLUDED.views),
-           likes    = GREATEST(twitter_tweets.likes,    EXCLUDED.likes),
-           retweets = GREATEST(twitter_tweets.retweets, EXCLUDED.retweets),
-           replies  = GREATEST(twitter_tweets.replies,  EXCLUDED.replies),
-           source_query = COALESCE(EXCLUDED.source_query, twitter_tweets.source_query),
-           updated_at = EXCLUDED.updated_at
-         WHERE EXCLUDED.updated_at > twitter_tweets.updated_at`,
-        values
-      );
-
-      if (mint) {
-        const linkVals: unknown[] = [];
-        const linkPh = chunk.map((t, j) => {
-          const off = j * 4;
-          linkVals.push(t.id, mint, t.authorHandle.toLowerCase(), now);
-          return `($${off + 1},$${off + 2},$${off + 3},$${off + 4})`;
-        }).join(",");
-        await client.query(
-          `INSERT INTO tweet_token_links (tweet_id, mint, handle, linked_at)
-           VALUES ${linkPh} ON CONFLICT (tweet_id, mint) DO NOTHING`,
-          linkVals
-        );
-      }
-    });
-  }
-}
-
-async function persistProfile(p: unknown) {
-  const parsed = ProfileSchema.safeParse(p);
-  if (!parsed.success) {
-    log.warn("profile rejected by schema", { error: parsed.error.message });
-    return;
-  }
-  const d = parsed.data;
-  const now = Date.now();
-  await exec(
-    `INSERT INTO twitter_profiles
-       (handle, display_name, bio, followers, following, posts_count, is_verified, joined_at, avatar_url, first_seen_at, last_seen_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
-     ON CONFLICT (handle) DO UPDATE SET
-       display_name = COALESCE(EXCLUDED.display_name, twitter_profiles.display_name),
-       bio          = COALESCE(EXCLUDED.bio, twitter_profiles.bio),
-       followers    = COALESCE(EXCLUDED.followers, twitter_profiles.followers),
-       following    = COALESCE(EXCLUDED.following, twitter_profiles.following),
-       posts_count  = COALESCE(EXCLUDED.posts_count, twitter_profiles.posts_count),
-       is_verified  = EXCLUDED.is_verified OR twitter_profiles.is_verified,
-       joined_at    = COALESCE(EXCLUDED.joined_at, twitter_profiles.joined_at),
-       avatar_url   = COALESCE(EXCLUDED.avatar_url, twitter_profiles.avatar_url),
-       last_seen_at = EXCLUDED.last_seen_at`,
-    [d.handle.toLowerCase(), d.displayName, d.bio, d.followers, d.following, d.postsCount,
-     d.isVerified, d.joinedAt, d.avatarUrl, now]
-  );
-}
-
 async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number]): Promise<string> {
   const cfg = getConfig();
+  let progress:Progress={phase:"selecting",found:0,startedAt:Date.now()};
+  const publish=async(p:Progress)=>{progress={...progress,...p};if(!await recordProgress(task.id,workerId,task.attempts,progress))throw new Error("task lease lost during progress update");};
+  await publish({phase:"selecting"});
 
   let payload: ReturnType<typeof parseTaskPayload>;
   try {
     payload = parseTaskPayload(task.kind, task.payloadJson);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    await publish({phase:"failed"}).catch(()=>{});
     await failTask(task.id, workerId, `schema: ${msg}`).catch(() => {});
     return "invalid-payload";
   }
@@ -210,6 +128,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
   }
 
   if (!account) {
+    await publish({phase:"waiting"}).catch(()=>{});
     await deferTask(task.id, workerId, 60_000, "no available account").catch(() => false);
     return "no-account";
   }
@@ -232,6 +151,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
   }, Math.floor(cfg.sessions.leaseMs / 2));
 
   try {
+    await publish({phase:"opening",account:acc.name});
     const decryptedSession = decryptBuffer(acc.session_encrypted);
     let authState: ScrapeAuthState | undefined;
     try {
@@ -241,6 +161,14 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
       }
       const scrapeOpts = {
         authState,
+        signal:cancellation.signal,
+        onProgress:publish,
+        onBatch:async(tweets:RawTweet[])=>{
+          assertLeases();await publish({phase:"saving"});
+          const query=kind==="search"?(payload as {query:string}).query:null;
+          await persistTweets(kind==="search"?task.mint:null,tweets,query,task.id);
+          assertLeases();await publish({phase:"collecting"});
+        },
         proxy: buildProxy(acc),
         userAgent: acc.user_agent ?? undefined,
         timezone: acc.timezone ?? undefined,
@@ -250,28 +178,25 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
       if (kind === "search") {
         const p = payload as { query: string; limit: number; sort: "top" | "latest" };
         const t0 = Date.now();
-        const tweets = await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
+        await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
-        await persistTweets(task.mint, tweets, p.query);
-        assertLeases();
+
       } else if (kind === "timeline") {
         const p = payload as { handle: string; limit: number };
         const t0 = Date.now();
-        const tweets = await fetchUserTimeline(p.handle, { ...scrapeOpts, limit: p.limit });
+        await fetchUserTimeline(p.handle, { ...scrapeOpts, limit: p.limit });
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
-        // A timeline task is scheduled because the author once mentioned a mint;
-        // that does not make every post in the author's timeline about that mint.
-        await persistTweets(null, tweets);
-        assertLeases();
+
       } else {
         const p = payload as { handle: string };
         const t0 = Date.now();
         const profile = await fetchAccountProfile(p.handle, scrapeOpts);
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
-        await persistProfile(profile);
+        await publish({phase:"saving"});
+        await persistProfile(profile, task.id);
         assertLeases();
       }
     } finally {
@@ -280,6 +205,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
     }
 
     assertLeases();
+    await publish({phase:"finishing"});
     await recordSuccess(acc.name);
     assertLeases();
     const ok = await finishTask(task.id, workerId);
@@ -293,16 +219,17 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
     return "done";
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    await publish({phase:shuttingDown?"waiting":"failed"}).catch(()=>{});
     let kindErr: "rate_limit" | "captcha" | "ban" | "other" = "other";
     if (/rate limit|429|temporarily limited/i.test(msg)) kindErr = "rate_limit";
     else if (/captcha/i.test(msg)) kindErr = "captcha";
     else if (/login required|auth session expired/i.test(msg)) kindErr = "ban";
 
-    if (!leaseLost) await recordError(acc.name, kindErr).catch(() => {});
-    const result = await failTask(task.id, workerId, msg).catch(() => "lost" as const);
+    if (!leaseLost && !shuttingDown) await recordError(acc.name, kindErr).catch(() => {});
+    const result = shuttingDown ? await deferTask(task.id,workerId,5000,"worker shutdown").then(ok=>ok?"requeued" as const:"lost" as const) : await failTask(task.id, workerId, msg).catch(() => "lost" as const);
     if (result === "dlq") tasksTotal.inc({ kind, result: "dlq" });
     else if (result === "requeued") tasksTotal.inc({ kind, result: "retry" });
-    registry.incrementFailed();
+    if(!shuttingDown)registry.incrementFailed();
     log.warn("task failed", { taskId: task.id, error: msg, classification: kindErr, result });
     return "failed";
   } finally {
@@ -317,6 +244,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
 async function loop() {
   await registry.register();
   registry.start();
+  process.send?.({ ready: true });
   const stopMetrics = startMetricsCollector();
   log.info("worker started", { workerId, pid: process.pid });
 

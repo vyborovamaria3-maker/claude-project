@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Reply Guy · X Collector</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #0d1117;
+        color: #c9d1d9;
+        font: 15px system-ui;
+      }
+      header {
+        padding: 20px;
+        border-bottom: 1px solid #30363d;
+      }
+      main {
+        max-width: 1200px;
+        margin: auto;
+        padding: 20px;
+      }
+      nav {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 16px 0;
+      }
+      a {
+        color: #58a6ff;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        background: #161b22;
+        color: #c9d1d9;
+        padding: 9px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button.active {
+        background: #1f6feb;
+      }
+      button:disabled {
+        opacity: 0.5;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+      }
+      textarea {
+        min-height: 80px;
+      }
+      label {
+        display: block;
+        margin: 12px 0;
+      }
+      section {
+        background: #161b22;
+        padding: 20px;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        margin: 15px 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+      }
+      .error {
+        color: #ff7b72;
+        white-space: pre-wrap;
+      }
+      .muted {
+        color: #8b949e;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      article {
+        border-top: 1px solid #30363d;
+        padding: 16px 0;
+      }
+      h2 {
+        margin-top: 0;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+    <script src="/reply.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a href="/">← X Collector</a>
+      <h1>AI Reply Guy</h1>
+      <p>Кампании, персонажи и ответы. Публикация через официальный X API.</p>
+    </header>
+    <main>
+      <p id="error" class="error" role="alert"></p>
+      <section id="login">
+        <h2>Подключение</h2>
+        <form id="login-form">
+          <label
+            >Токен доступа к модулю<input
+              id="token"
+              type="password"
+              autocomplete="off"
+              required /></label
+          ><button>Подключиться</button>
+        </form>
+        <p class="muted">
+          Токен выдаёт администратор сервиса. Он хранится только в памяти этой
+          страницы.
+        </p>
+      </section>
+      <div id="workspace" hidden>
+        <div class="row">
+          <button id="refresh">Обновить</button
+          ><button id="logout">Выйти</button
+          ><button id="revoke">Отозвать этот токен</button>
+        </div>
+        <nav id="tabs"></nav>
+        <div id="content"></div>
+      </div>
+    </main>
+  </body>
+</html>

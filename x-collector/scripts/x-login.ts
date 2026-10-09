@@ -1,4 +1,5 @@
 import { chromium, Browser } from "playwright";
+import { hasXSession } from "../lib/trade/x-session";
 import readline from "node:readline";
 import { encryptBuffer } from "../lib/trade/crypto";
 import { registerAccount } from "../lib/trade/account-manager";
@@ -48,7 +49,7 @@ async function main() {
   let browser: Browser | null = null;
   let encryptedSession: Buffer | null;
   try {
-    browser = await chromium.launch({ headless: false, slowMo: 50 });
+    browser = await chromium.launch({ headless: false, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, slowMo: 50 });
     const context = await browser.newContext({
       viewport: { width: 1365, height: 900 },
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -80,6 +81,7 @@ async function main() {
     log("saving session");
     // Keep the session state in memory: never create a plaintext cookie file on disk.
     const state = await context.storageState();
+    if(!hasXSession(state))throw new Error("Сессия X не получена: завершите вход и ручную проверку в браузере");
     const serializedState = Buffer.from(JSON.stringify(state), "utf8");
     try { encryptedSession = encryptBuffer(serializedState); }
     finally { serializedState.fill(0); }

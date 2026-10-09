@@ -2,11 +2,18 @@
 
 This is the PostgreSQL X collector from fixed_project.zip, integrated as an isolated subsystem. It does not replace the existing SQLite collector inside solana-launcher.
 
-## Migrations
+## Migration chain and provenance
 
-The complete 001–011 migration chain is included. Migration 003_performance.sql was reconstructed from the collector's surviving query patterns; it adds indexes and is not a byte-for-byte recovery of the missing original. Do not substitute migrations from other subsystems. The runner validates the chain and prevents concurrent migration runs. Use `npm run x-collector:migrate -- --status` to inspect migration status.
+The repository contains the complete numbered 001–018 chain plus the graph-monitoring, intelligence and signals migrations (`012_graph_monitoring.sql`, `013_intelligence.sql`, `014_signals_engine.sql`). `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state. The runner validates the chain and prevents concurrent migration runs.
 
 ## Setup
+
+The migration manifest in `lib/trade/migrations.ts` is shared by the runner and
+integration tests. It includes migration `019_account_roles.sql`, which gives
+existing accounts the `collector` role and supports separate publisher accounts.
+Run `npm run migrate` before starting workers after upgrading. The old
+`012_ai_reply_guy.sql` prototype is not part of this manifest; the supported
+Reply Guy schema uses the isolated `012_reply_guy.sql` tables instead.
 
 Use a dedicated PostgreSQL database named x_collector. Do not point this service at the main application database. The existing memecoin-intelligence PostgreSQL publishes port 5434; create a separate x_collector database there (or use another dedicated PostgreSQL instance), then copy .env.example to .env and set DATABASE_URL plus a permanent random 32-byte MASTER_KEY (64 hexadecimal characters or Base64). Keep the .env file and key out of Git. Losing or changing MASTER_KEY makes stored X sessions unreadable.
 
@@ -39,7 +46,7 @@ npm run x-collector:lint        # eslint
 npm run x-collector:test        # node:test via tsx (tests/**.test.ts)
 ~~~
 
-Unit tests cover the shared parsing/CSV/auth/advisory helpers and do not require a database or a running collector.
+Tests cover shared helpers, browser navigation under CSP, partial API failures, encrypted sessions, and actual queue/account SQL against disposable PGlite. No external database or X credentials are required. The bundled test Chromium targets Linux; on other systems install a compatible Chromium and set TEST_CHROMIUM_PATH to its executable. PGlite tests do not replace multi-process integration checks on a dedicated PostgreSQL server.
 
 Dashboard and metrics bind to loopback by default. External binds require Basic Auth and TLS at a reverse proxy. X login restrictions, captcha challenges and rate limits are surfaced as failures; the collector does not rotate identities to evade a platform restriction. Results are bounded by X search availability and configured limits, so the collector cannot guarantee every account or historical post.
 
@@ -47,7 +54,27 @@ Timeline refreshes store posts without linking every post to the mint that origi
 
 The archive report is retained as FIX_REPORT_RU.md. It describes the supplied source snapshot and its verification limits.
 
-Dashboard CSP permits only the pinned Vue and Chart.js CDN script URLs used by its HTML. Internet access to these CDNs is required. HTTP rate limits use the socket peer address and ignore untrusted forwarded headers. Behind a reverse proxy, the application limit is shared by requests from that proxy; configure per-client limits at the proxy too.
+See [DEVELOPMENT_REPORT_RU.md](DEVELOPMENT_REPORT_RU.md) for verified behavior and remaining integrations.
+
+## AI Reply Guy
+
+The integrated reply module is available at `/reply` in the dashboard or via `npm run reply:api`. See [REPLY_GUY_RU.md](REPLY_GUY_RU.md) for the plan mapping, official API credentials, Telegram, workers, deployment and verified limits. Migration 012 is additive and must be applied before enabling the module.
+
+Migration 013 adds Reply Guy queue/tenant/budget/alert indexes. See DATABASE_PERFORMANCE_RU.md for measured fixture plans and deployment guidance.
+
+Archive backfill/import and Solana datasets: see ARCHIVE_RU.md. Existing Playwright scraper remains in lib/trade/twitter-scraper.ts.
+
+Сборщик браузера сохраняет снимки метрик и профилей, ссылки/упоминания/медиа и передаёт новые публикации в Archive. Неизвестные счётчики — NULL; migration 015 сохраняет старые нули без попытки восстановить их происхождение. Подробнее: [COLLECTOR_RU.md](COLLECTOR_RU.md).
+
+## Запуск кнопкой
+
+После настройки базы, MASTER_KEY, миграций и входа `npm run login -- main` запустите `npm start` и откройте http://127.0.0.1:3001/collector. Задайте запрос и нажмите «Начать парсинг»: worker запускается автоматически, прогресс и результаты обновляются. См. [COLLECTOR_RU.md](COLLECTOR_RU.md).
+
+На странице парсинга есть SSE-мониторинг: сессии X, цели/авторы, этапы, найденные и сохранённые записи, нагрузка аккаунтов и ожидание. Нужна миграция 017. Подробности в COLLECTOR_RU.md.
+
+## Bulk persistence and future AI analysis
+
+Migration 018 adds immutable post versions, versioned model/results storage, and cutoff indexes. See AI_DATA_RU.md for reproducible JSONL export, the measured fixture benchmark, limitations and setup. Apply all migrations before restarting workers.
 
 ## Graph signals and autonomous monitoring v1
 
@@ -84,7 +111,7 @@ SELECT * FROM graph_priority_events ORDER BY priority DESC, created_at DESC LIMI
 Real PostgreSQL integration check: set TEST_DATABASE_URL to a dedicated test database, then run `npm run test:db` inside x-collector. It creates and removes an isolated schema and checks persistence, duplicate protection, concurrent locking and rollback. Without TEST_DATABASE_URL the check is skipped.
 
 The standard `npm test` also uses the embedded PostgreSQL engine PGlite to apply
-the complete migration chain 001–012 and verify actual SQL writes, deduplication,
+the complete migration chain and verify actual SQL writes, deduplication,
 rollback, and an injected failure during the event INSERT. This runs without an
 external database; it does not verify concurrency between server connections.
 The separate `test:db` check verifies that on PostgreSQL using two connections.
@@ -92,3 +119,10 @@ The admin X Collector explorer automatically lists both graph tables after migra
 012, with Russian labels and explanations of scores and priorities.
 
 GitHub Actions `X Collector monitoring` provisions PostgreSQL 17, checks the build, applies the full migration chain twice, runs the two-connection integration test, and executes the one-cycle monitor on an empty database. It uses disposable test credentials and does not access production.
+
+The dashboard serves pinned Vue and Chart.js builds from local node_modules
+(`/assets/vue.js`, `/assets/chart.js`); CSP is self-only with no external CDN
+hosts, so no internet access is required. HTTP rate limits use the socket peer
+address and ignore untrusted forwarded headers. Behind a reverse proxy, the
+application limit is shared by requests from that proxy; configure per-client
+limits at the proxy too.

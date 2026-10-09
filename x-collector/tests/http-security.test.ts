@@ -6,6 +6,7 @@ import {
   createRateLimiter,
   isSameOrigin,
   clientIp,
+  dashboardRequestOrigin,
 } from "../lib/trade/http-security";
 
 function fakeRes() {
@@ -68,9 +69,21 @@ test("clientIp ignores spoofed forwarded headers and uses socket address", () =>
   assert.equal(clientIp({ headers: {} }), "unknown");
 });
 
-test("dashboard CSP permits its pinned dependencies without allowing other hosts", () => {
+test("local dashboard aliases preserve port and explicit origin restrictions", () => {
+ for(const host of ["localhost:3001","127.0.0.1:3001","[::1]:3001"]){
+  const allowed=dashboardRequestOrigin({headers:{host}},undefined,"127.0.0.1",3001);
+  assert.equal(checkOrigin({method:"POST",headers:{origin:`http://${host}`}},allowed).ok,true);
+  for(const origin of ["https://evil.example","http://localhost:3000"])assert.equal(checkOrigin({method:"POST",headers:{origin}},allowed).ok,false);
+ }
+ for(const host of ["evil.example:3001","localhost:3000","localhost:3001@evil.example","localhost:3001/path","localhost:3001?x=1"])
+  assert.equal(dashboardRequestOrigin({headers:{host}},undefined,"127.0.0.1",3001),"http://127.0.0.1:3001");
+ assert.equal(dashboardRequestOrigin({headers:{host:"localhost:3001"}},"https://configured.example","127.0.0.1",3001),"https://configured.example");
+ assert.equal(dashboardRequestOrigin({headers:{host:"localhost:3001"}},undefined,"0.0.0.0",3001),"http://0.0.0.0:3001");
+});
+
+test("dashboard CSP stays self-only and does not allow external hosts", () => {
   const res = fakeRes();
-  applySecurityHeaders(res, { scriptSources: ["https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"] });
-  assert.match(res.headers["content-security-policy"], /script-src 'self' 'unsafe-inline' https:\/\/unpkg.com\/vue@3.5.13\/dist\/vue.global.prod.js/);
-  assert.doesNotMatch(res.headers["content-security-policy"], /https:;/);
+  applySecurityHeaders(res, { allowUnsafeEval: true });
+  assert.match(res.headers["content-security-policy"], /script-src 'self' 'unsafe-inline' 'unsafe-eval'/);
+  assert.doesNotMatch(res.headers["content-security-policy"], /https:\/\//);
 });

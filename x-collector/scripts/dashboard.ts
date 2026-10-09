@@ -1,10 +1,18 @@
+import { closeLive } from "../lib/collector/live";
+import { handleCollectorRequest } from "../lib/collector/http";
+import { stopManagedWorker } from "../lib/collector/runtime";
 import http from "node:http";
+import { handleArchiveRequest } from "../lib/archive/http";
+import { handleReplyRequest } from "../lib/reply/http";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { q } from "../lib/trade/pg";
 import { log, closeLogger } from "../lib/trade/logger";
 import { isLoopbackHost, enforceBasicAuth } from "../lib/trade/http-auth";
+import { SolanaMint, Handle } from "../lib/trade/schemas";
 import { intParam } from "../lib/trade/num";
 import {
-  applySecurityHeaders, checkOrigin, createRateLimiter, clientIp,
+  applySecurityHeaders, checkOrigin, createRateLimiter, clientIp, dashboardRequestOrigin,
 } from "../lib/trade/http-security";
 import { httpRequests, httpRequestDuration } from "../lib/trade/metrics";
 import {
@@ -205,13 +213,13 @@ const routes: Record<string, Handler> = {
   ),
 };
 
-const HTML = `<!DOCTYPE html>
+export const HTML = `<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <title>Solana X Collector</title>
-<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/assets/vue.js"></script>
+<script src="/assets/chart.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; }
@@ -249,10 +257,17 @@ const HTML = `<!DOCTYPE html>
   <header>
     <h1>🔍 X Collector</h1>
     <nav>
+      <a href="/collector" style="padding:8px;color:#58a6ff">Начать парсинг</a>
+      <a href="/archive" style="padding:8px;color:#58a6ff">Archive</a>
+      <a href="/reply" style="padding:8px;color:#58a6ff">Reply Guy</a>
       <button v-for="t in tabs" :key="t.id" @click="active = t.id" :class="{active: active === t.id}">{{ t.label }}</button>
     </nav>
   </header>
   <main>
+    <div class="card"><button @click="refresh" :disabled="loading">{{ loading ? 'Загрузка…' : 'Обновить' }}</button>
+      <p v-if="lastUpdated">Последняя попытка обновления: {{ lastUpdated }}</p>
+      <p v-for="(message, endpoint) in errors" :key="endpoint" class="error">{{ endpoint }}: {{ message }}</p>
+    </div>
     <div v-if="active === 'overview'">
       <div class="stats" style="margin-bottom: 16px;">
         <div class="stat" v-for="s in digest" :key="s.metric">
@@ -294,6 +309,14 @@ const HTML = `<!DOCTYPE html>
             <td class="num">{{ a.tweets_count }}</td><td class="num">{{ fmtNum(a.total_views) }}</td>
           </tr></table>
         </div>
+        <div class="card"><h2>Собранные посты</h2><p v-if="!mintFull.topTweets || !mintFull.topTweets.length">Нет собранных постов</p>
+          <table><tr><th>Автор</th><th>Текст</th><th class="num">Views</th></tr>
+          <tr v-for="tweet in mintFull.topTweets" :key="tweet.tweet_id"><td>@{{ tweet.handle }}</td><td>{{ tweet.text }}</td><td class="num">{{ fmtNum(tweet.views) }}</td></tr></table>
+        </div>
+        <div class="card"><h2>Всплески активности</h2><p v-if="!mintFull.bursts || !mintFull.bursts.length">Нет данных о всплесках</p>
+          <table><tr><th>Время</th><th class="num">Твиты</th><th class="num">Рост</th></tr>
+          <tr v-for="burst in mintFull.bursts" :key="burst.hour_start_ms"><td>{{ new Date(Number(burst.hour_start_ms)).toLocaleString() }}</td><td class="num">{{ burst.tweets }}</td><td class="num">{{ burst.growth_x }}</td></tr></table>
+        </div>
       </template>
     </div>
 
@@ -311,7 +334,7 @@ const HTML = `<!DOCTYPE html>
     <div v-if="active === 'ultra'">
       <div class="card"><h2>Ultra Score</h2>
         <table><tr><th>Mint</th><th class="num">Ultra</th><th class="num">Hype</th><th class="num">P(views набора +50%)</th></tr>
-        <tr v-for="u in ultra" :key="u.mint"><td>{{ shortMint(u.mint) }}</td><td class="num">{{ u.ultra_score }}</td><td class="num">{{ u.hype }}</td><td class="num">{{ u.views_growth_50_probability }}</td></tr></table>
+        <tr v-for="u in ultra" :key="u.mint"><td>{{ shortMint(u.mint) }}</td><td class="num">{{ u.ultra_score }}</td><td class="num">{{ u.hype }}</td><td class="num">{{ u.views_growth_50_probability ?? 'Нет модели' }}</td></tr></table>
       </div>
     </div>
 
@@ -326,6 +349,11 @@ const HTML = `<!DOCTYPE html>
     </div>
 
     <div v-if="active === 'trending'">
+      <div class="card"><h2>Популярные слова</h2>
+        <p v-if="!trending.length">Нет собранных данных</p>
+        <table><tr><th>Слово</th><th class="num">Упоминаний</th><th class="num">Авторов</th></tr>
+        <tr v-for="word in trending" :key="word.word"><td>{{ word.word }}</td><td class="num">{{ word.occurrences }}</td><td class="num">{{ word.authors }}</td></tr></table>
+      </div>
       <div class="card"><h2>Cashtag-тренды</h2>
         <table><tr><th>Tag</th><th class="num">Упоминаний</th></tr>
         <tr v-for="c in cashtags" :key="c.tag"><td>&#36;{{ c.tag }}</td><td class="num">{{ c.mentions }}</td></tr></table>
@@ -362,7 +390,7 @@ const HTML = `<!DOCTYPE html>
   </main>
 </div>
 <script>
-const { createApp, ref, onMounted, nextTick, watch } = Vue;
+const { createApp, ref, onMounted, onUnmounted, nextTick, watch } = Vue;
 createApp({
   setup() {
     const tabs = [
@@ -371,9 +399,13 @@ createApp({
       { id: 'shillers', label: 'Shillers' }, { id: 'trending', label: 'Trending' },
       { id: 'leaders', label: 'Leaders' }, { id: 'system', label: 'System' },
     ];
-    const active = ref('overview');
+    const active = ref(tabs.some(t => t.id === location.hash.slice(1)) ? location.hash.slice(1) : 'overview');
+    const errors = ref({}); const loading = ref(false); const lastUpdated = ref('');
+    let timer; let mintRequest = 0;
+    function hashChanged() { const id = location.hash.slice(1); if (tabs.some(t => t.id === id)) active.value = id; }
+    watch(active, async id => { location.hash = id; if (id !== 'mint' && mintChartInstance) { mintChartInstance.destroy(); mintChartInstance = null; } await nextTick(); if (id === 'mint') drawMint(); });
     const digest = ref([]); const tasks = ref({ queue: [], dlq: 0 });
-    const shillers = ref([]); const cashtags = ref([]);
+    const shillers = ref([]); const cashtags = ref([]); const trending = ref([]);
     const workers = ref([]); const accounts = ref([]);
     const hype = ref([]); const signals = ref([]); const ultra = ref([]);
     const leaders = ref([]); const pagerank = ref([]);
@@ -381,8 +413,13 @@ createApp({
     const mintChart = ref(null);
     let mintChartInstance = null;
 
-    async function api(path) { const r = await fetch(path); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+    async function api(path) {
+      const r = await fetch(path, { signal: AbortSignal.timeout(65000) });
+      if (!r.ok) { let message = 'HTTP ' + r.status; try { message += ': ' + (await r.json()).error; } catch {} throw new Error(message); }
+      return r.json();
+    }
     function fmtNum(n) {
+      if (n === null || n === undefined) return '—';
       const v = Number(n); if (!isFinite(v)) return n;
       if (v >= 1e9) return (v/1e9).toFixed(2)+'B';
       if (v >= 1e6) return (v/1e6).toFixed(2)+'M';
@@ -392,42 +429,49 @@ createApp({
     function shortMint(m) { return m ? m.slice(0,4)+'…'+m.slice(-4) : ''; }
 
     async function refresh() {
-      try {
-        const r = await Promise.all([
-          api('/api/digest'), api('/api/tasks'), api('/api/shillers?limit=50'),
-          api('/api/cashtags?limit=30'), api('/api/workers'), api('/api/accounts'),
-          api('/api/hype/top?limit=30'), api('/api/signals?limit=30'),
-          api('/api/ultra/top?limit=30'), api('/api/leaders?limit=50'), api('/api/pagerank?limit=50'),
-        ]);
-        digest.value = r[0]; tasks.value = r[1]; shillers.value = r[2];
-        cashtags.value = r[3]; workers.value = r[4]; accounts.value = r[5];
-        hype.value = r[6]; signals.value = r[7]; ultra.value = r[8];
-        leaders.value = r[9]; pagerank.value = r[10];
-      } catch (e) { console.error(e); }
+      if (loading.value) return;
+      loading.value = true;
+      const requests = [
+        ['/api/digest', digest], ['/api/tasks', tasks], ['/api/shillers?limit=50', shillers],
+        ['/api/cashtags?limit=30', cashtags], ['/api/trending?limit=50', trending], ['/api/workers', workers], ['/api/accounts', accounts],
+        ['/api/hype/top?limit=30', hype], ['/api/signals?limit=30', signals],
+        ['/api/ultra/top?limit=30', ultra], ['/api/leaders?limit=50', leaders], ['/api/pagerank?limit=50', pagerank],
+      ];
+      await Promise.allSettled(requests.map(async ([endpoint, target]) => {
+        try { target.value = await api(endpoint); delete errors.value[endpoint]; }
+        catch (e) { errors.value[endpoint] = e.message || String(e); }
+      }));
+      lastUpdated.value = new Date().toLocaleTimeString(); loading.value = false;
+    }
+    function drawMint() {
+      if (!mintChart.value || !mintFull.value) return;
+      if (mintChartInstance) mintChartInstance.destroy();
+      const f = mintFull.value.dailyFunnel || [];
+      mintChartInstance = new Chart(mintChart.value.getContext('2d'), {
+        type: 'line',
+        data: { labels: f.map(x => String(x.day).slice(0,10)), datasets: [
+          { label: 'Твиты', data: f.map(x => Number(x.tweets)), borderColor: '#58a6ff', tension: 0.3 },
+        ]},
+        options: { responsive: true, maintainAspectRatio: false,
+          scales: { x: { ticks: { color: '#8b949e' } }, y: { ticks: { color: '#8b949e' } } } }
+      });
     }
     async function loadMint() {
+      const request = ++mintRequest;
       mintError.value = ''; mintFull.value = null;
       if (mintChartInstance) { mintChartInstance.destroy(); mintChartInstance = null; }
-      const mint = mintInput.value.trim(); if (!mint) return;
+      const mint = mintInput.value.trim(); if (!mint) { mintError.value = 'Введите mint address'; return; }
       try {
-        mintFull.value = await api('/api/mint/full?mint=' + encodeURIComponent(mint));
-        await nextTick();
-        if (!mintChart.value) return;
-        const f = mintFull.value.dailyFunnel || [];
-        const ctx = mintChart.value.getContext('2d');
-        if (mintChartInstance) mintChartInstance.destroy();
-        mintChartInstance = new Chart(ctx, {
-          type: 'line',
-          data: { labels: f.map(x => x.day), datasets: [
-            { label: 'Твиты', data: f.map(x => x.tweets), borderColor: '#58a6ff', tension: 0.3 },
-          ]},
-          options: { responsive: true, maintainAspectRatio: false,
-            scales: { x: { ticks: { color: '#8b949e' } }, y: { ticks: { color: '#8b949e' } } } }
-        });
-      } catch (e) { mintError.value = String(e.message || e); }
+        const data = await api('/api/mint/full?mint=' + encodeURIComponent(mint));
+        if (request !== mintRequest) return;
+        mintFull.value = data;
+        if (!data.summary) mintError.value = 'Для этого mint нет собранных данных';
+        await nextTick(); drawMint();
+      } catch (e) { if (request === mintRequest) mintError.value = String(e.message || e); }
     }
-    onMounted(() => { refresh(); setInterval(refresh, 30000); });
-    return { tabs, active, digest, tasks, shillers, cashtags, workers, accounts,
+    onMounted(() => { location.hash = active.value; refresh(); timer = setInterval(refresh, 30000); addEventListener('hashchange', hashChanged); });
+    onUnmounted(() => { clearInterval(timer); removeEventListener('hashchange', hashChanged); if (mintChartInstance) mintChartInstance.destroy(); });
+    return { errors, loading, lastUpdated, refresh, tabs, active, digest, tasks, shillers, cashtags, trending, workers, accounts,
       hype, signals, ultra, leaders, pagerank,
       mintInput, mintFull, mintError, mintChart, loadMint, fmtNum, shortMint };
   },
@@ -436,7 +480,7 @@ createApp({
 </body>
 </html>`;
 
-const server = http.createServer(async (req, res) => {
+export const server = http.createServer(async (req, res) => {
   const start = Date.now();
   const pathname = (() => {
     try { return new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).pathname; }
@@ -451,10 +495,6 @@ const server = http.createServer(async (req, res) => {
   // Security headers применяются ко всем ответам, включая 401/429.
   applySecurityHeaders(res, {
     allowUnsafeEval: true,
-    scriptSources: [
-      "https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js",
-      "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js",
-    ],
   });
 
   if (!allowRequest(clientIp(req))) {
@@ -472,10 +512,17 @@ const server = http.createServer(async (req, res) => {
 
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    if (url.pathname === '/reply' || url.pathname === '/reply.js' || url.pathname.startsWith('/api/reply/')) {
+      await handleReplyRequest(req, res);
+      finish(res.statusCode);
+      return;
+    }
+    if (await handleCollectorRequest(req,res,dashboardRequestOrigin(req, DASHBOARD_ORIGIN, HOST, PORT))) {finish(res.statusCode);return;}
+    if (await handleArchiveRequest(req,res)) { finish(res.statusCode); return; }
     const route = routes[url.pathname];
     const mutating = MUTATING_ROUTES.has(url.pathname);
     if (mutating) {
-      const origin = checkOrigin(req, DASHBOARD_ORIGIN);
+      const origin = checkOrigin(req, dashboardRequestOrigin(req, DASHBOARD_ORIGIN, HOST, PORT));
       if (!origin.ok) {
         res.statusCode = 403;
         res.end(JSON.stringify({ error: origin.reason }));
@@ -497,6 +544,16 @@ const server = http.createServer(async (req, res) => {
       finish(405);
       return;
     }
+    const assets: Record<string, string> = {
+      '/assets/vue.js': path.join(path.dirname(require.resolve('vue/package.json')), 'dist/vue.global.prod.js'),
+      '/assets/chart.js': path.join(path.dirname(require.resolve('chart.js')), 'chart.umd.js'),
+    };
+    if (assets[url.pathname]) {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.end(await fs.readFile(assets[url.pathname]));
+      finish(200);
+      return;
+    }
     if (url.pathname === "/" || url.pathname === "/index.html") {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.end(HTML);
@@ -504,6 +561,20 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (route) {
+      const mint = url.searchParams.get('mint');
+      const handle = url.searchParams.get('handle');
+      const mintRequired = url.pathname.startsWith('/api/mint/') || ['/api/sentiment/mint', '/api/kol/mint', '/api/timeseries/mint', '/api/timeseries/trend', '/api/similar', '/api/ml/predict'].includes(url.pathname);
+      const handleRequired = ['/api/sentiment/author', '/api/author/reputation'].includes(url.pathname);
+      const granularity = url.searchParams.get('granularity');
+      if ((mintRequired && !mint) || (mint !== null && !SolanaMint.safeParse(mint).success) ||
+          (handleRequired && !handle) || (handle !== null && !Handle.safeParse(handle).success) ||
+          (granularity !== null && !['1m', '1h', '1d', '1w'].includes(granularity))) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'invalid or missing mint, handle or granularity' }));
+        finish(400);
+        return;
+      }
       const data = await route({ url, method: req.method ?? "GET" });
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify(data));
@@ -525,17 +596,21 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.on("error", (e) => log.error("dashboard server error", { error: String(e) }));
-server.listen(PORT, HOST, () => {
+if (require.main === module) server.listen(PORT, HOST, () => {
   log.info("dashboard listening", { host: HOST, port: PORT, authenticated: Boolean(AUTH_USER && AUTH_PASS) });
   console.log(`\n🌐 Dashboard: http://${HOST}:${PORT}\n`);
 });
 
-function shutdown(signal: string) {
+async function shutdown(signal: string) {
   log.info("shutting down dashboard", { signal });
-  server.close(() => {
+  closeLive();
+  const closed = new Promise<void>(resolve=>server.close(()=>resolve()));
+  await stopManagedWorker();
+  await closed;
+  {
     closeLogger();
     process.exit(0);
-  });
+  }
 }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
