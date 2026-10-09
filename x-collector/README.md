@@ -8,6 +8,13 @@ The repository contains the complete numbered 001–018 chain plus the graph-mon
 
 ## Setup
 
+The migration manifest in `lib/trade/migrations.ts` is shared by the runner and
+integration tests. It includes migration `019_account_roles.sql`, which gives
+existing accounts the `collector` role and supports separate publisher accounts.
+Run `npm run migrate` before starting workers after upgrading. The old
+`012_ai_reply_guy.sql` prototype is not part of this manifest; the supported
+Reply Guy schema uses the isolated `012_reply_guy.sql` tables instead.
+
 Use a dedicated PostgreSQL database named x_collector. Do not point this service at the main application database. The existing memecoin-intelligence PostgreSQL publishes port 5434; create a separate x_collector database there (or use another dedicated PostgreSQL instance), then copy .env.example to .env and set DATABASE_URL plus a permanent random 32-byte MASTER_KEY (64 hexadecimal characters or Base64). Keep the .env file and key out of Git. Losing or changing MASTER_KEY makes stored X sessions unreadable.
 
 From the repository root:
