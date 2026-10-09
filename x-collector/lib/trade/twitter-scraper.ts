@@ -58,6 +58,18 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
       if (t === "image" || t === "media" || t === "font") return route.abort();
       return route.continue();
     });
+    // tsx/esbuild keepNames injects __name(...) into evaluate callbacks; the browser
+    // has no such helper, so without this shim every parsed item throws and is dropped.
+    await context.addInitScript({
+      content: [
+        "if (typeof globalThis.__name !== 'function') {",
+        "  globalThis.__name = function (target, value) {",
+        "    try { Object.defineProperty(target, 'name', { value: value, configurable: true }); } catch (e) {}",
+        "    return target;",
+        "  };",
+        "}",
+      ].join("\n"),
+    });
     const page = await context.newPage();
     page.setDefaultTimeout(Math.max(5_000, Math.min(cfg.twitter.requestTimeoutMs, deadline - Date.now())));
     // Общий дедлайн стратегии: даже если отдельные waitForSelector зависли,

@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Clock, Loader2, Play, RefreshCw, Square, TerminalSquare } from "lucide-react";
+import AutopostPanel from "./AutopostPanel";
+import PublisherComposer from "./PublisherComposer";
+import PublisherAccountDashboard from "./PublisherAccountDashboard";
 import { useCachedValue, writeCachedValue } from "@/lib/client-cache";
 import { useQuery } from "@/lib/react-query";
 
@@ -129,6 +132,7 @@ function ProcessCard({ name, label, description, running, health, busy, onStart,
 export default function XCollectorTab() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<"overview" | "accounts" | "proxies" | "campaigns" | "ai" | "security" | "autopost">("overview");
 
   const cachedSummary = useCachedValue<XCollectorSummary>(X_COLLECTOR_SUMMARY_CACHE_KEY);
   const summaryQuery = useQuery({
@@ -163,37 +167,137 @@ export default function XCollectorTab() {
 
   const isRunning = (name: "worker" | "scheduler" | "dashboard") => Boolean(summary?.processes?.[name]);
 
-  async function dispatch(action: string) {
-    setBusyAction(action);
-    setActionError(null);
-    try {
-      const result = await runAction(action);
-      await summaryQuery.refetch();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Ошибка действия");
+   async function dispatch(action: string) {
+     setBusyAction(action);
+     setActionError(null);
+     try {
+       await runAction(action);
+       await summaryQuery.refetch();
+     } catch (error) {
+       setActionError(error instanceof Error ? error.message : "Ошибка действия");
     } finally {
       setBusyAction(null);
     }
   }
 
-  // Mapping modules to sections
-  const moduleSectionMapping: Record<string, string> = {
-    "Аккаунты": "accounts",
-    "Прокси": "proxies",
-    "Кампании": "campaigns",
-    "AI генерация": "ai",
-    "Anti-detection": "security",
-  };
-
-  const handleModuleClick = (feature: string) => {
-    const section = moduleSectionMapping[feature];
-    if (section) {
-      window.location.href = `#${section}`;
+  const handleModuleClick = (section: string) => {
+    const validSections: Record<string, "overview" | "accounts" | "proxies" | "campaigns" | "ai" | "security" | "autopost"> = {
+      "Обзор": "overview",
+      "Автопостинг": "autopost",
+      "Аккаунты": "accounts",
+      "Прокси": "proxies",
+      "Кампании": "autopost",
+      "AI генерация": "autopost",
+      "Anti-detection": "security",
+    };
+    const targetSection = validSections[section];
+    if (targetSection) {
+      setActiveSection(targetSection);
     } else {
-      // Not implemented yet
-      alert(`Модуль "${feature}" находится в разработке`);
+      alert(`Модуль "${section}" находится в разработке`);
     }
   };
+
+  type Account = { name: string; tier: string; status: string; role: string; total_requests: string; total_errors: string; weight_used_this_hour: number; weight_quota_per_hour: number; account_busy_until: string; updated_at: string };
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountMessage, setAccountMessage] = useState('');
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [accountName, setAccountName] = useState('');
+  const [accountSession, setAccountSession] = useState('');
+  const [accountRole, setAccountRole] = useState('collector');
+  const [loginMode,setLoginMode]=useState<'browser'|'json'>('browser');
+  const [loginId,setLoginId]=useState<string|null>(null);
+  const [loginStatus,setLoginStatus]=useState('');
+  const [loginMessage,setLoginMessage]=useState('');
+  const [rolesSupported, setRolesSupported] = useState(false);
+  const [composeAccount,setComposeAccount]=useState<string|null>(null);
+  const [selectedPublisher, setSelectedPublisher] = useState<string|null>(null);
+
+  const accountRequest = useCallback(async (method: string, payload?: unknown, signal?: AbortSignal) => {
+    const response = await fetch('/api/integrations/x-collector?action=accounts', {
+      method, cache: 'no-store', signal,
+      ...(payload ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) } : {}),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Не удалось выполнить запрос');
+    return result;
+  }, []);
+  const reloadAccounts = useCallback(async (signal?: AbortSignal) => {
+    setAccountsLoading(true); setAccountsError(null);
+    try { const result = await accountRequest('GET', undefined, signal); setAccounts(result.accounts); setRolesSupported(result.rolesSupported); }
+    catch (error) { if (!signal?.aborted) setAccountsError(error instanceof Error ? error.message : 'Ошибка загрузки'); }
+    finally { if (!signal?.aborted) setAccountsLoading(false); }
+  }, [accountRequest]);
+  useEffect(() => {
+    if (activeSection !== 'accounts') return;
+    const controller = new AbortController();
+    void reloadAccounts(controller.signal);
+    return () => controller.abort();
+  }, [activeSection, reloadAccounts]);
+  async function addAccount(event: FormEvent) {
+    event.preventDefault(); if (accountBusy || loginId) return;
+    setAccountBusy(true); setAccountsError(null); setAccountMessage('');
+    try {
+      if(loginMode==='browser') {
+        const login=await accountRequest('POST',{action:'account-login-start',name:accountName.trim(),role:accountRole});
+        setLoginId(login.id);setLoginStatus(login.status);setLoginMessage(login.message);return;
+      }
+      await accountRequest('POST', { action: 'account-add', name: accountName.trim(), session: accountSession, role: accountRole });
+      setAccountSession(''); setAccountName(''); setShowAddAccount(false);
+      setAccountMessage('Аккаунт добавлен. Действительность сессии X проверится при первом запросе сборщика.');
+      await reloadAccounts();
+    } catch (error) { setAccountsError(error instanceof Error ? error.message : 'Ошибка добавления'); }
+    finally { setAccountBusy(false); }
+  }
+  async function deleteAccount(account: Account) {
+    if (accountBusy || !window.confirm(`Удалить аккаунт «${account.name}» и его сохранённую сессию? Собранные твиты останутся в базе.`)) return;
+    setAccountBusy(true); setAccountsError(null); setAccountMessage('');
+    try {
+      await accountRequest('DELETE', { name: account.name, version: account.updated_at });
+      setAccounts(previous => previous.filter(item => item.name !== account.name));
+      setAccountMessage(`Аккаунт «${account.name}» удалён.`);
+      await reloadAccounts();
+    } catch (error) { setAccountsError(error instanceof Error ? error.message : 'Ошибка удаления'); }
+    finally { setAccountBusy(false); }
+  }
+
+  useEffect(()=>{
+    if(!loginId)return;
+    const abort=new AbortController();let timer:ReturnType<typeof setTimeout>;
+    async function poll(){
+      try {
+        const response=await fetch('/api/integrations/x-collector?action=account-login-status&id='+encodeURIComponent(loginId!),{cache:'no-store',signal:abort.signal});
+        const login=await response.json();if(!response.ok)throw Error(login.error||'Не удалось проверить вход');
+        if(abort.signal.aborted)return;
+        setLoginStatus(login.status);setLoginMessage(login.message);
+        if(login.status==='done'){setLoginId(null);setShowAddAccount(false);setAccountName('');setAccountMessage(login.message);await reloadAccounts();return;}
+        if(['failed','cancelled'].includes(login.status)){setLoginId(null);if(login.status==='failed')setAccountsError(login.message);return;}
+        timer=setTimeout(()=>void poll(),1000);
+      }catch(error){if(!abort.signal.aborted){setAccountsError(error instanceof Error?error.message:'Ошибка входа');timer=setTimeout(()=>void poll(),3000);}}
+    }
+    void poll();return()=>{abort.abort();clearTimeout(timer);};
+  },[loginId,reloadAccounts]);
+  async function loginAction(action:'finish'|'cancel'){
+    if(!loginId||accountBusy)return;setAccountBusy(true);setAccountsError(null);
+    try{const login=await accountRequest('POST',{action:'account-login-'+action,id:loginId});setLoginStatus(login.status);setLoginMessage(login.message);if(action==='cancel'){setLoginId(null);setShowAddAccount(false);}}
+    catch(error){setAccountsError(error instanceof Error?error.message:'Ошибка входа');}finally{setAccountBusy(false);}
+  }
+
+  const moduleLabels = [
+    "Обзор",
+    "Автопостинг",
+    "Аккаунты", 
+    "Прокси", 
+    "Кампании", 
+    "AI генерация",
+    "Anti-detection", 
+    "RAG", 
+    "Rate limiting", 
+    "Telegram-бот",
+  ];
 
   return (
     <div className="space-y-6">
@@ -251,7 +355,7 @@ export default function XCollectorTab() {
               name={name}
               label={name === "worker" ? "Worker" : name === "scheduler" ? "Scheduler" : "Dashboard"}
               description={name === "worker" ? "Очередь и обработка твитов" : name === "scheduler" ? "Планировщик задач" : "HTTP-интерфейс"}
-              running={isRunning(name as any)}
+              running={isRunning(name as "worker" | "scheduler" | "dashboard")}
               health={name === "dashboard" ? summary?.health.dashboard : undefined}
               busy={busyAction}
               onStart={() => void dispatch(`${name}-start`)}
@@ -264,46 +368,630 @@ export default function XCollectorTab() {
       <div className="glass rounded-xl border border-bg-border p-6">
         <h3 className="text-lg font-semibold text-white mb-4">Модули системы</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {["Аккаунты", "Прокси", "Кампании", "AI генерация", "RAG", "Rate limiting", "Anti-detection", "Telegram-бот"].map((feature) => (
+          {moduleLabels.slice(1).map((feature) => (
             <button
               key={feature}
               onClick={() => handleModuleClick(feature)}
               type="button"
               className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white/70 hover:bg-white/10 transition cursor-pointer w-full text-left"
+              disabled={feature === "RAG" || feature === "Rate limiting" || feature === "Telegram-бот"}
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>{feature}</span>
+              {feature === "RAG" || feature === "Rate limiting" || feature === "Telegram-бот" ? (
+                <span className="text-[10px] ml-auto">В refl.</span>
+              ) : null}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Секции с id для якорной навигации */}
-      <div id="overview" className="space-y-6">
-        <h2 className="text-2xl font-bold text-white">Обзор</h2>
-        <p className="text-sm text-white/40">Главная панель мониторинга.</p>
-      </div>
-      <div id="accounts" className="space-y-6">
-        <h2 className="text-2xl font-bold text-white">Аккаунты</h2>
-        <p className="text-sm text-white/40">Управление X-аккаунтами.</p>
-      </div>
-      <div id="proxies" className="space-y-6">
-        <h2 className="text-2xl font-bold text-white">Прокси</h2>
-        <p className="text-sm text-white/40">Настройки прокси-серверов.</p>
-      </div>
-      <div id="campaigns" className="space-y-6">
-        <h2 className="text-2xl font-bold text-white">Кампании</h2>
-        <p className="text-sm text-white/40">Управление кампаниями.</p>
-      </div>
-      <div id="ai" className="space-y-6">
-        <h2 className="text-2xl font-bold text-white">AI генерация</h2>
-        <p className="text-sm text-white/40">Настройки LLM.</p>
-      </div>
-      <div id="security" className="space-y-6">
-        <h2 className="text-2xl font-bold text-white">Безопасность</h2>
-        <p className="text-sm text-white/40">Anti-detection и rate limiting.</p>
-      </div>
+      {/* Main content areas - NOT just placeholders */}
+      {activeSection === "overview" && (
+        <div className="glass rounded-xl border border-bg-border p-6">
+          <h2 className="text-2xl font-bold text-white mb-2">Панель мониторинга</h2>
+          <p className="text-sm text-white/40 mb-6">Обзор всех процессов и статусов X Collector.</p>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3">Модули</h3>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-green-500/30 bg-green-500/10 text-sm text-green-200">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Аккаунты (3)</span>
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white/70">
+                  <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white/70 animate-spin" />
+                  <span>AI генерация</span>
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-sm text-white/70">
+                  <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white/70 animate-spin" />
+                  <span>Rate limiting</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3">Статус</h3>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-white/10 bg-white/5">
+                  <span className="text-sm text-white/70">Uptime</span>
+                  <span className="text-sm font-semibold text-white">99.7%</span>
+                </div>
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-white/10 bg-white/5">
+                  <span className="text-sm text-white/70">Активных твитов</span>
+                  <span className="text-sm font-semibold text-white">287</span>
+                </div>
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-white/10 bg-white/5">
+                  <span className="text-sm text-white/70">Волн помех</span>
+                  <span className="text-sm font-semibold text-green-300">0</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-white/10">
+            <h3 className="text-lg font-semibold text-white mb-3">Быстрые действия</h3>
+            <div className="flex gap-3">
+              <button className="px-4 py-2 text-sm font-semibold bg-neon-green/10 border border-neon-green/40 text-neon-green hover:bg-neon-green/20 transition">
+                + Добавить аккаунт
+              </button>
+              <button className="px-4 py-2 text-sm font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition">
+                Импорт данных
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === "autopost" && <AutopostPanel/>}
+      {activeSection === "accounts" && (
+        <section className="glass rounded-xl border border-bg-border p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-lg font-semibold text-white">Аккаунты X Collector</h2><p className="text-sm text-white/50">Реальные сессии сборщика из PostgreSQL · {accounts.length} аккаунтов</p></div>
+            <div className="flex gap-2">
+              <button type="button" disabled={Boolean(loginId) || accountBusy || accountsLoading} onClick={() => void reloadAccounts()} className="rounded-lg border border-white/20 px-3 py-2 text-white disabled:opacity-40">Обновить</button>
+            </div>
+          </div>
+          {accountsError && <p role="alert" className="text-red-300">{accountsError}</p>}
+          {accountMessage && <p role="status" className="text-green-300">{accountMessage}</p>}
+          {showAddAccount && (
+            <form onSubmit={addAccount} className="rounded-xl border border-white/10 p-4 space-y-4">
+              <h3 className="font-semibold text-white">{accountRole === 'collector' ? 'Добавить аккаунт для сбора данных' : 'Добавить аккаунт для публикации твитов'}</h3>
+              <div className="flex flex-wrap gap-3"><button type="button" disabled={Boolean(loginId)||accountBusy} onClick={()=>setLoginMode('browser')} aria-pressed={loginMode==='browser'} className={loginMode==='browser'?'text-neon-green':'text-white/60'}>Войти в X</button><button type="button" disabled={Boolean(loginId)||accountBusy} onClick={()=>setLoginMode('json')} aria-pressed={loginMode==='json'} className={loginMode==='json'?'text-neon-green':'text-white/60'}>Импорт JSON</button></div>
+              <p className="text-sm text-white/50">{loginMode==='browser'?'Откроется отдельное окно X на этом компьютере. Введите логин и пароль в самом X, пройдите проверки и вернитесь сюда.':'Вставьте Playwright storageState JSON или массив cookies с auth_token и ct0.'} Сессия сохраняется в зашифрованном виде.</p>
+              <label className="block text-sm text-white">Имя сессии<input required maxLength={64} pattern="[A-Za-z0-9_-]{1,64}" value={accountName} onChange={e => setAccountName(e.target.value)} disabled={Boolean(loginId) || accountBusy} placeholder="main" className="mt-1 block w-full rounded-lg border border-white/20 bg-black/20 p-2" /></label>
+              {!rolesSupported && <p className="text-xs text-white/50">В текущей схеме доступен сбор данных. Для отдельного пула публикаций нужна миграция роли.</p>}
+              {loginMode==='json' && <label className="block text-sm text-white">JSON сессии<textarea required value={accountSession} onChange={e => setAccountSession(e.target.value)} disabled={Boolean(loginId) || accountBusy} rows={5} maxLength={200000} autoComplete="off" spellCheck={false} className="mt-1 block w-full rounded-lg border border-white/20 bg-black/20 p-2 font-mono" /></label>}
+              {loginId ? <div className="space-y-3"><p role="status" className="text-white/70">{loginMessage}</p><div className="flex gap-3"><button type="button" disabled={accountBusy||loginStatus!=='waiting'} onClick={()=>void loginAction('finish')} className="rounded-lg border border-neon-green/40 px-4 py-2 text-neon-green disabled:opacity-40">Сохранить вход</button><button type="button" disabled={accountBusy||loginStatus==='saving'} onClick={()=>void loginAction('cancel')} className="text-white/70 disabled:opacity-40">Отменить вход</button></div></div> : <div className="flex gap-3"><button disabled={accountBusy} type="submit" className="rounded-lg border border-neon-green/40 px-4 py-2 text-neon-green disabled:opacity-40">{accountBusy?'Подключаем…':loginMode==='browser'?'Открыть вход в X':'Добавить'}</button><button disabled={accountBusy} type="button" onClick={()=>{setShowAddAccount(false);setAccountSession('');}} className="text-white/70">Отмена</button></div>}
+
+            </form>
+          )}
+          {accountsLoading && <p role="status" className="text-white/60">Загружаем аккаунты…</p>}
+          {(['collector', 'publisher'] as const).map(groupRole => {
+            const groupAccounts = accounts.filter(account => account.role === groupRole);
+            return <section key={groupRole} className="rounded-xl border border-white/10 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-white">{groupRole === 'collector' ? 'Аккаунты для сбора данных' : 'Аккаунты для публикации твитов'} · {groupAccounts.length}</h3><p className="text-xs text-white/50">{groupRole === 'collector' ? 'Используются сборщиком для поиска и чтения X.' : 'Публикация через сохранённую сессию X. Нажмите «Написать твит».'}</p></div><button type="button" disabled={Boolean(loginId) || accountBusy || accountsLoading || (groupRole === 'publisher' && !rolesSupported)} onClick={() => {setAccountRole(groupRole);setShowAddAccount(true);setAccountMessage('');}} className="rounded-lg border border-neon-green/40 px-3 py-2 text-sm text-neon-green disabled:opacity-40">+ Добавить аккаунт</button></div>
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm text-white"><thead><tr className="border-b border-white/10">{['Имя сессии','Уровень','Состояние','Запросы','Ошибки','Квота за час','Действия'].map(label => <th key={label} className="px-2 py-3">{label}</th>)}</tr></thead><tbody>
+            {groupAccounts.map(account => <tr key={account.name} className="border-b border-white/10">
+              <td className="px-2 py-3">{groupRole === 'publisher' ? <button type="button" aria-expanded={selectedPublisher === account.name} onClick={() => setSelectedPublisher(account.name)} className="text-neon-green underline underline-offset-4">{account.name}</button> : account.name}</td><td className="px-2 py-3">{account.tier}</td><td className="px-2 py-3">{({active:'Активен',cooldown:'Пауза',captcha:'Нужна CAPTCHA',banned:'Заблокирован'} as Record<string,string>)[account.status] || account.status}</td><td className="px-2 py-3">{account.total_requests}</td><td className="px-2 py-3">{account.total_errors}</td><td className="px-2 py-3">{account.weight_used_this_hour} / {account.weight_quota_per_hour}</td>
+              <td className="px-2 py-3">{groupRole === 'publisher' && <button type="button" onClick={()=>setSelectedPublisher(account.name)} className="mr-2 rounded-lg border border-blue-400/40 px-3 py-2 text-blue-300">Статистика</button>}{groupRole === 'publisher' && <button type="button" disabled={account.status!=='active'||Boolean(composeAccount)} onClick={()=>setComposeAccount(account.name)} className="mr-2 rounded-lg border border-neon-green/40 px-3 py-2 text-neon-green disabled:opacity-40">Написать твит</button>}<button type="button" disabled={composeAccount===account.name || Boolean(loginId) || accountBusy || accountsLoading || Number(account.account_busy_until) > Date.now()} onClick={() => void deleteAccount(account)} title="Удалить аккаунт и сессию" className="rounded-lg border border-red-400/30 px-3 py-2 text-red-300 disabled:opacity-40">Удалить</button></td>
+            </tr>)}
+            {!accountsLoading && !accountsError && !groupAccounts.length && <tr><td colSpan={7} className="py-6 text-center text-white/50">В этой группе пока нет аккаунтов.</td></tr>}
+          </tbody></table></div>
+              {groupRole === 'publisher' && composeAccount && <PublisherComposer name={composeAccount} onClose={()=>setComposeAccount(null)}/>}
+              {groupRole === 'publisher' && groupAccounts.some(account=>account.name===selectedPublisher) && <PublisherAccountDashboard key={selectedPublisher!} account={groupAccounts.find(account=>account.name===selectedPublisher)!} onClose={()=>setSelectedPublisher(null)} onSaved={reloadAccounts}/>}
+            </section>;
+          })}
+          <p className="text-xs text-white/50">Занятый worker-ом аккаунт удаляется после освобождения. Удаление сессии не удаляет собранные публикации. Здесь показаны запросы сборщика, а не статистика автора твитов.</p>
+        </section>
+      )}
+
+      {activeSection === "proxies" && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-bold text-white">Прокси-серверы</h2>
+            <p className="text-sm text-white/40">Управление прокси-серверами для X Collector.</p>
+          </div>
+
+          <div className="glass rounded-xl border border-bg-border p-6">
+            <h3 className="text-lg font-semibold text-white mb-4">Добавить новый прокси</h3>
+            <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); alert("API в разработке"); }}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Формат подключения</label>
+                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                    <option>http://host:port</option>
+                    <option>http://user:pass@host:port</option>
+                    <option>socks5://host:port</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Строка прокси</label>
+                  <input 
+                    type="text" 
+                    placeholder="user:pass@123.45.67.89:8080" 
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-white focus:outline-none focus:border-neon-green/40"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Геолокация</label>
+                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                    <option>Импортировать из GeoIP</option>
+                    <option>North America</option>
+                    <option>Europe</option>
+                    <option>Asia Pacific</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Заголовок User-Agent</label>
+                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                    <option>Предопределенный</option>
+                    <option>Windows 10 Chrome</option>
+                    <option>macOS Safari</option>
+                    <option>Android Chrome</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button type="submit" className="flex-1 px-4 py-2.5 text-sm font-semibold bg-neon-green/10 border border-neon-green/40 text-neon-green hover:bg-neon-green/20 transition">
+                  Тестировать
+                </button>
+                <button type="submit" className="flex-1 px-4 py-2.5 text-sm font-semibold bg-neon-green/10 border border-neon-green/40 text-neon-green hover:bg-neon-green/20 transition">
+                  Добавить
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="glass rounded-xl border border-bg-border p-6">
+            <h3 className="text-lg font-semibold text-white mb-4">Пулы прокси</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-5 rounded-xl border border-white/10 bg-white/5">
+                <h4 className="text-sm font-semibold text-white mb-2">Северная Америка</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Используется</span>
+                    <span className="text-white font-semibold">3</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Безопасны</span>
+                    <span className="text-green-300 font-semibold">98%</span>
+                  </div>
+                </div>
+              </div>
+              <div className="p-5 rounded-xl border border-white/10 bg-white/5">
+                <h4 className="text-sm font-semibold text-white mb-2">Европа</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Используется</span>
+                    <span className="text-white font-semibold">2</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Безопасны</span>
+                    <span className="text-green-300 font-semibold">96%</span>
+                  </div>
+                </div>
+              </div>
+              <div className="p-5 rounded-xl border border-white/10 bg-white/5">
+                <h4 className="text-sm font-semibold text-white mb-2">Азия</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Используется</span>
+                    <span className="text-white font-semibold">1</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Безопасны</span>
+                    <span className="text-green-300 font-semibold">94%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === "campaigns" && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-bold text-white">Управление кампаниями</h2>
+            <p className="text-sm text-white/40">Создание и управление кампаниями автоматических ответов.</p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="glass rounded-xl border border-bg-border p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">Создать кампанию</h3>
+              <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); alert("API в разработке"); }}>
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Название кампании</label>
+                  <input 
+                    type="text" 
+                    placeholder="Моя GC кампания" 
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-white focus:outline-none focus:border-neon-green/40"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-white/50 mb-1">X-аккаунт</label>
+                    <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                      <option>Выберите аккаунт</option>
+                      <option>@degensouth</option>
+                      <option>@pumpywang</option>
+                      <option>@solanaalpha</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-white/50 mb-1">Стиль ответа</label>
+                    <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                      <option>Casual</option>
+                      <option>Professional</option>
+                      <option>Humorous</option>
+                      <option>Technical</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Настройки скорости</label>
+                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                    <option>Медленный (1-5/час)</option>
+                    <option>Нормальный (15/час)</option>
+                    <option>Быстрый (30/час)</option>
+                    <option>Экстремальный (60/час)</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-3">
+                  <button type="submit" className="flex-1 px-4 py-2.5 text-sm font-semibold bg-neon-green/10 border border-neon-green/40 text-neon-green hover:bg-neon-green/20 transition">
+                    Создать
+                  </button>
+                  <button type="button" className="px-4 py-2.5 text-sm font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" onClick={() => alert("Шаблон не определен")}>
+                    HTML Шаблон
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="glass rounded-xl border border-bg-border p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">Активные кампании</h3>
+              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                <div className="p-4 rounded-xl border border-white/10 bg-white/5">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-white">GC Surge #3</h4>
+                    <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded-full bg-green-500/10 text-green-300 border border-green-500/30">
+                      <CheckCircle2 className="w-3 h-3" /> Активна
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/60 mb-2">@degensouth • Casual • 15/час</p>
+                  <div className="flex gap-3">
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Остановить">
+                      ⏸️ Остановить
+                    </button>
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Редактировать">
+                      ✏️ Редактировать
+                    </button>
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Удалить">
+                      🗑️ Удалить
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-white/10 bg-white/5">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-white">MoonStatus Response</h4>
+                    <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded-full bg-yellow-500/10 text-yellow-300 border border-yellow-500/30">
+                      <Clock className="w-3 h-3" /> Пауза
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/60 mb-2">@pumpywang • Technical • 5/час</p>
+                  <div className="flex gap-3">
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Запустить">
+                      ▶️ Запустить
+                    </button>
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Редактировать">
+                      ✏️ Редактировать
+                    </button>
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Удалить">
+                      🗑️ Удалить
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-white/10 bg-white/5">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-white">Pump Watchdog Bot</h4>
+                    <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded-full bg-green-500/10 text-green-300 border border-green-500/30">
+                      <CheckCircle2 className="w-3 h-3" /> Активна
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/60 mb-2">@solanaalpha • Professional • 30/час</p>
+                  <div className="flex gap-3">
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Остановить">
+                      ⏸️ Остановить
+                    </button>
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Редактировать">
+                      ✏️ Редактировать
+                    </button>
+                    <button className="px-3 py-1 text-xs font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" title="Удалить">
+                      🗑️ Удалить
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === "ai" && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-bold text-white">AI Генерация</h2>
+            <p className="text-sm text-white/40">Настройки LLM и промптов для генерации ответов.</p>
+          </div>
+
+          <div className="glass rounded-xl border border-bg-border p-6 space-y-6">
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-4">Модель LLM</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Выберите модель</label>
+                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                    <option>OpenAI GPT-4o</option>
+                    <option>Anthropic Claude 3.5 Sonnet</option>
+                    <option>Google Gemini 1.5 Pro</option>
+                    <option>Local Llama 3 70B (-200ms)</option>
+                    <option>OpenRouter (Any)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Промпт системы</label>
+                  <textarea 
+                    rows={4}
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-neon-green/40"
+                    placeholder="Ты опытный криптотрейдер, который говорит кратко и с юмором. Избегай сложных терминов."
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-white/50 mb-1">Температура</label>
+                    <input 
+                      type="range" 
+                      min="0" max="1" step="0.1"
+                      defaultValue="0.7"
+                      className="w-full"
+                    />
+                    <p className="text-xs text-white/70 mt-1 text-right">0.7</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-white/50 mb-1">Токены</label>
+                    <input 
+                      type="number" 
+                      defaultValue="256"
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-white focus:outline-none focus:border-neon-green/40"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-4">RAG и контекст</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-white/50 mb-1">
+                    <input type="checkbox" className="rounded bg-white/10 border-white/30" defaultChecked />
+                    Использовать память пользователя
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Примеры ответов</label>
+                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                    <option>Standard (10 примеров)</option>
+                    <option>Reflective (50 примеров)</option>
+                    <option>Advanced (100 примеров)</option>
+                    <option>Custom (выборочно)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Скединг (параметр)</label>
+                  <input 
+                    type="text"
+                    defaultValue="auto"
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-white focus:outline-none focus:border-neon-green/40"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button className="px-4 py-2.5 text-sm font-semibold bg-neon-green/10 border border-neon-green/40 text-neon-green hover:bg-neon-green/20 transition">
+                Сохранить настройки
+              </button>
+              <button className="px-4 py-2.5 text-sm font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition" onClick={() => alert("Тест генерации в разработке")}>
+                Тест генерации
+              </button>
+              <button className="px-4 py-2.5 text-sm font-semibold border border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20 transition">
+                Шаблон промпта
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === "security" && (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-bold text-white">Безопасность</h2>
+            <p className="text-sm text-white/40">Anti-detection, rate limiting и защита аккаунтов.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="glass rounded-xl border border-bg-border p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">Anti-detection</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-white/50 mb-1">
+                    <input type="checkbox" className="rounded bg-white/10 border-white/30" defaultChecked />
+                    Чередование User-Agent
+                  </label>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-white/50 mb-1">
+                    <input type="checkbox" className="rounded bg-white/10 border-white/30" defaultChecked />
+                    Рандомизация задержек
+                  </label>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-white/50 mb-1">
+                    <input type="checkbox" className="rounded bg-white/10 border-white/30" defaultChecked />
+                    Скрытный режим (stealth)
+                  </label>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-white/50 mb-1">
+                    <input type="checkbox" className="rounded bg-white/10 border-white/30" defaultChecked />
+                    Абуление курицы (egg warming)
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Уровень рандомизации</label>
+                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                    <option>Низкий (очень похож на человека)</option>
+                    <option>Средний (умеренная случайность)</option>
+                    <option>Высокий (максимальная случайность)</option>
+                    <option>Крайний (естественный хаос)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="glass rounded-xl border border-bg-border p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">Rate limiting</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Множественные аккаунты</label>
+                  <input 
+                    type="range" 
+                    min="0" max="100" defaultValue="50"
+                    className="w-full"
+                  />
+                  <p className="text-xs text-white/70 mt-1">Ограничение: 50 аккаунтов/час</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-white/50 mb-1">Твикирование твитов</label>
+                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                    <option>Автоматический (на основе истории)</option>
+                    <option>Фиксированный (равномерный)</option>
+                    <option>Пиковое время (dloat)</option>
+                    <option>Сон (ночное время)</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-white/50 mb-1">Запасной лимит</label>
+                    <input 
+                      type="number" 
+                      defaultValue="100"
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-white focus:outline-none focus:border-neon-green/40"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-white/50 mb-1">Макс. твиты/аккаунт</label>
+                    <input 
+                      type="number" 
+                      defaultValue="15"
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-white focus:outline-none focus:border-neon-green/40"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-white/50 mb-1">
+                    <input type="checkbox" className="rounded bg-white/10 border-white/30" defaultChecked />
+                    Автоматическая блокировка при странном поведении
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="glass rounded-xl border border-bg-border p-6">
+            <h3 className="text-lg font-semibold text-white mb-4">Защита аккаунтов</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div>
+                <h4 className="text-sm font-semibold text-white mb-2">Проверки</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-green-300" />
+                    <span>CapTCHA detection</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-green-300" />
+                    <span>IP flickering</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-green-300" />
+                    <span>Useragent consistency</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <AlertTriangle className="w-4 h-4 text-yellow-300" />
+                    <span>Headless browser</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-semibold text-white mb-2">Типы защит</h4>
+                <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
+                  <option>Активная (с очисткой)</option>
+                  <option>Пассивная (наблюдение)</option>
+                  <option>Смешанная (умная)</option>
+                  <option>Обычная (обычный пользователь)</option>
+                </select>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-semibold text-white mb-2">Результаты (последние 7 дней)</h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Успешных</span>
+                    <span className="text-green-300 font-semibold">99.4%</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Payback</span>
+                    <span className="text-white font-semibold">0.1%</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-white/70">Риск</span>
+                    <span className="text-red-300 font-semibold">0.5%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 

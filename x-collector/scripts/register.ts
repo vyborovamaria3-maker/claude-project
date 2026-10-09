@@ -3,7 +3,7 @@ import { Client } from "pg";
 import crypto from "node:crypto";
 
 const ALGO = "aes-256-gcm";
-const KEY_LEN = 32, IV_LEN = 12, TAG_LEN = 16;
+const KEY_LEN = 32, IV_LEN = 12;
 
 function getKey(): Buffer {
   const raw = process.env.MASTER_KEY;
@@ -40,7 +40,7 @@ async function main() {
     process.exit(1);
   }
 
-  const client = new Client({ connectionString: dbUrl, max: 1 });
+  const client = new Client({ connectionString: dbUrl });
   try {
     await client.connect();
     const sessionEncrypted = await encryptSession(cookies);
