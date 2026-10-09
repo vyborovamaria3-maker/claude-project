@@ -73,6 +73,11 @@ services:
       FRONTEND_URL: https://potapoff.fun
       FRONTEND_INTERNAL_URL: http://frontend:3000
       CORS_ORIGINS: '["https://potapoff.fun","https://www.potapoff.fun"]'
+      KOL_INTERNAL_KEY: ${KOL_INTERNAL_KEY:?KOL_INTERNAL_KEY is required}
+      SOLANA_TRACKER_API_KEY: ${SOLANA_TRACKER_API_KEY:-}
+      SOLANA_TRACKER_API_BASE: ${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}
+      KOL_TRADE_SYNC_INTERVAL_SECONDS: ${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}
+      KOL_TRADE_SYNC_WALLETS_PER_RUN: ${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       REQUIRE_SUBSCRIPTION_INTERNAL_KEY: "true"
       SUBSCRIPTION_ADMIN_KEY: ${SUBSCRIPTION_ADMIN_KEY:-}
@@ -110,9 +115,39 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SOLANA_TRACKER_API_KEY: ${SOLANA_TRACKER_API_KEY:-}
+      SOLANA_TRACKER_API_BASE: ${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}
+      KOL_TRADE_SYNC_INTERVAL_SECONDS: ${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}
+      KOL_TRADE_SYNC_WALLETS_PER_RUN: ${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=info"]
     depends_on:
       backend:
+        condition: service_healthy
+    logging: *default-logging
+
+  celery-beat:
+    image: ghcr.io/vyborovamaria3-maker/claude-project/backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    env_file:
+      - backend.env
+      - .env.server
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      DATABASE_URL: postgresql+asyncpg://potapoff:${POSTGRES_PASSWORD}@postgres:5432/potapoff
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://potapoff:${RABBITMQ_PASSWORD}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SOLANA_TRACKER_API_KEY: ${SOLANA_TRACKER_API_KEY:-}
+      SOLANA_TRACKER_API_BASE: ${SOLANA_TRACKER_API_BASE:-https://data.solanatracker.io}
+      KOL_TRADE_SYNC_INTERVAL_SECONDS: ${KOL_TRADE_SYNC_INTERVAL_SECONDS:-1200}
+      KOL_TRADE_SYNC_WALLETS_PER_RUN: ${KOL_TRADE_SYNC_WALLETS_PER_RUN:-1}
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      backend:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     logging: *default-logging
 
@@ -165,9 +200,11 @@ services:
   frontend:
     image: ghcr.io/vyborovamaria3-maker/claude-project/frontend:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
+    # Deliberately keep the public frontend isolated from backend.env and provider secrets.
     environment:
       NODE_ENV: production
       BACKEND_URL: http://backend:8000
+      KOL_INTERNAL_KEY: ${KOL_INTERNAL_KEY:?KOL_INTERNAL_KEY is required}
       SUBSCRIPTION_INTERNAL_KEY: ${SUBSCRIPTION_INTERNAL_KEY:?SUBSCRIPTION_INTERNAL_KEY is required}
       FRONTEND_URL: https://potapoff.fun
       NEXT_PUBLIC_APP_URL: https://potapoff.fun

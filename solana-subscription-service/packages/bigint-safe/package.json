@@ -1,0 +1,8 @@
+{
+  "name": "@potapoff/bigint-buffer",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "license": "MIT"
+}

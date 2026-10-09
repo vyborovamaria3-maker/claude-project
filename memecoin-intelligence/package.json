@@ -13,7 +13,7 @@
     "build": "npm run typecheck && vite build && tsc -p tsconfig.server.json && node scripts/rewrite-server-imports.mjs",
     "start": "node dist/src/server/main.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "npm run check:syntax && npm run test:network && npm run test:fixtures && npm run test:telegram-ai && npm run test:qwen-smoke && npm run test:telegram-grounding && npm run test:telegram-boundary",
+    "test": "npm run check:syntax && npm run test:network && npm run test:fixtures && npm run test:telegram-ai && npm run test:qwen-smoke && npm run test:telegram-grounding && npm run test:telegram-boundary && tsx scripts/test-ai-provider.ts",
     "check:syntax": "node scripts/check-syntax.mjs",
     "test:network": "node scripts/test-network.mjs",
     "test:fixtures": "tsx scripts/test-fixtures.ts",

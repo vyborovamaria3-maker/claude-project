@@ -2,6 +2,7 @@ import os
 
 TEST_SECRET_KEY = "a9f4c2e8d7b1f6a3c9e5d2b8f7a4c1e9d6b3f8a2c5e7d4b9a1f3c6e8d2b7a5c9"
 TEST_BACKEND_API_KEY = "test-backend-api-key-2026"
+TEST_KOL_INTERNAL_KEY = "test-kol-internal-key-2026-cccccccccccccccccccccccccccccccc"
 TEST_SUBSCRIPTION_INTERNAL_KEY = (
     "test-subscription-internal-key-2026-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
@@ -9,8 +10,13 @@ TEST_SUBSCRIPTION_ADMIN_KEY = (
     "test-subscription-admin-key-2026-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
+# KOL internal endpoints read their scoped credential directly from process env.
+# Pin a deterministic test-only value before importing the app so CI never
+# inherits a developer/runner credential and the KOL key stays distinct from
+# BACKEND_API_KEY.
 os.environ["ENVIRONMENT"] = "test"
 os.environ.setdefault("SECRET_KEY", TEST_SECRET_KEY)
+os.environ["KOL_INTERNAL_KEY"] = TEST_KOL_INTERNAL_KEY
 
 import pytest_asyncio  # noqa: E402
 from app.core.config import Settings  # noqa: E402

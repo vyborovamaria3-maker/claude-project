@@ -1,8 +1,26 @@
+import os
+
 from celery import Celery
 
 from app.core.config import get_settings
 
 settings = get_settings()
+
+
+def _schedule_seconds(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+kol_trade_sync_interval = _schedule_seconds(
+    "KOL_TRADE_SYNC_INTERVAL_SECONDS",
+    1200.0,
+    minimum=300.0,
+    maximum=86400.0,
+)
 
 celery_app = Celery(
     "potapoff",
@@ -12,6 +30,7 @@ celery_app = Celery(
         "app.tasks.notifications",
         "app.tasks.etl",
         "app.tasks.intelligence",
+        "app.tasks.kols",
     ],
 )
 
@@ -41,6 +60,14 @@ celery_app.conf.update(
         "evaluate-intelligence-outcomes-every-15-minutes": {
             "task": "app.tasks.intelligence.evaluate_matured_outcomes",
             "schedule": 900.0,
+        },
+        "sync-kol-trade-events": {
+            "task": "app.tasks.kols.sync_trade_events",
+            "schedule": kol_trade_sync_interval,
+        },
+        "refresh-kol-wallet-metrics-every-5-minutes": {
+            "task": "app.tasks.kols.refresh_metrics",
+            "schedule": 300.0,
         },
     },
 )

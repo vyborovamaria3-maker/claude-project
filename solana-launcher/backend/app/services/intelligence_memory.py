@@ -249,7 +249,7 @@ async def persist_intelligence_memory(
             (item.source_key, item.target_key, item.edge_type): item for item in edge_rows
         }
 
-        seen_rows = await session.execute(
+        seen_edge_rows = await session.execute(
             select(
                 IntelligenceSnapshotEdge.source_key,
                 IntelligenceSnapshotEdge.target_key,
@@ -266,7 +266,7 @@ async def persist_intelligence_memory(
             )
         )
         seen_edges_on_mint = {
-            (source, target, edge_type) for source, target, edge_type in seen_rows.all()
+            (source, target, edge_type) for source, target, edge_type in seen_edge_rows.all()
         }
 
     for source, target, edge_type, confidence, evidence, attributes in parsed_edges:

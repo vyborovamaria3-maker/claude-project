@@ -1,16 +1,18 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
-import SidebarTop from "@/components/SidebarTop";
-import MasterWalletBar from "@/components/MasterWalletBar";
-import SidebarNav from "@/components/SidebarNav";
-import Header from "@/components/Header";
-import TrendingBar from "@/components/TrendingBar";
-import DesktopOnlyOverlays from "@/components/DesktopOnlyOverlays";
-import ThemePickerToggle from "@/components/ThemePickerToggle";
 import { siteDesign } from "@/lib/siteDesign";
+
+const SidebarTop = dynamic(() => import("@/components/SidebarTop"));
+const MasterWalletBar = dynamic(() => import("@/components/MasterWalletBar"));
+const SidebarNav = dynamic(() => import("@/components/SidebarNav"));
+const Header = dynamic(() => import("@/components/Header"));
+const TrendingBar = dynamic(() => import("@/components/TrendingBar"));
+const DesktopOnlyOverlays = dynamic(() => import("@/components/DesktopOnlyOverlays"));
+const ThemePickerToggle = dynamic(() => import("@/components/ThemePickerToggle"));
 
 const PUBLIC_ROUTES = new Set(siteDesign.publicRoutes);
 

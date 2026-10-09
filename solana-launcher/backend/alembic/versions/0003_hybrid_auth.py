@@ -5,9 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision = "0003_hybrid_auth"
 down_revision = "0002_analytics"
@@ -212,4 +211,7 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_users_email"), table_name="users")
     op.drop_table("users")
     op.rename_table("users_old", "users")
+    # Restore the exact index contract from 0001_initial so the next downgrade
+    # step can safely remove both indexes before dropping the base users table.
+    op.create_index(op.f("ix_users_email"), "users", ["email"], unique=True)
     op.create_index(op.f("ix_users_id"), "users", ["id"], unique=False)
