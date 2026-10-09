@@ -18,6 +18,10 @@ import {
 
 import { runMonitoringCycle } from "../lib/trade/graph-monitoring";
 
+import { runAgentCycle } from "../lib/trade/social-agent-cycle";
+
+import { runDiscoveryCycle } from "../lib/trade/social-discovery";
+
 interface TaskDef {
   name: string;
   intervalMs: number;
@@ -29,6 +33,12 @@ let shuttingDown = false;
 const timers: NodeJS.Timeout[] = [];
 
 const tasks: TaskDef[] = [
+  { name: "solana-discovery", intervalMs: 60 * 60_000, run: async () => {
+    log.info("Solana discovery queued", { queued: await runDiscoveryCycle() });
+  } },
+  { name: "social-agent-preview", intervalMs: 10 * 60_000, run: async () => {
+    log.info("social agent preview", { ...await runAgentCycle() });
+  } },
   { name: "graph-monitoring", intervalMs: 5 * 60_000, run: async () => {
     log.info("graph monitoring cycle", { ...await runMonitoringCycle() });
   } },
