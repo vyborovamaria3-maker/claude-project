@@ -124,6 +124,8 @@ jobs:
         run: npm run prisma:generate
       - name: API typecheck
         run: npm run typecheck -w @solsub/api
+      - name: Vendored dependency security regressions
+        run: node --test ../security/audit/bigint-safe.test.mjs ../security/audit/braces-safe.test.mjs
       - name: API security regressions
         run: npm run test -w @solsub/api
       - name: Production dependency audit

@@ -68,7 +68,8 @@
     "telegraf": "^4.16.3",
     "telegram": "^2.26.22",
     "ws": "^8.20.1",
-    "zustand": "^5.0.13"
+    "zustand": "^5.0.13",
+    "bigint-buffer": "file:./scripts/bigint-safe-package"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.6",
@@ -88,9 +89,10 @@
     "typescript": "^5.5.3",
     "vite": "^8.2.2",
     "vitest": "^5.0.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:./scripts/xlsx-safe-package"
   },
   "overrides": {
-    "toml": "^5.0.0"
+    "toml": "^5.0.0",
+    "bigint-buffer": "$bigint-buffer"
   }
 }
