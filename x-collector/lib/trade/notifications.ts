@@ -126,3 +126,10 @@ export async function notify(n: Notification): Promise<"delivered" | "skipped"> 
     retryAfterMs || undefined,
   );
 }
+
+export function notificationRetryDelayMs(attempts: number, error: unknown): number {
+  const backoff = Math.min(300_000, 1000 * 2 ** Math.min(attempts, 8));
+  const requested = error instanceof RetryableNotificationError ? error.retryAfterMs : undefined;
+  return requested !== undefined && Number.isFinite(requested)
+    ? Math.max(backoff, requested) : backoff;
+}

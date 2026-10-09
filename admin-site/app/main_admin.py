@@ -11,6 +11,7 @@ from .analysis_editor import LiveAnalysisProfileStore
 from .analysis_editor_api import build_analysis_editor_router
 from .auth import require_admin
 from .database_inventory import build_database_inventory
+from .integration_status import build_integration_router
 from .intelligence_view import build_intelligence_router
 from .intelligence_view_factory import build_intelligence_view_store
 from .main import create_app as create_base_app
@@ -19,6 +20,7 @@ from .postgres_admin_state import PostgresAuditStore, PostgresControlStore, Post
 from .postgres_pool import build_postgres_pool
 from .postgres_security_store import PostgresAdminSessionStore
 from .postgres_task_queue import PostgresTaskQueue
+from .x_collector_admin import build_x_collector_router
 from .subscription_admin import build_subscription_admin_router
 from . import security_v2
 from .services import TELEGRAM_TABLES
@@ -184,6 +186,8 @@ def create_app() -> FastAPI:
     app.include_router(build_analysis_editor_router())
     app.include_router(build_intelligence_router())
     app.include_router(build_subscription_admin_router())
+    app.include_router(build_x_collector_router())
+    app.include_router(build_integration_router())
     app.include_router(build_twitter_monitoring_router())
     if shared_security is None:
         security_v2.install_security(app)

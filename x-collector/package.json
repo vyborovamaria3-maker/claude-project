@@ -23,7 +23,9 @@
     "outbox:publish": "tsx scripts/outbox-publisher.ts",
     "report": "tsx scripts/report.ts",
     "backtest": "tsx scripts/backtest.ts",
-    "graph-export": "tsx scripts/graph-export.ts"
+    "graph-export": "tsx scripts/graph-export.ts",
+    "monitor": "tsx scripts/monitor.ts",
+    "test:db": "node --import tsx --test tests/integration/*.test.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
@@ -34,6 +36,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.15.0",
     "@types/pg": "^8.15.5",
