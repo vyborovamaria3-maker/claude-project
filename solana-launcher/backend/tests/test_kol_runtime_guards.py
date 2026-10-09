@@ -3,10 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
-
 from app.api.v1.kols_internal import _require_kol_internal_key
 from app.tasks import kols as kol_tasks
+from fastapi import HTTPException
 
 
 class _FakeLock:

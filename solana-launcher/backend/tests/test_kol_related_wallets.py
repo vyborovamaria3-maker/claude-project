@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from app.models.analytics import Token, Wallet, WalletLink, WalletTrade
 from app.services.kol_intelligence import related_wallet_candidates
 
 
 @pytest.mark.asyncio
 async def test_related_wallet_similarity_recomputed_from_unique_trade_tokens(test_app):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with test_app.state.sessionmaker() as session:
         source = Wallet(wallet_address="source-wallet", first_seen_date=now, tags=[])
         candidate = Wallet(wallet_address="candidate-wallet", first_seen_date=now, tags=[])

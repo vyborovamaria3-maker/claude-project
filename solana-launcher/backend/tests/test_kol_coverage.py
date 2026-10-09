@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
-
 from app.models.analytics import Wallet
 from app.models.kol_intelligence import KOLTradeEvent
+from sqlalchemy import select
 from tests.conftest import TEST_BACKEND_API_KEY, TEST_KOL_INTERNAL_KEY
 
 BACKEND_HEADERS = {"X-Backend-API-Key": TEST_BACKEND_API_KEY}
@@ -55,7 +54,9 @@ async def test_trade_coverage_requires_scoped_key(client):
 
 
 @pytest.mark.asyncio
-async def test_trade_coverage_reports_disabled_provider_before_first_worker_run(client, monkeypatch):
+async def test_trade_coverage_reports_disabled_provider_before_first_worker_run(
+    client, monkeypatch
+):
     monkeypatch.delenv("SOLANA_TRACKER_API_KEY", raising=False)
     synced = await client.post(
         "/api/v1/kols/sync",
@@ -73,7 +74,9 @@ async def test_trade_coverage_reports_disabled_provider_before_first_worker_run(
 
 
 @pytest.mark.asyncio
-async def test_trade_coverage_distinguishes_missing_ingestion_from_covered_history(client, test_app, monkeypatch):
+async def test_trade_coverage_distinguishes_missing_ingestion_from_covered_history(
+    client, test_app, monkeypatch
+):
     monkeypatch.setenv("SOLANA_TRACKER_API_KEY", "configured-test-key")
     synced = await client.post(
         "/api/v1/kols/sync",
@@ -109,7 +112,7 @@ async def test_trade_coverage_distinguishes_missing_ingestion_from_covered_histo
                 price_usd=1,
                 value_usd=1,
                 source="test",
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=datetime.now(UTC),
             )
         )
         await session.commit()

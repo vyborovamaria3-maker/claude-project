@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -13,15 +13,15 @@ _METRIC_SOURCE = "internal_kol_events"
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _positive(value: float | None) -> float | None:
@@ -39,11 +39,13 @@ async def _get_or_create_internal_metric(
 ) -> KOLWalletMetric:
     metric = (
         await session.execute(
-            select(KOLWalletMetric).where(
+            select(KOLWalletMetric)
+            .where(
                 KOLWalletMetric.wallet_id == wallet_id,
                 KOLWalletMetric.timeframe_days == timeframe_days,
                 KOLWalletMetric.source == _METRIC_SOURCE,
-            ).limit(1)
+            )
+            .limit(1)
         )
     ).scalar_one_or_none()
     if metric is not None:
@@ -62,11 +64,13 @@ async def _get_or_create_internal_metric(
     except IntegrityError:
         metric = (
             await session.execute(
-                select(KOLWalletMetric).where(
+                select(KOLWalletMetric)
+                .where(
                     KOLWalletMetric.wallet_id == wallet_id,
                     KOLWalletMetric.timeframe_days == timeframe_days,
                     KOLWalletMetric.source == _METRIC_SOURCE,
-                ).limit(1)
+                )
+                .limit(1)
             )
         ).scalar_one_or_none()
         if metric is None:
@@ -140,7 +144,9 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
                     KOLWalletAttribution.analytics_wallet_id.is_not(None),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     wallet_ids = sorted(
         {
@@ -163,14 +169,15 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
                         KOLTradeEvent.id.asc(),
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         for event in events:
             events_by_wallet.setdefault(event.analytics_wallet_id, []).append(event)
 
     realized_by_wallet = {
-        wallet_id: _fifo_realized(events)
-        for wallet_id, events in events_by_wallet.items()
+        wallet_id: _fifo_realized(events) for wallet_id, events in events_by_wallet.items()
     }
 
     refreshed = 0
@@ -185,7 +192,7 @@ async def refresh_kol_metrics(session: AsyncSession) -> dict[str, int]:
             recent = [
                 event
                 for event in events
-                if (_as_utc(event.occurred_at) or datetime.min.replace(tzinfo=timezone.utc)) >= start
+                if (_as_utc(event.occurred_at) or datetime.min.replace(tzinfo=UTC)) >= start
             ]
             realized_total = 0.0
             realized_sell_events = 0

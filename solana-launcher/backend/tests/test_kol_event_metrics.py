@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
-
 from app.models.analytics import Wallet
 from app.models.kol_intelligence import (
     KOLProfile,
@@ -14,6 +12,7 @@ from app.models.kol_intelligence import (
 )
 from app.services.kol_metrics import refresh_kol_metrics
 from app.services.kol_trade_ingestion import normalize_solana_tracker_trade
+from sqlalchemy import select
 
 WALLET = "11111111111111111111111111111111"
 TOKEN_A = "TokenA111111111111111111111111111111111111"
@@ -22,7 +21,7 @@ SPOOF_USDC = "SpoofUSDC111111111111111111111111111111111"
 
 
 def test_symbol_spoof_does_not_turn_arbitrary_token_into_base_asset():
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
     rows = normalize_solana_tracker_trade(
         wallet_id=1,
         wallet_address=WALLET,
@@ -54,7 +53,7 @@ def test_symbol_spoof_does_not_turn_arbitrary_token_into_base_asset():
 
 @pytest.mark.asyncio
 async def test_token_to_token_swap_counts_one_wallet_trade_and_one_notional(test_app):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with test_app.state.sessionmaker() as session:
         wallet = Wallet(wallet_address=WALLET, first_seen_date=now, tags=["kol"])
         profile = KOLProfile(twitter_handle="volume_kol", confidence=95, verified=True)

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     UniqueConstraint,
 )
@@ -19,7 +19,7 @@ from app.db.base import Base
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class KOLProfile(Base):
@@ -39,8 +39,12 @@ class KOLProfile(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
 
     wallets: Mapped[list[KOLWalletAttribution]] = relationship(
         back_populates="profile",
@@ -58,15 +62,23 @@ class KOLWalletAttribution(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    kol_id: Mapped[int] = mapped_column(ForeignKey("kol_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
-    analytics_wallet_id: Mapped[int | None] = mapped_column(ForeignKey("wallets.id", ondelete="SET NULL"), nullable=True, index=True)
+    kol_id: Mapped[int] = mapped_column(
+        ForeignKey("kol_profiles.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    analytics_wallet_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wallets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     address: Mapped[str] = mapped_column(String(128), nullable=False)
     chain: Mapped[str] = mapped_column(String(32), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
 
     profile: Mapped[KOLProfile] = relationship(back_populates="wallets")
     evidence: Mapped[list[KOLWalletEvidence]] = relationship(
@@ -84,12 +96,16 @@ class KOLWalletAttribution(Base):
 class KOLWalletEvidence(Base):
     __tablename__ = "kol_wallet_evidence"
     __table_args__ = (
-        UniqueConstraint("wallet_id", "source", "kind", "fingerprint", name="uq_kol_wallet_evidence_fingerprint"),
+        UniqueConstraint(
+            "wallet_id", "source", "kind", "fingerprint", name="uq_kol_wallet_evidence_fingerprint"
+        ),
         Index("ix_kol_wallet_evidence_source_observed", "source", "observed_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    wallet_id: Mapped[int] = mapped_column(ForeignKey("kol_wallet_attributions.id", ondelete="CASCADE"), nullable=False, index=True)
+    wallet_id: Mapped[int] = mapped_column(
+        ForeignKey("kol_wallet_attributions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     source: Mapped[str] = mapped_column(String(120), nullable=False)
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -98,7 +114,9 @@ class KOLWalletEvidence(Base):
     detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
 
     wallet: Mapped[KOLWalletAttribution] = relationship(back_populates="evidence")
 
@@ -106,12 +124,16 @@ class KOLWalletEvidence(Base):
 class KOLWalletMetric(Base):
     __tablename__ = "kol_wallet_metrics"
     __table_args__ = (
-        UniqueConstraint("wallet_id", "timeframe_days", "source", name="uq_kol_wallet_metric_window_source"),
+        UniqueConstraint(
+            "wallet_id", "timeframe_days", "source", name="uq_kol_wallet_metric_window_source"
+        ),
         Index("ix_kol_wallet_metrics_window_calculated", "timeframe_days", "calculated_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    wallet_id: Mapped[int] = mapped_column(ForeignKey("kol_wallet_attributions.id", ondelete="CASCADE"), nullable=False, index=True)
+    wallet_id: Mapped[int] = mapped_column(
+        ForeignKey("kol_wallet_attributions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     timeframe_days: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(String(120), nullable=False, default="internal")
     pnl_value: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -125,7 +147,9 @@ class KOLWalletMetric(Base):
     trade_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_trade_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
 
     wallet: Mapped[KOLWalletAttribution] = relationship(back_populates="metrics")
 
@@ -171,9 +195,13 @@ class KOLTradeEvent(Base):
     counterparty_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     program: Mapped[str | None] = mapped_column(String(120), nullable=True)
     source: Mapped[str] = mapped_column(String(120), nullable=False, default="solana_tracker")
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
 
 
 class KOLTradeSyncState(Base):
@@ -196,7 +224,9 @@ class KOLTradeSyncState(Base):
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
 
 
 class KOLSourceSync(Base):
@@ -210,4 +240,6 @@ class KOLSourceSync(Base):
     detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )

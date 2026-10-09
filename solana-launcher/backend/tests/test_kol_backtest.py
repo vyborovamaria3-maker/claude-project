@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete, select
-
 from app.models.analytics import Token, TokenMetric, Wallet
 from app.models.kol_intelligence import KOLProfile, KOLTradeEvent, KOLWalletAttribution
 from app.services.kol_backtest import backtest_kol_signals
+from sqlalchemy import delete, select
 from tests.conftest import TEST_KOL_INTERNAL_KEY
 
 KOL_HEADERS = {"X-KOL-Internal-Key": TEST_KOL_INTERNAL_KEY}
 
 
 async def _seed_accumulation_case(test_app):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = now - timedelta(hours=36)
 
     async with test_app.state.sessionmaker() as session:
@@ -76,11 +75,27 @@ async def _seed_accumulation_case(test_app):
         # the +21m future market price.
         session.add_all(
             [
-                TokenMetric(token_id=token.id, timestamp=start + timedelta(minutes=15), price_usd=1.0),
-                TokenMetric(token_id=token.id, timestamp=start + timedelta(minutes=21), price_usd=10.0),
-                TokenMetric(token_id=token.id, timestamp=start + timedelta(hours=1, minutes=30), price_usd=1.1),
-                TokenMetric(token_id=token.id, timestamp=start + timedelta(hours=6, minutes=30), price_usd=1.2),
-                TokenMetric(token_id=token.id, timestamp=start + timedelta(hours=24, minutes=30), price_usd=1.5),
+                TokenMetric(
+                    token_id=token.id, timestamp=start + timedelta(minutes=15), price_usd=1.0
+                ),
+                TokenMetric(
+                    token_id=token.id, timestamp=start + timedelta(minutes=21), price_usd=10.0
+                ),
+                TokenMetric(
+                    token_id=token.id,
+                    timestamp=start + timedelta(hours=1, minutes=30),
+                    price_usd=1.1,
+                ),
+                TokenMetric(
+                    token_id=token.id,
+                    timestamp=start + timedelta(hours=6, minutes=30),
+                    price_usd=1.2,
+                ),
+                TokenMetric(
+                    token_id=token.id,
+                    timestamp=start + timedelta(hours=24, minutes=30),
+                    price_usd=1.5,
+                ),
             ]
         )
         await session.commit()
@@ -132,10 +147,14 @@ async def test_backtest_skips_trigger_without_pre_signal_market_price(test_app):
         token = (await session.execute(select(Token))).scalar_one()
         await session.execute(delete(TokenMetric).where(TokenMetric.token_id == token.id))
         event = (
-            await session.execute(
-                select(KOLTradeEvent).order_by(KOLTradeEvent.occurred_at.desc())
+            (
+                await session.execute(
+                    select(KOLTradeEvent).order_by(KOLTradeEvent.occurred_at.desc())
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert event is not None
         # Add only a post-trigger market price. The provider event price is populated
         # but must never be used as a backtest entry fallback.
@@ -186,8 +205,8 @@ async def test_backtest_dedupes_multiple_labels_for_one_event(test_app):
                 confidence=70,
                 verified=False,
                 source_count=1,
-                first_seen_at=datetime.now(timezone.utc) - timedelta(days=2),
-                last_seen_at=datetime.now(timezone.utc),
+                first_seen_at=datetime.now(UTC) - timedelta(days=2),
+                last_seen_at=datetime.now(UTC),
             )
         )
         await session.commit()

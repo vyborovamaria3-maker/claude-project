@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import func, select
-
 from app.api.v1 import advanced_intelligence as advanced_api
 from app.models.analytics import Wallet
 from app.models.kol_intelligence import (
@@ -16,6 +14,7 @@ from app.models.kol_intelligence import (
     KOLWalletMetric,
 )
 from app.services.kol_metrics import refresh_kol_metrics
+from sqlalchemy import func, select
 from tests.conftest import TEST_BACKEND_API_KEY, TEST_KOL_INTERNAL_KEY
 
 BACKEND_HEADERS = {"X-Backend-API-Key": TEST_BACKEND_API_KEY}
@@ -55,7 +54,9 @@ def sync_payload(
                         "confidence": wallet_confidence,
                         "verified": verified,
                         "detail": f"{source} test evidence",
-                        "url": "https://next.id/" if source == "Next.ID" else "https://example.com/",
+                        "url": "https://next.id/"
+                        if source == "Next.ID"
+                        else "https://example.com/",
                     }
                 ],
                 "metrics": metrics or {},
@@ -121,7 +122,9 @@ async def test_kol_sync_is_db_idempotent_and_timeframe_specific(client, test_app
 
     async with test_app.state.sessionmaker() as session:
         assert (await session.execute(select(func.count(KOLProfile.id)))).scalar_one() == 1
-        assert (await session.execute(select(func.count(KOLWalletAttribution.id)))).scalar_one() == 1
+        assert (
+            await session.execute(select(func.count(KOLWalletAttribution.id)))
+        ).scalar_one() == 1
         assert (await session.execute(select(func.count(KOLWalletEvidence.id)))).scalar_one() == 1
         metrics = list(
             (
@@ -130,7 +133,9 @@ async def test_kol_sync_is_db_idempotent_and_timeframe_specific(client, test_app
                     .where(KOLWalletMetric.source == "resolver")
                     .order_by(KOLWalletMetric.timeframe_days.asc())
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         assert [(row.timeframe_days, row.wins, row.losses, row.win_rate) for row in metrics] == [
             (1, 1, 1, 50),
@@ -155,8 +160,12 @@ async def test_partial_sync_preserves_verified_profile_data(client, test_app):
         wallet_confidence=70,
     )
 
-    assert (await client.post("/api/v1/kols/sync", json=strong, headers=BACKEND_HEADERS)).status_code == 200
-    assert (await client.post("/api/v1/kols/sync", json=weak, headers=BACKEND_HEADERS)).status_code == 200
+    assert (
+        await client.post("/api/v1/kols/sync", json=strong, headers=BACKEND_HEADERS)
+    ).status_code == 200
+    assert (
+        await client.post("/api/v1/kols/sync", json=weak, headers=BACKEND_HEADERS)
+    ).status_code == 200
 
     async with test_app.state.sessionmaker() as session:
         profile = (await session.execute(select(KOLProfile))).scalar_one()
@@ -192,7 +201,9 @@ async def test_sync_rejects_invalid_wallet_addresses(client, test_app):
     response = await client.post("/api/v1/kols/sync", json=payload, headers=BACKEND_HEADERS)
     assert response.status_code == 200, response.text
     async with test_app.state.sessionmaker() as session:
-        assert (await session.execute(select(func.count(KOLWalletAttribution.id)))).scalar_one() == 0
+        assert (
+            await session.execute(select(func.count(KOLWalletAttribution.id)))
+        ).scalar_one() == 0
 
 
 @pytest.mark.asyncio
@@ -205,8 +216,12 @@ async def test_shared_wallet_event_is_counted_once(client, test_app):
         source="KOL Quest / KolScan",
         wallet_confidence=70,
     )
-    assert (await client.post("/api/v1/kols/sync", json=strong, headers=BACKEND_HEADERS)).status_code == 200
-    assert (await client.post("/api/v1/kols/sync", json=weak, headers=BACKEND_HEADERS)).status_code == 200
+    assert (
+        await client.post("/api/v1/kols/sync", json=strong, headers=BACKEND_HEADERS)
+    ).status_code == 200
+    assert (
+        await client.post("/api/v1/kols/sync", json=weak, headers=BACKEND_HEADERS)
+    ).status_code == 200
 
     async with test_app.state.sessionmaker() as session:
         wallet = (
@@ -227,7 +242,7 @@ async def test_shared_wallet_event_is_counted_once(client, test_app):
                 price_usd=2,
                 value_usd=20,
                 source="test",
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=datetime.now(UTC),
             )
         )
         await session.commit()
@@ -270,7 +285,7 @@ async def test_refresh_clears_stale_internal_event_metric(client, test_app):
             losses=0,
             volume_usd=500,
             trade_count=4,
-            calculated_at=datetime.now(timezone.utc),
+            calculated_at=datetime.now(UTC),
         )
         session.add(stale)
         await session.commit()

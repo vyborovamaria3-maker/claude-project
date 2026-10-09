@@ -1,4 +1,4 @@
-import TGInviteWorkspace from "@/components/tginvite/TGInviteWorkspace";
+import TGInviteWorkspace from "@/components/tginvite/TGInviteClient";
 
 export default function SettingsTGInvitePage() {
   return <TGInviteWorkspace />;

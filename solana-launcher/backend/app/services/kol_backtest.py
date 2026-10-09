@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from statistics import median
 from typing import Any
 
@@ -14,7 +14,7 @@ from app.models.kol_intelligence import KOLProfile, KOLTradeEvent, KOLWalletAttr
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _safe_float(value: Any) -> float | None:
@@ -28,7 +28,7 @@ def _safe_float(value: Any) -> float | None:
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _attribution_rank(
@@ -182,9 +182,9 @@ async def backtest_kol_signals(
     if mints:
         tokens_by_mint = {
             token.mint_address: token
-            for token in (
-                await session.execute(select(Token).where(Token.mint_address.in_(mints)))
-            ).scalars().all()
+            for token in (await session.execute(select(Token).where(Token.mint_address.in_(mints))))
+            .scalars()
+            .all()
         }
 
     events_by_token_side: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
@@ -245,11 +245,11 @@ async def backtest_kol_signals(
         active: deque[dict[str, Any]] = deque()
         last_signal_at: datetime | None = None
 
-        for event in events:
-            timestamp = event["timestamp"]
+        for signal_event in events:
+            timestamp = signal_event["timestamp"]
             while active and timestamp - active[0]["timestamp"] > window:
                 active.popleft()
-            active.append(event)
+            active.append(signal_event)
 
             # Count one identity once inside a signal window, retaining its newest
             # event even when it traded through multiple attributed wallets.
@@ -282,9 +282,7 @@ async def backtest_kol_signals(
             returns: dict[str, Any] = {}
             for horizon in horizons_hours:
                 target = timestamp + timedelta(hours=horizon)
-                tolerance = timedelta(
-                    minutes=90 if horizon == 1 else 180 if horizon <= 6 else 360
-                )
+                tolerance = timedelta(minutes=90 if horizon == 1 else 180 if horizon <= 6 else 360)
                 future = _price_at_or_after(
                     points,
                     timestamps,
@@ -405,16 +403,31 @@ async def backtest_kol_signals(
             "bySignalType": by_side,
         },
         "methodology": {
-            "entryPrice": "latest TokenMetric at or before the signal (max age 2h); signals without a pre-signal price are excluded from evaluated outcomes",
-            "outcomes": "first TokenMetric at or after each target horizon within a bounded lag tolerance",
-            "eventGranularity": "granular KOLTradeEvent swap legs identified by wallet + transaction signature + event index",
-            "dedupe": "one strongest eligible KOL attribution per on-chain event; one identity per rolling signal window",
+            "entryPrice": (
+                "latest TokenMetric at or before the signal (max age 2h); "
+                "signals without a pre-signal price are excluded from evaluated outcomes"
+            ),
+            "outcomes": (
+                "first TokenMetric at or after each target horizon within a bounded lag tolerance"
+            ),
+            "eventGranularity": (
+                "granular KOLTradeEvent swap legs identified by "
+                "wallet + transaction signature + event index"
+            ),
+            "dedupe": (
+                "one strongest eligible KOL attribution per on-chain event; "
+                "one identity per rolling signal window"
+            ),
             "transactionCost": f"{cost_bps} bps subtracted from directional return",
-            "lookaheadGuard": "future prices and provider trade prices are never used for signal construction or entry selection",
+            "lookaheadGuard": (
+                "future prices and provider trade prices are never used "
+                "for signal construction or entry selection"
+            ),
             "attributionBias": (
                 "strict: each event only uses attributions already observed by that event timestamp"
                 if strict_attribution_time
-                else "current KOL attribution snapshot is applied to historical events; this can introduce selection/look-ahead bias"
+                else "current KOL attribution snapshot is applied to historical events; "
+                "this can introduce selection/look-ahead bias"
             ),
         },
         "signals": returned_signals,

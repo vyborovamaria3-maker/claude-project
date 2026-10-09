@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.models.kol_intelligence import KOLTradeEvent
 from app.services.kol_metrics import _fifo_realized
@@ -30,7 +30,7 @@ def _trade(from_asset: dict, to_asset: dict, *, tx: str = "sig-1") -> dict:
         "to": to_asset,
         "volume": {"usd": 25.0},
         "program": "test-dex",
-        "time": int(datetime.now(timezone.utc).timestamp() * 1000),
+        "time": int(datetime.now(UTC).timestamp() * 1000),
     }
 
 
@@ -95,11 +95,15 @@ def test_symbol_spoof_does_not_turn_unknown_mint_into_base_asset():
 def test_normalizer_rejects_trade_without_stable_identity_or_timestamp():
     invalid_tx = _trade(_asset(WSOL, 1, "SOL"), _asset(TOKEN_A, 1, "AAA"))
     invalid_tx["tx"] = ""
-    assert normalize_solana_tracker_trade(wallet_id=1, wallet_address=WALLET, trade=invalid_tx) == []
+    assert (
+        normalize_solana_tracker_trade(wallet_id=1, wallet_address=WALLET, trade=invalid_tx) == []
+    )
 
     invalid_time = _trade(_asset(WSOL, 1, "SOL"), _asset(TOKEN_A, 1, "AAA"))
     invalid_time["time"] = "not-a-time"
-    assert normalize_solana_tracker_trade(wallet_id=1, wallet_address=WALLET, trade=invalid_time) == []
+    assert (
+        normalize_solana_tracker_trade(wallet_id=1, wallet_address=WALLET, trade=invalid_time) == []
+    )
 
 
 def _event(event_id: int, side: str, amount: float, price: float | None) -> KOLTradeEvent:
@@ -116,7 +120,7 @@ def _event(event_id: int, side: str, amount: float, price: float | None) -> KOLT
         price_usd=price,
         value_usd=(amount * price if price is not None else None),
         source="test",
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 

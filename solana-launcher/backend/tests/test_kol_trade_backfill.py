@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import func, select
-
 from app.models.analytics import Wallet
 from app.models.kol_intelligence import (
     KOLProfile,
@@ -13,6 +11,7 @@ from app.models.kol_intelligence import (
     KOLWalletAttribution,
 )
 from app.services import kol_trade_ingestion as ingestion
+from sqlalchemy import func, select
 
 WALLET = "11111111111111111111111111111111"
 TOKEN = "BackfillToken11111111111111111111111111111"
@@ -36,14 +35,14 @@ def _provider_trade(tx: str, amount: float = 10.0) -> dict:
         },
         "volume": {"usd": amount},
         "program": "test-dex",
-        "time": int(datetime.now(timezone.utc).timestamp() * 1000),
+        "time": int(datetime.now(UTC).timestamp() * 1000),
     }
 
 
 @pytest.mark.asyncio
 async def test_cursor_backfill_completes_then_returns_to_latest_polling(monkeypatch, test_app):
     async with test_app.state.sessionmaker() as session:
-        wallet = Wallet(wallet_address=WALLET, first_seen_date=datetime.now(timezone.utc), tags=["kol"])
+        wallet = Wallet(wallet_address=WALLET, first_seen_date=datetime.now(UTC), tags=["kol"])
         profile = KOLProfile(twitter_handle="backfill_kol", confidence=95, verified=True)
         session.add_all([wallet, profile])
         await session.flush()
@@ -62,7 +61,14 @@ async def test_cursor_backfill_completes_then_returns_to_latest_polling(monkeypa
 
         cursors: list[str | None] = []
 
-        async def fake_fetch(address: str, *, api_key: str, base_url: str, cursor: str | None = None, timeout_seconds: float = 15.0):
+        async def fake_fetch(
+            address: str,
+            *,
+            api_key: str,
+            base_url: str,
+            cursor: str | None = None,
+            timeout_seconds: float = 15.0,
+        ):
             assert address == WALLET
             assert api_key == "test-key"
             cursors.append(cursor)

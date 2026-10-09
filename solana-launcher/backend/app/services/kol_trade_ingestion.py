@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -28,7 +28,7 @@ _BASE_MINTS = {
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _safe_float(value: Any) -> float | None:
@@ -49,7 +49,7 @@ def _event_time(value: Any) -> datetime | None:
     # a provider-side representation change does not create year-50000 rows.
     seconds = parsed / 1000.0 if parsed > 10_000_000_000 else parsed
     try:
-        return datetime.fromtimestamp(seconds, tz=timezone.utc)
+        return datetime.fromtimestamp(seconds, tz=UTC)
     except (OSError, OverflowError, ValueError):
         return None
 
@@ -85,9 +85,12 @@ def _normalized_leg(
     amount = _safe_float(asset.get("amount"))
     if amount is None or amount <= 0:
         return None
-    token = asset.get("token") if isinstance(asset.get("token"), dict) else {}
+    raw_token = asset.get("token")
+    token = raw_token if isinstance(raw_token, dict) else {}
     price_usd = _safe_float(asset.get("priceUsd"))
-    value_usd = amount * price_usd if price_usd is not None and price_usd >= 0 else fallback_value_usd
+    value_usd = (
+        amount * price_usd if price_usd is not None and price_usd >= 0 else fallback_value_usd
+    )
     counterparty_amount = _safe_float(counterparty.get("amount"))
     return {
         "analytics_wallet_id": wallet_id,
@@ -133,7 +136,8 @@ def normalize_solana_tracker_trade(
     if not from_asset or not to_asset:
         return []
 
-    volume = trade.get("volume") if isinstance(trade.get("volume"), dict) else {}
+    raw_volume = trade.get("volume")
+    volume = raw_volume if isinstance(raw_volume, dict) else {}
     fallback_value_usd = _safe_float(volume.get("usd"))
     program = str(trade.get("program") or "").strip() or None
     from_is_base = _is_base_asset(from_asset)
@@ -198,7 +202,11 @@ async def fetch_solana_tracker_wallet_trades(
     if not isinstance(payload, dict):
         return {"trades": [], "nextCursor": None, "hasNextPage": False}
     raw_trades = payload.get("trades")
-    trades = [item for item in raw_trades if isinstance(item, dict)] if isinstance(raw_trades, list) else []
+    trades = (
+        [item for item in raw_trades if isinstance(item, dict)]
+        if isinstance(raw_trades, list)
+        else []
+    )
     raw_cursor = payload.get("nextCursor")
     next_cursor = str(raw_cursor) if raw_cursor not in (None, "") else None
     return {
@@ -299,8 +307,12 @@ async def sync_kol_trade_events(
     # serialization boundary that also protects manual API refreshes, while Celery's
     # Redis lock remains the fast distributed guard for scheduled workers.
     source = await _source_sync(session)
-    key = (api_key if api_key is not None else os.getenv("SOLANA_TRACKER_API_KEY", "")).strip()
-    resolved_base_url = (base_url or os.getenv("SOLANA_TRACKER_API_BASE", _DEFAULT_BASE_URL)).strip() or _DEFAULT_BASE_URL
+    key = (
+        api_key if api_key is not None else (os.getenv("SOLANA_TRACKER_API_KEY", "") or "")
+    ).strip()
+    resolved_base_url = (
+        base_url or os.getenv("SOLANA_TRACKER_API_BASE") or _DEFAULT_BASE_URL
+    ).strip() or _DEFAULT_BASE_URL
     if max_wallets is None:
         try:
             max_wallets = int(os.getenv("KOL_TRADE_SYNC_WALLETS_PER_RUN", "1"))
@@ -393,7 +405,8 @@ async def sync_kol_trade_events(
             state.events_seen = len(normalized)
             state.last_success_at = now
             state.detail = (
-                f"mode={mode} providerTrades={len(provider_rows)} normalizedEvents={len(normalized)} "
+                f"mode={mode} providerTrades={len(provider_rows)} "
+                f"normalizedEvents={len(normalized)} "
                 f"inserted={wallet_inserted} backfillComplete={state.backfill_complete}"
             )
         except Exception as exc:  # provider failures must not block rotation to other wallets

@@ -82,9 +82,7 @@ async def internal_kol_trade_coverage(
         )
     ).all()
     source = (
-        await session.execute(
-            select(KOLSourceSync).where(KOLSourceSync.source == _SOURCE).limit(1)
-        )
+        await session.execute(select(KOLSourceSync).where(KOLSourceSync.source == _SOURCE).limit(1))
     ).scalar_one_or_none()
 
     attributed = int(attributed_wallets or 0)
@@ -92,7 +90,9 @@ async def internal_kol_trade_coverage(
     rows = int(event_rows or 0)
     ratio = covered / attributed if attributed else 0.0
     provider_configured = bool(os.getenv("SOLANA_TRACKER_API_KEY", "").strip())
-    provider_status = source.status if source else ("not_started" if provider_configured else "disabled")
+    provider_status = (
+        source.status if source else ("not_started" if provider_configured else "disabled")
+    )
 
     if attributed == 0:
         coverage_status = "no_attributed_wallets"
@@ -115,8 +115,12 @@ async def internal_kol_trade_coverage(
             "configured": provider_configured,
             "status": provider_status,
             "detail": source.detail if source else None,
-            "lastSuccessAt": source.last_success_at.isoformat() if source and source.last_success_at else None,
-            "lastErrorAt": source.last_error_at.isoformat() if source and source.last_error_at else None,
+            "lastSuccessAt": source.last_success_at.isoformat()
+            if source and source.last_success_at
+            else None,
+            "lastErrorAt": source.last_error_at.isoformat()
+            if source and source.last_error_at
+            else None,
         },
         "attributedSolanaWallets": attributed,
         "walletsWithTradeHistory": covered,
@@ -126,7 +130,8 @@ async def internal_kol_trade_coverage(
         "coverageRatio": round(min(1.0, ratio), 4),
         "latestEventAt": latest_event_at.isoformat() if latest_event_at else None,
         "note": (
-            "Coverage measures locally ingested kol_trade_events for currently attributed Solana wallets. "
+            "Coverage measures locally ingested kol_trade_events "
+            "for currently attributed Solana wallets. "
             "Missing local history must not be interpreted as evidence that a KOL did not trade."
         ),
     }
