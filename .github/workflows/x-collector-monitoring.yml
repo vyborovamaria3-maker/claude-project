@@ -1,0 +1,53 @@
+name: X Collector monitoring
+on:
+  pull_request:
+    paths:
+      - 'x-collector/**'
+      - '.github/workflows/x-collector-monitoring.yml'
+  push:
+    branches: [main, feat/graph-signals-monitoring-v1]
+    paths:
+      - 'x-collector/**'
+      - '.github/workflows/x-collector-monitoring.yml'
+permissions:
+  contents: read
+jobs:
+  postgres-monitoring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: collector_test
+          POSTGRES_PASSWORD: collector_test
+          POSTGRES_DB: collector_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U collector_test -d collector_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: x-collector
+    env:
+      DATABASE_URL: postgresql://collector_test:collector_test@localhost:5432/collector_test
+      TEST_DATABASE_URL: postgresql://collector_test:collector_test@localhost:5432/collector_test
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: x-collector/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+      - run: npm run migrate
+      - run: npm run migrate
+      - run: npm run test:db
+      - run: npm run monitor

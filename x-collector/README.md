@@ -48,3 +48,47 @@ Timeline refreshes store posts without linking every post to the mint that origi
 The archive report is retained as FIX_REPORT_RU.md. It describes the supplied source snapshot and its verification limits.
 
 Dashboard CSP permits only the pinned Vue and Chart.js CDN script URLs used by its HTML. Internet access to these CDNs is required. HTTP rate limits use the socket peer address and ignore untrusted forwarded headers. Behind a reverse proxy, the application limit is shared by requests from that proxy; configure per-client limits at the proxy too.
+
+## Graph signals and autonomous monitoring v1
+
+Apply migration 012 with `npm run migrate` inside x-collector before starting the scheduler.
+`npm run monitor` runs one cycle; the scheduler runs it every five minutes. No new
+AI, sentiment, embeddings, dashboard or trading features are used by this cycle.
+
+The analyzer reads posts, entity mentions with confidence >= 0.5, explicit token
+links and author reputation. Missing reputation contributes zero. It compares two
+adjacent completed hourly windows. Duplicate tweets and repeated entity mentions
+contribute once; author handles are normalized. Posts with missing timestamps and
+future posts are excluded. Entity identifiers preserve type and value.
+
+Base score: frequency (30), positive growth (30), unique authors (20), posting
+velocity (20), each bounded. Final score = base * 0.60 + author reputation * 0.25
++ graph impact * 0.15. Graph impact combines author diversity (70%) and distinct
+co-mentioned entities (30%). Scores are evidence of attention, not price predictions.
+LOW <30; MEDIUM >=30; HIGH >=60; CRITICAL >=80.
+
+History is stored in graph_signal_history. HIGH/CRITICAL observations also create
+graph_priority_events with priorities 2/3. These are persisted events for consumers,
+not externally delivered notifications. Transactional advisory locking serializes
+cycles, REPEATABLE READ fixes the input snapshot, and unique keys deduplicate
+entity/window records. Failed cycles roll back; successful windows remain immutable.
+Late posts arriving after the first successful cycle are not retroactively included.
+
+Inspect results with:
+```sql
+SELECT entity, bucket_at, score, level, payload
+FROM graph_signal_history ORDER BY bucket_at DESC, score DESC LIMIT 100;
+SELECT * FROM graph_priority_events ORDER BY priority DESC, created_at DESC LIMIT 100;
+```
+
+Real PostgreSQL integration check: set TEST_DATABASE_URL to a dedicated test database, then run `npm run test:db` inside x-collector. It creates and removes an isolated schema and checks persistence, duplicate protection, concurrent locking and rollback. Without TEST_DATABASE_URL the check is skipped.
+
+The standard `npm test` also uses the embedded PostgreSQL engine PGlite to apply
+the complete migration chain 001–012 and verify actual SQL writes, deduplication,
+rollback, and an injected failure during the event INSERT. This runs without an
+external database; it does not verify concurrency between server connections.
+The separate `test:db` check verifies that on PostgreSQL using two connections.
+The admin X Collector explorer automatically lists both graph tables after migration
+012, with Russian labels and explanations of scores and priorities.
+
+GitHub Actions `X Collector monitoring` provisions PostgreSQL 17, checks the build, applies the full migration chain twice, runs the two-connection integration test, and executes the one-cycle monitor on an empty database. It uses disposable test credentials and does not access production.
