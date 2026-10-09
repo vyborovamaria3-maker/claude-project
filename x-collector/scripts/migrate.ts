@@ -4,29 +4,7 @@ import path from "node:path";
 import { Pool } from "pg";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "migrations");
-const REQUIRED = [
-  "001_init.sql",
-  "002_improvements.sql",
-  "003_performance.sql",
-  "004_analytics.sql",
-  "005_nlp.sql",
-  "006_events.sql",
-  "007_kol.sql",
-  "008_timeseries.sql",
-  "009_advanced_analytics.sql",
-  "010_predictive.sql",
-  "011_runtime_hardening.sql",
-  "012_graph_monitoring.sql",
-  "013_intelligence.sql",
-  "014_signals_engine.sql",
-  "012_reply_guy.sql",
-  "013_reply_performance.sql",
-  "014_archive.sql",
-  "015_collector_observations.sql",
-  "016_collector_task_results.sql",
-  "017_collector_live.sql",
-  "018_ai_foundation.sql",
-];
+import { REQUIRED } from "../lib/trade/migrations";
 const LOCK_KEY = "x-collector:migrate";
 
 async function main() {

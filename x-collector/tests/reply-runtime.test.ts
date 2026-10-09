@@ -1,3 +1,4 @@
+import { REQUIRED } from "../lib/trade/migrations";
 import assert from "node:assert/strict";
 import { test, mock } from "node:test";
 import fs from "node:fs/promises";
@@ -122,9 +123,7 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
   });
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
-    for (const file of (await fs.readdir("migrations"))
-      .filter((f) => f.endsWith(".sql"))
-      .sort())
+    for (const file of REQUIRED)
       await db.exec(await fs.readFile("migrations/" + file, "utf8"));
     const jwt = await issueToken("12345"),
       otherJwt = await issueToken("67890");

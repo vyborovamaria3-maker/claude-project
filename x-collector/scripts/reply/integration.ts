@@ -1,3 +1,4 @@
+import { REQUIRED } from "../../lib/trade/migrations";
 import { checkCollectorNative } from "../collector/native-check";
 import "dotenv/config";
 import assert from "node:assert/strict";
@@ -28,9 +29,7 @@ async function main() {
     process.env.DATABASE_URL = url.toString();
     const client = await getPool().connect();
     try {
-      for (const file of (await fs.readdir("migrations"))
-        .filter((f) => f.endsWith(".sql"))
-        .sort())
+      for (const file of REQUIRED)
         await client.query(await fs.readFile("migrations/" + file, "utf8"));
     } finally {
       client.release();

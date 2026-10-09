@@ -1,3 +1,4 @@
+import { REQUIRED } from "../lib/trade/migrations";
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const load = createRequire(__filename);
@@ -9,8 +10,8 @@ const { pg_trgm } = load('@electric-sql/pglite/contrib/pg_trgm') as { pg_trgm: i
 test('001–018 migration chain executes on disposable PostgreSQL engine', async () => {
   const db = new PGlite({ extensions: { pg_trgm } });
   try {
-    const files = (await fs.readdir('migrations')).filter(f => f.endsWith('.sql')).sort();
-    assert.equal(files.length, 18);
+    const files = REQUIRED;
+    assert.equal(files.length, 22);
     for (const file of files) {
       try { await db.exec(await fs.readFile('migrations/' + file, 'utf8')); }
       catch (error) { throw new Error(file + ': ' + String(error), { cause: error }); }

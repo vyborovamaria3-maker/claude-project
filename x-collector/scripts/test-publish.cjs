@@ -1,4 +1,4 @@
-const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const fs=require('node:fs'),path=require('node:path'),nodeCrypto=require('node:crypto');
 const {Client}=require('pg'),{chromium}=require('playwright'),dotenv=require('dotenv');
 const {launchLoginBrowser}=require('./test-publish-browser.cjs');
 async function main(){
@@ -17,7 +17,7 @@ async function main(){
  if(key.length!==32)throw Error('Invalid MASTER_KEY.');
  const encrypted=row.session_encrypted;
  if(!Buffer.isBuffer(encrypted)||encrypted.length<29)throw Error('Invalid encrypted session.');
- const decipher=crypto.createDecipheriv('aes-256-gcm',key,encrypted.subarray(0,12));decipher.setAuthTag(encrypted.subarray(12,28));
+ const decipher=nodeCrypto.createDecipheriv('aes-256-gcm',key,encrypted.subarray(0,12));decipher.setAuthTag(encrypted.subarray(12,28));
  plain=Buffer.concat([decipher.update(encrypted.subarray(28)),decipher.final()]);
  const state=JSON.parse(plain.toString('utf8'));
  const opened=await launchLoginBrowser(chromium,{...process.env,X_LOGIN_BROWSER:env.X_LOGIN_BROWSER||process.env.X_LOGIN_BROWSER});browser=opened.browser;

@@ -1,3 +1,4 @@
+import { REQUIRED } from "../lib/trade/migrations";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -14,8 +15,8 @@ test("PostgreSQL engine: full migration chain, persistence, retries and atomic r
   } } as unknown as Pick<PoolClient, "query">;
   try {
     const dir = path.resolve("migrations");
-    const migrations = (await fs.readdir(dir)).filter(f => f.endsWith(".sql")).sort();
-    assert.equal(migrations.length, 12);
+    const migrations = REQUIRED;
+    assert.equal(migrations.length, 22);
     for (const file of migrations) {
       await db.exec("BEGIN");
       try {

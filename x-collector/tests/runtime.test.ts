@@ -1,3 +1,4 @@
+import { REQUIRED } from "../lib/trade/migrations";
 import assert from 'node:assert/strict';
 import { test, mock } from 'node:test';
 import fs from 'node:fs/promises';
@@ -41,7 +42,7 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
   const queryMock = mock.method(Pool.prototype, 'query', query);
   const connectMock = mock.method(Pool.prototype, 'connect', async () => ({ query, release() {} }));
   try {
-    for (const file of (await fs.readdir('migrations')).filter(f => f.endsWith('.sql')).sort()) {
+    for (const file of REQUIRED) {
       await db.exec(await fs.readFile('migrations/' + file, 'utf8'));
     }
     for (const read of [getDailyDigest, getTopShillers, getTrendingWords, getCashtagTrends, getWorkerEfficiency, getAccountHealth, getTopHype, getEarlySignals, getLeadAuthors, getTopPageRank, getTopUltra, listModels]) await read();

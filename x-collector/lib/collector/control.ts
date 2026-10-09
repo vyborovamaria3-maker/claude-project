@@ -26,7 +26,8 @@ export async function readiness() {
  const tables=await q<{name:string;present:boolean}>("SELECT name,to_regclass(name) IS NOT NULL present FROM unnest($1::text[]) AS name",[required]);
  const missing=tables.filter(t=>!t.present).map(t=>t.name);
  if(!missing.includes("x_accounts")&&(await q("SELECT attname FROM pg_attribute WHERE attrelid='x_accounts'::regclass AND attname='account_claimed_by' AND NOT attisdropped")).length===0)missing.push("account lease migration 011");
- checks.push({name:"schema",ok:missing.length===0,message:missing.length?"Примените миграции: npm run migrate (нужна 018)":"Схема сборщика готова"});
+ if(!missing.includes("x_accounts")&&(await q("SELECT attname FROM pg_attribute WHERE attrelid='x_accounts'::regclass AND attname='role' AND NOT attisdropped")).length===0)missing.push("account role migration 019");
+ checks.push({name:"schema",ok:missing.length===0,message:missing.length?"Примените миграции: npm run migrate (нужна 019)":"Схема сборщика готова"});
  if(missing.length)return {ready:false,checks,runtime:runtimeStatus()};
  let valid=false,after="";
  // Bounded batches, but no arbitrary cap hiding a valid account after the first 20.
