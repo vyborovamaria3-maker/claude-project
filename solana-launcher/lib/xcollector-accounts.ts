@@ -19,13 +19,14 @@ function settings() {
     key: env.MASTER_KEY || process.env.X_COLLECTOR_MASTER_KEY };
 }
 let pool: Pool | undefined, poolUrl: string | undefined;
-function database() {
+export function collectorDatabase() {
   const { url } = settings();
   if (!url) throw new AccountError('Укажите DATABASE_URL в x-collector/.env', 503);
   if (pool && poolUrl !== url) throw new AccountError('Настройки базы изменены. Перезапустите сайт', 503);
   if (!pool) { poolUrl = url; pool = new Pool({ connectionString: url, max: 3, connectionTimeoutMillis: 5000, statement_timeout: 10000 }); pool.on('error', () => {}); }
   return pool;
 }
+const database=collectorDatabase;
 function accountName(raw: unknown) {
   if (typeof raw !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(raw)) throw new AccountError('Имя: 1–64 латинских буквы, цифры, _ или -');
   return raw;
