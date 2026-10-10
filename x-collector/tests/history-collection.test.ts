@@ -80,7 +80,8 @@ test('history jobs persist, deduplicate starts and paginate a full period withou
   await db.exec(await fs.readFile('migrations/022_history_archive.sql','utf8'));
   await db.exec("CREATE TABLE twitter_tweets(tweet_id text PRIMARY KEY,text text,posted_at bigint); INSERT INTO twitter_tweets VALUES('1000000000000000','Durable historical fixture',1728518400000)");
   const poolQuery=mock.method(Pool.prototype,'query',c.query);
-  try{await persistHistory(id,Number(tasks[0].id));}finally{await closePool();poolQuery.mock.restore();}
+  const oldUrl=process.env.DATABASE_URL;process.env.DATABASE_URL='postgresql://fixture/history';
+  try{await persistHistory(id,Number(tasks[0].id));}finally{await closePool();poolQuery.mock.restore();if(oldUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=oldUrl;}
   await db.query('DELETE FROM x_tasks WHERE id=$1',[tasks[0].id]);await db.exec('DELETE FROM twitter_tweets');
   assert.equal((await db.query<{text:string}>("SELECT snapshot_json->>'text' AS text FROM xc_history_posts WHERE run_id=$1",[id])).rows[0].text,'Durable historical fixture');
  }finally{await db.close();}
