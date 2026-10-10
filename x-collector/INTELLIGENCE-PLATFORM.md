@@ -46,6 +46,31 @@ deduplicates captures. It does not yet import every legacy API archive format or
 the retention-independent historical snapshots when operational observations
 have already been removed.
 
+Operational commands (same DATABASE_URL):
+
+```powershell
+npm run investigation:run -- --entity <uuid>
+npm run investigation:run -- --list --status OPEN
+npm run intelligence:health
+npm run intelligence:retention -- --snapshot-days 365 --dry-run
+```
+
+`intelligence:health` exits non-zero unless every required migration is applied,
+all `ip_` tables exist, no active relation lacks a durable source event, and the
+normalization and investigation queues stay inside configured limits. It reports
+counts, not scores.
+
+`intelligence:retention` deletes expired `ip_entity_snapshots` in bounded
+batches. Raw events, relation evidence, relations and investigation steps are
+protected and never removed by this command. Dry-run reports the candidate
+count without writing.
+
+Investigations (`ip_investigations`, `ip_investigation_steps`) are created by
+`runInvestigation`: it reads observed relations, profiles and clusters, then
+records OBSERVATION and EVIDENCE steps. EVIDENCE steps must reference an existing
+raw event. The runner never creates relations. Lifecycle transitions are written
+to the append-only `ip_audit_log`.
+
 Graph analytics operates on all observed account-to-account edges up to 100,000.
 It refuses larger graphs rather than silently sampling them. Groups are connected
 components, not confirmed real-world communities. Influence is relative PageRank

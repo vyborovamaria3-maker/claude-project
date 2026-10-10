@@ -1,5 +1,6 @@
 import {randomUUID} from "node:crypto";
 import type {PoolClient} from "pg";
+import {recordAudit} from "./audit-log";
 
 type Client=Pick<PoolClient,"query">;
 
@@ -117,7 +118,9 @@ export async function openInvestigation(c:Client,input:OpenInvestigationInput):P
   `INSERT INTO ip_investigations(id,subject_entity_id,title,status,priority,hypothesis,created_by)
    VALUES($1,$2,$3,'OPEN',$4,$5,$6) RETURNING *`,
   [id,subject,title,priority,input.hypothesis??"",input.createdBy??"agent"]);
- return r.rows[0];
+ const row=r.rows[0];
+ await recordAudit(c,{action:"investigation.open",actor:input.createdBy,entityId:subject,payload:{id:row.id,title,priority}});
+ return row;
 }
 
 export async function appendStep(c:Client,investigationId:string,input:AppendStepInput):Promise<InvestigationStep>{
@@ -140,10 +143,12 @@ export async function appendStep(c:Client,investigationId:string,input:AppendSte
   `INSERT INTO ip_investigation_steps(id,investigation_id,kind,content,source_event_id,entity_id,confidence)
    VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,investigation_id,kind,content,source_event_id,entity_id,confidence,created_at`,
   [id,investigationId,kind,content,sourceEvent,entity,confidence]);
+ const step=r.rows[0];
  await c.query(
   `UPDATE ip_investigations SET status=CASE WHEN status='OPEN' THEN 'ACTIVE' ELSE status END,updated_at=now(),started_at=COALESCE(started_at,now()) WHERE id=$1`,
   [investigationId]);
- return r.rows[0];
+ await recordAudit(c,{action:"investigation.step",entityId:entity,payload:{investigation_id:investigationId,kind,step_id:step.id}});
+ return step;
 }
 
 export async function getInvestigation(c:Client,id:string):Promise<{investigation:Investigation;steps:InvestigationStep[]}>{
@@ -179,7 +184,9 @@ export async function closeInvestigation(c:Client,id:string,summary:string,statu
  const r=await c.query<Investigation>(
   `UPDATE ip_investigations SET status=$2,summary=$3,started_at=COALESCE(started_at,now()),closed_at=now(),updated_at=now() WHERE id=$1 RETURNING *`,
   [id,status,text]);
- return r.rows[0];
+ const closed=r.rows[0];
+ await recordAudit(c,{action:"investigation.close",entityId:investigation.subject_entity_id,payload:{id,status:closed.status}});
+ return closed;
 }
 
 export type InvestigationReport={

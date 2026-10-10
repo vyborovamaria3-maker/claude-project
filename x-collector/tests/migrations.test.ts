@@ -7,11 +7,11 @@ import fs from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 const { pg_trgm } = load('@electric-sql/pglite/contrib/pg_trgm') as { pg_trgm: import('@electric-sql/pglite').Extension };
 
-test('001–036 migration chain executes on disposable PostgreSQL engine', async () => {
+test('001–037 migration chain executes on disposable PostgreSQL engine', async () => {
   const db = new PGlite({ extensions: { pg_trgm } });
   try {
     const files = REQUIRED;
-    assert.equal(files.length, 32);
+    assert.equal(files.length, 33);
     for (const file of files) {
       try { await db.exec(await fs.readFile('migrations/' + file, 'utf8')); }
       catch (error) { throw new Error(file + ': ' + String(error), { cause: error }); }
@@ -53,6 +53,10 @@ test('001–036 migration chain executes on disposable PostgreSQL engine', async
       "SELECT column_name FROM information_schema.columns WHERE table_name='ip_investigation_steps' AND column_name IN ('id','investigation_id','kind','content','source_event_id','entity_id','confidence','metadata','created_at','updated_at')",
     );
     assert.equal(investigationSteps.rows.length, 10);
+    const auditColumns = await db.query<{ column_name: string }>(
+      "SELECT column_name FROM information_schema.columns WHERE table_name='ip_audit_log' AND column_name IN ('id','actor','action','entity_id','payload','created_at')",
+    );
+    assert.equal(auditColumns.rows.length, 6);
     await db.query("INSERT INTO x_accounts(name,session_encrypted,hour_window_start,created_at,updated_at) VALUES ('profile-test',decode('00','hex'),0,0,0)");
     await db.query("INSERT INTO xc_account_errors(account_name,type,message,created_at) VALUES ('profile-test','PROXY_FAILED','safe',0)");
     await assert.rejects(db.query("INSERT INTO xc_account_errors(account_name,type,message,created_at) VALUES ('profile-test','INVALID','safe',0)"));
