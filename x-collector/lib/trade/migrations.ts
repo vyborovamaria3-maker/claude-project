@@ -29,4 +29,5 @@ export const REQUIRED = [
   "029_wallet_intelligence.sql",
   "032_intelligence_dashboard_api.sql",
   "033_intelligence_indexes.sql",
+  "035_tag_taxonomy.sql",
 ];
