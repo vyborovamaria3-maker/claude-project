@@ -26,4 +26,7 @@ export const REQUIRED = [
   "022_history_archive.sql",
   "023_intelligence_platform.sql",
   "024_intelligence_temporal.sql",
+  "029_wallet_intelligence.sql",
+  "032_intelligence_dashboard_api.sql",
+  "033_intelligence_indexes.sql",
 ];

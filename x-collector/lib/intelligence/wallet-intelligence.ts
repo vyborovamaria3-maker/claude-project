@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 
 export type WalletProfileInput = {
-  entityId: number;
+  entityId: string;
   walletAgeDays?: number;
   firstSeenAt?: Date;
   lastActivityAt?: Date;
@@ -50,7 +50,7 @@ export class WalletIntelligenceService {
     );
   }
 
-  async getProfile(entityId: number) {
+  async getProfile(entityId: string) {
     const result = await this.db.query(
       `SELECT * FROM ip_wallet_profiles WHERE entity_id = $1`,
       [entityId],
