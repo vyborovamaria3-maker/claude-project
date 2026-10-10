@@ -9,6 +9,16 @@ import {closePool} from '../lib/trade/pg';
 import type {RawTweet} from '../lib/trade/twitter-scraper';
 const core=createRequire(__filename)('../scripts/history-core.cjs');
 
+test('historical workers use collector settings instead of the inherited website database',()=>{
+ const {configureEnvironment}=createRequire(__filename)('../scripts/history-collector.cjs');
+ const before={DATABASE_URL:process.env.DATABASE_URL,MASTER_KEY:process.env.MASTER_KEY};
+ try{
+  process.env.DATABASE_URL='postgresql://fixture/website';
+  configureEnvironment({DATABASE_URL:'postgresql://fixture/collector',MASTER_KEY:'fixture-key'});
+  assert.equal(process.env.DATABASE_URL,'postgresql://fixture/collector');assert.equal(process.env.MASTER_KEY,'fixture-key');
+ }finally{for(const [key,value] of Object.entries(before)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+});
+
 test('list membership discovery captures valid current handles and releases the selected account',async()=>{
  const load=createRequire(__filename),helper=load('../scripts/test-publish-browser.cjs'),runtime=load('../scripts/autopost/runtime.cjs');
  const handles:string[]=[];let released=false,closed=false;
