@@ -22,7 +22,7 @@ function fixture() {
 }
 
 async function migrations(db: PGlite) {
-  for (const name of ["023_intelligence_platform.sql", "024_intelligence_temporal.sql", "036_investigations.sql"]) {
+  for (const name of ["023_intelligence_platform.sql", "024_intelligence_temporal.sql", "036_investigations.sql", "037_intelligence_audit.sql"]) {
     await db.exec(await fs.readFile("migrations/" + name, "utf8"));
   }
 }
