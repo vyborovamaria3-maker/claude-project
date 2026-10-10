@@ -25,6 +25,7 @@ import { applySecurityHeaders, clientIp, createRateLimiter } from "../lib/trade/
 import { handleSearchTask } from "../src/x/task-handler";
 import { normalizeTweets } from "../src/x/normalize";
 import { listId } from "../lib/trade/list-source";
+import {filterHistory,persistHistory} from '../lib/trade/history-filter';
 
 const workerId = process.env.WORKER_ID || `w-${randomUUID().slice(0, 8)}`;
 const METRICS_HOST = process.env.METRICS_HOST ?? "127.0.0.1";
@@ -73,11 +74,15 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
     return "invalid-payload";
   }
 
+  const historical=payload as {history_run_id?:string;history_since?:string;history_until?:string;history_author?:string;history_max_id?:string};
+  if(historical.history_run_id&&!(await q("SELECT 1 FROM xc_history_runs WHERE id=$1 AND status='running'",[historical.history_run_id])).length){
+    await deferTask(task.id,workerId,60000,'Historical collection paused');return 'history-paused';
+  }
   // Ветка нового X Collector (src/x). Стоит до pickAccount: аккаунт, сессия и
   // прокси берутся внутри handleSearchTask, иначе единственная учётка была бы
   // занята воркером и getCollectorAccount не вернул бы её. Lease/retry/defer —
   // те же функции очереди, что и в основном пути.
-  if (task.kind === "search" && USE_X_COLLECTOR && !listId((payload as {query:string}).query)) {
+  if (task.kind === "search" && USE_X_COLLECTOR && !listId((payload as {query:string}).query) && !(payload as {account_name?:string}).account_name) {
     const startMs = Date.now();
     const leaseMs = cfg.sessions.leaseMs;
     let branchLeaseLost = false;
@@ -121,7 +126,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
   let account: XAccount | null;
   try {
     account = await pickAccount(task.kind === "search" ? "search"
-      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner);
+      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner, (payload as {account_name?:string}).account_name);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await failTask(task.id, workerId, `pickAccount: ${msg}`).catch(() => {});
@@ -167,7 +172,8 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
         onBatch:async(tweets:RawTweet[])=>{
           assertLeases();await publish({phase:"saving"});
           const query=kind==="search"?(payload as {query:string}).query:null;
-          await persistTweets(kind==="search"?task.mint:null,tweets,query,task.id);
+          await persistTweets(kind==="search"?task.mint:null,filterHistory(tweets,historical),query,task.id);
+          if(historical.history_run_id)await persistHistory(historical.history_run_id,task.id);
           assertLeases();await publish({phase:"collecting"});
         },
         proxy: buildProxy(acc),

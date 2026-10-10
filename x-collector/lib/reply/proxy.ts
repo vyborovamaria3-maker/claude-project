@@ -60,6 +60,8 @@ function agent(proxy?: ProxyConfig): Agent | undefined {
   const url = new URL(proxy.server);
   if (proxy.username) url.username = proxy.username;
   if (proxy.password) url.password = proxy.password;
+  // Resolve destination names at the proxy, using its network and address family.
+  if (url.protocol === "socks5:") url.protocol = "socks5h:";
   return url.protocol.startsWith("socks")
     ? new SocksProxyAgent(url)
     : new HttpsProxyAgent(url);

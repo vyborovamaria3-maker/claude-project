@@ -75,6 +75,68 @@ export async function accountErrors(raw:unknown){
  const name=accountName(raw);
  return {errors:(await database().query('SELECT type,message,created_at::text FROM xc_account_errors WHERE account_name=$1 ORDER BY created_at DESC,id DESC LIMIT 30',[name])).rows};
 }
+export async function collectorParsing(input:any){
+ const name=accountName(input?.name),db=database();
+ if(!(await db.query("SELECT name FROM x_accounts WHERE name=$1 AND role='collector' AND status='active'",[name])).rowCount)throw new AccountError('Нужен активный аккаунт collector');
+ if(input.action==='account-parse-status'){
+  if(!Array.isArray(input.ids)||input.ids.length>20||input.ids.some((id:unknown)=>!/^\d+$/.test(String(id))))throw new AccountError('Некорректные задания');
+  const tasks=(await db.query("SELECT id::text,status FROM x_tasks WHERE id=ANY($1::bigint[]) AND payload_json->>'account_name'=$2 ORDER BY id",[input.ids,name])).rows;
+  return {tasks,running:tasks.some(t=>['pending','claimed'].includes(t.status))};
+ }
+ const client=await db.connect();
+ try{
+  await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(742098532)');
+  const sources=(await client.query('SELECT list_id FROM xc_auto_sources WHERE enabled ORDER BY list_id')).rows;
+  if(!sources.length)throw new AccountError('Нет включённых списков для сбора');
+  const ids:string[]=[];const now=Date.now();
+  for(const source of sources){
+   const query='list:'+source.list_id;
+   let task=(await client.query("SELECT id::text FROM x_tasks WHERE kind='search' AND payload_json->>'query'=$1 AND payload_json->>'account_name'=$2 AND status IN ('pending','claimed') LIMIT 1",[query,name])).rows[0];
+   if(!task)task=(await client.query("INSERT INTO x_tasks(kind,payload_json,priority,available_at,created_at,updated_at,max_attempts) VALUES('search',$1::jsonb,10,$2,$2,$2,3) RETURNING id::text",[JSON.stringify({query,limit:100,sort:'latest',account_name:name}),now])).rows[0];
+   ids.push(task.id);
+   await client.query('UPDATE xc_auto_sources SET last_task_id=$2 WHERE list_id=$1',[source.list_id,task.id]);
+  }
+  await client.query('COMMIT');
+  return {ids,message:'Запущен сбор из списков: '+ids.length,workerActive:!!(await db.query("SELECT 1 FROM x_workers WHERE status='active' AND last_heartbeat>$1 LIMIT 1",[now-90000])).rowCount};
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+export async function historyCollection(input:{action:string;name:unknown;id?:unknown}){
+ const name=accountName(input.name),db=database();
+ if(input.action==='account-history-start'){
+  const root=[path.resolve(process.cwd(),'../x-collector'),path.resolve(process.cwd(),'x-collector')].find(p=>fs.existsSync(path.join(p,'scripts/history-core.cjs')));
+  if(!root)throw new AccountError('Обновите X Collector для исторического сбора',503);
+  const nativeModule=process.getBuiltinModule('node:module') as typeof import('node:module');
+  const {startRun}=nativeModule.createRequire(path.join(root,'package.json'))('./scripts/history-core.cjs');
+  const today=new Date(Date.now()+3*3600000).toISOString().slice(0,10);
+  const start=new Date(today+'T00:00:00Z');start.setUTCFullYear(start.getUTCFullYear()-2);
+  const end=new Date(today+'T00:00:00Z');end.setUTCDate(end.getUTCDate()+1);
+  const lists=(await db.query('SELECT list_id FROM xc_auto_sources WHERE enabled ORDER BY list_id')).rows.map(r=>r.list_id);
+  if(!lists.length)throw new AccountError('Добавьте списки X для исторического сбора');
+  const c=await db.connect();try{await startRun(c,name,start.toISOString().slice(0,10),end.toISOString().slice(0,10),lists);}catch{throw new AccountError('Не удалось начать архив. Проверьте активный collector и миграции.',503);}finally{c.release();}
+ }
+ if(['account-history-pause','account-history-resume'].includes(input.action)){
+  if(typeof input.id!=='string'||!/^[a-f0-9-]{36}$/i.test(input.id))throw new AccountError('Некорректный архив');
+  const r=await db.query("UPDATE xc_history_runs SET status=$3,updated_at=$4 WHERE id=$1 AND account_name=$2 AND status IN ('running','paused') RETURNING id",[input.id,name,input.action==='account-history-pause'?'paused':'running',Date.now()]);
+  if(!r.rowCount)throw new AccountError('Активный архив не найден',404);
+ }
+ if(input.action==='account-history-retry'){
+  if(typeof input.id!=='string'||!/^[a-f0-9-]{36}$/i.test(input.id))throw new AccountError('Некорректный архив');
+  const c=await db.connect();try{
+   await c.query('BEGIN');
+   if(!(await c.query('SELECT id FROM xc_history_runs WHERE id=$1 AND account_name=$2 FOR UPDATE',[input.id,name])).rowCount)throw new AccountError('Архив не найден',404);
+   await c.query("UPDATE xc_history_windows SET cursor_id=CASE WHEN status='partial' THEN '' ELSE cursor_id END,status='pending',task_id=NULL,message=NULL WHERE run_id=$1 AND status IN ('failed','partial')",[input.id]);
+   await c.query("UPDATE xc_history_lists SET status='pending',attempts=0 WHERE run_id=$1 AND status='failed'",[input.id]);
+   await c.query("UPDATE xc_history_runs SET status='running',updated_at=$2 WHERE id=$1",[input.id,Date.now()]);await c.query('COMMIT');
+  }catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}
+ }
+ const run=(await db.query('SELECT id,account_name,since_date::text,until_date::text,status,message FROM xc_history_runs WHERE account_name=$1 ORDER BY created_at DESC LIMIT 1',[name])).rows[0];
+ if(!run)return {run:null};
+ const counts=(await db.query("SELECT count(*)::int AS total,count(*) FILTER(WHERE status='done')::int AS done,count(*) FILTER(WHERE status='queued')::int AS queued,count(*) FILTER(WHERE status IN ('failed','partial'))::int AS errors FROM xc_history_windows WHERE run_id=$1",[run.id])).rows[0];
+ const authors=Number((await db.query('SELECT count(DISTINCT handle) FROM xc_history_authors WHERE run_id=$1',[run.id])).rows[0].count);
+ const posts=Number((await db.query('SELECT count(*) FROM xc_history_posts WHERE run_id=$1',[run.id])).rows[0].count);
+ const lists=(await db.query('SELECT list_id,status FROM xc_history_lists WHERE run_id=$1 ORDER BY list_id',[run.id])).rows;
+ return {run:{...run,...counts,authors,posts,lists}};
+}
 export async function saveAccountSettings(input:any){
  const name=accountName(input?.name);
  if(typeof input?.version!=='string'||!/^\d+$/.test(input.version))throw new AccountError('Обновите список аккаунтов');

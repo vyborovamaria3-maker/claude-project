@@ -7,6 +7,12 @@ export const SearchPayload = z.object({
   query: z.string().min(1).max(500),
   limit: z.number().int().min(1).max(500).default(50),
   sort: z.enum(["top", "latest"]).default("latest"),
+  account_name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
+  history_run_id: z.string().uuid().optional(),
+  history_since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  history_until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  history_author: Handle.optional(),
+  history_max_id: z.string().regex(/^\d{1,25}$/).optional(),
 });
 
 export const TimelinePayload = z.object({

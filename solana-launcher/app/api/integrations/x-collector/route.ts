@@ -1,5 +1,5 @@
-import {accountProxyCommand,startAccountCheck,accountCheckStatus} from '@/lib/xcollector-diagnostics';
-import {accountErrors,saveAccountSettings,removeAccountProxy} from '@/lib/xcollector-accounts';
+import {accountProxyCommand,startAccountCheck,accountCheckStatus,ensureHistoryCollector} from '@/lib/xcollector-diagnostics';
+import {accountErrors,saveAccountSettings,removeAccountProxy,collectorParsing,historyCollection} from '@/lib/xcollector-accounts';
 import {autopostCommand,publicPublishJob} from '@/lib/xcollector-autopost';
 import {startAccountLogin,finishAccountLogin,cancelAccountLogin,loginStatus} from '@/lib/xcollector-login';
 import { NextRequest, NextResponse } from 'next/server';
@@ -43,6 +43,18 @@ export async function POST(request: NextRequest) {
     const auth = await requireProdAuth(request); if (auth) return auth;
     if (!sameOrigin(request)) throw new AccountError('Запрос разрешён только со страницы сайта',403);
     const input = await body(request);
+    if(['account-history-start','account-history-status','account-history-pause','account-history-resume','account-history-retry'].includes(input?.action)){
+      localLogin(request);const result=await historyCollection(input);
+      if(result.run?.status==='running'){
+        ensureHistoryCollector();
+      }
+      return NextResponse.json(result,{headers:{'Cache-Control':'no-store'}});
+    }
+    if(['account-parse-start','account-parse-status'].includes(input?.action)){
+      localLogin(request);const result=await collectorParsing(input);
+      if(input.action==='account-parse-start'&&'workerActive' in result&&!result.workerActive)await runXCollectorAction('worker-start');
+      return NextResponse.json(result,{headers:{'Cache-Control':'no-store'}});
+    }
     if (['autopost-provider-save','autopost-provider-test','autopost-config-save','autopost-pause','autopost-enqueue','autopost-cancel','autopost-sync'].includes(input?.action)) {localLogin(request);return NextResponse.json(await autopostCommand({...input,action:input.action.slice(9)}));}
     if (input?.action === 'publish-start') {localLogin(request);return NextResponse.json(publicPublishJob(await autopostCommand({...input,action:'enqueue',kind:'post'})),{status:202});}
     if (['account-login-start','account-login-finish','account-login-cancel'].includes(input?.action)) {localLogin(request);return NextResponse.json(input.action==='account-login-start'?startAccountLogin(input):input.action==='account-login-finish'?finishAccountLogin(input.id):cancelAccountLogin(input.id));}

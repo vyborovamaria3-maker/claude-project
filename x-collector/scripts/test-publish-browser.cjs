@@ -1,12 +1,24 @@
 // Browser compatibility and redacted diagnostics; no stealth flags or credential capture.
 async function launchLoginBrowser(chromium,env=process.env,extra={}){
+ let bridge;
+ if(extra.proxy?.server?.startsWith('socks5:')&&(extra.proxy.username||extra.proxy.password)){
+  const upstream=new URL(extra.proxy.server);
+  upstream.username=extra.proxy.username||'';upstream.password=extra.proxy.password||'';
+  const {anonymizeProxy}=require('proxy-chain');
+  bridge=await anonymizeProxy(upstream.href);
+  extra={...extra,proxy:{server:bridge}};
+ }
+ const closeBridge=async()=>{if(bridge){const url=bridge;bridge=undefined;await require('proxy-chain').closeAnonymizedProxy(url,true);}};
+ async function launch(options){const browser=await chromium.launch(options);if(bridge)browser.once('disconnected',()=>{void closeBridge().catch(()=>{});});return browser;}
+ try{
  const base={headless:extra.headless??false,...(extra.proxy?{proxy:extra.proxy}:{})};
- if(env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH)return {browser:await chromium.launch({...base,executablePath:env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}),label:'Настроенный Chromium'};
+ if(env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH)return {browser:await launch({...base,executablePath:env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}),label:'Настроенный Chromium'};
  const preferred=env.X_LOGIN_BROWSER;
  if(preferred&&!['chrome','msedge','chromium'].includes(preferred))throw Error('browserconfig');
  const channels=preferred?[preferred]:['chrome','msedge','chromium'];
- for(const channel of channels){try{return {browser:await chromium.launch({...base,...(channel==='chromium'?{}:{channel})}),label:channel==='chrome'?'Google Chrome':channel==='msedge'?'Microsoft Edge':'Chromium'};}catch{/* Try the next supported browser; do not expose paths from launch errors. */}}
+ for(const channel of channels){try{return {browser:await launch({...base,...(channel==='chromium'?{}:{channel})}),label:channel==='chrome'?'Google Chrome':channel==='msedge'?'Microsoft Edge':'Chromium'};}catch{/* Try the next supported browser; do not expose paths from launch errors. */}}
  throw Error('browsermissing');
+ }catch(error){await closeBridge().catch(()=>{});throw error;}
 }
 function attachLoginDiagnostics(page,report){
  const relevant=url=>{try{const u=new URL(url);return /(^|\.)x\.com$|(^|\.)twitter\.com$/.test(u.hostname)&&/onboarding\/task|i\/flow\/login/.test(u.pathname);}catch{return false;}};
