@@ -3,7 +3,8 @@ import { tx } from "./pg";
 import { log } from "./logger";
 import { source, rawPage, storePage } from "../archive/store";
 import { Page } from "../archive/model";
-export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number) {
+import {recordRaw,recordRawBatch} from './intelligence-store';
+export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string) {
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
   let rejected = 0;
@@ -26,6 +27,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
     await tx(async (client) => {
+      await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
       const values: unknown[] = [];
       const placeholders = chunk.map((t, j) => {
         const off = j * 13;
@@ -94,7 +96,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   }
 }
 
-export async function persistProfile(p: unknown, taskId?: number) {
+export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string) {
   const parsed = ProfileSchema.safeParse(p);
   if (!parsed.success) {
     log.warn("profile rejected by schema", { error: parsed.error.message });
@@ -103,6 +105,7 @@ export async function persistProfile(p: unknown, taskId?: number) {
   const d = parsed.data;
   const now = Date.now();
   await tx(async client => {
+  await recordRaw(client,'PROFILE',d.handle.toLowerCase(),d,new Date(now),collectorAccount??null);
   await client.query(
     `INSERT INTO twitter_profiles
        (handle, display_name, bio, followers, following, posts_count, is_verified, joined_at, avatar_url, first_seen_at, last_seen_at)

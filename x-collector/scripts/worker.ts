@@ -172,7 +172,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
         onBatch:async(tweets:RawTweet[])=>{
           assertLeases();await publish({phase:"saving"});
           const query=kind==="search"?(payload as {query:string}).query:null;
-          await persistTweets(kind==="search"?task.mint:null,filterHistory(tweets,historical),query,task.id);
+          await persistTweets(kind==="search"?task.mint:null,filterHistory(tweets,historical),query,task.id,acc.name);
           if(historical.history_run_id)await persistHistory(historical.history_run_id,task.id);
           assertLeases();await publish({phase:"collecting"});
         },
@@ -204,7 +204,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
         await publish({phase:"saving"});
-        await persistProfile(profile, task.id);
+        await persistProfile(profile, task.id,acc.name);
         assertLeases();
       }
     } finally {

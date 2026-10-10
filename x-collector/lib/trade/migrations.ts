@@ -24,4 +24,6 @@ export const REQUIRED = [
   "020_account_profile.sql",
   "021_history_collection.sql",
   "022_history_archive.sql",
+  "023_intelligence_platform.sql",
+  "024_intelligence_temporal.sql",
 ];

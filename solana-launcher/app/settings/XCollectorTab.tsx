@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Clock, Loader2, Play, RefreshCw, Square, TerminalSquare } from "lucide-react";
 import AccountHealthCard, {type HealthAccount} from "./AccountHealthCard";
+import Link from 'next/link';
 import AutopostPanel from "./AutopostPanel";
 import PublisherComposer from "./PublisherComposer";
 import PublisherAccountDashboard from "./PublisherAccountDashboard";
@@ -302,6 +303,7 @@ export default function XCollectorTab() {
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-bold text-white">X Collector</h2>
+        <Link href="/intelligence" className="text-sm text-primary">Открыть сущности, связи и историю →</Link>
         <p className="text-sm text-white/40 mt-0.5">
           Автоматический сборщик твитов и AI-агрегатор для Solana.
         </p>
