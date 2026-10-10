@@ -1,3 +1,5 @@
+import {accountProxyCommand,startAccountCheck,accountCheckStatus} from '@/lib/xcollector-diagnostics';
+import {accountErrors,saveAccountSettings,removeAccountProxy} from '@/lib/xcollector-accounts';
 import {autopostCommand,publicPublishJob} from '@/lib/xcollector-autopost';
 import {startAccountLogin,finishAccountLogin,cancelAccountLogin,loginStatus} from '@/lib/xcollector-login';
 import { NextRequest, NextResponse } from 'next/server';
@@ -30,6 +32,7 @@ export async function GET(request: NextRequest) {
     if (action === 'autopost-overview' || action === 'autopost-stats') {localLogin(request);return NextResponse.json(await autopostCommand({action:action==='autopost-overview'?'overview':'stats',name:new URL(request.url).searchParams.get('name')}),{headers:{'Cache-Control':'no-store'}});}
     if (action === 'publish-status') {localLogin(request);return NextResponse.json(publicPublishJob(await autopostCommand({action:'status',id:new URL(request.url).searchParams.get('id')})), {headers:{'Cache-Control':'no-store'}});}
     if (action === 'account-login-status') {localLogin(request);return NextResponse.json(loginStatus(new URL(request.url).searchParams.get('id')), {headers:{'Cache-Control':'no-store'}});}
+    if (action === 'account-errors') return NextResponse.json(await accountErrors(new URL(request.url).searchParams.get('name')),{headers:{'Cache-Control':'no-store'}});
     if (action === 'publisher-stats') return NextResponse.json(await publisherStatistics(new URL(request.url).searchParams), { headers:{'Cache-Control':'no-store'} });
     if (action === 'accounts' || action === 'metrics') return NextResponse.json(await listCollectorAccounts(), { headers: { 'Cache-Control': 'no-store' } });
     return NextResponse.json(await getXCollectorSummary());
@@ -43,6 +46,9 @@ export async function POST(request: NextRequest) {
     if (['autopost-provider-save','autopost-provider-test','autopost-config-save','autopost-pause','autopost-enqueue','autopost-cancel','autopost-sync'].includes(input?.action)) {localLogin(request);return NextResponse.json(await autopostCommand({...input,action:input.action.slice(9)}));}
     if (input?.action === 'publish-start') {localLogin(request);return NextResponse.json(publicPublishJob(await autopostCommand({...input,action:'enqueue',kind:'post'})),{status:202});}
     if (['account-login-start','account-login-finish','account-login-cancel'].includes(input?.action)) {localLogin(request);return NextResponse.json(input.action==='account-login-start'?startAccountLogin(input):input.action==='account-login-finish'?finishAccountLogin(input.id):cancelAccountLogin(input.id));}
+    if (input?.action === 'account-settings-save') return NextResponse.json(await saveAccountSettings(input));
+    if (input?.action === 'account-proxy-remove') return NextResponse.json(await removeAccountProxy(input));
+    if (['account-proxy-test','account-proxy-save','account-check-start','account-check-status'].includes(input?.action)) {localLogin(request);return NextResponse.json(input.action==='account-check-start'?startAccountCheck(input):input.action==='account-check-status'?accountCheckStatus(input.id):await accountProxyCommand(input),{headers:{'Cache-Control':'no-store'}});}
     if (input?.action === 'publisher-profile') return NextResponse.json(await savePublisherProfile(input));
     if (input?.action === 'account-role') return NextResponse.json(await changeCollectorAccountRole(input));
     if (input?.action === 'account-add') return NextResponse.json(await addCollectorAccount(input), { status: 201 });

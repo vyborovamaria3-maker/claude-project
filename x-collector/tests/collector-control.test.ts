@@ -42,7 +42,7 @@ test('Start button reaches queue, real storage and task results; retries and set
  const browser=await chromium.launch({headless:true,executablePath,args:bundled.args.filter(arg=>arg!=="--disable-web-security")});
  try{
  assert.equal((await readiness()).ready,false);
- for(const f of ['001_init.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql','019_account_roles.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+ for(const f of ['001_init.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql','019_account_roles.sql','020_account_profile.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
  await db.exec('ALTER TABLE x_accounts ADD COLUMN IF NOT EXISTS account_claimed_by text');
  assert.equal((await readiness()).ready,false);
  const blob=encryptBuffer(Buffer.from(JSON.stringify({cookies:[{name:'auth_token',value:'controlled-fixture',domain:'.x.com',expires:-1}],origins:[]})));
@@ -83,7 +83,11 @@ test('Start button reaches queue, real storage and task results; retries and set
  assert.equal(await recordProgress(Number(id),'controlled-worker',claimed.attempts,{phase:'collecting',found:999}),false);
  await db.query("UPDATE x_accounts SET status='captcha',cooldown_until=0");assert.equal((await readiness()).ready,false);assert.equal(await pickAccount('search','blocked-fixture'),null);
  await page.locator('#check').click();await page.waitForFunction(()=>(document.getElementById('start') as HTMLButtonElement).disabled);assert.match(await page.locator('#checks').innerText(),/CAPTCHA/);
- await registerAccount('fixture',blob);assert(await pickAccount('profile','renewed-fixture'));
+ await db.query("UPDATE x_accounts SET health_score=0,last_check_at=1,last_check_json='{\"errorType\":\"SESSION_EXPIRED\"}' WHERE name='fixture'");
+ await registerAccount('fixture',blob);
+ const renewed=(await db.query<{health_score:null;last_check_json:null;last_check_at:null}>("SELECT health_score,last_check_json,last_check_at FROM x_accounts WHERE name='fixture'")).rows[0];
+ assert.deepEqual(renewed,{health_score:null,last_check_json:null,last_check_at:null});
+ assert(await pickAccount('profile','renewed-fixture'));
  }finally{await browser.close();closeLive();await new Promise<void>(resolve=>server.close(()=>resolve()));await closePool();a.mock.restore();b.mock.restore();await db.close();await fs.rm(root,{recursive:true,force:true});clearKeyCache();for(const [n,v] of Object.entries(old)){if(v===undefined)delete process.env[n];else process.env[n]=v;}}
 });
 

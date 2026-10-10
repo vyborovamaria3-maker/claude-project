@@ -21,4 +21,5 @@ export const REQUIRED = [
   "017_collector_live.sql",
   "018_ai_foundation.sql",
   "019_account_roles.sql",
+  "020_account_profile.sql",
 ];

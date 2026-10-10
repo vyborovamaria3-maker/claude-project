@@ -1,0 +1,15 @@
+ALTER TABLE x_accounts
+ ADD COLUMN IF NOT EXISTS language TEXT,
+ ADD COLUMN IF NOT EXISTS display_name TEXT,
+ ADD COLUMN IF NOT EXISTS avatar_url TEXT,
+ ADD COLUMN IF NOT EXISTS x_created_at BIGINT,
+ ADD COLUMN IF NOT EXISTS health_score INTEGER CHECK (health_score BETWEEN 0 AND 100),
+ ADD COLUMN IF NOT EXISTS last_check_at BIGINT,
+ ADD COLUMN IF NOT EXISTS last_check_json JSONB;
+CREATE TABLE IF NOT EXISTS xc_account_errors (
+ id BIGSERIAL PRIMARY KEY,
+ account_name TEXT NOT NULL REFERENCES x_accounts(name) ON DELETE CASCADE,
+ type TEXT NOT NULL CHECK (type IN ('SESSION_EXPIRED','PROXY_FAILED','X_BLOCKED','RATE_LIMIT','BROWSER_ERROR','OTHER')),
+ message TEXT NOT NULL, created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_xc_account_errors_account ON xc_account_errors(account_name,created_at DESC);

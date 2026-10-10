@@ -12,6 +12,7 @@ export interface SearchXOptions {
   proxy?: PlaywrightProxy;
   userAgent?: string;
   timezone?: string;
+  language?: string;
   limit?: number;
 }
 
@@ -33,6 +34,7 @@ export async function searchX(query: string, options: SearchXOptions = {}): Prom
       proxy: options.proxy,
       userAgent: options.userAgent,
       timezone: options.timezone,
+      language: options.language,
     });
     const page = await context.newPage();
     page.setDefaultTimeout(cfg.twitter.requestTimeoutMs);

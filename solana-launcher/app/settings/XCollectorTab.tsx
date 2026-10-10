@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Clock, Loader2, Play, RefreshCw, Square, TerminalSquare } from "lucide-react";
+import AccountHealthCard, {type HealthAccount} from "./AccountHealthCard";
 import AutopostPanel from "./AutopostPanel";
 import PublisherComposer from "./PublisherComposer";
 import PublisherAccountDashboard from "./PublisherAccountDashboard";
@@ -132,7 +133,7 @@ function ProcessCard({ name, label, description, running, health, busy, onStart,
 export default function XCollectorTab() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<"overview" | "accounts" | "proxies" | "campaigns" | "ai" | "security" | "autopost">("overview");
+  const [activeSection, setActiveSection] = useState<"overview" | "accounts" | "campaigns" | "ai" | "security" | "autopost">("overview");
 
   const cachedSummary = useCachedValue<XCollectorSummary>(X_COLLECTOR_SUMMARY_CACHE_KEY);
   const summaryQuery = useQuery({
@@ -181,11 +182,10 @@ export default function XCollectorTab() {
   }
 
   const handleModuleClick = (section: string) => {
-    const validSections: Record<string, "overview" | "accounts" | "proxies" | "campaigns" | "ai" | "security" | "autopost"> = {
+    const validSections: Record<string, "overview" | "accounts" | "campaigns" | "ai" | "security" | "autopost"> = {
       "Обзор": "overview",
       "Автопостинг": "autopost",
       "Аккаунты": "accounts",
-      "Прокси": "proxies",
       "Кампании": "autopost",
       "AI генерация": "autopost",
       "Anti-detection": "security",
@@ -198,7 +198,7 @@ export default function XCollectorTab() {
     }
   };
 
-  type Account = { name: string; tier: string; status: string; role: string; total_requests: string; total_errors: string; weight_used_this_hour: number; weight_quota_per_hour: number; account_busy_until: string; updated_at: string };
+  type Account = HealthAccount;
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [accountsError, setAccountsError] = useState<string | null>(null);
@@ -290,7 +290,6 @@ export default function XCollectorTab() {
     "Обзор",
     "Автопостинг",
     "Аккаунты", 
-    "Прокси", 
     "Кампании", 
     "AI генерация",
     "Anti-detection", 
@@ -472,127 +471,16 @@ export default function XCollectorTab() {
             const groupAccounts = accounts.filter(account => account.role === groupRole);
             return <section key={groupRole} className="rounded-xl border border-white/10 p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-white">{groupRole === 'collector' ? 'Аккаунты для сбора данных' : 'Аккаунты для публикации твитов'} · {groupAccounts.length}</h3><p className="text-xs text-white/50">{groupRole === 'collector' ? 'Используются сборщиком для поиска и чтения X.' : 'Публикация через сохранённую сессию X. Нажмите «Написать твит».'}</p></div><button type="button" disabled={Boolean(loginId) || accountBusy || accountsLoading || (groupRole === 'publisher' && !rolesSupported)} onClick={() => {setAccountRole(groupRole);setShowAddAccount(true);setAccountMessage('');}} className="rounded-lg border border-neon-green/40 px-3 py-2 text-sm text-neon-green disabled:opacity-40">+ Добавить аккаунт</button></div>
-          <div className="overflow-x-auto"><table className="w-full text-left text-sm text-white"><thead><tr className="border-b border-white/10">{['Имя сессии','Уровень','Состояние','Запросы','Ошибки','Квота за час','Действия'].map(label => <th key={label} className="px-2 py-3">{label}</th>)}</tr></thead><tbody>
-            {groupAccounts.map(account => <tr key={account.name} className="border-b border-white/10">
-              <td className="px-2 py-3">{groupRole === 'publisher' ? <button type="button" aria-expanded={selectedPublisher === account.name} onClick={() => setSelectedPublisher(account.name)} className="text-neon-green underline underline-offset-4">{account.name}</button> : account.name}</td><td className="px-2 py-3">{account.tier}</td><td className="px-2 py-3">{({active:'Активен',cooldown:'Пауза',captcha:'Нужна CAPTCHA',banned:'Заблокирован'} as Record<string,string>)[account.status] || account.status}</td><td className="px-2 py-3">{account.total_requests}</td><td className="px-2 py-3">{account.total_errors}</td><td className="px-2 py-3">{account.weight_used_this_hour} / {account.weight_quota_per_hour}</td>
-              <td className="px-2 py-3">{groupRole === 'publisher' && <button type="button" onClick={()=>setSelectedPublisher(account.name)} className="mr-2 rounded-lg border border-blue-400/40 px-3 py-2 text-blue-300">Статистика</button>}{groupRole === 'publisher' && <button type="button" disabled={account.status!=='active'||Boolean(composeAccount)} onClick={()=>setComposeAccount(account.name)} className="mr-2 rounded-lg border border-neon-green/40 px-3 py-2 text-neon-green disabled:opacity-40">Написать твит</button>}<button type="button" disabled={composeAccount===account.name || Boolean(loginId) || accountBusy || accountsLoading || Number(account.account_busy_until) > Date.now()} onClick={() => void deleteAccount(account)} title="Удалить аккаунт и сессию" className="rounded-lg border border-red-400/30 px-3 py-2 text-red-300 disabled:opacity-40">Удалить</button></td>
-            </tr>)}
-            {!accountsLoading && !accountsError && !groupAccounts.length && <tr><td colSpan={7} className="py-6 text-center text-white/50">В этой группе пока нет аккаунтов.</td></tr>}
-          </tbody></table></div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {groupAccounts.map(account=><AccountHealthCard key={account.name} account={account} onSaved={reloadAccounts}>{groupRole === 'publisher' && <button type="button" onClick={()=>setSelectedPublisher(account.name)} className="mr-2 rounded-lg border border-blue-400/40 px-3 py-2 text-blue-300">Статистика</button>}{groupRole === 'publisher' && <button type="button" disabled={account.status!=='active'||Boolean(composeAccount)} onClick={()=>setComposeAccount(account.name)} className="mr-2 rounded-lg border border-neon-green/40 px-3 py-2 text-neon-green disabled:opacity-40">Написать твит</button>}<button type="button" disabled={composeAccount===account.name || Boolean(loginId) || accountBusy || accountsLoading || Number(account.account_busy_until) > Date.now()} onClick={() => void deleteAccount(account)} title="Удалить аккаунт и сессию" className="rounded-lg border border-red-400/30 px-3 py-2 text-red-300 disabled:opacity-40">Удалить</button></AccountHealthCard>)}
+            {!accountsLoading&&!accountsError&&!groupAccounts.length&&<p className="py-6 text-white/50">В этой группе пока нет аккаунтов.</p>}
+          </div>
               {groupRole === 'publisher' && composeAccount && <PublisherComposer name={composeAccount} onClose={()=>setComposeAccount(null)}/>}
               {groupRole === 'publisher' && groupAccounts.some(account=>account.name===selectedPublisher) && <PublisherAccountDashboard key={selectedPublisher!} account={groupAccounts.find(account=>account.name===selectedPublisher)!} onClose={()=>setSelectedPublisher(null)} onSaved={reloadAccounts}/>}
             </section>;
           })}
           <p className="text-xs text-white/50">Занятый worker-ом аккаунт удаляется после освобождения. Удаление сессии не удаляет собранные публикации. Здесь показаны запросы сборщика, а не статистика автора твитов.</p>
         </section>
-      )}
-
-      {activeSection === "proxies" && (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-2xl font-bold text-white">Прокси-серверы</h2>
-            <p className="text-sm text-white/40">Управление прокси-серверами для X Collector.</p>
-          </div>
-
-          <div className="glass rounded-xl border border-bg-border p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Добавить новый прокси</h3>
-            <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); alert("API в разработке"); }}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-white/50 mb-1">Формат подключения</label>
-                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
-                    <option>http://host:port</option>
-                    <option>http://user:pass@host:port</option>
-                    <option>socks5://host:port</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-white/50 mb-1">Строка прокси</label>
-                  <input 
-                    type="text" 
-                    placeholder="user:pass@123.45.67.89:8080" 
-                    className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-white focus:outline-none focus:border-neon-green/40"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm text-white/50 mb-1">Геолокация</label>
-                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
-                    <option>Импортировать из GeoIP</option>
-                    <option>North America</option>
-                    <option>Europe</option>
-                    <option>Asia Pacific</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-white/50 mb-1">Заголовок User-Agent</label>
-                  <select className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-white focus:outline-none focus:border-neon-green/40">
-                    <option>Предопределенный</option>
-                    <option>Windows 10 Chrome</option>
-                    <option>macOS Safari</option>
-                    <option>Android Chrome</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-3">
-                <button type="submit" className="flex-1 px-4 py-2.5 text-sm font-semibold bg-neon-green/10 border border-neon-green/40 text-neon-green hover:bg-neon-green/20 transition">
-                  Тестировать
-                </button>
-                <button type="submit" className="flex-1 px-4 py-2.5 text-sm font-semibold bg-neon-green/10 border border-neon-green/40 text-neon-green hover:bg-neon-green/20 transition">
-                  Добавить
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <div className="glass rounded-xl border border-bg-border p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Пулы прокси</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-5 rounded-xl border border-white/10 bg-white/5">
-                <h4 className="text-sm font-semibold text-white mb-2">Северная Америка</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-white/70">Используется</span>
-                    <span className="text-white font-semibold">3</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-white/70">Безопасны</span>
-                    <span className="text-green-300 font-semibold">98%</span>
-                  </div>
-                </div>
-              </div>
-              <div className="p-5 rounded-xl border border-white/10 bg-white/5">
-                <h4 className="text-sm font-semibold text-white mb-2">Европа</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-white/70">Используется</span>
-                    <span className="text-white font-semibold">2</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-white/70">Безопасны</span>
-                    <span className="text-green-300 font-semibold">96%</span>
-                  </div>
-                </div>
-              </div>
-              <div className="p-5 rounded-xl border border-white/10 bg-white/5">
-                <h4 className="text-sm font-semibold text-white mb-2">Азия</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-white/70">Используется</span>
-                    <span className="text-white font-semibold">1</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-white/70">Безопасны</span>
-                    <span className="text-green-300 font-semibold">94%</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       )}
 
       {activeSection === "campaigns" && (

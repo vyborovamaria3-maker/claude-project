@@ -14,6 +14,7 @@ export function errorCode(error: unknown): string {
   const m = /^([A-Z][A-Z0-9_]{2,})\s*:/.exec(msg);
   if (m) return m[1];
   if (/^X returned HTTP \d+/.test(msg)) return "X_HTTP_ERROR";
+  if (/ERR_PROXY|ERR_TUNNEL|socks|proxy|ECONNREFUSED/i.test(msg)) return "PROXY_FAILED";
   return "OTHER";
 }
 

@@ -1,6 +1,7 @@
 import type { Progress } from "../collector/live";
 import { chromium, Page, BrowserContextOptions } from "playwright";
 import { getConfig } from "./config";
+import { collectionUrl } from "./list-source";
 
 export interface RawTweet {
   id: string; text: string; authorHandle: string;
@@ -23,6 +24,7 @@ export interface ScrapeOptions {
   proxy?: { server: string; username?: string; password?: string };
   userAgent?: string;
   timezone?: string;
+  language?: string;
   headless?: boolean;
 }
 
@@ -56,7 +58,7 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
     const context = await browser.newContext({
       storageState: opts.authState,
       viewport: { width: 1365, height: 900 },
-      locale: "en-US",
+      locale: opts.language || "en-US",
       userAgent: opts.userAgent ?? cfg.twitter.userAgents[0],
       ...(opts.timezone ? { timezoneId: opts.timezone } : {}),
       ...(opts.proxy ? { proxy: opts.proxy } : {}),
@@ -204,8 +206,7 @@ export async function searchTweets(
   const cfg = getConfig();
   const limit = opts.limit ?? cfg.twitter.searchLimit;
   const sort = opts.sort ?? "latest";
-  const mode = sort === "latest" ? "live" : "top";
-  const url = `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query&f=${mode}`;
+  const url = collectionUrl(query, sort);
 
   return withBrowser(opts, async (page) => {
     const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
