@@ -88,6 +88,13 @@ test('Start button reaches queue, real storage and task results; retries and set
  const renewed=(await db.query<{health_score:null;last_check_json:null;last_check_at:null}>("SELECT health_score,last_check_json,last_check_at FROM x_accounts WHERE name='fixture'")).rows[0];
  assert.deepEqual(renewed,{health_score:null,last_check_json:null,last_check_at:null});
  assert(await pickAccount('profile','renewed-fixture'));
+ await registerAccount('selected',blob);
+ await db.query("UPDATE x_accounts SET account_busy_until=0 WHERE name='fixture'");
+ assert.equal((await pickAccount('search','selected-fixture','selected'))?.name,'selected');
+ assert.equal(await pickAccount('search','selected-busy','selected'),null);
+ assert.equal(await pickAccount('search','unknown-selection','missing'),null);
+ await db.query("UPDATE x_accounts SET account_busy_until=0,role='publisher' WHERE name='selected'");
+ assert.equal(await pickAccount('search','publisher-selection','selected'),null);
  }finally{await browser.close();closeLive();await new Promise<void>(resolve=>server.close(()=>resolve()));await closePool();a.mock.restore();b.mock.restore();await db.close();await fs.rm(root,{recursive:true,force:true});clearKeyCache();for(const [n,v] of Object.entries(old)){if(v===undefined)delete process.env[n];else process.env[n]=v;}}
 });
 

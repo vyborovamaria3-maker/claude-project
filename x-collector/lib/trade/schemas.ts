@@ -7,6 +7,7 @@ export const SearchPayload = z.object({
   query: z.string().min(1).max(500),
   limit: z.number().int().min(1).max(500).default(50),
   sort: z.enum(["top", "latest"]).default("latest"),
+  account_name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
 });
 
 export const TimelinePayload = z.object({

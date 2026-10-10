@@ -20,6 +20,8 @@ export default function AccountHealthCard({account,onSaved,children}:{account:He
  const [proxyType,setProxyType]=useState(account.proxy?.type||'http'),[proxyInput,setProxyInput]=useState('');
  const [ua,setUa]=useState(account.user_agent||''),[timezone,setTimezone]=useState(account.timezone||''),[language,setLanguage]=useState(account.language||'');
  const [probe,setProbe]=useState<any>(null),[check,setCheck]=useState<Check|null>(null);
+ const [parsing,setParsing]=useState<{ids:string[];running:boolean;message:string}|null>(null);
+ const parsingIds=parsing?.ids,parsingRunning=parsing?.running;
  const locked=busy||check?.status==='running'||Number(account.account_busy_until)>Date.now();
  useEffect(()=>{
   if(!check?.id||check.status!=='running')return;
@@ -27,10 +29,22 @@ export default function AccountHealthCard({account,onSaved,children}:{account:He
   const timer=setInterval(()=>{void command({action:'account-check-status',id}).then(async result=>{if(stopped)return;setCheck(result);if(result.status!=='running')await onSaved();}).catch(e=>{if(!stopped){setError(e.message);setCheck({status:'failed',message:e.message});}});},1000);
   return()=>{stopped=true;clearInterval(timer);};
  },[check?.id,check?.status,onSaved]);
+ useEffect(()=>{
+  if(!parsingRunning||!parsingIds)return;let stopped=false;
+  const timer=setInterval(()=>{void command({action:'account-parse-status',name:account.name,ids:parsingIds}).then(result=>{
+   if(stopped)return;
+   const done=result.tasks.filter((t:{status:string})=>t.status==='done').length;
+   const failed=result.tasks.filter((t:{status:string})=>['failed','dlq','cancelled'].includes(t.status)).length;
+   setParsing(current=>current?{...current,running:result.running,message:result.running?'Сбор выполняется: '+done+'/'+parsingIds.length+' списков. Ожидание зависит от квоты аккаунта.':'Сбор завершён: '+done+'/'+parsingIds.length+' списков; ошибок: '+failed}:current);
+   if(!result.running)void onSaved();
+  }).catch(e=>{if(!stopped){setError(e.message);setParsing(current=>current?{...current,running:false}:current);}});},2000);
+  return()=>{stopped=true;clearInterval(timer);};
+ },[parsingRunning,parsingIds,account.name,onSaved]);
  async function perform(action:string){
   setBusy(true);setError('');
   try{
    if(action==='account-check-start'){setCheck(await command({action,name:account.name}));return;}
+   if(action==='account-parse-start'){const result=await command({action,name:account.name});setParsing({ids:result.ids,running:true,message:result.message});return;}
    const proxy=proxyInput.includes('://')?proxyInput:proxyType+'://'+proxyInput;
    const result=await command({action,name:account.name,version:account.updated_at,proxy,user_agent:ua,timezone,language});
    if(action==='account-proxy-test'||action==='account-proxy-save'){setProbe(result);if(!result.ok){setError(result.message);return;}}
@@ -46,6 +60,8 @@ export default function AccountHealthCard({account,onSaved,children}:{account:He
   {account.lastError&&<p className="mb-3 text-amber-200">Последняя ошибка (история): {account.lastError.type}: {account.lastError.message}</p>}
   <div className="flex flex-wrap gap-2"><button type="button" disabled={locked} onClick={()=>void perform('account-check-start')} className="rounded-lg border border-neon-green/40 px-3 py-2 text-neon-green disabled:opacity-40">{check?.status==='running'?'Проверяем…':'Полная проверка'}</button><button type="button" disabled={locked} onClick={()=>{setSettings(true);setUa(account.user_agent||'');setTimezone(account.timezone||'');setLanguage(account.language||'');setProxyInput('');setProbe(null);setError('');}} className="rounded-lg border border-white/30 px-3 py-2 disabled:opacity-40">Настроить</button>{children}</div>
   {error&&<p role="alert" className="mt-3 text-red-300">{error}</p>}
+  {account.role==='collector'&&<button type="button" disabled={busy||parsing?.running||account.status!=='active'} onClick={()=>void perform('account-parse-start')} className="mt-3 rounded-lg border border-neon-green/40 px-3 py-2 text-neon-green disabled:opacity-40">{parsing?.running?'Парсинг выполняется…':'Запустить парсинг'}</button>}
+  {parsing&&<p role="status" className="mt-2 text-white/70">{parsing.message}</p>}
   {visible&&<div role="status" className="mt-3 rounded-lg border border-white/10 p-3"><p>Проверка: {visible.score??0}/100 · {visible.status==='running'?'выполняется':visible.ready?'готов к работе':'есть проблемы'}</p><div className="mt-2 flex flex-wrap gap-3">{Object.entries(visible.steps||{}).map(([key,step])=><span key={key} title={step.message}>{labels[key]||key}: {({passed:'✓',failed:'✕',running:'…',pending:'ожидание',skipped:'пропущен'} as Record<string,string>)[step.status]||step.status}</span>)}</div>{visible.message&&<p>{visible.message}</p>}{Object.entries(visible.steps||{}).filter(([,s])=>s.status==='failed').map(([key,s])=><p key={key} className="mt-1 text-red-300">{labels[key]}: {s.message}</p>)}</div>}
   {settings&&<div role="dialog" aria-modal="true" aria-label={'Настройки '+account.name} className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4"><div className="my-auto w-full max-w-xl space-y-4 rounded-xl border border-white/20 bg-slate-950 p-5">
    <h3 className="text-lg font-semibold">Настройки {account.name}</h3>

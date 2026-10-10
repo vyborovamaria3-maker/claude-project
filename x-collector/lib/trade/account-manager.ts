@@ -31,7 +31,7 @@ export interface XAccount {
   account_claimed_by: string;
 }
 
-export async function pickAccount(kind: RequestKind, leaseOwner: string): Promise<XAccount | null> {
+export async function pickAccount(kind: RequestKind, leaseOwner: string, preferredAccount?: string): Promise<XAccount | null> {
   if (!leaseOwner || leaseOwner.length > 200) throw new Error("Invalid account lease owner");
   const weight = WEIGHTS[kind];
   const now = Date.now();
@@ -54,6 +54,7 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string): Promis
       `WITH picked AS (
          SELECT name FROM x_accounts
          WHERE role='collector' AND status='active' AND tier != 'retired'
+           AND ($5::text IS NULL OR name=$5)
            AND COALESCE(account_busy_until, 0) <= $2
            AND weight_used_this_hour + $1 <= weight_quota_per_hour
          ORDER BY CASE tier WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'new' THEN 2 ELSE 3 END,
@@ -75,7 +76,7 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string): Promis
                  x_accounts.user_agent, x_accounts.timezone, x_accounts.language,
                  x_accounts.weight_used_this_hour, x_accounts.weight_quota_per_hour,
                  x_accounts.account_busy_until, x_accounts.account_claimed_by`,
-      [weight, now, now + leaseMs, leaseOwner]
+      [weight, now, now + leaseMs, leaseOwner, preferredAccount ?? null]
     );
     return r.rows[0] ?? null;
   });

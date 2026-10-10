@@ -77,7 +77,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
   // прокси берутся внутри handleSearchTask, иначе единственная учётка была бы
   // занята воркером и getCollectorAccount не вернул бы её. Lease/retry/defer —
   // те же функции очереди, что и в основном пути.
-  if (task.kind === "search" && USE_X_COLLECTOR && !listId((payload as {query:string}).query)) {
+  if (task.kind === "search" && USE_X_COLLECTOR && !listId((payload as {query:string}).query) && !(payload as {account_name?:string}).account_name) {
     const startMs = Date.now();
     const leaseMs = cfg.sessions.leaseMs;
     let branchLeaseLost = false;
@@ -121,7 +121,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
   let account: XAccount | null;
   try {
     account = await pickAccount(task.kind === "search" ? "search"
-      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner);
+      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner, (payload as {account_name?:string}).account_name);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await failTask(task.id, workerId, `pickAccount: ${msg}`).catch(() => {});

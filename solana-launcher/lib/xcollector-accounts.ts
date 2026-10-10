@@ -75,6 +75,31 @@ export async function accountErrors(raw:unknown){
  const name=accountName(raw);
  return {errors:(await database().query('SELECT type,message,created_at::text FROM xc_account_errors WHERE account_name=$1 ORDER BY created_at DESC,id DESC LIMIT 30',[name])).rows};
 }
+export async function collectorParsing(input:any){
+ const name=accountName(input?.name),db=database();
+ if(!(await db.query("SELECT name FROM x_accounts WHERE name=$1 AND role='collector' AND status='active'",[name])).rowCount)throw new AccountError('Нужен активный аккаунт collector');
+ if(input.action==='account-parse-status'){
+  if(!Array.isArray(input.ids)||input.ids.length>20||input.ids.some((id:unknown)=>!/^\d+$/.test(String(id))))throw new AccountError('Некорректные задания');
+  const tasks=(await db.query("SELECT id::text,status FROM x_tasks WHERE id=ANY($1::bigint[]) AND payload_json->>'account_name'=$2 ORDER BY id",[input.ids,name])).rows;
+  return {tasks,running:tasks.some(t=>['pending','claimed'].includes(t.status))};
+ }
+ const client=await db.connect();
+ try{
+  await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(742098532)');
+  const sources=(await client.query('SELECT list_id FROM xc_auto_sources WHERE enabled ORDER BY list_id')).rows;
+  if(!sources.length)throw new AccountError('Нет включённых списков для сбора');
+  const ids:string[]=[];const now=Date.now();
+  for(const source of sources){
+   const query='list:'+source.list_id;
+   let task=(await client.query("SELECT id::text FROM x_tasks WHERE kind='search' AND payload_json->>'query'=$1 AND payload_json->>'account_name'=$2 AND status IN ('pending','claimed') LIMIT 1",[query,name])).rows[0];
+   if(!task)task=(await client.query("INSERT INTO x_tasks(kind,payload_json,priority,available_at,created_at,updated_at,max_attempts) VALUES('search',$1::jsonb,10,$2,$2,$2,3) RETURNING id::text",[JSON.stringify({query,limit:100,sort:'latest',account_name:name}),now])).rows[0];
+   ids.push(task.id);
+   await client.query('UPDATE xc_auto_sources SET last_task_id=$2 WHERE list_id=$1',[source.list_id,task.id]);
+  }
+  await client.query('COMMIT');
+  return {ids,message:'Запущен сбор из списков: '+ids.length,workerActive:!!(await db.query("SELECT 1 FROM x_workers WHERE status='active' AND last_heartbeat>$1 LIMIT 1",[now-90000])).rowCount};
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
 export async function saveAccountSettings(input:any){
  const name=accountName(input?.name);
  if(typeof input?.version!=='string'||!/^\d+$/.test(input.version))throw new AccountError('Обновите список аккаунтов');

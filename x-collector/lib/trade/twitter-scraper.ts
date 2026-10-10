@@ -2,6 +2,8 @@ import type { Progress } from "../collector/live";
 import { chromium, Page, BrowserContextOptions } from "playwright";
 import { getConfig } from "./config";
 import { collectionUrl } from "./list-source";
+import {createRequire} from 'node:module';
+const {launchLoginBrowser}=createRequire(__filename)('../../scripts/test-publish-browser.cjs');
 
 export interface RawTweet {
   id: string; text: string; authorHandle: string;
@@ -53,7 +55,7 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
   const headless = opts.headless ?? cfg.twitter.headless;
   const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
   let running:Promise<T>|undefined;
-  const browser = await chromium.launch({ headless, executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, slowMo: headless ? 0 : 80 });
+  const {browser}:{browser:import('playwright').Browser}=await launchLoginBrowser(chromium,process.env,{headless,proxy:opts.proxy});
   try {
     const context = await browser.newContext({
       storageState: opts.authState,
@@ -61,7 +63,6 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
       locale: opts.language || "en-US",
       userAgent: opts.userAgent ?? cfg.twitter.userAgents[0],
       ...(opts.timezone ? { timezoneId: opts.timezone } : {}),
-      ...(opts.proxy ? { proxy: opts.proxy } : {}),
     });
     await context.route("**/*", (route) => {
       const t = route.request().resourceType();
