@@ -11,11 +11,16 @@ export class GraphReasoner {
       entityId: context.entityId,
       explanation: 'Connection explanation generated from graph relations, evidence and scores.',
       confidence: this.calculateConfidence(context),
+      inferredRelations: this.inferRelations(context),
     };
   }
 
   private calculateConfidence(context: GraphReasoningContext) {
     const signals = context.relations.length + context.evidence.length;
     return Math.min(1, Number((signals / 100).toFixed(2)));
+  }
+
+  private inferRelations(context: GraphReasoningContext) {
+    return context.relations.map((relation) => ({ relation, inferred: true }));
   }
 }
