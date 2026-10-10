@@ -7,11 +7,11 @@ import fs from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 const { pg_trgm } = load('@electric-sql/pglite/contrib/pg_trgm') as { pg_trgm: import('@electric-sql/pglite').Extension };
 
-test('001–033 migration chain executes on disposable PostgreSQL engine', async () => {
+test('001–035 migration chain executes on disposable PostgreSQL engine', async () => {
   const db = new PGlite({ extensions: { pg_trgm } });
   try {
     const files = REQUIRED;
-    assert.equal(files.length, 30);
+    assert.equal(files.length, 31);
     for (const file of files) {
       try { await db.exec(await fs.readFile('migrations/' + file, 'utf8')); }
       catch (error) { throw new Error(file + ': ' + String(error), { cause: error }); }
@@ -37,6 +37,14 @@ test('001–033 migration chain executes on disposable PostgreSQL engine', async
       db.query("INSERT INTO ip_wallet_profiles(entity_id) VALUES ('00000000-0000-0000-0000-000000000001')"),
       /violates foreign key constraint/,
     );
+    const taxonomy = await db.query<{ id: string }>(
+      "SELECT id FROM ip_tag_categories WHERE id IN ('IDENTITY','BEHAVIOR','INDUSTRY','NETWORK')",
+    );
+    assert.equal(taxonomy.rows.length, 4);
+    const operationalTags = await db.query<{ id: string }>(
+      "SELECT id FROM ip_tags WHERE id IN ('high-risk','exchange')",
+    );
+    assert.equal(operationalTags.rows.length, 2);
     await db.query("INSERT INTO x_accounts(name,session_encrypted,hour_window_start,created_at,updated_at) VALUES ('profile-test',decode('00','hex'),0,0,0)");
     await db.query("INSERT INTO xc_account_errors(account_name,type,message,created_at) VALUES ('profile-test','PROXY_FAILED','safe',0)");
     await assert.rejects(db.query("INSERT INTO xc_account_errors(account_name,type,message,created_at) VALUES ('profile-test','INVALID','safe',0)"));
