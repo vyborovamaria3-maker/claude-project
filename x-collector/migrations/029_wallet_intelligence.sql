@@ -2,7 +2,7 @@
 -- Adds analytical profile storage for blockchain entities linked to the intelligence graph.
 
 CREATE TABLE IF NOT EXISTS ip_wallet_profiles (
-  entity_id BIGINT PRIMARY KEY REFERENCES ip_entities(id) ON DELETE CASCADE,
+  entity_id uuid PRIMARY KEY REFERENCES ip_entities(id) ON DELETE CASCADE,
   wallet_age_days INTEGER,
   first_seen_at TIMESTAMPTZ,
   last_activity_at TIMESTAMPTZ,

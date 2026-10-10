@@ -1,11 +1,12 @@
--- Intelligence API support views
--- Adds lightweight aggregation layer over existing intelligence tables.
+-- Intelligence API support indexes
+-- Adds the aggregation-layer indexes the dashboard API reads. Only references
+-- tables that exist in 023_intelligence_platform.sql.
 
-CREATE INDEX IF NOT EXISTS idx_ip_entity_scores_entity
-ON ip_entity_scores(entity_id);
+CREATE INDEX IF NOT EXISTS idx_ip_entity_profiles_risk
+ON ip_entity_profiles(risk_score);
 
-CREATE INDEX IF NOT EXISTS idx_ip_graph_metrics_entity
-ON ip_graph_metrics(entity_id);
+CREATE INDEX IF NOT EXISTS idx_ip_graph_clusters_computed
+ON ip_graph_clusters(computed_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_ip_graph_anomalies_entity
-ON ip_graph_anomalies(entity_id);
+CREATE INDEX IF NOT EXISTS idx_ip_raw_events_source_collected
+ON ip_raw_events(source, collected_at DESC);

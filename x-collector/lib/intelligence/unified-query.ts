@@ -4,7 +4,7 @@ export type UnifiedQueryResult = {
   evidence: unknown[];
 };
 
-export async function runUnifiedQuery(query: string): Promise<UnifiedQueryResult> {
+export async function runUnifiedQuery(_query: string): Promise<UnifiedQueryResult> {
   return {
     entities: [],
     relations: [],
