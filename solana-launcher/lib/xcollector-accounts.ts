@@ -58,11 +58,42 @@ async function hasRole() {
   const r = await database().query("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='x_accounts' AND column_name='role'");
   return r.rows.length > 0;
 }
-export async function listCollectorAccounts() {
-  const role = await hasRole();
-  const result = await database().query(`SELECT name,tier,status,${role ? 'role' : "'collector'::text AS role"},total_requests::text,total_errors::text,weight_used_this_hour,weight_quota_per_hour,account_busy_until::text,updated_at::text FROM x_accounts ORDER BY name`);
-  return { accounts: result.rows, rolesSupported: role };
+
+function publicProxy(raw:unknown) {
+ const root=[path.resolve(process.cwd(),'../x-collector'),path.resolve(process.cwd(),'x-collector')].find(p=>fs.existsSync(path.join(p,'scripts/account-health.cjs')));
+ if(!root)throw new AccountError('Установите обновление X Collector',503);
+ const nativeModule=process.getBuiltinModule('node:module') as typeof import('node:module');
+ return nativeModule.createRequire(path.join(root,'package.json'))('./scripts/account-health.cjs').toPublicProxy(raw);
 }
+export async function listCollectorAccounts() {
+ const role=await hasRole();
+ const result=await database().query(`SELECT name,tier,status,${role?'role':"'collector'::text AS role"},total_requests::text,total_errors::text,weight_used_this_hour,weight_quota_per_hour,account_busy_until::text,updated_at::text,language,user_agent,timezone,display_name,avatar_url,x_created_at::text,health_score,last_check_at::text,last_check_json,proxy_json FROM x_accounts ORDER BY name`);
+ const errors=(await database().query('SELECT DISTINCT ON(account_name) account_name,type,message,created_at::text FROM xc_account_errors ORDER BY account_name,created_at DESC,id DESC')).rows;
+ return {accounts:result.rows.map(({proxy_json,last_check_json,...row})=>({...row,proxy:publicProxy(proxy_json),sessionState:last_check_json?.steps?.session?.status==='failed'||last_check_json?.errorType==='SESSION_EXPIRED'?'expired':last_check_json?.ready?'valid':'unverified',lastCheck:last_check_json,lastError:errors.find(e=>e.account_name===row.name)||null})),rolesSupported:role};
+}
+export async function accountErrors(raw:unknown){
+ const name=accountName(raw);
+ return {errors:(await database().query('SELECT type,message,created_at::text FROM xc_account_errors WHERE account_name=$1 ORDER BY created_at DESC,id DESC LIMIT 30',[name])).rows};
+}
+export async function saveAccountSettings(input:any){
+ const name=accountName(input?.name);
+ if(typeof input?.version!=='string'||!/^\d+$/.test(input.version))throw new AccountError('Обновите список аккаунтов');
+ const values=['user_agent','timezone','language'].map(key=>{const value=input[key];if(typeof value!=='string'||value.length>(key==='user_agent'?1000:100)||/[\r\n\x00]/.test(value))throw new AccountError('Некорректные настройки аккаунта');return value.trim()||null;});
+ try{if(values[1])new Intl.DateTimeFormat('en',{timeZone:values[1]});if(values[2])Intl.getCanonicalLocales(values[2]);}catch{throw new AccountError('Проверьте часовой пояс и язык (например Europe/Moscow и ru-RU)');}
+ const now=Date.now();
+ const result=await database().query('UPDATE x_accounts SET user_agent=$2,timezone=$3,language=$4,updated_at=GREATEST(updated_at+1,$5::bigint),health_score=NULL,last_check_at=NULL,last_check_json=NULL WHERE name=$1 AND updated_at=$6::bigint AND account_busy_until<=$5 RETURNING name',[name,...values,now,input.version]);
+ if(!result.rowCount)throw new AccountError('Аккаунт занят или изменён. Обновите список',409);
+ return {ok:true,name};
+}
+export async function removeAccountProxy(input:any){
+ const name=accountName(input?.name);
+ if(typeof input?.version!=='string'||!/^\d+$/.test(input.version))throw new AccountError('Обновите список аккаунтов');
+ const now=Date.now();
+ const result=await database().query('UPDATE x_accounts SET proxy_json=NULL,health_score=NULL,last_check_at=NULL,last_check_json=NULL,updated_at=GREATEST(updated_at+1,$2::bigint) WHERE name=$1 AND updated_at=$3::bigint AND account_busy_until<=$2 RETURNING name',[name,now,input.version]);
+ if(!result.rowCount)throw new AccountError('Аккаунт занят или изменён. Обновите список',409);
+ return {ok:true,name};
+}
+
 export async function addCollectorAccount(input: any) {
   const name = accountName(input?.name), session = encryptedSession(sessionState(input?.session));
   const role = input?.role ?? 'collector';

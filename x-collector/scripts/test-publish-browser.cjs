@@ -1,10 +1,11 @@
 // Browser compatibility and redacted diagnostics; no stealth flags or credential capture.
-async function launchLoginBrowser(chromium,env=process.env){
- if(env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH)return {browser:await chromium.launch({headless:false,executablePath:env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}),label:'Настроенный Chromium'};
+async function launchLoginBrowser(chromium,env=process.env,extra={}){
+ const base={headless:extra.headless??false,...(extra.proxy?{proxy:extra.proxy}:{})};
+ if(env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH)return {browser:await chromium.launch({...base,executablePath:env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}),label:'Настроенный Chromium'};
  const preferred=env.X_LOGIN_BROWSER;
  if(preferred&&!['chrome','msedge','chromium'].includes(preferred))throw Error('browserconfig');
  const channels=preferred?[preferred]:['chrome','msedge','chromium'];
- for(const channel of channels){try{return {browser:await chromium.launch({headless:false,...(channel==='chromium'?{}:{channel})}),label:channel==='chrome'?'Google Chrome':channel==='msedge'?'Microsoft Edge':'Chromium'};}catch{/* Try the next supported browser; do not expose paths from launch errors. */}}
+ for(const channel of channels){try{return {browser:await chromium.launch({...base,...(channel==='chromium'?{}:{channel})}),label:channel==='chrome'?'Google Chrome':channel==='msedge'?'Microsoft Edge':'Chromium'};}catch{/* Try the next supported browser; do not expose paths from launch errors. */}}
  throw Error('browsermissing');
 }
 function attachLoginDiagnostics(page,report){

@@ -24,6 +24,7 @@ export interface XAccount {
   proxy_json: string | null;
   user_agent: string | null;
   timezone: string | null;
+  language?: string | null;
   weight_used_this_hour: number;
   weight_quota_per_hour: number;
   account_busy_until: string;
@@ -71,7 +72,7 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string): Promis
        WHERE x_accounts.name = picked.name
        RETURNING x_accounts.name, x_accounts.tier, x_accounts.status,
                  x_accounts.session_encrypted, x_accounts.proxy_json,
-                 x_accounts.user_agent, x_accounts.timezone,
+                 x_accounts.user_agent, x_accounts.timezone, x_accounts.language,
                  x_accounts.weight_used_this_hour, x_accounts.weight_quota_per_hour,
                  x_accounts.account_busy_until, x_accounts.account_claimed_by`,
       [weight, now, now + leaseMs, leaseOwner]
@@ -164,6 +165,7 @@ export async function registerAccount(
      ON CONFLICT(name) DO UPDATE SET
        session_encrypted = EXCLUDED.session_encrypted,
        status='active', cooldown_until=0, consecutive_errors=0,
+       health_score=NULL,last_check_at=NULL,last_check_json=NULL,
        updated_at = EXCLUDED.updated_at,
        proxy_json = COALESCE(EXCLUDED.proxy_json, x_accounts.proxy_json)`,
     [name, sessionEncrypted, tier, quota, now, proxyJson ?? null]

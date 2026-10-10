@@ -1,3 +1,4 @@
+const {spawn}=require('node:child_process');const path=require('node:path'),fs=require('node:fs');let sourceCollector;
 const {claim,eligible}=require('./autopost/queue.cjs');
 const {connect}=require('./autopost/runtime.cjs');const {plan,inWindow}=require('./autopost/store.cjs');const {execute,sync,persistPost}=require('./autopost/browser.cjs');
 let stopping=false;process.on('SIGINT',()=>{stopping=true;});process.on('SIGTERM',()=>{stopping=true;});
@@ -12,6 +13,7 @@ async function cycle(c){const now=Date.now(); const missing=(await c.query("SELE
 
 }
 (async()=>{const c=await connect();try{const locked=(await c.query('SELECT pg_try_advisory_lock(742098531) AS locked')).rows[0].locked;if(!locked)throw Error('busy');
+ if((await c.query("SELECT to_regclass('xc_auto_sources') AS present")).rows[0].present&&(await c.query('SELECT 1 FROM xc_auto_sources WHERE enabled LIMIT 1')).rowCount){const compiled=path.join(__dirname,'../dist/scripts/collect-lists.js');sourceCollector=spawn(process.execPath,fs.existsSync(compiled)?[compiled]:['--import','tsx',path.join(__dirname,'collect-lists.ts')],{cwd:process.cwd(),env:process.env,stdio:['ignore','inherit','inherit','ipc'],windowsHide:true});sourceCollector.on('error',()=>console.error('List collector could not start.'));}
  await c.query("UPDATE xc_auto_jobs SET status=CASE WHEN attempted THEN 'uncertain' ELSE 'queued' END,message=CASE WHEN attempted THEN 'Процесс прерван; проверьте X перед повтором' ELSE 'Восстановлено после перезапуска' END,lease_until=NULL WHERE status='running'");await c.query("UPDATE xc_auto_sync SET status='queued' WHERE status='running'");console.log('Autopost worker running. Ctrl+C stops after current action.');
  while(!stopping){try{await cycle(c);}catch{console.error('Autopost cycle failed. Check database and migrations.');}if(!stopping)await new Promise(r=>setTimeout(r,5000));}
- }finally{await c.query('SELECT pg_advisory_unlock(742098531)').catch(()=>{});await c.end();}})().catch(()=>{console.error('Unable to start worker. Check migrations/database or an already running worker.');process.exitCode=1;});
+ }finally{if(sourceCollector?.connected)sourceCollector.send({stop:true});await c.query('SELECT pg_advisory_unlock(742098531)').catch(()=>{});await c.end();}})().catch(()=>{console.error('Unable to start worker. Check migrations/database or an already running worker.');process.exitCode=1;});

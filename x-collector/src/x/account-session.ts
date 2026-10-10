@@ -6,6 +6,7 @@ export interface CollectorAccount {
   proxy_json: string | null;
   user_agent: string | null;
   timezone: string | null;
+  language?: string | null;
 }
 
 /**
@@ -17,9 +18,9 @@ export interface CollectorAccount {
 export async function getCollectorAccount(): Promise<CollectorAccount | null> {
   const now = Date.now();
   return q1<CollectorAccount>(
-    `SELECT name, session_encrypted, proxy_json, user_agent, timezone
+    `SELECT name, session_encrypted, proxy_json, user_agent, timezone, language
      FROM x_accounts
-     WHERE status = 'active'
+     WHERE role='collector' AND status = 'active'
        AND tier != 'retired'
        AND cooldown_until < $1
        AND account_busy_until < $1

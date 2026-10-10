@@ -9,6 +9,7 @@ export interface BrowserOptions {
   proxy?: PlaywrightProxy;
   userAgent?: string;
   timezone?: string;
+  language?: string;
 }
 
 /**
@@ -18,11 +19,11 @@ export interface BrowserOptions {
 export async function createBrowser(options: BrowserOptions = {}): Promise<BrowserContext> {
   const cfg = getConfig();
   const headless = cfg.twitter.headless;
-  const browser = await chromium.launch({ headless, slowMo: headless ? 0 : 80 });
+  const browser = await chromium.launch({ headless, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, slowMo: headless ? 0 : 80 });
   try {
     const context = await browser.newContext({
       viewport: { width: 1365, height: 900 },
-      locale: "en-US",
+      locale: options.language || "en-US",
       userAgent: options.userAgent || cfg.twitter.userAgents[0],
       ...(options.proxy ? { proxy: options.proxy } : {}),
       ...(options.timezone ? { timezoneId: options.timezone } : {}),

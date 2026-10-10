@@ -1,5 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["lib/**/*.ts", "scripts/**/*.ts", "src/**/*.ts"],
+  "compilerOptions": {"allowJs": true},
+  "include": ["lib/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "scripts/account-health.cjs"],
   "exclude": ["node_modules", "dist", "tests"]
 }

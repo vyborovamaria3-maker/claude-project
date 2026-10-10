@@ -1,3 +1,5 @@
+import { parseProxy } from "../src/x/proxy";
+import { recordAccountError } from "../src/accounts/errors";
 import { recordProgress, Progress } from "../lib/collector/live";
 import { persistTweets, persistProfile } from "../lib/trade/collector-store";
 import http from "node:http";
@@ -22,6 +24,7 @@ import { checkBasicAuth, isLoopbackHost } from "../lib/trade/http-auth";
 import { applySecurityHeaders, clientIp, createRateLimiter } from "../lib/trade/http-security";
 import { handleSearchTask } from "../src/x/task-handler";
 import { normalizeTweets } from "../src/x/normalize";
+import { listId } from "../lib/trade/list-source";
 
 const workerId = process.env.WORKER_ID || `w-${randomUUID().slice(0, 8)}`;
 const METRICS_HOST = process.env.METRICS_HOST ?? "127.0.0.1";
@@ -49,11 +52,9 @@ process.on("SIGINT", () => { log.warn("SIGINT — graceful shutdown"); shuttingD
 process.on("SIGTERM", () => { log.warn("SIGTERM — graceful shutdown"); shuttingDown = true; cancellation.abort(); });
 
 function buildProxy(acc: XAccount) {
-  if (!acc.proxy_json) return undefined;
-  try {
-    const p = JSON.parse(acc.proxy_json);
-    return p?.server ? p : undefined;
-  } catch { return undefined; }
+ const proxy=parseProxy(acc.proxy_json);
+ if(acc.proxy_json&&!proxy)throw new Error("PROXY_FAILED: invalid account proxy");
+ return proxy;
 }
 
 async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number]): Promise<string> {
@@ -76,7 +77,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
   // прокси берутся внутри handleSearchTask, иначе единственная учётка была бы
   // занята воркером и getCollectorAccount не вернул бы её. Lease/retry/defer —
   // те же функции очереди, что и в основном пути.
-  if (task.kind === "search" && USE_X_COLLECTOR) {
+  if (task.kind === "search" && USE_X_COLLECTOR && !listId((payload as {query:string}).query)) {
     const startMs = Date.now();
     const leaseMs = cfg.sessions.leaseMs;
     let branchLeaseLost = false;
@@ -172,6 +173,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
         proxy: buildProxy(acc),
         userAgent: acc.user_agent ?? undefined,
         timezone: acc.timezone ?? undefined,
+        language: acc.language ?? undefined,
         headless: cfg.twitter.headless,
       };
 
@@ -225,6 +227,7 @@ async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number])
     else if (/captcha/i.test(msg)) kindErr = "captcha";
     else if (/login required|auth session expired/i.test(msg)) kindErr = "ban";
 
+    if (!leaseLost && !shuttingDown) await recordAccountError(acc.name,e).catch(()=>{});
     if (!leaseLost && !shuttingDown) await recordError(acc.name, kindErr).catch(() => {});
     const result = shuttingDown ? await deferTask(task.id,workerId,5000,"worker shutdown").then(ok=>ok?"requeued" as const:"lost" as const) : await failTask(task.id, workerId, msg).catch(() => "lost" as const);
     if (result === "dlq") tasksTotal.inc({ kind, result: "dlq" });

@@ -37,11 +37,14 @@ export async function handleSearchTask(
     decrypted.fill(0);
   }
 
+  const proxy=parseProxy(account.proxy_json);
+  if(account.proxy_json&&!proxy)throw new Error("PROXY_FAILED: invalid account proxy");
   const tweets = await search(payload.query, {
     cookies,
-    proxy: parseProxy(account.proxy_json),
+    proxy,
     userAgent: account.user_agent || undefined,
     timezone: account.timezone || undefined,
+    language: account.language || undefined,
     limit: payload.limit,
   });
   return tweets.slice(0, payload.limit);

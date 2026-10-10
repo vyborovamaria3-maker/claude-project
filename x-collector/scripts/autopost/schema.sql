@@ -37,3 +37,11 @@ CREATE TABLE IF NOT EXISTS xc_auto_sync (
 );
 
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS attempted_at bigint;
+
+CREATE TABLE IF NOT EXISTS xc_auto_sources (
+ list_id text PRIMARY KEY CHECK(list_id ~ '^[0-9]{1,25}$'),
+ enabled boolean NOT NULL DEFAULT true,
+ interval_minutes int NOT NULL DEFAULT 15 CHECK(interval_minutes BETWEEN 5 AND 1440),
+ next_run bigint NOT NULL DEFAULT 0,
+ last_task_id bigint REFERENCES x_tasks(id)
+);
