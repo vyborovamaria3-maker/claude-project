@@ -12,3 +12,10 @@ export const scheduledAnalyses: AnalysisJob[] = [
 export function getScheduledAnalyses() {
   return scheduledAnalyses;
 }
+
+export type ScheduledAnalysisRun = AnalysisJob & { startedAt: string };
+
+export async function runScheduledAnalysis(jobs: AnalysisJob[] = scheduledAnalyses): Promise<ScheduledAnalysisRun[]> {
+  const startedAt = new Date().toISOString();
+  return jobs.map((job) => ({ ...job, startedAt }));
+}

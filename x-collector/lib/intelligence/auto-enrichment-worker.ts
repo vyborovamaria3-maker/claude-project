@@ -20,3 +20,10 @@ export class AutoEnrichmentWorker {
     };
   }
 }
+
+export async function refreshIntelligenceProfiles(
+  tasks: EnrichmentTask[] = [],
+  worker = new AutoEnrichmentWorker(),
+) {
+  return Promise.all(tasks.map((task) => worker.process(task)));
+}

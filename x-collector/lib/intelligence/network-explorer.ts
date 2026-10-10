@@ -14,7 +14,7 @@ export type NetworkResult = {
 };
 
 export class NetworkExplorer {
-  async explore(entityId: string, depth = 2): Promise<NetworkResult> {
+  async explore(entityId: string, _depth = 2): Promise<NetworkResult> {
     return {
       nodes: [{ id: entityId, type: 'ENTITY' }],
       edges: [],
