@@ -5,6 +5,22 @@ const load=createRequire(__filename);
 const browserModule=load.resolve('../scripts/autopost/browser.cjs');
 const helper=load('../scripts/test-publish-browser.cjs');
 const runtime=load('../scripts/autopost/runtime.cjs');
+
+test('authenticated SOCKS5 uses a local browser bridge and closes it on disconnect or launch failure',async()=>{
+ const chain=load('proxy-chain/dist/anonymize_proxy');
+ let upstream='',closed=0,disconnect:()=>void=()=>{};
+ const a=mock.method(chain,'anonymizeProxy',async(url:string)=>{upstream=url;return 'http://127.0.0.1:12345';});
+ const b=mock.method(chain,'closeAnonymizedProxy',async()=>{closed++;});
+ try{
+  const chromium={launch:async(options:any)=>{assert.deepEqual(options.proxy,{server:'http://127.0.0.1:12345'});return {once:(_event:string,fn:()=>void)=>{disconnect=fn;}};}};
+  const proxy={server:'socks5://localhost:1080',username:'user',password:'p@ss'};
+  await helper.launchLoginBrowser(chromium,{X_LOGIN_BROWSER:'chrome'},{proxy,headless:true});
+  assert.equal(new URL(upstream).password,'p%40ss');
+  disconnect();await new Promise(resolve=>setImmediate(resolve));assert.equal(closed,1);
+  await assert.rejects(helper.launchLoginBrowser({launch:async()=>{throw Error('failed');}},{X_LOGIN_BROWSER:'chrome'},{proxy}),/browsermissing/);
+  assert.equal(closed,2);
+ }finally{a.mock.restore();b.mock.restore();}
+});
 test('publisher refuses expired sessions and malformed/recently failed proxies before browser launch',async()=>{
  let launches=0;
  const m=mock.method(helper,'launchLoginBrowser',async()=>{launches++;throw Error('unexpected browser');});
