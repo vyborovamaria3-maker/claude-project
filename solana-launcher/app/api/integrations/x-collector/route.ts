@@ -1,5 +1,5 @@
-import {accountProxyCommand,startAccountCheck,accountCheckStatus} from '@/lib/xcollector-diagnostics';
-import {accountErrors,saveAccountSettings,removeAccountProxy,collectorParsing} from '@/lib/xcollector-accounts';
+import {accountProxyCommand,startAccountCheck,accountCheckStatus,ensureHistoryCollector} from '@/lib/xcollector-diagnostics';
+import {accountErrors,saveAccountSettings,removeAccountProxy,collectorParsing,historyCollection} from '@/lib/xcollector-accounts';
 import {autopostCommand,publicPublishJob} from '@/lib/xcollector-autopost';
 import {startAccountLogin,finishAccountLogin,cancelAccountLogin,loginStatus} from '@/lib/xcollector-login';
 import { NextRequest, NextResponse } from 'next/server';
@@ -43,6 +43,13 @@ export async function POST(request: NextRequest) {
     const auth = await requireProdAuth(request); if (auth) return auth;
     if (!sameOrigin(request)) throw new AccountError('Запрос разрешён только со страницы сайта',403);
     const input = await body(request);
+    if(['account-history-start','account-history-status','account-history-pause','account-history-resume','account-history-retry'].includes(input?.action)){
+      localLogin(request);const result=await historyCollection(input);
+      if(result.run?.status==='running'){
+        ensureHistoryCollector();
+      }
+      return NextResponse.json(result,{headers:{'Cache-Control':'no-store'}});
+    }
     if(['account-parse-start','account-parse-status'].includes(input?.action)){
       localLogin(request);const result=await collectorParsing(input);
       if(input.action==='account-parse-start'&&'workerActive' in result&&!result.workerActive)await runXCollectorAction('worker-start');

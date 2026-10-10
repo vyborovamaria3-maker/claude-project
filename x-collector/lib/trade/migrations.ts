@@ -22,4 +22,6 @@ export const REQUIRED = [
   "018_ai_foundation.sql",
   "019_account_roles.sql",
   "020_account_profile.sql",
+  "021_history_collection.sql",
+  "022_history_archive.sql",
 ];

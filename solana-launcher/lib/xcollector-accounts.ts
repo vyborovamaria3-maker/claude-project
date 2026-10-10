@@ -100,6 +100,43 @@ export async function collectorParsing(input:any){
   return {ids,message:'Запущен сбор из списков: '+ids.length,workerActive:!!(await db.query("SELECT 1 FROM x_workers WHERE status='active' AND last_heartbeat>$1 LIMIT 1",[now-90000])).rowCount};
  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
+export async function historyCollection(input:{action:string;name:unknown;id?:unknown}){
+ const name=accountName(input.name),db=database();
+ if(input.action==='account-history-start'){
+  const root=[path.resolve(process.cwd(),'../x-collector'),path.resolve(process.cwd(),'x-collector')].find(p=>fs.existsSync(path.join(p,'scripts/history-core.cjs')));
+  if(!root)throw new AccountError('Обновите X Collector для исторического сбора',503);
+  const nativeModule=process.getBuiltinModule('node:module') as typeof import('node:module');
+  const {startRun}=nativeModule.createRequire(path.join(root,'package.json'))('./scripts/history-core.cjs');
+  const today=new Date(Date.now()+3*3600000).toISOString().slice(0,10);
+  const start=new Date(today+'T00:00:00Z');start.setUTCFullYear(start.getUTCFullYear()-2);
+  const end=new Date(today+'T00:00:00Z');end.setUTCDate(end.getUTCDate()+1);
+  const lists=(await db.query('SELECT list_id FROM xc_auto_sources WHERE enabled ORDER BY list_id')).rows.map(r=>r.list_id);
+  if(!lists.length)throw new AccountError('Добавьте списки X для исторического сбора');
+  const c=await db.connect();try{await startRun(c,name,start.toISOString().slice(0,10),end.toISOString().slice(0,10),lists);}catch{throw new AccountError('Не удалось начать архив. Проверьте активный collector и миграции.',503);}finally{c.release();}
+ }
+ if(['account-history-pause','account-history-resume'].includes(input.action)){
+  if(typeof input.id!=='string'||!/^[a-f0-9-]{36}$/i.test(input.id))throw new AccountError('Некорректный архив');
+  const r=await db.query("UPDATE xc_history_runs SET status=$3,updated_at=$4 WHERE id=$1 AND account_name=$2 AND status IN ('running','paused') RETURNING id",[input.id,name,input.action==='account-history-pause'?'paused':'running',Date.now()]);
+  if(!r.rowCount)throw new AccountError('Активный архив не найден',404);
+ }
+ if(input.action==='account-history-retry'){
+  if(typeof input.id!=='string'||!/^[a-f0-9-]{36}$/i.test(input.id))throw new AccountError('Некорректный архив');
+  const c=await db.connect();try{
+   await c.query('BEGIN');
+   if(!(await c.query('SELECT id FROM xc_history_runs WHERE id=$1 AND account_name=$2 FOR UPDATE',[input.id,name])).rowCount)throw new AccountError('Архив не найден',404);
+   await c.query("UPDATE xc_history_windows SET cursor_id=CASE WHEN status='partial' THEN '' ELSE cursor_id END,status='pending',task_id=NULL,message=NULL WHERE run_id=$1 AND status IN ('failed','partial')",[input.id]);
+   await c.query("UPDATE xc_history_lists SET status='pending',attempts=0 WHERE run_id=$1 AND status='failed'",[input.id]);
+   await c.query("UPDATE xc_history_runs SET status='running',updated_at=$2 WHERE id=$1",[input.id,Date.now()]);await c.query('COMMIT');
+  }catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}
+ }
+ const run=(await db.query('SELECT id,account_name,since_date::text,until_date::text,status,message FROM xc_history_runs WHERE account_name=$1 ORDER BY created_at DESC LIMIT 1',[name])).rows[0];
+ if(!run)return {run:null};
+ const counts=(await db.query("SELECT count(*)::int AS total,count(*) FILTER(WHERE status='done')::int AS done,count(*) FILTER(WHERE status='queued')::int AS queued,count(*) FILTER(WHERE status IN ('failed','partial'))::int AS errors FROM xc_history_windows WHERE run_id=$1",[run.id])).rows[0];
+ const authors=Number((await db.query('SELECT count(DISTINCT handle) FROM xc_history_authors WHERE run_id=$1',[run.id])).rows[0].count);
+ const posts=Number((await db.query('SELECT count(*) FROM xc_history_posts WHERE run_id=$1',[run.id])).rows[0].count);
+ const lists=(await db.query('SELECT list_id,status FROM xc_history_lists WHERE run_id=$1 ORDER BY list_id',[run.id])).rows;
+ return {run:{...run,...counts,authors,posts,lists}};
+}
 export async function saveAccountSettings(input:any){
  const name=accountName(input?.name);
  if(typeof input?.version!=='string'||!/^\d+$/.test(input.version))throw new AccountError('Обновите список аккаунтов');

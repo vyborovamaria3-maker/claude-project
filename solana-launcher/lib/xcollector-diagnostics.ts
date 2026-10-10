@@ -11,6 +11,15 @@ export function collectorRoot(){
 type Check={id:string;name:string;status:string;created:number;steps?:Record<string,{status:string;message?:string}>;score?:number;ready?:boolean;message?:string};
 const shared=globalThis as typeof globalThis & {xcAccountChecks?:Map<string,Check>};
 const checks=shared.xcAccountChecks??(shared.xcAccountChecks=new Map());
+const historyShared=globalThis as typeof globalThis & {xcHistoryChild?:ReturnType<typeof spawn>};
+export function ensureHistoryCollector(){
+ if(historyShared.xcHistoryChild&&historyShared.xcHistoryChild.exitCode===null&&!historyShared.xcHistoryChild.killed)return;
+ const root=collectorRoot();
+ const child=spawn(process.execPath,[path.join(root,'scripts/history-collector.cjs')],{cwd:root,env:{...process.env},stdio:['ignore','ignore','ignore','ipc'],shell:false,windowsHide:true});
+ historyShared.xcHistoryChild=child;
+ child.on('error',()=>{if(historyShared.xcHistoryChild===child)historyShared.xcHistoryChild=undefined;});
+ child.on('exit',()=>{if(historyShared.xcHistoryChild===child)historyShared.xcHistoryChild=undefined;});
+}
 export function accountCheckStatus(id:unknown){const check=typeof id==='string'?checks.get(id):null;if(!check)throw new AccountError('Проверка завершена или сервер перезапущен. Запустите заново',404);return check;}
 export function startAccountCheck(input:any){
  if(typeof input?.name!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(input.name))throw new AccountError('Некорректное имя аккаунта');
