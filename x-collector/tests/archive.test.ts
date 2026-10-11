@@ -121,8 +121,7 @@ test("archive pagination, provenance, graph, snapshots and resumable import use 
         await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
         const endpoint = server.address();
         assert(endpoint && typeof endpoint !== "string");
-        const bundled = createRequire(__filename)("@sparticuz/chromium").default as typeof import("@sparticuz/chromium").default;
-        const browser = await chromium.launch({ headless: true, executablePath: process.env.TEST_CHROMIUM_PATH ?? await bundled.executablePath(), args: bundled.args });
+        const browser = await chromium.launch({ headless: true });
         try {
             const page = await browser.newPage(), errors: string[] = [];
             page.on("pageerror", e => errors.push(e.message));
