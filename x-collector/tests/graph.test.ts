@@ -1,5 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { PGlite } from "@electric-sql/pglite";
+import type { PoolClient } from "pg";
 import { metrics } from "../src/core/metrics";
 import {
   getAuthorNetwork, getRelatedEntities, topAuthors, topEntities, topRelations,
@@ -7,6 +11,15 @@ import {
 import {
   buildGraphFromTweets, buildKnowledgeGraph, type GraphTweetInput,
 } from "../src/intelligence/graph/builder";
+import {
+  MAX_EMBEDDING_DIMENSIONS,
+  computeGraphEmbeddings,
+  embedGraph,
+} from "../lib/intelligence/graph-embeddings";
+import { predictLinks } from "../lib/intelligence/link-prediction";
+import { compareNeighbourhoods } from "../lib/intelligence/similarity-engine";
+import { calculateCentrality, calculateWeightedCentrality, pageRank } from "../lib/intelligence/centrality-engine";
+import { detectCommunities } from "../lib/intelligence/community-detection";
 
 const TWEETS: GraphTweetInput[] = [
   { tweetId: "t1", handle: "alice", entities: [
@@ -241,4 +254,202 @@ test("graph: buildKnowledgeGraph({tweets}) — путь без БД", async () =
   assert.equal(graph.meta.tweetsProcessed, 3);
   assert.equal(graph.nodes.length, 9);
   assert.equal(graph.edges.length, 14);
+});
+
+
+test("graph embeddings: dimension, determinism, model id", () => {
+  const nodes = ["a", "b", "c", "d", "e"];
+  const edges = [
+    { source: "a", target: "b" },
+    { source: "b", target: "c" },
+    { source: "c", target: "d" },
+    { source: "d", target: "a" },
+    { source: "a", target: "c" },
+  ];
+
+  const first = embedGraph(nodes, edges, { algorithm: "random-walk", dimensions: 8, seed: 7 });
+  assert.equal(first.model, "random-walk@1");
+  assert.equal(first.dimensions, 8);
+  assert.equal(first.nodes.length, 5);
+  assert.equal(first.vectors.length, 5);
+  for (const vector of first.vectors) {
+    assert.equal(vector.length, 8);
+    assert.ok(vector.some((value) => value !== 0));
+  }
+
+  const again = embedGraph(nodes, edges, { algorithm: "random-walk", dimensions: 8, seed: 7 });
+  assert.deepEqual(again.vectors, first.vectors);
+
+  const otherSeed = embedGraph(nodes, edges, { algorithm: "random-walk", dimensions: 8, seed: 8 });
+  assert.notDeepEqual(otherSeed.vectors, first.vectors);
+
+  const spectral = embedGraph(nodes, edges, { algorithm: "spectral", dimensions: 8, seed: 7 });
+  assert.equal(spectral.model, "spectral@1");
+  assert.equal(spectral.vectors.length, 5);
+  assert.notDeepEqual(spectral.vectors, first.vectors);
+
+  const padded = embedGraph(nodes, edges, { algorithm: "spectral", dimensions: 32 });
+  assert.equal(padded.vectors.length, 5);
+  assert.ok(padded.vectors.every((vector) => vector.length === 32));
+
+  assert.deepEqual(embedGraph([], []), {
+    model: "random-walk@1",
+    algorithm: "random-walk",
+    dimensions: 64,
+    nodes: [],
+    vectors: [],
+  });
+  assert.throws(() => embedGraph(nodes, edges, { dimensions: 0 }));
+  assert.throws(() => embedGraph(nodes, edges, { dimensions: MAX_EMBEDDING_DIMENSIONS + 1 }));
+  assert.throws(() => embedGraph(nodes, edges, { algorithm: "nope" as never }));
+  assert.throws(() => embedGraph(nodes, edges, { walks: 0 }));
+});
+
+test("link prediction: ranking and no automatic relation creation", async () => {
+  const db = new PGlite();
+  const c = { query: (sql: string, args: unknown[] = []) => db.query(sql, args) } as unknown as Pick<PoolClient, "query">;
+  try {
+    for (const name of ["023_intelligence_platform.sql", "024_intelligence_temporal.sql"]) {
+      await db.exec(await fs.readFile("migrations/" + name, "utf8"));
+    }
+
+    const ids = new Map<string, string>();
+    for (const name of ["a", "b", "c", "d", "e"]) {
+      const id = randomUUID();
+      ids.set(name, id);
+      const eventId = randomUUID();
+      await db.query(
+        `INSERT INTO ip_raw_events(id,source,event_type,external_id,payload,payload_hash,collected_at)
+         VALUES($1,'X','TWEET',$2,$3::jsonb,$4,now())`,
+        [eventId, "event-" + eventId, JSON.stringify({ fixture: name }), "hash-" + eventId],
+      );
+      await db.query(
+        `INSERT INTO ip_entities(id,type,name,external_id,platform) VALUES($1,'ACCOUNT',$2,$3,'X')`,
+        [id, name, name],
+      );
+    }
+
+
+    const link = async (left: string, right: string) => {
+      const eventId = randomUUID();
+      await db.query(
+        `INSERT INTO ip_raw_events(id,source,event_type,external_id,payload,payload_hash,collected_at)
+         VALUES($1,'X','TWEET',$2,$3::jsonb,$4,now())`,
+        [eventId, "event-" + eventId, JSON.stringify({ fixture: eventId }), "hash-" + eventId],
+      );
+      await db.query(
+        `INSERT INTO ip_entity_relations
+           (id,source_entity_id,target_entity_id,relation_type,confidence,first_seen,last_seen,valid_from,source_event_id)
+         VALUES($1,$2,$3,'SHARED',1,now(),now(),now(),$4)`,
+        [randomUUID(), ids.get(left)!, ids.get(right)!, eventId],
+      );
+    };
+    await link("a", "b");
+    await link("a", "c");
+    await link("b", "c");
+    await link("b", "d");
+    await link("c", "d");
+    await link("a", "e");
+
+    const before = await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM ip_entity_relations`);
+    const nodes = ["a", "b", "c", "d", "e"].map((name) => ids.get(name)!);
+    const edges = ["a|b", "a|c", "b|c", "b|d", "c|d", "a|e"].map((pair) => {
+      const [source, target] = pair.split("|");
+      return { source: ids.get(source)!, target: ids.get(target)! };
+    });
+
+    const predictions = predictLinks(nodes, edges, { limit: 10 });
+    assert.ok(predictions.length > 0);
+    assert.equal(predictions[0].method, "common-neighbours");
+    assert.deepEqual(
+      [predictions[0].from, predictions[0].to].sort(),
+      [ids.get("a")!, ids.get("d")!].sort(),
+    );
+
+    const common = predictions.filter((entry) => entry.method === "common-neighbours");
+    const findPair = (left: string, right: string) =>
+      common.find((entry) => (entry.from === left && entry.to === right) || (entry.from === right && entry.to === left));
+    const ad = findPair(ids.get("a")!, ids.get("d")!)!;
+    const be = findPair(ids.get("b")!, ids.get("e")!)!;
+    const de = findPair(ids.get("d")!, ids.get("e")!)!;
+    assert.ok(ad.score > be.score);
+    assert.ok(be.score > de.score);
+    assert.equal(de.score, 0);
+    assert.deepEqual([...ad.evidence].sort(), [ids.get("b")!, ids.get("c")!].sort());
+
+    const preferential = predictions.filter((entry) => entry.method === "preferential-attachment");
+    assert.ok(preferential.length >= 4);
+    assert.ok(preferential[0].score >= preferential[preferential.length - 1].score);
+
+
+    const repeat = predictLinks(nodes, edges, { limit: 10 });
+    assert.deepEqual(repeat, predictions);
+
+    const after = await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM ip_entity_relations`);
+    assert.equal(after.rows[0].count, before.rows[0].count);
+
+    const embeddings = await computeGraphEmbeddings(c, { algorithm: "spectral", dimensions: 4 });
+    assert.equal(embeddings.model, "spectral@1");
+    assert.equal(embeddings.dimensions, 4);
+    assert.equal(embeddings.entities, 5);
+    const stored = await db.query<{ dimensions: number; model: string }>(
+      `SELECT dimensions, model FROM ip_entity_embeddings`,
+    );
+    assert.equal(stored.rows.length, 5);
+    assert.ok(stored.rows.every((row) => row.dimensions === 4 && row.model === "spectral@1"));
+  } finally {
+    await db.close();
+  }
+});
+
+test("graph engines: similarity, centrality, communities are deterministic", () => {
+  assert.equal(compareNeighbourhoods("e", ["b", "c"], ["b", "c"]).similarity, 1);
+  assert.equal(compareNeighbourhoods("e", ["b", "c"], ["a", "b"]).similarity, 1 / 3);
+  assert.equal(compareNeighbourhoods("e", [], []).similarity, 0);
+
+  const ranked = calculateCentrality([
+    { id: "a", connections: ["b", "c"] },
+    { id: "b", connections: ["a"] },
+    { id: "c", connections: [] },
+  ]);
+  assert.deepEqual(ranked.map((entry) => entry.id), ["a", "b", "c"]);
+
+  const weighted = calculateWeightedCentrality(
+    ["a", "b", "c"],
+    [
+      { from: "a", to: "b", weight: 5 },
+      { from: "b", to: "c", weight: 1 },
+    ],
+  );
+  assert.deepEqual(weighted.map((entry) => entry.id), ["b", "a", "c"]);
+  assert.equal(weighted[0].centrality, 6);
+
+  const pr = pageRank(["a", "b"], [{ from: "a", to: "b" }]);
+  const total = pr.reduce((sum, entry) => sum + entry.centrality, 0);
+  assert.ok(Math.abs(total - 1) < 1e-6);
+  assert.equal(pr[0].id, "b");
+  assert.deepEqual(pageRank(["a", "b"], [{ from: "a", to: "b" }]), pr);
+  assert.throws(() => pageRank(["a"], [], { damping: 1 }));
+
+  const triangles = detectCommunities(
+    ["a", "b", "c", "x", "y", "z"],
+    [
+      ["a", "b"], ["b", "c"], ["c", "a"],
+      ["x", "y"], ["y", "z"], ["z", "x"],
+    ],
+  );
+  assert.equal(triangles.length, 2);
+  assert.ok(triangles.every((community) => community.members.length === 3 && community.density === 1));
+  assert.deepEqual(detectCommunities(["a", "b", "c", "x", "y", "z"], [
+    ["b", "a"], ["c", "b"], ["a", "c"],
+    ["y", "x"], ["z", "y"], ["x", "z"],
+  ]), triangles);
+
+  const star = detectCommunities(
+    ["c", "l1", "l2", "l3", "l4"],
+    [["c", "l1"], ["c", "l2"], ["c", "l3"], ["c", "l4"]],
+  );
+  assert.equal(star.length, 1);
+  assert.equal(star[0].members.length, 5);
+  assert.deepEqual(detectCommunities([], []), []);
 });

@@ -31,3 +31,20 @@ export class SimilarityEngine {
     };
   }
 }
+
+export function compareNeighbourhoods(
+  entityId: string,
+  left: string[],
+  right: string[],
+): SimilarityResult {
+  const a = new Set(left);
+  const b = new Set(right);
+  const shared = [...a].filter((node) => b.has(node)).sort();
+  const union = new Set([...a, ...b]);
+  const similarity = union.size ? shared.length / union.size : 0;
+  return {
+    entityId,
+    similarity,
+    reasons: shared.length ? ['shared_neighbours'] : [],
+  };
+}
