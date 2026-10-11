@@ -311,9 +311,6 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
     assert.equal(await reservePublication(accountId), null);
     browser = await chromium.launch({
       headless: true,
-      executablePath:
-        process.env.TEST_CHROMIUM_PATH ?? (await bundled.executablePath()),
-      args: bundled.args,
     });
     const page = await browser.newPage();
     const errors: string[] = [];
@@ -413,3 +410,6 @@ test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser c
     Object.assign(process.env, env);
   }
 });
+
+
+
