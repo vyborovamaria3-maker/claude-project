@@ -22,7 +22,12 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   const sourceKey = await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
 
   for (let i = 0; i < valid.length; i += BATCH) {
-    const chunk = valid.slice(i, i + BATCH);
+    const chunk = valid.slice(i, i + BATCH).filter(t => {
+      if (t.observedAt !== undefined && t.observedAt < now - 24 * 60 * 60 * 1000) {
+        throw new Error(	weet  predates collector window);
+      }
+      return true;
+    });
     const received = new Date(now);
     const raw = await rawPage({ tweets: chunk, sourceQuery, received_at: received.toISOString() });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
@@ -57,18 +62,18 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         values
       );
 
+      if (taskId !== undefined) await client.query("INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",[taskId,chunk.map(t=>t.id)]);
+      const snapshots = chunk.map(t => ({ id:t.id, observed_at:new Date(t.observedAt ?? now).toISOString(), raw:t }));
+      await client.query(`INSERT INTO twitter_tweet_observations(tweet_id,observed_at,raw)
+        SELECT x.id,x.observed_at,x.raw FROM jsonb_to_recordset($1::jsonb) AS x(id text,observed_at timestamptz,raw jsonb)
+        ON CONFLICT(tweet_id,observed_at) DO NOTHING`, [JSON.stringify(snapshots)]);
+
       for (const t of chunk) {
         await processTweetEntities({
           tweet_id: t.id,
           text: t.text ?? null,
         });
       }
-
-      if (taskId !== undefined) await client.query("INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",[taskId,chunk.map(t=>t.id)]);
-      const snapshots = chunk.map(t => ({ id:t.id, observed_at:new Date(t.observedAt ?? now).toISOString(), raw:t }));
-      await client.query(`INSERT INTO twitter_tweet_observations(tweet_id,observed_at,raw)
-        SELECT x.id,x.observed_at,x.raw FROM jsonb_to_recordset($1::jsonb) AS x(id text,observed_at timestamptz,raw jsonb)
-        ON CONFLICT(tweet_id,observed_at) DO NOTHING`, [JSON.stringify(snapshots)]);
       const entities = chunk.flatMap(t => [
         ...(t.mentions??[]).map(value=>({id:t.id,kind:"mention_handle",value:value.toLowerCase()})),
         ...(t.hashtags??[]).map(value=>({id:t.id,kind:"hashtag",value:value.toLowerCase()})),
@@ -135,6 +140,10 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
   await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(d)]);
   });
 }
+
+
+
+
 
 
 
