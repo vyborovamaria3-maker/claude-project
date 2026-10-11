@@ -1,4 +1,5 @@
 import { TweetSchema, ProfileSchema } from "./schemas";
+import { processTweetEntities } from "../../src/intelligence/entities/processor";
 import { tx } from "./pg";
 import { log } from "./logger";
 import { source, rawPage, storePage } from "../archive/store";
@@ -55,6 +56,13 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
          WHERE EXCLUDED.updated_at >= twitter_tweets.updated_at`,
         values
       );
+
+      for (const t of chunk) {
+        await processTweetEntities({
+          tweet_id: t.id,
+          text: t.text ?? null,
+        });
+      }
 
       if (taskId !== undefined) await client.query("INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",[taskId,chunk.map(t=>t.id)]);
       const snapshots = chunk.map(t => ({ id:t.id, observed_at:new Date(t.observedAt ?? now).toISOString(), raw:t }));
@@ -127,4 +135,7 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
   await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(d)]);
   });
 }
+
+
+
 
