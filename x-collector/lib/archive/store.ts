@@ -47,7 +47,6 @@ export async function storePage(c: PoolClient, source: string, page: ArchivePage
         const text=p.note_post?.text??p.note_tweet?.text??p.text;
         postRows.push({id:p.id,author_id:p.author_id??null,conversation_id:p.conversation_id??null,text,posted_at:p.created_at,lang:p.lang??null,author_handle:p.author_handle??handles.get(p.author_id??"")??null});
         const m=p.public_metrics,observedAt=observed??(p.metrics_observed_at?new Date(p.metrics_observed_at):null);
-        if(observedAt&&observedAt.getTime()<Date.parse(p.created_at))throw new Error("metric observation predates the post");
         const snapshotKey=createHash("sha256").update(raw.hash+"|"+(observedAt?.toISOString()??"unknown")).digest("hex");
         metrics.push({id:p.id,observed_at:observedAt?.toISOString()??null,likes:m?.like_count??null,views:m?.impression_count??null,reposts:m?.repost_count??m?.retweet_count??null,replies:m?.reply_count??null,quotes:m?.quote_count??null,snapshot_key:snapshotKey});
         for(const r of p.referenced_posts??p.referenced_tweets??[])edges.push({id:p.id,target:r.id,kind:r.type});

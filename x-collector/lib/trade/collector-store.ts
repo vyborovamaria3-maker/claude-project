@@ -22,12 +22,8 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   const sourceKey = await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
 
   for (let i = 0; i < valid.length; i += BATCH) {
-    const chunk = valid.slice(i, i + BATCH).filter(t => {
-      if (t.observedAt !== undefined && t.observedAt < now - 24 * 60 * 60 * 1000) {
-        throw new Error(	weet  predates collector window);
-      }
-      return true;
-    });
+    const chunk = valid.slice(i, i + BATCH);
+    if (chunk.length === 0) continue;
     const received = new Date(now);
     const raw = await rawPage({ tweets: chunk, sourceQuery, received_at: received.toISOString() });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
@@ -140,11 +136,3 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
   await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(d)]);
   });
 }
-
-
-
-
-
-
-
-

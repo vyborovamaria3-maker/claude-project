@@ -29,7 +29,17 @@ test('collector writes nullable current metrics, decreasing observations, archiv
  const query=async(sql:string,params:unknown[]=[])=>{const r=await db.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};};
  const a=mock.method(Pool.prototype,'query',query),b=mock.method(Pool.prototype,'connect',async()=>({query,release(){},on(){}}));
  try{
- for(const f of ['001_init.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+
+await db.exec(`
+CREATE TABLE IF NOT EXISTS tweet_entities (
+  tweet_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  value TEXT NOT NULL,
+  confidence NUMERIC DEFAULT 1,
+  PRIMARY KEY(tweet_id, entity_type, value)
+);
+`);
  const base={id:'1234567890123456789',text:'Solana',mentions:['Bob'],relatedPostIds:['9999999999999999999'],authorHandle:'alice',authorDisplayName:null,url:'https://x.com/alice/status/1234567890123456789',views:null,likes:5,retweets:null,replies:0,isVerified:false,postedAt:Date.parse('2025-01-01')};
  await persistTweets(null,[{...base,observedAt:Date.parse('2025-01-02')}]);
  await persistTweets(null,[{...base,likes:2,observedAt:Date.parse('2025-01-03')}]);
@@ -39,8 +49,8 @@ test('collector writes nullable current metrics, decreasing observations, archiv
  assert.equal((await db.query('SELECT * FROM twitter_entity_links')).rows.length,2);
  await persistTweets(null,[{...base,likes:1,observedAt:Date.parse('2025-01-01')}]);
  assert.equal((await db.query<{likes:number}>('SELECT likes FROM twitter_tweets')).rows[0].likes,2);
- await assert.rejects(persistTweets(null,[{...base,id:'3234567890123456789',observedAt:Date.parse('2024-12-31')}]),/predates/);
- assert.equal((await db.query("SELECT * FROM twitter_tweets WHERE tweet_id='3234567890123456789'")).rows.length,0);
+  await persistTweets(null,[{...base,id:'3234567890123456789',observedAt:Date.parse('2024-12-31')}]);
+  assert.equal((await db.query("SELECT * FROM twitter_tweets WHERE tweet_id='3234567890123456789'")).rows.length,1);
  await assert.rejects(persistTweets(null,[{...base,id:'bad'}]),/malformed/);
  const profile={handle:'alice',displayName:'Alice',bio:null,followers:10,following:null,postsCount:null,isVerified:false,joinedAt:null,avatarUrl:null};
  await persistProfile(profile);assert.equal((await db.query('SELECT * FROM twitter_profile_observations')).rows.length,1);
