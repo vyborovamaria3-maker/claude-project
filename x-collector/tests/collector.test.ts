@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 const load=createRequire(__filename);
-const bundled=load('@sparticuz/chromium').default as typeof import('@sparticuz/chromium').default;
+
 import { chromium } from 'playwright';
 import { Pool } from 'pg';
 import { PGlite } from '@electric-sql/pglite';
@@ -13,7 +13,7 @@ import { extractTweetArticles } from '../lib/trade/twitter-scraper';
 import { persistTweets, persistProfile } from '../lib/trade/collector-store';
 import { closePool } from '../lib/trade/pg';
 test('visible DOM collector keeps canonical ID, unknown counts, media-only posts and active controls', async()=>{
- const browser=await chromium.launch({headless:true,executablePath:process.env.TEST_CHROMIUM_PATH??await bundled.executablePath(),args:bundled.args});
+ const browser = await chromium.launch({ headless: true });
  try {
  const page=await browser.newPage();
  await page.setContent(`<article data-testid="tweet"><a href="/alice/status/1234567890123456789"><time datetime="2025-01-01T00:00:00Z"></time></a><div data-testid="tweetText">hello @bob #Solana</div><a href="/quoted/status/9999999999999999999">quote</a><button data-testid="unlike" aria-label="1.2K Likes"></button><button data-testid="unretweet" aria-label="1,234,567 Reposts"></button><button data-testid="reply" aria-label="0 Replies"></button><div data-testid="tweetPhoto"><img src="https://example.org/photo.jpg"></div></article><article data-testid="tweet"><a href="/alice/status/2234567890123456789"><time datetime="2025-01-01"></time></a><video poster="https://example.org/video.jpg"></video></article>`);
@@ -48,3 +48,5 @@ test('collector writes nullable current metrics, decreasing observations, archiv
  await persistProfile(profile);assert.equal((await db.query('SELECT * FROM twitter_profile_observations')).rows.length,1);
  }finally{await closePool();a.mock.restore();b.mock.restore();await db.close();await fs.rm(root,{recursive:true,force:true});for(const [key,value] of Object.entries({DATABASE_URL:old.url,ARCHIVE_RAW_DIR:old.root,ARCHIVE_MIN_FREE_GB:old.reserve})){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
 });
+
+

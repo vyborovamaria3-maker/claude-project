@@ -3,11 +3,11 @@ import { createRequire } from 'node:module';
 const load = createRequire(__filename);
 import { test } from 'node:test';
 import { chromium } from 'playwright';
-const bundledChromium = load('@sparticuz/chromium').default as typeof import('@sparticuz/chromium').default;
+
 import { server } from '../scripts/dashboard';
 
 test('dashboard boots under CSP, isolates API errors and restores Mint chart', async () => {
-  const browser = await chromium.launch({ headless: true, executablePath: process.env.TEST_CHROMIUM_PATH ?? await bundledChromium.executablePath(), args: bundledChromium.args });
+  const browser = await chromium.launch({ headless: true });
   server.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address();
@@ -62,3 +62,5 @@ test('dashboard boots under CSP, isolates API errors and restores Mint chart', a
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
+
+

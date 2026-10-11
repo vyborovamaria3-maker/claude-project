@@ -33,13 +33,13 @@ test('Start button reaches queue, real storage and task results; retries and set
  const db=new PGlite(),root=await fs.mkdtemp(path.join(os.tmpdir(),'collector-control-'));
  const names=['DATABASE_URL','MASTER_KEY','ARCHIVE_RAW_DIR','ARCHIVE_MIN_FREE_GB','PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH','COLLECTOR_AUTOSTART'];const old=Object.fromEntries(names.map(n=>[n,process.env[n]]));
  process.env.DATABASE_URL='postgresql://fixture/collector_control_test';process.env.MASTER_KEY='12'.repeat(32);clearKeyCache();process.env.ARCHIVE_RAW_DIR=root;process.env.ARCHIVE_MIN_FREE_GB='0';process.env.COLLECTOR_AUTOSTART='true';
- const executablePath=process.env.TEST_CHROMIUM_PATH??await bundled.executablePath();process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=executablePath;
+ 
  const query=async(sql:string,params:unknown[]=[])=>{const r=await db.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};};
  const a=mock.method(Pool.prototype,'query',query),b=mock.method(Pool.prototype,'connect',async()=>({query,release(){},on(){}}));
  let launches=0;const startWorker=async()=>{launches++;};
  const services={readiness,taskDetails,resumeCollection:(id:string)=>resumeCollection(id,startWorker),startCollection:(input:unknown)=>startCollection(input,startWorker)};
  let origin='';const server=http.createServer(async(req,res)=>{applySecurityHeaders(res);if(!enforceBasicAuth(req,res,'fixture','fixture','collector'))return;await handleCollectorRequest(req,res,origin,services);});
- const browser=await chromium.launch({headless:true,executablePath,args:bundled.args.filter(arg=>arg!=="--disable-web-security")});
+ const browser = await chromium.launch({ headless: true });
  try{
  assert.equal((await readiness()).ready,false);
  for(const f of ['001_init.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql','019_account_roles.sql','020_account_profile.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
@@ -112,3 +112,5 @@ test('collector HTTP hides internal failures but preserves authored action error
   const actionable=await fetch(url);assert.equal(actionable.status,409);assert.match(await actionable.text(),/Установите браузер/);
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
+
+
