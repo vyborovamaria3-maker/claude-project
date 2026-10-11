@@ -7,7 +7,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { createRequire } from 'node:module';
 import { PGlite } from '@electric-sql/pglite';
 import { Pool } from 'pg';
 import { chromium } from 'playwright';
@@ -22,7 +21,6 @@ import { collectArticles } from '../lib/trade/twitter-scraper';
 import { registerAccount,pickAccount } from '../lib/trade/account-manager';
 import { applySecurityHeaders } from '../lib/trade/http-security';
 import { enforceBasicAuth } from '../lib/trade/http-auth';
-const load=createRequire(__filename),bundled=load('@sparticuz/chromium').default as typeof import('@sparticuz/chromium').default;
 test('X session readiness rejects missing, expired and unrelated cookies',()=>{
  assert.equal(hasXSession({cookies:[]}),false);
  assert.equal(hasXSession({cookies:[{name:'auth_token',value:'fixture',domain:'.example.com',expires:-1}]}),false);

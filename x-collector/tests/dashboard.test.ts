@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-const load = createRequire(__filename);
 import { test } from 'node:test';
 import { chromium } from 'playwright';
 

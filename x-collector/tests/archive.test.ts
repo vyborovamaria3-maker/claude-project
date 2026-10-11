@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import http from "node:http";
-import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import { handleArchiveRequest } from "../lib/archive/http";
 import { applySecurityHeaders } from "../lib/trade/http-security";

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { test, mock } from "node:test";
 import fs from "node:fs/promises";
 import http from "node:http";
-import { createRequire } from "node:module";
 import { Pool } from "pg";
 import { PGlite } from "@electric-sql/pglite";
 import { chromium } from "playwright";
@@ -19,9 +18,6 @@ import {
 } from "../lib/reply/engine";
 import { closePool } from "../lib/trade/pg";
 import type { Tweet } from "../lib/reply/model";
-const load = createRequire(__filename);
-const bundled = load("@sparticuz/chromium")
-  .default as typeof import("@sparticuz/chromium").default;
 
 test("Reply Guy API, ownership, RAG pipeline, budgets, uncertainty and browser controls", async () => {
   const db = new PGlite();
