@@ -41,10 +41,10 @@ test("hardening: health reports real checks and degrades on queue pressure", asy
     assert.equal(empty.counts.entities, 0);
 
     const subject = await resolveEntity(c, "ACCOUNT", "X", "health-handle", "@health");
-    const raw = await recordRaw(c, "TWEET", "health-tweet", { text: "pending" }, new Date("2026-10-10T00:00:00Z"), null);
-    await link(c, subject, subject, "SHARED", raw, new Date("2026-10-10T00:00:00Z"), 1);
+  const raw = await recordRaw(c, "TWEET", "health-tweet", { text: "pending" }, new Date(Date.now() - 60 * 60 * 1000), null);
+  await link(c, subject, subject, "SHARED", raw, new Date(Date.now() - 60 * 60 * 1000), 1);
 
-    const withData = await checkIntelligenceHealth(c);
+const withData = await checkIntelligenceHealth(c);
     assert.equal(withData.status, "healthy");
     assert.equal(withData.counts.entities, 1);
     assert.equal(withData.counts.pending_normalizations, 1);
@@ -116,8 +116,8 @@ test("hardening: retention deletes only expired snapshots and never evidence", a
   try {
     await fullChain(db);
     const subject = await resolveEntity(c, "ACCOUNT", "X", "retention-handle", "@retention");
-    const raw = await recordRaw(c, "TWEET", "retention-tweet", { text: "kept" }, new Date("2026-10-10T00:00:00Z"), null);
-    await link(c, subject, subject, "SHARED", raw, new Date("2026-10-10T00:00:00Z"), 1);
+    const raw = await recordRaw(c, "TWEET", "retention-tweet", { text: "kept" }, new Date(Date.now() - 60 * 60 * 1000), null);
+await link(c, subject, subject, "SHARED", raw, new Date(Date.now() - 60 * 60 * 1000), 1);
 
     const insert = async (id: string, observedAt: string) => {
       const event = randomUUID();

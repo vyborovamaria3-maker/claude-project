@@ -98,7 +98,7 @@ export async function checkIntelligenceHealth(c:Client,limits:HealthLimits=DEFAU
   });
 
   const failed=checks.filter((check)=>!check.ok);
-  return{status:failed.length?"degraded":"healthy",checks,counts,checkedAt:new Date().toISOString()};
+   return{status:failed.length?"degraded":"healthy",checks,counts,checkedAt:new Date().toISOString()};
  }catch(error){
   checks.push({name:"database",ok:false,detail:error instanceof Error?error.message:"database unreachable"});
   return{status:"unavailable",checks,counts,checkedAt:new Date().toISOString()};
