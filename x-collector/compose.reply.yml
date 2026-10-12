@@ -28,7 +28,7 @@ services:
     <<: *service
     restart: "no"
     command: [node, dist/scripts/migrate.js]
-    profiles: [setup]
+    profiles: [setup, collector]
   api:
     <<: *service
     ports: ["127.0.0.1:3002:3002"]
@@ -51,5 +51,45 @@ services:
         condition: service_started
     command: [node, dist/scripts/reply/telegram.js]
     stop_grace_period: 45s
+  worker:
+    <<: *service
+    profiles: [collector]
+    command: [node, dist/scripts/worker.js]
+    volumes: [collector_data:/app/data, collector_logs:/app/logs]
+    stop_grace_period: 45s
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:'+(process.env.METRICS_PORT||9091)+'/health',{headers:process.env.METRICS_USER?{authorization:'Basic '+Buffer.from(process.env.METRICS_USER+':'+process.env.METRICS_PASS).toString('base64')}:{}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  scheduler:
+    <<: *service
+    profiles: [collector]
+    command: [node, dist/scripts/scheduler.js]
+    stop_grace_period: 100s
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+  dashboard:
+    <<: *service
+    profiles: [collector]
+    command: [node, dist/scripts/dashboard.js]
+    environment:
+      DATABASE_URL: postgresql://collector:${REPLY_DB_PASSWORD:?set REPLY_DB_PASSWORD}@postgres:5432/x_collector
+      DASHBOARD_HOST: 0.0.0.0
+      COLLECTOR_AUTOSTART: "false"
+      DASHBOARD_USER: ${DASHBOARD_USER:-}
+      DASHBOARD_PASS: ${DASHBOARD_PASS:-}
+      DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-}
+    ports: ["127.0.0.1:3001:3001"]
+    volumes: [collector_data:/app/data, collector_logs:/app/logs]
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
 volumes:
   reply_pg:
+  collector_data:
+  collector_logs:

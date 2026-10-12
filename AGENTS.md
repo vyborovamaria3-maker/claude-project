@@ -1,0 +1,3 @@
+# X Collector engineering rules
+
+Preserve working collectors, history, analytics and API contracts. Reuse PostgreSQL queue/pool/account manager; no unused abstractions, simulated success or added brokers without evidence. Fence stale workers and keep result writes transactional. Never log sessions or credentials. Run strict typecheck, targeted failure tests and final applicable regression checks. Report live infrastructure limitations honestly. Use docs/CODEX_PROJECT_CONTEXT.md and docs/CODEX_PROGRESS.md, verifying against changed code. Keep tool output/search scoped and documentation concise.

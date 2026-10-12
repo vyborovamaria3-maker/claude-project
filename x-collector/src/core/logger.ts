@@ -1,14 +1,8 @@
 type Level = "info" | "warn" | "error";
+import { log as sharedLog } from "../../lib/trade/logger";
 
 function log(level: Level, message: string, data?: unknown) {
-  console.log(
-    JSON.stringify({
-      time: new Date().toISOString(),
-      level,
-      message,
-      data,
-    })
-  );
+  sharedLog[level](message, { data: data instanceof Error ? { error: data.message } : data });
 }
 
 export const logger = {

@@ -35,6 +35,13 @@ let currentDate = "";
 let bytesWritten = 0;
 
 /** Вырезает поля, похожие на секреты, и ограничивает глубину/длину значений. */
+export function redactText(value: string): string {
+  return value
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[REDACTED]@")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
+    .replace(/\b(password|secret|api[_-]?key|access[_-]?token|auth_token|ct0|cookie|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]");
+}
+
 export function scrub(value: unknown, key = "", depth = 0): unknown {
   if (SENSITIVE_KEY.test(key)) return "[REDACTED]";
   if (depth > 6) return "[DEPTH_LIMIT]";
@@ -43,7 +50,7 @@ export function scrub(value: unknown, key = "", depth = 0): unknown {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
       .map(([k, v]) => [k, scrub(v, k, depth + 1)]));
   }
-  if (typeof value === "string") return value.length > 20_000 ? `${value.slice(0, 20_000)}…[TRUNCATED]` : value;
+  if (typeof value === "string") { const safe = redactText(value); return safe.length > 20_000 ? `${safe.slice(0, 20_000)}…[TRUNCATED]` : safe; }
   return value;
 }
 
@@ -85,6 +92,7 @@ function rotateIfNeeded(incomingBytes: number) {
 }
 
 function emit(level: Level, msg: string, meta?: Record<string, unknown>) {
+  msg = redactText(msg);
   const cfg = getConfig();
   if (LEVELS[level] < LEVELS[(cfg.logging.level as Level) ?? "info"]) return;
   const safeMeta = meta ? scrub(meta) as Record<string, unknown> : undefined;

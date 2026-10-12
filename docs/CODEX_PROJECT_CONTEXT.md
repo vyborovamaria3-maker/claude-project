@@ -1,0 +1,3 @@
+# X Collector Runtime v2 context
+
+See architecture/CURRENT_ARCHITECTURE.md and DEPENDENCY_MAP.md. Source is the user-supplied ZIP; GitHub HEAD has not been substituted. Collector uses durable PostgreSQL x_tasks and x_accounts with existing migrations, Playwright DOM collection, encrypted sessions, batch persistence and raw-event AI normalization. One collector task per worker; scale processes if needed. Existing reply runtime remains independent. Baseline strict typecheck passes. Confirmed defects and remaining scope are in AUDIT_REPORT.md. Current work: lease/persistence/lifecycle stabilization; no new broker or tables planned.

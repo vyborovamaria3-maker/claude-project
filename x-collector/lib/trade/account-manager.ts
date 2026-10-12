@@ -86,7 +86,7 @@ export async function extendAccountLease(name: string, leaseOwner: string, lease
   const now = Date.now();
   const changed = await exec(
     `UPDATE x_accounts SET account_busy_until=$1, updated_at=$2
-     WHERE name=$3 AND account_claimed_by=$4`,
+     WHERE name=$3 AND account_claimed_by=$4 AND account_busy_until > $2`,
     [now + leaseMs, now, name, leaseOwner]
   );
   return changed > 0;
@@ -103,20 +103,22 @@ export async function releaseAccount(name: string, leaseOwner: string, cooldownM
   return changed > 0;
 }
 
-export async function recordSuccess(name: string) {
+export async function recordSuccess(name: string, leaseOwner?: string) {
   await exec(
-    `UPDATE x_accounts SET consecutive_errors=0, last_success_at=$1, updated_at=$1 WHERE name=$2`,
-    [Date.now(), name]
+    `UPDATE x_accounts SET consecutive_errors=0, last_success_at=$1, updated_at=$1 WHERE name=$2
+      AND ($3::text IS NULL OR (account_claimed_by=$3 AND account_busy_until>$1))`,
+    [Date.now(), name, leaseOwner ?? null]
   );
 }
 
-export async function recordError(name: string, kind: "rate_limit" | "captcha" | "ban" | "other") {
+export async function recordError(name: string, kind: "rate_limit" | "captcha" | "ban" | "auth_expired" | "other", serverDelayMs = 0, leaseOwner?: string) {
   const cfg = getConfig();
   const now = Date.now();
   const cooldownMs = {
-    rate_limit: cfg.sessions.cooldownAfterRateLimitMs,
+    rate_limit: Math.max(cfg.sessions.cooldownAfterRateLimitMs, serverDelayMs),
     captcha: cfg.sessions.cooldownAfterCaptchaMs,
     ban: 0,
+    auth_expired: 0,
     other: 0,
   }[kind];
 
@@ -127,24 +129,22 @@ export async function recordError(name: string, kind: "rate_limit" | "captcha" |
          last_error_at = $1,
          status = CASE
            WHEN $2 = 'ban' THEN 'banned'
-           WHEN $2 = 'captcha' THEN 'captcha'
+           WHEN $2 IN ('captcha', 'auth_expired') THEN 'captcha'
            WHEN $2 = 'rate_limit' THEN 'cooldown'
            ELSE status
          END,
          cooldown_until = CASE WHEN $3 > 0 THEN $1::bigint + $3::bigint ELSE cooldown_until END,
          updated_at = $1
-     WHERE name = $4`,
-    [now, kind, cooldownMs, name]
+     WHERE name = $4 AND ($5::text IS NULL OR (account_claimed_by=$5 AND account_busy_until>$1))`,
+    [now, kind, cooldownMs, name, leaseOwner ?? null]
   );
 
   const row = await q1<{ ce: number }>(
     `SELECT consecutive_errors AS ce FROM x_accounts WHERE name=$1`, [name]
   );
-  const shouldBan = row && row.ce >= cfg.sessions.banAfterConsecutiveErrors
-    && (kind === "ban" || kind === "captcha" || kind === "rate_limit");
+  const shouldBan = row && kind === "ban";
   if (shouldBan) {
-    await exec(`UPDATE x_accounts SET status='banned', updated_at=$1 WHERE name=$2`, [now, name]);
-    log.error("account banned after consecutive errors", { name, errors: row!.ce, kind });
+    log.error("account ban reported", { name, errors: row!.ce, kind });
   }
 }
 

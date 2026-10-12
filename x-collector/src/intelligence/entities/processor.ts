@@ -1,4 +1,5 @@
 import { tx } from "../../../lib/trade/pg";
+import type { PoolClient } from "pg";
 import { metrics } from "../../core/metrics";
 import { extractEntities, ExtractedEntity } from "./extractor";
 
@@ -11,9 +12,9 @@ export interface ProcessableTweet {
  * Сохраняет сущности твита в существующую таблицу tweet_entities (005_nlp.sql).
  * DELETE + INSERT в одной транзакции: повторный запуск идемпотентен.
  */
-export async function saveTweetEntities(tweetId: string, entities: ExtractedEntity[]): Promise<number> {
+export async function saveTweetEntities(tweetId: string, entities: ExtractedEntity[], client?: PoolClient): Promise<number> {
   const now = Date.now();
-  return tx(async (c) => {
+  const save = async (c: PoolClient) => {
     await c.query("DELETE FROM tweet_entities WHERE tweet_id = $1", [tweetId]);
     if (entities.length === 0) return 0;
     const values: unknown[] = [];
@@ -28,13 +29,14 @@ export async function saveTweetEntities(tweetId: string, entities: ExtractedEnti
       values
     );
     return r.rowCount ?? 0;
-  });
+  };
+  return client ? save(client) : tx(save);
 }
 
 /** twitter_tweets → extractEntities → tweet_entities. Возвращает сохранённые сущности. */
-export async function processTweetEntities(tweet: ProcessableTweet): Promise<ExtractedEntity[]> {
+export async function processTweetEntities(tweet: ProcessableTweet, client?: PoolClient): Promise<ExtractedEntity[]> {
   const entities = extractEntities(tweet.text ?? "");
-  const saved = await saveTweetEntities(tweet.tweet_id, entities);
+  const saved = await saveTweetEntities(tweet.tweet_id, entities, client);
   metrics.entitiesExtracted += saved;
   return entities;
 }

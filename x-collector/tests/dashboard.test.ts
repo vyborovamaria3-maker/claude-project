@@ -15,6 +15,8 @@ test('dashboard boots under CSP, isolates API errors and restores Mint chart', a
     assert.equal((await fetch(base + '/api/mint/full')).status, 400);
     assert.equal((await fetch(base + '/api/ultra/rebuild')).status, 405);
     assert.equal((await fetch(base + '/api/ultra/rebuild', { method: 'POST', headers: { Origin: 'https://untrusted.example' } })).status, 403);
+    assert.equal((await fetch(base + '/api/collector/start', { method: 'POST', headers: { Origin: base } })).status, 503);
+    assert.equal((await fetch(base + '/api/ultra/rebuild', { method: 'POST', headers: { Origin: 'http://127.0.0.1:3001' } })).status, 503);
     const page = await browser.newPage();
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));

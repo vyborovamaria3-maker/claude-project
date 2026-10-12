@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn, ChildProcess } from "node:child_process";
 import { q } from "../trade/pg";
+import { withAdvisoryLockOrThrow } from "../trade/advisory";
 let child: ChildProcess | null = null;
 let starting: Promise<void> | null = null;
 let lastError: string | null = null;
@@ -11,7 +12,7 @@ export function runtimeStatus() { return { managed: Boolean(child), starting: Bo
 export async function ensureWorker() {
   if (starting) return starting;
   if (child && child.exitCode === null) return;
-  starting = (async () => {
+  starting = withAdvisoryLockOrThrow("x-collector:worker-autostart", async () => {
     const active = await q("SELECT id FROM x_workers WHERE status='active' AND last_heartbeat>$1 LIMIT 1", [Date.now()-90000]);
     if (active.length) return;
     if (process.env.COLLECTOR_AUTOSTART === "false") throw new CollectorActionError("Worker не запущен; включите COLLECTOR_AUTOSTART или запустите npm run worker");
@@ -31,7 +32,7 @@ export async function ensureWorker() {
       const done=(error?:Error)=>{clearTimeout(timer);proc.off("message",ready);proc.off("exit",failed);proc.off("error",failed);if(error){lastError=error.message;reject(error);}else resolve();};
       proc.on("message",ready);proc.once("exit",failed);proc.once("error",failed);
     });
-  })();
+  });
   try { await starting; } finally { starting=null; }
 }
 export async function stopManagedWorker() {

@@ -82,6 +82,17 @@ export async function exec(sql: string, params: unknown[] = []): Promise<number>
   return r.rowCount ?? 0;
 }
 
+/** Bound the HTTP probe including time spent waiting for a pooled connection. */
+export async function checkDatabase(timeoutMs = 3000): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      getPool().query("SELECT 1"),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("database health timeout")), timeoutMs); }),
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 /**
  * Транзакция с retry. Повторяется только весь блок целиком при serialization/
  * deadlock/connection ошибках ДО COMMIT. Если COMMIT оборвался — выбрасывается

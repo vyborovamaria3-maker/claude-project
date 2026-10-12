@@ -4,13 +4,18 @@ import { test, mock } from 'node:test';
 import fs from 'node:fs/promises';
 import { Pool } from 'pg';
 import { PGlite } from '@electric-sql/pglite';
-import { enqueueTask, claimTasks, finishTask, deferTask, failTask } from '../lib/trade/tasks';
-import { pickAccount, releaseAccount, recordError } from '../lib/trade/account-manager';
+import { enqueueTask, claimTasks, finishTask, deferTask, failTask, extendLease, replayDeadLetter, QueueBackpressureError } from '../lib/trade/tasks';
+import { pickAccount, releaseAccount, recordError, extendAccountLease } from '../lib/trade/account-manager';
+import { CollectorHttpError, taskFailure, retryAfterMs } from '../lib/trade/task-errors';
+import { WorkerRuntime } from '../src/runtime/worker-runtime';
+import { executeTask } from '../src/runtime/collector-task';
+import { WorkerRegistry, reapDeadWorkers } from '../lib/trade/worker-registry';
 import { getDailyDigest, getMintFullReport, getTopShillers, getTrendingWords, getCashtagTrends, getWorkerEfficiency, getAccountHealth } from '../lib/trade/analytics';
 import { getTopHype, getEarlySignals, getLeadAuthors, getTopPageRank } from '../lib/trade/analytics-advanced';
 import { getTopUltra, listModels } from '../lib/trade/analytics-predictive';
 import { closePool } from '../lib/trade/pg';
 import { clearKeyCache, encryptBuffer, decryptBuffer } from '../lib/trade/crypto';
+import { handleSearchTask } from '../src/x/task-handler';
 
 test('encrypted sessions reject tampering and wrong keys', () => {
   const previous = process.env.MASTER_KEY;
@@ -80,9 +85,124 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     await enqueueTask({ ...input, payload: { query: 'retry' }, maxAttempts: 2 });
     const [retry] = await claimTasks('worker-c', 1, 60000);
     assert.equal(await failTask(retry.id, 'worker-c', 'transient'), 'requeued');
+    await db.query("UPDATE x_tasks SET status='done' WHERE status='pending'");
+    await enqueueTask({ ...input, payload: { query: 'fenced' }, maxAttempts: 3 });
+    const [fenced] = await claimTasks('same-worker', 1, 60000);
+    assert.equal(await extendLease(fenced.id, 'same-worker', 60000, fenced.attempts + 1), false);
+    assert.equal(await finishTask(fenced.id, 'same-worker', fenced.attempts + 1), false);
+    await db.query('UPDATE x_tasks SET lease_expires_at=0 WHERE id=$1', [fenced.id]);
+    assert.equal(await extendLease(fenced.id, 'same-worker', 60000), false);
+    assert.equal(await finishTask(fenced.id, 'same-worker'), false);
+    assert.equal(await deferTask(fenced.id, 'same-worker'), false);
+    assert.equal(await failTask(fenced.id, 'same-worker', 'failure'), 'lost');
+    const [newAttempt] = await claimTasks('same-worker', 1, 60000);
+    assert.equal(await finishTask(fenced.id, 'same-worker', fenced.attempts), false);
+    assert.equal(await failTask(newAttempt.id, 'same-worker', new CollectorHttpError(401), newAttempt.attempts), 'requeued');
+    await enqueueTask({ ...input, payload: { query: 'rate-delay' }, maxAttempts: 3 });
+    const [limited] = await claimTasks('worker-limit', 1, 60000);
+    const before = Date.now();
+    assert.equal(await failTask(limited.id, 'worker-limit', new CollectorHttpError(429, 120000)), 'requeued');
+    const delayed = (await db.query<{available_at:string}>('SELECT available_at FROM x_tasks WHERE id=$1', [limited.id])).rows[0];
+    assert(Number(delayed.available_at) >= before + 120000);
+    await db.query("UPDATE x_accounts SET status='active',cooldown_until=0 WHERE name='test'");
+    await pickAccount('search', 'expired-owner');
+    await db.query("UPDATE x_accounts SET account_busy_until=0 WHERE name='test'");
+    assert.equal(await extendAccountLease('test', 'expired-owner', 60000), false);
+    for (let i=0;i<4;i++) await recordError('test', 'rate_limit');
+    assert.equal((await db.query<{status:string}>("SELECT status FROM x_accounts WHERE name='test'")).rows[0].status, 'cooldown');
+    await recordError('test', 'auth_expired');
+    assert.equal((await db.query<{status:string}>("SELECT status FROM x_accounts WHERE name='test'")).rows[0].status, 'captcha');
+    // A missing heartbeat must not revoke a valid task lease.
+    await db.query("UPDATE x_tasks SET status='done' WHERE status='pending'");
+    await enqueueTask({ ...input, payload: { query: 'heartbeat' }, maxAttempts: 3 });
+    const [alive] = await claimTasks('heartbeat-worker', 1, 60000);
+    await db.query("INSERT INTO x_workers(id,started_at,last_heartbeat,status) VALUES('heartbeat-worker',0,0,'active')");
+    await reapDeadWorkers();
+    assert.equal(await finishTask(alive.id, 'heartbeat-worker'), true);
+    // Actual worker handler plus durable queue: invalid input goes directly to DLQ.
+    await enqueueTask({ kind:'profile', payload:{handle:'!'}, maxAttempts:3 });
+    const [invalid] = await claimTasks('handler-worker', 1, 60000);
+    const runtime = new WorkerRuntime('handler-worker'); runtime.ready();
+    const context = {workerId:'handler-worker',registry:new WorkerRegistry('handler-worker'),signal:new AbortController().signal,isStopping:()=>false,useSourceCollector:false};
+    assert.equal(await runtime.runJob(invalid, job=>executeTask(job,context)), 'invalid-payload');
+    assert.equal((await db.query<{status:string}>('SELECT status FROM x_tasks WHERE id=$1',[invalid.id])).rows[0].status,'failed');
+    await enqueueTask({ kind:'profile',payload:{handle:'alice'},maxAttempts:3 });
+    const [waiting] = await claimTasks('handler-worker', 1, 60000);
+    assert.equal(await runtime.runJob(waiting,job=>executeTask(job,context)), 'no-account');
+    assert.equal((await db.query<{attempts:number}>('SELECT attempts FROM x_tasks WHERE id=$1',[waiting.id])).rows[0].attempts,0);
+    await db.query("UPDATE x_tasks SET status='done' WHERE status='pending'");
+    // Account failures quarantine only that account; a second account can finish the job.
+    const previousKey = process.env.MASTER_KEY;
+    try {
+      process.env.MASTER_KEY = 'ab'.repeat(32); clearKeyCache();
+      const session = encryptBuffer(Buffer.from(JSON.stringify({cookies:[{name:'auth_token',value:'fixture',domain:'.x.com',path:'/'}]})));
+      for (const status of [401,403]) {
+        await db.query("UPDATE x_accounts SET status='captcha'");
+        for (const [name,tier] of [['broken-'+status,'hot'],['healthy-'+status,'warm']]) {
+          await db.query("INSERT INTO x_accounts(name,tier,session_encrypted,hour_window_start,created_at,updated_at) VALUES($1,$2,$3,0,0,0)",[name,tier,session]);
+        }
+        const id = await enqueueTask({kind:'search',payload:{query:'account-recovery-'+status},maxAttempts:3});
+        const [first] = await claimTasks('recovery-worker',1,60000);
+        assert.equal(Number(first.id),Number(id));
+        await assert.rejects(handleSearchTask(first,{search:async()=>{throw new CollectorHttpError(status);}}),CollectorHttpError);
+        const broken = (await db.query<{status:string;account_claimed_by:string|null}>("SELECT status,account_claimed_by FROM x_accounts WHERE name=$1",['broken-'+status])).rows[0];
+        assert.equal(broken.status,'captcha');
+        assert.equal(broken.account_claimed_by,null);
+        assert.equal(await failTask(first.id,'recovery-worker',new CollectorHttpError(status),first.attempts),'requeued');
+        assert.equal((await db.query("SELECT 1 FROM x_tasks_dlq WHERE original_id=$1",[id])).rows.length,0);
+        await db.query('UPDATE x_tasks SET available_at=0 WHERE id=$1',[id]);
+        const [second] = await claimTasks('recovery-worker',1,60000);
+        assert.equal(second.attempts,2);
+        await handleSearchTask(second,{search:async()=>[]});
+        const healthy = (await db.query<{status:string;last_success_at:string}>("SELECT status,last_success_at FROM x_accounts WHERE name=$1",['healthy-'+status])).rows[0];
+        assert.equal(healthy.status,'active');
+        assert(Number(healthy.last_success_at)>0);
+        assert.equal(await finishTask(second.id,'recovery-worker',second.attempts),true);
+      }
+    } finally {
+      clearKeyCache();
+      if(previousKey===undefined)delete process.env.MASTER_KEY;else process.env.MASTER_KEY=previousKey;
+    }
+    assert.equal(await replayDeadLetter(invalid.id),true);
+    assert.equal(await replayDeadLetter(invalid.id),false);
+    const previousCap = process.env.COLLECTOR_MAX_BACKLOG;
+    try {
+      process.env.COLLECTOR_MAX_BACKLOG='1';
+      await assert.rejects(enqueueTask({kind:'profile',payload:{handle:'extra'}}),QueueBackpressureError);
+      assert.equal((await db.query("SELECT 1 FROM x_tasks WHERE status IN ('pending','claimed')")).rows.length,1);
+    } finally { if(previousCap===undefined)delete process.env.COLLECTOR_MAX_BACKLOG;else process.env.COLLECTOR_MAX_BACKLOG=previousCap; }
   } finally {
     queryMock.mock.restore(); connectMock.mock.restore();
     await closePool(); await db.close();
     if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous;
   }
+});
+
+test('worker lifecycle rejects concurrent claims, drains stopping work and preserves errors', async () => {
+  const runtime = new WorkerRuntime('fixture'); runtime.ready();
+  const job = {id:1,kind:'profile' as const,payloadJson:'{}',mint:null,handle:null,attempts:1,maxAttempts:3,claimedBy:'fixture'};
+  let finish!: (value:string)=>void;
+  const active = runtime.runJob(job,()=>new Promise<string>(resolve=>{finish=resolve;}));
+  await Promise.resolve();
+  assert.equal(runtime.snapshot().status,'RUNNING');
+  await assert.rejects(runtime.runJob(job,async()=>"done"),/not accepting/);
+  const stop = runtime.stop();
+  assert.equal(runtime.snapshot().ready,false);
+  finish('done'); await active; await stop;
+  assert.equal(runtime.snapshot().completedJobs,1);
+  assert.equal(runtime.snapshot().status,'STOPPED');
+  await assert.rejects(runtime.runJob(job,async()=>"done"),/not accepting/);
+  const failed = new WorkerRuntime('failed'); failed.ready();
+  await assert.rejects(failed.runJob(job,async()=>{throw new Error('DB unavailable');}),/DB unavailable/);
+  assert.equal(failed.snapshot().failedJobs,1);
+});
+
+test('failure classification distinguishes access, rate limits and upstream errors',()=>{
+  assert.equal(taskFailure(new CollectorHttpError(503)).permanent,false);
+  assert.equal(taskFailure(new CollectorHttpError(401)).permanent,false);
+  assert.equal(taskFailure(new CollectorHttpError(403)).permanent,false);
+  assert.equal(taskFailure('schema: invalid input').permanent,true);
+  assert.equal(retryAfterMs('120'),120000);
+  assert.equal(retryAfterMs(new Date(125000).toUTCString(),5000),120000);
+  assert.equal(retryAfterMs('bad'),0);
 });

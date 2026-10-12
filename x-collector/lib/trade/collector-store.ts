@@ -5,7 +5,21 @@ import { log } from "./logger";
 import { source, rawPage, storePage } from "../archive/store";
 import { Page } from "../archive/model";
 import {recordRaw,recordRawBatch} from './intelligence-store';
-export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string) {
+import type { PoolClient } from "pg";
+export interface PersistenceLease { workerId: string; attempt: number; accountName: string; accountOwner: string; }
+async function assertPersistenceLease(client: PoolClient, taskId: number | undefined, lease?: PersistenceLease) {
+  if (!lease) return;
+  const now = Date.now();
+  const task = await client.query(`SELECT id FROM x_tasks WHERE id=$1 AND claimed_by=$2
+    AND attempts=$3 AND status='claimed' AND lease_expires_at>$4 FOR UPDATE`,
+    [taskId, lease.workerId, lease.attempt, now]);
+  if (!task.rows.length) throw new Error("task lease lost before persistence");
+  const account = await client.query(`SELECT name FROM x_accounts WHERE name=$1
+    AND account_claimed_by=$2 AND account_busy_until>$3 FOR UPDATE`,
+    [lease.accountName, lease.accountOwner, now]);
+  if (!account.rows.length) throw new Error("account lease lost before persistence");
+}
+export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease) {
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
   let rejected = 0;
@@ -29,6 +43,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
     await tx(async (client) => {
+      await assertPersistenceLease(client, taskId, lease);
       await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
       const values: unknown[] = [];
       const placeholders = chunk.map((t, j) => {
@@ -68,7 +83,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         await processTweetEntities({
           tweet_id: t.id,
           text: t.text ?? null,
-        });
+        }, client);
       }
       const entities = chunk.flatMap(t => [
         ...(t.mentions??[]).map(value=>({id:t.id,kind:"mention_handle",value:value.toLowerCase()})),
@@ -105,7 +120,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   }
 }
 
-export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string) {
+export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string, lease?: PersistenceLease) {
   const parsed = ProfileSchema.safeParse(p);
   if (!parsed.success) {
     log.warn("profile rejected by schema", { error: parsed.error.message });
@@ -114,6 +129,7 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
   const d = parsed.data;
   const now = Date.now();
   await tx(async client => {
+  await assertPersistenceLease(client, taskId, lease);
   await recordRaw(client,'PROFILE',d.handle.toLowerCase(),d,new Date(now),collectorAccount??null);
   await client.query(
     `INSERT INTO twitter_profiles
