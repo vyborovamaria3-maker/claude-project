@@ -42,12 +42,13 @@ async function advanceWindows(c,run){
  }
 }
 async function queueWindows(c,run){
+ await c.query("UPDATE x_tasks SET payload_json=payload_json||'{\"account_fallback\":true}'::jsonb,priority=1 WHERE status='pending' AND payload_json->>'history_run_id'=$1",[run.id]);
  const active=Number((await c.query("SELECT count(*) FROM xc_history_windows WHERE run_id=$1 AND status='queued'",[run.id])).rows[0].count);
  if(active>=2)return;
  const rows=(await c.query("SELECT * FROM xc_history_windows WHERE run_id=$1 AND status='pending' ORDER BY (author_handle IS NOT NULL) DESC,since_date DESC,id LIMIT $2",[run.id,2-active])).rows;
  for(const w of rows){
-  const now=Date.now();const payload={query:windowQuery(w),limit:100,sort:'latest',account_name:run.account_name,history_run_id:run.id,history_since:date(w.since_date),history_until:date(w.until_date),history_author:w.author_handle||undefined,history_max_id:w.cursor_id||undefined};
-  const task=(await c.query("INSERT INTO x_tasks(kind,payload_json,priority,available_at,created_at,updated_at,max_attempts) VALUES('search',$1::jsonb,3,$2,$2,$2,3) RETURNING id",[JSON.stringify(payload),now])).rows[0];
+  const now=Date.now();const payload={query:windowQuery(w),limit:100,sort:'latest',account_name:run.account_name,account_fallback:true,history_run_id:run.id,history_since:date(w.since_date),history_until:date(w.until_date),history_author:w.author_handle||undefined,history_max_id:w.cursor_id||undefined};
+  const task=(await c.query("INSERT INTO x_tasks(kind,payload_json,priority,available_at,created_at,updated_at,max_attempts) VALUES('search',$1::jsonb,1,$2,$2,$2,3) RETURNING id",[JSON.stringify(payload),now])).rows[0];
   await c.query('INSERT INTO xc_history_tasks(window_id,task_id) VALUES($1,$2)',[w.id,task.id]);
   await c.query("UPDATE xc_history_windows SET task_id=$2,status='queued' WHERE id=$1",[w.id,task.id]);
  }

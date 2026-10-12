@@ -33,4 +33,5 @@ export const REQUIRED = [
   "036_investigations.sql",
   "037_intelligence_audit.sql",
   "038_analytics_bigint_durations.sql",
+  "039_list_checkpoints.sql",
 ];

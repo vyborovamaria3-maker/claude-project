@@ -4,7 +4,7 @@ import { recordAccountError } from "../accounts/errors";
 import { recordProgress, Progress } from "../../lib/collector/live";
 import { persistTweets, persistProfile } from "../../lib/trade/collector-store";
 import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../../lib/trade/tasks";
-import { pickAccount, recordSuccess, recordError, getAccountDelay, extendAccountLease, releaseAccount, XAccount } from "../../lib/trade/account-manager";
+import { pickAccount, accountWaitMs, recordSuccess, recordError, getAccountDelay, extendAccountLease, releaseAccount, XAccount } from "../../lib/trade/account-manager";
 import { WorkerRegistry } from "../../lib/trade/worker-registry";
 import { decryptBuffer } from "../../lib/trade/crypto";
 import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState, RawTweet } from "../../lib/trade/twitter-scraper";
@@ -49,7 +49,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
   let account: XAccount | null;
   try {
     account = await pickAccount(task.kind === "search" ? "search"
-      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner, (payload as {account_name?:string}).account_name);
+      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner, (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await failTask(task.id, workerId, `pickAccount: ${msg}`, task.attempts).catch(() => {});
@@ -58,7 +58,8 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
 
   if (!account) {
     await publish({phase:"waiting"}).catch(()=>{});
-    await deferTask(task.id, workerId, 60_000, "no available account", task.attempts).catch(() => false);
+    const wait = await accountWaitMs(task.kind === 'timeline' ? 'timeline' : task.kind === 'profile' ? 'profile' : 'search', (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true).catch(()=>60000);
+    await deferTask(task.id, workerId, wait, "no available account; waiting for lease or quota", task.attempts).catch(() => false);
     return "no-account";
   }
   const acc: XAccount = account;
@@ -102,7 +103,9 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
         onBatch:async(tweets:RawTweet[])=>{
           assertLeases();await publish({phase:"saving"});
           const query=kind==="search"?(payload as {query:string}).query:null;
-          await persistTweets(kind==="search"?task.mint:null,filterHistory(tweets,historical),query,task.id,acc.name,persistenceLease);
+          const listPayload=payload as {list_source_id?:string;list_since_id?:string;list_max_id?:string};
+          const selected=filterHistory(tweets,historical).filter(t=>!listPayload.list_source_id || ((!listPayload.list_since_id || BigInt(t.id)>BigInt(listPayload.list_since_id)) && (!listPayload.list_max_id || BigInt(t.id)<=BigInt(listPayload.list_max_id))));
+          await persistTweets(kind==="search"?task.mint:null,selected,listPayload.list_source_id?`list:${listPayload.list_source_id}`:query,task.id,acc.name,persistenceLease);
           if(historical.history_run_id)await persistHistory(historical.history_run_id,task.id);
           assertLeases();await publish({phase:"collecting"});
         },
@@ -116,7 +119,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
       if (kind === "search") {
         const p = payload as { query: string; limit: number; sort: "top" | "latest" };
         const t0 = Date.now();
-        if (useSourceCollector && !listId(p.query) && p.sort === "latest" && !historical.history_run_id) {
+        if (useSourceCollector && !listId(p.query) && p.sort === "latest" && !historical.history_run_id && !(payload as {list_source_id?:string}).list_source_id) {
           const tweets = await handleSearchTask(task, { getAccount: async () => acc, signal: operationSignal });
           assertLeases();
           await persistTweets(task.mint, normalizeTweets(tweets), p.query, task.id, acc.name, persistenceLease);

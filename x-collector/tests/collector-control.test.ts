@@ -77,6 +77,7 @@ for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundatio
  const [partialTask]=await claimTasks('controlled-worker',1,60000);
  await assert.rejects(collectArticles(fixture,5,Date.now()+10000,undefined,async batch=>{await persistTweets(null,batch,null,Number(partial.id));throw new Error('controlled interruption');}),/controlled interruption/);
  assert.equal(Number((await taskDetails(String(partial.id)))!.counts!.tweets),1);
+ await assert.rejects(collectArticles(fixture,5,Date.now()+100,undefined,async()=>{await new Promise(resolve=>setTimeout(resolve,150));}),/deadline exceeded.*incomplete/);
  assert.equal(await failTask(partialTask.id,'controlled-worker','controlled interruption'),'requeued');
  assert.equal(await recordProgress(Number(id),'controlled-worker',claimed.attempts,{phase:'collecting',found:999}),false);
  await db.query("UPDATE x_accounts SET status='captcha',cooldown_until=0");assert.equal((await readiness()).ready,false);assert.equal(await pickAccount('search','blocked-fixture'),null);

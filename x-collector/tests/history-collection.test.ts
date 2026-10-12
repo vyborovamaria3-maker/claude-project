@@ -22,7 +22,7 @@ test('historical workers use collector settings instead of the inherited website
 test('list membership discovery captures valid current handles and releases the selected account',async()=>{
  const load=createRequire(__filename),helper=load('../scripts/test-publish-browser.cjs'),runtime=load('../scripts/autopost/runtime.cjs');
  const handles:string[]=[];let released=false,closed=false;
- const page={goto:async()=>({status:()=>200}),url:()=> 'https://x.com/i/lists/123/members',waitForSelector:async()=>{},mouse:{wheel:async()=>{}},waitForTimeout:async()=>{},locator:()=>({evaluateAll:async(fn:(cells:unknown[])=>string[])=>fn([{querySelectorAll:()=>['/Alice','/Bob','/Alice/status/1','/i/lists/123'].map(h=>({getAttribute:()=>h}))}])})};
+ const page={evaluate:async()=>true,goto:async()=>({status:()=>200}),url:()=> 'https://x.com/i/lists/123/members',waitForSelector:async()=>{},mouse:{wheel:async()=>{}},waitForTimeout:async()=>{},locator:()=>({evaluateAll:async(fn:(cells:unknown[])=>string[])=>fn([{querySelectorAll:()=>['/Alice','/Bob','/Alice/status/1','/i/lists/123'].map(h=>({getAttribute:()=>h}))}])})};
  const browser={newContext:async()=>({newPage:async()=>page}),close:async()=>{closed=true;}};
  const a=mock.method(helper,'launchLoginBrowser',async()=>({browser}));const b=mock.method(runtime,'unseal',()=>JSON.stringify({cookies:[],origins:[]}));
  const modulePath=load.resolve('../scripts/history-collector.cjs');delete load.cache[modulePath];
