@@ -14,6 +14,7 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -38,9 +39,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
       - run: npm run test:db
         env:
           RUNTIME_TEST_DATABASE_URL: postgresql://collector:isolated_ci_fixture@127.0.0.1:5432/x_collector_test
