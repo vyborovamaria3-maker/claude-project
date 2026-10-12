@@ -46,6 +46,10 @@ const cancellation=new AbortController();
 
 process.on("SIGINT", () => requestStop("SIGINT"));
 process.on("SIGTERM", () => requestStop("SIGTERM"));
+// Node's Windows process.kill does not deliver POSIX signals to the child.
+process.on("message", message => {
+  if (typeof message === "object" && message !== null && "stop" in message && message.stop === true) requestStop("IPC");
+});
 
 
 async function loop() {

@@ -37,5 +37,10 @@ export async function ensureWorker() {
 }
 export async function stopManagedWorker() {
  const proc=child;if(!proc)return;
- await new Promise<void>(resolve=>{const timer=setTimeout(()=>{proc.kill("SIGKILL");resolve();},45000);proc.once("exit",()=>{clearTimeout(timer);resolve();});proc.kill("SIGTERM");});
+ await new Promise<void>(resolve=>{
+   const timer=setTimeout(()=>{proc.kill("SIGKILL");resolve();},45000);
+   proc.once("exit",()=>{clearTimeout(timer);resolve();});
+   if(proc.connected)proc.send({stop:true},error=>{if(error)proc.kill("SIGTERM");});
+   else proc.kill("SIGTERM");
+ });
 }
