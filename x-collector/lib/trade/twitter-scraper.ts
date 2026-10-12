@@ -170,8 +170,7 @@ export async function collectArticles(page: Page, limit: number, deadlineMs: num
   while (tweets.length < limit && stale < 3) {
     // Общий дедлайн на весь скролл: страница не может «залипнуть» навсегда.
     if (Date.now() > deadlineMs) {
-      if (tweets.length === 0) throw new Error("scrape deadline exceeded before any tweets were collected");
-      break;
+      throw new Error("scrape deadline exceeded; saved batches are incomplete");
     }
     const pageError = detectError(page.url(), await page.locator("body").innerText().catch(()=>""));
     if (pageError) throw new Error(pageError);

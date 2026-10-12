@@ -1,6 +1,11 @@
 const {connect,name,handle}=require('./runtime.cjs');const {overview,enqueue,saveProvider,saveConfig}=require('./store.cjs');const {generate,choices}=require('./providers.cjs');
 async function command(c,i){switch(i.action){
  case 'overview':return overview(c);
+ case 'source-retry':{
+  if(!/^\d{1,25}$/.test(i.id||''))throw Error('Некорректный ID списка');
+  if(!(await c.query('SELECT list_id FROM xc_auto_sources WHERE list_id=$1',[i.id])).rowCount)throw Error('Источник списка не найден');
+  await require('../list-core.cjs').resumeSource(c,i.id);return {ok:true,message:'Незавершённая страница поставлена на повтор'};
+ }
  case 'provider-save':return saveProvider(c,i);
  case 'provider-test':{const p=(await c.query('SELECT * FROM xc_ai_providers WHERE id=$1',[i.id])).rows[0];if(!p)throw Error('Провайдер не найден');const text=await generate(p,'Return JSON only: {"actions":[]}.','Connection test.');choices(text,[],['post']);return {ok:true,message:'Подключение и формат ответа проверены'};}
  case 'config-save':return saveConfig(c,i);

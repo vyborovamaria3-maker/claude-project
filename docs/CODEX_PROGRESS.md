@@ -1,6 +1,8 @@
 PROJECT: X Collector Runtime v2
 
-CURRENT PHASE: Tested runtime/queue/account stabilization slice; full master prompt not complete.
+CURRENT PHASE: Runtime reliability and collection efficiency; full master prompt not complete.
+
+Collection efficiency: migration 039 adds durable per-list checkpoints, paginated search and incremental watermarks. Automated tasks can fall back to eligible collector accounts; quota waits preserve attempts. Fresh updates outrank historical backfill. Deadlines fail honestly with saved batches retained. Partial list pages can be retried from settings or the collection-status CLI. 190 tests and real PostgreSQL runtime integration passed. Local rollout preserved databases and encrypted sessions; live X pages are currently failing to load, so no claim of complete collection or measured throughput gain. See architecture/COLLECTION_EFFICIENCY.md.
 
 COMPLETED:
 - Audit/map and reusable real collector operation
