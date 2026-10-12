@@ -28,7 +28,7 @@ export interface SiteNavItem {
 }
 
 export const siteDesign = {
-  publicRoutes: ["/login", "/auth", "/miniapp"],
+  publicRoutes: ["/", "/login", "/auth", "/miniapp"],
 
   /**
    * Main redesign controls for the whole app.
