@@ -2,6 +2,7 @@ import type { Progress } from "../collector/live";
 import { chromium, Page, BrowserContextOptions } from "playwright";
 import { getConfig } from "./config";
 import { collectionUrl } from "./list-source";
+import { CollectorHttpError, retryAfterMs } from "./task-errors";
 import {createRequire} from 'node:module';
 const {launchLoginBrowser}=createRequire(__filename)('../../scripts/test-publish-browser.cjs');
 
@@ -105,6 +106,12 @@ async function withBrowser<T>(opts: ScrapeOptions, fn: (page: Page) => Promise<T
     // Drain an in-flight persistence callback before the caller requeues a timed-out task.
     await running?.catch(()=>{});
   }
+}
+
+async function navigate(page: Page, url: string): Promise<void> {
+  const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: getConfig().twitter.requestTimeoutMs });
+  const status = response?.status() ?? 0;
+  if (status >= 400) throw new CollectorHttpError(status, retryAfterMs(response?.headers()["retry-after"]));
 }
 
 export function extractTweetArticles(articles: Element[]): RawTweet[] {
@@ -212,7 +219,7 @@ export async function searchTweets(
   return withBrowser(opts, async (page) => {
     const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
     await opts.onProgress?.({phase:"opening",limit});
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
+    await navigate(page, url);
     await waitForTweetsOrEmpty(page, Math.min(15_000, cfg.twitter.requestTimeoutMs));
     const text = await page.locator("body").innerText().catch(() => "");
     const err = detectError(page.url(), text);
@@ -237,7 +244,7 @@ export async function fetchUserTimeline(
   return withBrowser(opts, async (page) => {
     const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
     await opts.onProgress?.({phase:"opening",limit});
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
+    await navigate(page, url);
     await waitForTweetsOrEmpty(page, Math.min(15_000, cfg.twitter.requestTimeoutMs));
     const text = await page.locator("body").innerText().catch(() => "");
     const err = detectError(page.url(), text);
@@ -263,7 +270,7 @@ export async function fetchAccountProfile(
   const cfg = getConfig();
   return withBrowser(opts, async (page) => {
     await opts.onProgress?.({phase:"profile",currentAuthor:handle});
-    await page.goto(`https://x.com/${handle}`, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
+    await navigate(page, `https://x.com/${handle}`);
     await page.waitForSelector('[data-testid="UserName"], [data-testid="emptyState"], [data-testid="error-detail"]', {timeout:Math.min(15000,cfg.twitter.requestTimeoutMs)}).catch(()=>{});
     const err = detectError(page.url(), await page.locator("body").innerText().catch(() => ""));
     if (err) throw new Error(err);

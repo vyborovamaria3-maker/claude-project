@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import { chromium } from "playwright";
 import { z } from "zod";
-import { q, q1 } from "../trade/pg";
+import { q, q1, checkDatabase } from "../trade/pg";
 import { decryptBuffer } from "../trade/crypto";
 import { enqueueTask } from "../trade/tasks";
 import { SearchPayload, TimelinePayload, ProfilePayload } from "../trade/schemas";
@@ -20,7 +20,7 @@ export type Check={name:string;ok:boolean;message:string};
 export async function readiness() {
  const checks:Check[]=[];
  if(!process.env.DATABASE_URL)return {ready:false,checks:[{name:"database",ok:false,message:"Настройте DATABASE_URL в .env"}],runtime:runtimeStatus()};
- try { await q("SELECT 1");checks.push({name:"database",ok:true,message:"PostgreSQL доступен"}); }
+ try { await checkDatabase();checks.push({name:"database",ok:true,message:"PostgreSQL доступен"}); }
  catch { return {ready:false,checks:[{name:"database",ok:false,message:"Нет подключения к PostgreSQL; проверьте .env и службу базы"}],runtime:runtimeStatus()}; }
  const required=["archive_post_versions","x_tasks","x_accounts","x_workers","archive_posts","twitter_tweet_observations","twitter_entity_links","x_task_progress","x_task_tweets","x_task_profiles","twitter_profiles","twitter_profile_observations","archive_metrics","archive_users","archive_raw_pages","archive_sources","archive_token_links","archive_edges"];
  const tables=await q<{name:string;present:boolean}>("SELECT name,to_regclass(name) IS NOT NULL present FROM unnest($1::text[]) AS name",[required]);

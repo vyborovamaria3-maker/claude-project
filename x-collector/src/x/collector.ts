@@ -6,6 +6,7 @@ import type { XCookie } from "./client";
 import type { XTweet } from "./types";
 import { logger } from "../core/logger";
 import { metrics } from "../core/metrics";
+import { CollectorHttpError, retryAfterMs } from "../../lib/trade/task-errors";
 
 export interface SearchXOptions {
   cookies?: XCookie[];
@@ -14,6 +15,7 @@ export interface SearchXOptions {
   timezone?: string;
   language?: string;
   limit?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -22,12 +24,14 @@ export interface SearchXOptions {
  * Пустой результат не возвращается — это ошибка загрузки/блокировки.
  */
 export async function searchX(query: string, options: SearchXOptions = {}): Promise<XTweet[]> {
+  options.signal?.throwIfAborted();
   const cfg = getConfig();
   const url = `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
   logger.info("x search started", { query });
   const started = Date.now();
 
   let context: Awaited<ReturnType<typeof createBrowser>> | null = null;
+  const abort = () => { void context?.close().catch(() => {}); };
   try {
     context = await createBrowser({
       cookies: options.cookies,
@@ -36,14 +40,14 @@ export async function searchX(query: string, options: SearchXOptions = {}): Prom
       timezone: options.timezone,
       language: options.language,
     });
+    options.signal?.addEventListener("abort", abort, { once: true });
+    options.signal?.throwIfAborted();
     const page = await context.newPage();
     page.setDefaultTimeout(cfg.twitter.requestTimeoutMs);
 
     const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: cfg.twitter.requestTimeoutMs });
     const status = response?.status() ?? 0;
-    if (status === 429) throw new Error("RATE_LIMIT: HTTP 429");
-    if (status === 403 || status === 503) throw new Error(`X_BLOCKED: HTTP ${status}`);
-    if (status >= 400) throw new Error(`X returned HTTP ${status} — запрос не прошёл`);
+    if (status >= 400) throw new CollectorHttpError(status, retryAfterMs(response?.headers()["retry-after"]));
 
     try {
       await page.waitForSelector('article[data-testid="tweet"], [data-testid="emptyState"]', { timeout: 15_000 });
@@ -75,6 +79,7 @@ export async function searchX(query: string, options: SearchXOptions = {}): Prom
     logger.error("x search failed", { query, error: e instanceof Error ? e.message : String(e) });
     throw e;
   } finally {
+    options.signal?.removeEventListener("abort", abort);
     if (context) {
       const browser = context.browser();
       if (browser) await browser.close().catch(() => {});

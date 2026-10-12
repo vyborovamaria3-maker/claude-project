@@ -31,7 +31,7 @@ function showLive(data){
  const working=active.some(j=>j.account_name===a.name&&freshWorkers.has(j.claimed_by));
  const quotaWait=Number(a.weight_used_this_hour)>=Number(a.weight_quota_per_hour)?Number(a.hour_window_start)+3600000:0;
  const until=Math.max(Number(a.cooldown_until),Number(a.account_busy_until),quotaWait);
- const statuses={active:'Готов',cooldown:'Cooldown',captcha:'Нужна ручная CAPTCHA',banned:'Недоступен'};
+ const statuses={active:'Готов',cooldown:'Cooldown',captcha:'Проверьте вход или CAPTCHA',banned:'Недоступен'};
  return cells([a.name,working?'В работе':statuses[a.status]??a.status,a.weight_used_this_hour+' / '+a.weight_quota_per_hour,a.status==='captcha'?'Ручная проверка':until>now?Math.ceil((until-now)/1000)+' сек':'—']);
  }));
 }

@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { scrub } from "../lib/trade/logger";
+import { scrub, redactText } from "../lib/trade/logger";
+test('error text redacts connection credentials and authorization',()=>{
+  const safe=redactText('postgresql://alice:password@localhost/db Bearer abcdef auth_token=secret');
+  assert(!safe.includes('password')); assert(!safe.includes('abcdef')); assert(!safe.includes('secret'));
+});
 
 test("scrub redacts token/password/secret/session/cookie/api key fields", () => {
   assert.equal(scrub("abc", "botToken"), "[REDACTED]");

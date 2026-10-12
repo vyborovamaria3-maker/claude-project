@@ -1,0 +1,187 @@
+import { randomUUID } from "node:crypto";
+import { parseProxy } from "../x/proxy";
+import { recordAccountError } from "../accounts/errors";
+import { recordProgress, Progress } from "../../lib/collector/live";
+import { persistTweets, persistProfile } from "../../lib/trade/collector-store";
+import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../../lib/trade/tasks";
+import { pickAccount, recordSuccess, recordError, getAccountDelay, extendAccountLease, releaseAccount, XAccount } from "../../lib/trade/account-manager";
+import { WorkerRegistry } from "../../lib/trade/worker-registry";
+import { decryptBuffer } from "../../lib/trade/crypto";
+import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState, RawTweet } from "../../lib/trade/twitter-scraper";
+import { parseTaskPayload } from "../../lib/trade/schemas";
+import { q } from "../../lib/trade/pg";
+import { log } from "../../lib/trade/logger";
+import { tasksTotal, taskDuration, scrapeDuration } from "../../lib/trade/metrics";
+import { getConfig } from "../../lib/trade/config";
+import { handleSearchTask } from "../x/task-handler";
+import { normalizeTweets } from "../x/normalize";
+import { listId } from "../../lib/trade/list-source";
+import { filterHistory, persistHistory } from "../../lib/trade/history-filter";
+import { taskFailure } from "../../lib/trade/task-errors";
+function buildProxy(acc: XAccount) {
+  const proxy = parseProxy(acc.proxy_json);
+  if (acc.proxy_json && !proxy) throw new Error("PROXY_FAILED: invalid account proxy");
+  return proxy;
+}
+
+export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number], context: { workerId: string; registry: WorkerRegistry; signal: AbortSignal; isStopping: () => boolean; useSourceCollector: boolean }): Promise<string> {
+  const { workerId, registry, signal, isStopping, useSourceCollector } = context;
+  const cfg = getConfig();
+  let progress:Progress={phase:"selecting",found:0,startedAt:Date.now()};
+  const publish=async(p:Progress)=>{progress={...progress,...p};if(!await recordProgress(task.id,workerId,task.attempts,progress))throw new Error("task lease lost during progress update");};
+  await publish({phase:"selecting"});
+
+  let payload: ReturnType<typeof parseTaskPayload>;
+  try {
+    payload = parseTaskPayload(task.kind, task.payloadJson);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await publish({phase:"failed"}).catch(()=>{});
+    await failTask(task.id, workerId, `schema: ${msg}`, task.attempts).catch(() => {});
+    return "invalid-payload";
+  }
+
+  const historical=payload as {history_run_id?:string;history_since?:string;history_until?:string;history_author?:string;history_max_id?:string};
+  if(historical.history_run_id&&!(await q("SELECT 1 FROM xc_history_runs WHERE id=$1 AND status='running'",[historical.history_run_id])).length){
+    await deferTask(task.id,workerId,60000,'Historical collection paused',task.attempts);return 'history-paused';
+  }
+  const accountLeaseOwner = `${workerId.slice(0, 150)}:${task.id}:${randomUUID().slice(0, 8)}`;
+  let account: XAccount | null;
+  try {
+    account = await pickAccount(task.kind === "search" ? "search"
+      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner, (payload as {account_name?:string}).account_name);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await failTask(task.id, workerId, `pickAccount: ${msg}`, task.attempts).catch(() => {});
+    return "pick-failed";
+  }
+
+  if (!account) {
+    await publish({phase:"waiting"}).catch(()=>{});
+    await deferTask(task.id, workerId, 60_000, "no available account", task.attempts).catch(() => false);
+    return "no-account";
+  }
+  const acc: XAccount = account;
+
+  const startMs = Date.now();
+  const kind = task.kind;
+
+  const leaseAbort = new AbortController();
+  const operationSignal = AbortSignal.any([signal, leaseAbort.signal]);
+  const persistenceLease = { workerId, attempt: task.attempts, accountName: acc.name, accountOwner: accountLeaseOwner };
+  let leaseLost: "task" | "account" | null = null;
+  const assertLeases = () => {
+    operationSignal.throwIfAborted();
+    if (leaseLost) throw new Error(`${leaseLost} lease lost`);
+  };
+  let renewing: Promise<void> | undefined;
+  const leaseTimer = setInterval(() => {
+    if (renewing || leaseLost || isStopping()) return;
+    renewing = (async () => {
+      try {
+        if (!await extendLease(task.id, workerId, cfg.sessions.leaseMs, task.attempts)) leaseLost = "task";
+        else if (!await extendAccountLease(acc.name, accountLeaseOwner, cfg.sessions.leaseMs)) leaseLost = "account";
+      } catch { leaseLost = "task"; }
+      if (leaseLost) leaseAbort.abort(new Error(`${leaseLost} lease lost`));
+    })().finally(() => { renewing = undefined; });
+  }, Math.floor(cfg.sessions.leaseMs / 2));
+
+  try {
+    await publish({phase:"opening",account:acc.name});
+    const decryptedSession = decryptBuffer(acc.session_encrypted);
+    let authState: ScrapeAuthState | undefined;
+    try {
+      authState = JSON.parse(decryptedSession.toString("utf8")) as ScrapeAuthState;
+      if (!authState || !Array.isArray(authState.cookies)) {
+        throw new Error("invalid encrypted browser storage state");
+      }
+      const scrapeOpts = {
+        authState,
+        signal:operationSignal,
+        onProgress:publish,
+        onBatch:async(tweets:RawTweet[])=>{
+          assertLeases();await publish({phase:"saving"});
+          const query=kind==="search"?(payload as {query:string}).query:null;
+          await persistTweets(kind==="search"?task.mint:null,filterHistory(tweets,historical),query,task.id,acc.name,persistenceLease);
+          if(historical.history_run_id)await persistHistory(historical.history_run_id,task.id);
+          assertLeases();await publish({phase:"collecting"});
+        },
+        proxy: buildProxy(acc),
+        userAgent: acc.user_agent ?? undefined,
+        timezone: acc.timezone ?? undefined,
+        language: acc.language ?? undefined,
+        headless: cfg.twitter.headless,
+      };
+
+      if (kind === "search") {
+        const p = payload as { query: string; limit: number; sort: "top" | "latest" };
+        const t0 = Date.now();
+        if (useSourceCollector && !listId(p.query) && p.sort === "latest" && !historical.history_run_id) {
+          const tweets = await handleSearchTask(task, { getAccount: async () => acc, signal: operationSignal });
+          assertLeases();
+          await persistTweets(task.mint, normalizeTweets(tweets), p.query, task.id, acc.name, persistenceLease);
+        } else await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
+        scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
+        assertLeases();
+
+      } else if (kind === "timeline") {
+        const p = payload as { handle: string; limit: number };
+        const t0 = Date.now();
+        await fetchUserTimeline(p.handle, { ...scrapeOpts, limit: p.limit });
+        scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
+        assertLeases();
+
+      } else {
+        const p = payload as { handle: string };
+        const t0 = Date.now();
+        const profile = await fetchAccountProfile(p.handle, scrapeOpts);
+        scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
+        assertLeases();
+        await publish({phase:"saving"});
+        await persistProfile(profile, task.id,acc.name,persistenceLease);
+        assertLeases();
+      }
+    } finally {
+      decryptedSession.fill(0);
+      authState = undefined;
+    }
+
+    assertLeases();
+    await publish({phase:"finishing"});
+    await recordSuccess(acc.name, accountLeaseOwner);
+    assertLeases();
+    const ok = await finishTask(task.id, workerId, task.attempts);
+    if (!ok) {
+      leaseLost = "task";
+      throw new Error("task lease lost before completion");
+    }
+    registry.incrementDone();
+    tasksTotal.inc({ kind, result: "done" });
+    taskDuration.observe({ kind }, (Date.now() - startMs) / 1000);
+    return "done";
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await publish({phase:isStopping()?"waiting":"failed"}).catch(()=>{});
+    let kindErr: "rate_limit" | "captcha" | "ban" | "auth_expired" | "other" = "other";
+    const failure = taskFailure(e);
+    if (failure.code === "RATE_LIMIT") kindErr = "rate_limit";
+    else if (failure.code === "ACCESS_REQUIRED") kindErr = "captcha";
+    else if (failure.code === "AUTH_EXPIRED") kindErr = "auth_expired";
+
+    if (!leaseLost && !isStopping()) await recordAccountError(acc.name,e).catch(()=>{});
+    if (!leaseLost && !isStopping()) await recordError(acc.name, kindErr, taskFailure(e).retryAfterMs, accountLeaseOwner).catch(() => {});
+    const result = isStopping() ? await deferTask(task.id,workerId,5000,"worker shutdown",task.attempts).then(ok=>ok?"requeued" as const:"lost" as const) : await failTask(task.id, workerId, e, task.attempts).catch(() => "lost" as const);
+    if (result === "dlq") tasksTotal.inc({ kind, result: "dlq" });
+    else if (result === "requeued") tasksTotal.inc({ kind, result: "retry" });
+    if(!isStopping())registry.incrementFailed();
+    log.warn("task failed", { taskId: task.id, error: msg, classification: kindErr, result });
+    return isStopping() ? "shutdown" : "failed";
+  } finally {
+    clearInterval(leaseTimer);
+    await renewing;
+    const delay = getAccountDelay(acc.tier);
+    await releaseAccount(acc.name, accountLeaseOwner, delay).then((released) => {
+      if (!released) log.warn("account release skipped; lease is no longer owned", { account: acc.name });
+    }).catch((e) => log.warn("account release failed", { account: acc.name, error: String(e) }));
+  }
+}

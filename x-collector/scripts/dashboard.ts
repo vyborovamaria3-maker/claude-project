@@ -6,7 +6,7 @@ import { handleArchiveRequest } from "../lib/archive/http";
 import { handleReplyRequest } from "../lib/reply/http";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { q } from "../lib/trade/pg";
+import { q, checkDatabase } from "../lib/trade/pg";
 import { log, closeLogger } from "../lib/trade/logger";
 import { isLoopbackHost, enforceBasicAuth } from "../lib/trade/http-auth";
 import { SolanaMint, Handle } from "../lib/trade/schemas";
@@ -21,7 +21,7 @@ import {
   getWorkerEfficiency, getAccountHealth, getMintSummary, getMintDailyFunnel,
   getMintBursts, getTopTweetsForMint, getMintTimeseries, getMintFullReport,
 } from "../lib/trade/analytics";
-import { queueStats, dlqStats } from "../lib/trade/tasks";
+import { queueStats, dlqStats, listDeadLetters } from "../lib/trade/tasks";
 import { getSentimentByMint, getSentimentByAuthor, getMintSentimentDaily } from "../lib/trade/analytics-nlp";
 import {
   listMintEvents, listMintMilestones, getFirstMovers, getMintTimeline, getMintFirstVerified,
@@ -65,9 +65,10 @@ const daysParam = (url: URL, def = 30) =>
 
 type Handler = (req: { url: URL; method: string }) => Promise<unknown>;
 const routes: Record<string, Handler> = {
-  "/api/health": async () => { await q(`SELECT 1`); return { ok: true, ts: Date.now() }; },
+  "/api/health": async () => { await checkDatabase(); return { ok: true, ts: Date.now() }; },
   "/api/digest": async (req) => getDailyDigest(req.url.searchParams.get("day") ?? undefined),
   "/api/tasks": async () => ({ queue: await queueStats(), dlq: (await dlqStats())?.n ?? 0 }),
+  "/api/dlq": async () => listDeadLetters(),
   "/api/workers": async () => getWorkerEfficiency(),
   "/api/accounts": async () => getAccountHealth(),
   "/api/shillers": async (req) => getTopShillers(limitParam(req.url)),
@@ -517,6 +518,13 @@ export const server = http.createServer(async (req, res) => {
       finish(res.statusCode);
       return;
     }
+    if (req.method !== "GET" && req.method !== "HEAD" &&
+        (url.pathname.startsWith('/api/collector/') || url.pathname.startsWith('/api/archive/')) && (!AUTH_USER || !AUTH_PASS)) {
+      res.statusCode = 503;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Configure DASHBOARD_USER and DASHBOARD_PASS before changing collector state" }));
+      finish(503); return;
+    }
     if (await handleCollectorRequest(req,res,dashboardRequestOrigin(req, DASHBOARD_ORIGIN, HOST, PORT))) {finish(res.statusCode);return;}
     if (await handleArchiveRequest(req,res)) { finish(res.statusCode); return; }
     const route = routes[url.pathname];
@@ -528,6 +536,11 @@ export const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: origin.reason }));
         finish(403);
         return;
+      }
+      if (req.method === "POST" && (!AUTH_USER || !AUTH_PASS)) {
+        res.statusCode = 503;
+        res.end(JSON.stringify({ error: "Configure DASHBOARD_USER and DASHBOARD_PASS before changing collector state" }));
+        finish(503); return;
       }
     }
     if (mutating && req.method !== "POST") {

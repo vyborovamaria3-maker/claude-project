@@ -27,6 +27,13 @@ interface TaskDef {
 const runningTasks = new Set<string>();
 let shuttingDown = false;
 const timers: NodeJS.Timeout[] = [];
+const inFlight = new Set<Promise<void>>();
+function schedule(t: TaskDef) {
+  if (shuttingDown) return;
+  const work = tick(t);
+  inFlight.add(work);
+  void work.finally(() => inFlight.delete(work));
+}
 
 const tasks: TaskDef[] = [
   { name: "graph-monitoring", intervalMs: 5 * 60_000, run: async () => {
@@ -251,12 +258,14 @@ const tasks: TaskDef[] = [
         log.info("ml model trained", { modelId: m[0]?.train_logistic_regression });
       } catch (e) {
         log.warn("ml training failed", { error: String(e) });
+        throw e;
       }
     },
   },
 ];
 
 async function tick(t: TaskDef) {
+  if (shuttingDown) return;
   if (runningTasks.has(t.name)) {
     log.warn("tick skipped — already running in this process", { task: t.name });
     return;
@@ -287,8 +296,8 @@ async function tick(t: TaskDef) {
 async function main() {
   log.info("scheduler started", { tasks: tasks.length });
   for (const t of tasks) {
-    const kickoff = setTimeout(() => { void tick(t); }, 5000);
-    const interval = setInterval(() => { void tick(t); }, t.intervalMs);
+    const kickoff = setTimeout(() => schedule(t), 5000);
+    const interval = setInterval(() => schedule(t), t.intervalMs);
     timers.push(kickoff, interval);
   }
 }
@@ -298,8 +307,15 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   log.warn("scheduler shutting down", { signal });
   for (const timer of timers) clearTimeout(timer as NodeJS.Timeout);
+  const deadline = setTimeout(() => {
+    log.error("scheduler shutdown deadline exceeded; transactions recover on disconnect");
+    process.exit(1);
+  }, 90000);
+  deadline.unref();
+  await Promise.allSettled([...inFlight]);
   schedulerRunning.set(0);
   await closePool().catch(() => {});
+  clearTimeout(deadline);
   process.exit(0);
 }
 
