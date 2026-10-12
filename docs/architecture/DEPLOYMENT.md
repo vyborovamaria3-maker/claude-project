@@ -31,6 +31,10 @@ npm run jobs:dlq -- replay 123 1
 
 Replay only after fixing the cause. Original task/results/idempotency key are retained; max total attempts cannot exceed 100. Backpressure rejects and rolls back overflowing insert batches; producers should retry later, not spin.
 
+Scheduler defaults to two concurrent tasks and coalesces duplicate ticks while waiting. Each task needs an advisory-lock connection plus query capacity; set PG_POOL_MAX >=3 and SCHEDULER_CONCURRENCY <= floor((PG_POOL_MAX-1)/2). Queued ticks are discarded on shutdown and running tasks are drained. Migration 038 repairs BIGINT day-duration arithmetic in existing analytics functions; run npm run migrate before restarting the scheduler.
+
+For a local Celery Beat authentication failure, compare its broker configuration with the working worker and RabbitMQ. Synchronize the local .env RabbitMQ settings, then recreate only celery-beat using the same Compose files as the running stack. Restarting an unchanged container does not update its environment. Keep credentials out of Git.
+
 # Docker
 
 The existing compose.reply.yml has a collector profile. In .env set REPLY_DB_PASSWORD, MASTER_KEY, DASHBOARD_USER, DASHBOARD_PASS and DASHBOARD_ORIGIN=http://127.0.0.1:3001 (adjust for the secured browser origin).

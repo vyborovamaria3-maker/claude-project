@@ -28,11 +28,25 @@ const runningTasks = new Set<string>();
 let shuttingDown = false;
 const timers: NodeJS.Timeout[] = [];
 const inFlight = new Set<Promise<void>>();
+const pending = new Map<string, TaskDef>();
+const poolMax = Number(process.env.PG_POOL_MAX ?? 20);
+const concurrency = Number(process.env.SCHEDULER_CONCURRENCY ?? Math.min(2, Math.floor((poolMax - 1) / 2)));
+if (!Number.isInteger(poolMax) || poolMax < 3 || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > Math.floor((poolMax - 1) / 2)) {
+  throw new Error("Scheduler requires PG_POOL_MAX >= 3 and SCHEDULER_CONCURRENCY <= (PG_POOL_MAX - 1) / 2");
+}
 function schedule(t: TaskDef) {
-  if (shuttingDown) return;
-  const work = tick(t);
-  inFlight.add(work);
-  void work.finally(() => inFlight.delete(work));
+  if (shuttingDown || pending.has(t.name) || runningTasks.has(t.name)) return;
+  pending.set(t.name, t);
+  dispatch();
+}
+function dispatch() {
+  while (!shuttingDown && pending.size && inFlight.size < concurrency) {
+    const task = pending.values().next().value!;
+    pending.delete(task.name);
+    const work = tick(task);
+    inFlight.add(work);
+    void work.finally(() => { inFlight.delete(work); dispatch(); });
+  }
 }
 
 const tasks: TaskDef[] = [
@@ -294,7 +308,7 @@ async function tick(t: TaskDef) {
 }
 
 async function main() {
-  log.info("scheduler started", { tasks: tasks.length });
+  log.info("scheduler started", { tasks: tasks.length, concurrency });
   for (const t of tasks) {
     const kickoff = setTimeout(() => schedule(t), 5000);
     const interval = setInterval(() => schedule(t), t.intervalMs);
@@ -305,6 +319,7 @@ async function main() {
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
+  pending.clear();
   log.warn("scheduler shutting down", { signal });
   for (const timer of timers) clearTimeout(timer as NodeJS.Timeout);
   const deadline = setTimeout(() => {
@@ -321,6 +336,9 @@ async function shutdown(signal: string) {
 
 process.on("SIGINT", () => { void shutdown("SIGINT"); });
 process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
+process.on("message", message => {
+  if (typeof message === "object" && message !== null && "stop" in message && message.stop === true) void shutdown("IPC");
+});
 
 main().catch((e) => {
   log.error("scheduler fatal", { error: String(e) });

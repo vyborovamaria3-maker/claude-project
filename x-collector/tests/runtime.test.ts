@@ -50,6 +50,13 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     for (const file of REQUIRED) {
       await db.exec(await fs.readFile('migrations/' + file, 'utf8'));
     }
+    // A populated/previously migrated database must receive the same idempotent repair.
+    const definitions = await db.query('SELECT oid,prosrc FROM pg_proc WHERE pronamespace=(SELECT oid FROM pg_namespace WHERE nspname=current_schema()) ORDER BY oid');
+    await db.exec(await fs.readFile('migrations/038_analytics_bigint_durations.sql','utf8'));
+    assert.deepEqual((await db.query('SELECT oid,prosrc FROM pg_proc WHERE pronamespace=(SELECT oid FROM pg_namespace WHERE nspname=current_schema()) ORDER BY oid')).rows,definitions.rows);
+    assert.equal((await db.query<{n:number}>('SELECT rollup_mint_1w($1,$2) AS n',[1791000000000,1791767667000])).rows[0].n,0);
+    assert.equal((await db.query<{n:number}>('SELECT rebuild_author_metrics_1d($1,$2) AS n',[1791000000000,1791767667000])).rows[0].n,0);
+    assert.equal((await db.query("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=current_schema() AND p.prokind='f' AND p.prosrc ~ '\\m(30|90)[[:space:]]*\\*[[:space:]]*86400000\\M' AND p.prosrc !~ '86400000::BIGINT'")).rows.length,0);
     for (const read of [getDailyDigest, getTopShillers, getTrendingWords, getCashtagTrends, getWorkerEfficiency, getAccountHealth, getTopHype, getEarlySignals, getLeadAuthors, getTopPageRank, getTopUltra, listModels]) await read();
     const report = await getMintFullReport('11111111111111111111111111111111');
     assert.equal(report.summary, null);
