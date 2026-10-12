@@ -15,6 +15,7 @@ import { clearKeyCache, encryptBuffer } from "../../lib/trade/crypto";
 import { WorkerRegistry } from "../../lib/trade/worker-registry";
 import { WorkerRuntime } from "../../src/runtime/worker-runtime";
 import { executeTask } from "../../src/runtime/collector-task";
+import { spawn } from "node:child_process";
 
 test("real PostgreSQL: migration replay, parallel leases, restart fencing, transactional results and worker/browser fixture", {
   skip: !process.env.RUNTIME_TEST_DATABASE_URL,
@@ -141,6 +142,33 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       signal:new AbortController().signal,isStopping:()=>false,useSourceCollector:true})), 'done');
     assert.equal((await q("SELECT 1 FROM x_task_tweets WHERE task_id=$1",[sourceTask.id])).length,1);
     await runtime.stop(); await registry.stop();
+    // Exercise every initial scheduler tick with only five real DB connections.
+    const scheduler = spawn(process.execPath,['--import','tsx','scripts/scheduler.ts'],{
+      env:{...process.env,PG_POOL_MAX:'5',SCHEDULER_CONCURRENCY:'2'},stdio:['ignore','pipe','pipe','ipc'],
+    });
+    let schedulerLog='';
+    scheduler.stdout!.on('data',data=>{schedulerLog+=String(data);});
+    scheduler.stderr!.on('data',data=>{schedulerLog+=String(data);});
+    const exited=new Promise<number|null>((resolve,reject)=>{scheduler.once('exit',resolve);scheduler.once('error',reject);});
+    try {
+      const deadline=Date.now()+20000;
+      let expected=0,completed=0;
+      while(Date.now()<deadline) {
+        expected=Number(schedulerLog.match(/scheduler started.*"tasks":(\d+)/)?.[1]??0);
+        completed=(schedulerLog.match(/tick (done|failed|skipped)/g)??[]).length;
+        if(expected>0&&completed>=expected)break;
+        if(scheduler.exitCode!==null)break;
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      assert(expected>0&&completed>=expected,schedulerLog);
+      assert(!/timeout exceeded when trying to connect|integer out of range/.test(schedulerLog),schedulerLog);
+    } finally {
+      const hardStop=setTimeout(()=>scheduler.kill('SIGKILL'),10000);
+      if(scheduler.connected)scheduler.send({stop:true});else scheduler.kill('SIGTERM');
+      const code=await exited;
+      clearTimeout(hardStop);
+      assert.equal(code,0,schedulerLog);
+    }
   } finally {
     launchMock?.mock.restore();
     await closePool(); clearKeyCache();

@@ -32,4 +32,5 @@ export const REQUIRED = [
   "035_tag_taxonomy.sql",
   "036_investigations.sql",
   "037_intelligence_audit.sql",
+  "038_analytics_bigint_durations.sql",
 ];
