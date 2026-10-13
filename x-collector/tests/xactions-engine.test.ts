@@ -44,3 +44,9 @@ test("malformed list response must fail instead of silently marking complete", a
   const engine = new XActionsReadEngine(client, endpoints, parsers);
   await assert.rejects(engine.listPage("1945268064792068152"), /response shape changed/);
 });
+
+test("malformed user timeline response must fail instead of silently claiming completion", async () => {
+  const client: ReadClient = { graphql: async () => ({ data: { user: { result: {} } } }) };
+  const engine = new XActionsReadEngine(client, endpoints, parsers);
+  await assert.rejects(engine.timelinePage("123456"), /response shape changed/);
+});
