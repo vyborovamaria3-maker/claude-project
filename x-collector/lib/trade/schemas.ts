@@ -72,6 +72,7 @@ export function parseTaskPayload(kind: string, raw: unknown) {
     case "search": return SearchPayload.parse(json);
     case "timeline": return TimelinePayload.parse(json);
     case "profile": return ProfilePayload.parse(json);
+    case "members": return MembersPayload.parse(json);
     default: throw new Error(`unknown kind: ${kind}`);
   }
 }
