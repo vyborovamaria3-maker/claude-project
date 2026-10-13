@@ -12,6 +12,7 @@ export interface ReadEndpoints {
   userByScreenName: GraphqlEndpoint;
   userTweets: GraphqlEndpoint;
   listTimeline: GraphqlEndpoint;
+  listMembers?: GraphqlEndpoint;
 }
 
 export interface ReadClient {
@@ -25,6 +26,7 @@ export interface ReadParsers {
   parseUserData(raw: unknown): XActionsHttpProfile;
   parseTimelineInstructions(instructions: unknown[]): { tweets: XActionsHttpTweet[]; cursor: string | null };
   userTimelineInstructions(data: unknown): unknown[];
+  parseUserList?(instructions: unknown[]): { users: XActionsHttpProfile[]; cursor: string | null };
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -98,6 +100,21 @@ export class XActionsReadEngine {
     }
     const page = this.parsers.parseTimelineInstructions(instructions(this.parsers.userTimelineInstructions(data)));
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
+  }
+
+  /** One page of X List members, with the opaque bottom cursor exposed. */
+  async listMembersPage(listId: string, cursor: string | null = null): Promise<CursorPage<AccountProfileData>> {
+    if (!/^\\d{1,25}$/.test(listId)) throw new Error("XActions: invalid list ID");
+    if (!this.endpoints.listMembers || !this.parsers.parseUserList) {
+      throw new Error("XActions: ListMembers parser or endpoint unavailable");
+    }
+    const variables: Record<string, unknown> = { listId, count: 20 };
+    if (cursor) variables.cursor = cursor;
+    const data = await this.graphql(this.endpoints.listMembers, variables);
+    const rawInstructions = nested(data, ["list", "members_timeline", "timeline", "instructions"]);
+    if (!Array.isArray(rawInstructions)) throw new Error("XActions: list members response shape changed");
+    const page = this.parsers.parseUserList(rawInstructions);
+    return { items: page.users.map(user => normalizeXActionsProfile(user)), nextCursor: page.cursor };
   }
 
   async listPage(listId: string, cursor: string | null = null): Promise<CursorPage<RawTweet>> {
