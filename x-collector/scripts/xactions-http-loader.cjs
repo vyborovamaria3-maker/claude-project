@@ -31,6 +31,18 @@ async function loadPinnedXActions(root) {
   if (sha !== EXPECTED_SHA) {
     throw new Error('XActions: the checkout commit does not match the tested pinned version');
   }
+  // A matching HEAD alone does not guarantee unchanged source files.
+  // npm ci leaves node_modules ignored, so only tracked modifications matter.
+  let dirty;
+  try {
+    dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], {
+      cwd: root, encoding: 'utf8', timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    throw new Error('XActions: unable to verify checkout cleanliness');
+  }
+  if (dirty) throw new Error('XActions: pinned checkout contains modified tracked files');
   const entry = path.join(root, 'src', 'scrapers', 'twitter', 'http', 'index.js');
   const http = await import(pathToFileURL(entry).href);
   const tweetParser = await import(pathToFileURL(path.join(root, 'src', 'scrapers', 'twitter', 'http', 'parse', 'tweet.js')).href);
