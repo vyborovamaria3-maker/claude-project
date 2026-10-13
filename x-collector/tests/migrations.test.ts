@@ -11,7 +11,7 @@ test('001-041 migration chain executes on disposable PostgreSQL engine', async (
   const db = new PGlite({ extensions: { pg_trgm } });
   try {
     const files = REQUIRED;
-    assert.equal(files.length, 37);
+    assert.equal(files.length, 38);
     for (const file of files) {
       try { await db.exec(await fs.readFile('migrations/' + file, 'utf8')); }
       catch (error) { throw new Error(file + ': ' + String(error), { cause: error }); }
