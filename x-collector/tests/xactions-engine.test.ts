@@ -50,3 +50,31 @@ test("malformed user timeline response must fail instead of silently claiming co
   const engine = new XActionsReadEngine(client, endpoints, parsers);
   await assert.rejects(engine.timelinePage("123456"), /response shape changed/);
 });
+
+test("ListMembers page returns profiles and preserves a real opaque cursor", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const client: ReadClient = { graphql: async (_id, op, variables) => {
+    assert.equal(op, "ListMembers");
+    calls.push(variables);
+    return { data: { list: { members_timeline: { timeline: { instructions: [{ type: "TimelineAddEntries" }] } } } } };
+  } };
+  const engine = new XActionsReadEngine(client, {
+    ...endpoints, listMembers: { queryId: "m", operationName: "ListMembers" },
+  }, {
+    ...parsers,
+    parseUserList: () => ({ users: [{ username: "NASA", name: "NASA", followersCount: 123 }], cursor: "member-cursor-2" }),
+  });
+  const page = await engine.listMembersPage("1878727153048777016", "member-cursor-1");
+  assert.equal(calls[0]?.cursor, "member-cursor-1");
+  assert.equal(page.nextCursor, "member-cursor-2");
+  assert.deepEqual(page.items.map(p => p.handle), ["NASA"]);
+  assert.equal(page.items[0]?.followers, 123);
+});
+
+test("ListMembers invalid response is an error, not a complete list", async () => {
+  const client: ReadClient = { graphql: async () => ({ data: { list: {} } }) };
+  const engine = new XActionsReadEngine(client, {
+    ...endpoints, listMembers: { queryId: "m", operationName: "ListMembers" },
+  }, { ...parsers, parseUserList: () => ({ users: [], cursor: null }) });
+  await assert.rejects(engine.listMembersPage("1878727153048777016"), /response shape changed/);
+});
