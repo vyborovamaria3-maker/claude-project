@@ -19,7 +19,8 @@ async function assertPersistenceLease(client: PoolClient, taskId: number | undef
     [lease.accountName, lease.accountOwner, now]);
   if (!account.rows.length) throw new Error("account lease lost before persistence");
 }
-export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease) {
+export interface TweetPersistenceOptions { client?: PoolClient; transport?: "browser" | "http"; }
+export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease, options: TweetPersistenceOptions = {}) {
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
   let rejected = 0;
@@ -33,7 +34,10 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
 
   const now = Date.now();
   const BATCH = 200;
-  const sourceKey = await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
+  // A page checkpoint and all of its posts must share one transaction.
+  if (options.client && valid.length > BATCH) throw new Error("XActions: HTTP page exceeds transactional batch limit");
+  const fromHttp = options.transport === "http";
+  const sourceKey = await source(fromHttp ? "X HTTP collector" : "X browser collector", "https://x.com", "X platform terms", "x", { transport: fromHttp ? "HTTP GraphQL" : "visible DOM" });
 
   for (let i = 0; i < valid.length; i += BATCH) {
     const chunk = valid.slice(i, i + BATCH);
@@ -42,7 +46,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     const raw = await rawPage({ tweets: chunk, sourceQuery, received_at: received.toISOString() });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
-    await tx(async (client) => {
+    const writeChunk = async (client: PoolClient) => {
       await assertPersistenceLease(client, taskId, lease);
       await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
       const values: unknown[] = [];
@@ -116,7 +120,9 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
           linkVals
         );
       }
-    });
+    };
+    if (options.client) await writeChunk(options.client);
+    else await tx(writeChunk);
   }
 }
 
