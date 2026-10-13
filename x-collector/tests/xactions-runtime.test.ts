@@ -81,4 +81,5 @@ test("injected HTTP client receives cookies, no signing/refresh and no network b
   assert.equal(opts.maxRetries, 0);
   assert.equal(typeof opts.fetch, "function");
   assert.ok(String(opts.cookies).includes("auth_token="));
+  await assert.rejects((opts.fetch as typeof fetch)("https://example.com/private"), /not x.com/);
 });
