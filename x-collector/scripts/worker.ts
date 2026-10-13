@@ -41,6 +41,8 @@ const allowMetricsRequest = createRateLimiter(Number(process.env.METRICS_RATE_LI
 // Новый X Collector (src/x) для search-задач; по умолчанию выключен —
 // production-путь searchTweets не затрагивается.
 const USE_X_COLLECTOR = process.env.X_COLLECTOR === "src";
+ // XActions remains opt-in and does not replace the existing search engine.
+ const USE_XACTIONS = process.env.COLLECTOR_ENGINE === "xactions";
 let shuttingDown = false;
 const cancellation=new AbortController();
 
@@ -76,7 +78,7 @@ async function loop() {
         await withContext(
           { taskId: task.id, workerId, mint: task.mint ?? undefined, handle: task.handle ?? undefined },
           async () => {
-            const result = await runtime.runJob(task, job => executeTask(job, { workerId, registry, signal: cancellation.signal, isStopping: () => shuttingDown, useSourceCollector: USE_X_COLLECTOR }));
+            const result = await runtime.runJob(task, job => executeTask(job, { workerId, registry, signal: cancellation.signal, isStopping: () => shuttingDown, useSourceCollector: USE_X_COLLECTOR, useXActions: USE_XACTIONS }));
             log.info("task result", { result });
           }
         ).catch((e) => log.error("task runner crashed", { error: String(e) }));
