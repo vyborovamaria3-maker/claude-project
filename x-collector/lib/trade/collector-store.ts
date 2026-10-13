@@ -37,7 +37,9 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   // A page checkpoint and all of its posts must share one transaction.
   if (options.client && valid.length > BATCH) throw new Error("XActions: HTTP page exceeds transactional batch limit");
   const fromHttp = options.transport === "http";
-  const sourceKey = await source(fromHttp ? "X HTTP collector" : "X browser collector", "https://x.com", "X platform terms", "x", { transport: fromHttp ? "HTTP GraphQL" : "visible DOM" });
+  // archive.sourceId hashes URL/license/kind (not name). Distinct URLs keep
+  // HTTP observations from inheriting the old browser-only source metadata.
+  const sourceKey = await source(fromHttp ? "X HTTP collector" : "X browser collector", fromHttp ? "https://x.com/i/api/graphql" : "https://x.com", "X platform terms", "x", { transport: fromHttp ? "HTTP GraphQL" : "visible DOM" });
 
   for (let i = 0; i < valid.length; i += BATCH) {
     const chunk = valid.slice(i, i + BATCH);
