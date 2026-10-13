@@ -23,7 +23,7 @@ test("XActions cursor and posts commit atomically, reject stale cursors and expi
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         const result = await db.query(sql, params);
-        return { ...result, rowCount: result.affectedRows ?? result.rows.length };
+        return { ...result, rowCount: /^\s*(SELECT|WITH)\b/i.test(sql) ? result.rows.length : (result.affectedRows ?? result.rows.length) };
       },
     } as unknown as PoolClient;
 
