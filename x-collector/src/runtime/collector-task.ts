@@ -185,6 +185,12 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     return "done";
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (e instanceof HttpAccountQuotaError && !leaseLost && !isStopping()) {
+      await publish({phase:"waiting"}).catch(()=>{});
+      const wait = await httpQuotaWaitMs(acc.name).catch(() => 60000);
+      const ok = await deferTask(task.id, workerId, wait, "XActions account HTTP quota exhausted", task.attempts).catch(() => false);
+      return ok ? "quota-waiting" : "failed";
+    }
     await publish({phase:isStopping()?"waiting":"failed"}).catch(()=>{});
     let kindErr: "rate_limit" | "captcha" | "ban" | "auth_expired" | "other" = "other";
     const failure = taskFailure(e);
@@ -192,11 +198,6 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     else if (failure.code === "ACCESS_REQUIRED") kindErr = "captcha";
     else if (failure.code === "AUTH_EXPIRED") kindErr = "auth_expired";
 
-    if (e instanceof HttpAccountQuotaError && !leaseLost && !isStopping()) {
-      const wait = await httpQuotaWaitMs(acc.name).catch(() => 60000);
-      const ok = await deferTask(task.id, workerId, wait, "XActions account HTTP quota exhausted", task.attempts).catch(() => false);
-      return ok ? "quota-waiting" : "failed";
-    }
     if (!leaseLost && !isStopping()) await recordAccountError(acc.name,e).catch(()=>{});
     if (!leaseLost && !isStopping()) await recordError(acc.name, kindErr, taskFailure(e).retryAfterMs, accountLeaseOwner).catch(() => {});
     const result = isStopping() ? await deferTask(task.id,workerId,5000,"worker shutdown",task.attempts).then(ok=>ok?"requeued" as const:"lost" as const) : await failTask(task.id, workerId, e, task.attempts).catch(() => "lost" as const);
