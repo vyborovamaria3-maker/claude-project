@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 const { pg_trgm } = load('@electric-sql/pglite/contrib/pg_trgm') as { pg_trgm: import('@electric-sql/pglite').Extension };
 
-test('001вЂ“039 migration chain executes on disposable PostgreSQL engine', async () => {
+test('001-040 migration chain executes on disposable PostgreSQL engine', async () => {
   const db = new PGlite({ extensions: { pg_trgm } });
   try {
     const files = REQUIRED;
