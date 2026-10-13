@@ -44,6 +44,10 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     return "invalid-payload";
   }
 
+  if (task.kind === "members" && !useXActions) {
+    await deferTask(task.id, workerId, 60000, "ListMembers requires COLLECTOR_ENGINE=xactions", task.attempts);
+    return "members-disabled";
+  }
   const historical=payload as {history_run_id?:string;history_since?:string;history_until?:string;history_author?:string;history_max_id?:string};
   if(historical.history_run_id&&!(await q("SELECT 1 FROM xc_history_runs WHERE id=$1 AND status='running'",[historical.history_run_id])).length){
     await deferTask(task.id,workerId,60000,'Historical collection paused',task.attempts);return 'history-paused';
@@ -70,7 +74,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
 
   if (!account) {
     await publish({phase:"waiting"}).catch(()=>{});
-    const wait = await accountWaitMs(task.kind === 'timeline' ? 'timeline' : task.kind === 'profile' ? 'profile' : 'search', (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true).catch(()=>60000);
+    const wait = await accountWaitMs(task.kind === 'timeline' ? 'timeline' : (task.kind === 'profile' || task.kind === 'members') ? 'profile' : 'search', (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true).catch(()=>60000);
     await deferTask(task.id, workerId, wait, "no available account; waiting for lease or quota", task.attempts).catch(() => false);
     return "no-account";
   }
