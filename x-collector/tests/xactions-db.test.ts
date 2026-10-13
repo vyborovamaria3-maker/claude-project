@@ -48,7 +48,8 @@ test("XActions cursor and posts commit atomically, reject stale cursors and expi
     await transaction(() => writeHttpPageInTransaction(client, base, async c => {
       await c.query("INSERT INTO collected_posts VALUES('tweet-1')");
     }));
-    let cp = (await db.query<{ cursor: string | null; pages_committed: number }>(
+    let cp: { cursor: string | null; pages_committed: number; completed?: boolean } =
+      (await db.query<{ cursor: string | null; pages_committed: number }>(
       "SELECT cursor,pages_committed FROM xc_http_checkpoints WHERE task_id=7",
     )).rows[0];
     assert.equal(cp.cursor, "opaque-1");
