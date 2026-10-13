@@ -5,6 +5,7 @@ import { cookiesFromStorageState } from "../src/xactions/session";
 import { createHttpQuotaGate, HttpAccountQuotaError } from "../src/xactions/account-http-quota";
 import { isXActionsEligible } from "../src/xactions/task";
 import { assertXActionsRuntime, createXActionsRuntime } from "../src/xactions/runtime";
+import { parseTaskPayload } from "../lib/trade/schemas";
 
 function storage(): ScrapeAuthState {
   return {
@@ -86,4 +87,12 @@ test("injected HTTP client receives cookies, no signing/refresh and no network b
   assert.equal(typeof opts.fetch, "function");
   assert.ok(String(opts.cookies).includes("auth_token="));
   await assert.rejects((opts.fetch as typeof fetch)("https://example.com/private"), /not x.com/);
+});
+
+test("members task accepts only a numeric list ID and bounded requested limit", () => {
+  const payload = parseTaskPayload("members", { list_id: "953048248406519809", limit: 75 });
+  assert.equal(payload.list_id, "953048248406519809");
+  assert.equal(payload.limit, 75);
+  assert.throws(() => parseTaskPayload("members", { list_id: "bad-list" }));
+  assert.throws(() => parseTaskPayload("members", { list_id: "953048248406519809", limit: 5000 }));
 });
