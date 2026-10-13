@@ -7,7 +7,7 @@ import { redactText, scrub } from "./logger";
 import { taskFailure } from "./task-errors";
 import { advisoryKey } from "./advisory";
 
-export type TaskKind = "search" | "timeline" | "profile";
+export type TaskKind = "search" | "timeline" | "profile" | "members";
 export type TaskStatus = "pending" | "claimed" | "done" | "failed";
 /** JSONB-полезная нагрузка: структура определяется kind и валидируется схемой. */
 type JsonbPayload = unknown;
