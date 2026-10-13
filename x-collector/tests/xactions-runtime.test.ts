@@ -46,6 +46,12 @@ test("engine selection excludes historical/discovery and keyword search", () => 
   assert.equal(isXActionsEligible("search", { query: "solana" }), false);
   assert.equal(isXActionsEligible("search", { query: "list:1945268064792068152", history_run_id: "test" }), false);
   assert.equal(isXActionsEligible("search", { query: "list:1945268064792068152", list_source_id: "123" }), false);
+  // Regression: archive timeline tasks must update legacy history_runs and
+  // numeric max_id, so HTTP must never claim them.
+  assert.equal(isXActionsEligible("timeline", { handle: "NASA", limit: 100, history_run_id: "archive-1" }), false);
+  assert.equal(isXActionsEligible("timeline", { handle: "NASA", limit: 100, history_max_id: "1234567890" }), false);
+  assert.equal(isXActionsEligible("profile", { handle: "NASA", history_since: "2026-01-01" }), false);
+  assert.equal(isXActionsEligible("timeline", { handle: "NASA", discovery_source: "three-lists" }), false);
 });
 
 test("runtime enforces Node requirement only for explicit XActions path", () => {
