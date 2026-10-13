@@ -82,29 +82,36 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
   let nextToFetch = saved?.cursor ?? null;
   const remaining = totalPages - (saved?.pagesCommitted ?? 0);
   let totalItems = saved?.itemsCommitted ?? 0;
-  await runCursorPages(async (cursor) => {
-    signal.throwIfAborted();
-    return sourceKind === "timeline"
-      ? engine.timelinePage(authorId!, cursor)
-      : sourceKind === "members" ? engine.listMembersPage(sourceKey, cursor)
-      : engine.listPage(sourceKey, cursor);
-  }, async page => {
-    signal.throwIfAborted();
-    await publish({ phase: "saving" });
-    if (sourceKind === "members") {
+  if (sourceKind === "members") {
+    await runCursorPages(async cursor => {
+      signal.throwIfAborted();
+      return engine.listMembersPage(sourceKey, cursor);
+    }, async page => {
+      signal.throwIfAborted();
+      await publish({ phase: "saving" });
       await persistXActionsMemberPage({
         ...key, lease, previousCursor: nextToFetch,
-      }, page as import("./pagination").PageCommit<import("../../lib/trade/twitter-scraper").AccountProfileData>);
-    } else {
+      }, page);
+      nextToFetch = page.nextCursor;
+      totalItems += page.items.length;
+      await publish({ phase: "collecting", found: totalItems, limit });
+    }, { initialCursor: nextToFetch, maxPages: remaining, signal });
+  } else {
+    await runCursorPages(async cursor => {
+      signal.throwIfAborted();
+      return sourceKind === "timeline" ? engine.timelinePage(authorId!, cursor) : engine.listPage(sourceKey, cursor);
+    }, async page => {
+      signal.throwIfAborted();
+      await publish({ phase: "saving" });
       await persistXActionsTweetPage({
         ...key, lease,
         mint: sourceKind === "list" ? task.mint : null,
         sourceQuery: sourceKind === "list" ? `list:${sourceKey}` : null,
         previousCursor: nextToFetch,
-      }, page as import("./pagination").PageCommit<import("../../lib/trade/twitter-scraper").RawTweet>);
-    }
-    nextToFetch = page.nextCursor;
-    totalItems += page.items.length;
-    await publish({ phase: "collecting", found: totalItems, limit });
-  }, { initialCursor: nextToFetch, maxPages: remaining, signal });
+      }, page);
+      nextToFetch = page.nextCursor;
+      totalItems += page.items.length;
+      await publish({ phase: "collecting", found: totalItems, limit });
+    }, { initialCursor: nextToFetch, maxPages: remaining, signal });
+  }
 }
