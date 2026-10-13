@@ -93,7 +93,9 @@ export function createSocks5Fetch(proxy: PlaywrightProxy, options: SocksFetchOpt
             const status = res.statusCode ?? 502;
             // The Fetch Response constructor forbids a body for these statuses.
             const noBody = status === 204 || status === 205 || status === 304;
-            resolve(new Response(noBody ? null : payload, { status, headers: out }));
+            const bytes = new Uint8Array(payload.byteLength);
+            bytes.set(payload);
+            resolve(new Response(noBody ? null : bytes, { status, headers: out }));
           } catch (error) { reject(error); }
         });
       });
