@@ -2,6 +2,7 @@ import { q, tx, closePool, getPool } from '../lib/trade/pg';
 import { ensureWorker, stopManagedWorker } from '../lib/collector/runtime';
 import { closeLogger } from '../lib/trade/logger';
 import { createRequire } from 'node:module';
+const {tickDiscovery}=createRequire(__filename)('./discovery-core.cjs');
 const {tickSources}=createRequire(__filename)('./list-core.cjs');
 
 let stopping = false;
@@ -13,8 +14,9 @@ async function tick() {
   await tx(async c => {
     await c.query('SELECT pg_advisory_xact_lock(742098532)');
     await tickSources(c);
+    await tickDiscovery(c);
   });
-  if ((await q("SELECT id FROM x_tasks WHERE kind='search' AND payload_json->>'query' LIKE 'list:%' AND status IN ('pending','claimed') LIMIT 1")).length) await ensureWorker();
+  if ((await q("SELECT id FROM x_tasks WHERE kind='search' AND (payload_json->>'query' LIKE 'list:%' OR payload_json ? 'discovery_source') AND status IN ('pending','claimed') LIMIT 1")).length) await ensureWorker();
 }
 async function main() {
   lock=await getPool().connect();

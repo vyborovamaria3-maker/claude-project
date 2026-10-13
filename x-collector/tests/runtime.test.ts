@@ -95,6 +95,15 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     const fallback=await pickAccount('search','fallback-owner','test',true);
     assert.equal(fallback?.name,'fallback');
     assert.equal(await releaseAccount('fallback','fallback-owner'),true);
+    await db.query("INSERT INTO x_accounts(name,session_encrypted,hour_window_start,created_at,updated_at,role) VALUES('second',$1,0,0,0,'collector')",[Buffer.from('fixture')]);
+    await db.query('UPDATE xc_discovery_plan SET enabled=true,max_browser_accounts=1');
+    const capped=await pickAccount('search','capped-a');assert(capped);
+    assert.equal(await pickAccount('search','capped-b'),null);
+    assert.equal(await releaseAccount(capped.name,'capped-a'),true);
+    assert(await pickAccount('search','capped-b'));
+    await db.query('UPDATE xc_discovery_plan SET enabled=false');
+    await db.query("DELETE FROM x_accounts WHERE name='second'");
+    await db.query("UPDATE x_accounts SET account_busy_until=0,account_claimed_by=NULL WHERE name='fallback'");
     await db.query("DELETE FROM x_accounts WHERE name IN ('fallback','publisher-only')");
     await enqueueTask({ ...input, payload: { query: 'retry' }, maxAttempts: 2 });
     const [retry] = await claimTasks('worker-c', 1, 60000);

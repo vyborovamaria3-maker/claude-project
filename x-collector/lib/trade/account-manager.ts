@@ -39,6 +39,12 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string, preferr
   const leaseMs = getConfig().sessions.leaseMs;
 
   return tx(async (c) => {
+    const available = await c.query("SELECT to_regclass('xc_discovery_plan') AS present");
+    if (available.rows[0]?.present) {
+      await c.query('SELECT pg_advisory_xact_lock(742098535)');
+      const policy = (await c.query('SELECT max_browser_accounts FROM xc_discovery_plan WHERE enabled')).rows[0];
+      if (policy && Number((await c.query("SELECT count(*) AS count FROM x_accounts WHERE role='collector' AND account_busy_until>$1", [now])).rows[0].count) >= policy.max_browser_accounts) return null;
+    }
     await c.query(
       `UPDATE x_accounts SET weight_used_this_hour = 0, hour_window_start = $1
        WHERE hour_window_start < $2`,

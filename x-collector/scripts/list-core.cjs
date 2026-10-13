@@ -7,7 +7,7 @@ async function advance(c,state,now){
  if(!task||task.status!=='done'){
   await c.query("UPDATE xc_list_checkpoints SET status='partial',message='Страница не завершена; сохранённые твиты и курсор сохранены',updated_at=$2 WHERE list_id=$1",[state.list_id,now]);return;
  }
- if(!task.payload_json?.list_source_id){
+ if(!task.payload_json?.list_source_id&&!task.payload_json?.discovery_source){
   await c.query('UPDATE xc_list_checkpoints SET task_id=NULL,updated_at=$2 WHERE list_id=$1',[state.list_id,now]);return;
  }
  const result=(await c.query('SELECT count(*)::int saved,min(tweet_id::numeric)::text oldest,max(tweet_id::numeric)::text newest FROM x_task_tweets WHERE task_id=$1',[state.task_id])).rows[0];

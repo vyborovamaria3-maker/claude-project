@@ -9,6 +9,7 @@ export const SearchPayload = z.object({
   sort: z.enum(["top", "latest"]).default("latest"),
   account_name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
   account_fallback: z.boolean().optional(),
+  discovery_source: z.string().min(1).max(64).optional(),
   list_source_id: z.string().regex(/^\d{1,25}$/).optional(),
   list_since_id: z.string().regex(/^\d{1,25}$/).optional(),
   list_max_id: z.string().regex(/^\d{1,25}$/).optional(),
