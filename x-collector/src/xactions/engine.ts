@@ -87,6 +87,15 @@ export class XActionsReadEngine {
     };
     if (cursor) variables.cursor = cursor;
     const data = await this.graphql(this.endpoints.userTweets, variables);
+    // An API shape change is not a valid end-of-timeline signal.
+    const paths = [
+      ["user", "result", "timeline", "timeline", "instructions"],
+      ["user", "result", "timeline_v2", "timeline", "instructions"],
+      ["user", "result", "timeline", "instructions"],
+    ];
+    if (!paths.some(path => Array.isArray(nested(data, path)))) {
+      throw new Error("XActions: user timeline response shape changed");
+    }
     const page = this.parsers.parseTimelineInstructions(instructions(this.parsers.userTimelineInstructions(data)));
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
   }
