@@ -127,6 +127,9 @@ async function assertMobileNavigationKeyboardFlow(page, profileName, pageErrors)
   pageErrors.length = 0;
   await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await page.waitForTimeout(300);
+  assert.equal(await page.getByRole("button", { name: "Open navigation" }).count(), 0, `${profileName}: public landing must not expose workspace navigation`);
+  await page.goto(`${baseURL}/launch-dashboard`, { waitUntil: "load", timeout: 30_000 });
+  await page.waitForTimeout(300);
 
   const menuButton = page.getByRole("button", { name: "Open navigation" });
   await menuButton.waitFor({ state: "visible" });
