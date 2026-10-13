@@ -104,7 +104,7 @@ export class XActionsReadEngine {
 
   /** One page of X List members, with the opaque bottom cursor exposed. */
   async listMembersPage(listId: string, cursor: string | null = null): Promise<CursorPage<AccountProfileData>> {
-    if (!/^\\d{1,25}$/.test(listId)) throw new Error("XActions: invalid list ID");
+    if (!/^\d{1,25}$/.test(listId)) throw new Error("XActions: invalid list ID");
     if (!this.endpoints.listMembers || !this.parsers.parseUserList) {
       throw new Error("XActions: ListMembers parser or endpoint unavailable");
     }
