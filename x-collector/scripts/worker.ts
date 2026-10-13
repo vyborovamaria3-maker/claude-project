@@ -10,6 +10,7 @@ import { checkBasicAuth, isLoopbackHost } from "../lib/trade/http-auth";
 import { applySecurityHeaders, clientIp, createRateLimiter } from "../lib/trade/http-security";
 import { WorkerRuntime } from "../src/runtime/worker-runtime";
 import { executeTask } from "../src/runtime/collector-task";
+import { assertXActionsRuntime } from "../src/xactions/runtime";
 import { setTimeout as delay } from "node:timers/promises";
 const workerId = `${(process.env.WORKER_ID || "w").slice(0, 100)}-${randomUUID()}`;
 const METRICS_HOST = process.env.METRICS_HOST ?? "127.0.0.1";
@@ -43,6 +44,10 @@ const allowMetricsRequest = createRateLimiter(Number(process.env.METRICS_RATE_LI
 const USE_X_COLLECTOR = process.env.X_COLLECTOR === "src";
  // XActions remains opt-in and does not replace the existing search engine.
  const USE_XACTIONS = process.env.COLLECTOR_ENGINE === "xactions";
+ if (USE_XACTIONS) {
+   assertXActionsRuntime();
+   if (!process.env.XACTIONS_ROOT) throw new Error("XACTIONS_ROOT must be configured when COLLECTOR_ENGINE=xactions");
+ }
 let shuttingDown = false;
 const cancellation=new AbortController();
 
