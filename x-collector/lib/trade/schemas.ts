@@ -30,7 +30,7 @@ export const ProfilePayload = z.object({
 });
 
 export const MembersPayload = z.object({
-  list_id: z.string().regex(/^\\d{1,25}$/),
+  list_id: z.string().regex(/^\d{1,25}$/),
   limit: z.number().int().min(1).max(1000).default(100),
 });
 
