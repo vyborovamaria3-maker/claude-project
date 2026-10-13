@@ -29,6 +29,15 @@ LABELS = {
 }
 
 LABELS.update({
+    'xc_auto_sources': 'Списки X — источники', 'xc_list_checkpoints': 'Прогресс сбора списков',
+    'xc_history_runs': 'Архив — запуски', 'xc_history_lists': 'Архив — списки и участники',
+    'xc_history_authors': 'Архив — авторы списков', 'xc_history_windows': 'Архив — периоды сбора',
+    'xc_history_posts': 'Архив — сохранённые публикации', 'xc_history_tasks': 'Архив — связи с заданиями',
+    'xc_discovery_plan': 'Этапы сбора', 'xc_discovery_sources': 'Тематический поиск',
+    'xc_account_errors': 'Ошибки аккаунтов', 'x_task_tweets': 'Публикации по заданиям',
+    'x_task_profiles': 'Профили по заданиям', 'x_task_progress': 'Текущий прогресс заданий',
+    'xc_ai_providers': 'AI-провайдеры', 'xc_auto_jobs': 'Автопостинг — задания',
+    'xc_auto_posts': 'Автопостинг — опубликованные посты',
     'feature_flags': 'Переключатели функций', 'account_daily_stats': 'Статистика аккаунтов по дням',
     'account_state_log': 'История состояний аккаунтов', 'session_rotations': 'История смены сессий',
     'table_size_snapshots': 'Размеры таблиц во времени', 'author_cooccurrence': 'Совместные упоминания авторов',
@@ -72,6 +81,10 @@ for prefix in ('v_', 'mv_'):
 
 
 def description(table):
+    if table in ('xc_discovery_plan', 'xc_discovery_sources'):
+        return 'Первый этап — списки и архив их авторов, второй — тематический поиск. Неполный архив блокирует переход. last_completed_at означает обработку доступных результатов, а не гарантированную полноту X.'
+    if table.startswith('xc_history_') or table == 'xc_list_checkpoints':
+        return 'Сохранённый прогресс архива. pending — ожидает, queued — в очереди, done — обработано, partial — неполный сбор, failed — ошибка. cursor_id сохраняет точку продолжения; snapshot_json содержит архивную публикацию.'
     if table == 'graph_signal_history':
         return 'Сигналы за завершённые окна: score от 0 до 100, level — LOW, MEDIUM, HIGH или CRITICAL. payload содержит число твитов, авторов, связанных сущностей и составляющие оценки.'
     if table == 'graph_priority_events':
@@ -92,6 +105,9 @@ class Mutation(BaseModel):
     version: str | None = Field(default=None, max_length=20)
     confirm: bool = False
 
+def read_only():
+    return os.getenv('ADMIN_X_COLLECTOR_READ_ONLY', 'false').lower() in ('true', '1', 'yes')
+
 @contextmanager
 def connection():
     dsn = os.getenv('ADMIN_X_COLLECTOR_DSN', '').strip()
@@ -99,6 +115,8 @@ def connection():
         raise HTTPException(503, 'Подключение X Collector не настроено: ADMIN_X_COLLECTOR_DSN')
     try:
         with psycopg.connect(dsn, connect_timeout=3, row_factory=dict_row) as db:
+            if read_only():
+                db.execute('SET TRANSACTION READ ONLY')
             db.execute("SET LOCAL statement_timeout = '8s'")
             anchors = db.execute("SELECT to_regclass('public.x_tasks') AS tasks, to_regclass('public.twitter_tweets') AS tweets").fetchone()
             if not anchors['tasks'] or not anchors['tweets']:
@@ -131,11 +149,13 @@ def metadata(db, table):
         WHERE n.nspname='public' AND c.relname=%s AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum""", (table,)).fetchall()
     for c in columns:
         c['sensitive'] = is_sensitive(c['name']) or c['type'] == 'bytea' or c['name'] in ('proxy_json', 'credentials')
-    entry.update(columns=columns, label=LABELS.get(table, table), description=description(table), editable=entry['kind'] in ('r','p') and table != 'schema_migrations')
+    entry.update(columns=columns, label=LABELS.get(table, table), description=description(table), editable=not read_only() and entry['kind'] in ('r','p') and table != 'schema_migrations')
     return entry
 
 
 def validate_mutation(meta, body, action):
+    if read_only():
+        raise HTTPException(403, 'База коллектора подключена только для просмотра')
     if not meta['editable']:
         raise HTTPException(403, 'Представления и история миграций доступны только для просмотра')
     if not body.confirm:

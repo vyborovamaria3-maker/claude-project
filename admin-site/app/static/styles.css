@@ -129,3 +129,8 @@ tr:hover td { background: rgba(147,249,185,.025); }
   .toolbar, .toolbar.compact, .lookup { grid-template-columns: 1fr; }
   .login-card { padding: 28px; }
 }
+:root .xc-shortcuts { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+:root .xc-shortcuts [aria-current="page"] { border-color:var(--accent,#c8a95e); }
+.xc-table-wrap { overflow:auto; max-width:100%; margin-top:16px; }
+.xc-table-wrap table { min-width:100%; width:max-content; }
+.xc-table-wrap td { min-width:90px; max-width:320px; white-space:normal; overflow-wrap:anywhere; }
