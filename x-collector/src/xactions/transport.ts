@@ -88,6 +88,9 @@ export function createSocks5Fetch(proxy: PlaywrightProxy, options: SocksFetchOpt
               else if (value !== undefined) out.set(name, value);
             }
             const payload = decodeBody(Buffer.concat(chunks), res.headers["content-encoding"]);
+            if (payload.byteLength > maxResponseBytes) {
+              throw new Error("XActions: decoded HTTP response exceeds size limit");
+            }
             out.delete("content-encoding");
             out.delete("content-length");
             const status = res.statusCode ?? 502;
