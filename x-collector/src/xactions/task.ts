@@ -10,11 +10,13 @@ import { createHttpQuotaGate, reserveAdditionalHttpRequest } from "./account-htt
 import { httpQueryFingerprint, loadHttpCheckpoint, type HttpCheckpointKey, type HttpLease } from "./checkpoint-store";
 import { runCursorPages } from "./pagination";
 import { persistXActionsTweetPage } from "./persist";
+import { persistXActionsMemberPage } from "./persist-members";
 
-type Parsed = { handle?: string; limit?: number; query?: string; [key: string]: unknown };
+type Parsed = { handle?: string; limit?: number; query?: string; list_id?: string; [key: string]: unknown };
 
 export function isXActionsEligible(kind: string, payload: Parsed): boolean {
   if (kind === "profile" || kind === "timeline") return true;
+  if (kind === "members") return typeof payload.list_id === "string" && /^[0-9]{1,25}$/.test(payload.list_id);
   if (kind !== "search" || typeof payload.query !== "string" || !listId(payload.query)) return false;
   // Existing historical/list-discovery book-keeping is still browser-only.
   return !(
@@ -62,8 +64,9 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
     return;
   }
 
-  const sourceKind = task.kind === "timeline" ? "timeline" : "list";
-  const sourceKey = sourceKind === "timeline" ? String(payload.handle).toLowerCase() : listId(String(payload.query))!;
+  const sourceKind = task.kind === "timeline" ? "timeline" : task.kind === "members" ? "members" : "list";
+  const sourceKey = sourceKind === "timeline" ? String(payload.handle).toLowerCase() :
+    sourceKind === "members" ? String(payload.list_id) : listId(String(payload.query))!;
   const limit = Number(payload.limit);
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("XActions: invalid task limit");
   // Each XActions GraphQL page requests 20 items. Finish pages, never discard
@@ -83,16 +86,23 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
     signal.throwIfAborted();
     return sourceKind === "timeline"
       ? engine.timelinePage(authorId!, cursor)
+      : sourceKind === "members" ? engine.listMembersPage(sourceKey, cursor)
       : engine.listPage(sourceKey, cursor);
   }, async page => {
     signal.throwIfAborted();
     await publish({ phase: "saving" });
-    await persistXActionsTweetPage({
-      ...key, lease,
-      mint: sourceKind === "list" ? task.mint : null,
-      sourceQuery: sourceKind === "list" ? `list:${sourceKey}` : null,
-      previousCursor: nextToFetch,
-    }, page);
+    if (sourceKind === "members") {
+      await persistXActionsMemberPage({
+        ...key, lease, previousCursor: nextToFetch,
+      }, page as import("./pagination").PageCommit<import("../../lib/trade/twitter-scraper").AccountProfileData>);
+    } else {
+      await persistXActionsTweetPage({
+        ...key, lease,
+        mint: sourceKind === "list" ? task.mint : null,
+        sourceQuery: sourceKind === "list" ? `list:${sourceKey}` : null,
+        previousCursor: nextToFetch,
+      }, page as import("./pagination").PageCommit<import("../../lib/trade/twitter-scraper").RawTweet>);
+    }
     nextToFetch = page.nextCursor;
     totalItems += page.items.length;
     await publish({ phase: "collecting", found: totalItems, limit });
