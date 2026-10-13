@@ -72,7 +72,13 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     }
     await ctx.beforeRequest();
     ctx.signal.throwIfAborted();
-    return networkFetch(input, { ...init, signal: ctx.signal });
+    try {
+      return await networkFetch(input, { ...init, signal: ctx.signal });
+    } catch {
+      ctx.signal.throwIfAborted();
+      // Do not forward transport/agent messages that could contain proxy secrets.
+      throw new Error("PROXY_FAILED: XActions SOCKS5 transport request failed");
+    }
   };
   const client = new module.TwitterHttpClient({
     cookies: cookieHeader, userAgent: ctx.userAgent,
