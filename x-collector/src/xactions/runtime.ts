@@ -11,6 +11,7 @@ interface HttpModule {
   parseUserData: ReadParsers["parseUserData"];
   parseTimelineInstructions: ReadParsers["parseTimelineInstructions"];
   userTimelineInstructions: ReadParsers["userTimelineInstructions"];
+  parseUserList: NonNullable<ReadParsers["parseUserList"]>;
 }
 
 const loader = createRequire(__filename)("../../scripts/xactions-http-loader.cjs") as {
@@ -60,7 +61,14 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     userByScreenName: endpoint("UserByScreenName"),
     userTweets: endpoint("UserTweets"),
     listTimeline: endpoint("ListTimeline"),
+    listMembers: endpoint("ListMembers"),
   };
+  if (typeof module.userTimelineInstructions !== "function" ||
+      typeof module.parseTimelineInstructions !== "function" ||
+      typeof module.parseUserList !== "function" ||
+      typeof module.parseUserData !== "function") {
+    throw new Error("XActions: pinned parser exports unavailable");
+  }
   const networkFetch = createSocks5Fetch(ctx.proxy);
   const proxiedFetch: typeof fetch = async (input, init) => {
     ctx.signal.throwIfAborted();
@@ -89,5 +97,6 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     parseUserData: module.parseUserData,
     parseTimelineInstructions: module.parseTimelineInstructions,
     userTimelineInstructions: module.userTimelineInstructions,
+    parseUserList: module.parseUserList,
   });
 }
