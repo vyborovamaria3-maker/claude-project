@@ -126,7 +126,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   }
 }
 
-export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string, lease?: PersistenceLease) {
+export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string, lease?: PersistenceLease, options: { client?: PoolClient } = {}) {
   const parsed = ProfileSchema.safeParse(p);
   if (!parsed.success) {
     log.warn("profile rejected by schema", { error: parsed.error.message });
@@ -134,7 +134,7 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
   }
   const d = parsed.data;
   const now = Date.now();
-  await tx(async client => {
+  const write = async (client: PoolClient) => {
   await assertPersistenceLease(client, taskId, lease);
   await recordRaw(client,'PROFILE',d.handle.toLowerCase(),d,new Date(now),collectorAccount??null);
   await client.query(
@@ -156,5 +156,7 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
   );
   if (taskId !== undefined) await client.query("INSERT INTO x_task_profiles(task_id,handle) VALUES($1,$2) ON CONFLICT DO NOTHING",[taskId,d.handle.toLowerCase()]);
   await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(d)]);
-  });
+  };
+  if (options.client) await write(options.client);
+  else await tx(write);
 }
