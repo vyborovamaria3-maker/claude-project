@@ -15,15 +15,18 @@ import { persistXActionsMemberPage } from "./persist-members";
 type Parsed = { handle?: string; limit?: number; query?: string; list_id?: string; [key: string]: unknown };
 
 export function isXActionsEligible(kind: string, payload: Parsed): boolean {
+  // The legacy archive/discovery jobs use a numeric max_id watermark and
+  // additional history bookkeeping. NEVER route those jobs to opaque HTTP
+  // pagination, regardless of their kind (timeline/profile/search).
+  const legacyArchiveJob = Boolean(
+    payload.history_run_id || payload.history_author || payload.history_since ||
+    payload.history_until || payload.history_max_id || payload.discovery_source ||
+    payload.list_source_id || payload.list_since_id || payload.list_max_id
+  );
+  if (legacyArchiveJob) return false;
   if (kind === "profile" || kind === "timeline") return true;
   if (kind === "members") return typeof payload.list_id === "string" && /^[0-9]{1,25}$/.test(payload.list_id);
-  if (kind !== "search" || typeof payload.query !== "string" || !listId(payload.query)) return false;
-  // Existing historical/list-discovery book-keeping is still browser-only.
-  return !(
-    payload.history_run_id || payload.history_author || payload.history_since || payload.history_until ||
-    payload.history_max_id || payload.discovery_source || payload.list_source_id ||
-    payload.list_since_id || payload.list_max_id
-  );
+  return kind === "search" && typeof payload.query === "string" && listId(payload.query) !== null;
 }
 
 export interface XActionsTaskContext {
