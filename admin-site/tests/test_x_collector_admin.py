@@ -27,6 +27,19 @@ class CollectorApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn('ADMIN_X_COLLECTOR_DSN', response.json()['detail'])
 
+    def test_observation_mode_rejects_mutations_even_with_confirmation(self):
+        a,b = self.setup_database()
+        with a,b,patch.dict(os.environ, {'ADMIN_X_COLLECTOR_READ_ONLY':'true'}):
+            response=self.client.post('/api/x-collector/tables/x_tasks',json={'confirm':True,'values':{'payload':{'a':2}}})
+        self.assertEqual(response.status_code,403)
+        self.assertIn('просмотра',response.json()['detail'])
+
+    def test_archive_and_stage_tables_have_readable_labels(self):
+        from app.x_collector_admin import LABELS, description
+        for table in ('xc_history_posts','xc_history_windows','xc_list_checkpoints','xc_discovery_plan','xc_discovery_sources','xc_account_errors'):
+            self.assertNotEqual(LABELS[table],table)
+            self.assertTrue(description(table))
+
     def test_api_requires_admin(self):
         self.app.dependency_overrides[require_admin] = lambda: (_ for _ in ()).throw(__import__('fastapi').HTTPException(401, 'Login required'))
         for method in ('get','post','patch','delete'):
