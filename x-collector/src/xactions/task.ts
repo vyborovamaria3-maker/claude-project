@@ -89,7 +89,7 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
     await publish({ phase: "saving" });
     await persistXActionsTweetPage({
       ...key, lease,
-      mint: null,
+      mint: sourceKind === "list" ? task.mint : null,
       sourceQuery: sourceKind === "list" ? `list:${sourceKey}` : null,
       previousCursor: nextToFetch,
     }, page);
