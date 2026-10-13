@@ -13,6 +13,8 @@ export interface ReadEndpoints {
   userTweets: GraphqlEndpoint;
   listTimeline: GraphqlEndpoint;
   listMembers?: GraphqlEndpoint;
+  /** Search is diagnostic-only. Never route production keyword jobs here. */
+  searchTimeline?: GraphqlEndpoint;
 }
 
 export interface ReadClient {
@@ -99,6 +101,36 @@ export class XActionsReadEngine {
       throw new Error("XActions: user timeline response shape changed");
     }
     const page = this.parsers.parseTimelineInstructions(instructions(this.parsers.userTimelineInstructions(data)));
+    return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
+  }
+
+  /**
+   * Diagnostic-only GraphQL SearchTimeline read. XActions 3.5.0's HTTP client
+   * uses POST for this operation, unlike the older GET-based scraper.
+   * Do not enable as a worker backend until real 404 diagnostics pass.
+   */
+  async diagnosticSearchPage(
+    query: string,
+    sort: "top" | "latest" = "latest",
+    cursor: string | null = null,
+  ): Promise<CursorPage<RawTweet>> {
+    if (!this.endpoints.searchTimeline) throw new Error("XActions: SearchTimeline endpoint unavailable");
+    if (typeof query !== "string" || !query.trim() || query.length > 500) {
+      throw new Error("XActions: invalid diagnostic search query");
+    }
+    const variables: Record<string, unknown> = {
+      rawQuery: query,
+      count: 20,
+      querySource: "typed_query",
+      product: sort === "latest" ? "Latest" : "Top",
+    };
+    if (cursor) variables.cursor = cursor;
+    const data = await this.graphql(this.endpoints.searchTimeline, variables);
+    const rawInstructions = nested(data, ["search_by_raw_query", "search_timeline", "timeline", "instructions"]);
+    if (!Array.isArray(rawInstructions)) {
+      throw new Error("XActions: SearchTimeline response shape changed");
+    }
+    const page = this.parsers.parseTimelineInstructions(rawInstructions);
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
   }
 
