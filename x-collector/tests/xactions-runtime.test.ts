@@ -38,6 +38,8 @@ test("HTTP quota gate consumes weighted reservation, then extra shared quota", a
 
 test("engine selection excludes historical/discovery and keyword search", () => {
   assert.equal(isXActionsEligible("profile", { handle: "NASA" }), true);
+  assert.equal(isXActionsEligible("members", { list_id: "1878727153048777016" }), true);
+  assert.equal(isXActionsEligible("members", { list_id: "invalid" }), false);
   assert.equal(isXActionsEligible("timeline", { handle: "NASA", limit: 20 }), true);
   assert.equal(isXActionsEligible("search", { query: "list:1945268064792068152" }), true);
   assert.equal(isXActionsEligible("search", { query: "solana" }), false);
@@ -68,10 +70,12 @@ test("injected HTTP client receives cookies, no signing/refresh and no network b
         UserByScreenName: { queryId: "u", operationName: "UserByScreenName" },
         UserTweets: { queryId: "t", operationName: "UserTweets" },
         ListTimeline: { queryId: "l", operationName: "ListLatestTweetsTimeline" },
+        ListMembers: { queryId: "m", operationName: "ListMembers" },
       },
       parseUserData: () => ({ username: "NASA", name: "NASA" }),
       parseTimelineInstructions: () => ({ tweets: [], cursor: null }),
       userTimelineInstructions: () => [],
+      parseUserList: () => ({ users: [], cursor: null }),
     }),
   });
   assert.equal((await engine.profile("NASA")).handle, "NASA");
