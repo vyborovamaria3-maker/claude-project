@@ -26,6 +26,8 @@ export interface XActionsHttpProfile {
   bio?: string | null;
   followers?: Count;
   following?: Count;
+  followersCount?: Count;
+  followingCount?: Count;
   tweets?: Count;
   verified?: boolean | null;
   joined?: string | null;
@@ -102,8 +104,8 @@ export function normalizeXActionsProfile(input: XActionsHttpProfile): AccountPro
     handle: username,
     displayName: input.name ?? null,
     bio: input.bio ?? null,
-    followers: uncertainCount(input.followers),
-    following: uncertainCount(input.following),
+    followers: uncertainCount(input.followers ?? input.followersCount),
+    following: uncertainCount(input.following ?? input.followingCount),
     postsCount: uncertainCount(input.tweets),
     isVerified: input.verified === true,
     joinedAt: timestamp(input.joined),
