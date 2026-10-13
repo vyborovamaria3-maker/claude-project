@@ -92,7 +92,8 @@ npm run xactions:members -- 1878727153048777016 100
 cd x-collector
 npm run typecheck
 npm run lint
-node --import tsx --test tests/xactions-http.test.ts tests/xactions-engine.test.ts tests/xactions-runtime.test.ts
+npm run xactions:verify  # после установки XACTIONS_ROOT, без сетевых запросов к X
+node --import tsx --test tests/xactions-http.test.ts tests/xactions-engine.test.ts tests/xactions-runtime.test.ts tests/xactions-db.test.ts
 npm run test
 ```
 
