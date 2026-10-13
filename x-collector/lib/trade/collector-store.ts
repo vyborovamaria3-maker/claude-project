@@ -103,7 +103,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         id:t.id,text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
         metrics_observed_at:new Date(t.observedAt ?? now).toISOString(),
         public_metrics:{ like_count:t.likes, impression_count:t.views, retweet_count:t.retweets,reply_count:t.replies },
-        browser_observation:t,
+        ...(fromHttp ? { http_observation: t } : { browser_observation: t }),
       })) });
       await storePage(client, sourceKey, archive, raw, received, null);
 
