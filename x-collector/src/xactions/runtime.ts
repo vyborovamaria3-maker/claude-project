@@ -62,6 +62,7 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     userTweets: endpoint("UserTweets"),
     listTimeline: endpoint("ListTimeline"),
     listMembers: endpoint("ListMembers"),
+    searchTimeline: endpoint("SearchTimeline"),
   };
   if (typeof module.userTimelineInstructions !== "function" ||
       typeof module.parseTimelineInstructions !== "function" ||
