@@ -1,6 +1,6 @@
 import type { ScrapeAuthState } from "../../lib/trade/twitter-scraper";
 
-const COOKIE_NAME = /^[A-Za-z0-9_\-]+$/;
+const COOKIE_NAME = /^[A-Za-z0-9_-]+$/;
 
 function isXDomain(value: string): boolean {
   const domain = value.toLowerCase().replace(/^\./, "");
