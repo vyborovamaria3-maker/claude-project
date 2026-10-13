@@ -19,14 +19,16 @@ import { normalizeTweets } from "../x/normalize";
 import { listId } from "../../lib/trade/list-source";
 import { filterHistory, persistHistory } from "../../lib/trade/history-filter";
 import { taskFailure } from "../../lib/trade/task-errors";
+import { executeXActionsReadTask, isXActionsEligible } from "../xactions/task";
+import { HttpAccountQuotaError, httpQuotaWaitMs } from "../xactions/account-http-quota";
 function buildProxy(acc: XAccount) {
   const proxy = parseProxy(acc.proxy_json);
   if (acc.proxy_json && !proxy) throw new Error("PROXY_FAILED: invalid account proxy");
   return proxy;
 }
 
-export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number], context: { workerId: string; registry: WorkerRegistry; signal: AbortSignal; isStopping: () => boolean; useSourceCollector: boolean }): Promise<string> {
-  const { workerId, registry, signal, isStopping, useSourceCollector } = context;
+export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[number], context: { workerId: string; registry: WorkerRegistry; signal: AbortSignal; isStopping: () => boolean; useSourceCollector: boolean; useXActions?: boolean }): Promise<string> {
+  const { workerId, registry, signal, isStopping, useSourceCollector, useXActions = false } = context;
   const cfg = getConfig();
   let progress:Progress={phase:"selecting",found:0,startedAt:Date.now()};
   const publish=async(p:Progress)=>{progress={...progress,...p};if(!await recordProgress(task.id,workerId,task.attempts,progress))throw new Error("task lease lost during progress update");};
@@ -126,7 +128,16 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
         headless: cfg.twitter.headless,
       };
 
-      if (kind === "search") {
+      if (useXActions && isXActionsEligible(kind, payload)) {
+        const t0 = Date.now();
+        await executeXActionsReadTask({
+          task, payload, account: acc, authState,
+          leaseOwner: accountLeaseOwner, workerId,
+          signal: operationSignal, publish,
+        });
+        scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
+        assertLeases();
+      } else if (kind === "search") {
         const p = payload as { query: string; limit: number; sort: "top" | "latest" };
         const t0 = Date.now();
         if (useSourceCollector && !listId(p.query) && p.sort === "latest" && !historical.history_run_id && !(payload as {list_source_id?:string}).list_source_id && !(payload as {discovery_source?:string}).discovery_source) {
@@ -181,6 +192,11 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     else if (failure.code === "ACCESS_REQUIRED") kindErr = "captcha";
     else if (failure.code === "AUTH_EXPIRED") kindErr = "auth_expired";
 
+    if (e instanceof HttpAccountQuotaError && !leaseLost && !isStopping()) {
+      const wait = await httpQuotaWaitMs(acc.name).catch(() => 60000);
+      const ok = await deferTask(task.id, workerId, wait, "XActions account HTTP quota exhausted", task.attempts).catch(() => false);
+      return ok ? "quota-waiting" : "failed";
+    }
     if (!leaseLost && !isStopping()) await recordAccountError(acc.name,e).catch(()=>{});
     if (!leaseLost && !isStopping()) await recordError(acc.name, kindErr, taskFailure(e).retryAfterMs, accountLeaseOwner).catch(() => {});
     const result = isStopping() ? await deferTask(task.id,workerId,5000,"worker shutdown",task.attempts).then(ok=>ok?"requeued" as const:"lost" as const) : await failTask(task.id, workerId, e, task.attempts).catch(() => "lost" as const);
