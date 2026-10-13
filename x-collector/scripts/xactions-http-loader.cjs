@@ -32,6 +32,13 @@ async function loadPinnedXActions(root) {
     throw new Error('XActions: the checkout commit does not match the tested pinned version');
   }
   const entry = path.join(root, 'src', 'scrapers', 'twitter', 'http', 'index.js');
-  return import(pathToFileURL(entry).href);
+  const http = await import(pathToFileURL(entry).href);
+  const tweetParser = await import(pathToFileURL(path.join(root, 'src', 'scrapers', 'twitter', 'http', 'parse', 'tweet.js')).href);
+  const relationshipParser = await import(pathToFileURL(path.join(root, 'src', 'scrapers', 'twitter', 'http', 'relationships.js')).href);
+  return {
+    ...http,
+    userTimelineInstructions: tweetParser.userTimelineInstructions,
+    parseUserList: relationshipParser.parseUserList,
+  };
 }
 module.exports = { loadPinnedXActions };
