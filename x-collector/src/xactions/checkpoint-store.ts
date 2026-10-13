@@ -78,6 +78,18 @@ export async function commitHttpPage(
   write: HttpPageWrite,
   saveItems: (client: PoolClient) => Promise<void>,
 ): Promise<void> {
+  await tx(client => writeHttpPageInTransaction(client, write, saveItems));
+}
+
+/**
+ * Transaction body, exposed for local PGlite tests. A caller MUST hold a
+ * database transaction; production always uses commitHttpPage above.
+ */
+export async function writeHttpPageInTransaction(
+  client: PoolClient,
+  write: HttpPageWrite,
+  saveItems: (client: PoolClient) => Promise<void>,
+): Promise<void> {
   checkKey(write);
   if (!Number.isSafeInteger(write.itemsWritten) || write.itemsWritten < 0) throw new Error("XActions: invalid page size");
   if (write.completed !== (write.nextCursor === null)) throw new Error("XActions: invalid terminal cursor");
@@ -85,7 +97,7 @@ export async function commitHttpPage(
     throw new Error("XActions: invalid next cursor");
   }
 
-  await tx(async client => {
+  {
     const checkLeases = async () => {
       const now = Date.now();
       const task = await client.query(
@@ -137,5 +149,5 @@ export async function commitHttpPage(
       [write.taskId, write.sourceKind, write.sourceKey, write.queryFingerprint,
         write.nextCursor, write.completed, write.itemsWritten, Date.now()],
     );
-  });
+  }
 }
