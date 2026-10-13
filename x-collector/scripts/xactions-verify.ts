@@ -16,7 +16,8 @@ async function main(): Promise<void> {
   }
   const operations = api.GRAPHQL as Record<string, { queryId?: string; operationName?: string }> | undefined;
   for (const key of ["UserByScreenName", "UserTweets", "ListTimeline", "ListMembers"]) {
-    if (!operations?.[key]?.queryId || !operations[key]?.operationName) {
+    const endpoint = operations?.[key];
+    if (!endpoint?.queryId || !endpoint.operationName) {
       throw new Error(`XActions pinned GraphQL operation missing: ${key}`);
     }
   }
