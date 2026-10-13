@@ -31,7 +31,7 @@ export interface XAccount {
   account_claimed_by: string;
 }
 
-export async function pickAccount(kind: RequestKind, leaseOwner: string, preferredAccount?: string): Promise<XAccount | null> {
+export async function pickAccount(kind: RequestKind, leaseOwner: string, preferredAccount?: string, allowFallback = false): Promise<XAccount | null> {
   if (!leaseOwner || leaseOwner.length > 200) throw new Error("Invalid account lease owner");
   const weight = WEIGHTS[kind];
   const now = Date.now();
@@ -39,6 +39,12 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string, preferr
   const leaseMs = getConfig().sessions.leaseMs;
 
   return tx(async (c) => {
+    const available = await c.query("SELECT to_regclass('xc_discovery_plan') AS present");
+    if (available.rows[0]?.present) {
+      await c.query('SELECT pg_advisory_xact_lock(742098535)');
+      const policy = (await c.query('SELECT max_browser_accounts FROM xc_discovery_plan WHERE enabled')).rows[0];
+      if (policy && Number((await c.query("SELECT count(*) AS count FROM x_accounts WHERE role='collector' AND account_busy_until>$1", [now])).rows[0].count) >= policy.max_browser_accounts) return null;
+    }
     await c.query(
       `UPDATE x_accounts SET weight_used_this_hour = 0, hour_window_start = $1
        WHERE hour_window_start < $2`,
@@ -54,10 +60,11 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string, preferr
       `WITH picked AS (
          SELECT name FROM x_accounts
          WHERE role='collector' AND status='active' AND tier != 'retired'
-           AND ($5::text IS NULL OR name=$5)
+           AND ($5::text IS NULL OR name=$5 OR $6)
            AND COALESCE(account_busy_until, 0) <= $2
            AND weight_used_this_hour + $1 <= weight_quota_per_hour
-         ORDER BY CASE tier WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'new' THEN 2 ELSE 3 END,
+         ORDER BY CASE WHEN name=$5 THEN 0 ELSE 1 END,
+                  CASE tier WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'new' THEN 2 ELSE 3 END,
                   weight_used_this_hour ASC,
                   COALESCE(last_success_at, 0) ASC
          LIMIT 1
@@ -76,10 +83,21 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string, preferr
                  x_accounts.user_agent, x_accounts.timezone, x_accounts.language,
                  x_accounts.weight_used_this_hour, x_accounts.weight_quota_per_hour,
                  x_accounts.account_busy_until, x_accounts.account_claimed_by`,
-      [weight, now, now + leaseMs, leaseOwner, preferredAccount ?? null]
+      [weight, now, now + leaseMs, leaseOwner, preferredAccount ?? null, allowFallback]
     );
     return r.rows[0] ?? null;
   });
+}
+
+export async function accountWaitMs(kind: RequestKind, preferredAccount?: string, allowFallback = false): Promise<number> {
+  const now = Date.now();
+  const row = await q1<{ready_at:string|null}>(
+    `SELECT min(greatest($1::bigint,COALESCE(account_busy_until,0),COALESCE(cooldown_until,0),
+      CASE WHEN weight_used_this_hour+$2>weight_quota_per_hour THEN hour_window_start+3600000 ELSE $1::bigint END))::text ready_at
+     FROM x_accounts WHERE role='collector' AND status IN ('active','cooldown') AND tier!='retired'
+       AND weight_quota_per_hour >= $2 AND ($3::text IS NULL OR name=$3 OR $4)`,
+    [now,WEIGHTS[kind],preferredAccount??null,allowFallback]);
+  return row?.ready_at ? Math.max(5000, Math.min(3600000,Number(row.ready_at)-now+1000)) : 60000;
 }
 
 export async function extendAccountLease(name: string, leaseOwner: string, leaseMs: number): Promise<boolean> {

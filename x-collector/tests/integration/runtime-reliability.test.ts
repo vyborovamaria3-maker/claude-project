@@ -62,6 +62,14 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     await pickAccount("profile","new-owner");
     assert.equal(await releaseAccount("fixture",owner),false);
     assert.equal(await releaseAccount("fixture","new-owner"),true);
+    await getPool().query("INSERT INTO x_accounts(name,session_encrypted,hour_window_start,created_at,updated_at) VALUES('cap-second',$1,0,0,0)",[encryptBuffer(Buffer.from('{"cookies":[],"origins":[]}'))]);
+    await getPool().query('UPDATE xc_discovery_plan SET enabled=true,max_browser_accounts=1');
+    const cappedAccounts=await Promise.all([pickAccount('profile','cap-a'),pickAccount('profile','cap-b')]);
+    assert.equal(cappedAccounts.filter(Boolean).length,1,'Global browser cap serializes different accounts across concurrent callers');
+    const cappedIndex=cappedAccounts.findIndex(Boolean);
+    assert.equal(await releaseAccount(cappedAccounts[cappedIndex]!.name,cappedIndex===0?'cap-a':'cap-b'),true);
+    await getPool().query('UPDATE xc_discovery_plan SET enabled=false');
+    await getPool().query("DELETE FROM x_accounts WHERE name='cap-second'");
 
     await enqueueTask({kind:"search",payload:{query:"restart"},maxAttempts:3});
     const [old]=await claimTasks("same-name",1,60000);

@@ -12,7 +12,7 @@ function configureEnvironment(settings=config()){
 process.on('message',m=>{if(m?.stop)stopping=true;});process.on('disconnect',()=>{stopping=true;});
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{stopping=true;});
 async function members(c,run,list,accounts){
- const owner='history-'+run.id;const account=await accounts.pickAccount('search',owner,run.account_name);
+ const owner='history-'+run.id;const account=await accounts.pickAccount('search',owner,run.account_name,true);
  if(!account){await c.query('UPDATE xc_history_runs SET message=$2,updated_at=$3 WHERE id=$1',[run.id,'Ожидание доступного collector и его часовой квоты',Date.now()]);return false;}
  const leaseMs=accounts.leaseMs||300000;
  let leaseLost=false;
@@ -33,6 +33,7 @@ async function members(c,run,list,accounts){
    for(const h of found)await c.query('INSERT INTO xc_history_authors(run_id,list_id,handle) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[run.id,list.list_id,h]);
    await c.query('UPDATE xc_history_runs SET message=$2,updated_at=$3 WHERE id=$1',[run.id,'Чтение участников списка '+list.list_id+': найдено '+seen.size,Date.now()]);
    await page.mouse.wheel(0,1800);await page.waitForTimeout(800);
+   if(stale>=4&&!await page.evaluate(()=>globalThis.window.scrollY+globalThis.window.innerHeight>=globalThis.document.documentElement.scrollHeight-8&&!globalThis.document.querySelector('[role="progressbar"]'))){stale=0;await page.waitForTimeout(2000);}
   }
   if(stopping)return false;if(leaseLost)throw Error('Account lease lost');
   await accounts.recordSuccess(account.name);
@@ -58,6 +59,8 @@ async function tick(c,accounts){
   await c.query('BEGIN');
   try{await advanceWindows(c,run);await queueWindows(c,run);await c.query('COMMIT');}catch(e){await c.query('ROLLBACK');throw e;}
   const remaining=Number((await c.query("SELECT count(*) FROM xc_history_windows WHERE run_id=$1 AND status IN ('pending','queued')",[run.id])).rows[0].count);
+  const incomplete=Number((await c.query("SELECT (SELECT count(*) FROM xc_history_windows WHERE run_id=$1 AND status IN ('failed','partial'))+(SELECT count(*) FROM xc_history_lists WHERE run_id=$1 AND status='failed') AS count",[run.id])).rows[0].count);
+  if(!remaining&&incomplete){await c.query("UPDATE xc_history_runs SET status='paused',message='Есть неполные периоды или списки. Повторите после восстановления доступа X.',updated_at=$2 WHERE id=$1",[run.id,Date.now()]);continue;}
   await c.query("UPDATE xc_history_runs SET status=$2,message=$3,updated_at=$4 WHERE id=$1",[run.id,remaining?'running':'finished',remaining?'Исторический поиск: авторы списков и темы; прогресс сохраняется в базе':'Доступные результаты обработаны. Проверьте ошибки и неполные окна; полнота поиска X не гарантируется.',Date.now()]);
  }
 }
