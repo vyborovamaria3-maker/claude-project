@@ -37,6 +37,7 @@
     "kol:report": "tsx scripts/kol-report.ts",
     "entities:worker": "tsx scripts/entity-worker.ts",
     "enqueue-search": "tsx scripts/enqueue-search.ts",
+    "xactions:members": "tsx scripts/xactions-enqueue-members.ts",
     "enqueue-mints": "tsx scripts/enqueue-mints.ts",
     "worker": "tsx scripts/worker.ts",
     "scheduler": "tsx scripts/scheduler.ts",
