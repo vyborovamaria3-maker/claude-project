@@ -161,6 +161,9 @@ export async function POST(request: Request) {
         await verifyTGInviteLoginLease(authorization, leaseToken);
         const completed = await completeLogin({ phoneCode, password }, ownerId);
         try {
+          // Re-check after the Telegram RPC: a concurrent disconnect may have
+          // invalidated our lease while Telegram was verifying the code.
+          await verifyTGInviteLoginLease(authorization, leaseToken);
           await persistVaultSession(authorization, {
             api_id: completed.apiId,
             api_hash: completed.apiHash,
@@ -173,6 +176,12 @@ export async function POST(request: Request) {
             return NextResponse.json(
               { error: "Telegram session changed concurrently. Start a new login.", status: "session_conflict" },
               { status: 409 },
+            );
+          }
+          if (vaultError instanceof TGInviteLoginLeaseError) {
+            return NextResponse.json(
+              { error: vaultError.message, status: "login_lease_unavailable" },
+              { status: vaultError.status },
             );
           }
           return NextResponse.json(
