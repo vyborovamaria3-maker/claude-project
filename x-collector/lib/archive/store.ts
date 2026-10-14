@@ -7,11 +7,14 @@ import { PoolClient } from "pg";
 import { q1 } from "../trade/pg";
 import { ArchivePage, addresses, validMint } from "./model";
 export function sourceId(url: string, license: string, kind: string): string { return createHash("sha256").update(JSON.stringify([url, license, kind])).digest("hex"); }
-export async function source(name: string, url: string, license: string, kind: "x" | "tweets" | "tokens", metadata: unknown = {}) {
+export async function source(name: string, url: string, license: string, kind: "x" | "tweets" | "tokens", metadata: unknown = {}, client?: PoolClient) {
     if (!name || !license || new URL(url).protocol !== "https:")
         throw new Error("source name, HTTPS provenance and license required");
     const id = sourceId(url, license, kind);
-    await q1("INSERT INTO archive_sources(id,name,url,license,kind,metadata) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(id) DO NOTHING RETURNING id", [id, name, url, license, kind, JSON.stringify(metadata)]);
+    const sql = "INSERT INTO archive_sources(id,name,url,license,kind,metadata) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(id) DO NOTHING RETURNING id";
+    const args = [id, name, url, license, kind, JSON.stringify(metadata)];
+    if (client) await client.query(sql, args);
+    else await q1(sql, args);
     return id;
 }
 export async function rawPage(value: unknown, root = process.env.ARCHIVE_RAW_DIR ?? "data/archive/raw") {
