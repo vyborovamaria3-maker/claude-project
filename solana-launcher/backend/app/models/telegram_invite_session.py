@@ -25,7 +25,9 @@ class TelegramInviteSession(Base):
         index=True,
         nullable=False,
     )
-    encrypted_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    # Null is a revocation tombstone, not an absent owner row.
+    encrypted_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
