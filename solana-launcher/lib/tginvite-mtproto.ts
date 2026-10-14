@@ -303,6 +303,9 @@ export async function startClient(
 }
 
 export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }, ownerId: string): Promise<{ isCodeViaApp: boolean }> {
+  // A new challenge invalidates any existing pending login for this owner.
+  // Disconnect the old Telegram client before replacing it to avoid orphaned sockets.
+  await clearClient(ownerId);
   const tgClient = await createClient(config, ownerId);
   const typedClient = tgClient as TelegramClientLike & {
     sendCode: (
@@ -311,34 +314,37 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
     ) => Promise<{ phoneCodeHash: string; isCodeViaApp: boolean }>;
   };
 
-  await ensureConnected(typedClient);
-  const result = await typedClient.sendCode(
-    { apiId: config.apiId, apiHash: config.apiHash },
-    config.phoneNumber
-  );
+  try {
+    await ensureConnected(typedClient);
+    const result = await typedClient.sendCode(
+      { apiId: config.apiId, apiHash: config.apiHash },
+      config.phoneNumber
+    );
 
-  const challenge: PendingAuth = {
-    createdAt: Date.now(),
-    apiId: config.apiId,
-    apiHash: config.apiHash,
-    phoneNumber: config.phoneNumber,
-    phoneCodeHash: result.phoneCodeHash,
-    isCodeViaApp: result.isCodeViaApp,
-    client: tgClient,
-  };
-  pendingAuthByOwner.set(ownerId, challenge);
-  setClient(tgClient, ownerId);
+    const challenge: PendingAuth = {
+      createdAt: Date.now(),
+      apiId: config.apiId,
+      apiHash: config.apiHash,
+      phoneNumber: config.phoneNumber,
+      phoneCodeHash: result.phoneCodeHash,
+      isCodeViaApp: result.isCodeViaApp,
+      client: tgClient,
+    };
+    pendingAuthByOwner.set(ownerId, challenge);
 
-  // Best-effort early cleanup in long-running workers. Expiry is enforced
-  // independently in completeLogin, even if the timer never executes.
-  const cleanup = setTimeout(() => {
-    if (pendingAuthByOwner.get(ownerId) === challenge) {
-      void clearClient(ownerId);
-    }
-  }, PENDING_LOGIN_TTL_MS);
-  cleanup.unref?.();
+    const cleanup = setTimeout(() => {
+      if (pendingAuthByOwner.get(ownerId) === challenge) {
+        void clearClient(ownerId);
+      }
+    }, PENDING_LOGIN_TTL_MS);
+    cleanup.unref?.();
 
-  return { isCodeViaApp: result.isCodeViaApp };
+    return { isCodeViaApp: result.isCodeViaApp };
+  } catch (error) {
+    // Failed sendCode/connect must not retain a live socket or a stale challenge.
+    await clearClient(ownerId);
+    throw error;
+  }
 }
 
 export async function completeLogin(params: {
