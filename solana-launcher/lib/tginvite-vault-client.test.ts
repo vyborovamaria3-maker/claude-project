@@ -107,6 +107,13 @@ describe("TGInvite cross-worker vault invalidation (mocked)", () => {
   it("does not delete a newer central session after stale local authorization fails", async () => {
     const fetcher = mockVaultResponse(200);
     vi.mocked(isAuthorized).mockResolvedValue(false);
+    // createClient registers the newly restored client in the real owner map.
+    // Model that side effect so the cleanup path is actually reachable.
+    const restored = active(stored.session_string);
+    vi.mocked(createClient).mockResolvedValue(restored);
+    vi.mocked(getClient)
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(restored);
 
     expect(await resolveTGInviteClient(ownerId, authorization)).toBeNull();
     expect(clearClient).toHaveBeenCalledWith(ownerId);
