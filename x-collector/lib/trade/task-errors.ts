@@ -15,6 +15,8 @@ export function retryAfterMs(value: string | undefined, now = Date.now()): numbe
 export function taskFailure(error: unknown): { code: string; permanent: boolean; retryAfterMs: number } {
   const message = error instanceof Error ? error.message : String(error);
   const status = error instanceof CollectorHttpError ? error.status : Number(message.match(/(?:HTTP\s*|status\s*[:=]?\s*)(\d{3})/i)?.[1]);
+  if (/^XACTIONS_ENDPOINT_UNAVAILABLE/.test(message))
+    return { code: "ENDPOINT_UNAVAILABLE", permanent: false, retryAfterMs: 120_000 };
   if (/^XACTIONS_ACCESS_UNVERIFIED/.test(message))
     return { code: "ACCESS_UNVERIFIED", permanent: false, retryAfterMs: 120_000 };
   if (/^XACTIONS_ACCESS_DENIED/.test(message))

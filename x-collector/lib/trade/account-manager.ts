@@ -31,7 +31,7 @@ export interface XAccount {
   account_claimed_by: string;
 }
 
-export async function pickAccount(kind: RequestKind, leaseOwner: string, preferredAccount?: string, allowFallback = false): Promise<XAccount | null> {
+export async function pickAccount(kind: RequestKind, leaseOwner: string, preferredAccount?: string, allowFallback = false, requireProxy = false): Promise<XAccount | null> {
   if (!leaseOwner || leaseOwner.length > 200) throw new Error("Invalid account lease owner");
   const weight = WEIGHTS[kind];
   const now = Date.now();
@@ -61,6 +61,7 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string, preferr
          SELECT name FROM x_accounts
          WHERE role='collector' AND status='active' AND tier != 'retired'
            AND ($5::text IS NULL OR name=$5 OR $6)
+           AND (NOT $7::boolean OR proxy_json IS NOT NULL)
            AND COALESCE(account_busy_until, 0) <= $2
            AND weight_used_this_hour + $1 <= weight_quota_per_hour
          ORDER BY CASE WHEN name=$5 THEN 0 ELSE 1 END,
@@ -83,20 +84,21 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string, preferr
                  x_accounts.user_agent, x_accounts.timezone, x_accounts.language,
                  x_accounts.weight_used_this_hour, x_accounts.weight_quota_per_hour,
                  x_accounts.account_busy_until, x_accounts.account_claimed_by`,
-      [weight, now, now + leaseMs, leaseOwner, preferredAccount ?? null, allowFallback]
+      [weight, now, now + leaseMs, leaseOwner, preferredAccount ?? null, allowFallback, requireProxy]
     );
     return r.rows[0] ?? null;
   });
 }
 
-export async function accountWaitMs(kind: RequestKind, preferredAccount?: string, allowFallback = false): Promise<number> {
+export async function accountWaitMs(kind: RequestKind, preferredAccount?: string, allowFallback = false, requireProxy = false): Promise<number> {
   const now = Date.now();
   const row = await q1<{ready_at:string|null}>(
     `SELECT min(greatest($1::bigint,COALESCE(account_busy_until,0),COALESCE(cooldown_until,0),
       CASE WHEN weight_used_this_hour+$2>weight_quota_per_hour THEN hour_window_start+3600000 ELSE $1::bigint END))::text ready_at
      FROM x_accounts WHERE role='collector' AND status IN ('active','cooldown') AND tier!='retired'
-       AND weight_quota_per_hour >= $2 AND ($3::text IS NULL OR name=$3 OR $4)`,
-    [now,WEIGHTS[kind],preferredAccount??null,allowFallback]);
+       AND weight_quota_per_hour >= $2 AND ($3::text IS NULL OR name=$3 OR $4)
+       AND (NOT $5::boolean OR proxy_json IS NOT NULL)`,
+    [now,WEIGHTS[kind],preferredAccount??null,allowFallback,requireProxy]);
   return row?.ready_at ? Math.max(5000, Math.min(3600000,Number(row.ready_at)-now+1000)) : 60000;
 }
 

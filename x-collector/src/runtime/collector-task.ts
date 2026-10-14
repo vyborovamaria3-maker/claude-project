@@ -20,7 +20,7 @@ import { listId } from "../../lib/trade/list-source";
 import { filterHistory, persistHistory } from "../../lib/trade/history-filter";
 import { taskFailure } from "../../lib/trade/task-errors";
 import { executeXActionsReadTask, isXActionsEligible, HttpPartialProgressError } from "../xactions/task";
-import { HttpAccountQuotaError, HttpAccountLeaseError, httpQuotaWaitMs } from "../xactions/account-http-quota";
+import { HttpAccountQuotaError, HttpAccountLeaseError, httpQuotaWaitMs, createHttpQuotaGate, reserveAdditionalHttpRequest } from "../xactions/account-http-quota";
 import { HttpNoProgressError } from "../xactions/pagination";
 function buildProxy(acc: XAccount) {
   const proxy = parseProxy(acc.proxy_json);
@@ -63,10 +63,12 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     }
   }
   const accountLeaseOwner = `${workerId.slice(0, 150)}:${task.id}:${randomUUID().slice(0, 8)}`;
+  const useLegacyHttpSearch = useXActions && task.kind === "search" && process.env.X_SEARCH_HTTP_COMPAT === "true";
+  const needsProxy = useLegacyHttpSearch || (useXActions && isXActionsEligible(task.kind, payload, task.payloadJson));
   let account: XAccount | null;
   try {
     account = await pickAccount(task.kind === "search" ? "search"
-      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner, (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true);
+      : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner, (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true, needsProxy);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await failTask(task.id, workerId, `pickAccount: ${msg}`, task.attempts).catch(() => {});
@@ -75,7 +77,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
 
   if (!account) {
     await publish({phase:"waiting"}).catch(()=>{});
-    const wait = await accountWaitMs(task.kind === 'timeline' ? 'timeline' : (task.kind === 'profile' || task.kind === 'members') ? 'profile' : 'search', (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true).catch(()=>60000);
+    const wait = await accountWaitMs(task.kind === 'timeline' ? 'timeline' : (task.kind === 'profile' || task.kind === 'members') ? 'profile' : 'search', (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true, needsProxy).catch(()=>60000);
     await deferTask(task.id, workerId, wait, "no available account; waiting for lease or quota", task.attempts).catch(() => false);
     return "no-account";
   }
@@ -122,7 +124,8 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
           const query=kind==="search"?(payload as {query:string}).query:null;
           const listPayload=payload as {list_source_id?:string;discovery_source?:string;list_since_id?:string;list_max_id?:string};
           const selected=filterHistory(tweets,historical).filter(t=>!(listPayload.list_source_id||listPayload.discovery_source) || ((!listPayload.list_since_id || BigInt(t.id)>BigInt(listPayload.list_since_id)) && (!listPayload.list_max_id || BigInt(t.id)<=BigInt(listPayload.list_max_id))));
-          await persistTweets(kind==="search"?task.mint:null,selected,listPayload.list_source_id?`list:${listPayload.list_source_id}`:query,task.id,acc.name,persistenceLease);
+          await persistTweets(kind==="search"?task.mint:null,selected,listPayload.list_source_id?`list:${listPayload.list_source_id}`:query,task.id,acc.name,persistenceLease,
+            useLegacyHttpSearch ? { transport: "http" } : {});
           if(historical.history_run_id)await persistHistory(historical.history_run_id,task.id);
           assertLeases();await publish({phase:"collecting"});
         },
@@ -131,6 +134,8 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
         timezone: acc.timezone ?? undefined,
         language: acc.language ?? undefined,
         headless: cfg.twitter.headless,
+        beforeHttpRequest: useXActions ? createHttpQuotaGate("search",
+          weight => reserveAdditionalHttpRequest(acc.name, accountLeaseOwner, weight)) : undefined,
       };
 
       if (useXActions && isXActionsEligible(kind, payload, task.payloadJson)) {
@@ -145,7 +150,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
       } else if (kind === "search") {
         const p = payload as { query: string; limit: number; sort: "top" | "latest" };
         const t0 = Date.now();
-        if (useSourceCollector && !listId(p.query) && p.sort === "latest" && !historical.history_run_id && !(payload as {list_source_id?:string}).list_source_id && !(payload as {discovery_source?:string}).discovery_source) {
+        if (useSourceCollector && !useLegacyHttpSearch && !listId(p.query) && p.sort === "latest" && !historical.history_run_id && !(payload as {list_source_id?:string}).list_source_id && !(payload as {discovery_source?:string}).discovery_source) {
           const tweets = await handleSearchTask(task, { getAccount: async () => acc, signal: operationSignal });
           assertLeases();
           await persistTweets(task.mint, normalizeTweets(tweets), p.query, task.id, acc.name, persistenceLease);
@@ -215,7 +220,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
 
     // A private/forbidden resource is a task permission issue, not evidence
     // of a broken authenticated session or a CAPTCHA challenge.
-    if (failure.code !== "ACCESS_DENIED" && failure.code !== "ACCESS_UNVERIFIED" &&
+    if (failure.code !== "ACCESS_DENIED" && failure.code !== "ACCESS_UNVERIFIED" && failure.code !== "ENDPOINT_UNAVAILABLE" &&
         !(e instanceof HttpNoProgressError) && !leaseLost && !isStopping()) {
       await recordAccountError(acc.name,e).catch(()=>{});
       await recordError(acc.name, kindErr, failure.retryAfterMs, accountLeaseOwner).catch(() => {});

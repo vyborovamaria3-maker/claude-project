@@ -1,11 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { XActionsReadEngine, verifyHttpPageEnd, type ReadClient, type ReadParsers } from "../src/xactions/engine";
+import { XActionsReadEngine, verifyHttpPageEnd, normalizeTimelineInstructions, isSearchCursorOnlyEnd, type ReadClient, type ReadParsers } from "../src/xactions/engine";
 
 const validTweet = {
   id: "1878727153048777016", text: "hello", author: { username: "NASA" },
   metrics: { likes: 10 }, createdAt: "2026-10-12T00:00:00.000Z",
 };
+
+test("only the measured top/bottom cursor-only search response ends a search", () => {
+  const pair = ["Top", "Bottom"].map(cursorType => ({ type: "TimelineReplaceEntry",
+    entry: { content: { __typename: "TimelineTimelineCursor", cursorType, value: "opaque" } } }));
+  assert.equal(isSearchCursorOnlyEnd(pair, 0), true);
+  assert.equal(isSearchCursorOnlyEnd(pair, 1), false);
+  assert.equal(isSearchCursorOnlyEnd([pair[0]], 0), false);
+  assert.equal(isSearchCursorOnlyEnd([pair[0], pair[0]], 0), false);
+  assert.equal(isSearchCursorOnlyEnd([...pair, { type: "TimelineAddEntries", entries: [] }], 0), false);
+});
+
+test("live replacement cursors reach the pinned SDK without losing add-entry data", () => {
+  const first = { type: "TimelineAddEntries", entries: [{ entryId: "tweet-1" }] };
+  const bottom = { content: { __typename: "TimelineTimelineCursor", cursorType: "Bottom", value: "opaque-next" } };
+  const terminal = { type: "TimelineTerminateTimeline" };
+  assert.deepEqual(normalizeTimelineInstructions([first,
+    { type: "TimelineReplaceEntry", entry_id_to_replace: "cursor-bottom-old", entry: bottom }, terminal]),
+  [first, { type: "TimelineAddEntries", entries: [{ ...bottom, entryId: "cursor-bottom-old" }] }, terminal]);
+  assert.deepEqual(normalizeTimelineInstructions([{ type: "TimelineReplaceEntry" }]), [{ type: "TimelineReplaceEntry" }]);
+});
 
 const endpoints = {
   userByScreenName: { queryId: "a", operationName: "UserByScreenName" },

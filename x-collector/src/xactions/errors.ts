@@ -41,6 +41,7 @@ export function toCollectorError(error: unknown): Error {
     }
     return new XActionsAmbiguousForbiddenError();
   }
+  if (status === 404) return new Error("XACTIONS_ENDPOINT_UNAVAILABLE: HTTP 404; refresh query IDs or verify source access");
   if (status !== undefined && Number.isInteger(status) && status >= 400 && status <= 599) {
     const resetAt = typeof details.resetAt === "number" && Number.isFinite(details.resetAt)
       ? details.resetAt : 0;

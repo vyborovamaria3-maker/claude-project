@@ -3,6 +3,23 @@ import {test} from 'node:test';
 import {createRequire} from 'node:module';
 import fs from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
+test('history producer queues two distinct windows when collector policy permits two accounts',async()=>{
+ const db=new PGlite();
+ try{
+  for(const file of REQUIRED)await db.exec(await fs.readFile('migrations/'+file,'utf8'));
+  const c={query:async(sql:string,args:unknown[]=[])=>{const r=await db.query(sql,args);return {rows:r.rows,rowCount:r.rows.length||r.affectedRows};}};
+  await db.exec(`INSERT INTO xc_history_runs(id,since_date,until_date,topics_json,created_at,updated_at) VALUES('parallel-run','2026-01-01','2026-02-01','[]',0,0);
+   UPDATE xc_discovery_plan SET enabled=true,history_run_id='parallel-run',max_browser_accounts=2;
+   INSERT INTO xc_history_windows(run_id,base_query,author_handle,since_date,until_date,status) VALUES
+   ('parallel-run','from:alice','alice','2026-01-01','2026-02-01','pending'),
+   ('parallel-run','from:bob','bob','2026-01-01','2026-02-01','pending');`);
+  await queueWindows(c,{id:'parallel-run',account_name:'collector'});
+  const rows=(await db.query<{id:number}>('SELECT id FROM x_tasks')).rows;
+  assert.equal(rows.length,2);assert.notEqual(rows[0].id,rows[1].id);
+  await queueWindows(c,{id:'parallel-run',account_name:'collector'});
+  assert.equal((await db.query('SELECT id FROM x_tasks')).rows.length,2);
+ }finally{await db.close();}
+});
 import {REQUIRED} from '../lib/trade/migrations';
 const load=createRequire(__filename);
 const {tickDiscovery,readiness}=load('../scripts/discovery-core.cjs');

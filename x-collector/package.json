@@ -39,6 +39,7 @@
     "enqueue-search": "tsx scripts/enqueue-search.ts",
     "xactions:members": "tsx scripts/xactions-enqueue-members.ts",
     "xactions:verify": "tsx scripts/xactions-verify.ts",
+    "xactions:refresh": "node scripts/xactions-refresh.cjs",
     "xactions:status": "tsx scripts/xactions-status.ts",
     "xactions:archive-gc": "tsx scripts/xactions-archive-gc.ts",
     "enqueue-mints": "tsx scripts/enqueue-mints.ts",
