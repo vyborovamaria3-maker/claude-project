@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-
 from app.services.telegram_collector.user_history import (
     normalize_public_channel,
     safe_message_record,

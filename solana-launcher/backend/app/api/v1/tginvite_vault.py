@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_subscriber
 from app.db.session import get_db
 from app.models.telegram_invite_session import TelegramInviteSession
-from app.services.telegram_collector.user_history import load_public_history, normalize_public_channel
+from app.services.telegram_collector.user_history import (
+    load_public_history,
+    normalize_public_channel,
+)
 from app.services.telegram_invite_vault import (
     TelegramInviteVaultError,
     _key,
