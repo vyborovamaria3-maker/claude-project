@@ -33,6 +33,7 @@ interface PendingAuth {
 }
 const clients = new Map<string, Record<string, unknown>>();
 const pendingAuthByOwner = new Map<string, PendingAuth>();
+const inFlightLoginCodes = new Set<string>();
 
 export interface MTProtoConfig {
   apiId: number;
@@ -306,6 +307,9 @@ export async function startClient(
 
 export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }, ownerId: string, leaseToken: string): Promise<{ isCodeViaApp: boolean }> {
   if (!leaseToken || leaseToken.length < 32) throw new Error("Shared Telegram login lease required");
+  // Block read-only status/resolution requests from tearing down a socket
+  // while sendCode is still awaiting Telegram's code-delivery response.
+  inFlightLoginCodes.add(ownerId);
   // A new challenge invalidates any existing pending login for this owner.
   // Disconnect the old Telegram client before replacing it to avoid orphaned sockets.
   await clearClient(ownerId);
@@ -348,12 +352,18 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
     // Failed sendCode/connect must not retain a live socket or a stale challenge.
     await clearClient(ownerId);
     throw error;
+  } finally {
+    inFlightLoginCodes.delete(ownerId);
   }
 }
 
 export function getPendingLoginLease(ownerId: string): string | null {
   const challenge = pendingAuthByOwner.get(ownerId);
   return challenge && !isPendingLoginExpired(challenge.createdAt) ? challenge.leaseToken : null;
+}
+
+export function hasTGInviteLoginInProgress(ownerId: string): boolean {
+  return inFlightLoginCodes.has(ownerId) || getPendingLoginLease(ownerId) !== null;
 }
 
 export async function completeLogin(params: {
