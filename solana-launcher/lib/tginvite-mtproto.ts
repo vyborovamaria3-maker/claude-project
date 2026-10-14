@@ -173,7 +173,7 @@ function scoreRecentAnalysis(analysis: Omit<RecentChannelAnalysis, "essenceScore
   };
 }
 
-function toRawMember(user: Record<string, unknown>): RawMember | null {
+export function toRawMember(user: Record<string, unknown>): RawMember | null {
   const type = String(user._ || user.className || "");
   if (type && !/^(user|User)$/i.test(type)) return null;
 
@@ -186,7 +186,7 @@ function toRawMember(user: Record<string, unknown>): RawMember | null {
     username: getString(user, "username", "username"),
     firstName: getString(user, "first_name", "firstName"),
     lastName: getString(user, "last_name", "lastName"),
-    phone: getString(user, "phone", "phone"),
+    // Do not expose contact information to the browser or analytics exports.
     isBot: getBoolean(user, "bot", "bot"),
     isPremium: getBoolean(user, "premium", "premium"),
     isScam: getBoolean(user, "scam", "scam"),
@@ -195,7 +195,7 @@ function toRawMember(user: Record<string, unknown>): RawMember | null {
     photo: photo ? { isPersonal: Boolean(photo.personal) } : undefined,
     langCode: getString(user, "lang_code", "langCode"),
     restrictionReason: undefined,
-    accessHash: getString(user, "access_hash", "accessHash"),
+    // MTProto access hashes are credentials for user operations, not profile metadata.
     lastSeen: undefined,
     createdAt: undefined,
   };
@@ -208,20 +208,12 @@ function toRawMember(user: Record<string, unknown>): RawMember | null {
     } else if (/userStatusOffline/i.test(statusType)) {
       const wasOnline = getNumber(status, "was_online", "wasOnline");
       if (wasOnline) member.lastSeen = new Date(wasOnline * 1000);
-    } else if (/userStatusRecently/i.test(statusType)) {
-      member.lastSeen = new Date(Date.now() - 3 * 86400000);
-    } else if (/userStatusLastWeek/i.test(statusType)) {
-      member.lastSeen = new Date(Date.now() - 7 * 86400000);
-    } else if (/userStatusLastMonth/i.test(statusType)) {
-      member.lastSeen = new Date(Date.now() - 30 * 86400000);
     }
+    // Telegram approximate statuses deliberately remain unknown, not fabricated dates.
   }
 
-  const createdAt = getNumber(user, "date", "date");
-  if (createdAt) {
-    member.createdAt = new Date(createdAt * 1000);
-  }
-
+  // User.date is not a verified account-registration timestamp.
+  // Keep createdAt unset unless trustworthy provenance is added.
   return member;
 }
 
