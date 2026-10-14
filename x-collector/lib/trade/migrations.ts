@@ -35,4 +35,7 @@ export const REQUIRED = [
   "038_analytics_bigint_durations.sql",
   "039_list_checkpoints.sql",
   "040_discovery.sql",
+  "041_xactions_checkpoints.sql",
+  "042_xactions_list_members.sql",
+  "043_xactions_progress.sql",
 ];

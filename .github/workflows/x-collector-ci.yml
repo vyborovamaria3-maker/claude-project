@@ -42,6 +42,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run build
+      - run: node scripts/check-built-runtime.cjs
       - run: npm run test:db
         env:
           RUNTIME_TEST_DATABASE_URL: postgresql://collector:isolated_ci_fixture@127.0.0.1:5432/x_collector_test

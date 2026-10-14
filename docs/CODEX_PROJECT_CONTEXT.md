@@ -1,5 +1,7 @@
 # X Collector Runtime v2 context
 
+XActions is an opt-in additional HTTP reader, not a replacement for automatic list/history/discovery collection. See x-collector/XACTIONS_INTEGRATION_RU.md for activation prerequisites and rollback. Compiled runtime packaging and absolute transport deadlines are checked before merge; real X terminal-page compatibility is a separate live activation gate.
+
 See architecture/CURRENT_ARCHITECTURE.md and DEPENDENCY_MAP.md. Initial review used the supplied ZIP; subsequent fixes use the GitHub checkout including the merged stabilization work. PostgreSQL owns tasks, account leases, encrypted sessions and collection progress. Playwright collects posts in durable batches. Migration 039 adds per-list checkpoints for paginated and incremental collection. Automated collection may explicitly fall back between collector accounts; manual selection stays strict. Fresh updates take priority over backfill, and partial passes remain visible. AI analysis and the reply runtime remain separate from collection. See architecture/COLLECTION_EFFICIENCY.md for current behavior and live limitations.
 
 Migration 040 provides optional staged discovery: complete the three configured lists and their requested author archive before broader thematic searches. Continuous sources and checkpoints are database-backed, with one global collector account lease by default. Search coverage is not all of X and does not establish price correlation. See architecture/STAGED_DISCOVERY.md.

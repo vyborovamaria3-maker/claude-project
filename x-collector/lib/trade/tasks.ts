@@ -7,7 +7,7 @@ import { redactText, scrub } from "./logger";
 import { taskFailure } from "./task-errors";
 import { advisoryKey } from "./advisory";
 
-export type TaskKind = "search" | "timeline" | "profile";
+export type TaskKind = "search" | "timeline" | "profile" | "members";
 export type TaskStatus = "pending" | "claimed" | "done" | "failed";
 /** JSONB-полезная нагрузка: структура определяется kind и валидируется схемой. */
 type JsonbPayload = unknown;
@@ -75,7 +75,10 @@ export async function enqueueTask(p: EnqueueParams): Promise<number | null> {
     [p.kind, JSON.stringify(p.payload), p.mint ?? null,
      p.handle?.toLowerCase() ?? null, p.priority ?? 0, availableAt, now, key, maxAttempts]
   )).rows[0]);
-  return row?.id ?? null;
+  if (!row) return null;
+  const id = Number(row.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error("Collector task ID exceeds safe integer range");
+  return id;
 }
 
 export interface BatchEnqueueResult {
@@ -157,7 +160,12 @@ export async function claimTasks(workerId: string, limit: number, leaseMs: numbe
                  attempts, max_attempts AS "maxAttempts", claimed_by AS "claimedBy"`,
       [workerId, now, now + leaseMs, limit]
     );
-    return r.rows;
+    // pg decodes BIGINT as string; all caller contracts require a safe number.
+    return r.rows.map(row => {
+      const id = Number(row.id);
+      if (!Number.isSafeInteger(id) || id < 1) throw new Error("Collector task ID exceeds safe integer range");
+      return { ...row, id };
+    });
   });
 }
 

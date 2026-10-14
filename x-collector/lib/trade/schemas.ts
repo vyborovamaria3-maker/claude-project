@@ -29,6 +29,11 @@ export const ProfilePayload = z.object({
   handle: Handle,
 });
 
+export const MembersPayload = z.object({
+  list_id: z.string().regex(/^\d{1,25}$/),
+  limit: z.number().int().min(1).max(1000).default(100),
+});
+
 export const TweetSchema = z.object({
   id: z.string().regex(/^\d{15,25}$/),
   text: z.string().max(50_000),
@@ -67,6 +72,7 @@ export function parseTaskPayload(kind: string, raw: unknown) {
     case "search": return SearchPayload.parse(json);
     case "timeline": return TimelinePayload.parse(json);
     case "profile": return ProfilePayload.parse(json);
+    case "members": return MembersPayload.parse(json);
     default: throw new Error(`unknown kind: ${kind}`);
   }
 }

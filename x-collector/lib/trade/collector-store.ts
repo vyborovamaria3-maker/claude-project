@@ -2,7 +2,7 @@ import { TweetSchema, ProfileSchema } from "./schemas";
 import { processTweetEntities } from "../../src/intelligence/entities/processor";
 import { tx } from "./pg";
 import { log } from "./logger";
-import { source, rawPage, storePage } from "../archive/store";
+import { source, sourceId, rawPage, storePage } from "../archive/store";
 import { Page } from "../archive/model";
 import {recordRaw,recordRawBatch} from './intelligence-store';
 import type { PoolClient } from "pg";
@@ -19,7 +19,9 @@ async function assertPersistenceLease(client: PoolClient, taskId: number | undef
     [lease.accountName, lease.accountOwner, now]);
   if (!account.rows.length) throw new Error("account lease lost before persistence");
 }
-export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease) {
+export interface TweetPersistenceOptions { client?: PoolClient; transport?: "browser" | "http"; }
+export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease, options: TweetPersistenceOptions = {}): Promise<number> {
+  let newTaskLinks = 0;
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
   let rejected = 0;
@@ -29,11 +31,19 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     else rejected++;
   }
   if (rejected > 0) throw new Error(`collector rejected ${rejected} malformed tweets`);
-  if (valid.length === 0) return;
+  if (valid.length === 0) return 0;
 
   const now = Date.now();
   const BATCH = 200;
-  const sourceKey = await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
+  // A page checkpoint and all of its posts must share one transaction.
+  if (options.client && valid.length > BATCH) throw new Error("XActions: HTTP page exceeds transactional batch limit");
+  const fromHttp = options.transport === "http";
+  // archive.sourceId hashes URL/license/kind (not name). Distinct URLs keep
+  // HTTP observations from inheriting the old browser-only source metadata.
+  const httpSourceUrl = "https://x.com/i/api/graphql";
+  const sourceKey = fromHttp
+    ? sourceId(httpSourceUrl, "X platform terms", "x")
+    : await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
 
   for (let i = 0; i < valid.length; i += BATCH) {
     const chunk = valid.slice(i, i + BATCH);
@@ -42,8 +52,15 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     const raw = await rawPage({ tweets: chunk, sourceQuery, received_at: received.toISOString() });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
-    await tx(async (client) => {
+    const writeChunk = async (client: PoolClient): Promise<number> => {
+      let newlyLinked = 0;
       await assertPersistenceLease(client, taskId, lease);
+      // HTTP provenance must be committed or rolled back with its page/cursor.
+      // Browser-source behavior is deliberately unchanged.
+      if (fromHttp) {
+        await source("X HTTP collector", httpSourceUrl, "X platform terms", "x",
+          { transport: "HTTP GraphQL" }, client);
+      }
       await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
       const values: unknown[] = [];
       const placeholders = chunk.map((t, j) => {
@@ -73,7 +90,13 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         values
       );
 
-      if (taskId !== undefined) await client.query("INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",[taskId,chunk.map(t=>t.id)]);
+      if (taskId !== undefined) {
+        const inserted = await client.query(
+          "INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",
+          [taskId, chunk.map(t=>t.id)],
+        );
+        newlyLinked = inserted.rowCount ?? 0;
+      }
       const snapshots = chunk.map(t => ({ id:t.id, observed_at:new Date(t.observedAt ?? now).toISOString(), raw:t }));
       await client.query(`INSERT INTO twitter_tweet_observations(tweet_id,observed_at,raw)
         SELECT x.id,x.observed_at,x.raw FROM jsonb_to_recordset($1::jsonb) AS x(id text,observed_at timestamptz,raw jsonb)
@@ -99,7 +122,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         id:t.id,text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
         metrics_observed_at:new Date(t.observedAt ?? now).toISOString(),
         public_metrics:{ like_count:t.likes, impression_count:t.views, retweet_count:t.retweets,reply_count:t.replies },
-        browser_observation:t,
+        ...(fromHttp ? { http_observation: t } : { browser_observation: t }),
       })) });
       await storePage(client, sourceKey, archive, raw, received, null);
 
@@ -116,21 +139,32 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
           linkVals
         );
       }
-    });
+      return newlyLinked;
+    };
+    // Only count successful transaction results; tx() may retry rollbacks.
+    newTaskLinks += options.client ? await writeChunk(options.client) : await tx(writeChunk);
   }
+  return newTaskLinks;
 }
 
-export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string, lease?: PersistenceLease) {
+export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string, lease?: PersistenceLease, options: { client?: PoolClient; transport?: "browser" | "http" } = {}): Promise<number> {
   const parsed = ProfileSchema.safeParse(p);
   if (!parsed.success) {
     log.warn("profile rejected by schema", { error: parsed.error.message });
     throw new Error("collector rejected malformed profile");
   }
   const d = parsed.data;
+  const incomingEvidence = (p && typeof p === "object" && !Array.isArray(p))
+    ? (p as { verificationEvidence?: unknown }).verificationEvidence : undefined;
+  const verificationEvidence = options.transport !== "http" ? (d.isVerified ? "verified" : "unverified")
+    : d.isVerified ? "verified"
+    : incomingEvidence === "unverified" ? "unverified" : "unknown";
   const now = Date.now();
-  await tx(async client => {
+  const write = async (client: PoolClient): Promise<number> => {
+  let newlyLinked = 0;
   await assertPersistenceLease(client, taskId, lease);
-  await recordRaw(client,'PROFILE',d.handle.toLowerCase(),d,new Date(now),collectorAccount??null);
+  const observedProfile = options.transport === "http" ? { ...d, verificationEvidence } : d;
+  await recordRaw(client,'PROFILE',d.handle.toLowerCase(),observedProfile,new Date(now),collectorAccount??null);
   await client.query(
     `INSERT INTO twitter_profiles
        (handle, display_name, bio, followers, following, posts_count, is_verified, joined_at, avatar_url, first_seen_at, last_seen_at)
@@ -141,14 +175,27 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
        followers    = COALESCE(EXCLUDED.followers, twitter_profiles.followers),
        following    = COALESCE(EXCLUDED.following, twitter_profiles.following),
        posts_count  = COALESCE(EXCLUDED.posts_count, twitter_profiles.posts_count),
-       is_verified  = EXCLUDED.is_verified,
+       -- Unknown HTTP verification never downgrades known data. An explicit
+       -- GraphQL verification=false may revoke the previous true value.
+       is_verified = CASE $11::text
+         WHEN 'verified' THEN TRUE
+         WHEN 'unverified' THEN FALSE
+         ELSE twitter_profiles.is_verified END,
        joined_at    = COALESCE(EXCLUDED.joined_at, twitter_profiles.joined_at),
        avatar_url   = COALESCE(EXCLUDED.avatar_url, twitter_profiles.avatar_url),
        last_seen_at = EXCLUDED.last_seen_at`,
     [d.handle.toLowerCase(), d.displayName, d.bio, d.followers, d.following, d.postsCount,
-     d.isVerified, d.joinedAt, d.avatarUrl, now]
+     d.isVerified, d.joinedAt, d.avatarUrl, now, verificationEvidence]
   );
-  if (taskId !== undefined) await client.query("INSERT INTO x_task_profiles(task_id,handle) VALUES($1,$2) ON CONFLICT DO NOTHING",[taskId,d.handle.toLowerCase()]);
-  await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(d)]);
-  });
+  if (taskId !== undefined) {
+    const inserted = await client.query(
+      "INSERT INTO x_task_profiles(task_id,handle) VALUES($1,$2) ON CONFLICT DO NOTHING",
+      [taskId,d.handle.toLowerCase()],
+    );
+    newlyLinked = inserted.rowCount ?? 0;
+  }
+  await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(observedProfile)]);
+  return newlyLinked;
+  };
+  return options.client ? write(options.client) : tx(write);
 }
