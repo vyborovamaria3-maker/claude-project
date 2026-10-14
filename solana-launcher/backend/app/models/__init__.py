@@ -42,6 +42,7 @@ from app.models.social_intelligence import (
     TelegramTokenMention,
     TelegramUser,
 )
+from app.models.telegram_invite_session import TelegramInviteSession
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
 from app.models.twitter_crawler_run import TwitterCrawlerRun
@@ -72,6 +73,7 @@ __all__ = [
     "User",
     "SubscriptionOrder",
     "SubscriptionSettings",
+    "TelegramInviteSession",
     "TelegramChannel",
     "TelegramUser",
     "TelegramMessage",

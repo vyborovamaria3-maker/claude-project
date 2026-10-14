@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     frontend_internal_url: str = Field(
         default="http://frontend:3000", alias="FRONTEND_INTERNAL_URL"
     )
+    tginvite_internal_key: str = Field(default="", alias="TG_INVITE_INTERNAL_KEY")
+    tginvite_session_encryption_key: str = Field(
+        default="", alias="TG_INVITE_SESSION_ENCRYPTION_KEY"
+    )
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_api_id: int | None = Field(default=None, alias="TG_API_ID")
     telegram_api_hash: str = Field(default="", alias="TG_API_HASH")
