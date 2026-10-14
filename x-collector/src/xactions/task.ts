@@ -72,21 +72,22 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
     sourceKind === "members" ? String(payload.list_id) : listId(String(payload.query))!;
   const limit = Number(payload.limit);
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("XActions: invalid task limit");
-  // Each XActions GraphQL page requests 20 items. Finish pages, never discard
-  // half of a page while moving the opaque cursor past unseen data.
-  const totalPages = Math.ceil(limit / 20);
+  // HTTP pages do not guarantee 20 posts/members each. Bound one attempt,
+  // and continue later from the durable cursor if more pages are required.
+  const pageBudget = Math.min(250, Math.max(15, Math.ceil(limit / 20) * 5));
   const authorId = sourceKind === "timeline" ? await engine.resolveUserId(sourceKey) : null;
   const key: HttpCheckpointKey = {
     taskId: task.id, sourceKind, sourceKey,
     queryFingerprint: httpQueryFingerprint({ sourceKind, sourceKey, authorId, limit, graphQlCount: 20, version: "3.5.0" }),
   };
   const saved = await loadHttpCheckpoint(key);
-  if (saved?.completed || (saved && saved.pagesCommitted >= totalPages)) return;
+  if (saved?.completed || (saved && saved.itemsCommitted >= limit)) return;
   let nextToFetch = saved?.cursor ?? null;
-  const remaining = totalPages - (saved?.pagesCommitted ?? 0);
   let totalItems = saved?.itemsCommitted ?? 0;
+  const pageOptions = { initialCursor: nextToFetch, maxPages: pageBudget,
+    stopAfterItems: limit, itemsCommittedBefore: totalItems, signal };
   if (sourceKind === "members") {
-    await runCursorPages(async cursor => {
+    const result = await runCursorPages(async cursor => {
       signal.throwIfAborted();
       return engine.listMembersPage(sourceKey, cursor);
     }, async page => {
@@ -98,9 +99,12 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
       nextToFetch = page.nextCursor;
       totalItems += page.items.length;
       await publish({ phase: "collecting", found: totalItems, limit });
-    }, { initialCursor: nextToFetch, maxPages: remaining, signal });
+    }, pageOptions);
+    if (!result.completed && result.itemsCommitted < limit) {
+      throw new Error("XActions: HTTP page budget exhausted before task item target; cursor saved");
+    }
   } else {
-    await runCursorPages(async cursor => {
+    const result = await runCursorPages(async cursor => {
       signal.throwIfAborted();
       return sourceKind === "timeline" ? engine.timelinePage(authorId!, cursor) : engine.listPage(sourceKey, cursor);
     }, async page => {
@@ -115,6 +119,9 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
       nextToFetch = page.nextCursor;
       totalItems += page.items.length;
       await publish({ phase: "collecting", found: totalItems, limit });
-    }, { initialCursor: nextToFetch, maxPages: remaining, signal });
+    }, pageOptions);
+    if (!result.completed && result.itemsCommitted < limit) {
+      throw new Error("XActions: HTTP page budget exhausted before task item target; cursor saved");
+    }
   }
 }
