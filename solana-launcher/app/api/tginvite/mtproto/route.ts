@@ -1,4 +1,4 @@
-import { consumeTGInviteLoginAttempt, consumeTGInviteReadPermit, persistVaultSession, resolveTGInviteClient, revokeVaultSession } from "@/lib/tginvite-vault-client";
+import { consumeTGInviteLoginAttempt, consumeTGInviteReadPermit, persistVaultSession, resolveTGInviteClient, revokeVaultSession, TGInviteVaultConflict } from "@/lib/tginvite-vault-client";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode } from "@/lib/tginvite-mtproto";
@@ -141,9 +141,15 @@ export async function POST(request: Request) {
             api_hash: completed.apiHash,
             session_string: completed.sessionString,
           });
-        } catch {
+        } catch (vaultError: unknown) {
           // Never report a non-persisted Telegram session as a successful login.
           await clearClient(ownerId);
+          if (vaultError instanceof TGInviteVaultConflict) {
+            return NextResponse.json(
+              { error: "Telegram session changed concurrently. Start a new login.", status: "session_conflict" },
+              { status: 409 },
+            );
+          }
           return NextResponse.json(
             { error: "Telegram session could not be saved securely; reconnect and retry" },
             { status: 503 },
