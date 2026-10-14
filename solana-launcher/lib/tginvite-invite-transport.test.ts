@@ -32,6 +32,7 @@ const recipients = Array.from({ length: 12 }, (_, i) => ({
 describe("mocked Telegram invitation transport", () => {
   it("reconciles missing recipients instead of counting full batch as success", async () => {
     const { client, invoke, getEntity } = fakeClient(async (count) => ({
+      updates: { updates: [] },
       missingInvitees: count === 1 ? [{ userId: 1005 }] : [],
     }));
     const result = await inviteUsers(client, "@owned_sandbox", recipients);
@@ -61,5 +62,31 @@ describe("mocked Telegram invitation transport", () => {
       invited: 0, failed: 0, unknown: 10, unattempted: 2,
     });
     expect(invoke).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("recipient validation before any Telegram call", () => {
+  it("rejects duplicate recipient IDs without network effects", async () => {
+    const { client, invoke, getEntity } = fakeClient(async () => ({
+      updates: {}, missingInvitees: [],
+    }));
+    const res = await inviteUsers(client, "@owned_sandbox", [
+      { id: 1, accessHash: "x" }, { id: 1, accessHash: "y" },
+    ]);
+    expect(res).toMatchObject({ invited: 0, unknown: 0, unattempted: 2 });
+    expect(getEntity).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe JavaScript integer IDs without trying to invite anyone", async () => {
+    const { client, invoke, getEntity } = fakeClient(async () => ({
+      updates: {}, missingInvitees: [],
+    }));
+    const res = await inviteUsers(client, "@owned_sandbox", [{
+      id: Number.MAX_SAFE_INTEGER + 2, accessHash: "x",
+    }]);
+    expect(res.unattempted).toBe(1);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(getEntity).not.toHaveBeenCalled();
   });
 });

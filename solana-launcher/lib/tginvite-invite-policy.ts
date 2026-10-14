@@ -97,6 +97,11 @@ export function reconcileInviteToChannelResult(
   });
   if (!response || typeof response !== "object" || Array.isArray(response)) return failClosed();
   const result = response as Record<string, unknown>;
+  // messages.InvitedUsers always contains Updates. A forged or truncated
+  // missingInvitees array alone cannot confirm any successful invitations.
+  if (!result.updates || typeof result.updates !== "object" || Array.isArray(result.updates)) {
+    return failClosed();
+  }
   // GramJS camelCase field, or MTProto snake_case serialized output.
   const missing = result.missingInvitees ?? result.missing_invitees;
   if (!Array.isArray(missing)) return failClosed();

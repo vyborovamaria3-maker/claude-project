@@ -629,6 +629,14 @@ export async function inviteUsers(
   let unknown = 0;
   let attempted = 0;
   const errors: string[] = [];
+  // Never hand rounded, non-positive or duplicate JavaScript IDs to Telegram.
+  if (users.some((u) => !Number.isSafeInteger(u.id) || u.id < 1) ||
+      new Set(users.map((u) => u.id)).size !== users.length) {
+    return {
+      invited: 0, failed: 0, unknown: 0, unattempted: users.length,
+      errors: ["Invalid or duplicate Telegram recipient IDs"],
+    };
+  }
   const client = tgClient as {
     connected?: boolean;
     connect?: () => Promise<void>;
@@ -646,8 +654,8 @@ export async function inviteUsers(
       const inputUsers = batch.map((u) => new Api.InputUser({
         userId: u.id as never, accessHash: u.accessHash as never,
       }));
-      attempted += batch.length;
       try {
+        attempted += batch.length;
         const response = await client.invoke(new Api.channels.InviteToChannel({
           channel: entity as never,
           users: inputUsers as never,

@@ -69,6 +69,7 @@ describe("MTProto invitation receipt reconciliation (mocked results only)", () =
 
   it("accepts snake_case MTProto serialization and large user IDs", () => {
     const result = reconcileInviteToChannelResult([9007199254740993n], {
+      updates: {},
       missing_invitees: [{ user_id: "9007199254740993" }],
     });
     expect(result.declined).toBe(1);
@@ -78,11 +79,12 @@ describe("MTProto invitation receipt reconciliation (mocked results only)", () =
   it("handles GramJS integer objects without unsafe JS number conversion", () => {
     const bigIntegerLike = { toString: () => "9007199254740993" };
     const result = reconcileInviteToChannelResult(["9007199254740993"], {
+      updates: {},
       missingInvitees: [{ userId: bigIntegerLike }],
     });
     expect(result).toMatchObject({ invited: 0, declined: 1, unknown: 0 });
     const unsafe = reconcileInviteToChannelResult([Number.MAX_SAFE_INTEGER + 2], {
-      missingInvitees: [],
+      updates: {}, missingInvitees: [],
     });
     expect(unsafe).toMatchObject({ invited: 0, unknown: 1 });
   });
@@ -101,7 +103,10 @@ describe("MTProto invitation receipt reconciliation (mocked results only)", () =
       invited: 0, declined: 0, unknown: 2,
     });
     expect(reconcileInviteToChannelResult([1], {
-      missingInvitees: [{ userId: 99 }],
+      updates: {}, missingInvitees: [{ userId: 99 }],
+    }).unknown).toBe(1);
+    expect(reconcileInviteToChannelResult([1], {
+      missingInvitees: [],
     }).unknown).toBe(1);
     expect(reconcileInviteToChannelResult([1, 1], {
       missingInvitees: [],
