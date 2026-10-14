@@ -24,6 +24,10 @@ FIELDS = (
 def _cell(value: Any) -> str:
     if value is None:
         return ""
+    # Trusted typed numbers must retain their numeric value in CSV (including negatives).
+    # User-controlled strings still require formula protection.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
     text = str(value)
     # CSV formula injection protection for downstream spreadsheet viewers.
     if text.lstrip().startswith(("=", "+", "-", "@")):
