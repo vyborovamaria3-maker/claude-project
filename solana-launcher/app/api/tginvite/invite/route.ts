@@ -3,6 +3,7 @@ import {
   InvalidInviteRequest,
   batchInviteLinkName,
   validateInviteLinkRequest,
+  safeInviteError,
 } from "@/lib/tginvite-invite-policy";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
       }
       const chatResult = await getChatInfo(options.token, options.chatId);
       if (!chatResult.success) {
-        return NextResponse.json({ error: chatResult.error || "Chat not accessible" }, { status: 400 });
+        return NextResponse.json({ error: safeInviteError(chatResult.error || "Chat not accessible", options.token) }, { status: 400 });
       }
 
       if (action === "createLink") {
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
           createsJoinRequest: options.createsJoinRequest,
         });
         if (!result.success || !result.inviteLink) {
-          return NextResponse.json({ error: result.error || "Telegram did not create the link" }, { status: 400 });
+          return NextResponse.json({ error: safeInviteError(result.error || "Telegram did not create the link", options.token) }, { status: 400 });
         }
         return NextResponse.json(
           { link: result.inviteLink, chat: chatResult.chat, status: "created" },
@@ -64,23 +65,27 @@ export async function POST(request: Request) {
       const links: NonNullable<Awaited<ReturnType<typeof createInviteLink>>["inviteLink"]>[] = [];
       let failure: string | undefined;
       for (let i = 0; i < options.count; i++) {
-        const result = await createInviteLink(options.token, options.chatId, {
-          name: batchInviteLinkName(options.name, i + 1),
-          expireDate: options.expireDate,
-          memberLimit: options.createsJoinRequest ? undefined : (options.memberLimit ?? 1),
-          createsJoinRequest: options.createsJoinRequest,
-        });
-        if (!result.success || !result.inviteLink) {
-          failure = result.error || "Telegram did not return an invite link";
-          // Avoid additional mutations when Telegram has already rejected one.
+        try {
+          const result = await createInviteLink(options.token, options.chatId, {
+            name: batchInviteLinkName(options.name, i + 1),
+            expireDate: options.expireDate,
+            memberLimit: options.createsJoinRequest ? undefined : (options.memberLimit ?? 1),
+            createsJoinRequest: options.createsJoinRequest,
+          });
+          if (!result.success || !result.inviteLink) {
+            failure = safeInviteError(result.error || "Telegram did not return an invite link", options.token);
+            break;
+          }
+          links.push(result.inviteLink);
+        } catch (error) {
+          failure = safeInviteError(error, options.token);
           break;
         }
-        links.push(result.inviteLink);
       }
       return NextResponse.json(
         {
           links, count: links.length, requestedCount: options.count,
-          status: failure ? "partial" : "completed",
+          status: failure ? (links.length ? "partial" : "failed") : "completed",
           ...(failure ? { error: failure } : {}),
         },
         { headers: { "Cache-Control": "private, no-store" } },

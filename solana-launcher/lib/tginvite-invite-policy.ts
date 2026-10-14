@@ -103,3 +103,10 @@ export function reconcileInviteToChannelResult(
     declinedUserIds: [...failures],
   };
 }
+
+/** Avoid echoing bot tokens or unbounded upstream exception strings to clients. */
+export function safeInviteError(error: unknown, token: string): string {
+  const message = typeof error === "string" ? error :
+    error instanceof Error ? error.message : "Telegram operation failed";
+  return (token ? message.replaceAll(token, "[redacted]") : message).slice(0, 300);
+}

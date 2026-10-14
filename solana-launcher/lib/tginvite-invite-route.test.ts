@@ -92,6 +92,20 @@ describe("TGInvite invitation endpoint mocked integration", () => {
     expect((await response.json()).status).toBe("created");
   });
 
+  it("does not leak bot tokens and stops after a thrown Telegram error", async () => {
+    vi.mocked(createInviteLink).mockRejectedValueOnce(
+      new Error(`Bot token ${params.token} was rejected`),
+    );
+    const response = await POST(request({
+      ...params, action: "batchLinks", linkCount: 3,
+    }));
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result).toMatchObject({ count: 0, requestedCount: 3, status: "failed" });
+    expect(JSON.stringify(result)).not.toContain(params.token);
+    expect(createInviteLink).toHaveBeenCalledTimes(1);
+  });
+
   it("reports partial batches honestly and stops after first Telegram error", async () => {
     vi.mocked(createInviteLink)
       .mockResolvedValueOnce({
