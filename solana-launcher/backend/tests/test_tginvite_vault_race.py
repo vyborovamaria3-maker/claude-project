@@ -7,11 +7,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from fastapi import Request
-from sqlalchemy.exc import IntegrityError
-
 from app.api.v1.tginvite_vault import StoredTelegramSession, store_session
 from app.services.telegram_invite_vault import decrypt_session
+from fastapi import Request
+from sqlalchemy.exc import IntegrityError
 
 KEY = base64.b64encode(b"z" * 32).decode("ascii")
 
@@ -41,7 +40,9 @@ class _CompetingInsertSession:
     async def commit(self):
         self.commits += 1
         if self.commits == 1:
-            raise IntegrityError("INSERT telegram_invite_sessions", {}, RuntimeError("unique owner_id"))
+            raise IntegrityError(
+                "INSERT telegram_invite_sessions", {}, RuntimeError("unique owner_id")
+            )
 
     async def rollback(self):
         self.rolled_back = True
