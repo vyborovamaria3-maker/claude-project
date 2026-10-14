@@ -13,9 +13,19 @@ export interface PageCommit<T> extends CursorPage<T> {
   completed: boolean;
 }
 
+/** Cursor advances but no new records are ever persisted; do not loop forever. */
+export class HttpNoProgressError extends Error {
+  constructor(readonly pageCount: number) {
+    super("XACTIONS_NO_PROGRESS: repeated pages contain no new unique items");
+    this.name = "HttpNoProgressError";
+  }
+}
+
 export interface CursorRunOptions {
   initialCursor?: string | null;
   maxPages: number;
+  /** Stop after this many consecutive persisted pages without new unique items. */
+  maxPagesWithoutNewItems?: number;
   /** Optional task item target; a cursor after this target is not exhaustion. */
   stopAfterItems?: number;
   /** Already persisted items when resuming an HTTP checkpoint. */
@@ -39,6 +49,11 @@ export async function runCursorPages<T>(
     throw new Error("XActions: maxPages must be a positive integer");
   }
 
+  const maxWithoutNew = options.maxPagesWithoutNewItems ?? 5;
+  if (!Number.isSafeInteger(maxWithoutNew) || maxWithoutNew < 1) {
+    throw new Error("XActions: invalid no-progress threshold");
+  }
+  let consecutiveEmpty = 0;
   const stopAfter = options.stopAfterItems;
   const prior = options.itemsCommittedBefore ?? 0;
   if (stopAfter !== undefined && (!Number.isSafeInteger(stopAfter) || stopAfter < 1)) {
@@ -77,9 +92,12 @@ export async function runCursorPages<T>(
       throw new Error("XActions: invalid unique page commit count");
     }
     cursor = page.nextCursor;
-    itemsCommitted += committedCount === undefined ? page.items.length : committedCount;
+    const uniqueAdded = committedCount === undefined ? page.items.length : committedCount;
+    itemsCommitted += uniqueAdded;
+    consecutiveEmpty = uniqueAdded === 0 ? consecutiveEmpty + 1 : 0;
 
     if (completed) return { pagesCommitted: pageNumber, itemsCommitted, nextCursor: null, completed: true };
+    if (consecutiveEmpty >= maxWithoutNew) throw new HttpNoProgressError(consecutiveEmpty);
     // Never discard the remainder of an HTTP page. The target is a minimum
     // observed count and the opaque next cursor stays durable for later reads.
     if (stopAfter !== undefined && itemsCommitted >= stopAfter) {
