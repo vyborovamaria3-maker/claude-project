@@ -130,3 +130,27 @@ test("timeline reader refuses empty GraphQL data without a confirmed terminal ma
   });
   await assert.rejects(reader.timelinePage("123456"), /ambiguous timeline end/);
 });
+
+test("ListTimeline without bottom cursor or terminal instruction cannot mark task done", async () => {
+  const client: ReadClient = { graphql: async () => ({
+    data: { list: { tweets_timeline: { timeline: { instructions: [{ type: "TimelineAddEntries", entries: [] }] } } } },
+  }) };
+  const reader = new XActionsReadEngine(client, endpoints, {
+    ...parsers,
+    parseTimelineInstructions: () => ({ tweets: [], cursor: null }),
+  });
+  await assert.rejects(reader.listPage("1945268064792068152"), /ambiguous timeline end/);
+});
+
+test("explicit absence of verification is distinct from upstream parser default false", async () => {
+  const client: ReadClient = { graphql: async () => ({
+    data: { user: { result: { rest_id: "123", verification: { verified: false } } },
+  } }) };
+  const reader = new XActionsReadEngine(client, endpoints, {
+    ...parsers,
+    parseUserData: () => ({ username: "NASA", verified: false }),
+  });
+  const profile = await reader.profile("NASA");
+  assert.equal(profile.verificationEvidence, "unverified");
+  assert.equal(profile.isVerified, false);
+});
