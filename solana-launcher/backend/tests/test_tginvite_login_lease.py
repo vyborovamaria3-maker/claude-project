@@ -69,6 +69,7 @@ async def test_login_lease_blocks_competing_workers_and_cannot_release_new_owner
         assert first.status_code == 200
         assert first.headers["cache-control"] == "private, no-store"
         token = first.json()["token"]
+        assert first.json()["generation"] == 0
         assert len(token) >= 32
 
         competing = await client.post(path, headers=headers, json={"action": "acquire"})
