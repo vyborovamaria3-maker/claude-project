@@ -53,6 +53,21 @@ async def test_webhook_proof_hashing_replay_and_reconsent(test_app):
         assert "123456789" not in first.recipient_digest
         assert "123456789" not in first.proof_digest
 
+        another_owner = await create_user(db)
+        await db.commit()
+        # One authentic Telegram update cannot be reused for another owner,
+        # another chat, or a different alleged recipient.
+        with pytest.raises(ConsentLedgerError):
+            await record_verified_opt_in(db, proof(another_owner), hmac_key=KEY)
+        with pytest.raises(ConsentLedgerError):
+            await record_verified_opt_in(
+                db,
+                VerifiedTelegramOptIn(**{
+                    **proof(owner).__dict__, "recipient_telegram_id": "555555555",
+                }),
+                hmac_key=KEY,
+            )
+
         revoked = await revoke_recipient_opt_in(
             db, owner_id=owner, destination_chat_id="-100123456789",
             recipient_digest=first.recipient_digest,
