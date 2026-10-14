@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_subscriber
+from app.core.rate_limit import RateLimitResult, RateLimiterUnavailable
 from app.db.session import get_db
 from app.models.telegram_invite_session import TelegramInviteSession
 from app.services.telegram_collector.user_history import (
@@ -25,6 +26,21 @@ from app.services.telegram_invite_vault import (
 )
 
 router = APIRouter()
+
+
+async def _telegram_limit(
+    request: Request, key: str, *, limit: int, window_seconds: int
+) -> RateLimitResult:
+    """Use cross-worker quotas in production; never fail open on a Redis outage."""
+    strict = request.app.state.settings.environment.strip().lower() in {"production", "prod"}
+    try:
+        return await request.app.state.rate_limiter.allow(
+            key, limit=limit, window_seconds=window_seconds, require_shared=strict
+        )
+    except RateLimiterUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail="Telegram request protection unavailable"
+        ) from exc
 
 
 class StoredTelegramSession(BaseModel):
@@ -143,10 +159,9 @@ async def limit_telegram_login_attempt(
         "complete_login": (8, 600),
     }
     limit, period = caps[payload.kind]
-    result = await request.app.state.rate_limiter.allow(
-        f"tginvite-login:{payload.kind}:{owner.id}",
-        limit=limit,
-        window_seconds=period,
+    result = await _telegram_limit(
+        request, f"tginvite-login:{payload.kind}:{owner.id}",
+        limit=limit, window_seconds=period,
     )
     if not result.allowed:
         raise HTTPException(
@@ -177,10 +192,9 @@ async def rate_limit_telegram_reads(
         "validate_candidates": (2, 60),
     }
     limit, window_seconds = caps[payload.kind]
-    result = await request.app.state.rate_limiter.allow(
-        f"tginvite-read:{payload.kind}:{owner.id}",
-        limit=limit,
-        window_seconds=window_seconds,
+    result = await _telegram_limit(
+        request, f"tginvite-read:{payload.kind}:{owner.id}",
+        limit=limit, window_seconds=window_seconds,
     )
     if not result.allowed:
         raise HTTPException(
@@ -213,8 +227,8 @@ async def read_user_channel_history(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    rate = await request.app.state.rate_limiter.allow(
-        f"tg-history:{owner.id}", limit=6, window_seconds=60
+    rate = await _telegram_limit(
+        request, f"tg-history:{owner.id}", limit=6, window_seconds=60
     )
     if not rate.allowed:
         raise HTTPException(
