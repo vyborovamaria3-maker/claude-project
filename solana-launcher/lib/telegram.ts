@@ -5,7 +5,8 @@ import { Telegraf } from "telegraf";
  * A request may use its own token without replacing another user's bot.
  */
 export function getBot(token?: string): Telegraf | null {
-  const botToken = token || process.env.TELEGRAM_BOT_TOKEN;
+  // An explicitly empty token must not silently select the process-wide bot.
+  const botToken = token ?? process.env.TELEGRAM_BOT_TOKEN;
   return botToken ? new Telegraf(botToken) : null;
 }
 
@@ -14,9 +15,17 @@ export async function verifyBotToken(token: string): Promise<{
   botInfo?: { id: number; username: string; firstName: string };
   error?: string;
 }> {
-  // verifyBotToken tests an arbitrary token, so we can't reuse the singleton
-  const testBot = new Telegraf(token);
+  // Reject malformed credentials before constructing a Bot API client.
+  // Never put upstream exception text into a response: Telegraf errors can
+  // contain URLs with the secret bot token embedded in their path.
+  if (typeof token !== "string" ||
+      token.length > 256 ||
+      !/^\\d{5,20}:[A-Za-z0-9_-]{30,}$/.test(token)) {
+    return { valid: false, error: "Invalid Telegram bot token format" };
+  }
+  let testBot: Telegraf | null = null;
   try {
+    testBot = new Telegraf(token);
     const info = await testBot.telegram.getMe();
     try { await testBot.stop(); } catch {}
     return {
@@ -27,13 +36,9 @@ export async function verifyBotToken(token: string): Promise<{
         firstName: info.first_name,
       },
     };
-  } catch (err: unknown) {
-    try { await testBot.stop(); } catch {}
-    const error = err as { response?: { description?: string }; message?: string };
-    return {
-      valid: false,
-      error: error.response?.description || error.message || "Invalid token",
-    };
+  } catch {
+    try { await testBot?.stop(); } catch {}
+    return { valid: false, error: "Invalid or inaccessible Telegram bot token" };
   }
 }
 
