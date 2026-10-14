@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Loader2, MessageSquareText } from "lucide-react";
 import { buildHistoryCsv, buildHistoryJson } from "@/lib/tginvite-history-export";
 
@@ -24,10 +24,21 @@ export default function AuthorizedHistoryPanel({ username }: { username: string 
   const [source, setSource] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
+  const requestId = useRef(0);
+  const currentUsername = username.trim();
+  useEffect(() => {
+    // Do not display or export messages collected for a previously selected channel.
+    requestId.current += 1;
+    setMessages([]);
+    setSource("");
+    setStatus("");
+    setLoading(false);
+  }, [currentUsername]);
   const valid = /^@?[A-Za-z][A-Za-z0-9_]{4,31}$/.test(username.trim());
 
   async function preview() {
     if (!valid) return;
+    const id = ++requestId.current;
     setLoading(true);
     setStatus("");
     setMessages([]);
@@ -40,6 +51,7 @@ export default function AuthorizedHistoryPanel({ username }: { username: string 
         cache: "no-store",
       });
       const data = await response.json() as HistoryResponse & { error?: string };
+      if (id !== requestId.current) return;
       if (!response.ok) {
         setStatus(data.error || "Unable to read channel history");
         return;
@@ -48,9 +60,9 @@ export default function AuthorizedHistoryPanel({ username }: { username: string 
       setMessages(data.messages || []);
       setStatus(data.count === 0 ? "No visible recent messages" : "");
     } catch {
-      setStatus("The Telegram history service is unavailable");
+      if (id === requestId.current) setStatus("The Telegram history service is unavailable");
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   }
 
