@@ -38,7 +38,7 @@ async def user_and_token(test_app):
 async def test_job_list_and_cancel_are_owner_scoped_and_do_not_expose_proofs(test_app, client):
     test_app.state.settings.tginvite_internal_key = SERVICE_KEY
     owner_a, token_a = await user_and_token(test_app)
-    owner_b, token_b = await user_and_token(test_app)
+    _, token_b = await user_and_token(test_app)
     a = {"Authorization": f"Bearer {token_a}", "X-TGInvite-Service-Key": SERVICE_KEY}
     b = {"Authorization": f"Bearer {token_b}", "X-TGInvite-Service-Key": SERVICE_KEY}
     path = "/api/v1/tginvite/invite-jobs"
