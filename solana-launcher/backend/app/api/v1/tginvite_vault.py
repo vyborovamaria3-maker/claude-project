@@ -6,6 +6,7 @@ import hmac
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -232,10 +233,8 @@ async def telegram_login_lease(
                 raise HTTPException(
                     status_code=409, detail="Another Telegram login is in progress"
                 )
-            return Response(
-                content='{"token":"' + token + '"}',
-                status_code=200,
-                media_type="application/json",
+            return JSONResponse(
+                {"token": token},
                 headers={"Cache-Control": "private, no-store"},
             )
         if payload.action == "verify":
