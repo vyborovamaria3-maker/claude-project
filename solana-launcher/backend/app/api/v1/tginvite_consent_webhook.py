@@ -60,7 +60,8 @@ async def receive_telegram_join_request(
             status_code=503, detail="TGInvite consent webhook disabled"
         ) from exc
 
-    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
         raise HTTPException(status_code=415, detail="Expected JSON")
     declared = request.headers.get("content-length")
     if declared and (not declared.isdecimal() or int(declared) > MAX_WEBHOOK_BYTES):
