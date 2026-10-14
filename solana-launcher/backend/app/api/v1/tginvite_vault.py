@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -119,6 +120,40 @@ async def delete_session(
     if row is not None:
         await db.delete(row)
         await db.commit()
+    return Response(status_code=204)
+
+
+class TelegramLoginAttemptRequest(BaseModel):
+    kind: Literal["send_code", "complete_login"]
+
+
+@router.post("/login-attempt", status_code=204, dependencies=[Depends(_internal_only)])
+async def limit_telegram_login_attempt(
+    payload: TelegramLoginAttemptRequest,
+    request: Request,
+    owner=Depends(get_current_subscriber),
+) -> Response:
+    """Shared per-user login throttle, enforced before any Telegram auth request.
+
+    The existing rate-limiter uses Redis when available and a memory fallback in
+    development; configure Redis for cross-worker enforcement in production.
+    """
+    caps = {
+        "send_code": (3, 600),
+        "complete_login": (8, 600),
+    }
+    limit, period = caps[payload.kind]
+    result = await request.app.state.rate_limiter.allow(
+        f"tginvite-login:{payload.kind}:{owner.id}",
+        limit=limit,
+        window_seconds=period,
+    )
+    if not result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many Telegram login attempts",
+            headers={"Retry-After": str(result.retry_after)},
+        )
     return Response(status_code=204)
 
 
