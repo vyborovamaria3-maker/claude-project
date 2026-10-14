@@ -48,12 +48,28 @@ class RateLimiter:
         redis = self._redis
         if redis is None:
             return await self._allow_memory(key, limit=limit, window_seconds=window_seconds)
-        count = await redis.incr(key)
-        if count == 1:
-            await redis.expire(key, window_seconds)
-        ttl = await redis.ttl(key)
+        # INCR and EXPIRE must be one atomic operation. A crash between
+        # independent calls would otherwise leave a non-expiring quota key.
+        result = await redis.eval(
+            """
+            local count = redis.call('INCR', KEYS[1])
+            if count == 1 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+            end
+            local ttl = redis.call('TTL', KEYS[1])
+            if ttl < 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+                ttl = redis.call('TTL', KEYS[1])
+            end
+            return {count, ttl}
+            """,
+            1,
+            key,
+            window_seconds,
+        )
+        count, ttl = int(result[0]), int(result[1])
         remaining = max(0, limit - count)
-        retry_after = ttl if isinstance(ttl, int) and ttl > 0 else window_seconds
+        retry_after = ttl if ttl > 0 else window_seconds
         return RateLimitResult(allowed=count <= limit, remaining=remaining, retry_after=retry_after)
 
     async def _allow_memory(self, key: str, *, limit: int, window_seconds: int) -> RateLimitResult:
