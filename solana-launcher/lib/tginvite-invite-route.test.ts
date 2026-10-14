@@ -10,12 +10,13 @@ vi.mock("@/lib/tginvite-vault-client", () => ({
 vi.mock("@/lib/telegram", () => ({
   createInviteLink: vi.fn(),
   getChatInfo: vi.fn(),
+  checkBotInviteRights: vi.fn(),
 }));
 
 import { POST } from "@/app/api/tginvite/invite/route";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { consumeTGInviteReadPermit } from "@/lib/tginvite-vault-client";
-import { createInviteLink, getChatInfo } from "@/lib/telegram";
+import { checkBotInviteRights, createInviteLink, getChatInfo } from "@/lib/telegram";
 
 function request(body: unknown) {
   return new Request("https://example.test/api/tginvite/invite", {
@@ -33,6 +34,7 @@ beforeEach(() => {
     authorization: "Bearer mock",
   });
   vi.mocked(consumeTGInviteReadPermit).mockResolvedValue({ allowed: true, status: 204 });
+  vi.mocked(checkBotInviteRights).mockResolvedValue({ allowed: true });
   vi.mocked(getChatInfo).mockResolvedValue({
     success: true, chat: { id: -100123, title: "Owned sandbox", type: "supergroup" },
   });
@@ -77,6 +79,24 @@ describe("TGInvite invitation endpoint mocked integration", () => {
     });
     const response = await POST(request(params));
     expect(response.status).toBe(503);
+    expect(createInviteLink).not.toHaveBeenCalled();
+  });
+
+  it("fails closed if the bot lacks invite rights", async () => {
+    vi.mocked(checkBotInviteRights).mockResolvedValueOnce({
+      allowed: false, reason: "Bot needs administrator rights to invite users",
+    });
+    const response = await POST(request(params));
+    expect(response.status).toBe(403);
+    expect(createInviteLink).not.toHaveBeenCalled();
+  });
+
+  it("fails closed if rights lookup cannot verify the bot", async () => {
+    vi.mocked(checkBotInviteRights).mockResolvedValueOnce({
+      allowed: false, reason: "Unable to verify bot invite permissions",
+    });
+    const response = await POST(request(params));
+    expect(response.status).toBe(403);
     expect(createInviteLink).not.toHaveBeenCalled();
   });
 

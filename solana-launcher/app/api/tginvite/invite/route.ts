@@ -7,7 +7,7 @@ import {
 } from "@/lib/tginvite-invite-policy";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
-import { createInviteLink, getChatInfo } from "@/lib/telegram";
+import { checkBotInviteRights, createInviteLink, getChatInfo } from "@/lib/telegram";
 import { filterMembers, getFilterSummary, FilterConfig, DEFAULT_FILTER_CONFIG } from "@/lib/tginvite-filter";
 import { fetchChannelMembers } from "@/lib/tginvite-mtproto";
 
@@ -44,6 +44,13 @@ export async function POST(request: Request) {
       const chatResult = await getChatInfo(options.token, options.chatId);
       if (!chatResult.success) {
         return NextResponse.json({ error: safeInviteError(chatResult.error || "Chat not accessible", options.token) }, { status: 400 });
+      }
+      const permission = await checkBotInviteRights(options.token, options.chatId);
+      if (!permission.allowed) {
+        return NextResponse.json(
+          { error: permission.reason || "Bot cannot create invite links" },
+          { status: 403 },
+        );
       }
 
       if (action === "createLink") {

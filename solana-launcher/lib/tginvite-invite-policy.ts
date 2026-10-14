@@ -108,5 +108,17 @@ export function reconcileInviteToChannelResult(
 export function safeInviteError(error: unknown, token: string): string {
   const message = typeof error === "string" ? error :
     error instanceof Error ? error.message : "Telegram operation failed";
-  return (token ? message.replaceAll(token, "[redacted]") : message).slice(0, 300);
+  // Do not expose arbitrary upstream text: it can include bot credentials,
+  // phone numbers or internal URLs. Recognized Telegram codes remain useful.
+  const safeCodes = [
+    "CHAT_ADMIN_REQUIRED",
+    "CHAT_WRITE_FORBIDDEN",
+    "BOT_NOT_MEMBER",
+    "INVITE_HASH_EXPIRED",
+    "INVITE_LINK_NAME_INVALID",
+  ];
+  for (const code of safeCodes) {
+    if (message.includes(code)) return code;
+  }
+  return "Telegram invite link operation failed";
 }

@@ -72,21 +72,25 @@ export async function consumeTGInviteReadPermit(
 ): Promise<{ allowed: boolean; retryAfter?: string; status: number }> {
   const secret = process.env.TG_INVITE_INTERNAL_KEY;
   if (!secret || secret.length < 32) return { allowed: false, status: 503 };
-  const response = await fetch(`${getBackendBaseUrl()}/api/v1/tginvite/read-permit`, {
-    method: "POST",
-    headers: {
-      Authorization: authorization,
-      "X-TGInvite-Service-Key": secret,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ kind }),
-    cache: "no-store",
-  });
-  return {
-    allowed: response.status === 204,
-    retryAfter: response.headers.get("Retry-After") ?? undefined,
-    status: response.status,
-  };
+  try {
+    const response = await fetch(`${getBackendBaseUrl()}/api/v1/tginvite/read-permit`, {
+      method: "POST",
+      headers: {
+        Authorization: authorization,
+        "X-TGInvite-Service-Key": secret,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ kind }),
+      cache: "no-store",
+    });
+    return {
+      allowed: response.status === 204,
+      retryAfter: response.headers.get("Retry-After") ?? undefined,
+      status: response.status,
+    };
+  } catch {
+    return { allowed: false, status: 503 };
+  }
 }
 
 export async function loadVaultSession(authorization: string): Promise<VaultSession | null> {

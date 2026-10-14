@@ -1,20 +1,12 @@
 import { Telegraf } from "telegraf";
 
-let bot: Telegraf | null = null;
-let currentToken: string | null = null;
-
+/**
+ * Do not share a mutable Bot singleton between authenticated operators.
+ * A request may use its own token without replacing another user's bot.
+ */
 export function getBot(token?: string): Telegraf | null {
   const botToken = token || process.env.TELEGRAM_BOT_TOKEN;
-  if (!botToken) return null;
-
-  if (!bot || botToken !== currentToken) {
-    if (bot) {
-      try { bot.stop(); } catch {}
-    }
-    bot = new Telegraf(botToken);
-    currentToken = botToken;
-  }
-  return bot;
+  return botToken ? new Telegraf(botToken) : null;
 }
 
 export async function verifyBotToken(token: string): Promise<{
@@ -42,6 +34,29 @@ export async function verifyBotToken(token: string): Promise<{
       valid: false,
       error: error.response?.description || error.message || "Invalid token",
     };
+  }
+}
+
+/**
+ * Fail-closed check of the bot's own membership and invite-link permissions.
+ * Telegram remains the final authority on whether it creates the link.
+ */
+export async function checkBotInviteRights(
+  token: string,
+  chatId: string,
+): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    const client = getBot(token);
+    if (!client) return { allowed: false, reason: "Bot token is not configured" };
+    const self = await client.telegram.getMe();
+    const member = await client.telegram.getChatMember(chatId, self.id);
+    if (member.status === "creator") return { allowed: true };
+    if (member.status !== "administrator" || member.can_invite_users !== true) {
+      return { allowed: false, reason: "Bot needs administrator rights to invite users" };
+    }
+    return { allowed: true };
+  } catch {
+    return { allowed: false, reason: "Unable to verify bot invite permissions" };
   }
 }
 
