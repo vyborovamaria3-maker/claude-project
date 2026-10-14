@@ -92,10 +92,11 @@ async def record_verified_opt_in(
     recipient_hash = _digest(
         hmac_key, "recipient:v1", event.telegram_bot_id, event.recipient_telegram_id
     )
+    # Telegram update IDs are unique within one bot's update stream.
+    # Deliberately omit owner/chat/recipient: a single update cannot be
+    # recycled as purported consent for another campaign or owner.
     proof_hash = _digest(
-        hmac_key, "proof:v1", event.telegram_bot_id,
-        str(event.telegram_update_id), event.proof_kind,
-        owner_id, chat, event.recipient_telegram_id,
+        hmac_key, "proof:v1", event.telegram_bot_id, str(event.telegram_update_id)
     )
     # Idempotent event ingestion: webhook redelivery cannot create new consent.
     old = (
@@ -106,6 +107,13 @@ async def record_verified_opt_in(
         )
     ).scalar_one_or_none()
     if old is not None:
+        if (
+            old.owner_id != owner_id
+            or old.destination_chat_id != chat
+            or old.recipient_digest != recipient_hash
+            or old.proof_kind != event.proof_kind
+        ):
+            raise ConsentLedgerError("Telegram proof already belongs to another consent")
         return old
 
     record = TelegramInviteConsent(
@@ -132,6 +140,13 @@ async def record_verified_opt_in(
         ).scalar_one_or_none()
         if winner is None:
             raise
+        if (
+            winner.owner_id != owner_id
+            or winner.destination_chat_id != chat
+            or winner.recipient_digest != recipient_hash
+            or winner.proof_kind != event.proof_kind
+        ):
+            raise ConsentLedgerError("Telegram proof already belongs to another consent")
         return winner
     await db.refresh(record)
     return record
