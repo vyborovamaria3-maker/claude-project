@@ -73,6 +73,13 @@ test("injected HTTP client receives cookies, no signing/refresh and no network b
     beforeRequest: async () => { throw new Error("no outgoing calls expected"); },
     loadModule: async () => ({
       TwitterHttpClient: Stub,
+      RateLimitError: class RateLimitError extends Error {
+        constructor(_message: string, options?: { resetAt?: number; status?: number }) {
+          super("upstream rate limit reached");
+          this.name = "RateLimitError";
+          Object.assign(this, options);
+        }
+      },
       GRAPHQL: {
         UserByScreenName: { queryId: "u", operationName: "UserByScreenName" },
         UserTweets: { queryId: "t", operationName: "UserTweets" },
@@ -94,6 +101,14 @@ test("injected HTTP client receives cookies, no signing/refresh and no network b
   assert.equal(typeof opts.fetch, "function");
   assert.ok(String(opts.cookies).includes("auth_token="));
   await assert.rejects((opts.fetch as typeof fetch)("https://example.com/private"), /not x.com/);
+  const onResponse = opts.onResponse as (result: { status: number; remaining: number | null; resetAt: number | null }) => void;
+  onResponse({ status: 200, remaining: 0, resetAt: Date.now() + 60_000 });
+  // Quota reset blocks a new network request before the user callback runs;
+  // this regression test performs no socket connection.
+  await assert.rejects(
+    (opts.fetch as typeof fetch)("https://x.com/i/api/graphql/test/UserTweets"),
+    (error: unknown) => error instanceof Error && error.name === "RateLimitError",
+  );
 });
 
 test("members task accepts only a numeric list ID and bounded requested limit", () => {
