@@ -92,3 +92,41 @@ test("SOCKS5 proxy is mandatory; credentials are encoded and never echoed", () =
   assert.throws(() => createSocks5Fetch({ server: "http://127.0.0.1:8080" }), /explicit SOCKS5/);
   assert.equal(typeof createSocks5Fetch({ server: "socks5://127.0.0.1:9050" }), "function");
 });
+
+test("cursor item target waits for real pages rather than assuming 20 posts per page", async () => {
+  const cursors: Array<string | null> = [];
+  const result = await runCursorPages(async cursor => {
+    cursors.push(cursor);
+    const index = cursors.length;
+    return { items: [`post-${index}`], nextCursor: `cursor-${index}` };
+  }, async () => {}, { maxPages: 15, stopAfterItems: 3 });
+  assert.deepEqual(cursors, [null, "cursor-1", "cursor-2"]);
+  assert.equal(result.itemsCommitted, 3);
+  assert.equal(result.nextCursor, "cursor-3");
+  assert.equal(result.completed, false);
+  assert.equal(result.pagesCommitted, 3);
+});
+
+test("cursor resume includes previously committed item count", async () => {
+  let writes = 0;
+  const result = await runCursorPages(async cursor => {
+    assert.equal(cursor, "saved-cursor");
+    return { items: ["new-1", "new-2"], nextCursor: "new-cursor" };
+  }, async () => { writes++; }, {
+    initialCursor: "saved-cursor", itemsCommittedBefore: 3,
+    stopAfterItems: 5, maxPages: 50,
+  });
+  assert.equal(writes, 1);
+  assert.equal(result.itemsCommitted, 5);
+  assert.equal(result.pagesCommitted, 1);
+  assert.equal(result.nextCursor, "new-cursor");
+});
+
+test("page budget exhaustion is distinguishable from real end of HTTP timeline", async () => {
+  const result = await runCursorPages(async () => ({
+    items: [], nextCursor: "still-more",
+  }), async () => {}, { maxPages: 1, stopAfterItems: 30 });
+  assert.equal(result.completed, false);
+  assert.equal(result.itemsCommitted, 0);
+  assert.equal(result.nextCursor, "still-more");
+});
