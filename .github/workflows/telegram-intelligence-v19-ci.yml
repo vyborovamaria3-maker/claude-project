@@ -9,6 +9,10 @@ on:
       - "solana-launcher/lib/telegram/**"
       - "solana-launcher/telegram-bot/**"
       - "solana-launcher/app/telegram-intelligence/**"
+      - "solana-launcher/app/api/tginvite/**"
+      - "solana-launcher/components/tginvite/**"
+      - "solana-launcher/lib/tginvite-*.ts"
+      - "solana-launcher/lib/routeAuth.ts"
       - "solana-launcher/components/SidebarNav.tsx"
       - "solana-launcher/lib/siteDesign.ts"
       - "solana-launcher/docker-compose.production.yml"
@@ -73,6 +77,8 @@ jobs:
         run: npm run lint
       - name: TypeScript check
         run: npx tsc --noEmit
+      - name: TGInvite unit tests
+        run: npx vitest run lib/tginvite-auth.test.ts lib/tginvite-encryption.test.ts lib/tginvite-filter.test.ts lib/tginvite-job-queue.test.ts lib/tginvite-rate-limiter.test.ts
 
   compose:
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}

@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   if (user.error) return user.error;
   try {
     const body = await request.json();
-    const { action, channels, filters } = body;
+    const { action } = body;
 
     if (action === "analyze") {
       return NextResponse.json({ error: "Use the authenticated MTProto analysis API" }, { status: 501 });

@@ -115,7 +115,10 @@ class TgInviteService {
       active.progress.status = "running";
       jobsStorage.update(jobId, { status: "running" });
       tginviteEvents.emit(TGEvent.IMPORT_RESUME, { jobId });
-      this.processImport(jobId);
+      // Legacy client-side simulation cannot be resumed. Use server-side jobs instead.
+      active.cancelFlag = true;
+      active.progress.status = "failed";
+      jobsStorage.update(jobId, { status: "failed" });
     }
   }
 
