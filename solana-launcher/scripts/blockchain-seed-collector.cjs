@@ -397,12 +397,8 @@ function failTask(db, row, error) {
 }
 
 async function collect(db, args) {
-  // Fail fast before reserving work, so absent/invalid API keys cannot
-  // pollute retry counters or trigger avoidable network requests.
-  require("ts-node").register({
-    skipProject: true, transpileOnly: true,
-    compilerOptions: { module: "commonjs", moduleResolution: "node", esModuleInterop: true },
-  });
+  // ts-node is registered once in main(); avoid stacking require hooks on each
+  // watch cycle. Fail fast before reserving work if API keys are unavailable.
   const keys = require("../lib/trade/helius-rotation").getHeliusApiKeys();
   if (!keys.length) throw new Error("Valid HELIUS_API_KEY(S) required for --mode collect");
   const helius = require("../lib/trade/helius");
