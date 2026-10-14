@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBackendBaseUrl } from "@/lib/authProxy";
 
-type AuthSuccess = { ownerId: string; error?: never };
+type AuthSuccess = { ownerId: string; authorization: string; error?: never };
 type AuthFailure = { ownerId?: never; error: NextResponse };
 
 /**
@@ -63,7 +63,7 @@ export async function requireTGInviteUser(request: Request): Promise<AuthSuccess
     if (typeof user.id !== "string" || !/^[0-9a-f-]{36}$/i.test(user.id)) {
       return { error: NextResponse.json({ error: "Invalid identity" }, { status: 401 }) };
     }
-    return { ownerId: user.id };
+    return { ownerId: user.id, authorization };
   } catch {
     return { error: NextResponse.json({ error: "Authentication service unavailable" }, { status: 503 }) };
   }

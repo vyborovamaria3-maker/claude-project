@@ -1,3 +1,4 @@
+import { persistVaultSession, resolveTGInviteClient, revokeVaultSession } from "@/lib/tginvite-vault-client";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode } from "@/lib/tginvite-mtproto";
@@ -26,31 +27,37 @@ function parserError(message: string): { status: number; body: { error: string; 
   if (message.includes("No pending Telegram login")) {
     return { status: 400, body: { error: "No pending Telegram login. Send code first.", status: "login_not_started" } };
   }
-  return { status: 500, body: { error: message || "Internal error", status: "unknown" } };
+  return { status: 500, body: { error: "Telegram service error", status: "unknown" } };
 }
 
 export async function POST(request: Request) {
   const user = await requireTGInviteUser(request);
   if (user.error) return user.error;
   const ownerId = user.ownerId!;
+  const authorization = user.authorization!;
   try {
     const body = await request.json();
     const { action, apiId, apiHash, phoneNumber, sessionString, channelUsername, limit, filterConfig, activityMode, phoneCode, password } = body;
 
     if (action === "connect") {
-      if (!apiId || !apiHash) {
-        return NextResponse.json({ error: "apiId and apiHash required" }, { status: 400 });
-      }
       if (sessionString) {
-        return NextResponse.json({ error: "Browser-provided session strings are no longer accepted" }, { status: 400 });
+        return NextResponse.json({ error: "Browser-provided session strings are not accepted" }, { status: 400 });
       }
-      const existingClient = getClient(ownerId);
-      if (existingClient && await isAuthorized(existingClient)) {
+      const active = await resolveTGInviteClient(ownerId, authorization);
+      if (active) {
         return NextResponse.json({ status: "connected", hasSession: true });
       }
-      await clearClient(ownerId);
+      if (!apiId || !apiHash) {
+        return NextResponse.json({ error: "apiId and apiHash required for a new login" }, { status: 400 });
+      }
       await createClient({ apiId: Number(apiId), apiHash, phoneNumber }, ownerId);
-      return NextResponse.json({ status: "needs_phone", message: "Enter your phone number to authenticate" });
+      return NextResponse.json({ status: "needs_phone", message: "Use sendCode to authenticate" });
+    }
+
+    if (action === "disconnect") {
+      await revokeVaultSession(authorization);
+      await clearClient(ownerId);
+      return NextResponse.json({ status: "disconnected" });
     }
 
     if (action === "sendCode") {
@@ -73,7 +80,12 @@ export async function POST(request: Request) {
 
     if (action === "completeLogin") {
       try {
-        await completeLogin({ phoneCode, password }, ownerId);
+        const completed = await completeLogin({ phoneCode, password }, ownerId);
+        await persistVaultSession(authorization, {
+          api_id: completed.apiId,
+          api_hash: completed.apiHash,
+          session_string: completed.sessionString,
+        });
         return NextResponse.json({ status: "authenticated" });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -103,7 +115,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "channelUsername required" }, { status: 400 });
       }
 
-      const existingClient = getClient(ownerId);
+      const existingClient = await resolveTGInviteClient(ownerId, authorization);
       if (!existingClient) {
         return NextResponse.json(
           { error: "MTProto is not connected. Connect your Telegram account in TGInvite Settings first.", status: "not_connected" },
@@ -184,7 +196,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "channelUsername required" }, { status: 400 });
       }
 
-      const existingClient = getClient(ownerId);
+      const existingClient = await resolveTGInviteClient(ownerId, authorization);
       if (!existingClient) {
         return NextResponse.json(
           { error: "MTProto is not connected. Connect your Telegram account in TGInvite Settings first.", status: "not_connected" },
@@ -206,7 +218,7 @@ export async function POST(request: Request) {
     }
 
     if (action === "validateCandidates") {
-      const existingClient = getClient(ownerId);
+      const existingClient = await resolveTGInviteClient(ownerId, authorization);
 
       if (!existingClient) {
         return NextResponse.json(
@@ -382,7 +394,7 @@ export async function GET(request: Request) {
   const user = await requireTGInviteUser(request);
   if (user.error) return user.error;
   const ownerId = user.ownerId!;
-  const existingClient = getClient(ownerId);
+  const existingClient = await resolveTGInviteClient(ownerId, user.authorization!);
   return NextResponse.json({
     connected: isConnected(ownerId),
     clientReady: existingClient !== null,

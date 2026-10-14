@@ -328,7 +328,7 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
 export async function completeLogin(params: {
   phoneCode?: string;
   password?: string;
-}, ownerId: string): Promise<string> {
+}, ownerId: string): Promise<{ sessionString: string; apiId: number; apiHash: string }> {
   const pendingAuth = pendingAuthByOwner.get(ownerId);
   if (!pendingAuth) {
     throw new Error("No pending Telegram login. Send code first.");
@@ -372,7 +372,7 @@ export async function completeLogin(params: {
     const sessionString = typedClient.session.save();
     pendingAuthByOwner.delete(ownerId);
     setClient(typedClient, ownerId);
-    return sessionString;
+    return { sessionString, apiId: pendingAuth.apiId, apiHash: pendingAuth.apiHash };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("SESSION_PASSWORD_NEEDED")) {

@@ -1,13 +1,15 @@
+import { resolveTGInviteClient } from "@/lib/tginvite-vault-client";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { createInviteLink, getChatInfo } from "@/lib/telegram";
 import { filterMembers, getFilterSummary, FilterConfig, DEFAULT_FILTER_CONFIG } from "@/lib/tginvite-filter";
-import { getClient, fetchChannelMembers, inviteUsers } from "@/lib/tginvite-mtproto";
+import { fetchChannelMembers, inviteUsers } from "@/lib/tginvite-mtproto";
 
 export async function POST(request: Request) {
   const user = await requireTGInviteUser(request);
   if (user.error) return user.error;
   const ownerId = user.ownerId!;
+  const authorization = user.authorization!;
   try {
     const body = await request.json();
     const { action, token, chatId, linkName, expireDays, memberLimit, linkCount, filterConfig, channelUsernames, targetChannel, userIds, confirmedOptIn } = body;
@@ -62,7 +64,7 @@ export async function POST(request: Request) {
 
     if (action === "fetchAndFilter") {
       // MTProto mode — fetch real members from channels and filter
-      const tgClient = getClient(ownerId);
+      const tgClient = await resolveTGInviteClient(ownerId, authorization);
       if (!tgClient) {
         return NextResponse.json(
           { error: "MTProto not connected — go to Settings → MTProto Connect" },
@@ -134,7 +136,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Explicit opt-in confirmation is required" }, { status: 403 });
       }
       // Invite filtered users to target channel
-      const tgClient = getClient(ownerId);
+      const tgClient = await resolveTGInviteClient(ownerId, authorization);
       if (!tgClient) {
         return NextResponse.json(
           { error: "MTProto not connected" },
