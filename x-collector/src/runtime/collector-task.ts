@@ -20,7 +20,7 @@ import { listId } from "../../lib/trade/list-source";
 import { filterHistory, persistHistory } from "../../lib/trade/history-filter";
 import { taskFailure } from "../../lib/trade/task-errors";
 import { executeXActionsReadTask, isXActionsEligible, HttpPartialProgressError } from "../xactions/task";
-import { HttpAccountQuotaError, httpQuotaWaitMs } from "../xactions/account-http-quota";
+import { HttpAccountQuotaError, HttpAccountLeaseError, httpQuotaWaitMs } from "../xactions/account-http-quota";
 function buildProxy(acc: XAccount) {
   const proxy = parseProxy(acc.proxy_json);
   if (acc.proxy_json && !proxy) throw new Error("PROXY_FAILED: invalid account proxy");
@@ -189,6 +189,11 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     return "done";
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (e instanceof HttpAccountLeaseError && !leaseLost && !isStopping()) {
+      await publish({phase:"waiting"}).catch(() => {});
+      const ok = await deferTask(task.id, workerId, 5000, "XActions account ownership lost", task.attempts).catch(() => false);
+      return ok ? "lease-waiting" : "lost";
+    }
     if (e instanceof HttpPartialProgressError && !leaseLost && !isStopping()) {
       await publish({phase:"waiting"}).catch(() => {});
       const ok = await deferTask(task.id, workerId, 2_000, "XActions partial page budget; durable cursor saved", task.attempts).catch(() => false);
