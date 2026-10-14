@@ -8,6 +8,7 @@ import csv
 import json
 from pathlib import Path
 
+from app.core.config import get_settings
 from app.db.session import create_engine_and_sessionmaker
 from app.services.telegram_collector.tgparser_import import MAX_BATCH, import_tgparser_archive
 
@@ -35,7 +36,7 @@ async def run(path: Path, channel_id: int) -> None:
     records = read_archive(path)
     if not records:
         raise ValueError("Archive contains no messages")
-    engine, sessionmaker = create_engine_and_sessionmaker()
+    engine, sessionmaker = create_engine_and_sessionmaker(get_settings())
     added = duplicates = 0
     try:
         async with sessionmaker() as session:
