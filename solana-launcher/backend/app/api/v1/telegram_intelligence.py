@@ -30,6 +30,7 @@ from app.services.social_intelligence import (
     refresh_x_for_mint,
     token_timeline,
 )
+from app.services.telegram_collector.activity import summarize_channel_activity
 from app.services.telegram_collector.exports import encode_messages
 from app.services.telegram_intelligence import TelegramSessionError
 from app.services.telegram_parser import is_solana_address
@@ -257,6 +258,20 @@ async def monitor_status(
     current_user=Depends(get_current_superuser),
 ) -> dict:
     return _manager(request).status()
+
+
+@router.get("/activity/{channel_id}")
+async def telegram_channel_activity(
+    channel_id: int,
+    days: int = Query(30, ge=1, le=90),
+    session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_superuser),
+) -> dict:
+    """Provide aggregated counts from the existing Telegram message database."""
+    try:
+        return await summarize_channel_activity(session, channel_id=channel_id, days=days)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/export/{channel_id}")
