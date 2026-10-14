@@ -40,12 +40,11 @@ def _normalize_row(row: dict[str, Any], allowed_channels: set[str]) -> dict[str,
     if not isinstance(row, dict):
         raise ValueError("Each archive entry must be an object")
     raw_id = row.get("id")
-    if isinstance(raw_id, bool):
+    if isinstance(raw_id, bool) or not isinstance(raw_id, (int, str)):
         raise ValueError("Archive message id must be a positive integer")
-    try:
-        message_id = int(raw_id)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Archive message id must be a positive integer") from exc
+    if isinstance(raw_id, str) and not raw_id.isdecimal():
+        raise ValueError("Archive message id must be a positive integer")
+    message_id = int(raw_id)
     if message_id <= 0 or message_id >= 2**63:
         raise ValueError("Archive message id is out of range")
 
