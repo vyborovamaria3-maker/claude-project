@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import hmac
 import logging
+from typing import Literal
+
+from fastapi.responses import Response
+from sqlalchemy import select
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_subscriber, get_current_superuser
 from app.db.session import get_db
+from app.models.social_intelligence import TelegramMessage
 from app.schemas.social_intelligence import (
     TelegramAttachSessionRequest,
     TelegramMonitorRequest,
@@ -25,6 +30,7 @@ from app.services.social_intelligence import (
     token_timeline,
 )
 from app.services.telegram_intelligence import TelegramSessionError
+from app.services.telegram_collector.exports import encode_messages
 from app.services.telegram_parser import is_solana_address
 from app.services.telegram_public_web import TelegramPublicWebError
 from app.services.telegram_runtime import TelegramMonitorManager
@@ -211,6 +217,53 @@ async def monitor_status(
     current_user=Depends(get_current_superuser),
 ) -> dict:
     return _manager(request).status()
+
+
+@router.get("/export/{channel_id}")
+async def export_telegram_messages(
+    channel_id: int,
+    export_format: Literal["json", "csv", "parquet"] = Query("json", alias="format"),
+    limit: int = Query(1000, ge=1, le=5000),
+    session: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_superuser),
+) -> Response:
+    """Download messages already collected from accessible Telegram sources.
+
+    Restricted to superusers until per-source access controls are implemented.
+    """
+    result = await session.execute(
+        select(TelegramMessage)
+        .where(TelegramMessage.channel_id == channel_id)
+        .order_by(TelegramMessage.telegram_message_id.desc())
+        .limit(limit)
+    )
+    records = [
+        {
+            "message_id": row.telegram_message_id,
+            "channel_id": row.channel_id,
+            "sender": row.sender_username or "",
+            "published_at": row.published_at.isoformat(),
+            "text": row.text,
+            "views": row.views,
+            "forwards": row.forwards,
+            "replies": row.replies,
+            "reactions": row.reactions,
+        }
+        for row in result.scalars()
+    ]
+    try:
+        payload, media_type, extension = encode_messages(records, export_format)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="telegram_{channel_id}.{extension}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/channels")

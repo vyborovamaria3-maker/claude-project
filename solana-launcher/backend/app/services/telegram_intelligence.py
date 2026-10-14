@@ -40,6 +40,13 @@ def aware(value: datetime | None) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
+def incremental_min_id(latest_id: int | None, *, lookback_ids: int = 250) -> int:
+    """Re-read recent message IDs to refresh edits/reactions without scanning all history."""
+    if latest_id is None or latest_id < 1:
+        return 0
+    return max(0, int(latest_id) - max(0, lookback_ids))
+
+
 def message_replies(message: Any) -> int:
     return int(getattr(getattr(message, "replies", None), "replies", 0) or 0)
 
@@ -400,15 +407,29 @@ class TelegramIntelligenceService:
             await upsert_channel_score(session, channel.id)
         return parsed, created
 
-    async def scan_channel(self, username: str, *, post_limit: int = 200) -> dict[str, Any]:
+    async def scan_channel(
+        self, username: str, *, post_limit: int = 200, incremental: bool = True
+    ) -> dict[str, Any]:
         entity = await self.client.get_entity(username)
         if not isinstance(entity, Channel):
             raise ValueError("Entity is not a Telegram channel or group")
         discovered_tg: set[str] = set()
         discovered_x: set[str] = set()
         saved = mentions = 0
+        cursor_before = 0
+        cursor_after = 0
         async with self.sessionmaker() as session:
             channel = await self.upsert_channel(session, entity)
+            if incremental:
+                latest_id = (
+                    await session.execute(
+                        select(func.max(TelegramMessage.telegram_message_id)).where(
+                            TelegramMessage.channel_id == channel.id
+                        )
+                    )
+                ).scalar_one_or_none()
+                cursor_before = int(latest_id or 0)
+            cursor_after = cursor_before
             source_handle = (channel.username or str(channel.telegram_id)).lower()
             profile = parse_telegram_message(channel.about)
             discovered_tg.update(profile.telegram_links)
@@ -426,8 +447,11 @@ class TelegramIntelligenceService:
                     evidence="linked discussion chat",
                 )
             async for message in self.client.iter_messages(
-                entity, limit=max(1, min(post_limit, 5000))
+                entity,
+                limit=max(1, min(post_limit, 5000)),
+                min_id=incremental_min_id(cursor_before) if incremental else 0,
             ):
+                cursor_after = max(cursor_after, int(message.id))
                 parsed, created = await self.save_message(
                     session, channel, message, update_score=False
                 )
@@ -446,6 +470,9 @@ class TelegramIntelligenceService:
             "telegram_id": channel.telegram_id,
             "entity_type": channel.entity_type,
             "posts_saved": saved,
+            "cursor_before": cursor_before,
+            "cursor_after": cursor_after,
+            "incremental": incremental,
             "token_mentions_created": mentions,
             "discovered_telegram": sorted(discovered_tg),
             "discovered_x": sorted(discovered_x),
