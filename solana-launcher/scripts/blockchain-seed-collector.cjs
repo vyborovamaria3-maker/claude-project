@@ -7,6 +7,7 @@
 // Requires Python 3 for the project's bounded XLSX reader and Helius keys for collection.
 const fs = require("node:fs");
 const path = require("node:path");
+const { gzipSync } = require("node:zlib");
 // The local CLI does not inherit Next.js environment loading.
 require("dotenv").config({ path: path.join(process.cwd(), ".env.local"), quiet: true });
 require("dotenv").config({ path: path.join(process.cwd(), ".env"), quiet: true });
@@ -89,7 +90,7 @@ function initDb(db) {
     "  ON chain_seed_targets(next_run_at,priority,lease_until)",
     ";CREATE TABLE IF NOT EXISTS chain_seed_events (",
     "  kind TEXT NOT NULL, address TEXT NOT NULL, signature TEXT NOT NULL,",
-    "  block_time INTEGER, slot INTEGER, payload_json TEXT NOT NULL, observed_at INTEGER NOT NULL,",
+    "  block_time INTEGER, slot INTEGER, payload_gzip BLOB NOT NULL, payload_bytes INTEGER NOT NULL, observed_at INTEGER NOT NULL,",
     "  PRIMARY KEY(kind,address,signature))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
     "  ON chain_seed_events(kind,address,block_time DESC)",
@@ -240,20 +241,23 @@ function claimOne(db) {
 function persistEvents(db, kind, address, transactions) {
   const insert = db.prepare(
     "INSERT OR IGNORE INTO chain_seed_events"
-    + "(kind,address,signature,block_time,slot,payload_json,observed_at)"
-    + " VALUES(?,?,?,?,?,?,?)"
+    + "(kind,address,signature,block_time,slot,payload_gzip,payload_bytes,observed_at)"
+    + " VALUES(?,?,?,?,?,?,?,?)"
   );
   let saved = 0;
   db.transaction(() => {
     for (const tx of transactions) {
       if (!tx || typeof tx.signature !== "string" || !tx.signature) continue;
       const serialized = JSON.stringify(tx);
-      if (Buffer.byteLength(serialized) > 512 * 1024) {
+      const bytes = Buffer.byteLength(serialized);
+      if (bytes > 512 * 1024) {
         throw new Error("Oversized Helius transaction; not silently truncated");
       }
+      // Fast gzip reduces laptop disk I/O while retaining the original evidence.
+      const packed = gzipSync(Buffer.from(serialized), { level: 1 });
       saved += insert.run(kind, address, tx.signature,
         Number.isFinite(tx.timestamp) ? tx.timestamp : null,
-        Number.isFinite(tx.slot) ? tx.slot : null, serialized, Date.now()).changes;
+        Number.isFinite(tx.slot) ? tx.slot : null, packed, bytes, Date.now()).changes;
     }
   })();
   return saved;
