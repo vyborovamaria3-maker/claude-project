@@ -14,6 +14,15 @@ import { persistXActionsMemberPage } from "./persist-members";
 
 type Parsed = { handle?: string; limit?: number; query?: string; list_id?: string; [key: string]: unknown };
 
+/** A valid durable checkpoint needs another bounded pass, not a failed attempt. */
+export class HttpPartialProgressError extends Error {
+  constructor(readonly pagesCommitted: number, readonly uniqueItemsCommitted: number) {
+    super("XACTIONS_PARTIAL: page budget reached; resume from committed checkpoint");
+    this.name = "HttpPartialProgressError";
+  }
+}
+
+
 export function isXActionsEligible(kind: string, payload: Parsed, originalPayload?: unknown): boolean {
   // Zod strips extra fields from TimelinePayload/ProfilePayload. Therefore,
   // judging archive markers ONLY on parsed payload can silently send an
@@ -111,7 +120,7 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
       return newItems;
     }, pageOptions);
     if (!result.completed && result.itemsCommitted < limit) {
-      throw new Error("XActions: HTTP page budget exhausted before task item target; cursor saved");
+      throw new HttpPartialProgressError(result.pagesCommitted, result.itemsCommitted);
     }
   } else {
     const result = await runCursorPages(async cursor => {
@@ -132,7 +141,7 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
       return newItems;
     }, pageOptions);
     if (!result.completed && result.itemsCommitted < limit) {
-      throw new Error("XActions: HTTP page budget exhausted before task item target; cursor saved");
+      throw new HttpPartialProgressError(result.pagesCommitted, result.itemsCommitted);
     }
   }
 }
