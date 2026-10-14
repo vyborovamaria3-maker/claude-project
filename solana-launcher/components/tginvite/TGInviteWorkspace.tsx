@@ -993,27 +993,10 @@ function TGInvitePageInner() {
     });
   }, []);
 
-  // Resume import
+  // No persistent invitation worker exists yet; never label a legacy job as running.
   const resumeImport = useCallback(async () => {
-    if (intervalRef.current) {
-      clearTimeout(intervalRef.current);
-      intervalRef.current = null;
-    }
-
-    if (importJobIdRef.current) {
-      tgInviteService.resumeImport(importJobIdRef.current);
-    }
-
-    isRunningRef.current = true;
-    setIsRunning(true);
-    setCurrentJob((prev) => {
-      if (prev) {
-        jobsStorage.update(prev.id, { status: "running" });
-        return { ...prev, status: "running" };
-      }
-      return null;
-    });
-  }, []);
+    warning("Import unavailable", "A persistent, consent-verified server job is required to resume invitations.");
+  }, [warning]);
 
   // Reset import
   const resetImport = useCallback(() => {
@@ -1111,29 +1094,28 @@ function TGInvitePageInner() {
     const jobs = jobsStorage.getAll();
     const lastActive = jobs.find((j) => j.status === "running" || j.status === "paused");
     if (lastActive && lastActive.progress < 100) {
+      // Legacy client-side work cannot be restored. Mark it failed in both storage
+      // and the rendered UI, so stale "running" and "paused" states never reappear.
+      const endTime = new Date().toISOString();
+      jobsStorage.update(lastActive.id, { status: "failed", endTime });
       setCurrentJob({
         id: lastActive.id,
         targetChannel: lastActive.targetChannel,
         sources: lastActive.sources,
-        status: lastActive.status,
+        status: "failed",
         progress: lastActive.progress,
         total: lastActive.total,
         invited: lastActive.invited,
         skipped: lastActive.skipped,
         failed: lastActive.failed,
         startTime: lastActive.startTime,
+        endTime,
         logs: lastActive.logs,
         inviteLinks: lastActive.inviteLinks,
       });
-      importJobIdRef.current = lastActive.id;
-      if (lastActive.status === "running") {
-        setIsRunning(true);
-        isRunningRef.current = true;
-        // Never resume the legacy simulated importer after reload.
-        jobsStorage.update(lastActive.id, { status: "failed", endTime: new Date().toISOString() });
-        setIsRunning(false);
-        isRunningRef.current = false;
-      }
+      importJobIdRef.current = "";
+      setIsRunning(false);
+      isRunningRef.current = false;
     }
   }, []);
 
