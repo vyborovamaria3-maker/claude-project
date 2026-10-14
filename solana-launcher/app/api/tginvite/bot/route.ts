@@ -9,7 +9,7 @@ export async function POST(request: Request) {
     const { action, token } = await request.json();
 
     if (action === "verify") {
-      if (!token) {
+      if (typeof token !== "string" || token.length === 0 || token.length > 256) {
         return NextResponse.json({ error: "Token required" }, { status: 400 });
       }
       const result = await verifyBotToken(token);
@@ -21,8 +21,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
-  } catch (err: unknown) {
-    const error = err as { message?: string };
-    return NextResponse.json({ error: error.message || "Internal error" }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "Telegram bot verification service error" }, { status: 500 });
   }
 }
