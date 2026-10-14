@@ -64,6 +64,76 @@ async def test_vault_is_owner_scoped_encrypted_and_revocable(test_app, client):
 
 
 @pytest.mark.asyncio
+async def test_session_generation_blocks_late_login_after_revocation(test_app, client):
+    settings = test_app.state.settings
+    settings.tginvite_internal_key = SERVICE_KEY
+    settings.tginvite_session_encryption_key = VAULT_KEY
+    token = await _user(test_app, "generation-fence-user")
+    path = "/api/v1/tginvite/session"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-TGInvite-Service-Key": SERVICE_KEY,
+    }
+
+    # A login began when no vault record existed (generation zero).
+    created = await client.put(
+        path, headers={**headers, "X-TGInvite-Expected-Generation": "0"},
+        json=SESSION,
+    )
+    assert created.status_code == 204
+
+    # A different process disconnects after the login has begun. Deletion
+    # leaves an opaque tombstone rather than erasing the generation.
+    assert (await client.delete(path, headers=headers)).status_code == 204
+    assert (await client.get(path, headers=headers)).status_code == 404
+
+    late = await client.put(
+        path, headers={**headers, "X-TGInvite-Expected-Generation": "1"},
+        json=SESSION,
+    )
+    assert late.status_code == 409
+    assert (await client.get(path, headers=headers)).status_code == 404
+
+    # A fresh login after disconnect receives the new epoch and may connect.
+    fresh = await client.put(
+        path, headers={**headers, "X-TGInvite-Expected-Generation": "2"},
+        json=SESSION,
+    )
+    assert fresh.status_code == 204
+    assert (await client.get(path, headers=headers)).status_code == 200
+
+    # A second late attempt using the old epoch cannot overwrite it.
+    older = await client.put(
+        path, headers={**headers, "X-TGInvite-Expected-Generation": "2"},
+        json=SESSION,
+    )
+    assert older.status_code == 409
+
+    missing_generation = await client.put(path, headers=headers, json=SESSION)
+    assert missing_generation.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_disconnect_before_first_login_preserves_fence(test_app, client):
+    settings = test_app.state.settings
+    settings.tginvite_internal_key = SERVICE_KEY
+    settings.tginvite_session_encryption_key = VAULT_KEY
+    token = await _user(test_app, "first-disconnect-user")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-TGInvite-Service-Key": SERVICE_KEY,
+    }
+    path = "/api/v1/tginvite/session"
+    assert (await client.delete(path, headers=headers)).status_code == 204
+    late = await client.put(
+        path, headers={**headers, "X-TGInvite-Expected-Generation": "0"},
+        json=SESSION,
+    )
+    assert late.status_code == 409
+    assert (await client.get(path, headers=headers)).status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_vault_fails_closed_without_keys(test_app, client):
     settings = test_app.state.settings
     token = await _user(test_app, "missing-keys-user")
