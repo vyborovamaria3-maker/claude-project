@@ -14,16 +14,22 @@ import { persistXActionsMemberPage } from "./persist-members";
 
 type Parsed = { handle?: string; limit?: number; query?: string; list_id?: string; [key: string]: unknown };
 
-export function isXActionsEligible(kind: string, payload: Parsed): boolean {
-  // The legacy archive/discovery jobs use a numeric max_id watermark and
-  // additional history bookkeeping. NEVER route those jobs to opaque HTTP
-  // pagination, regardless of their kind (timeline/profile/search).
-  const legacyArchiveJob = Boolean(
-    payload.history_run_id || payload.history_author || payload.history_since ||
-    payload.history_until || payload.history_max_id || payload.discovery_source ||
-    payload.list_source_id || payload.list_since_id || payload.list_max_id
-  );
-  if (legacyArchiveJob) return false;
+export function isXActionsEligible(kind: string, payload: Parsed, originalPayload?: unknown): boolean {
+  // Zod strips extra fields from TimelinePayload/ProfilePayload. Therefore,
+  // judging archive markers ONLY on parsed payload can silently send an
+  // existing historical job to the HTTP engine. Inspect the original JSON too.
+  let raw: unknown = originalPayload ?? payload;
+  if (typeof raw === "string") {
+    try { raw = JSON.parse(raw); } catch { return false; }
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const original = raw as Record<string, unknown>;
+  const archiveMarkers = [
+    "history_run_id", "history_author", "history_since", "history_until",
+    "history_max_id", "discovery_source", "list_source_id",
+    "list_since_id", "list_max_id",
+  ] as const;
+  if (archiveMarkers.some(key => Object.hasOwn(original, key) || Object.hasOwn(payload, key))) return false;
   if (kind === "profile" || kind === "timeline") return true;
   if (kind === "members") return typeof payload.list_id === "string" && /^[0-9]{1,25}$/.test(payload.list_id);
   return kind === "search" && typeof payload.query === "string" && listId(payload.query) !== null;
@@ -42,7 +48,7 @@ export interface XActionsTaskContext {
 
 export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise<void> {
   const { task, payload, account, authState, leaseOwner, workerId, signal, publish } = ctx;
-  if (!isXActionsEligible(task.kind, payload)) throw new Error("XActions: task is not eligible for HTTP");
+  if (!isXActionsEligible(task.kind, payload, task.payloadJson)) throw new Error("XActions: task is not eligible for HTTP");
   const accountKind = task.kind === "search" ? "search" : task.kind === "timeline" ? "timeline" : "profile";
   const charge = createHttpQuotaGate(accountKind,
     weight => reserveAdditionalHttpRequest(account.name, leaseOwner, weight));
