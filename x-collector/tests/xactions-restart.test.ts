@@ -24,7 +24,7 @@ test("HTTP cursor survives a worker crash, new account lease and new task attemp
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         const res = await db.query(sql, params);
-        return { ...res, rowCount: /^\\s*(SELECT|WITH)\\b/i.test(sql) ? res.rows.length : (res.affectedRows ?? res.rows.length) };
+        return { ...res, rowCount: /^\s*(SELECT|WITH)\b/i.test(sql) ? res.rows.length : (res.affectedRows ?? res.rows.length) };
       },
     } as unknown as PoolClient;
 
