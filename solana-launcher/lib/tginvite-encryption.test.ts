@@ -19,9 +19,11 @@ describe("authenticated session encryption", () => {
     const key = secret();
     const result = await encryptSession("abc:123", key);
     expect(await decryptSession(result, secret())).toBeNull();
-    const chars = result.split("");
-    chars[chars.length - 2] = chars[chars.length - 2] === "A" ? "B" : "A";
-    expect(await decryptSession(chars.join(""), key)).toBeNull();
+    const [version, encoded] = result.split(":");
+    const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+    bytes[12] ^= 1; // Change a ciphertext byte, not a Base64 padding bit.
+    const tampered = `${version}:${btoa(String.fromCharCode(...bytes))}`;
+    expect(await decryptSession(tampered, key)).toBeNull();
   });
 
   it("does not accept legacy XOR payloads", async () => {

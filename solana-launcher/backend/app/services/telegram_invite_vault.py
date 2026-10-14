@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import os
 from typing import Any
@@ -19,7 +20,7 @@ def _key(configured_key: str) -> bytes:
         raise TelegramInviteVaultError("TG_INVITE_SESSION_ENCRYPTION_KEY is not configured")
     try:
         raw = base64.b64decode(configured_key, validate=True)
-    except (ValueError, base64.binascii.Error) as exc:
+    except (ValueError, binascii.Error) as exc:
         raise TelegramInviteVaultError("Invalid Telegram vault key") from exc
     if len(raw) != 32:
         raise TelegramInviteVaultError("Telegram vault key must be 32 bytes, base64 encoded")
