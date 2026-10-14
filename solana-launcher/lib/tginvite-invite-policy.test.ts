@@ -1,0 +1,87 @@
+import { describe, expect, it } from "vitest";
+import {
+  InvalidInviteRequest,
+  batchInviteLinkName,
+  reconcileInviteToChannelResult,
+  validateInviteLinkRequest,
+} from "./tginvite-invite-policy";
+
+const required = { token: "1234:my-token", chatId: "@example_channel" };
+
+describe("invitation link validation (no Telegram network)", () => {
+  it("prepares a bounded single-use link with expiration", () => {
+    const o = validateInviteLinkRequest(
+      { ...required, expireDays: 2, memberLimit: 1 }, "createLink", 1_700_000_000_000,
+    );
+    expect(o.expireDate).toBe(1_700_000_000 + 2 * 86400);
+    expect(o.count).toBe(1);
+    expect(o.memberLimit).toBe(1);
+  });
+
+  it("allows join-request links only without member limits", () => {
+    expect(validateInviteLinkRequest({
+      ...required, createsJoinRequest: true,
+    }, "createLink").createsJoinRequest).toBe(true);
+    expect(() => validateInviteLinkRequest({
+      ...required, createsJoinRequest: true, memberLimit: 1,
+    }, "createLink")).toThrow(InvalidInviteRequest);
+  });
+
+  it("rejects negative, fractional, excessive and zero batches", () => {
+    for (const linkCount of [-1, 0, 1.5, 11, Number.NaN, "10"]) {
+      expect(() => validateInviteLinkRequest({
+        ...required, linkCount,
+      }, "batchLinks")).toThrow(InvalidInviteRequest);
+    }
+  });
+
+  it("rejects bad expiration, member limits and chat IDs", () => {
+    const invalid = [
+      { ...required, expireDays: -1 },
+      { ...required, expireDays: "7" },
+      { ...required, memberLimit: 100000 },
+      { ...required, memberLimit: -5 },
+      { ...required, chatId: "https://t.me/+private" },
+    ];
+    for (const item of invalid) {
+      expect(() => validateInviteLinkRequest(item, "createLink")).toThrow(InvalidInviteRequest);
+    }
+  });
+
+  it("keeps generated batch link names within Telegram's 32 char limit", () => {
+    expect(batchInviteLinkName("a".repeat(32), 10).length).toBe(32);
+    expect(batchInviteLinkName("launch", 2)).toBe("launch #2");
+  });
+});
+
+describe("MTProto invitation receipt reconciliation (mocked results only)", () => {
+  it("counts missing users as declined, not successful invitations", () => {
+    const result = reconcileInviteToChannelResult([1001, 1002, 1003], {
+      updates: {},
+      missingInvitees: [{ userId: 1002 }],
+    });
+    expect(result).toEqual({
+      invited: 2, declined: 1, unknown: 0, declinedUserIds: ["1002"],
+    });
+  });
+
+  it("accepts snake_case MTProto serialization and large user IDs", () => {
+    const result = reconcileInviteToChannelResult([9007199254740993n], {
+      missing_invitees: [{ user_id: "9007199254740993" }],
+    });
+    expect(result.declined).toBe(1);
+    expect(result.invited).toBe(0);
+  });
+
+  it("does not invent success when response metadata is missing or malformed", () => {
+    expect(reconcileInviteToChannelResult([1, 2], { updates: {} })).toMatchObject({
+      invited: 0, declined: 0, unknown: 2,
+    });
+    expect(reconcileInviteToChannelResult([1], {
+      missingInvitees: [{ userId: 99 }],
+    }).unknown).toBe(1);
+    expect(reconcileInviteToChannelResult([1, 1], {
+      missingInvitees: [],
+    }).unknown).toBe(2);
+  });
+});
