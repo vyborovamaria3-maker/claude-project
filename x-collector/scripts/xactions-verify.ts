@@ -25,7 +25,57 @@ async function main(): Promise<void> {
   if (typeof method !== "function" || method("SearchTimeline") !== "POST") {
     throw new Error("XActions: SearchTimeline diagnostic expects POST; do not enable HTTP search");
   }
-  console.log("XActions pinned checkout, exports and SearchTimeline=POST verified offline. No X requests made.");
+  // Exercise the ACTUAL pinned ESM HTTP client, not a mock replacement.
+  // Only the injected fetch below can be called: it never touches the network.
+  type Client = {
+    graphql(id: string, operation: string, vars: Record<string, unknown>): Promise<{
+      data?: Record<string, unknown>;
+    }>;
+  };
+  const ClientCtor = api.TwitterHttpClient as new(opts: Record<string, unknown>) => Client;
+  const requests: Array<{ operation: string; method: string; hasAuthCookie: boolean }> = [];
+  const testFetch: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    const operation = url.pathname.split("/").pop() ?? "";
+    const headers = new Headers(init?.headers);
+    requests.push({
+      operation, method: init?.method ?? "GET",
+      hasAuthCookie: (headers.get("cookie") ?? "").includes("auth_token=offline-fixture"),
+    });
+    if (url.hostname !== "x.com" || !["UserByScreenName", "SearchTimeline"].includes(operation)) {
+      throw new Error("XActions: unexpected outgoing request in offline test");
+    }
+    const data = operation === "UserByScreenName"
+      ? { user: { result: { rest_id: "123", core: { screen_name: "offline_test", name: "Offline" } } } }
+      : { search_by_raw_query: { search_timeline: { timeline: { instructions: [] } } } };
+    return new Response(JSON.stringify({ data }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  const client = new ClientCtor({
+    cookies: "auth_token=offline-fixture; ct0=offline-csrf",
+    fetch: testFetch, autoRefreshQueryIds: false,
+    transactionId: false, maxRetries: 0, rateLimitStrategy: "error",
+  });
+  const profile = operations?.UserByScreenName;
+  const search = operations?.SearchTimeline;
+  if (!profile?.queryId || !profile.operationName || !search?.queryId || !search.operationName) {
+    throw new Error("XActions: missing offline smoke-test operations");
+  }
+  const response = await client.graphql(profile.queryId, profile.operationName, {
+    screen_name: "offline_test", withSafetyModeUserFields: true,
+  });
+  const userResult = response.data?.user as { result?: { rest_id?: string } } | undefined;
+  if (userResult?.result?.rest_id !== "123") throw new Error("XActions: fake UserByScreenName response not decoded");
+  await client.graphql(search.queryId, search.operationName, {
+    rawQuery: "offline_test", count: 1, querySource: "typed_query", product: "Latest",
+  });
+  if (requests.length !== 2 || requests[0]?.method !== "GET" || requests[1]?.method !== "POST"
+    || requests[0]?.operation !== "UserByScreenName" || requests[1]?.operation !== "SearchTimeline"
+    || requests.some(request => !request.hasAuthCookie)) {
+    throw new Error("XActions: pinned HTTP client violated offline GET/POST/cookie contract");
+  }
+  console.log("XActions pinned checkout, ESM imports and real HTTP client GET/POST contract verified offline. No X requests made.");
 }
 main().catch(error => {
   console.error(error instanceof Error ? error.message : "XActions local verification failed");
