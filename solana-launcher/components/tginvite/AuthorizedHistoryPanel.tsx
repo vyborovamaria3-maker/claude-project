@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, MessageSquareText } from "lucide-react";
+import { Download, Loader2, MessageSquareText } from "lucide-react";
+import { buildHistoryCsv, buildHistoryJson } from "@/lib/tginvite-history-export";
 
 interface HistoryMessage {
   message_id: number;
@@ -53,6 +54,23 @@ export default function AuthorizedHistoryPanel({ username }: { username: string 
     }
   }
 
+  function downloadPreview(format: "csv" | "json") {
+    if (!source || messages.length === 0) return;
+    const content = format === "csv"
+      ? buildHistoryCsv(messages)
+      : buildHistoryJson(source, messages);
+    const mime = format === "csv" ? "text/csv;charset=utf-8" : "application/json;charset=utf-8";
+    const blob = new Blob([content], { type: mime });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `telegram_${source.replace(/[^a-zA-Z0-9_-]/g, "_")}_preview.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
+
   return (
     <section className="rounded-2xl border border-bg-border bg-bg-elevated p-5">
       <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
@@ -60,18 +78,33 @@ export default function AuthorizedHistoryPanel({ username }: { username: string 
           <h3 className="text-base font-semibold text-content">Authorized message preview</h3>
           <p className="mt-1 text-sm text-content-muted">
             Reads up to 50 recent messages using your connected Telegram account.
-            Only public @usernames are supported; no automatic joining or bulk export.
+            Only public @usernames are supported; exports include only the current 50-message preview.
           </p>
         </div>
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 rounded-xl border border-bg-border px-4 py-2 text-sm text-content disabled:opacity-50"
-          onClick={() => void preview()}
-          disabled={!valid || loading}
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquareText className="h-4 w-4" />}
-          {loading ? "Loading..." : "Preview 50"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-xl border border-bg-border px-4 py-2 text-sm text-content disabled:opacity-50"
+            onClick={() => void preview()}
+            disabled={!valid || loading}
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquareText className="h-4 w-4" />}
+            {loading ? "Loading..." : "Preview 50"}
+          </button>
+          {(["json", "csv"] as const).map((format) => (
+            <button
+              key={format}
+              type="button"
+              className="inline-flex items-center gap-2 rounded-xl border border-bg-border px-3 py-2 text-xs text-content disabled:opacity-50"
+              onClick={() => downloadPreview(format)}
+              disabled={!source || messages.length === 0 || loading}
+              aria-label={`Export current Telegram history preview as ${format.toUpperCase()}`}
+            >
+              <Download className="h-4 w-4" />
+              {format.toUpperCase()}
+            </button>
+          ))}
+        </div>
       </div>
       {!valid && username.trim() && (
         <p className="mt-3 text-xs text-content-muted">Enter a public @channel username for the message preview.</p>
