@@ -48,11 +48,15 @@ def _vault_key(request: Request) -> str:
         # Validate configuration even if the database contains no session yet.
         _key(key)
     except TelegramInviteVaultError as exc:
-        raise HTTPException(status_code=503, detail="Telegram session vault is unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Telegram session vault is unavailable"
+        ) from exc
     return key
 
 
-@router.get("/session", response_model=StoredTelegramSession, dependencies=[Depends(_internal_only)])
+@router.get(
+    "/session", response_model=StoredTelegramSession, dependencies=[Depends(_internal_only)]
+)
 async def get_session(
     request: Request,
     owner=Depends(get_current_subscriber),
@@ -67,9 +71,12 @@ async def get_session(
     if row is None:
         raise HTTPException(status_code=404, detail="No stored Telegram session")
     try:
-        return StoredTelegramSession.model_validate(decrypt_session(str(owner.id), row.encrypted_payload, key))
+        stored_payload = decrypt_session(str(owner.id), row.encrypted_payload, key)
+        return StoredTelegramSession.model_validate(stored_payload)
     except (TelegramInviteVaultError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail="Stored Telegram session cannot be decrypted") from exc
+        raise HTTPException(
+            status_code=503, detail="Stored Telegram session cannot be decrypted"
+        ) from exc
 
 
 @router.put("/session", status_code=204, dependencies=[Depends(_internal_only)])
