@@ -1463,8 +1463,8 @@ export interface MarketOverviewAggregateRow {
   sampledMarketCaps: number;
 }
 
-export function persistMarketEvent(event: MarketEventInsert) {
-  getDb().prepare(
+export function persistMarketEvent(event: MarketEventInsert): boolean {
+  const result = getDb().prepare(
     `INSERT OR IGNORE INTO market_events
        (event_id, kind, mint, trader, tx_type, amount_sol, market_cap_sol, payload_json, source, observed_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1480,6 +1480,7 @@ export function persistMarketEvent(event: MarketEventInsert) {
     event.source ?? "pumpportal",
     event.observedAt,
   );
+  return result.changes > 0;
 }
 
 export function getMarketOverviewAggregate(sinceMs: number): MarketOverviewAggregateRow {
