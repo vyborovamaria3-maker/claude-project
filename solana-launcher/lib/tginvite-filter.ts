@@ -91,7 +91,7 @@ export function scoreActivity(member: RawMember, now: Date = new Date()): Activi
   }
 
   // No profile photo — suspicious
-  if (!member.photo || member.photo.isPersonal) {
+  if (!member.photo) {
     score -= 0.1;
     reasons.push("no_avatar");
   }
@@ -123,7 +123,7 @@ export function scoreActivity(member: RawMember, now: Date = new Date()): Activi
   }
 
   // Has avatar — more engaged
-  if (member.photo && !member.photo.isPersonal) {
+  if (member.photo) {
     score += 0.1;
     reasons.push("has_avatar");
   }
@@ -238,28 +238,27 @@ export function filterMembers(
       config.whitelistUsernames.includes(member.username.toLowerCase());
 
     // 1. Remove bots
-    if (config.removeBots && activityScore.isBot && !isWhitelisted) {
+    if (config.removeBots && activityScore.isBot) {
       stats.botsRemoved++;
       continue;
     }
 
     // 2. Remove scam/fake/restricted
-    if (config.removeScam && member.isScam && !isWhitelisted) {
+    if (config.removeScam && member.isScam) {
       stats.scamRemoved++;
       continue;
     }
-    if (config.removeFake && member.isFake && !isWhitelisted) {
+    if (config.removeFake && member.isFake) {
       stats.fakeRemoved++;
       continue;
     }
-    if (config.removeRestricted && member.isRestricted && !isWhitelisted) {
+    if (config.removeRestricted && member.isRestricted) {
       stats.restrictedRemoved++;
       continue;
     }
 
     // 4. Blacklist check (only if NOT whitelisted)
     if (
-      !isWhitelisted &&
       member.username &&
       config.blacklistUsernames.includes(member.username.toLowerCase())
     ) {
@@ -281,24 +280,22 @@ export function filterMembers(
       }
 
       // 7. Avatar requirement
-      if (config.requireAvatar && (!member.photo || member.photo.isPersonal)) {
+      if (config.requireAvatar && !member.photo) {
         stats.noAvatarRemoved++;
         continue;
       }
 
       // 8. Last seen filter
       if (config.minLastSeenDays > 0) {
-        if (!member.lastSeen) {
-          // No last seen data — treat as inactive (hidden status)
-          stats.inactiveRemoved++;
-          continue;
-        }
-        const daysSinceLastSeen = Math.floor(
-          (now.getTime() - member.lastSeen.getTime()) / 86400000
-        );
-        if (daysSinceLastSeen > config.minLastSeenDays) {
-          stats.inactiveRemoved++;
-          continue;
+        // Hidden last-seen information is unknown, not evidence of inactivity.
+        if (member.lastSeen) {
+          const daysSinceLastSeen = Math.floor(
+            (now.getTime() - member.lastSeen.getTime()) / 86400000
+          );
+          if (daysSinceLastSeen > config.minLastSeenDays) {
+            stats.inactiveRemoved++;
+            continue;
+          }
         }
       }
 
