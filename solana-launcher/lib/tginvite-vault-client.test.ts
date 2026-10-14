@@ -11,7 +11,7 @@ vi.mock("@/lib/tginvite-mtproto", () => ({
   isAuthorized: vi.fn(),
 }));
 
-import { resolveTGInviteClient } from "./tginvite-vault-client";
+import { resolveTGInviteClient, persistVaultSession, TGInviteVaultConflict } from "./tginvite-vault-client";
 import { clearClient, createClient, getClient, isAuthorized } from "./tginvite-mtproto";
 
 const ownerId = "123e4567-e89b-12d3-a456-426614174000";
@@ -50,6 +50,18 @@ function mockVaultResponse(status: number, payload = stored) {
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
 }
+
+describe("TGInvite shared vault write conflicts (mocked)", () => {
+  it("turns competing session writes into a typed 409 conflict", async () => {
+    const fetcher = mockVaultResponse(409);
+    await expect(persistVaultSession(authorization, stored))
+      .rejects.toBeInstanceOf(TGInviteVaultConflict);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://internal-backend.test/api/v1/tginvite/session",
+      expect.objectContaining({ method: "PUT" }),
+    );
+  });
+});
 
 describe("TGInvite cross-worker vault invalidation (mocked)", () => {
   it("closes a locally authorized socket when another worker revoked the vault session", async () => {
