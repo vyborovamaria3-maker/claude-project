@@ -81,7 +81,7 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
     const profile = await engine.profile(handle);
     signal.throwIfAborted();
     await publish({ phase: "saving" });
-    await persistProfile(profile, task.id, account.name, lease);
+    await persistProfile(profile, task.id, account.name, lease, { transport: "http" });
     return;
   }
 
