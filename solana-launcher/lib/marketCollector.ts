@@ -61,7 +61,7 @@ function handleMessage(raw: string) {
     // messages with a mint could be counted as trades.
     const kind: MarketEventKind | null = isMigration ? "migration" : isLaunch ? "launch" : isTrade ? "trade" : null;
     if (!kind) return;
-    persistMarketEvent({
+    const inserted = persistMarketEvent({
       eventId: makeEventId(kind, mint, msg),
       kind,
       mint,
@@ -73,8 +73,10 @@ function handleMessage(raw: string) {
       source: "pumpportal",
       observedAt: now,
     });
-    state.eventsSinceStart++;
-    state.lastEventAt = now;
+    if (inserted) {
+      state.eventsSinceStart++;
+      state.lastEventAt = now;
+    }
   } catch (error) {
     console.error("[market-collector] Invalid event or persistence failed:", error);
   }
