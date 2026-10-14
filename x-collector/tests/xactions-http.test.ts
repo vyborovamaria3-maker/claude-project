@@ -3,6 +3,7 @@ import test from "node:test";
 import { normalizeXActionsProfile, normalizeXActionsTweet } from "../src/xactions/normalize";
 import { runCursorPages, HttpNoProgressError, type PageCommit } from "../src/xactions/pagination";
 import { toCollectorError, XActionsAccessDeniedError } from "../src/xactions/errors";
+import { HttpAccountLeaseError, HttpAccountQuotaError } from "../src/xactions/account-http-quota";
 import { taskFailure } from "../lib/trade/task-errors";
 import { CollectorHttpError } from "../lib/trade/task-errors";
 import { createSocks5Fetch, socksProxyUrl, decodeResponseBody } from "../src/xactions/transport";
@@ -202,4 +203,11 @@ test("HTTP pagination halts after repeated cursor-only pages with no new records
   (error: unknown) => error instanceof HttpNoProgressError && error.pageCount === 3);
   assert.equal(pages, 3);
   assert.deepEqual(committed, ["opaque-1", "opaque-2", "opaque-3"]);
+});
+
+test("XActions NetworkError wrappers retain quota and lease classification", () => {
+  const quota = Object.assign(new Error("XACTIONS_QUOTA_EXHAUSTED"), {name:"NetworkError"});
+  const lease = Object.assign(new Error("XACTIONS_ACCOUNT_LEASE_LOST"), {name:"NetworkError"});
+  assert.ok(toCollectorError(quota) instanceof HttpAccountQuotaError);
+  assert.ok(toCollectorError(lease) instanceof HttpAccountLeaseError);
 });
