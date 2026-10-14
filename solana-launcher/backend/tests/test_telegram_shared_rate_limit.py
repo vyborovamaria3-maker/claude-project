@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.core.rate_limit import RateLimiter, RateLimiterUnavailable
 
 
