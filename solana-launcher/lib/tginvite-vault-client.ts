@@ -177,7 +177,8 @@ async function resolveFromVault(
     throw new Error("Unable to restore Telegram session; retry later");
   }
   if (getClient(ownerId) === restored) await clearClient(ownerId);
-  await revokeVaultSession(authorization);
+  // Do not delete the central vault record here: another worker may have
+  // replaced it after our GET. Only an explicit disconnect may revoke it.
   return null;
 }
 
