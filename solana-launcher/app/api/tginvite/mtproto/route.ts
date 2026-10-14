@@ -1,4 +1,4 @@
-import { persistVaultSession, resolveTGInviteClient, revokeVaultSession } from "@/lib/tginvite-vault-client";
+import { consumeTGInviteLoginAttempt, persistVaultSession, resolveTGInviteClient, revokeVaultSession } from "@/lib/tginvite-vault-client";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode } from "@/lib/tginvite-mtproto";
@@ -28,6 +28,25 @@ function parserError(message: string): { status: number; body: { error: string; 
     return { status: 400, body: { error: "No pending Telegram login. Send code first.", status: "login_not_started" } };
   }
   return { status: 500, body: { error: "Telegram service error", status: "unknown" } };
+}
+
+function loginPermitError(
+  permit: { allowed: boolean; retryAfter?: string; status: number },
+): NextResponse | null {
+  if (permit.allowed) return null;
+  const rateLimited = permit.status === 429;
+  return NextResponse.json(
+    {
+      error: rateLimited
+        ? "Too many Telegram login attempts. Try again after the cooldown."
+        : "Telegram login protection service is unavailable.",
+      status: rateLimited ? "rate_limited" : "service_unavailable",
+    },
+    {
+      status: rateLimited ? 429 : 503,
+      headers: permit.retryAfter ? { "Retry-After": permit.retryAfter } : undefined,
+    },
+  );
 }
 
 export async function POST(request: Request) {
@@ -65,6 +84,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "apiId, apiHash, and phoneNumber required" }, { status: 400 });
       }
 
+      const permit = await consumeTGInviteLoginAttempt(authorization, "send_code");
+      const denied = loginPermitError(permit);
+      if (denied) return denied;
+
       const result = await sendLoginCode({
         apiId: Number(apiId),
         apiHash,
@@ -80,6 +103,10 @@ export async function POST(request: Request) {
 
     if (action === "completeLogin") {
       try {
+        const permit = await consumeTGInviteLoginAttempt(authorization, "complete_login");
+        const denied = loginPermitError(permit);
+        if (denied) return denied;
+
         const completed = await completeLogin({ phoneCode, password }, ownerId);
         await persistVaultSession(authorization, {
           api_id: completed.apiId,
