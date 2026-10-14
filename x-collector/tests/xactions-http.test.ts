@@ -85,6 +85,13 @@ test("GraphQL rate limit with an unusual transport status is still rate limited"
   assert.ok(mapped.retryAfterMs >= 30_000);
 });
 
+test("XActions authentication responses preserve HTTP 403 as access-required", () => {
+  const error = Object.assign(new Error("X access not granted"), { name: "AuthError", status: 403 });
+  const converted = toCollectorError(error);
+  assert.ok(converted instanceof CollectorHttpError);
+  assert.equal(converted.status, 403);
+});
+
 test("SOCKS5 proxy is mandatory; credentials are encoded and never echoed", () => {
   const url = socksProxyUrl({ server: "socks5://127.0.0.1:9050", username: "test@user", password: "pass#word" });
   assert.equal(url.username, "test%40user");
