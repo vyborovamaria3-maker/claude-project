@@ -30,9 +30,10 @@
 - `src/xactions/normalize.ts`: приводит ответы к формату TweetSchema/ProfileSchema;
   отсутствие метрик, которое XActions иногда превращает в ноль, сохраняется
   консервативно как null (включая настоящий 0, если его нельзя отличить).
-- `src/xactions/account-http-quota.ts`: первые HTTP запросы входят в уже
-  списанный вес задания, дополнительные резервируют квоту в x_accounts под
-  той же действующей арендой. При исчерпании задача откладывается.
+- `src/xactions/account-http-quota.ts`: **первый** HTTP-запрос покрывается
+  предварительно списанным весом `pickAccount`. Каждый последующий запрос
+  резервирует тот же вес операции (profile=1, search=3, timeline=5) в общей
+  таблице `x_accounts`. При исчерпании квоты задача откладывается.
 - `migrations/042_xactions_list_members.sql`: отдельная таблица наблюдений участников списков и новый тип задач `members`.
 - `src/xactions/persist-members.ts`: атомарная запись профилей, принадлежности к списку и HTTP-курсора.
 - `migrations/041_xactions_checkpoints.sql` и `src/xactions/checkpoint-store.ts`:
