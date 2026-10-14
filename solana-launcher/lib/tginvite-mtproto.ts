@@ -23,6 +23,7 @@ export function isPendingLoginExpired(
 
 interface PendingAuth {
   createdAt: number;
+  leaseToken: string;
   apiId: number;
   apiHash: string;
   phoneNumber: string;
@@ -303,7 +304,8 @@ export async function startClient(
   return client.session.save();
 }
 
-export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }, ownerId: string): Promise<{ isCodeViaApp: boolean }> {
+export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }, ownerId: string, leaseToken: string): Promise<{ isCodeViaApp: boolean }> {
+  if (!leaseToken || leaseToken.length < 32) throw new Error("Shared Telegram login lease required");
   // A new challenge invalidates any existing pending login for this owner.
   // Disconnect the old Telegram client before replacing it to avoid orphaned sockets.
   await clearClient(ownerId);
@@ -324,6 +326,7 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
 
     const challenge: PendingAuth = {
       createdAt: Date.now(),
+      leaseToken,
       apiId: config.apiId,
       apiHash: config.apiHash,
       phoneNumber: config.phoneNumber,
@@ -346,6 +349,11 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
     await clearClient(ownerId);
     throw error;
   }
+}
+
+export function getPendingLoginLease(ownerId: string): string | null {
+  const challenge = pendingAuthByOwner.get(ownerId);
+  return challenge && !isPendingLoginExpired(challenge.createdAt) ? challenge.leaseToken : null;
 }
 
 export async function completeLogin(params: {
