@@ -22,7 +22,7 @@ All fixes were committed only to the PR branch; `main` was unchanged.
 | 6 | `telegram_collector/tgparser_import.py`, CLI and tests | Archive source can be matched by mutable channel title; archive identity is not cryptographically proven. Concurrent inserts can still collide on a DB uniqueness constraint. | Needs stable source validation and conflict-safe insert |
 | 7 | `telegram_collector/exports.py`, history export, API | Formula protection treated trusted negative numeric values as dangerous strings, altering CSV values. No user-level source access policy yet; server export is superuser-only. | **Numeric export fixed** and regression test added |
 | 8 | `AuthorizedHistoryPanel.tsx`, `TGInviteWorkspace.tsx`, browser storage | Channel change could show or export stale messages; legacy resume could display a non-existent running job. Local TGInvite storage is still browser-wide rather than account-scoped. | **Stale preview and false resume fixed**; ownership migration remains |
-| 9 | DB migration 0025, vault crypto, rate limiter | DB row uniqueness is enforced. Redis limiter increments and sets expiry in separate operations; interrupted first requests can leave a key without expiry. There is no automated envelope-key rotation. | Redis atomicity and key rotation remain |
+| 9 | DB migration 0025, vault crypto, rate limiter | DB row uniqueness is enforced. Redis limiter originally incremented and set expiry separately; failures could leave non-expiring keys. There is no automated envelope-key rotation. | **Redis quota atomicity fixed** with Lua and test; key rotation remains |
 | 10 | Telegram CI and security regression tests | Starting commit passed all principal GitHub Actions workflows; gaps remain for cross-worker races, production Redis failure modes, and live authorized Telegram integration. | Added targeted race regression; latest CI must be checked |
 
 ## Changed in this review
@@ -34,6 +34,7 @@ All fixes were committed only to the PR branch; `main` was unchanged.
 - Keep typed negative numbers numeric in exported CSV, with text formula protection intact.
 - Close superseded/failed GramJS authentication connections.
 - Add targeted tests for duplicate session insertion and CSV integrity.
+- Atomically increment and expire Redis rate-limit counters; test fail-closed behavior.
 
 ## Remaining release blockers
 
@@ -41,7 +42,7 @@ All fixes were committed only to the PR branch; `main` was unchanged.
 2. Stable Telegram source identity validation for archives and conflict-safe imports.
 3. Per-account browser state isolation and privileged source access policies.
 4. Durable opt-in evidence and invitation result ledger. Direct invitations must remain disabled.
-5. Atomic Redis quota updates, operational secret rotation, and adversarial load testing.
+5. Operational secret rotation, real Redis integration tests, and adversarial load testing.
 6. Live integration tests with authorized accounts and owned/consenting communities.
 
 A green CI result proves that configured tests passed, **not** that a production
