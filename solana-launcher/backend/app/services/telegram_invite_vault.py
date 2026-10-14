@@ -36,22 +36,39 @@ def encrypt_session(owner_id: str, payload: dict[str, Any], configured_key: str)
     return "v1:" + base64.b64encode(nonce + ciphertext).decode("ascii")
 
 
-def decrypt_session(owner_id: str, encrypted: str, configured_key: str) -> dict[str, Any]:
+def decrypt_session(
+    owner_id: str,
+    encrypted: str,
+    configured_key: str,
+    previous_keys: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Read v1 payloads with the active key, then explicit rotation fallback keys.
+
+    Writing always uses the primary key. Previous keys must be removed only
+    after all vault rows have been re-encrypted with the new active key.
+    """
     if not encrypted.startswith("v1:"):
         raise TelegramInviteVaultError("Unsupported Telegram vault payload version")
     try:
         combined = base64.b64decode(encrypted[3:], validate=True)
         if len(combined) < 29:
             raise ValueError("Ciphertext too short")
-        plaintext = AESGCM(_key(configured_key)).decrypt(
-            combined[:12], combined[12:], owner_id.encode("utf-8")
-        )
-        data = json.loads(plaintext)
-        if not isinstance(data, dict):
-            raise ValueError("Invalid payload")
-        return data
-    except (ValueError, TypeError, KeyError) as exc:
+        # Validate *all* configured keys, not just the first matching key.
+        keyring = tuple(_key(key) for key in (configured_key, *previous_keys))
+        for raw_key in keyring:
+            try:
+                plaintext = AESGCM(raw_key).decrypt(
+                    combined[:12], combined[12:], owner_id.encode("utf-8")
+                )
+            except Exception:
+                continue
+            try:
+                data = json.loads(plaintext)
+            except (ValueError, TypeError) as exc:
+                raise TelegramInviteVaultError("Invalid Telegram vault payload") from exc
+            if not isinstance(data, dict):
+                raise TelegramInviteVaultError("Invalid Telegram vault payload")
+            return data
+        raise TelegramInviteVaultError("Unable to decrypt Telegram vault payload")
+    except (ValueError, TypeError) as exc:
         raise TelegramInviteVaultError("Invalid Telegram vault payload") from exc
-    except Exception as exc:
-        # Authentication failures must never reveal encryption internals.
-        raise TelegramInviteVaultError("Unable to decrypt Telegram vault payload") from exc
