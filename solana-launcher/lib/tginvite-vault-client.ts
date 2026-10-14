@@ -64,6 +64,30 @@ export async function consumeTGInviteLoginAttempt(
   };
 }
 
+/** Shared per-user limiter before potentially expensive Telegram reads. */
+export async function consumeTGInviteReadPermit(
+  authorization: string,
+  kind: "fetch_members" | "analyze_recent" | "validate_candidates",
+): Promise<{ allowed: boolean; retryAfter?: string; status: number }> {
+  const secret = process.env.TG_INVITE_INTERNAL_KEY;
+  if (!secret || secret.length < 32) return { allowed: false, status: 503 };
+  const response = await fetch(`${getBackendBaseUrl()}/api/v1/tginvite/read-permit`, {
+    method: "POST",
+    headers: {
+      Authorization: authorization,
+      "X-TGInvite-Service-Key": secret,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ kind }),
+    cache: "no-store",
+  });
+  return {
+    allowed: response.status === 204,
+    retryAfter: response.headers.get("Retry-After") ?? undefined,
+    status: response.status,
+  };
+}
+
 export async function loadVaultSession(authorization: string): Promise<VaultSession | null> {
   const response = await vaultRequest("GET", authorization);
   if (response.status === 404) return null;
