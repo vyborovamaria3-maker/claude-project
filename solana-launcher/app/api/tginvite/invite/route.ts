@@ -1,4 +1,4 @@
-import { resolveTGInviteClient } from "@/lib/tginvite-vault-client";
+import { consumeTGInviteReadPermit, resolveTGInviteClient } from "@/lib/tginvite-vault-client";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { createInviteLink, getChatInfo } from "@/lib/telegram";
@@ -72,11 +72,28 @@ export async function POST(request: Request) {
         );
       }
 
-      if (!Array.isArray(channelUsernames) || !channelUsernames.length) {
-        return NextResponse.json({ error: "channelUsernames must be a non-empty array" }, { status: 400 });
+      if (!Array.isArray(channelUsernames) || !channelUsernames.length ||
+          channelUsernames.length > 5 ||
+          channelUsernames.some((value: unknown) => typeof value !== "string" || value.length > 256)) {
+        return NextResponse.json({ error: "Provide 1 to 5 valid channels" }, { status: 422 });
+      }
+
+      const permit = await consumeTGInviteReadPermit(authorization, "fetch_members");
+      if (!permit.allowed) {
+        const rateLimited = permit.status === 429;
+        return NextResponse.json(
+          { error: rateLimited ? "Too many Telegram read requests" : "Telegram read protection unavailable" },
+          {
+            status: rateLimited ? 429 : 503,
+            headers: permit.retryAfter ? { "Retry-After": permit.retryAfter } : undefined,
+          },
+        );
       }
 
       const config: FilterConfig = { ...DEFAULT_FILTER_CONFIG, ...filterConfig };
+      config.maxResults = Number.isInteger(config.maxResults)
+        ? Math.max(1, Math.min(Number(config.maxResults), 2000))
+        : 1000;
       const allResults: {
         channel: string;
         total: number;
