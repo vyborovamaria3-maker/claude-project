@@ -16,6 +16,7 @@ test("XActions cursor and posts commit atomically, reject stale cursors and expi
     );
     CREATE TABLE collected_posts (id text PRIMARY KEY);`);
     await db.exec(await fs.readFile("migrations/041_xactions_checkpoints.sql", "utf8"));
+    await db.exec(await fs.readFile("migrations/043_xactions_progress.sql", "utf8"));
     const deadline = Date.now() + 300000;
     await db.query("INSERT INTO x_tasks VALUES(7,'worker-1',1,'claimed',$1)", [deadline]);
     await db.query("INSERT INTO x_accounts VALUES('collector','owner-1',$1)", [deadline]);
