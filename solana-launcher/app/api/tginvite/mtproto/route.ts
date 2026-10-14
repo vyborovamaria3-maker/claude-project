@@ -96,8 +96,13 @@ export async function POST(request: Request) {
     }
 
     if (action === "disconnect") {
-      await revokeVaultSession(authorization);
-      await clearClient(ownerId);
+      try {
+        await revokeVaultSession(authorization);
+      } finally {
+        // Never leave a live session in this process if vault revocation fails.
+        // A failed vault operation still returns an error to the caller.
+        await clearClient(ownerId);
+      }
       return NextResponse.json({ status: "disconnected" });
     }
 
@@ -130,11 +135,20 @@ export async function POST(request: Request) {
         if (denied) return denied;
 
         const completed = await completeLogin({ phoneCode, password }, ownerId);
-        await persistVaultSession(authorization, {
-          api_id: completed.apiId,
-          api_hash: completed.apiHash,
-          session_string: completed.sessionString,
-        });
+        try {
+          await persistVaultSession(authorization, {
+            api_id: completed.apiId,
+            api_hash: completed.apiHash,
+            session_string: completed.sessionString,
+          });
+        } catch {
+          // Never report a non-persisted Telegram session as a successful login.
+          await clearClient(ownerId);
+          return NextResponse.json(
+            { error: "Telegram session could not be saved securely; reconnect and retry" },
+            { status: 503 },
+          );
+        }
         return NextResponse.json({ status: "authenticated" });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
