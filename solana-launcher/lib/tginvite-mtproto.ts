@@ -8,7 +8,20 @@ const CALL_CONTEXT_RE = /\b(?:call|calling|caller|gem|alpha|entry|buy|send(?:ing
 const PUMPFUN_RE = /(?:pump\.fun|pumpfun)/i;
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
+export const PENDING_LOGIN_TTL_MS = 10 * 60 * 1000;
+
+/** Reject stale code/password flows; Telegram codes themselves may expire sooner. */
+export function isPendingLoginExpired(
+  createdAt: number,
+  now = Date.now(),
+): boolean {
+  return !Number.isFinite(createdAt) ||
+    now < createdAt ||
+    now - createdAt >= PENDING_LOGIN_TTL_MS;
+}
+
 interface PendingAuth {
+  createdAt: number;
   apiId: number;
   apiHash: string;
   phoneNumber: string;
@@ -305,6 +318,7 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
   );
 
   pendingAuthByOwner.set(ownerId, {
+    createdAt: Date.now(),
     apiId: config.apiId,
     apiHash: config.apiHash,
     phoneNumber: config.phoneNumber,
@@ -324,6 +338,10 @@ export async function completeLogin(params: {
   const pendingAuth = pendingAuthByOwner.get(ownerId);
   if (!pendingAuth) {
     throw new Error("No pending Telegram login. Send code first.");
+  }
+  if (isPendingLoginExpired(pendingAuth.createdAt)) {
+    await clearClient(ownerId);
+    throw new Error("Telegram login expired. Send a new code.");
   }
 
   const { Api } = await import("telegram");
