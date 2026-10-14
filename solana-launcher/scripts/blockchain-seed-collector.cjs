@@ -7,6 +7,9 @@
 // Requires Python 3 for the project's bounded XLSX reader and Helius keys for collection.
 const fs = require("node:fs");
 const path = require("node:path");
+// The local CLI does not inherit Next.js environment loading.
+require("dotenv").config({ path: path.join(process.cwd(), ".env.local"), quiet: true });
+require("dotenv").config({ path: path.join(process.cwd(), ".env"), quiet: true });
 const { PRIORITIES, SOURCE_BITS, parseWorkbook, scanFolder, isSolanaAddress } = require("./blockchain-seed-core.cjs");
 const SOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
