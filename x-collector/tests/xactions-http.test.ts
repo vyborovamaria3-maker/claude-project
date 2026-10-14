@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeXActionsProfile, normalizeXActionsTweet } from "../src/xactions/normalize";
 import { runCursorPages, type PageCommit } from "../src/xactions/pagination";
-import { toCollectorError } from "../src/xactions/errors";
+import { toCollectorError, XActionsAccessDeniedError } from "../src/xactions/errors";
+import { taskFailure } from "../lib/trade/task-errors";
 import { CollectorHttpError } from "../lib/trade/task-errors";
 import { createSocks5Fetch, socksProxyUrl, decodeResponseBody } from "../src/xactions/transport";
 import { gzipSync, deflateSync, brotliCompressSync } from "node:zlib";
@@ -86,11 +87,15 @@ test("GraphQL rate limit with an unusual transport status is still rate limited"
   assert.ok(mapped.retryAfterMs >= 30_000);
 });
 
-test("XActions authentication responses preserve HTTP 403 as access-required", () => {
-  const error = Object.assign(new Error("X access not granted"), { name: "AuthError", status: 403 });
+test("XActions HTTP 403 without challenge never marks a healthy account captcha", () => {
+  const error = Object.assign(new Error("Authentication failed (403)"), { name: "AuthError", status: 403 });
   const converted = toCollectorError(error);
-  assert.ok(converted instanceof CollectorHttpError);
-  assert.equal(converted.status, 403);
+  assert.ok(converted instanceof XActionsAccessDeniedError);
+  assert.equal(taskFailure(converted).code, "ACCESS_DENIED");
+  assert.equal(taskFailure(converted).permanent, true);
+  const challenged = toCollectorError(Object.assign(new Error("captcha challenge required"), {status:403}));
+  assert.ok(challenged instanceof CollectorHttpError);
+  assert.equal(taskFailure(challenged).code, "ACCESS_REQUIRED");
 });
 
 test("SOCKS5 proxy is mandatory; credentials are encoded and never echoed", () => {
