@@ -95,6 +95,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ status: "needs_phone", message: "Use sendCode to authenticate" });
     }
 
+    if (action === "cancelLogin") {
+      await resetTGInviteLoginLease(authorization);
+      await clearClient(ownerId);
+      return NextResponse.json({ status: "login_cancelled" });
+    }
+
     if (action === "disconnect") {
       try {
         // Cancels pending logins in other workers before removing the vault row.
