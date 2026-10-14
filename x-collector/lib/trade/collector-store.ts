@@ -138,7 +138,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   return newTaskLinks;
 }
 
-export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string, lease?: PersistenceLease, options: { client?: PoolClient } = {}) {
+export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string, lease?: PersistenceLease, options: { client?: PoolClient; transport?: "browser" | "http" } = {}): Promise<number> {
   const parsed = ProfileSchema.safeParse(p);
   if (!parsed.success) {
     log.warn("profile rejected by schema", { error: parsed.error.message });
@@ -146,7 +146,8 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
   }
   const d = parsed.data;
   const now = Date.now();
-  const write = async (client: PoolClient) => {
+  const write = async (client: PoolClient): Promise<number> => {
+  let newlyLinked = 0;
   await assertPersistenceLease(client, taskId, lease);
   await recordRaw(client,'PROFILE',d.handle.toLowerCase(),d,new Date(now),collectorAccount??null);
   await client.query(
@@ -159,16 +160,26 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
        followers    = COALESCE(EXCLUDED.followers, twitter_profiles.followers),
        following    = COALESCE(EXCLUDED.following, twitter_profiles.following),
        posts_count  = COALESCE(EXCLUDED.posts_count, twitter_profiles.posts_count),
-       is_verified  = EXCLUDED.is_verified,
+       -- XActions source sometimes defaults absent verification to false.
+       -- Preserve previously confirmed verified=true on incomplete HTTP data.
+       is_verified  = CASE WHEN $11::boolean
+         THEN (twitter_profiles.is_verified OR EXCLUDED.is_verified)
+         ELSE EXCLUDED.is_verified END,
        joined_at    = COALESCE(EXCLUDED.joined_at, twitter_profiles.joined_at),
        avatar_url   = COALESCE(EXCLUDED.avatar_url, twitter_profiles.avatar_url),
        last_seen_at = EXCLUDED.last_seen_at`,
     [d.handle.toLowerCase(), d.displayName, d.bio, d.followers, d.following, d.postsCount,
-     d.isVerified, d.joinedAt, d.avatarUrl, now]
+     d.isVerified, d.joinedAt, d.avatarUrl, now, options.transport === "http"]
   );
-  if (taskId !== undefined) await client.query("INSERT INTO x_task_profiles(task_id,handle) VALUES($1,$2) ON CONFLICT DO NOTHING",[taskId,d.handle.toLowerCase()]);
+  if (taskId !== undefined) {
+    const inserted = await client.query(
+      "INSERT INTO x_task_profiles(task_id,handle) VALUES($1,$2) ON CONFLICT DO NOTHING",
+      [taskId,d.handle.toLowerCase()],
+    );
+    newlyLinked = inserted.rowCount ?? 0;
+  }
   await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(d)]);
+  return newlyLinked;
   };
-  if (options.client) await write(options.client);
-  else await tx(write);
+  return options.client ? write(options.client) : tx(write);
 }
