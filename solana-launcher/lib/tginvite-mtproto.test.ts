@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toRawMember } from "./tginvite-mtproto";
+import { isPendingLoginExpired, PENDING_LOGIN_TTL_MS, toRawMember } from "./tginvite-mtproto";
 
 describe("TGInvite member normalization", () => {
   it("does not expose phone numbers or MTProto access hashes", () => {
@@ -50,5 +50,24 @@ describe("TGInvite member normalization", () => {
 
   it("skips entities that are not Telegram users", () => {
     expect(toRawMember({ className: "Channel", id: 19 })).toBeNull();
+  });
+});
+
+describe("Telegram login pending-state expiry", () => {
+  it("accepts recent login challenges", () => {
+    const now = 1730000000000;
+    expect(isPendingLoginExpired(now, now)).toBe(false);
+    expect(isPendingLoginExpired(now, now + PENDING_LOGIN_TTL_MS - 1)).toBe(false);
+  });
+
+  it("expires challenges after ten minutes", () => {
+    const now = 1730000000000;
+    expect(isPendingLoginExpired(now, now + PENDING_LOGIN_TTL_MS)).toBe(true);
+    expect(isPendingLoginExpired(now, now + PENDING_LOGIN_TTL_MS + 60_000)).toBe(true);
+  });
+
+  it("rejects invalid and future timestamps", () => {
+    expect(isPendingLoginExpired(Number.NaN, 500)).toBe(true);
+    expect(isPendingLoginExpired(2000, 1000)).toBe(true);
   });
 });
