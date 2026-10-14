@@ -82,6 +82,7 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     assert.equal(await finishTask(reclaimed.id, 'worker-b'), true);
     await db.query("INSERT INTO x_accounts(name, session_encrypted, hour_window_start, created_at, updated_at) VALUES ('test', $1, 0, 0, 0)", [Buffer.from('encrypted-test-fixture')]);
     const account = await pickAccount('search', 'owner-a'); assert(account);
+    const busyWait=await accountWaitMs('search');assert(busyWait>=5000&&busyWait<=7000);
     assert.equal(await pickAccount('search', 'owner-b'), null);
     assert.equal(await releaseAccount('test', 'owner-b'), false);
     assert.equal(await releaseAccount('test', 'owner-a'), true);

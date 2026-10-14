@@ -93,7 +93,10 @@ export async function pickAccount(kind: RequestKind, leaseOwner: string, preferr
 export async function accountWaitMs(kind: RequestKind, preferredAccount?: string, allowFallback = false, requireProxy = false): Promise<number> {
   const now = Date.now();
   const row = await q1<{ready_at:string|null}>(
-    `SELECT min(greatest($1::bigint,COALESCE(account_busy_until,0),COALESCE(cooldown_until,0),
+    `SELECT min(greatest($1::bigint,
+      CASE WHEN account_claimed_by IS NOT NULL AND account_busy_until>$1
+        THEN least(account_busy_until,$1::bigint+5000) ELSE COALESCE(account_busy_until,0) END,
+      COALESCE(cooldown_until,0),
       CASE WHEN weight_used_this_hour+$2>weight_quota_per_hour THEN hour_window_start+3600000 ELSE $1::bigint END))::text ready_at
      FROM x_accounts WHERE role='collector' AND status IN ('active','cooldown') AND tier!='retired'
        AND weight_quota_per_hour >= $2 AND ($3::text IS NULL OR name=$3 OR $4)
