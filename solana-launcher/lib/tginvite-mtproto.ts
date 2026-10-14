@@ -1,4 +1,5 @@
 import { RawMember } from "./tginvite-filter";
+import { reconcileInviteToChannelResult } from "./tginvite-invite-policy";
 
 const SOLANA_CANDIDATE_RE = /(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])/g;
 const EVM_CONTRACT_RE = /(?<![0-9a-fA-F])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
@@ -607,15 +608,27 @@ export async function analyzeChannelRecentMessages(
   }
 }
 
+/**
+ * Low-level MTProto transport only. No TGInvite API route exposes this function:
+ * a server-owned recipient consent ledger and durable job must be built first.
+ * Do not use it for unsolicited bulk invitations.
+ */
 export async function inviteUsers(
   tgClient: Record<string, unknown>,
   channelUsername: string,
   users: { id: number; accessHash: string }[]
-): Promise<{ invited: number; failed: number; errors: string[] }> {
+): Promise<{
+  invited: number;
+  failed: number;
+  unknown: number;
+  unattempted: number;
+  errors: string[];
+}> {
   let invited = 0;
   let failed = 0;
+  let unknown = 0;
+  let attempted = 0;
   const errors: string[] = [];
-
   const client = tgClient as {
     connected?: boolean;
     connect?: () => Promise<void>;
@@ -628,38 +641,44 @@ export async function inviteUsers(
     const entity = await resolveChannelEntity(client, channelUsername);
     const { Api } = await import("telegram");
 
-    // Invite in batches of 10 (Telegram limit)
     for (let i = 0; i < users.length; i += 10) {
       const batch = users.slice(i, i + 10);
+      const inputUsers = batch.map((u) => new Api.InputUser({
+        userId: u.id as never, accessHash: u.accessHash as never,
+      }));
+      attempted += batch.length;
       try {
-        const inputUsers = batch.map((u) => new Api.InputUser({ userId: u.id as never, accessHash: u.accessHash as never }));
-        await client.invoke(
-          new Api.channels.InviteToChannel({
-            channel: entity as never,
-            users: inputUsers as never,
-          })
-        );
-        invited += batch.length;
-        await new Promise((r) => setTimeout(r, 2000 + Math.random() * 3000));
-      } catch (err: unknown) {
-        const error = err as { message?: string };
-        failed += batch.length;
-        errors.push(error.message || "Batch invite failed");
-
-        if (error.message?.includes("FLOOD_WAIT")) {
-          const waitMatch = error.message.match(/FLOOD_WAIT_(\d+)/);
-          const waitSec = waitMatch ? parseInt(waitMatch[1]) : 60;
-          await new Promise((r) => setTimeout(r, waitSec * 1000));
+        const response = await client.invoke(new Api.channels.InviteToChannel({
+          channel: entity as never,
+          users: inputUsers as never,
+        }));
+        const result = reconcileInviteToChannelResult(batch.map((u) => u.id), response);
+        invited += result.invited;
+        failed += result.declined;
+        unknown += result.unknown;
+        if (result.unknown > 0) {
+          errors.push("Telegram invite response could not be verified; halted.");
+          break;
         }
+      } catch (err: unknown) {
+        unknown += batch.length;
+        const reason = err instanceof Error ? err.message : "Telegram invite error";
+        errors.push(reason);
+        // Especially on FLOOD_WAIT, never sleep and retry automatically:
+        // the outcome might be uncertain and Telegram limits must be respected.
+        break;
       }
     }
   } catch (err: unknown) {
-    const error = err as { message?: string };
-    failed = users.length;
-    errors.push(error.message || "Channel entity not found");
+    const reason = err instanceof Error ? err.message : "Channel lookup failed";
+    errors.push(reason);
   }
 
-  return { invited, failed, errors };
+  return {
+    invited, failed, unknown,
+    unattempted: Math.max(0, users.length - attempted),
+    errors,
+  };
 }
 
 export function isConnected(ownerId: string): boolean {
