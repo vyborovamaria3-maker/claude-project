@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.telegram_invite_consent import TelegramInviteConsent, TelegramInviteJob
@@ -116,7 +117,22 @@ async def record_verified_opt_in(
         verified_at=datetime.now(UTC),
     )
     db.add(record)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Telegram may redeliver the exact update to multiple workers at once.
+        # The globally unique proof digest wins; a replay cannot mint consent.
+        await db.rollback()
+        winner = (
+            await db.execute(
+                select(TelegramInviteConsent).where(
+                    TelegramInviteConsent.proof_digest == proof_hash
+                )
+            )
+        ).scalar_one_or_none()
+        if winner is None:
+            raise
+        return winner
     await db.refresh(record)
     return record
 
@@ -197,6 +213,24 @@ async def plan_non_dispatching_job(
         status="blocked_transport",
     )
     db.add(job)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Competing callers with the same idempotency key must converge on
+        # one durable job without changing its consent binding.
+        await db.rollback()
+        winner = (
+            await db.execute(
+                select(TelegramInviteJob).where(
+                    TelegramInviteJob.owner_id == owner,
+                    TelegramInviteJob.idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if winner is None:
+            raise
+        if winner.consent_id != consent or winner.destination_chat_id != chat:
+            raise ConsentLedgerError("Idempotency key already belongs to another job")
+        return winner
     await db.refresh(job)
     return job
