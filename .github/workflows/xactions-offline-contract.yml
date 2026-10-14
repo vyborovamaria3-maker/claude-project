@@ -32,4 +32,6 @@ jobs:
           npm ci --ignore-scripts
       - name: Exercise pinned XActions real HTTP client with fake fetch only
         shell: bash
-        run: XACTIONS_ROOT="$RUNNER_TEMP/XActions" npm run xactions:verify
+        run: |
+          npm run build
+          XACTIONS_ROOT="$RUNNER_TEMP/XActions" node dist/scripts/xactions-verify.js
