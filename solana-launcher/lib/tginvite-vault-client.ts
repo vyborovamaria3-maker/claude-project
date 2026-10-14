@@ -113,23 +113,58 @@ export async function revokeVaultSession(authorization: string): Promise<void> {
   if (!response.ok) throw new Error(`TGInvite vault delete failed (HTTP ${response.status})`);
 }
 
-/** Reloads a session lost on process restart; identity is never supplied by the browser. */
-export async function resolveTGInviteClient(
+/**
+ * A process-local client must not survive a vault revocation or replacement
+ * made by another worker. Revalidate the stored session on every operation:
+ * an authorized GramJS socket alone is not evidence that its owner still
+ * permits use of that session.
+ *
+ * These single-flight promises prevent simultaneous reads in this worker from
+ * replacing and disconnecting each other's newly restored connections.
+ * Cross-worker mutations still require durable coordination before production.
+ */
+const pendingResolutions = new Map<string, Promise<Record<string, unknown> | null>>();
+
+function matchesVaultSession(client: Record<string, unknown>, stored: VaultSession): boolean {
+  const session = client.session as { save?: () => string } | undefined;
+  if (!session || typeof session.save !== "function") return false;
+  try {
+    return session.save() === stored.session_string;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveFromVault(
   ownerId: string,
   authorization: string,
 ): Promise<Record<string, unknown> | null> {
-  const existing = getClient(ownerId);
-  if (existing) {
-    try {
-      if (await isAuthorized(existing)) return existing;
-    } catch {
-      // Stale in-memory connection; check the persisted vault below.
-    }
+  let stored: VaultSession | null;
+  try {
+    // Never return the cached client before checking centralized revocation.
+    stored = await loadVaultSession(authorization);
+  } catch (error) {
+    // In particular, a vault outage must not turn a stale socket into access.
     await clearClient(ownerId);
+    throw error;
   }
 
-  const stored = await loadVaultSession(authorization);
-  if (!stored) return null;
+  const existing = getClient(ownerId);
+  if (!stored) {
+    if (existing) await clearClient(ownerId);
+    return null;
+  }
+  if (existing) {
+    if (matchesVaultSession(existing, stored)) {
+      try {
+        if (await isAuthorized(existing)) return existing;
+      } catch {
+        // Recreate a stale connection from the latest vault session below.
+      }
+    }
+    if (getClient(ownerId) === existing) await clearClient(ownerId);
+  }
+
   const restored = await createClient({
     apiId: stored.api_id,
     apiHash: stored.api_hash,
@@ -138,11 +173,28 @@ export async function resolveTGInviteClient(
   try {
     if (await isAuthorized(restored)) return restored;
   } catch {
-    // Recoverable connection failures should not silently erase credentials.
-    await clearClient(ownerId);
+    if (getClient(ownerId) === restored) await clearClient(ownerId);
     throw new Error("Unable to restore Telegram session; retry later");
   }
-  await clearClient(ownerId);
+  if (getClient(ownerId) === restored) await clearClient(ownerId);
   await revokeVaultSession(authorization);
   return null;
+}
+
+/** Resolve only a centrally authorized session; identity comes from the backend. */
+export function resolveTGInviteClient(
+  ownerId: string,
+  authorization: string,
+): Promise<Record<string, unknown> | null> {
+  const inflight = pendingResolutions.get(ownerId);
+  if (inflight) return inflight;
+  const resolving = (async () => {
+    try {
+      return await resolveFromVault(ownerId, authorization);
+    } finally {
+      pendingResolutions.delete(ownerId);
+    }
+  })();
+  pendingResolutions.set(ownerId, resolving);
+  return resolving;
 }
