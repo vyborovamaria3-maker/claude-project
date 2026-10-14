@@ -73,7 +73,8 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     throw new Error("XActions: pinned parser exports unavailable");
   }
   const networkFetch = createSocks5Fetch(ctx.proxy);
-  let upstreamResetAt = 0;
+  // A profile endpoint's budget must not pause unrelated timeline calls.
+  const endpointResets = new Map<string, number>();
   const proxiedFetch: typeof fetch = async (input, init) => {
     ctx.signal.throwIfAborted();
     const inputUrl = typeof input === "string" || input instanceof URL ? input : null;
@@ -86,9 +87,10 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     // reaches zero. The upstream client recognizes its own RateLimitError and
     // will not re-try or convert it into a generic NetworkError.
     const now = Date.now();
-    if (upstreamResetAt > now) {
-      throw new module.RateLimitError("XActions upstream request budget exhausted", {
-        status: 429, resetAt: upstreamResetAt,
+    const reset = endpointResets.get(url.pathname) ?? 0;
+    if (reset > now) {
+      throw new module.RateLimitError("XActions endpoint request budget exhausted", {
+        status: 429, resetAt: reset,
       });
     }
     await ctx.beforeRequest();
@@ -105,12 +107,19 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     cookies: cookieHeader, userAgent: ctx.userAgent,
     fetch: proxiedFetch, maxRetries: 0, rateLimitStrategy: "error",
     autoRefreshQueryIds: false, transactionId: false,
-    onResponse: (response: { status: number; remaining: number | null; resetAt: number | null }) => {
-      // A successful last permitted request can finish normally. The next
-      // request is blocked until X's own reset timestamp.
-      if (response.remaining === 0 && typeof response.resetAt === "number" &&
+    onResponse: (response: { url?: string; status: number; remaining: number | null; resetAt: number | null }) => {
+      // The X rate-limit headers are per GraphQL operation. Never apply a
+      // UserByScreenName reset to an unrelated ListTimeline request.
+      if (!response.url) return;
+      let pathname: string;
+      try { pathname = new URL(response.url).pathname; } catch { return; }
+      if (response.remaining !== 0) {
+        if (response.remaining !== null && response.remaining > 0) endpointResets.delete(pathname);
+        return;
+      }
+      if (typeof response.resetAt === "number" &&
           Number.isFinite(response.resetAt) && response.resetAt > Date.now()) {
-        upstreamResetAt = Math.min(response.resetAt, Date.now() + 86_400_000);
+        endpointResets.set(pathname, Math.min(response.resetAt, Date.now() + 86_400_000));
       }
     },
   });
