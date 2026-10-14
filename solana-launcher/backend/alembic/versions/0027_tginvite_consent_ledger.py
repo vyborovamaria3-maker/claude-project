@@ -35,13 +35,11 @@ def upgrade() -> None:
             "proof_kind IN ('telegram_bot_start', 'telegram_chat_join_request')",
             name="ck_tginvite_consent_proof_kind",
         ),
-        sa.UniqueConstraint(
-            "owner_id", "destination_chat_id", "recipient_digest",
-            name="uq_tginvite_consent_owner_chat_recipient",
-        ),
         sa.UniqueConstraint("proof_digest", name="uq_tginvite_consent_proof_digest"),
     )
-    op.create_index("ix_tginvite_consent_owner", "telegram_invite_consents", ["owner_id"])
+    op.create_index(
+        "ix_telegram_invite_consents_owner_id", "telegram_invite_consents", ["owner_id"]
+    )
 
     op.create_table(
         "telegram_invite_jobs",
@@ -69,11 +67,11 @@ def upgrade() -> None:
             "owner_id", "idempotency_key", name="uq_tginvite_job_owner_request",
         ),
     )
-    op.create_index("ix_tginvite_job_owner", "telegram_invite_jobs", ["owner_id"])
+    op.create_index("ix_telegram_invite_jobs_owner_id", "telegram_invite_jobs", ["owner_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_tginvite_job_owner", table_name="telegram_invite_jobs")
+    op.drop_index("ix_telegram_invite_jobs_owner_id", table_name="telegram_invite_jobs")
     op.drop_table("telegram_invite_jobs")
-    op.drop_index("ix_tginvite_consent_owner", table_name="telegram_invite_consents")
+    op.drop_index("ix_telegram_invite_consents_owner_id", table_name="telegram_invite_consents")
     op.drop_table("telegram_invite_consents")
