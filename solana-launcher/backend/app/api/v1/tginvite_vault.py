@@ -76,6 +76,21 @@ def _vault_key(request: Request) -> str:
     return key
 
 
+def _previous_vault_keys(request: Request) -> tuple[str, ...]:
+    configured = request.app.state.settings.tginvite_session_previous_keys
+    keys = tuple(entry.strip() for entry in configured.split(",") if entry.strip())
+    if len(keys) > 4:
+        raise HTTPException(status_code=503, detail="Too many previous Telegram vault keys")
+    try:
+        for key in keys:
+            _key(key)
+    except TelegramInviteVaultError as exc:
+        raise HTTPException(
+            status_code=503, detail="Telegram vault rotation keys are invalid"
+        ) from exc
+    return keys
+
+
 @router.get(
     "/session", response_model=StoredTelegramSession, dependencies=[Depends(_internal_only)]
 )
@@ -93,7 +108,9 @@ async def get_session(
     if row is None:
         raise HTTPException(status_code=404, detail="No stored Telegram session")
     try:
-        stored_payload = decrypt_session(str(owner.id), row.encrypted_payload, key)
+        stored_payload = decrypt_session(
+            str(owner.id), row.encrypted_payload, key, _previous_vault_keys(request)
+        )
         return StoredTelegramSession.model_validate(stored_payload)
     except (TelegramInviteVaultError, ValueError) as exc:
         raise HTTPException(
@@ -269,7 +286,10 @@ async def read_user_channel_history(
 
     try:
         stored = StoredTelegramSession.model_validate(
-            decrypt_session(str(owner.id), row.encrypted_payload, _vault_key(request))
+            decrypt_session(
+                str(owner.id), row.encrypted_payload,
+                _vault_key(request), _previous_vault_keys(request)
+            )
         )
     except (TelegramInviteVaultError, ValueError) as exc:
         raise HTTPException(status_code=503, detail="Telegram session is unavailable") from exc
