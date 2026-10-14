@@ -1,4 +1,5 @@
 import { CollectorHttpError } from "../../lib/trade/task-errors";
+import { HttpAccountLeaseError, HttpAccountQuotaError } from "./account-http-quota";
 
 /** A 403 is not necessarily a CAPTCHA. Avoid quarantining healthy accounts. */
 export class XActionsAccessDeniedError extends Error {
@@ -12,6 +13,11 @@ export class XActionsAccessDeniedError extends Error {
 export function toCollectorError(error: unknown): Error {
   if (error instanceof CollectorHttpError) return error;
   if (!(error instanceof Error)) return new Error("XActions: unknown HTTP error");
+  // Pinned TwitterHttpClient wraps non-API errors in NetworkError even with
+  // maxRetries=0. Restore our internal quota/lease signals before the worker
+  // chooses whether to defer or penalize the account.
+  if (error.message === "XACTIONS_QUOTA_EXHAUSTED") return new HttpAccountQuotaError();
+  if (error.message === "XACTIONS_ACCOUNT_LEASE_LOST") return new HttpAccountLeaseError();
 
   const details = error as Error & { status?: unknown; resetAt?: unknown };
   // The X GraphQL API can report a rate limit inside an error envelope
