@@ -43,6 +43,19 @@ function instructions(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+/** Absence of a bottom cursor is NOT proof of exhaustion: GraphQL can return
+ * truncated modules, a changed entry shape, or temporarily empty pages.
+ * Only the explicit terminal instruction may close a checkpoint. */
+export function verifyHttpPageEnd(rows: unknown[], count: number, cursor: string | null): void {
+  if (cursor !== null) return;
+  const terminal = rows.some(row => {
+    const parsed = record(row);
+    return parsed.type === "TimelineTerminateTimeline" || parsed.__typename === "TimelineTerminateTimeline";
+  });
+  if (!terminal) throw new Error("XActions: ambiguous timeline end without terminal instruction");
+  if (!Number.isSafeInteger(count) || count < 0) throw new Error("XActions: invalid parsed page count");
+}
+
 export class XActionsReadEngine {
   constructor(
     private readonly client: ReadClient,
@@ -100,7 +113,9 @@ export class XActionsReadEngine {
     if (!paths.some(path => Array.isArray(nested(data, path)))) {
       throw new Error("XActions: user timeline response shape changed");
     }
-    const page = this.parsers.parseTimelineInstructions(instructions(this.parsers.userTimelineInstructions(data)));
+    const rows = instructions(this.parsers.userTimelineInstructions(data));
+    const page = this.parsers.parseTimelineInstructions(rows);
+    verifyHttpPageEnd(rows, page.tweets.length, page.cursor);
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
   }
 
@@ -131,6 +146,7 @@ export class XActionsReadEngine {
       throw new Error("XActions: SearchTimeline response shape changed");
     }
     const page = this.parsers.parseTimelineInstructions(rawInstructions);
+    verifyHttpPageEnd(rawInstructions, page.tweets.length, page.cursor);
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
   }
 
@@ -146,6 +162,7 @@ export class XActionsReadEngine {
     const rawInstructions = nested(data, ["list", "members_timeline", "timeline", "instructions"]);
     if (!Array.isArray(rawInstructions)) throw new Error("XActions: list members response shape changed");
     const page = this.parsers.parseUserList(rawInstructions);
+    verifyHttpPageEnd(rawInstructions, page.users.length, page.cursor);
     return { items: page.users.map(user => normalizeXActionsProfile(user)), nextCursor: page.cursor };
   }
 
