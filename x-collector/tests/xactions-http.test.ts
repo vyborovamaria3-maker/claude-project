@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeXActionsProfile, normalizeXActionsTweet } from "../src/xactions/normalize";
-import { runCursorPages, type PageCommit } from "../src/xactions/pagination";
+import { runCursorPages, HttpNoProgressError, type PageCommit } from "../src/xactions/pagination";
 import { toCollectorError, XActionsAccessDeniedError } from "../src/xactions/errors";
 import { taskFailure } from "../lib/trade/task-errors";
 import { CollectorHttpError } from "../lib/trade/task-errors";
@@ -188,4 +188,18 @@ test("HTTP decompression is bounded for gzip, deflate and Brotli zip bombs", () 
   }
   assert.throws(() => decodeResponseBody(Buffer.from("a"), "unknown", 4096), /encoding/);
   assert.throws(() => decodeResponseBody(Buffer.alloc(5), "identity", 4), /size limit/);
+});
+
+test("HTTP pagination halts after repeated cursor-only pages with no new records", async () => {
+  let pages = 0;
+  const committed: string[] = [];
+  await assert.rejects(runCursorPages(async () => ({
+    items: ["duplicate"], nextCursor: `opaque-${++pages}`,
+  }), async page => {
+    committed.push(page.nextCursor!);
+    return 0;
+  }, { maxPages: 50, maxPagesWithoutNewItems: 3, stopAfterItems: 10 }),
+  (error: unknown) => error instanceof HttpNoProgressError && error.pageCount === 3);
+  assert.equal(pages, 3);
+  assert.deepEqual(committed, ["opaque-1", "opaque-2", "opaque-3"]);
 });
