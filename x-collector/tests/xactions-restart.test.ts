@@ -17,6 +17,7 @@ test("HTTP cursor survives a worker crash, new account lease and new task attemp
     );
     CREATE TABLE collected_posts (id text PRIMARY KEY);`);
     await db.exec(await fs.readFile("migrations/041_xactions_checkpoints.sql", "utf8"));
+    await db.exec(await fs.readFile("migrations/043_xactions_progress.sql", "utf8"));
     const leaseUntil = Date.now() + 300_000;
     await db.query("INSERT INTO x_tasks VALUES (11,'first-worker',1,'claimed',$1)", [leaseUntil]);
     await db.query("INSERT INTO x_accounts VALUES ('collector','first-owner',$1)", [leaseUntil]);
