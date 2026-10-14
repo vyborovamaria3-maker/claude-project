@@ -93,12 +93,13 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
     }, async page => {
       signal.throwIfAborted();
       await publish({ phase: "saving" });
-      await persistXActionsMemberPage({
+      const newItems = await persistXActionsMemberPage({
         ...key, lease, previousCursor: nextToFetch,
       }, page);
       nextToFetch = page.nextCursor;
-      totalItems += page.items.length;
+      totalItems += newItems;
       await publish({ phase: "collecting", found: totalItems, limit });
+      return newItems;
     }, pageOptions);
     if (!result.completed && result.itemsCommitted < limit) {
       throw new Error("XActions: HTTP page budget exhausted before task item target; cursor saved");
@@ -110,15 +111,16 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
     }, async page => {
       signal.throwIfAborted();
       await publish({ phase: "saving" });
-      await persistXActionsTweetPage({
+      const newItems = await persistXActionsTweetPage({
         ...key, lease,
         mint: sourceKind === "list" ? task.mint : null,
         sourceQuery: sourceKind === "list" ? `list:${sourceKey}` : null,
         previousCursor: nextToFetch,
       }, page);
       nextToFetch = page.nextCursor;
-      totalItems += page.items.length;
+      totalItems += newItems;
       await publish({ phase: "collecting", found: totalItems, limit });
+      return newItems;
     }, pageOptions);
     if (!result.completed && result.itemsCommitted < limit) {
       throw new Error("XActions: HTTP page budget exhausted before task item target; cursor saved");
