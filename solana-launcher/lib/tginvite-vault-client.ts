@@ -100,6 +100,68 @@ export async function consumeTGInviteReadPermit(
   }
 }
 
+export class TGInviteLoginLeaseError extends Error {
+  constructor(readonly status: number) {
+    super(status === 409 ? "Telegram login already in progress or expired" : "Shared Telegram login coordination unavailable");
+    this.name = "TGInviteLoginLeaseError";
+  }
+}
+
+async function loginLeaseRequest(
+  authorization: string,
+  action: "acquire" | "verify" | "release" | "reset",
+  token?: string,
+): Promise<{ token?: string }> {
+  const secret = process.env.TG_INVITE_INTERNAL_KEY;
+  if (!secret || secret.length < 32) throw new TGInviteLoginLeaseError(503);
+  let response: Response;
+  try {
+    response = await fetch(`${getBackendBaseUrl()}/api/v1/tginvite/login-lease`, {
+      method: "POST",
+      headers: {
+        Authorization: authorization,
+        "X-TGInvite-Service-Key": secret,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ action, ...(token ? { token } : {}) }),
+      cache: "no-store",
+    });
+  } catch {
+    throw new TGInviteLoginLeaseError(503);
+  }
+  if (!response.ok) throw new TGInviteLoginLeaseError(response.status === 409 ? 409 : 503);
+  if (action !== "acquire") return {};
+  try {
+    const data: unknown = await response.json();
+    if (data && typeof data === "object" &&
+        "token" in data && typeof data.token === "string" &&
+        data.token.length >= 32 && data.token.length <= 128) {
+      return { token: data.token };
+    }
+  } catch {
+    // Invalid backend response: never proceed without a lease token.
+  }
+  throw new TGInviteLoginLeaseError(503);
+}
+
+export async function acquireTGInviteLoginLease(authorization: string): Promise<string> {
+  const response = await loginLeaseRequest(authorization, "acquire");
+  if (!response.token) throw new TGInviteLoginLeaseError(503);
+  return response.token;
+}
+
+export async function verifyTGInviteLoginLease(authorization: string, token: string): Promise<void> {
+  await loginLeaseRequest(authorization, "verify", token);
+}
+
+export async function releaseTGInviteLoginLease(authorization: string, token: string): Promise<void> {
+  await loginLeaseRequest(authorization, "release", token);
+}
+
+export async function resetTGInviteLoginLease(authorization: string): Promise<void> {
+  await loginLeaseRequest(authorization, "reset");
+}
+
 export async function loadVaultSession(authorization: string): Promise<VaultSession | null> {
   const response = await vaultRequest("GET", authorization);
   if (response.status === 404) return null;
