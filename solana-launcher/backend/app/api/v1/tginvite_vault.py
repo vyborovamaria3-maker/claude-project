@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_subscriber
 from app.db.session import get_db
 from app.models.telegram_invite_session import TelegramInviteSession
+from app.services.telegram_collector.user_history import load_public_history, normalize_public_channel
 from app.services.telegram_invite_vault import (
     TelegramInviteVaultError,
     _key,
@@ -116,3 +117,71 @@ async def delete_session(
         await db.delete(row)
         await db.commit()
     return Response(status_code=204)
+
+
+class TelegramHistoryRequest(BaseModel):
+    username: str = Field(min_length=5, max_length=33)
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+@router.post("/messages", dependencies=[Depends(_internal_only)])
+async def read_user_channel_history(
+    payload: TelegramHistoryRequest,
+    request: Request,
+    owner=Depends(get_current_subscriber),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Read a bounded set of messages using only the caller's server-side user session.
+
+    Deliberately rejects invitation hashes and private-join links. This endpoint does
+    not add Telegram memberships or persist message contents in shared tables.
+    """
+    try:
+        username = normalize_public_channel(payload.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    rate = await request.app.state.rate_limiter.allow(
+        f"tg-history:{owner.id}", limit=6, window_seconds=60
+    )
+    if not rate.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many history requests",
+            headers={"Retry-After": str(rate.retry_after)},
+        )
+
+    row = (
+        await db.execute(
+            select(TelegramInviteSession).where(TelegramInviteSession.owner_id == str(owner.id))
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Connect your Telegram account first")
+
+    try:
+        stored = StoredTelegramSession.model_validate(
+            decrypt_session(str(owner.id), row.encrypted_payload, _vault_key(request))
+        )
+    except (TelegramInviteVaultError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Telegram session is unavailable") from exc
+
+    try:
+        messages = await load_public_history(
+            api_id=stored.api_id,
+            api_hash=stored.api_hash,
+            session_string=stored.session_string,
+            username=username,
+            limit=payload.limit,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "source": username,
+        "coverage": "recent_accessible_messages",
+        "complete_history": False,
+        "messages": messages,
+        "count": len(messages),
+    }
