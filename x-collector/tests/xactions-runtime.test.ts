@@ -26,15 +26,26 @@ test("Playwright cookies are restricted to X and never accept arbitrary domains"
   assert.throws(() => cookiesFromStorageState({ cookies: [], origins: [] }), /AUTH_REQUIRED/);
 });
 
-test("HTTP quota gate consumes weighted reservation, then extra shared quota", async () => {
-  let reservations = 0;
-  const gate = createHttpQuotaGate("timeline", async () => { reservations++; return reservations <= 2; });
-  for (let i = 0; i < 5; i++) await gate();
-  assert.equal(reservations, 0);
+test("HTTP quota gate precharges only first weighted call, then charges each extra call", async () => {
+  const weights: number[] = [];
+  const gate = createHttpQuotaGate("timeline", async weight => {
+    weights.push(weight);
+    return weights.length <= 2;
+  });
+  await gate();
+  assert.deepEqual(weights, []);
   await gate();
   await gate();
-  assert.equal(reservations, 2);
+  assert.deepEqual(weights, [5, 5]);
   await assert.rejects(gate(), HttpAccountQuotaError);
+  assert.deepEqual(weights, [5, 5, 5]);
+  const profileWeights: number[] = [];
+  const profileGate = createHttpQuotaGate("profile", async weight => {
+    profileWeights.push(weight); return true;
+  });
+  await profileGate();
+  await profileGate();
+  assert.deepEqual(profileWeights, [1]);
 });
 
 test("engine selection excludes historical/discovery and keyword search", () => {
