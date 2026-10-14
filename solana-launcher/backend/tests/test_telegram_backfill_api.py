@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import jwt
 import pytest
-
 from app.models.user import User
 
 
