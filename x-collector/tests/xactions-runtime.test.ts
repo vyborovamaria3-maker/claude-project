@@ -65,6 +65,18 @@ test("engine selection excludes historical/discovery and keyword search", () => 
   assert.equal(isXActionsEligible("timeline", { handle: "NASA", discovery_source: "three-lists" }), false);
 });
 
+test("historical routing survives Zod stripping unknown fields", () => {
+  const original = { handle: "NASA", limit: 20, history_run_id: "archived-run" };
+  const parsed = parseTaskPayload("timeline", original);
+  assert.equal(Object.hasOwn(parsed, "history_run_id"), false);
+  assert.equal(isXActionsEligible("timeline", parsed, JSON.stringify(original)), false);
+  assert.equal(isXActionsEligible("timeline", parsed, original), false);
+  assert.equal(isXActionsEligible("timeline", parsed), true);
+  const listOriginal = { query: "list:1878727153048777016", list_since_id: "123" };
+  const listParsed = parseTaskPayload("search", listOriginal);
+  assert.equal(isXActionsEligible("search", listParsed, JSON.stringify(listOriginal)), false);
+});
+
 test("runtime enforces Node requirement only for explicit XActions path", () => {
   assert.throws(() => assertXActionsRuntime("20.18.0"), /Node.js/);
   assert.doesNotThrow(() => assertXActionsRuntime("22.12.0"));
