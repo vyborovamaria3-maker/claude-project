@@ -1,10 +1,30 @@
 const PREFIX = "tginvite_";
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+let activeOwnerId: string | null = null;
+
+/**
+ * Browser storage must never be accessible until the authenticated backend
+ * identifies the current owner. Legacy unscoped keys are intentionally ignored:
+ * automatically assigning them to the next logged-in user would leak data.
+ */
+export function bindTGInviteStorageOwner(ownerId: string | null): void {
+  if (ownerId !== null && !UUID_RE.test(ownerId)) {
+    throw new Error("Invalid TGInvite storage identity");
+  }
+  activeOwnerId = ownerId?.toLowerCase() ?? null;
+}
+
+function scopedKey(key: string): string | null {
+  return activeOwnerId ? `${PREFIX}${activeOwnerId}_${key}` : null;
+}
 
 export const storage = {
   get<T>(key: string, fallback: T): T {
     if (typeof window === "undefined") return fallback;
+    const scoped = scopedKey(key);
+    if (!scoped) return fallback;
     try {
-      const raw = localStorage.getItem(PREFIX + key);
+      const raw = localStorage.getItem(scoped);
       return raw ? JSON.parse(raw) : fallback;
     } catch {
       return fallback;
@@ -13,20 +33,26 @@ export const storage = {
 
   set<T>(key: string, value: T): void {
     if (typeof window === "undefined") return;
+    const scoped = scopedKey(key);
+    if (!scoped) return;
     try {
-      localStorage.setItem(PREFIX + key, JSON.stringify(value));
+      localStorage.setItem(scoped, JSON.stringify(value));
     } catch {}
   },
 
   remove(key: string): void {
     if (typeof window === "undefined") return;
-    localStorage.removeItem(PREFIX + key);
+    const scoped = scopedKey(key);
+    if (!scoped) return;
+    localStorage.removeItem(scoped);
   },
 
   clear(): void {
     if (typeof window === "undefined") return;
+    const scoped = scopedKey("");
+    if (!scoped) return;
     Object.keys(localStorage)
-      .filter((k) => k.startsWith(PREFIX))
+      .filter((k) => k.startsWith(scoped))
       .forEach((k) => localStorage.removeItem(k));
   },
 };

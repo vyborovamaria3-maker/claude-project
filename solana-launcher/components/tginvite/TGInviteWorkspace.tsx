@@ -49,7 +49,7 @@ import {
 import { siteDesign } from "@/lib/siteDesign";
 import { ToastProvider, useToast } from "@/components/tginvite/Toast";
 import { useApi } from "@/components/tginvite/useApi";
-import { storage, channelsStorage, jobsStorage, settingsStorage } from "@/lib/tginvite-storage";
+import { bindTGInviteStorageOwner, storage, channelsStorage, jobsStorage, settingsStorage } from "@/lib/tginvite-storage";
 import { parseUsername, StealthDelayer } from "@/lib/tginvite-stealth";
 import AIAnalysisPanel from "@/components/tginvite/AIAnalysisPanel";
 import MultiAccountPanel from "@/components/tginvite/MultiAccountPanel";
@@ -262,9 +262,41 @@ function riskClassName(risk?: ParsedMemberScore["riskLevel"]): string {
 }
 
 export default function TGInvitePage() {
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [identityError, setIdentityError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function identify() {
+      try {
+        const response = await fetch("/api/tginvite/identity", { cache: "no-store" });
+        if (!response.ok) throw new Error("Unable to verify TGInvite access");
+        const identity = (await response.json()) as { ownerId?: unknown };
+        if (typeof identity.ownerId !== "string") throw new Error("Invalid owner identity");
+        if (!cancelled) {
+          bindTGInviteStorageOwner(identity.ownerId);
+          setOwnerId(identity.ownerId);
+        }
+      } catch {
+        if (!cancelled) setIdentityError(true);
+      }
+    }
+    void identify();
+    return () => {
+      cancelled = true;
+      bindTGInviteStorageOwner(null);
+    };
+  }, []);
+
+  if (identityError) {
+    return <p role="alert" className="p-6 text-content">Unable to verify TGInvite access. Sign in and retry.</p>;
+  }
+  if (!ownerId) {
+    return <p role="status" className="p-6 text-content-muted">Verifying TGInvite access...</p>;
+  }
   return (
     <ToastProvider>
-      <TGInvitePageInner />
+      <TGInvitePageInner key={ownerId} />
     </ToastProvider>
   );
 }
