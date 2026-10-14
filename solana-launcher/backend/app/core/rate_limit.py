@@ -15,19 +15,33 @@ class RateLimitResult:
     retry_after: int
 
 
+class RateLimiterUnavailable(RuntimeError):
+    """Shared rate-limiter backend is required but unavailable."""
+
+
 class RateLimiter:
     def __init__(self, redis_client: Redis | None = None) -> None:
         self._redis = redis_client
         self._memory: dict[str, tuple[int, float]] = {}
         self._lock = asyncio.Lock()
 
-    async def allow(self, key: str, *, limit: int, window_seconds: int) -> RateLimitResult:
+    async def allow(
+        self,
+        key: str,
+        *,
+        limit: int,
+        window_seconds: int,
+        require_shared: bool = False,
+    ) -> RateLimitResult:
         if self._redis is not None:
             try:
                 return await self._allow_redis(key, limit=limit, window_seconds=window_seconds)
-            except Exception:
-                # Fall back to in-memory protection if Redis is temporarily unavailable.
-                pass
+            except Exception as exc:
+                if require_shared:
+                    raise RateLimiterUnavailable("Shared rate limiter unavailable") from exc
+                # Existing non-sensitive routes retain the local development fallback.
+        elif require_shared:
+            raise RateLimiterUnavailable("Shared rate limiter not configured")
         return await self._allow_memory(key, limit=limit, window_seconds=window_seconds)
 
     async def _allow_redis(self, key: str, *, limit: int, window_seconds: int) -> RateLimitResult:
