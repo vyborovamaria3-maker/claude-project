@@ -42,9 +42,9 @@ from app.models.social_intelligence import (
     TelegramTokenMention,
     TelegramUser,
 )
-from app.models.telegram_invite_session import TelegramInviteSession
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
+from app.models.telegram_invite_session import TelegramInviteSession
 from app.models.twitter_crawler_run import TwitterCrawlerRun
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 from app.models.twitter_discovery_admin import TwitterDiscoveryConfig, TwitterDiscoveryRun

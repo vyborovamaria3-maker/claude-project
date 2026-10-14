@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models.telegram_invite_session import TelegramInviteSession
 from app.services.telegram_invite_vault import (
     TelegramInviteVaultError,
+    _key,
     decrypt_session,
     encrypt_session,
 )
@@ -27,7 +28,10 @@ class StoredTelegramSession(BaseModel):
     session_string: str = Field(min_length=8, max_length=20000)
 
 
-def _internal_only(request: Request, service_key: str | None = Header(None, alias="X-TGInvite-Service-Key")) -> None:
+def _internal_only(
+    request: Request,
+    service_key: str | None = Header(None, alias="X-TGInvite-Service-Key"),
+) -> None:
     settings = request.app.state.settings
     expected = settings.tginvite_internal_key
     if not expected or len(expected) < 32:
@@ -42,8 +46,6 @@ def _vault_key(request: Request) -> str:
     key = request.app.state.settings.tginvite_session_encryption_key
     try:
         # Validate configuration even if the database contains no session yet.
-        from app.services.telegram_invite_vault import _key
-
         _key(key)
     except TelegramInviteVaultError as exc:
         raise HTTPException(status_code=503, detail="Telegram session vault is unavailable") from exc
