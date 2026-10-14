@@ -32,7 +32,8 @@
     "bot:start": "NODE_ENV=production ts-node telegram-bot/index.ts",
     "blockchain:seeds": "node scripts/blockchain-seed-collector.cjs --mode import",
     "blockchain:collect": "node scripts/blockchain-seed-collector.cjs --mode collect",
-    "blockchain:status": "node scripts/blockchain-seed-collector.cjs --mode status"
+    "blockchain:status": "node scripts/blockchain-seed-collector.cjs --mode status",
+    "blockchain:watch": "node scripts/blockchain-seed-collector.cjs --mode watch"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
