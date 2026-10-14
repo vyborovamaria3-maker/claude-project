@@ -171,9 +171,11 @@ async def revoke_recipient_opt_in(
             TelegramInviteConsent.revoked_at.is_(None),
         )
         .values(revoked_at=datetime.now(UTC))
+        .returning(TelegramInviteConsent.id)
     )
+    revoked = len(result.scalars().all())
     await db.commit()
-    return result.rowcount or 0
+    return revoked
 
 
 async def plan_non_dispatching_job(
