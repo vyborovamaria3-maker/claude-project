@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
-
 from app.models.telegram_invite_session import TelegramInviteSession
 from app.models.user import User
 from sqlalchemy import select
