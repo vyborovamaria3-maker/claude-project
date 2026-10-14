@@ -75,6 +75,10 @@ export function createSocks5Fetch(proxy: PlaywrightProxy, options: SocksFetchOpt
     signal?.throwIfAborted();
 
     return new Promise<Response>((resolve, reject) => {
+      const fail = (error: Error) => {
+        clearTimeout(deadline);
+        reject(error);
+      };
       const req = (target.protocol === "https:" ? https : http).request(target, {
         method, headers: Object.fromEntries(headers.entries()), agent, signal,
         timeout: timeoutMs,
@@ -89,8 +93,9 @@ export function createSocks5Fetch(proxy: PlaywrightProxy, options: SocksFetchOpt
           }
           chunks.push(chunk);
         });
-        res.on("error", reject);
+        res.on("error", fail);
         res.on("end", () => {
+          clearTimeout(deadline);
           try {
             const out = new Headers();
             for (const [name, value] of Object.entries(res.headers)) {
@@ -109,8 +114,12 @@ export function createSocks5Fetch(proxy: PlaywrightProxy, options: SocksFetchOpt
           } catch (error) { reject(error); }
         });
       });
+      // Socket timeouts only bound idle periods. Bound the whole operation,
+      // including proxy negotiation and responses that continuously trickle.
+      const deadline = setTimeout(() => req.destroy(new Error("XActions: HTTP request timed out")), timeoutMs);
+      deadline.unref();
       req.on("timeout", () => req.destroy(new Error("XActions: HTTP request timed out")));
-      req.on("error", reject);
+      req.on("error", fail);
       req.end(body);
     });
   };
