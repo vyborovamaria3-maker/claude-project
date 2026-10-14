@@ -190,7 +190,10 @@ async def limit_telegram_login_attempt(
 
 
 class TelegramReadPermitRequest(BaseModel):
-    kind: Literal["fetch_members", "analyze_recent", "validate_candidates"]
+    kind: Literal[
+        "fetch_members", "analyze_recent", "validate_candidates",
+        "create_invite_link", "batch_invite_links",
+    ]
 
 
 @router.post("/read-permit", status_code=204, dependencies=[Depends(_internal_only)])
@@ -207,6 +210,8 @@ async def rate_limit_telegram_reads(
         "fetch_members": (6, 60),
         "analyze_recent": (10, 60),
         "validate_candidates": (2, 60),
+        "create_invite_link": (6, 60),
+        "batch_invite_links": (2, 60),
     }
     limit, window_seconds = caps[payload.kind]
     result = await _telegram_limit(

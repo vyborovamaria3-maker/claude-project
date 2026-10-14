@@ -67,7 +67,8 @@ export async function consumeTGInviteLoginAttempt(
 /** Shared per-user limiter before potentially expensive Telegram reads. */
 export async function consumeTGInviteReadPermit(
   authorization: string,
-  kind: "fetch_members" | "analyze_recent" | "validate_candidates",
+  kind: "fetch_members" | "analyze_recent" | "validate_candidates" |
+    "create_invite_link" | "batch_invite_links",
 ): Promise<{ allowed: boolean; retryAfter?: string; status: number }> {
   const secret = process.env.TG_INVITE_INTERNAL_KEY;
   if (!secret || secret.length < 32) return { allowed: false, status: 503 };

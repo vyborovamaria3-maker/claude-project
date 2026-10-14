@@ -92,7 +92,7 @@ export async function getChatInfo(
 export async function createInviteLink(
   token: string,
   chatId: string,
-  options?: { name?: string; expireDate?: number; memberLimit?: number }
+  options?: { name?: string; expireDate?: number; memberLimit?: number; createsJoinRequest?: boolean }
 ): Promise<{
   success: boolean;
   link?: string;
@@ -105,7 +105,8 @@ export async function createInviteLink(
     const linkResult = await botInstance.telegram.createChatInviteLink(chatId, {
       name: options?.name,
       expire_date: options?.expireDate,
-      member_limit: options?.memberLimit,
+      member_limit: options?.createsJoinRequest ? undefined : options?.memberLimit,
+      creates_join_request: options?.createsJoinRequest,
     });
     return {
       success: true,
