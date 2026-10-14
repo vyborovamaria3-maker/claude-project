@@ -2,7 +2,7 @@ import { TweetSchema, ProfileSchema } from "./schemas";
 import { processTweetEntities } from "../../src/intelligence/entities/processor";
 import { tx } from "./pg";
 import { log } from "./logger";
-import { source, rawPage, storePage } from "../archive/store";
+import { source, sourceId, rawPage, storePage } from "../archive/store";
 import { Page } from "../archive/model";
 import {recordRaw,recordRawBatch} from './intelligence-store';
 import type { PoolClient } from "pg";
@@ -40,7 +40,10 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   const fromHttp = options.transport === "http";
   // archive.sourceId hashes URL/license/kind (not name). Distinct URLs keep
   // HTTP observations from inheriting the old browser-only source metadata.
-  const sourceKey = await source(fromHttp ? "X HTTP collector" : "X browser collector", fromHttp ? "https://x.com/i/api/graphql" : "https://x.com", "X platform terms", "x", { transport: fromHttp ? "HTTP GraphQL" : "visible DOM" });
+  const httpSourceUrl = "https://x.com/i/api/graphql";
+  const sourceKey = fromHttp
+    ? sourceId(httpSourceUrl, "X platform terms", "x")
+    : await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
 
   for (let i = 0; i < valid.length; i += BATCH) {
     const chunk = valid.slice(i, i + BATCH);
@@ -52,6 +55,12 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     const writeChunk = async (client: PoolClient): Promise<number> => {
       let newlyLinked = 0;
       await assertPersistenceLease(client, taskId, lease);
+      // HTTP provenance must be committed or rolled back with its page/cursor.
+      // Browser-source behavior is deliberately unchanged.
+      if (fromHttp) {
+        await source("X HTTP collector", httpSourceUrl, "X platform terms", "x",
+          { transport: "HTTP GraphQL" }, client);
+      }
       await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
       const values: unknown[] = [];
       const placeholders = chunk.map((t, j) => {
