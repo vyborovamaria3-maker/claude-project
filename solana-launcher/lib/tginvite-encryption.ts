@@ -5,7 +5,10 @@ function decodeKey(key: string): Uint8Array {
   return bytes;
 }
 async function importAesKey(secret: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", decodeKey(secret), "AES-GCM", false, ["encrypt", "decrypt"]);
+  const raw = decodeKey(secret);
+  const buffer = new ArrayBuffer(raw.length);
+  new Uint8Array(buffer).set(raw);
+  return crypto.subtle.importKey("raw", buffer, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 /** Authenticated AES-256-GCM encryption. Keep the secret in server-only configuration. */
 export async function encryptSession(sessionString: string, key: string): Promise<string> {
