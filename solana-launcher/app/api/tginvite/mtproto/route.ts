@@ -1,4 +1,4 @@
-import { consumeTGInviteLoginAttempt, persistVaultSession, resolveTGInviteClient, revokeVaultSession } from "@/lib/tginvite-vault-client";
+import { consumeTGInviteLoginAttempt, consumeTGInviteReadPermit, persistVaultSession, resolveTGInviteClient, revokeVaultSession } from "@/lib/tginvite-vault-client";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode } from "@/lib/tginvite-mtproto";
@@ -52,6 +52,15 @@ function loginPermitError(
   );
 }
 
+function readPermitError(permit: { allowed: boolean; retryAfter?: string; status: number }): NextResponse | null {
+  if (permit.allowed) return null;
+  const blocked = permit.status === 429;
+  return NextResponse.json(
+    { error: blocked ? "Telegram read limit reached. Try later." : "Telegram read protection unavailable.", status: blocked ? "rate_limited" : "service_unavailable" },
+    { status: blocked ? 429 : 503, headers: permit.retryAfter ? { "Retry-After": permit.retryAfter } : undefined },
+  );
+}
+
 export async function POST(request: Request) {
   const user = await requireTGInviteUser(request);
   if (user.error) return user.error;
@@ -60,6 +69,16 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { action, apiId, apiHash, phoneNumber, sessionString, channelUsername, limit, filterConfig, activityMode, phoneCode, password } = body;
+    const readKinds = {
+      fetchMembers: "fetch_members",
+      analyzeRecentMessages: "analyze_recent",
+      validateCandidates: "validate_candidates",
+    } as const;
+    if (typeof action === "string" && Object.prototype.hasOwnProperty.call(readKinds, action)) {
+      const kind = readKinds[action as keyof typeof readKinds];
+      const denied = readPermitError(await consumeTGInviteReadPermit(authorization, kind));
+      if (denied) return denied;
+    }
 
     if (action === "connect") {
       if (sessionString) {
@@ -153,6 +172,9 @@ export async function POST(request: Request) {
         );
       }
 
+      if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 5000)) {
+        return NextResponse.json({ error: "Member limit must be between 1 and 5000" }, { status: 422 });
+      }
       let members;
       let partial = false;
       let source = "participants";
