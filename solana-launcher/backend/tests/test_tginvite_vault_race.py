@@ -8,8 +8,7 @@ from uuid import uuid4
 
 import pytest
 from app.api.v1.tginvite_vault import StoredTelegramSession, store_session
-from app.services.telegram_invite_vault import decrypt_session
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 
 KEY = base64.b64encode(b"z" * 32).decode("ascii")
@@ -58,11 +57,11 @@ async def test_vault_recovers_when_another_worker_inserts_owner_first(test_app):
         api_id=12345, api_hash="a" * 32, session_string="test.session.key.012345"
     )
 
-    response = await store_session(
-        session, request, owner=SimpleNamespace(id=owner_id), db=db
-    )
+    with pytest.raises(HTTPException) as caught:
+        await store_session(session, request, owner=SimpleNamespace(id=owner_id), db=db)
 
-    assert response.status_code == 204
+    assert caught.value.status_code == 409
     assert db.rolled_back is True
-    assert db.commits == 2
-    assert decrypt_session(owner_id, db.winner.encrypted_payload, KEY) == session.model_dump()
+    assert db.commits == 1
+    # The competing worker's session must remain untouched.
+    assert db.winner.encrypted_payload == "older-competing-value"
