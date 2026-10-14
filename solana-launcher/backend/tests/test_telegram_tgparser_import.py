@@ -7,6 +7,7 @@ from datetime import UTC
 import pytest
 from app.models.social_intelligence import TelegramChannel, TelegramMessage
 from app.services.telegram_collector.tgparser_import import import_tgparser_archive
+from app.services.telegram_intelligence import is_first_trusted_observation
 from sqlalchemy import func, select
 
 
@@ -56,6 +57,10 @@ async def test_tgparser_archive_import_is_idempotent_and_omits_author(test_app):
     assert stored[1].raw["assumed_utc"] is True
     assert all(x.sender_telegram_id is None and x.sender_name is None for x in stored)
     assert "private-person" not in str([x.raw for x in stored])
+    assert is_first_trusted_observation(stored[0]) is True
+    stored[0].raw = {"collector": "mtproto"}
+    assert is_first_trusted_observation(stored[0]) is False
+    assert is_first_trusted_observation(None) is True
 
 
 @pytest.mark.asyncio
