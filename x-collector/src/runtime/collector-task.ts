@@ -19,7 +19,7 @@ import { normalizeTweets } from "../x/normalize";
 import { listId } from "../../lib/trade/list-source";
 import { filterHistory, persistHistory } from "../../lib/trade/history-filter";
 import { taskFailure } from "../../lib/trade/task-errors";
-import { executeXActionsReadTask, isXActionsEligible } from "../xactions/task";
+import { executeXActionsReadTask, isXActionsEligible, HttpPartialProgressError } from "../xactions/task";
 import { HttpAccountQuotaError, httpQuotaWaitMs } from "../xactions/account-http-quota";
 function buildProxy(acc: XAccount) {
   const proxy = parseProxy(acc.proxy_json);
@@ -189,6 +189,11 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     return "done";
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (e instanceof HttpPartialProgressError && !leaseLost && !isStopping()) {
+      await publish({phase:"waiting"}).catch(() => {});
+      const ok = await deferTask(task.id, workerId, 2_000, "XActions partial page budget; durable cursor saved", task.attempts).catch(() => false);
+      return ok ? "partial" : "lost";
+    }
     if (e instanceof HttpAccountQuotaError && !leaseLost && !isStopping()) {
       await publish({phase:"waiting"}).catch(()=>{});
       const wait = await httpQuotaWaitMs(acc.name).catch(() => 60000);
