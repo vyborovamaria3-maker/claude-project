@@ -157,6 +157,40 @@ async def limit_telegram_login_attempt(
     return Response(status_code=204)
 
 
+class TelegramReadPermitRequest(BaseModel):
+    kind: Literal["fetch_members", "analyze_recent", "validate_candidates"]
+
+
+@router.post("/read-permit", status_code=204, dependencies=[Depends(_internal_only)])
+async def rate_limit_telegram_reads(
+    payload: TelegramReadPermitRequest,
+    request: Request,
+    owner=Depends(get_current_subscriber),
+) -> Response:
+    """Bound expensive Telegram reads per owner across application workers.
+
+    This is an abuse guard, not a mechanism to override Telegram rate limits.
+    """
+    caps = {
+        "fetch_members": (6, 60),
+        "analyze_recent": (10, 60),
+        "validate_candidates": (2, 60),
+    }
+    limit, window_seconds = caps[payload.kind]
+    result = await request.app.state.rate_limiter.allow(
+        f"tginvite-read:{payload.kind}:{owner.id}",
+        limit=limit,
+        window_seconds=window_seconds,
+    )
+    if not result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many Telegram read requests",
+            headers={"Retry-After": str(result.retry_after)},
+        )
+    return Response(status_code=204)
+
+
 class TelegramHistoryRequest(BaseModel):
     username: str = Field(min_length=5, max_length=33)
     limit: int = Field(default=100, ge=1, le=200)
