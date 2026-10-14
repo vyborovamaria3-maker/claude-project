@@ -75,7 +75,22 @@ async function main(): Promise<void> {
     || requests.some(request => !request.hasAuthCookie)) {
     throw new Error("XActions: pinned HTTP client violated offline GET/POST/cookie contract");
   }
-  console.log("XActions pinned checkout, ESM imports and real HTTP client GET/POST contract verified offline. No X requests made.");
+  // The pinned client converts custom fetch failures into NetworkError.
+  // Guard this contract so our quota/lease restoration stays compatible.
+  const rejecting = new ClientCtor({
+    cookies: "auth_token=offline-fixture; ct0=offline-csrf",
+    fetch: async () => { throw new Error("XACTIONS_QUOTA_EXHAUSTED"); },
+    autoRefreshQueryIds: false, transactionId: false, maxRetries: 0,
+  });
+  let wrapped = false;
+  try {
+    await rejecting.graphql(profile.queryId, profile.operationName, { screen_name: "offline_test" });
+  } catch (error) {
+    wrapped = error instanceof Error &&
+      error.name === "NetworkError" && error.message === "XACTIONS_QUOTA_EXHAUSTED";
+  }
+  if (!wrapped) throw new Error("XActions: upstream NetworkError wrapping contract has changed");
+  console.log("XActions pinned checkout, HTTP GET/POST and wrapped quota error contracts verified offline. No X requests made.");
 }
 main().catch(error => {
   console.error(error instanceof Error ? error.message : "XActions local verification failed");
