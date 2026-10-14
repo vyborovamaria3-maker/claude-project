@@ -13,7 +13,7 @@ export interface ReadEndpoints {
   userTweets: GraphqlEndpoint;
   listTimeline: GraphqlEndpoint;
   listMembers?: GraphqlEndpoint;
-  /** Search is diagnostic-only. Never route production keyword jobs here. */
+  /** Search is used only by the separately enabled legacy search bridge. */
   searchTimeline?: GraphqlEndpoint;
 }
 
@@ -41,6 +41,38 @@ function nested(root: unknown, path: string[]): unknown {
 
 function instructions(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+/** Pinned SDK ignores replacement entries used by live paginated searches. */
+export function normalizeTimelineInstructions(rows: unknown[]): unknown[] {
+  return rows.map(row => {
+    const instruction = record(row);
+    if (instruction.type !== "TimelineReplaceEntry") return row;
+    const entry = record(instruction.entry);
+    if (!Object.keys(entry).length) return row;
+    const content = record(entry.content);
+    const id = entry.entryId ?? entry.entry_id ?? instruction.entry_id_to_replace;
+    const entryId = typeof id === "string" ? id
+      : content.cursorType === "Bottom" ? "cursor-bottom-replacement"
+      : content.cursorType === "Top" ? "cursor-top-replacement" : undefined;
+    return { type: "TimelineAddEntries", entries: [{ ...entry, ...(entryId ? { entryId } : {}) }] };
+  });
+}
+
+/** Measured SearchTimeline exhaustion: only a top/bottom cursor replacement pair.
+ * This means the search returned no more indexed matches, not complete X coverage. */
+export function isSearchCursorOnlyEnd(rows: unknown[], count: number): boolean {
+  if (count !== 0 || rows.length !== 2) return false;
+  const directions = new Set<string>();
+  for (const row of rows) {
+    const instruction = record(row);
+    const content = record(record(instruction.entry).content);
+    if (instruction.type !== "TimelineReplaceEntry" || content.__typename !== "TimelineTimelineCursor" ||
+        (content.cursorType !== "Top" && content.cursorType !== "Bottom") ||
+        typeof content.value !== "string" || !content.value || content.itemContent || content.items) return false;
+    directions.add(content.cursorType);
+  }
+  return directions.size === 2;
 }
 
 /** Absence of a bottom cursor is NOT proof of exhaustion: GraphQL can return
@@ -114,15 +146,15 @@ export class XActionsReadEngine {
       throw new Error("XActions: user timeline response shape changed");
     }
     const rows = instructions(this.parsers.userTimelineInstructions(data));
-    const page = this.parsers.parseTimelineInstructions(rows);
+    const page = this.parsers.parseTimelineInstructions(normalizeTimelineInstructions(rows));
     verifyHttpPageEnd(rows, page.tweets.length, page.cursor);
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
   }
 
   /**
-   * Diagnostic-only GraphQL SearchTimeline read. XActions 3.5.0's HTTP client
+   * GraphQL SearchTimeline read. XActions 3.5.0's HTTP client
    * uses POST for this operation, unlike the older GET-based scraper.
-   * Do not enable as a worker backend until real 404 diagnostics pass.
+   * The legacy search bridge preserves its own historical/numeric checkpoints.
    */
   async diagnosticSearchPage(
     query: string,
@@ -145,7 +177,8 @@ export class XActionsReadEngine {
     if (!Array.isArray(rawInstructions)) {
       throw new Error("XActions: SearchTimeline response shape changed");
     }
-    const page = this.parsers.parseTimelineInstructions(rawInstructions);
+    const page = this.parsers.parseTimelineInstructions(normalizeTimelineInstructions(rawInstructions));
+    if (isSearchCursorOnlyEnd(rawInstructions, page.tweets.length)) return { items: [], nextCursor: null };
     verifyHttpPageEnd(rawInstructions, page.tweets.length, page.cursor);
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
   }
@@ -161,7 +194,7 @@ export class XActionsReadEngine {
     const data = await this.graphql(this.endpoints.listMembers, variables);
     const rawInstructions = nested(data, ["list", "members_timeline", "timeline", "instructions"]);
     if (!Array.isArray(rawInstructions)) throw new Error("XActions: list members response shape changed");
-    const page = this.parsers.parseUserList(rawInstructions);
+    const page = this.parsers.parseUserList(normalizeTimelineInstructions(rawInstructions));
     verifyHttpPageEnd(rawInstructions, page.users.length, page.cursor);
     return { items: page.users.map(user => normalizeXActionsProfile(user)), nextCursor: page.cursor };
   }
@@ -173,7 +206,7 @@ export class XActionsReadEngine {
     const data = await this.graphql(this.endpoints.listTimeline, variables);
     const rawInstructions = nested(data, ["list", "tweets_timeline", "timeline", "instructions"]);
     if (!Array.isArray(rawInstructions)) throw new Error("XActions: list timeline response shape changed");
-    const page = this.parsers.parseTimelineInstructions(rawInstructions);
+    const page = this.parsers.parseTimelineInstructions(normalizeTimelineInstructions(rawInstructions));
     verifyHttpPageEnd(rawInstructions, page.tweets.length, page.cursor);
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
   }

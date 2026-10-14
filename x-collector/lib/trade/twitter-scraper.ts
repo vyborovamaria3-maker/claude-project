@@ -3,6 +3,8 @@ import { chromium, Page, BrowserContextOptions } from "playwright";
 import { getConfig } from "./config";
 import { collectionUrl } from "./list-source";
 import { CollectorHttpError, retryAfterMs } from "./task-errors";
+import { collectHttpSearch } from "./http-search";
+import { createXActionsRuntime } from "../../src/xactions/runtime";
 import {createRequire} from 'node:module';
 const {launchLoginBrowser}=createRequire(__filename)('../../scripts/test-publish-browser.cjs');
 
@@ -24,6 +26,7 @@ export interface ScrapeOptions {
   signal?: AbortSignal;
   onProgress?: (progress:Progress)=>Promise<void>;
   onBatch?: (tweets:RawTweet[])=>Promise<void>;
+  beforeHttpRequest?: () => Promise<void>;
   proxy?: { server: string; username?: string; password?: string };
   userAgent?: string;
   timezone?: string;
@@ -213,6 +216,14 @@ export async function searchTweets(
   const cfg = getConfig();
   const limit = opts.limit ?? cfg.twitter.searchLimit;
   const sort = opts.sort ?? "latest";
+  if (process.env.X_SEARCH_HTTP_COMPAT === "true" && process.env.COLLECTOR_ENGINE === "xactions") {
+    if (!opts.beforeHttpRequest) throw new Error("HTTP search requires shared account quota reservation");
+    const deadline = AbortSignal.timeout(cfg.twitter.collectionDeadlineMs);
+    const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
+    const engine = await createXActionsRuntime({ state: opts.authState, proxy: opts.proxy,
+      userAgent: opts.userAgent, signal, beforeRequest: opts.beforeHttpRequest });
+    return collectHttpSearch(engine, query, { ...opts, limit, sort, signal });
+  }
   const url = collectionUrl(query, sort);
 
   return withBrowser(opts, async (page) => {
