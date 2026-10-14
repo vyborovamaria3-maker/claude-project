@@ -47,6 +47,7 @@ function parseArgs(argv) {
     recentLimit: intFlag(flags["recent-limit"], 200, 1, 1000),
     backfillLimit: intFlag(flags["backfill-limit"], 200, 1, 1000),
     maxFiles: intFlag(flags["max-files"], 5000, 1, 100000),
+    watchInterval: intFlag(flags["watch-interval"], 60, 10, 3600),
     dryRun: Boolean(flags["dry-run"]),
     pruneMissing: Boolean(flags["prune-missing"]),
     help: Boolean(flags.help),
@@ -55,9 +56,10 @@ function parseArgs(argv) {
 function usage() {
   console.log([
     "Blockchain Excel seed collector (local SQLite and Helius)",
-    "  --mode import|collect|all|status  [default: import]",
+    "  --mode import|collect|all|watch|status  [default: import]",
     "  --migrated-dir <folder> --trending-dir <folder> --wallets-dir <folder>",
     "  --limit 30 --concurrency 2 --recent-limit 200 --backfill-limit 200",
+    "  --mode watch --watch-interval 60  Repeat import and bounded collection on a laptop",
     "  --dry-run                 Inspect the spreadsheets without writing DB/network",
     "  --prune-missing           Remove mappings for deleted XLSX files",
     "  --max-files 5000",
@@ -439,7 +441,7 @@ async function collect(db, args) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) return usage();
-  if (!["import", "collect", "all", "status"].includes(args.mode)) throw new Error("Unknown --mode: " + args.mode);
+  if (!["import", "collect", "all", "watch", "status"].includes(args.mode)) throw new Error("Unknown --mode: " + args.mode);
   // In read-only mode no database is opened or changed.
   if (args.dryRun) {
     if (!["import", "all"].includes(args.mode)) throw new Error("--dry-run requires import/all");
@@ -451,6 +453,23 @@ async function main() {
   });
   const db = require("../lib/trade/db").getDb();
   initDb(db);
+  if (args.mode === "watch") {
+    while (!stopRequested) {
+      try {
+        const imported = importFolders(db, args);
+        const collected = await collect(db, args);
+        console.log(JSON.stringify({ watchCycle: new Date().toISOString(), imported, collected, status: status(db) }));
+      } catch (error) {
+        console.error("[blockchain-collector] watch cycle failed:", error);
+        process.exitCode = 1;
+        break;
+      }
+      for (let seconds = 0; seconds < args.watchInterval && !stopRequested; seconds++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    return;
+  }
   if (args.mode === "import" || args.mode === "all") {
     const imported = importFolders(db, args);
     console.log(JSON.stringify({ import: imported }, null, 2));
