@@ -75,6 +75,16 @@ test("XActions HTTP rate-limit errors use the collector's existing classifier", 
   assert.ok(mapped.retryAfterMs > 0);
 });
 
+test("GraphQL rate limit with an unusual transport status is still rate limited", () => {
+  const raw = Object.assign(new Error("GraphQL account limit"), {
+    name: "RateLimitError", status: 403, resetAt: Date.now() + 40_000,
+  });
+  const mapped = toCollectorError(raw);
+  assert.ok(mapped instanceof CollectorHttpError);
+  assert.equal(mapped.status, 429);
+  assert.ok(mapped.retryAfterMs >= 30_000);
+});
+
 test("SOCKS5 proxy is mandatory; credentials are encoded and never echoed", () => {
   const url = socksProxyUrl({ server: "socks5://127.0.0.1:9050", username: "test@user", password: "pass#word" });
   assert.equal(url.username, "test%40user");
