@@ -36,8 +36,14 @@ async function main(): Promise<void> {
      ORDER BY source_kind,source_key`,
     [taskId],
   );
+  const hasIncompleteProgress = states.some(p => !p.completed && p.pages_committed > 0);
+  const collectionState = task.status === "done" ? "completed"
+    : task.status === "failed" ? "failed"
+    : hasIncompleteProgress ? "partial"
+    : task.status === "claimed" ? "running" : "waiting";
   console.log(JSON.stringify({
     task,
+    collectionState,
     checkpoints: states.map(p => ({
       sourceKind: p.source_kind,
       sourceKey: p.source_key,
