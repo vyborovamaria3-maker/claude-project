@@ -7,6 +7,7 @@ import { XActionsReadEngine, type ReadClient, type ReadEndpoints, type ReadParse
 
 interface HttpModule {
   TwitterHttpClient: new(options: Record<string, unknown>) => ReadClient;
+  RateLimitError: new(message: string, options?: { resetAt?: number; status?: number }) => Error;
   GRAPHQL: Record<string, { queryId: string; operationName: string }>;
   parseUserData: ReadParsers["parseUserData"];
   parseTimelineInstructions: ReadParsers["parseTimelineInstructions"];
@@ -67,10 +68,12 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
   if (typeof module.userTimelineInstructions !== "function" ||
       typeof module.parseTimelineInstructions !== "function" ||
       typeof module.parseUserList !== "function" ||
-      typeof module.parseUserData !== "function") {
+      typeof module.parseUserData !== "function" ||
+      typeof module.RateLimitError !== "function") {
     throw new Error("XActions: pinned parser exports unavailable");
   }
   const networkFetch = createSocks5Fetch(ctx.proxy);
+  let upstreamResetAt = 0;
   const proxiedFetch: typeof fetch = async (input, init) => {
     ctx.signal.throwIfAborted();
     const inputUrl = typeof input === "string" || input instanceof URL ? input : null;
@@ -78,6 +81,15 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     const url = new URL(inputUrl);
     if (url.protocol !== "https:" || (url.hostname !== "x.com" && !url.hostname.endsWith(".x.com"))) {
       throw new Error("XActions: HTTP request target is not x.com");
+    }
+    // Proactively respect X's per-endpoint remaining/reset header once it
+    // reaches zero. The upstream client recognizes its own RateLimitError and
+    // will not re-try or convert it into a generic NetworkError.
+    const now = Date.now();
+    if (upstreamResetAt > now) {
+      throw new module.RateLimitError("XActions upstream request budget exhausted", {
+        status: 429, resetAt: upstreamResetAt,
+      });
     }
     await ctx.beforeRequest();
     ctx.signal.throwIfAborted();
@@ -93,6 +105,14 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     cookies: cookieHeader, userAgent: ctx.userAgent,
     fetch: proxiedFetch, maxRetries: 0, rateLimitStrategy: "error",
     autoRefreshQueryIds: false, transactionId: false,
+    onResponse: (response: { status: number; remaining: number | null; resetAt: number | null }) => {
+      // A successful last permitted request can finish normally. The next
+      // request is blocked until X's own reset timestamp.
+      if (response.remaining === 0 && typeof response.resetAt === "number" &&
+          Number.isFinite(response.resetAt) && response.resetAt > Date.now()) {
+        upstreamResetAt = Math.min(response.resetAt, Date.now() + 86_400_000);
+      }
+    },
   });
   return new XActionsReadEngine(client, endpoints, {
     parseUserData: module.parseUserData,
