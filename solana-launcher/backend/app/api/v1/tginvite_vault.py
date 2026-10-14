@@ -128,7 +128,9 @@ async def store_session(
     encrypted = encrypt_session(str(owner.id), payload.model_dump(), _vault_key(request))
     row = (
         await db.execute(
-            select(TelegramInviteSession).where(TelegramInviteSession.owner_id == str(owner.id))
+            select(TelegramInviteSession)
+            .where(TelegramInviteSession.owner_id == str(owner.id))
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if row is None:
@@ -137,21 +139,13 @@ async def store_session(
         row.encrypted_payload = encrypted
     try:
         await db.commit()
-    except IntegrityError:
-        # Two requests can both observe a missing row before either commits.
-        # Re-read after rollback instead of returning a spurious 500.
+    except IntegrityError as exc:
+        # Concurrent inserts must not silently replace a different worker's
+        # newly authenticated session. Require the caller to retry explicitly.
         await db.rollback()
-        winner = (
-            await db.execute(
-                select(TelegramInviteSession).where(
-                    TelegramInviteSession.owner_id == str(owner.id)
-                )
-            )
-        ).scalar_one_or_none()
-        if winner is None:
-            raise
-        winner.encrypted_payload = encrypted
-        await db.commit()
+        raise HTTPException(
+            status_code=409, detail="Telegram session changed concurrently; reconnect"
+        ) from exc
     return Response(status_code=204)
 
 
@@ -164,7 +158,9 @@ async def delete_session(
     _vault_key(request)
     row = (
         await db.execute(
-            select(TelegramInviteSession).where(TelegramInviteSession.owner_id == str(owner.id))
+            select(TelegramInviteSession)
+            .where(TelegramInviteSession.owner_id == str(owner.id))
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if row is not None:
