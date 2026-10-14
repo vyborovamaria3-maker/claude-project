@@ -9,9 +9,10 @@ export function toCollectorError(error: unknown): Error {
   // The X GraphQL API can report a rate limit inside an error envelope
   // even when the transport response status differs from 429.
   const status = error.name === "RateLimitError" ? 429
+    : typeof details.status === "number" ? details.status
     : error.name === "AuthError" ? 401
     : error.name === "NotFoundError" ? 404
-    : typeof details.status === "number" ? details.status : undefined;
+    : undefined;
   if (status !== undefined && Number.isInteger(status) && status >= 400 && status <= 599) {
     const resetAt = typeof details.resetAt === "number" && Number.isFinite(details.resetAt)
       ? details.resetAt : 0;
