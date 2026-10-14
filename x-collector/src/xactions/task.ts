@@ -32,7 +32,10 @@ export function isXActionsEligible(kind: string, payload: Parsed, originalPayloa
   if (archiveMarkers.some(key => Object.hasOwn(original, key) || Object.hasOwn(payload, key))) return false;
   if (kind === "profile" || kind === "timeline") return true;
   if (kind === "members") return typeof payload.list_id === "string" && /^[0-9]{1,25}$/.test(payload.list_id);
-  return kind === "search" && typeof payload.query === "string" && listId(payload.query) !== null;
+  // ListTimeline is chronological; it cannot reproduce top-ranked list
+  // search semantics. Keep "top" tasks on the original Playwright parser.
+  return kind === "search" && (payload.sort === undefined || payload.sort === "latest")
+    && typeof payload.query === "string" && listId(payload.query) !== null;
 }
 
 export interface XActionsTaskContext {
