@@ -1,4 +1,4 @@
-import { normalizeXActionsProfile, normalizeXActionsTweet, type XActionsHttpProfile, type XActionsHttpTweet } from "./normalize";
+import { normalizeXActionsProfile, normalizeXActionsTweet, explicitVerificationEvidence, type XActionsNormalizedProfile, type XActionsHttpProfile, type XActionsHttpTweet } from "./normalize";
 import { toCollectorError } from "./errors";
 import type { AccountProfileData, RawTweet } from "../../lib/trade/twitter-scraper";
 import type { CursorPage } from "./pagination";
@@ -76,13 +76,13 @@ export class XActionsReadEngine {
     }
   }
 
-  async profile(username: string): Promise<AccountProfileData> {
+  async profile(username: string): Promise<XActionsNormalizedProfile> {
     const data = await this.graphql(this.endpoints.userByScreenName, {
       screen_name: username, withSafetyModeUserFields: true,
     });
     const raw = nested(data, ["user", "result"]);
     if (!raw) throw new Error("XActions: user profile missing");
-    return normalizeXActionsProfile(this.parsers.parseUserData(raw));
+    return normalizeXActionsProfile(this.parsers.parseUserData(raw), explicitVerificationEvidence(raw));
   }
 
   async resolveUserId(username: string): Promise<string> {
