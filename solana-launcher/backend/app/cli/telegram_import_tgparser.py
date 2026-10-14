@@ -40,15 +40,17 @@ async def run(path: Path, channel_id: int) -> None:
     added = duplicates = 0
     try:
         async with sessionmaker() as session:
+            # Keep batches bounded but commit the entire input atomically.
+            # An invalid later batch must not leave a half-imported archive.
             for offset in range(0, len(records), MAX_BATCH):
                 stats = await import_tgparser_archive(
                     session,
                     channel_id=channel_id,
                     records=records[offset : offset + MAX_BATCH],
                 )
-                await session.commit()
                 added += stats["inserted"]
                 duplicates += stats["duplicates"]
+            await session.commit()
     finally:
         await engine.dispose()
     print(f"Imported {added} messages; skipped {duplicates} duplicates.")
