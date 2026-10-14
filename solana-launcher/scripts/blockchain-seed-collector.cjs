@@ -370,6 +370,7 @@ async function processOne(db, row, cfg, api) {
         jitoTipLamports: t.jitoTipLamports,
       })));
     }
+    if (row.kind === "token") api.markTokenTradeChecked(row.address);
     if (row.kind === "wallet") appendDiscovered(db, row.address, unique, api.txsToTrades);
     return n;
   })();
@@ -404,8 +405,8 @@ async function collect(db, args) {
   const keys = require("../lib/trade/helius-rotation").getHeliusApiKeys();
   if (!keys.length) throw new Error("Valid HELIUS_API_KEY(S) required for --mode collect");
   const helius = require("../lib/trade/helius");
-  const { persistTokenTrades } = require("../lib/trade/db");
-  const api = { ...helius, persistTokenTrades };
+  const { persistTokenTrades, markTokenTradeChecked } = require("../lib/trade/db");
+  const api = { ...helius, persistTokenTrades, markTokenTradeChecked };
   const startedAt = Date.now();
   let claimed = 0, succeeded = 0, failed = 0, inserted = 0, gaps = 0;
   async function worker() {
