@@ -3,7 +3,7 @@ import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { createInviteLink, getChatInfo } from "@/lib/telegram";
 import { filterMembers, getFilterSummary, FilterConfig, DEFAULT_FILTER_CONFIG } from "@/lib/tginvite-filter";
-import { fetchChannelMembers, inviteUsers } from "@/lib/tginvite-mtproto";
+import { fetchChannelMembers } from "@/lib/tginvite-mtproto";
 
 export async function POST(request: Request) {
   const user = await requireTGInviteUser(request);
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   const authorization = user.authorization!;
   try {
     const body = await request.json();
-    const { action, token, chatId, linkName, expireDays, memberLimit, linkCount, filterConfig, channelUsernames, targetChannel, userIds, confirmedOptIn } = body;
+    const { action, token, chatId, linkName, expireDays, memberLimit, linkCount, filterConfig, channelUsernames } = body;
 
     if (action === "createLink") {
       if (!token || !chatId) {
@@ -132,44 +132,17 @@ export async function POST(request: Request) {
     }
 
     if (action === "inviteFromFetched") {
-      if (confirmedOptIn !== true) {
-        return NextResponse.json({ error: "Explicit opt-in confirmation is required" }, { status: 403 });
-      }
-      // Invite filtered users to target channel
-      const tgClient = await resolveTGInviteClient(ownerId, authorization);
-      if (!tgClient) {
-        return NextResponse.json(
-          { error: "MTProto not connected" },
-          { status: 400 }
-        );
-      }
-
-      if (!targetChannel) {
-        return NextResponse.json({ error: "targetChannel required" }, { status: 400 });
-      }
-
-      if (!Array.isArray(userIds) || !userIds.length) {
-        return NextResponse.json({ error: "userIds must be a non-empty array" }, { status: 400 });
-      }
-
-      const typedUserIds = userIds
-        .filter((u: { id: number; accessHash?: string }) => u.id && u.accessHash)
-        .map((u: { id: number; accessHash: string }) => ({
-          id: u.id,
-          accessHash: u.accessHash,
-        }));
-
-      if (typedUserIds.length === 0) {
-        return NextResponse.json({ error: "No valid userIds with accessHash provided" }, { status: 400 });
-      }
-
-      const result = await inviteUsers(tgClient, targetChannel, typedUserIds);
-      return NextResponse.json(result);
+      // Client-provided booleans are not proof of recipient consent.
+      // This operation must remain disabled until server-owned consent records
+      // and a durable result ledger are available.
+      return NextResponse.json(
+        { error: "Direct invitations require a consent-verified server job workflow" },
+        { status: 501 }
+      );
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
-    const error = err as { message?: string };
-    return NextResponse.json({ error: error.message || "Internal error" }, { status: 500 });
+    return NextResponse.json({ error: "TGInvite service error" }, { status: 500 });
   }
 }
