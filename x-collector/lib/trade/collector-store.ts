@@ -145,6 +145,11 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
     throw new Error("collector rejected malformed profile");
   }
   const d = parsed.data;
+  const incomingEvidence = (p && typeof p === "object" && !Array.isArray(p))
+    ? (p as { verificationEvidence?: unknown }).verificationEvidence : undefined;
+  const verificationEvidence = options.transport !== "http" ? (d.isVerified ? "verified" : "unverified")
+    : d.isVerified ? "verified"
+    : incomingEvidence === "unverified" ? "unverified" : "unknown";
   const now = Date.now();
   const write = async (client: PoolClient): Promise<number> => {
   let newlyLinked = 0;
@@ -160,16 +165,17 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
        followers    = COALESCE(EXCLUDED.followers, twitter_profiles.followers),
        following    = COALESCE(EXCLUDED.following, twitter_profiles.following),
        posts_count  = COALESCE(EXCLUDED.posts_count, twitter_profiles.posts_count),
-       -- XActions source sometimes defaults absent verification to false.
-       -- Preserve previously confirmed verified=true on incomplete HTTP data.
-       is_verified  = CASE WHEN $11::boolean
-         THEN (twitter_profiles.is_verified OR EXCLUDED.is_verified)
-         ELSE EXCLUDED.is_verified END,
+       -- Unknown HTTP verification never downgrades known data. An explicit
+       -- GraphQL verification=false may revoke the previous true value.
+       is_verified = CASE $11::text
+         WHEN 'verified' THEN TRUE
+         WHEN 'unverified' THEN FALSE
+         ELSE twitter_profiles.is_verified END,
        joined_at    = COALESCE(EXCLUDED.joined_at, twitter_profiles.joined_at),
        avatar_url   = COALESCE(EXCLUDED.avatar_url, twitter_profiles.avatar_url),
        last_seen_at = EXCLUDED.last_seen_at`,
     [d.handle.toLowerCase(), d.displayName, d.bio, d.followers, d.following, d.postsCount,
-     d.isVerified, d.joinedAt, d.avatarUrl, now, options.transport === "http"]
+     d.isVerified, d.joinedAt, d.avatarUrl, now, verificationEvidence]
   );
   if (taskId !== undefined) {
     const inserted = await client.query(
