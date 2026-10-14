@@ -130,3 +130,34 @@ test("page budget exhaustion is distinguishable from real end of HTTP timeline",
   assert.equal(result.itemsCommitted, 0);
   assert.equal(result.nextCursor, "still-more");
 });
+
+test("repeated HTTP entries do not satisfy the target of unique persisted tweets", async () => {
+  const pages = [
+    { items: ["a", "a"], nextCursor: "p2" },
+    { items: ["a", "b"], nextCursor: "p3" },
+    { items: ["b", "c"], nextCursor: "p4" },
+  ];
+  const stored = new Set<string>();
+  let fetched = 0;
+  const result = await runCursorPages(async () => pages[fetched++], async page => {
+    let inserted = 0;
+    for (const id of page.items) if (!stored.has(id)) {
+      stored.add(id);
+      inserted++;
+    }
+    return inserted;
+  }, { maxPages: 10, stopAfterItems: 3 });
+  assert.equal(fetched, 3);
+  assert.equal(result.itemsCommitted, 3);
+  assert.equal(result.pagesCommitted, 3);
+  assert.equal(result.nextCursor, "p4");
+  assert.deepEqual([...stored], ["a", "b", "c"]);
+});
+
+test("the cursor runner rejects an impossible persisted unique count", async () => {
+  await assert.rejects(runCursorPages(
+    async () => ({ items: ["a"], nextCursor: "next" }),
+    async () => 2,
+    { maxPages: 1, stopAfterItems: 1 },
+  ), /invalid unique page commit count/);
+});
