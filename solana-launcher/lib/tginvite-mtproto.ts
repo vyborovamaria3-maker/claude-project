@@ -312,16 +312,15 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
   inFlightLoginCodes.add(ownerId);
   // A new challenge invalidates any existing pending login for this owner.
   // Disconnect the old Telegram client before replacing it to avoid orphaned sockets.
-  await clearClient(ownerId);
-  const tgClient = await createClient(config, ownerId);
-  const typedClient = tgClient as TelegramClientLike & {
-    sendCode: (
-      credentials: { apiId: number; apiHash: string },
-      phoneNumber: string
-    ) => Promise<{ phoneCodeHash: string; isCodeViaApp: boolean }>;
-  };
-
   try {
+    await clearClient(ownerId);
+    const tgClient = await createClient(config, ownerId);
+    const typedClient = tgClient as TelegramClientLike & {
+      sendCode: (
+        credentials: { apiId: number; apiHash: string },
+        phoneNumber: string
+      ) => Promise<{ phoneCodeHash: string; isCodeViaApp: boolean }>;
+    };
     await ensureConnected(typedClient);
     const result = await typedClient.sendCode(
       { apiId: config.apiId, apiHash: config.apiHash },
