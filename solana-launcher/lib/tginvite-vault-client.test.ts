@@ -57,11 +57,11 @@ describe("TGInvite centralized login leases (mocked)", () => {
   it("acquires a server-owned token and validates it before completing a login", async () => {
     const token = "t".repeat(45);
     const fetcher = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ token }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token, generation: 7 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetcher);
-    expect(await acquireTGInviteLoginLease(authorization)).toBe(token);
+    expect(await acquireTGInviteLoginLease(authorization)).toEqual({ token, generation: 7 });
     await verifyTGInviteLoginLease(authorization, token);
     await releaseTGInviteLoginLease(authorization, token);
     expect(fetcher).toHaveBeenCalledTimes(3);
@@ -109,11 +109,14 @@ describe("TGInvite centralized login leases (mocked)", () => {
 describe("TGInvite shared vault write conflicts (mocked)", () => {
   it("turns competing session writes into a typed 409 conflict", async () => {
     const fetcher = mockVaultResponse(409);
-    await expect(persistVaultSession(authorization, stored))
+    await expect(persistVaultSession(authorization, stored, 0))
       .rejects.toBeInstanceOf(TGInviteVaultConflict);
     expect(fetcher).toHaveBeenCalledWith(
       "https://internal-backend.test/api/v1/tginvite/session",
-      expect.objectContaining({ method: "PUT" }),
+      expect.objectContaining({
+        method: "PUT",
+        headers: expect.objectContaining({ "X-TGInvite-Expected-Generation": "0" }),
+      }),
     );
   });
 });
