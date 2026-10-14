@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_subscriber
@@ -117,7 +118,23 @@ async def store_session(
         db.add(TelegramInviteSession(owner_id=str(owner.id), encrypted_payload=encrypted))
     else:
         row.encrypted_payload = encrypted
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Two requests can both observe a missing row before either commits.
+        # Re-read after rollback instead of returning a spurious 500.
+        await db.rollback()
+        winner = (
+            await db.execute(
+                select(TelegramInviteSession).where(
+                    TelegramInviteSession.owner_id == str(owner.id)
+                )
+            )
+        ).scalar_one_or_none()
+        if winner is None:
+            raise
+        winner.encrypted_payload = encrypted
+        await db.commit()
     return Response(status_code=204)
 
 
