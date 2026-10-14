@@ -395,19 +395,18 @@ function failTask(db, row, error) {
 }
 
 async function collect(db, args) {
-  // Fail fast before reserving work, so missing API keys cannot fill retry counters.
-  const keyConfigured = [
-    "HELIUS_API_KEYS", "HELIUS_API_KEY", "HELIUS_API_KEY_1",
-    "HELIUS_RPC_URL", "NEXT_PUBLIC_HELIUS_RPC_URL", "NEXT_PUBLIC_HELIUS_API_KEY",
-  ].some(key => Boolean(process.env[key]));
-  if (!keyConfigured) throw new Error("HELIUS_API_KEY(S) required for --mode collect");
+  // Fail fast before reserving work, so absent/invalid API keys cannot
+  // pollute retry counters or trigger avoidable network requests.
   require("ts-node").register({
     skipProject: true, transpileOnly: true,
     compilerOptions: { module: "commonjs", moduleResolution: "node", esModuleInterop: true },
   });
+  const keys = require("../lib/trade/helius-rotation").getHeliusApiKeys();
+  if (!keys.length) throw new Error("Valid HELIUS_API_KEY(S) required for --mode collect");
   const helius = require("../lib/trade/helius");
   const { persistTokenTrades } = require("../lib/trade/db");
   const api = { ...helius, persistTokenTrades };
+  const startedAt = Date.now();
   let claimed = 0, succeeded = 0, failed = 0, inserted = 0, gaps = 0;
   async function worker() {
     while (!stopRequested && claimed < args.limit) {
@@ -429,7 +428,12 @@ async function collect(db, args) {
     }
   }
   await Promise.all(Array.from({ length: args.concurrency }, worker));
-  return { claimed, succeeded, failed, newEvents: inserted, possibleGaps: gaps, stopped: stopRequested };
+  const durationSec = Math.max(0.001, (Date.now() - startedAt) / 1000);
+  return { claimed, succeeded, failed, newEvents: inserted, possibleGaps: gaps,
+    durationSec: Number(durationSec.toFixed(2)),
+    targetsPerSecond: Number((succeeded / durationSec).toFixed(2)),
+    eventsPerSecond: Number((inserted / durationSec).toFixed(2)),
+    stopped: stopRequested };
 }
 
 async function main() {
