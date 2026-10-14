@@ -40,6 +40,7 @@
     "xactions:members": "tsx scripts/xactions-enqueue-members.ts",
     "xactions:verify": "tsx scripts/xactions-verify.ts",
     "xactions:status": "tsx scripts/xactions-status.ts",
+    "xactions:archive-gc": "tsx scripts/xactions-archive-gc.ts",
     "enqueue-mints": "tsx scripts/enqueue-mints.ts",
     "worker": "tsx scripts/worker.ts",
     "scheduler": "tsx scripts/scheduler.ts",
