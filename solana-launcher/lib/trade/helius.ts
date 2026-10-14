@@ -63,6 +63,8 @@ export type EnrichedTxMeta = {
   exhausted: boolean;
   /** True when the `maxTxs` bound stopped pagination before history ended. */
   truncated: boolean;
+  /** Incremental mode stopped at an already-persisted signature, not chain exhaustion. */
+  reachedKnownHistory?: boolean;
 };
 
 const HELIUS_TIMEOUT_MS = (() => {
@@ -115,7 +117,8 @@ async function fetchHeliusPage(
 
 export async function fetchEnrichedTxsForMintWithMeta(
   mint: string,
-  maxTxs: number = 1000
+  maxTxs: number = 1000,
+  stopAtSignatures: ReadonlySet<string> | null = null,
 ): Promise<EnrichedTxMeta> {
   const keys = HELIUS_API_KEYS;
   if (!keys.length) {
@@ -127,6 +130,8 @@ export async function fetchEnrichedTxsForMintWithMeta(
   const seen = new Set<string>();
   let before: string | undefined;
   let exhausted = false;
+  let reachedKnownHistory = false;
+  const seenCursors = new Set<string>();
 
   while (all.length < maxTxs) {
     const requested = Math.min(100, maxTxs - all.length);
@@ -136,18 +141,25 @@ export async function fetchEnrichedTxsForMintWithMeta(
       break;
     }
     for (const tx of page) {
-      if (!tx || typeof tx.signature !== "string" || !tx.signature || seen.has(tx.signature)) continue;
+      if (!tx || typeof tx.signature !== "string" || !tx.signature) continue;
+      if (stopAtSignatures?.has(tx.signature)) {
+        reachedKnownHistory = true;
+        break;
+      }
+      if (seen.has(tx.signature)) continue;
       seen.add(tx.signature);
       all.push(tx);
     }
+    if (reachedKnownHistory) break;
     if (page.length < requested) {
       exhausted = true;
       break;
     }
     const nextBefore = page[page.length - 1]?.signature;
-    if (!nextBefore || nextBefore === before) {
-      throw new Error("Helius pagination stalled: cursor did not advance");
+    if (!nextBefore || nextBefore === before || seenCursors.has(nextBefore)) {
+      throw new Error("Helius pagination stalled: cursor repeated");
     }
+    seenCursors.add(nextBefore);
     before = nextBefore;
   }
 
@@ -161,7 +173,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
     },
     null,
   );
-  return { transactions: bounded, oldestTimestamp, exhausted, truncated };
+  return { transactions: bounded, oldestTimestamp, exhausted, truncated, reachedKnownHistory };
 }
 
 /**
