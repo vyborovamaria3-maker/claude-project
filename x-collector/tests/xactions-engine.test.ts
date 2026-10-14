@@ -78,3 +78,37 @@ test("ListMembers invalid response is an error, not a complete list", async () =
   }, { ...parsers, parseUserList: () => ({ users: [], cursor: null }) });
   await assert.rejects(engine.listMembersPage("1878727153048777016"), /response shape changed/);
 });
+
+test("diagnostic SearchTimeline request keeps keyword search out of worker routes", async () => {
+  const requests: Array<{ operation: string; variables: Record<string, unknown> }> = [];
+  const client: ReadClient = { graphql: async (_id, operation, variables) => {
+    requests.push({ operation, variables });
+    return {
+      data: { search_by_raw_query: { search_timeline: { timeline: { instructions: [] } } } },
+    };
+  }};
+  const reader = new XActionsReadEngine(client, {
+    ...endpoints,
+    searchTimeline: { queryId: "s", operationName: "SearchTimeline" },
+  }, parsers);
+  const first = await reader.diagnosticSearchPage("(solana OR pumpfun) memecoin");
+  assert.equal(first.nextCursor, "cursor-2");
+  assert.equal(first.items[0]?.id, validTweet.id);
+  assert.equal(requests[0]?.operation, "SearchTimeline");
+  assert.equal(requests[0]?.variables.product, "Latest");
+  assert.equal(requests[0]?.variables.rawQuery, "(solana OR pumpfun) memecoin");
+  const second = await reader.diagnosticSearchPage("solana", "top", "opaque");
+  assert.equal(second.items.length, 1);
+  assert.equal(requests[1]?.variables.product, "Top");
+  assert.equal(requests[1]?.variables.cursor, "opaque");
+  await assert.rejects(reader.diagnosticSearchPage("   "), /invalid diagnostic search query/);
+});
+
+test("diagnostic search rejects malformed GraphQL response without advancing cursor", async () => {
+  const client: ReadClient = { graphql: async () => ({ data: { search_by_raw_query: {} } }) };
+  const reader = new XActionsReadEngine(client, {
+    ...endpoints,
+    searchTimeline: { queryId: "s", operationName: "SearchTimeline" },
+  }, parsers);
+  await assert.rejects(reader.diagnosticSearchPage("pumpfun"), /response shape changed/);
+});
