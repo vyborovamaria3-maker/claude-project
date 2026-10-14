@@ -116,7 +116,9 @@ function refreshTargets(db) {
   ].join(" "));
   const tx = db.transaction(() => {
     let count = 0;
-    for (const row of grouped.iterate()) {
+    // better-sqlite3 does not permit writes while an .iterate() cursor is open
+    // on this connection. Materialize the target keys before upserting.
+    for (const row of grouped.all()) {
       const categories = String(row.categories || "").split(",");
       let mask = 0, priority = 0;
       for (const category of categories) {
