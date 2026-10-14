@@ -54,6 +54,8 @@ test("engine selection excludes historical/discovery and keyword search", () => 
   assert.equal(isXActionsEligible("members", { list_id: "invalid" }), false);
   assert.equal(isXActionsEligible("timeline", { handle: "NASA", limit: 20 }), true);
   assert.equal(isXActionsEligible("search", { query: "list:1945268064792068152" }), true);
+  assert.equal(isXActionsEligible("search", { query: "list:1945268064792068152", sort: "latest" }), true);
+  assert.equal(isXActionsEligible("search", { query: "list:1945268064792068152", sort: "top" }), false);
   assert.equal(isXActionsEligible("search", { query: "solana" }), false);
   assert.equal(isXActionsEligible("search", { query: "list:1945268064792068152", history_run_id: "test" }), false);
   assert.equal(isXActionsEligible("search", { query: "list:1945268064792068152", list_source_id: "123" }), false);
