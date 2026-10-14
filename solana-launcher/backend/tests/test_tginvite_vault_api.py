@@ -76,3 +76,28 @@ async def test_vault_fails_closed_without_keys(test_app, client):
     settings.tginvite_session_encryption_key = ""
     response = await client.get("/api/v1/tginvite/session", headers=headers)
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_public_history_is_internal_owner_bound_and_validates_usernames(test_app, client):
+    settings = test_app.state.settings
+    settings.tginvite_internal_key = SERVICE_KEY
+    settings.tginvite_session_encryption_key = VAULT_KEY
+    token = await _user(test_app, "history-private-user")
+    path = "/api/v1/tginvite/messages"
+    authorization = {"Authorization": f"Bearer {token}"}
+    allowed_headers = {**authorization, "X-TGInvite-Service-Key": SERVICE_KEY}
+
+    denied = await client.post(path, headers=authorization, json={"username": "@PublicChannel"})
+    assert denied.status_code == 403
+
+    invalid = await client.post(
+        path, headers=allowed_headers, json={"username": "https://t.me/+joinhash"}
+    )
+    assert invalid.status_code == 422
+
+    # No Telegram network access: the user has not connected a vault session.
+    missing_session = await client.post(
+        path, headers=allowed_headers, json={"username": "@PublicChannel", "limit": 50}
+    )
+    assert missing_session.status_code == 404
