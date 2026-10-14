@@ -76,7 +76,7 @@ export async function loadHttpCheckpoint(key: HttpCheckpointKey): Promise<HttpCh
  */
 export async function commitHttpPage(
   write: HttpPageWrite,
-  saveItems: (client: PoolClient) => Promise<void>,
+  saveItems: (client: PoolClient) => Promise<number | void>,
 ): Promise<void> {
   await tx(client => writeHttpPageInTransaction(client, write, saveItems));
 }
@@ -88,7 +88,7 @@ export async function commitHttpPage(
 export async function writeHttpPageInTransaction(
   client: PoolClient,
   write: HttpPageWrite,
-  saveItems: (client: PoolClient) => Promise<void>,
+  saveItems: (client: PoolClient) => Promise<number | void>,
 ): Promise<void> {
   checkKey(write);
   if (!Number.isSafeInteger(write.itemsWritten) || write.itemsWritten < 0) throw new Error("XActions: invalid page size");
@@ -133,7 +133,13 @@ export async function writeHttpPageInTransaction(
       throw new Error("XActions: non-advancing checkpoint cursor");
     }
 
-    await saveItems(client);
+    // A page can repeat pinned/reposted entries from earlier pages. A writer
+    // may return the actual number of newly linked unique task items.
+    const reported = await saveItems(client);
+    const itemsWritten = reported === undefined ? write.itemsWritten : reported;
+    if (!Number.isSafeInteger(itemsWritten) || itemsWritten < 0 || itemsWritten > 1_000_000) {
+      throw new Error("XActions: invalid committed item count");
+    }
     await checkLeases();
 
     await client.query(
@@ -147,7 +153,7 @@ export async function writeHttpPageInTransaction(
          items_committed=xc_http_checkpoints.items_committed+EXCLUDED.items_committed,
          updated_at=EXCLUDED.updated_at`,
       [write.taskId, write.sourceKind, write.sourceKey, write.queryFingerprint,
-        write.nextCursor, write.completed, write.itemsWritten, Date.now()],
+        write.nextCursor, write.completed, itemsWritten, Date.now()],
     );
   }
 }
