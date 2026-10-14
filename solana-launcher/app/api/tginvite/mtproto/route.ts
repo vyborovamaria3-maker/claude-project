@@ -1,7 +1,7 @@
-import { consumeTGInviteLoginAttempt, consumeTGInviteReadPermit, persistVaultSession, resolveTGInviteClient, revokeVaultSession, TGInviteVaultConflict } from "@/lib/tginvite-vault-client";
+import { acquireTGInviteLoginLease, verifyTGInviteLoginLease, releaseTGInviteLoginLease, resetTGInviteLoginLease, TGInviteLoginLeaseError, consumeTGInviteLoginAttempt, consumeTGInviteReadPermit, persistVaultSession, resolveTGInviteClient, revokeVaultSession, TGInviteVaultConflict } from "@/lib/tginvite-vault-client";
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
-import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode } from "@/lib/tginvite-mtproto";
+import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, getPendingLoginLease, isAuthorized, isConnected, sendLoginCode } from "@/lib/tginvite-mtproto";
 import { DEFAULT_FILTER_CONFIG, filterMembers, getFilterSummary, type FilterConfig } from "@/lib/tginvite-filter";
 
 function parserError(message: string): { status: number; body: { error: string; status: string } } {
@@ -91,12 +91,16 @@ export async function POST(request: Request) {
       if (!apiId || !apiHash) {
         return NextResponse.json({ error: "apiId and apiHash required for a new login" }, { status: 400 });
       }
-      await createClient({ apiId: Number(apiId), apiHash, phoneNumber }, ownerId);
+      // Do not create an unmanaged socket outside the shared login lease.
       return NextResponse.json({ status: "needs_phone", message: "Use sendCode to authenticate" });
     }
 
     if (action === "disconnect") {
       try {
+        // Cancels pending logins in other workers before removing the vault row.
+        // This still requires a separate DB generation fence to eliminate the
+        // narrow Redis/SQL interleaving during a concurrent completion.
+        await resetTGInviteLoginLease(authorization);
         await revokeVaultSession(authorization);
       } finally {
         // Never leave a live session in this process if vault revocation fails.
@@ -115,17 +119,24 @@ export async function POST(request: Request) {
       const denied = loginPermitError(permit);
       if (denied) return denied;
 
-      const result = await sendLoginCode({
-        apiId: Number(apiId),
-        apiHash,
-        phoneNumber,
-      }, ownerId);
+      const leaseToken = await acquireTGInviteLoginLease(authorization);
+      try {
+        const result = await sendLoginCode({
+          apiId: Number(apiId),
+          apiHash,
+          phoneNumber,
+        }, ownerId, leaseToken);
 
-      return NextResponse.json({
-        status: "code_sent",
-        isCodeViaApp: result.isCodeViaApp,
-        message: result.isCodeViaApp ? "Code sent to Telegram app" : "Code sent by SMS",
-      });
+        return NextResponse.json({
+          status: "code_sent",
+          isCodeViaApp: result.isCodeViaApp,
+          message: result.isCodeViaApp ? "Code sent to Telegram app" : "Code sent by SMS",
+        });
+      } catch (error) {
+        await clearClient(ownerId);
+        try { await releaseTGInviteLoginLease(authorization, leaseToken); } catch {}
+        throw error;
+      }
     }
 
     if (action === "completeLogin") {
@@ -134,6 +145,14 @@ export async function POST(request: Request) {
         const denied = loginPermitError(permit);
         if (denied) return denied;
 
+        const leaseToken = getPendingLoginLease(ownerId);
+        if (!leaseToken) {
+          return NextResponse.json(
+            { error: "No active login challenge on this worker. Start login again.", status: "login_not_started" },
+            { status: 409 },
+          );
+        }
+        await verifyTGInviteLoginLease(authorization, leaseToken);
         const completed = await completeLogin({ phoneCode, password }, ownerId);
         try {
           await persistVaultSession(authorization, {
@@ -155,8 +174,18 @@ export async function POST(request: Request) {
             { status: 503 },
           );
         }
+        // Authenticated credentials are already stored. A failed release
+        // must not cause a second Telegram code verification attempt.
+        try { await releaseTGInviteLoginLease(authorization, leaseToken); } catch {}
         return NextResponse.json({ status: "authenticated" });
       } catch (err: unknown) {
+        if (err instanceof TGInviteLoginLeaseError) {
+          if (err.status === 409) await clearClient(ownerId);
+          return NextResponse.json(
+            { error: err.message, status: "login_lease_unavailable" },
+            { status: err.status },
+          );
+        }
         const message = err instanceof Error ? err.message : String(err);
         if (message === "TWO_FACTOR_PASSWORD_REQUIRED") {
           return NextResponse.json({ error: "Two-factor password required", status: "password_required" }, { status: 401 });
@@ -456,6 +485,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
+    if (err instanceof TGInviteLoginLeaseError) {
+      return NextResponse.json(
+        { error: err.message, status: "login_lease_unavailable" },
+        { status: err.status },
+      );
+    }
     const error = err as { message?: string };
     const mapped = parserError(error.message || "Internal error");
     return NextResponse.json(mapped.body, { status: mapped.status });
