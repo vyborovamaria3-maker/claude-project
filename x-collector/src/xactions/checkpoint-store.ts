@@ -16,6 +16,7 @@ export interface HttpCheckpointState {
   completed: boolean;
   pagesCommitted: number;
   itemsCommitted: number;
+  consecutiveEmptyPages: number;
 }
 
 export interface HttpLease {
@@ -39,6 +40,7 @@ interface CheckpointRow {
   completed: boolean;
   pages_committed: number;
   items_committed: string;
+  consecutive_empty_pages: number;
 }
 
 export function httpQueryFingerprint(value: unknown): string {
@@ -54,7 +56,7 @@ function checkKey(key: HttpCheckpointKey): void {
 export async function loadHttpCheckpoint(key: HttpCheckpointKey): Promise<HttpCheckpointState | null> {
   checkKey(key);
   const row = await q1<CheckpointRow>(
-    `SELECT query_fingerprint, cursor, completed, pages_committed, items_committed
+    `SELECT query_fingerprint, cursor, completed, pages_committed, items_committed, consecutive_empty_pages
      FROM xc_http_checkpoints WHERE task_id=$1 AND source_kind=$2 AND source_key=$3`,
     [key.taskId, key.sourceKind, key.sourceKey],
   );
@@ -65,6 +67,7 @@ export async function loadHttpCheckpoint(key: HttpCheckpointKey): Promise<HttpCh
   return {
     cursor: row.cursor, completed: row.completed,
     pagesCommitted: row.pages_committed, itemsCommitted: Number(row.items_committed),
+    consecutiveEmptyPages: row.consecutive_empty_pages,
   };
 }
 
@@ -116,7 +119,7 @@ export async function writeHttpPageInTransaction(
 
     await checkLeases();
     const result = await client.query<CheckpointRow>(
-      `SELECT query_fingerprint,cursor,completed,pages_committed,items_committed
+      `SELECT query_fingerprint,cursor,completed,pages_committed,items_committed,consecutive_empty_pages
        FROM xc_http_checkpoints
        WHERE task_id=$1 AND source_kind=$2 AND source_key=$3 FOR UPDATE`,
       [write.taskId, write.sourceKind, write.sourceKey],
@@ -144,16 +147,18 @@ export async function writeHttpPageInTransaction(
 
     await client.query(
       `INSERT INTO xc_http_checkpoints
-        (task_id,source_kind,source_key,query_fingerprint,cursor,completed,pages_committed,items_committed,updated_at)
-       VALUES($1,$2,$3,$4,$5,$6,1,$7,$8)
+        (task_id,source_kind,source_key,query_fingerprint,cursor,completed,pages_committed,items_committed,updated_at,consecutive_empty_pages)
+       VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9)
        ON CONFLICT(task_id,source_kind,source_key) DO UPDATE SET
          cursor=EXCLUDED.cursor,
          completed=EXCLUDED.completed,
          pages_committed=xc_http_checkpoints.pages_committed+1,
          items_committed=xc_http_checkpoints.items_committed+EXCLUDED.items_committed,
+         consecutive_empty_pages=CASE WHEN EXCLUDED.items_committed=0
+           THEN xc_http_checkpoints.consecutive_empty_pages+1 ELSE 0 END,
          updated_at=EXCLUDED.updated_at`,
       [write.taskId, write.sourceKind, write.sourceKey, write.queryFingerprint,
-        write.nextCursor, write.completed, itemsWritten, Date.now()],
+        write.nextCursor, write.completed, itemsWritten, Date.now(), itemsWritten === 0 ? 1 : 0],
     );
   }
 }
