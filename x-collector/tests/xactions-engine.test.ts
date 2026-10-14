@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { XActionsReadEngine, type ReadClient, type ReadParsers } from "../src/xactions/engine";
+import { XActionsReadEngine, verifyHttpPageEnd, type ReadClient, type ReadParsers } from "../src/xactions/engine";
 
 const validTweet = {
   id: "1878727153048777016", text: "hello", author: { username: "NASA" },
@@ -111,4 +111,22 @@ test("diagnostic search rejects malformed GraphQL response without advancing cur
     searchTimeline: { queryId: "s", operationName: "SearchTimeline" },
   }, parsers);
   await assert.rejects(reader.diagnosticSearchPage("pumpfun"), /response shape changed/);
+});
+
+test("explicit terminal marker is required before closing a GraphQL checkpoint", () => {
+  assert.throws(() => verifyHttpPageEnd([], 0, null), /ambiguous timeline end/);
+  assert.throws(() => verifyHttpPageEnd([{ type: "TimelineAddEntries", entries: [] }], 0, null), /ambiguous timeline end/);
+  assert.throws(() => verifyHttpPageEnd([{ type: "TimelineAddEntries" }], 3, null), /ambiguous timeline end/);
+  assert.doesNotThrow(() => verifyHttpPageEnd([{ type: "TimelineTerminateTimeline" }], 0, null));
+  assert.doesNotThrow(() => verifyHttpPageEnd([], 0, "opaque-next-page"));
+});
+
+test("timeline reader refuses empty GraphQL data without a confirmed terminal marker", async () => {
+  const client: ReadClient = { graphql: async () => ({
+    data: { user: { result: { timeline: { timeline: { instructions: [] } } } } },
+  }) };
+  const reader = new XActionsReadEngine(client, endpoints, {
+    ...parsers, parseTimelineInstructions: () => ({ tweets: [], cursor: null }),
+  });
+  await assert.rejects(reader.timelinePage("123456"), /ambiguous timeline end/);
 });
