@@ -21,7 +21,11 @@ async function main(): Promise<void> {
       throw new Error(`XActions pinned GraphQL operation missing: ${key}`);
     }
   }
-  console.log("XActions pinned checkout and offline read-only exports verified. No X requests made.");
+  const method = api.graphqlRequestMethod as ((name: string) => string) | undefined;
+  if (typeof method !== "function" || method("SearchTimeline") !== "POST") {
+    throw new Error("XActions: SearchTimeline diagnostic expects POST; do not enable HTTP search");
+  }
+  console.log("XActions pinned checkout, exports and SearchTimeline=POST verified offline. No X requests made.");
 }
 main().catch(error => {
   console.error(error instanceof Error ? error.message : "XActions local verification failed");
