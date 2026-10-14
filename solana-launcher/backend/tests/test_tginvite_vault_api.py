@@ -101,3 +101,62 @@ async def test_public_history_is_internal_owner_bound_and_validates_usernames(te
         path, headers=allowed_headers, json={"username": "@PublicChannel", "limit": 50}
     )
     assert missing_session.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_telegram_login_attempts_are_rate_limited_per_owner(test_app, client):
+    settings = test_app.state.settings
+    settings.tginvite_internal_key = SERVICE_KEY
+    token_a = await _user(test_app, "login-rate-limit-owner-a")
+    token_b = await _user(test_app, "login-rate-limit-owner-b")
+    path = "/api/v1/tginvite/login-attempt"
+    headers_a = {
+        "Authorization": f"Bearer {token_a}",
+        "X-TGInvite-Service-Key": SERVICE_KEY,
+    }
+    headers_b = {
+        "Authorization": f"Bearer {token_b}",
+        "X-TGInvite-Service-Key": SERVICE_KEY,
+    }
+
+    for _ in range(3):
+        response = await client.post(path, headers=headers_a, json={"kind": "send_code"})
+        assert response.status_code == 204
+
+    limited = await client.post(path, headers=headers_a, json={"kind": "send_code"})
+    assert limited.status_code == 429
+    assert int(limited.headers["retry-after"]) > 0
+
+    # Another owner is not penalized for this owner's Telegram login attempts.
+    other_owner = await client.post(path, headers=headers_b, json={"kind": "send_code"})
+    assert other_owner.status_code == 204
+
+    # Verification attempts have a separate rate limit.
+    for _ in range(8):
+        verified = await client.post(path, headers=headers_a, json={"kind": "complete_login"})
+        assert verified.status_code == 204
+    denied = await client.post(path, headers=headers_a, json={"kind": "complete_login"})
+    assert denied.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_login_attempt_endpoint_requires_service_credentials(test_app, client):
+    settings = test_app.state.settings
+    settings.tginvite_internal_key = SERVICE_KEY
+    token = await _user(test_app, "login-permit-service-auth")
+    path = "/api/v1/tginvite/login-attempt"
+    no_service_key = await client.post(
+        path,
+        headers={"Authorization": f"Bearer {token}"},
+        json={"kind": "send_code"},
+    )
+    assert no_service_key.status_code == 403
+    invalid_kind = await client.post(
+        path,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-TGInvite-Service-Key": SERVICE_KEY,
+        },
+        json={"kind": "delete_all_sessions"},
+    )
+    assert invalid_kind.status_code == 422
