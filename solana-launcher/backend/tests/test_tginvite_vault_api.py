@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
+from app.core.rate_limit import RateLimiter
 from app.models.telegram_invite_session import TelegramInviteSession
 from app.models.user import User
 from sqlalchemy import select
@@ -196,3 +197,26 @@ async def test_read_permit_requires_internal_key_and_is_owner_scoped(test_app, c
     assert independent.status_code == 204
     other_kind = await client.post(url, headers=headers_a, json={"kind": "fetch_members"})
     assert other_kind.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_telegram_read_quota_fails_closed_in_production_without_redis(test_app, client):
+    settings = test_app.state.settings
+    settings.tginvite_internal_key = SERVICE_KEY
+    token = await _user(test_app, "strict-tginvite-read-owner")
+    url = "/api/v1/tginvite/read-permit"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-TGInvite-Service-Key": SERVICE_KEY,
+    }
+    previous_environment = settings.environment
+    previous_limiter = test_app.state.rate_limiter
+    try:
+        settings.environment = "production"
+        test_app.state.rate_limiter = RateLimiter(None)
+        denied = await client.post(url, headers=headers, json={"kind": "analyze_recent"})
+        assert denied.status_code == 503
+        assert "unavailable" in denied.json()["detail"].lower()
+    finally:
+        settings.environment = previous_environment
+        test_app.state.rate_limiter = previous_limiter
