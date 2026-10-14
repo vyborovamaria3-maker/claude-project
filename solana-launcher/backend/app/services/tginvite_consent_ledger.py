@@ -146,7 +146,7 @@ async def record_verified_opt_in(
             or winner.recipient_digest != recipient_hash
             or winner.proof_kind != event.proof_kind
         ):
-            raise ConsentLedgerError("Telegram proof already belongs to another consent")
+            raise ConsentLedgerError("Telegram proof already belongs to another consent") from None
         return winner
     await db.refresh(record)
     return record
@@ -245,7 +245,7 @@ async def plan_non_dispatching_job(
         if winner is None:
             raise
         if winner.consent_id != consent or winner.destination_chat_id != chat:
-            raise ConsentLedgerError("Idempotency key already belongs to another job")
+            raise ConsentLedgerError("Idempotency key already belongs to another job") from None
         return winner
     await db.refresh(job)
     return job
