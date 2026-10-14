@@ -39,6 +39,19 @@ test("partial HTTP profile never clears confirmed verification; rowCount tracks 
     )).rows[0];
     assert.equal(saved.is_verified, true);
     assert.equal(saved.followers, "100");
+    // Explicit negative verification from GraphQL may revoke old true state.
+    assert.equal(await persistProfile({ ...sparse, verificationEvidence: "unverified" },
+      9, "collector", undefined, { client, transport: "http" }), 0);
+    saved = (await db.query<{ is_verified: boolean; followers: string }>(
+      "SELECT is_verified,followers::text FROM twitter_profiles WHERE handle='nasa'",
+    )).rows[0];
+    assert.equal(saved.is_verified, false);
+    // Subsequent positively verified HTTP observation can restore it.
+    assert.equal(await persistProfile(profile, 9, "collector", undefined, { client, transport: "http" }), 0);
+    saved = (await db.query<{ is_verified: boolean; followers: string }>(
+      "SELECT is_verified,followers::text FROM twitter_profiles WHERE handle='nasa'",
+    )).rows[0];
+    assert.equal(saved.is_verified, true);
     assert.equal(await persistProfile(sparse, 9, "collector", undefined, { client, transport: "browser" }), 0);
     saved = (await db.query<{ is_verified: boolean; followers: string }>(
       "SELECT is_verified,followers::text FROM twitter_profiles WHERE handle='nasa'",
