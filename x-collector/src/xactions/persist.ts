@@ -34,10 +34,7 @@ export async function persistXActionsTweetPage(
     completed: page.completed,
     itemsWritten: new Set(page.items.map(item => item.id)).size,
   }, async client => {
-    const before = await client.query<{ count: string }>(
-      "SELECT COUNT(*)::text AS count FROM x_task_tweets WHERE task_id=$1", [context.taskId],
-    );
-    await persistTweets(
+    newItems = await persistTweets(
       context.mint,
       [...page.items],
       context.sourceQuery,
@@ -46,10 +43,6 @@ export async function persistXActionsTweetPage(
       persistenceLease,
       { client, transport: "http" },
     );
-    const after = await client.query<{ count: string }>(
-      "SELECT COUNT(*)::text AS count FROM x_task_tweets WHERE task_id=$1", [context.taskId],
-    );
-    newItems = Number(after.rows[0]?.count ?? 0) - Number(before.rows[0]?.count ?? 0);
     return newItems;
   });
   return newItems;
