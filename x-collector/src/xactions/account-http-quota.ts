@@ -7,9 +7,10 @@ import { WEIGHTS, type RequestKind } from "../../lib/trade/account-manager";
  * operation's weight. Never treat a timeline weight of 5 as five free calls.
  * The reservation is shared with browser tasks in the same account quota.
  */
+export type HttpReservation = "reserved" | "quota" | "lease";
 export function createHttpQuotaGate(
   kind: RequestKind,
-  reserveExtra: (weight: number) => Promise<boolean>,
+  reserveExtra: (weight: number) => Promise<HttpReservation>,
 ): () => Promise<void> {
   let firstCallCovered = true;
   return async () => {
@@ -17,7 +18,10 @@ export function createHttpQuotaGate(
       firstCallCovered = false;
       return;
     }
-    if (!(await reserveExtra(WEIGHTS[kind]))) throw new HttpAccountQuotaError();
+    const status = await reserveExtra(WEIGHTS[kind]);
+    if (status === "quota") throw new HttpAccountQuotaError();
+    if (status === "lease") throw new HttpAccountLeaseError();
+    if (status !== "reserved") throw new Error("XActions: invalid reservation status");
   };
 }
 
@@ -28,8 +32,16 @@ export class HttpAccountQuotaError extends Error {
   }
 }
 
+/** No usable ownership: never confuse stolen/expired leases with quota. */
+export class HttpAccountLeaseError extends Error {
+  constructor() {
+    super("XACTIONS_ACCOUNT_LEASE_LOST");
+    this.name = "HttpAccountLeaseError";
+  }
+}
+
 /** A single atomic increment, limited by quota and the caller's current lease. */
-export async function reserveAdditionalHttpRequest(accountName: string, leaseOwner: string, weight: number): Promise<boolean> {
+export async function reserveAdditionalHttpRequest(accountName: string, leaseOwner: string, weight: number): Promise<HttpReservation> {
   if (!Number.isSafeInteger(weight) || weight < 1 || weight > 100) {
     throw new Error("XActions: invalid HTTP quota weight");
   }
@@ -44,7 +56,14 @@ export async function reserveAdditionalHttpRequest(accountName: string, leaseOwn
        AND (CASE WHEN hour_window_start < $3 THEN $5 ELSE weight_used_this_hour+$5 END) <= weight_quota_per_hour`,
     [accountName, leaseOwner, now-3600000, now, weight],
   );
-  return changed === 1;
+  if (changed === 1) return "reserved";
+  const current = await q1<{ valid: boolean }>(
+    `SELECT (account_claimed_by=$2 AND account_busy_until>$3
+      AND status='active' AND role='collector') AS valid
+     FROM x_accounts WHERE name=$1`,
+    [accountName, leaseOwner, Date.now()],
+  );
+  return current?.valid ? "quota" : "lease";
 }
 
 export async function httpQuotaWaitMs(accountName: string): Promise<number> {
