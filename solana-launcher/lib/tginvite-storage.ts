@@ -127,8 +127,8 @@ export const jobsStorage = {
 };
 
 export const settingsStorage = {
-  get: () =>
-    storage.get<StoredSettings>("settings", {
+  get: () => {
+    const loaded = storage.get<StoredSettings>("settings", {
       botToken: "",
       targetChannel: "",
       delay: 100,
@@ -138,6 +138,15 @@ export const settingsStorage = {
       maxPerDay: 100,
       minDelay: 50,
       maxDelay: 300,
-    }),
-  set: (settings: StoredSettings) => storage.set("settings", settings),
+    });
+    // Migrate legacy browser storage: active sessions and bot tokens must not persist.
+    if (loaded.botToken || loaded.mtprotoSession) {
+      const sanitized = { ...loaded, botToken: "", mtprotoSession: undefined };
+      storage.set("settings", sanitized);
+      return sanitized;
+    }
+    return loaded;
+  },
+  set: (settings: StoredSettings) =>
+    storage.set("settings", { ...settings, botToken: "", mtprotoSession: undefined }),
 };

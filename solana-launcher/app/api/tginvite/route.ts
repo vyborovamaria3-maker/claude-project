@@ -19,25 +19,7 @@ export async function POST(request: Request) {
     const { action, channels, filters } = body;
 
     if (action === "analyze") {
-      return NextResponse.json({
-        status: "analyzed",
-        channels: channels?.map((ch: string) => ({
-          username: ch,
-          members: Math.floor(Math.random() * 10000),
-          activity: Math.random(),
-          quality: Math.random(),
-        })),
-      });
-    }
-
-    if (action === "import") {
-      return NextResponse.json({
-        status: "started",
-        jobId: Date.now().toString(),
-        target: body.target,
-        sources: channels,
-        filters,
-      });
+      return NextResponse.json({ error: "Use the authenticated MTProto analysis API" }, { status: 501 });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

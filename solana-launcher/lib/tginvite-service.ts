@@ -94,49 +94,8 @@ class TgInviteService {
     };
   }
 
-  startImport(config: ImportJobConfig): string {
-    const jobId = config.jobId ?? generateJobId();
-    const delayer = new StealthDelayer({
-      minDelay: config.minDelay,
-      maxDelay: config.maxDelay,
-      burstSize: config.batchSize,
-      burstPauseMin: config.batchPause * 1000,
-      burstPauseMax: config.batchPause * 1000 * 3,
-    });
-
-    const progress: ImportProgress = {
-      jobId,
-      status: "running",
-      progress: 0,
-      total: config.sources.length,
-      invited: 0,
-      skipped: 0,
-      failed: 0,
-      startTime: new Date().toISOString(),
-    };
-
-    const storedJob: StoredJob = {
-      id: jobId,
-      targetChannel: config.targetChannel,
-      sources: config.sources,
-      status: "running",
-      progress: 0,
-      total: config.sources.length,
-      invited: 0,
-      skipped: 0,
-      failed: 0,
-      startTime: progress.startTime,
-      logs: [],
-      inviteLinks: [],
-    };
-    jobsStorage.add(storedJob);
-
-    this.activeImports.set(jobId, { config, progress, delayer, cancelFlag: false });
-
-    tginviteEvents.emit(TGEvent.IMPORT_START, { jobId, config });
-    this.processImport(jobId);
-
-    return jobId;
+  startImport(_config: ImportJobConfig): string {
+    throw new Error("Legacy simulated TGInvite imports are disabled");
   }
 
   pauseImport(jobId: string): void {
@@ -205,79 +164,6 @@ class TgInviteService {
       estimatedFailed: Math.floor(config.sources.length * 0.1),
       channelBreakdown: config.sources.map((ch) => ({ channel: ch, estimatedMembers: 1000 })),
     };
-  }
-
-  private async processImport(jobId: string): Promise<void> {
-    const active = this.activeImports.get(jobId);
-    if (!active || active.cancelFlag) return;
-
-    const { config, progress, delayer } = active;
-    const currentIndex = progress.invited + progress.skipped + progress.failed;
-
-    if (currentIndex >= config.sources.length) {
-      progress.status = "completed";
-      progress.progress = 100;
-      progress.endTime = new Date().toISOString();
-      jobsStorage.update(jobId, {
-        status: "completed",
-        progress: 100,
-        endTime: progress.endTime,
-      });
-      this.activeImports.delete(jobId);
-      tginviteEvents.emit(TGEvent.IMPORT_COMPLETE, { jobId, progress });
-      return;
-    }
-
-    try {
-      await delayer.delay();
-
-      if (active.cancelFlag) return;
-
-      progress.currentChannel = config.sources[currentIndex];
-      const success = Math.random() > 0.1;
-
-      if (success) {
-        progress.invited++;
-      } else if (Math.random() > 0.5) {
-        progress.skipped++;
-      } else {
-        progress.failed++;
-      }
-
-      progress.progress = Math.round(
-        ((progress.invited + progress.skipped + progress.failed) / config.sources.length) * 100
-      );
-
-      jobsStorage.update(jobId, {
-        progress: progress.progress,
-        invited: progress.invited,
-        skipped: progress.skipped,
-        failed: progress.failed,
-      });
-
-      tginviteEvents.emit(TGEvent.IMPORT_PROGRESS, { jobId, progress });
-
-      setTimeout(() => this.processImport(jobId), 0);
-    } catch (err: unknown) {
-      const isRateLimit = (err as { isRateLimit?: boolean })?.isRateLimit ?? false;
-      const isFloodWait = (err as { isFloodWait?: boolean })?.isFloodWait ?? false;
-
-      if (isRateLimit || isFloodWait) {
-        tginviteEvents.emit(TGEvent.FLOOD_WAIT, { jobId, retryIn: 5000 });
-        progress.failed++;
-        progress.progress = Math.round(
-          ((progress.invited + progress.skipped + progress.failed) / config.sources.length) * 100
-        );
-        jobsStorage.update(jobId, { progress: progress.progress, failed: progress.failed });
-        setTimeout(() => this.processImport(jobId), 5000);
-      } else {
-        progress.status = "failed";
-        progress.endTime = new Date().toISOString();
-        jobsStorage.update(jobId, { status: "failed", endTime: progress.endTime });
-        this.activeImports.delete(jobId);
-        tginviteEvents.emit(TGEvent.IMPORT_ERROR, { jobId, error: err as string });
-      }
-    }
   }
 
   private computeStats(members: RawMember[]): FilterStats {

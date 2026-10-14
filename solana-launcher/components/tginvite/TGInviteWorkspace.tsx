@@ -966,69 +966,11 @@ function TGInvitePageInner() {
   const importJobIdRef = useRef("");
 
   // Start import — generates real invite links via Telegram API
+  // The previous workflow simulated successes and never called Telegram.
+  // Keep the button non-operational rather than presenting fictitious results.
   const startImport = useCallback(async () => {
-    const selected = channels.filter((ch) => selectedChannels.has(ch.id));
-    if (selected.length === 0) {
-      warning("No channels selected", "Select at least one source channel");
-      return;
-    }
-    if (!targetChannel) {
-      warning("No target channel", "Enter a target channel username");
-      return;
-    }
-
-    const importConfig: ImportJobConfig = {
-      targetChannel,
-      sources: selected.map((ch) => ch.username),
-      botToken: botToken || undefined,
-      batchSize,
-      batchPause,
-      minDelay: filters.delay,
-      maxDelay: filters.delay * 3,
-      filters: {
-        removeBots: true,
-        removeScam: true,
-        removeFake: true,
-        removeRestricted: true,
-        minActivityScore: filters.minActivity,
-        maxAccountAgeDays: filters.maxAge,
-        minLastSeenDays: 30,
-        requireAvatar: filters.hasAvatar,
-        requireUsername: false,
-        blacklistUsernames: filters.blacklist,
-        whitelistUsernames: filters.whitelist,
-        maxResults: filters.limit,
-      },
-    };
-
-    // Preview the import
-    const preview = tgInviteService.previewImport(importConfig);
-    info(
-      "Import Preview",
-      `Estimated time: ${preview.estimatedTime}, ~${preview.estimatedInvited} invites, ~${preview.estimatedFailed} failures`
-    );
-
-    // Start the import
-    const jobId = tgInviteService.startImport(importConfig);
-    importJobIdRef.current = jobId;
-
-    setCurrentJob({
-      id: jobId,
-      targetChannel,
-      sources: selected.map((ch) => ch.username),
-      status: "running",
-      progress: 0,
-      total: selected.length,
-      invited: 0,
-      skipped: 0,
-      failed: 0,
-      startTime: new Date().toISOString(),
-      logs: [],
-      inviteLinks: [],
-    });
-    setIsRunning(true);
-    isRunningRef.current = true;
-  }, [channels, selectedChannels, targetChannel, botToken, filters.delay, batchSize, batchPause, filters.minActivity, filters.maxAge, filters.hasAvatar, filters.blacklist, filters.whitelist, filters.limit, warning, info]);
+    warning("Import unavailable", "Live import requires the server-side job workflow. No invitations were sent.");
+  }, [warning]);
 
   // Pause import
   const pauseImport = useCallback(() => {
@@ -1186,7 +1128,10 @@ function TGInvitePageInner() {
       if (lastActive.status === "running") {
         setIsRunning(true);
         isRunningRef.current = true;
-        tgInviteService.resumeImport(lastActive.id);
+        // Never resume the legacy simulated importer after reload.
+        jobsStorage.update(lastActive.id, { status: "failed", endTime: new Date().toISOString() });
+        setIsRunning(false);
+        isRunningRef.current = false;
       }
     }
   }, []);
@@ -3118,10 +3063,9 @@ function MTProtoSettings({
     if (!apiId.trim() || !apiHash.trim()) return;
     setConnecting(true);
     try {
-      const savedSession = settingsStorage.get().mtprotoSession || "";
       const result = await call<{ status?: string; error?: string; sessionString?: string }>(
         "/api/tginvite/mtproto",
-        { body: { action: "connect", apiId: apiId.trim(), apiHash: apiHash.trim(), sessionString: savedSession } }
+        { body: { action: "connect", apiId: apiId.trim(), apiHash: apiHash.trim() } }
       );
       if (result?.status === "connected") {
         setConnected(true);
@@ -3181,10 +3125,7 @@ function MTProtoSettings({
         setNeedsPhone(false);
         setCodeSent(false);
         setPasswordRequired(false);
-        if (result.sessionString) {
-          settingsStorage.set({ ...settingsStorage.get(), mtprotoSession: result.sessionString });
-        }
-        success("MTProto authenticated", "Real member fetching enabled");
+         success("MTProto authenticated", "Real member fetching enabled");
       } else if (result?.status === "password_required") {
         setPasswordRequired(true);
         warning("2FA password required", "Enter your Telegram cloud password");

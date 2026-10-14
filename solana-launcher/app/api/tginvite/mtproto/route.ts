@@ -1,6 +1,6 @@
 import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
-import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode, setClient, startClient } from "@/lib/tginvite-mtproto";
+import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode } from "@/lib/tginvite-mtproto";
 import { DEFAULT_FILTER_CONFIG, filterMembers, getFilterSummary, type FilterConfig } from "@/lib/tginvite-filter";
 
 function parserError(message: string): { status: number; body: { error: string; status: string } } {
@@ -32,6 +32,7 @@ function parserError(message: string): { status: number; body: { error: string; 
 export async function POST(request: Request) {
   const user = await requireTGInviteUser(request);
   if (user.error) return user.error;
+  const ownerId = user.ownerId!;
   try {
     const body = await request.json();
     const { action, apiId, apiHash, phoneNumber, sessionString, channelUsername, limit, filterConfig, activityMode, phoneCode, password } = body;
@@ -40,44 +41,16 @@ export async function POST(request: Request) {
       if (!apiId || !apiHash) {
         return NextResponse.json({ error: "apiId and apiHash required" }, { status: 400 });
       }
-
-      const tgClient = await createClient({
-        apiId: Number(apiId),
-        apiHash,
-        sessionString,
-        phoneNumber,
-      });
-
       if (sessionString) {
-        const client = tgClient as { connect: () => Promise<void> };
-        try {
-          await client.connect();
-          const authorized = await isAuthorized(tgClient);
-          if (!authorized) {
-            await clearClient();
-            return NextResponse.json(
-              { error: "MTProto session expired. Clear saved session and authenticate again.", status: "session_expired" },
-              { status: 401 }
-            );
-          }
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          await clearClient();
-          if (message.includes("AUTH_KEY_UNREGISTERED")) {
-            return NextResponse.json(
-              { error: "MTProto session expired. Clear saved session and authenticate again.", status: "session_expired" },
-              { status: 401 }
-            );
-          }
-          throw err;
-        }
-        setClient(tgClient);
+        return NextResponse.json({ error: "Browser-provided session strings are no longer accepted" }, { status: 400 });
+      }
+      const existingClient = getClient(ownerId);
+      if (existingClient && await isAuthorized(existingClient)) {
         return NextResponse.json({ status: "connected", hasSession: true });
       }
-
-      // Need phone verification
-      setClient(tgClient);
-      return NextResponse.json({ status: "needs_phone", message: "Call start with phoneNumber" });
+      await clearClient(ownerId);
+      await createClient({ apiId: Number(apiId), apiHash, phoneNumber }, ownerId);
+      return NextResponse.json({ status: "needs_phone", message: "Enter your phone number to authenticate" });
     }
 
     if (action === "sendCode") {
@@ -89,7 +62,7 @@ export async function POST(request: Request) {
         apiId: Number(apiId),
         apiHash,
         phoneNumber,
-      });
+      }, ownerId);
 
       return NextResponse.json({
         status: "code_sent",
@@ -100,8 +73,8 @@ export async function POST(request: Request) {
 
     if (action === "completeLogin") {
       try {
-        const completedSessionString = await completeLogin({ phoneCode, password });
-        return NextResponse.json({ status: "authenticated", sessionString: completedSessionString });
+        await completeLogin({ phoneCode, password }, ownerId);
+        return NextResponse.json({ status: "authenticated" });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         if (message === "TWO_FACTOR_PASSWORD_REQUIRED") {
@@ -122,17 +95,7 @@ export async function POST(request: Request) {
     }
 
     if (action === "start") {
-      if (!phoneNumber) {
-        return NextResponse.json({ error: "phoneNumber required" }, { status: 400 });
-      }
-
-      const existingClient = getClient();
-      if (!existingClient) {
-        return NextResponse.json({ error: "No client — call connect first" }, { status: 400 });
-      }
-
-      const sessionString = await startClient(existingClient, phoneNumber);
-      return NextResponse.json({ status: "authenticated", sessionString });
+      return NextResponse.json({ error: "Use sendCode and completeLogin instead" }, { status: 400 });
     }
 
     if (action === "fetchMembers") {
@@ -140,7 +103,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "channelUsername required" }, { status: 400 });
       }
 
-      const existingClient = getClient();
+      const existingClient = getClient(ownerId);
       if (!existingClient) {
         return NextResponse.json(
           { error: "MTProto is not connected. Connect your Telegram account in TGInvite Settings first.", status: "not_connected" },
@@ -158,7 +121,7 @@ export async function POST(request: Request) {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("AUTH_KEY_UNREGISTERED")) {
-          await clearClient();
+          await clearClient(ownerId);
           const mapped = parserError(message);
           return NextResponse.json(mapped.body, { status: mapped.status });
         }
@@ -221,7 +184,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "channelUsername required" }, { status: 400 });
       }
 
-      const existingClient = getClient();
+      const existingClient = getClient(ownerId);
       if (!existingClient) {
         return NextResponse.json(
           { error: "MTProto is not connected. Connect your Telegram account in TGInvite Settings first.", status: "not_connected" },
@@ -235,7 +198,7 @@ export async function POST(request: Request) {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("AUTH_KEY_UNREGISTERED")) {
-          await clearClient();
+          await clearClient(ownerId);
         }
         const mapped = parserError(message);
         return NextResponse.json(mapped.body, { status: mapped.status });
@@ -243,7 +206,7 @@ export async function POST(request: Request) {
     }
 
     if (action === "validateCandidates") {
-      const existingClient = getClient();
+      const existingClient = getClient(ownerId);
 
       if (!existingClient) {
         return NextResponse.json(
@@ -418,9 +381,10 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const user = await requireTGInviteUser(request);
   if (user.error) return user.error;
-  const existingClient = getClient();
+  const ownerId = user.ownerId!;
+  const existingClient = getClient(ownerId);
   return NextResponse.json({
-    connected: isConnected(),
+    connected: isConnected(ownerId),
     clientReady: existingClient !== null,
     hasSession: existingClient?.connected || false,
   });

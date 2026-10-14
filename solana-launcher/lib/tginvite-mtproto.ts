@@ -8,17 +8,16 @@ const CALL_CONTEXT_RE = /\b(?:call|calling|caller|gem|alpha|entry|buy|send(?:ing
 const PUMPFUN_RE = /(?:pump\.fun|pumpfun)/i;
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-let client: Record<string, unknown> | null = null;
-let pendingAuth:
-  | {
-      apiId: number;
-      apiHash: string;
-      phoneNumber: string;
-      phoneCodeHash: string;
-      isCodeViaApp: boolean;
-      client: Record<string, unknown>;
-    }
-  | null = null;
+interface PendingAuth {
+  apiId: number;
+  apiHash: string;
+  phoneNumber: string;
+  phoneCodeHash: string;
+  isCodeViaApp: boolean;
+  client: Record<string, unknown>;
+}
+const clients = new Map<string, Record<string, unknown>>();
+const pendingAuthByOwner = new Map<string, PendingAuth>();
 
 export interface MTProtoConfig {
   apiId: number;
@@ -262,17 +261,11 @@ async function resolveChannelEntity(
     return checkedObj.chat;
   }
 
-  const imported = await tgClient.invoke(new Api.messages.ImportChatInvite({ hash: parsed.hash }));
-  const importedObj = imported as { chats?: unknown[] };
-  const [chat] = importedObj.chats || [];
-  if (chat) {
-    return chat;
-  }
-
-  throw new Error("Invite link does not expose a channel. Join it in Telegram first or use a public @username.");
+  // Resolving a link must not join a private chat as a side effect.
+  throw new Error("This chat requires membership. Join it manually in Telegram before parsing.");
 }
 
-export async function createClient(config: MTProtoConfig): Promise<Record<string, unknown>> {
+export async function createClient(config: MTProtoConfig, ownerId: string): Promise<Record<string, unknown>> {
   const { TelegramClient } = await import("telegram");
   const { StringSession } = await import("telegram/sessions");
 
@@ -284,7 +277,7 @@ export async function createClient(config: MTProtoConfig): Promise<Record<string
   });
 
   const clientInstance = tgClient as unknown as Record<string, unknown>;
-  setClient(clientInstance);
+  setClient(clientInstance, ownerId);
   return clientInstance;
 }
 
@@ -304,8 +297,8 @@ export async function startClient(
   return client.session.save();
 }
 
-export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }): Promise<{ isCodeViaApp: boolean }> {
-  const tgClient = await createClient(config);
+export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }, ownerId: string): Promise<{ isCodeViaApp: boolean }> {
+  const tgClient = await createClient(config, ownerId);
   const typedClient = tgClient as TelegramClientLike & {
     sendCode: (
       credentials: { apiId: number; apiHash: string },
@@ -319,15 +312,15 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
     config.phoneNumber
   );
 
-  pendingAuth = {
+  pendingAuthByOwner.set(ownerId, {
     apiId: config.apiId,
     apiHash: config.apiHash,
     phoneNumber: config.phoneNumber,
     phoneCodeHash: result.phoneCodeHash,
     isCodeViaApp: result.isCodeViaApp,
     client: tgClient,
-  };
-  setClient(tgClient);
+  });
+  setClient(tgClient, ownerId);
 
   return { isCodeViaApp: result.isCodeViaApp };
 }
@@ -335,7 +328,8 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
 export async function completeLogin(params: {
   phoneCode?: string;
   password?: string;
-}): Promise<string> {
+}, ownerId: string): Promise<string> {
+  const pendingAuth = pendingAuthByOwner.get(ownerId);
   if (!pendingAuth) {
     throw new Error("No pending Telegram login. Send code first.");
   }
@@ -376,8 +370,8 @@ export async function completeLogin(params: {
     }
 
     const sessionString = typedClient.session.save();
-    pendingAuth = null;
-    setClient(typedClient);
+    pendingAuthByOwner.delete(ownerId);
+    setClient(typedClient, ownerId);
     return sessionString;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -642,29 +636,30 @@ export async function inviteUsers(
   return { invited, failed, errors };
 }
 
-export function isConnected(): boolean {
-  return Boolean(client && (client as TelegramClientLike).connected);
+export function isConnected(ownerId: string): boolean {
+  const client = clients.get(ownerId) as TelegramClientLike | undefined;
+  return Boolean(client?.connected);
 }
 
 export async function isAuthorized(tgClient: Record<string, unknown>): Promise<boolean> {
   const typedClient = tgClient as TelegramClientLike;
   await ensureConnected(typedClient);
-  if (typeof typedClient.checkAuthorization !== "function") return true;
+  if (typeof typedClient.checkAuthorization !== "function") return false;
   return typedClient.checkAuthorization();
 }
 
-export function getClient(): Record<string, unknown> | null {
-  return client;
+export function getClient(ownerId: string): Record<string, unknown> | null {
+  return clients.get(ownerId) ?? null;
 }
 
-export function setClient(c: Record<string, unknown>): void {
-  client = c;
+export function setClient(c: Record<string, unknown>, ownerId: string): void {
+  clients.set(ownerId, c);
 }
 
-export async function clearClient(): Promise<void> {
-  const existingClient = client as TelegramClientLike | null;
-  client = null;
-  pendingAuth = null;
+export async function clearClient(ownerId: string): Promise<void> {
+  const existingClient = clients.get(ownerId) as TelegramClientLike | undefined;
+  clients.delete(ownerId);
+  pendingAuthByOwner.delete(ownerId);
   if (existingClient && typeof existingClient.disconnect === "function") {
     try {
       await existingClient.disconnect();

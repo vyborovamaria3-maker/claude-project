@@ -7,9 +7,10 @@ import { getClient, fetchChannelMembers, inviteUsers } from "@/lib/tginvite-mtpr
 export async function POST(request: Request) {
   const user = await requireTGInviteUser(request);
   if (user.error) return user.error;
+  const ownerId = user.ownerId!;
   try {
     const body = await request.json();
-    const { action, token, chatId, linkName, expireDays, memberLimit, linkCount, filterConfig, channelUsernames, targetChannel, userIds } = body;
+    const { action, token, chatId, linkName, expireDays, memberLimit, linkCount, filterConfig, channelUsernames, targetChannel, userIds, confirmedOptIn } = body;
 
     if (action === "createLink") {
       if (!token || !chatId) {
@@ -61,7 +62,7 @@ export async function POST(request: Request) {
 
     if (action === "fetchAndFilter") {
       // MTProto mode — fetch real members from channels and filter
-      const tgClient = getClient();
+      const tgClient = getClient(ownerId);
       if (!tgClient) {
         return NextResponse.json(
           { error: "MTProto not connected — go to Settings → MTProto Connect" },
@@ -129,8 +130,11 @@ export async function POST(request: Request) {
     }
 
     if (action === "inviteFromFetched") {
+      if (confirmedOptIn !== true) {
+        return NextResponse.json({ error: "Explicit opt-in confirmation is required" }, { status: 403 });
+      }
       // Invite filtered users to target channel
-      const tgClient = getClient();
+      const tgClient = getClient(ownerId);
       if (!tgClient) {
         return NextResponse.json(
           { error: "MTProto not connected" },
