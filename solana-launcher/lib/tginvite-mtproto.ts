@@ -24,6 +24,7 @@ export function isPendingLoginExpired(
 interface PendingAuth {
   createdAt: number;
   leaseToken: string;
+  generation: number;
   apiId: number;
   apiHash: string;
   phoneNumber: string;
@@ -305,7 +306,8 @@ export async function startClient(
   return client.session.save();
 }
 
-export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }, ownerId: string, leaseToken: string): Promise<{ isCodeViaApp: boolean }> {
+export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }, ownerId: string, leaseToken: string, generation: number): Promise<{ isCodeViaApp: boolean }> {
+  if (!Number.isSafeInteger(generation) || generation < 0) throw new Error("Invalid Telegram session generation");
   if (!leaseToken || leaseToken.length < 32) throw new Error("Shared Telegram login lease required");
   // Block read-only status/resolution requests from tearing down a socket
   // while sendCode is still awaiting Telegram's code-delivery response.
@@ -330,6 +332,7 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
     const challenge: PendingAuth = {
       createdAt: Date.now(),
       leaseToken,
+      generation,
       apiId: config.apiId,
       apiHash: config.apiHash,
       phoneNumber: config.phoneNumber,
@@ -356,9 +359,11 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
   }
 }
 
-export function getPendingLoginLease(ownerId: string): string | null {
+export function getPendingLoginLease(ownerId: string): { token: string; generation: number } | null {
   const challenge = pendingAuthByOwner.get(ownerId);
-  return challenge && !isPendingLoginExpired(challenge.createdAt) ? challenge.leaseToken : null;
+  return challenge && !isPendingLoginExpired(challenge.createdAt)
+    ? { token: challenge.leaseToken, generation: challenge.generation }
+    : null;
 }
 
 export function hasTGInviteLoginInProgress(ownerId: string): boolean {
