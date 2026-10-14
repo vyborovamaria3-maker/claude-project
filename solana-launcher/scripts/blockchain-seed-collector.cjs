@@ -106,7 +106,6 @@ function refreshTargets(db) {
     "THEN MIN(chain_seed_targets.next_run_at,?) ELSE chain_seed_targets.next_run_at END",
   ].join(" "));
   const tx = db.transaction(() => {
-    db.prepare("UPDATE chain_seed_targets SET source_mask=0,priority=0").run();
     let count = 0;
     for (const row of grouped.iterate()) {
       const categories = String(row.categories || "").split(",");
@@ -119,6 +118,11 @@ function refreshTargets(db) {
       upsert.run(row.kind, row.address, mask, priority, now);
       count++;
     }
+    // Unschedule targets no longer present in any source file; preserve the
+    // existing TTL of unchanged targets instead of refetching all of them.
+    db.prepare("UPDATE chain_seed_targets SET source_mask=0,priority=0 "
+      + "WHERE NOT EXISTS (SELECT 1 FROM chain_seed_file_sources s "
+      + "WHERE s.kind=chain_seed_targets.kind AND s.address=chain_seed_targets.address)").run();
     return count;
   });
   return tx();
@@ -126,18 +130,18 @@ function refreshTargets(db) {
 
 function importFolders(db, args) {
   const xlsx = require("./xlsx-safe-package/index.cjs");
-  const find = db.prepare("SELECT bytes,mtime_ms,category FROM chain_seed_files WHERE file_path=?");
-  const putFile = db.prepare([
+  const find = db ? db.prepare("SELECT bytes,mtime_ms,category FROM chain_seed_files WHERE file_path=?") : null;
+  const putFile = db ? db.prepare([
     "INSERT INTO chain_seed_files(file_path,category,bytes,mtime_ms,imported_at,sheet_count,rows_scanned,targets_found)",
     "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(file_path) DO UPDATE SET",
     "category=excluded.category, bytes=excluded.bytes,mtime_ms=excluded.mtime_ms,",
     "imported_at=excluded.imported_at,sheet_count=excluded.sheet_count,",
     "rows_scanned=excluded.rows_scanned,targets_found=excluded.targets_found",
-  ].join(" "));
-  const putTarget = db.prepare(
+  ].join(" ")) : null;
+  const putTarget = db ? db.prepare(
     "INSERT OR IGNORE INTO chain_seed_file_sources(file_path,category,kind,address) VALUES(?,?,?,?)"
-  );
-  const deleteFileTargets = db.prepare("DELETE FROM chain_seed_file_sources WHERE file_path=?");
+  ) : null;
+  const deleteFileTargets = db ? db.prepare("DELETE FROM chain_seed_file_sources WHERE file_path=?") : null;
   const stats = { scannedFiles: 0, changedFiles: 0, unchangedFiles: 0,
     parsedAddresses: 0, invalidRows: 0, missingFolders: [], files: [] };
   const seenPaths = new Set();
@@ -151,7 +155,7 @@ function importFolders(db, args) {
       stats.scannedFiles++;
       const fileStat = fs.statSync(file);
       const mtime = Math.round(fileStat.mtimeMs);
-      const previous = find.get(file);
+      const previous = find?.get(file);
       if (!args.dryRun && previous && previous.bytes === fileStat.size
           && previous.mtime_ms === mtime && previous.category === category) {
         stats.unchangedFiles++;
@@ -289,7 +293,7 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
 async function processOne(db, row, cfg, api) {
   const known = new Set(db.prepare(
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
-    + " ORDER BY observed_at DESC LIMIT 150"
+    + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
   ).all(row.kind, row.address).map(r => r.signature));
   const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known);
   let events = [...recent.transactions], backfillCursor = row.backfill_cursor;
