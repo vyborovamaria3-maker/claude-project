@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeXActionsProfile, normalizeXActionsTweet } from "../src/xactions/normalize";
 import { runCursorPages, HttpNoProgressError, type PageCommit } from "../src/xactions/pagination";
-import { toCollectorError, XActionsAccessDeniedError } from "../src/xactions/errors";
+import { toCollectorError, XActionsAccessDeniedError, XActionsAmbiguousForbiddenError } from "../src/xactions/errors";
 import { HttpAccountLeaseError, HttpAccountQuotaError } from "../src/xactions/account-http-quota";
 import { taskFailure } from "../lib/trade/task-errors";
 import { CollectorHttpError } from "../lib/trade/task-errors";
@@ -91,9 +91,13 @@ test("GraphQL rate limit with an unusual transport status is still rate limited"
 test("XActions HTTP 403 without challenge never marks a healthy account captcha", () => {
   const error = Object.assign(new Error("Authentication failed (403)"), { name: "AuthError", status: 403 });
   const converted = toCollectorError(error);
-  assert.ok(converted instanceof XActionsAccessDeniedError);
-  assert.equal(taskFailure(converted).code, "ACCESS_DENIED");
-  assert.equal(taskFailure(converted).permanent, true);
+  assert.ok(converted instanceof XActionsAmbiguousForbiddenError);
+  assert.equal(taskFailure(converted).code, "ACCESS_UNVERIFIED");
+  assert.equal(taskFailure(converted).permanent, false);
+  assert.ok(taskFailure(converted).retryAfterMs >= 120_000);
+  const clearlyDenied = toCollectorError(Object.assign(new Error("protected account"), { status: 403 }));
+  assert.ok(clearlyDenied instanceof XActionsAccessDeniedError);
+  assert.equal(taskFailure(clearlyDenied).permanent, true);
   const challenged = toCollectorError(Object.assign(new Error("captcha challenge required"), {status:403}));
   assert.ok(challenged instanceof CollectorHttpError);
   assert.equal(taskFailure(challenged).code, "ACCESS_REQUIRED");
