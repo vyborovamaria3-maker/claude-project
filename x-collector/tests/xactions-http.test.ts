@@ -4,7 +4,8 @@ import { normalizeXActionsProfile, normalizeXActionsTweet } from "../src/xaction
 import { runCursorPages, type PageCommit } from "../src/xactions/pagination";
 import { toCollectorError } from "../src/xactions/errors";
 import { CollectorHttpError } from "../lib/trade/task-errors";
-import { createSocks5Fetch, socksProxyUrl } from "../src/xactions/transport";
+import { createSocks5Fetch, socksProxyUrl, decodeResponseBody } from "../src/xactions/transport";
+import { gzipSync, deflateSync, brotliCompressSync } from "node:zlib";
 
 const tweetId = "1878727153048777016";
 
@@ -167,4 +168,19 @@ test("the cursor runner rejects an impossible persisted unique count", async () 
     async () => 2,
     { maxPages: 1, stopAfterItems: 1 },
   ), /invalid unique page commit count/);
+});
+
+test("HTTP decompression is bounded for gzip, deflate and Brotli zip bombs", () => {
+  const inflated = Buffer.alloc(128 * 1024, "x");
+  for (const [encoding, compressed] of [
+    ["gzip", gzipSync(inflated)],
+    ["deflate", deflateSync(inflated)],
+    ["br", brotliCompressSync(inflated)],
+  ] as const) {
+    assert.ok(compressed.length < 4 * 1024);
+    assert.throws(() => decodeResponseBody(compressed, encoding, 4096));
+    assert.equal(decodeResponseBody(compressed, encoding, 256 * 1024).byteLength, inflated.byteLength);
+  }
+  assert.throws(() => decodeResponseBody(Buffer.from("a"), "unknown", 4096), /encoding/);
+  assert.throws(() => decodeResponseBody(Buffer.alloc(5), "identity", 4), /size limit/);
 });
