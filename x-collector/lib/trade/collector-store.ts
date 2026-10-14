@@ -20,7 +20,8 @@ async function assertPersistenceLease(client: PoolClient, taskId: number | undef
   if (!account.rows.length) throw new Error("account lease lost before persistence");
 }
 export interface TweetPersistenceOptions { client?: PoolClient; transport?: "browser" | "http"; }
-export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease, options: TweetPersistenceOptions = {}) {
+export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease, options: TweetPersistenceOptions = {}): Promise<number> {
+  let newTaskLinks = 0;
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
   let rejected = 0;
@@ -30,7 +31,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     else rejected++;
   }
   if (rejected > 0) throw new Error(`collector rejected ${rejected} malformed tweets`);
-  if (valid.length === 0) return;
+  if (valid.length === 0) return 0;
 
   const now = Date.now();
   const BATCH = 200;
@@ -48,7 +49,8 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     const raw = await rawPage({ tweets: chunk, sourceQuery, received_at: received.toISOString() });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
-    const writeChunk = async (client: PoolClient) => {
+    const writeChunk = async (client: PoolClient): Promise<number> => {
+      let newlyLinked = 0;
       await assertPersistenceLease(client, taskId, lease);
       await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
       const values: unknown[] = [];
@@ -79,7 +81,13 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         values
       );
 
-      if (taskId !== undefined) await client.query("INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",[taskId,chunk.map(t=>t.id)]);
+      if (taskId !== undefined) {
+        const inserted = await client.query(
+          "INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",
+          [taskId, chunk.map(t=>t.id)],
+        );
+        newlyLinked = inserted.rowCount ?? 0;
+      }
       const snapshots = chunk.map(t => ({ id:t.id, observed_at:new Date(t.observedAt ?? now).toISOString(), raw:t }));
       await client.query(`INSERT INTO twitter_tweet_observations(tweet_id,observed_at,raw)
         SELECT x.id,x.observed_at,x.raw FROM jsonb_to_recordset($1::jsonb) AS x(id text,observed_at timestamptz,raw jsonb)
@@ -122,10 +130,12 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
           linkVals
         );
       }
+      return newlyLinked;
     };
-    if (options.client) await writeChunk(options.client);
-    else await tx(writeChunk);
+    // Only count successful transaction results; tx() may retry rollbacks.
+    newTaskLinks += options.client ? await writeChunk(options.client) : await tx(writeChunk);
   }
+  return newTaskLinks;
 }
 
 export async function persistProfile(p: unknown, taskId?: number, collectorAccount?:string, lease?: PersistenceLease, options: { client?: PoolClient } = {}) {
