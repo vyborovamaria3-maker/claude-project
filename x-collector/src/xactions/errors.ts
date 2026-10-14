@@ -1,10 +1,18 @@
 import { CollectorHttpError } from "../../lib/trade/task-errors";
 import { HttpAccountLeaseError, HttpAccountQuotaError } from "./account-http-quota";
 
-/** A 403 is not necessarily a CAPTCHA. Avoid quarantining healthy accounts. */
+/** 403 alone proves neither CAPTCHA nor permanent resource denial. */
+export class XActionsAmbiguousForbiddenError extends Error {
+  constructor() {
+    super("XACTIONS_ACCESS_UNVERIFIED: HTTP 403; check session and source permission");
+    this.name = "XActionsAmbiguousForbiddenError";
+  }
+}
+
+/** Use only when an actual protected/forbidden resource is identified. */
 export class XActionsAccessDeniedError extends Error {
   constructor() {
-    super("XACTIONS_ACCESS_DENIED: HTTP resource forbidden; no challenge confirmed");
+    super("XACTIONS_ACCESS_DENIED: protected resource is unavailable to this session");
     this.name = "XActionsAccessDeniedError";
   }
 }
@@ -28,7 +36,10 @@ export function toCollectorError(error: unknown): Error {
     : error.name === "NotFoundError" ? 404
     : undefined;
   if (status === 403 && !/captcha|challenge/i.test(error.message)) {
-    return new XActionsAccessDeniedError();
+    if (/protected (?:account|resource)|private (?:account|profile)|permission denied|access forbidden/i.test(error.message)) {
+      return new XActionsAccessDeniedError();
+    }
+    return new XActionsAmbiguousForbiddenError();
   }
   if (status !== undefined && Number.isInteger(status) && status >= 400 && status <= 599) {
     const resetAt = typeof details.resetAt === "number" && Number.isFinite(details.resetAt)
