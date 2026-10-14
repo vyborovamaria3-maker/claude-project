@@ -16,7 +16,8 @@ export interface MemberPageContext extends HttpCheckpointKey {
 export async function persistXActionsMemberPage(
   context: MemberPageContext,
   page: PageCommit<AccountProfileData>,
-): Promise<void> {
+): Promise<number> {
+  let newItems = 0;
   if (context.sourceKind !== "members") throw new Error("XActions: invalid member source kind");
   if (!/^[0-9]{1,25}$/.test(context.sourceKey)) throw new Error("XActions: invalid list ID");
   const byHandle = new Map<string, AccountProfileData>();
@@ -30,6 +31,9 @@ export async function persistXActionsMemberPage(
     completed: page.completed,
     itemsWritten: entries.length,
   }, async client => {
+    const before = await client.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM x_task_profiles WHERE task_id=$1", [context.taskId],
+    );
     for (const profile of entries) {
       await persistProfile(profile, context.taskId, context.lease.accountName, {
         workerId: context.lease.workerId,
@@ -45,5 +49,11 @@ export async function persistXActionsMemberPage(
         [context.sourceKey, profile.handle.toLowerCase(), Date.now(), context.taskId],
       );
     }
+    const after = await client.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM x_task_profiles WHERE task_id=$1", [context.taskId],
+    );
+    newItems = Number(after.rows[0]?.count ?? 0) - Number(before.rows[0]?.count ?? 0);
+    return newItems;
   });
+  return newItems;
 }
