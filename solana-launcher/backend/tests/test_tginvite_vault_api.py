@@ -220,3 +220,25 @@ async def test_telegram_read_quota_fails_closed_in_production_without_redis(test
     finally:
         settings.environment = previous_environment
         test_app.state.rate_limiter = previous_limiter
+
+@pytest.mark.asyncio
+async def test_invite_link_quota_is_shared_and_owner_scoped(test_app, client):
+    settings = test_app.state.settings
+    settings.tginvite_internal_key = SERVICE_KEY
+    owner_a = await _user(test_app, "invite-links-a")
+    owner_b = await _user(test_app, "invite-links-b")
+    path = "/api/v1/tginvite/read-permit"
+    a = {"Authorization": f"Bearer {owner_a}", "X-TGInvite-Service-Key": SERVICE_KEY}
+    b = {"Authorization": f"Bearer {owner_b}", "X-TGInvite-Service-Key": SERVICE_KEY}
+    for _ in range(2):
+        response = await client.post(
+            path, headers=a, json={"kind": "batch_invite_links"}
+        )
+        assert response.status_code == 204
+    excess = await client.post(path, headers=a, json={"kind": "batch_invite_links"})
+    assert excess.status_code == 429
+    assert int(excess.headers["retry-after"]) > 0
+    independent = await client.post(path, headers=b, json={"kind": "batch_invite_links"})
+    assert independent.status_code == 204
+    single = await client.post(path, headers=a, json={"kind": "create_invite_link"})
+    assert single.status_code == 204
