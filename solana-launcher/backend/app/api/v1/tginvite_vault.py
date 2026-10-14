@@ -113,7 +113,7 @@ async def get_session(
             select(TelegramInviteSession).where(TelegramInviteSession.owner_id == str(owner.id))
         )
     ).scalar_one_or_none()
-    if row is None:
+    if row is None or row.encrypted_payload is None:
         raise HTTPException(status_code=404, detail="No stored Telegram session")
     try:
         stored_payload = decrypt_session(
@@ -130,6 +130,7 @@ async def get_session(
 async def store_session(
     payload: StoredTelegramSession,
     request: Request,
+    expected_generation: int = Header(..., ge=0, alias="X-TGInvite-Expected-Generation"),
     owner=Depends(get_current_subscriber),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -142,9 +143,16 @@ async def store_session(
         )
     ).scalar_one_or_none()
     if row is None:
-        db.add(TelegramInviteSession(owner_id=str(owner.id), encrypted_payload=encrypted))
+        if expected_generation != 0:
+            raise HTTPException(status_code=409, detail="Telegram session generation changed")
+        db.add(TelegramInviteSession(
+            owner_id=str(owner.id), encrypted_payload=encrypted, generation=1
+        ))
     else:
+        if row.generation != expected_generation:
+            raise HTTPException(status_code=409, detail="Telegram session generation changed")
         row.encrypted_payload = encrypted
+        row.generation += 1
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -171,8 +179,30 @@ async def delete_session(
             .with_for_update()
         )
     ).scalar_one_or_none()
-    if row is not None:
-        await db.delete(row)
+    if row is None:
+        db.add(TelegramInviteSession(
+            owner_id=str(owner.id), encrypted_payload=None, generation=1
+        ))
+    else:
+        row.encrypted_payload = None
+        row.generation += 1
+    try:
+        await db.commit()
+    except IntegrityError:
+        # An initial PUT raced a disconnect on a previously absent owner row.
+        # After rollback, row-lock the winner and write a revocation tombstone.
+        await db.rollback()
+        winner = (
+            await db.execute(
+                select(TelegramInviteSession)
+                .where(TelegramInviteSession.owner_id == str(owner.id))
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if winner is None:
+            raise
+        winner.encrypted_payload = None
+        winner.generation += 1
         await db.commit()
     return Response(status_code=204)
 
@@ -220,6 +250,7 @@ async def telegram_login_lease(
     payload: TelegramLoginLeaseRequest,
     request: Request,
     owner=Depends(get_current_subscriber),
+    db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Shared login challenge fence, never exposed to unauthenticated clients."""
     if payload.action in {"verify", "release"} and not payload.token:
@@ -228,13 +259,23 @@ async def telegram_login_lease(
         redis = request.app.state.redis
         owner_id = str(owner.id)
         if payload.action == "acquire":
+            # Snapshot the durable SQL generation before this attempt starts.
+            # A later disconnect or competing login increments it, fencing
+            # any delayed completion even if Redis and SQL interleave.
+            generation = (
+                await db.execute(
+                    select(TelegramInviteSession.generation).where(
+                        TelegramInviteSession.owner_id == owner_id
+                    )
+                )
+            ).scalar_one_or_none()
             token = await acquire_login_lease(redis, owner_id)
             if token is None:
                 raise HTTPException(
                     status_code=409, detail="Another Telegram login is in progress"
                 )
             return JSONResponse(
-                {"token": token},
+                {"token": token, "generation": generation if generation is not None else 0},
                 headers={"Cache-Control": "private, no-store"},
             )
         if payload.action == "verify":
@@ -327,7 +368,7 @@ async def read_user_channel_history(
             select(TelegramInviteSession).where(TelegramInviteSession.owner_id == str(owner.id))
         )
     ).scalar_one_or_none()
-    if row is None:
+    if row is None or row.encrypted_payload is None:
         raise HTTPException(status_code=404, detail="Connect your Telegram account first")
 
     try:
