@@ -95,7 +95,7 @@ def verified_join_request(
     if (
         not isinstance(chat_id, int) or isinstance(chat_id, bool) or chat_id >= 0
         or not isinstance(recipient_id, int) or isinstance(recipient_id, bool)
-        or recipient_id <= 0
+        or recipient_id <= 0 or requester.get("is_bot") is True
         or not isinstance(date, int) or isinstance(date, bool) or date <= 0
     ):
         raise TelegramWebhookInvalid("Malformed Telegram join request")
