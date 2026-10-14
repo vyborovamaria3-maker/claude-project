@@ -24,6 +24,9 @@ function parserError(message: string): { status: number; body: { error: string; 
     const wait = message.match(/FLOOD_WAIT_?(\d+)/)?.[1];
     return { status: 429, body: { error: `Telegram flood wait${wait ? `: wait ${wait}s` : ""}. Try later.`, status: "flood_wait" } };
   }
+  if (message.includes("Telegram login expired")) {
+    return { status: 400, body: { error: "Telegram login code has expired. Request a new code.", status: "login_expired" } };
+  }
   if (message.includes("No pending Telegram login")) {
     return { status: 400, body: { error: "No pending Telegram login. Send code first.", status: "login_not_started" } };
   }
