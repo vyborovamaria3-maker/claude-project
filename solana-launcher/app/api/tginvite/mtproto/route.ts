@@ -102,17 +102,25 @@ export async function POST(request: Request) {
     }
 
     if (action === "disconnect") {
+      let leaseCleanupFailed = false;
       try {
-        // Cancel pending logins across workers. The SQL generation tombstone
-        // below also rejects completions that already passed lease verification.
-        await resetTGInviteLoginLease(authorization);
+        // SQL revocation is the authoritative safety fence. Do not block an
+        // explicit user disconnect just because Redis is temporarily offline.
         await revokeVaultSession(authorization);
+        try {
+          await resetTGInviteLoginLease(authorization);
+        } catch {
+          // A stale lease may delay another login, but cannot revive the
+          // tombstoned session because the SQL generation has advanced.
+          leaseCleanupFailed = true;
+        }
       } finally {
-        // Never leave a live session in this process if vault revocation fails.
-        // A failed vault operation still returns an error to the caller.
         await clearClient(ownerId);
       }
-      return NextResponse.json({ status: "disconnected" });
+      return NextResponse.json({
+        status: "disconnected",
+        ...(leaseCleanupFailed ? { warning: "Telegram login reset unavailable; retry login later" } : {}),
+      });
     }
 
     if (action === "sendCode") {
