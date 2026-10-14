@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import base64
 import binascii
+import ipaddress
 import os
 import re
 from urllib.parse import urlsplit
@@ -29,15 +30,26 @@ class SetupRejected(ValueError):
 
 
 def validate_setup(settings: Settings, public_url: str) -> dict[str, str]:
-    parsed = urlsplit(public_url)
-    if (
-        parsed.scheme != "https" or not parsed.hostname
-        or parsed.hostname == "localhost" or "." not in parsed.hostname
-        or parsed.username or parsed.password
-        or parsed.port not in (None, 443)
-        or parsed.path != WEBHOOK_PATH or parsed.query or parsed.fragment
-    ):
-        raise SetupRejected("Public HTTPS consent webhook URL is invalid")
+    try:
+        parsed = urlsplit(public_url)
+        host = parsed.hostname or ""
+        # Only operator-owned public DNS hostnames are allowed; no IP literals,
+        # loopback, local names, credentials or unexpected URL paths.
+        try:
+            ipaddress.ip_address(host)
+            is_ip = True
+        except ValueError:
+            is_ip = False
+        if (
+            parsed.scheme != "https" or not host or is_ip
+            or host == "localhost" or host.endswith((".local", ".test", ".internal"))
+            or "." not in host or parsed.username or parsed.password
+            or parsed.port not in (None, 443)
+            or parsed.path != WEBHOOK_PATH or parsed.query or parsed.fragment
+        ):
+            raise ValueError("Invalid public URL")
+    except ValueError:
+        raise SetupRejected("Public HTTPS consent webhook URL is invalid") from None
 
     secret = settings.tginvite_consent_webhook_secret
     if not SECRET_PATTERN.fullmatch(secret):
@@ -49,7 +61,7 @@ def validate_setup(settings: Settings, public_url: str) -> dict[str, str]:
         binding = verify_operator_bindings(
             settings.tginvite_consent_bot_id, settings.tginvite_consent_chat_bindings
         )
-    except (ValueError, binascii.Error) as exc:
+    except (ValueError, binascii.Error):
         raise SetupRejected("Consent webhook bot/chat settings are invalid") from None
     return binding.bindings
 
