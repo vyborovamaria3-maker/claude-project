@@ -20,7 +20,7 @@ export async function verifyBotToken(token: string): Promise<{
   // contain URLs with the secret bot token embedded in their path.
   if (typeof token !== "string" ||
       token.length > 256 ||
-      !/^\\d{5,20}:[A-Za-z0-9_-]{30,}$/.test(token)) {
+      !/^\d{5,20}:[A-Za-z0-9_-]{30,}$/.test(token)) {
     return { valid: false, error: "Invalid Telegram bot token format" };
   }
   let testBot: Telegraf | null = null;
