@@ -44,7 +44,9 @@ async def test_vault_is_owner_scoped_encrypted_and_revocable(test_app, client):
 
     denied = await client.get(url, headers={"Authorization": f"Bearer {owner_a}"})
     assert denied.status_code == 403
-    stored = await client.put(url, headers=a, json=SESSION)
+    stored = await client.put(
+        url, headers={**a, "X-TGInvite-Expected-Generation": "0"}, json=SESSION
+    )
     assert stored.status_code == 204
     loaded = await client.get(url, headers=a)
     assert loaded.status_code == 200
