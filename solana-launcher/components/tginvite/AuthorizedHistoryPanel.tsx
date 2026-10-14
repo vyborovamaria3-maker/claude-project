@@ -30,6 +30,7 @@ export default function AuthorizedHistoryPanel({ username }: { username: string 
     setLoading(true);
     setStatus("");
     setMessages([]);
+    setSource("");
     try {
       const response = await fetch("/api/tginvite/messages", {
         method: "POST",

@@ -28,3 +28,17 @@ Run Alembic migrations to head before allowing Telegram logins; migration `0025_
 - Session revocation requires the `disconnect` action. Removing the DB record prevents future restoration, but does not revoke Telegram sessions elsewhere; use Telegram's session controls for that.
 - The existing Next.js GramJS client remains in-process. Concurrent multi-worker requests and crash recovery still need integration testing and a distributed session lease/worker design before production.
 - Invitation functionality remains disabled until the complete consent and job-ledger workflow is implemented.
+
+## Authenticated public-message preview
+
+The Parser tab includes **Preview 50**. It calls the protected Next.js endpoint
+`POST /api/tginvite/messages` with `{"username":"@PublicChannel","limit":50}`.
+The Next.js server forwards the active subscriber's JWT and the internal service key to
+`POST /api/v1/tginvite/messages`. FastAPI decrypts that specific owner's session,
+uses a fresh Telethon client, reads at most 200 accessible public channel/group messages,
+then disconnects. No user IDs, phone numbers, access hashes, or session strings
+are returned to the browser. Session state and message texts are not persisted by this preview.
+
+Only public usernames are accepted; private invitation links, user profiles and
+private chats are intentionally rejected. Rate limit: six requests per authenticated
+account per 60 seconds. Missing credentials and revoked sessions fail closed.

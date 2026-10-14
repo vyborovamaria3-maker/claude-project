@@ -8,6 +8,7 @@ from typing import Any
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.tl.types import Channel
 
 USERNAME = re.compile(r"^@?[A-Za-z][A-Za-z0-9_]{4,31}$")
 
@@ -53,6 +54,9 @@ async def load_public_history(
             entity = await client.get_entity("@" + target)
         except ValueError as exc:
             raise LookupError("Public channel not found or not accessible") from exc
+
+        if not isinstance(entity, Channel) or not getattr(entity, "username", None):
+            raise PermissionError("Only public channels and groups are supported")
 
         rows: list[dict[str, str | int | None]] = []
         async for message in client.iter_messages(entity, limit=limit):
