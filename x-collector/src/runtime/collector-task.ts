@@ -21,6 +21,7 @@ import { filterHistory, persistHistory } from "../../lib/trade/history-filter";
 import { taskFailure } from "../../lib/trade/task-errors";
 import { executeXActionsReadTask, isXActionsEligible, HttpPartialProgressError } from "../xactions/task";
 import { HttpAccountQuotaError, HttpAccountLeaseError, httpQuotaWaitMs } from "../xactions/account-http-quota";
+import { HttpNoProgressError } from "../xactions/pagination";
 function buildProxy(acc: XAccount) {
   const proxy = parseProxy(acc.proxy_json);
   if (acc.proxy_json && !proxy) throw new Error("PROXY_FAILED: invalid account proxy");
@@ -214,7 +215,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
 
     // A private/forbidden resource is a task permission issue, not evidence
     // of a broken authenticated session or a CAPTCHA challenge.
-    if (failure.code !== "ACCESS_DENIED" && !leaseLost && !isStopping()) {
+    if (failure.code !== "ACCESS_DENIED" && !(e instanceof HttpNoProgressError) && !leaseLost && !isStopping()) {
       await recordAccountError(acc.name,e).catch(()=>{});
       await recordError(acc.name, kindErr, failure.retryAfterMs, accountLeaseOwner).catch(() => {});
     }
