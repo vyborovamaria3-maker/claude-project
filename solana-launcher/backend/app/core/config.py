@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     tginvite_session_encryption_key: str = Field(
         default="", alias="TG_INVITE_SESSION_ENCRYPTION_KEY"
     )
+    tginvite_session_previous_keys: str = Field(
+        default="", alias="TG_INVITE_SESSION_PREVIOUS_KEYS"
+    )
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_api_id: int | None = Field(default=None, alias="TG_API_ID")
     telegram_api_hash: str = Field(default="", alias="TG_API_HASH")
