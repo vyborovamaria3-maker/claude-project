@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC
 
 import pytest
+from app.cli import telegram_import_tgparser
 from app.models.social_intelligence import TelegramChannel, TelegramMessage
 from app.services.telegram_collector.tgparser_import import import_tgparser_archive
 from app.services.telegram_intelligence import is_first_trusted_observation
@@ -152,3 +153,55 @@ async def test_tgparser_archive_supports_stable_numeric_channel_id(test_app):
         )
         await session.commit()
         assert result["inserted"] == 1
+
+
+@pytest.mark.asyncio
+async def test_tgparser_cli_rolls_back_whole_archive_when_later_batch_invalid(
+    test_app, monkeypatch, tmp_path
+):
+    """A malformed 501st row must not commit the first 500."""
+    import json
+
+    async with test_app.state.sessionmaker() as session:
+        channel = TelegramChannel(
+            telegram_id=987658, username="batchtest", title="Atomic Import Test"
+        )
+        session.add(channel)
+        await session.commit()
+        channel_id = channel.id
+
+    rows = [
+        {
+            "id": idx,
+            "channel": "batchtest",
+            "date": "2026-10-14T00:00:00Z",
+            "text": f"Message {idx}",
+        }
+        for idx in range(1, 502)
+    ]
+    rows[-1]["channel"] = "different_source"
+    archive = tmp_path / "multi_batch.json"
+    archive.write_text(json.dumps(rows), encoding="utf-8")
+
+    class FakeEngine:
+        async def dispose(self):
+            pass
+
+    monkeypatch.setattr(telegram_import_tgparser, "get_settings", lambda: None)
+    monkeypatch.setattr(
+        telegram_import_tgparser,
+        "create_engine_and_sessionmaker",
+        lambda _settings: (FakeEngine(), test_app.state.sessionmaker),
+    )
+    with pytest.raises(ValueError, match="Archive username"):
+        await telegram_import_tgparser.run(archive, channel_id)
+
+    async with test_app.state.sessionmaker() as session:
+        count = (
+            await session.execute(
+                select(func.count(TelegramMessage.id)).where(
+                    TelegramMessage.channel_id == channel_id
+                )
+            )
+        ).scalar_one()
+    assert count == 0
