@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_subscriber, get_current_superuser
+from app.core.rate_limit import RateLimiterUnavailable
 from app.db.session import get_db
 from app.models.social_intelligence import TelegramMessage
 from app.schemas.social_intelligence import (
@@ -181,11 +182,30 @@ async def backfill_telegram_history(
     request: Request,
     current_user=Depends(get_current_superuser),
 ) -> dict:
-    """Continue importing older posts for an accessible channel without gaps.
+    """Continue importing older messages for an accessible channel without gaps.
 
-    This endpoint never imports private invite links or joins a chat.
-    The oldest stored message ID acts as the durable resume cursor.
+    Never imports private invite links or joins a chat. Uses a persisted cursor.
     """
+    production = request.app.state.settings.environment.strip().lower() in {
+        "production", "prod"
+    }
+    try:
+        permit = await request.app.state.rate_limiter.allow(
+            f"telegram-backfill:{current_user.id}",
+            limit=2,
+            window_seconds=60,
+            require_shared=production,
+        )
+    except RateLimiterUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail="Telegram backfill protection unavailable"
+        ) from exc
+    if not permit.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Telegram backfill rate limit reached",
+            headers={"Retry-After": str(permit.retry_after)},
+        )
     try:
         service = await _manager(request).get_service()
         return await service.scan_channel(
