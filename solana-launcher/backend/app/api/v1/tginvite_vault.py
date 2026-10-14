@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_subscriber
-from app.core.rate_limit import RateLimitResult, RateLimiterUnavailable
+from app.core.rate_limit import RateLimiterUnavailable, RateLimitResult
 from app.db.session import get_db
 from app.models.telegram_invite_session import TelegramInviteSession
 from app.services.telegram_collector.user_history import (
