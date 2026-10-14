@@ -6,7 +6,7 @@
  */
 import "server-only";
 import { getBackendBaseUrl } from "@/lib/authProxy";
-import { clearClient, createClient, getClient, isAuthorized } from "@/lib/tginvite-mtproto";
+import { clearClient, createClient, getClient, hasTGInviteLoginInProgress, isAuthorized } from "@/lib/tginvite-mtproto";
 
 export interface VaultSession {
   api_id: number;
@@ -209,6 +209,9 @@ async function resolveFromVault(
   ownerId: string,
   authorization: string,
 ): Promise<Record<string, unknown> | null> {
+  // The pending GramJS client is not yet a usable vault-backed session.
+  // Status reads must neither expose it nor disconnect an active code flow.
+  if (hasTGInviteLoginInProgress(ownerId)) return null;
   let stored: VaultSession | null;
   try {
     // Never return the cached client before checking centralized revocation.
