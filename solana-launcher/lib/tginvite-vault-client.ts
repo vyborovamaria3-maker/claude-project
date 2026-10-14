@@ -14,6 +14,13 @@ export interface VaultSession {
   session_string: string;
 }
 
+export class TGInviteVaultConflict extends Error {
+  constructor() {
+    super("Telegram session changed during login");
+    this.name = "TGInviteVaultConflict";
+  }
+}
+
 async function vaultRequest(
   method: "GET" | "PUT" | "DELETE",
   authorization: string,
@@ -105,6 +112,7 @@ export async function persistVaultSession(
   session: VaultSession,
 ): Promise<void> {
   const response = await vaultRequest("PUT", authorization, session);
+  if (response.status === 409) throw new TGInviteVaultConflict();
   if (!response.ok) throw new Error(`TGInvite vault save failed (HTTP ${response.status})`);
 }
 
