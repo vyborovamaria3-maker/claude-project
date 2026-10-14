@@ -6,14 +6,13 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
-from sqlalchemy import func, select
-
 from app.models.social_intelligence import TelegramChannel, TelegramMessage
 from app.schemas.social_intelligence import TelegramBackfillRequest
 from app.services import telegram_intelligence
 from app.services.telegram_intelligence import TelegramIntelligenceService
 from app.services.telegram_parser import parse_telegram_message
+from pydantic import ValidationError
+from sqlalchemy import func, select
 
 
 class FakeChannel:
