@@ -140,8 +140,8 @@ async function loginLeaseRequest(
     if (data && typeof data === "object" &&
         "token" in data && typeof data.token === "string" &&
         data.token.length >= 32 && data.token.length <= 128 &&
-        "generation" in data && Number.isSafeInteger(data.generation) &&
-        typeof data.generation === "number" && data.generation >= 0) {
+        "generation" in data && typeof data.generation === "number" &&
+        Number.isSafeInteger(data.generation) && data.generation >= 0) {
       return { token: data.token, generation: data.generation };
     }
   } catch {
