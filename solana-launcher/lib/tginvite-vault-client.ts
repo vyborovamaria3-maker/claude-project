@@ -35,6 +35,35 @@ async function vaultRequest(
   });
 }
 
+/**
+ * Reserve a per-user Telegram login attempt using the backend's shared limiter.
+ * This must succeed before calling Telegram's authentication API.
+ */
+export async function consumeTGInviteLoginAttempt(
+  authorization: string,
+  kind: "send_code" | "complete_login",
+): Promise<{ allowed: boolean; retryAfter?: string; status: number }> {
+  const secret = process.env.TG_INVITE_INTERNAL_KEY;
+  if (!secret || secret.length < 32) {
+    return { allowed: false, status: 503 };
+  }
+  const response = await fetch(`${getBackendBaseUrl()}/api/v1/tginvite/login-attempt`, {
+    method: "POST",
+    headers: {
+      Authorization: authorization,
+      "X-TGInvite-Service-Key": secret,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ kind }),
+    cache: "no-store",
+  });
+  return {
+    allowed: response.status === 204,
+    retryAfter: response.headers.get("Retry-After") ?? undefined,
+    status: response.status,
+  };
+}
+
 export async function loadVaultSession(authorization: string): Promise<VaultSession | null> {
   const response = await vaultRequest("GET", authorization);
   if (response.status === 404) return null;
