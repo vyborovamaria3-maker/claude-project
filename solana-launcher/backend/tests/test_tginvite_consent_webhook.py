@@ -113,6 +113,9 @@ async def test_unbound_or_stale_join_requests_never_create_proofs(test_app, clie
         {"update_id": True, "chat_join_request": join_request()["chat_join_request"]},
         {"update_id": 101, "chat_join_request": {"from": {"id": 123}}},
     ]
+    bot_sender = join_request()
+    bot_sender["chat_join_request"]["from"]["is_bot"] = True
+    invalid.append(bot_sender)
     for event in invalid:
         response = await client.post(url, json=event, headers=authorized())
         assert response.status_code == 422
