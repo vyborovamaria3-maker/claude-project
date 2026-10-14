@@ -17,7 +17,7 @@ python -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())"
 
 Create the internal key with your password manager or secure random generator. The keys must not be reused for JWTs, subscription service access or other features. Leaving either key unset disables the vault (fail closed).
 
-Run Alembic migrations to head before allowing Telegram logins; migration `0025_telegram_invite_sessions` introduces the new table.
+Run Alembic migrations to head before allowing Telegram logins. Migration `0025_telegram_invite_sessions` introduces the vault; migration `0026_tginvite_session_generation` adds a monotonically increasing SQL generation and nullable ciphertext for durable revocation tombstones. **Deploy the migration before the updated Next.js clients**: session PUTs now require `X-TGInvite-Expected-Generation`.
 
 ## Security and operational notes
 
@@ -71,5 +71,7 @@ A second worker attempting `sendCode` while a lease is active receives HTTP 409 
 
 The lease avoids simultaneous active login challenges but does **not** make Next.js requests sticky to the original worker. If `completeLogin` is routed to a different instance, the user receives a controlled error and must retry through the original worker or restart. For production, use consistent worker routing or move the entire Telegram login state to a single durable/authenticated backend worker.
 
-**Unresolved race:** Redis-based login lease reset and SQL vault deletion are not a single distributed transaction. A verification already past its lease check might still finish and persist after a concurrent disconnect. Consequently this PR remains draft, and multi-process operations must not be called revocation-atomic until a vault generation compare-and-set fence is implemented and tested.
+**SQL revocation fence:** When a login lease is acquired, FastAPI returns the owner's current vault generation along with the Redis token, solely to the internal Next.js service. The pending GramJS challenge retains both in server memory. A successful login stores its encrypted session only if the database generation still matches the original value. Every store or explicit disconnect increments the generation. Disconnect leaves a NULL-ciphertext tombstone (GET returns 404) instead of deleting the owner record, so a delayed login cannot recreate an old session after revocation. Competing writes receive HTTP 409. The CAS check and mutation share a database row lock where supported.
+
+**Remaining limits:** A Telegram read operation that started before revocation may still complete after it; the current code does not hold a durable distributed read/write lease for the entire RPC. Login challenges remain process-local, so the app needs sticky worker routing or a unified backend challenge runner for truly seamless multi-worker login. Redis lease expiry/cancellation and durable SQL generation are complementary: the SQL generation protects against the stale-login resurrection race even when the Redis/SQL steps interleave. This PR remains draft pending live, consented sandbox E2E and broader operational validation.
 
