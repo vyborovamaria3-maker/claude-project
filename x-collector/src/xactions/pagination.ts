@@ -16,6 +16,10 @@ export interface PageCommit<T> extends CursorPage<T> {
 export interface CursorRunOptions {
   initialCursor?: string | null;
   maxPages: number;
+  /** Optional task item target; a cursor after this target is not exhaustion. */
+  stopAfterItems?: number;
+  /** Already persisted items when resuming an HTTP checkpoint. */
+  itemsCommittedBefore?: number;
   signal?: AbortSignal;
 }
 
@@ -35,9 +39,19 @@ export async function runCursorPages<T>(
     throw new Error("XActions: maxPages must be a positive integer");
   }
 
+  const stopAfter = options.stopAfterItems;
+  const prior = options.itemsCommittedBefore ?? 0;
+  if (stopAfter !== undefined && (!Number.isSafeInteger(stopAfter) || stopAfter < 1)) {
+    throw new Error("XActions: invalid item target");
+  }
+  if (!Number.isSafeInteger(prior) || prior < 0) throw new Error("XActions: invalid saved item count");
+
   let cursor = options.initialCursor ?? null;
   const visited = new Set<string>();
-  let itemsCommitted = 0;
+  let itemsCommitted = prior;
+  if (stopAfter !== undefined && itemsCommitted >= stopAfter) {
+    return { pagesCommitted: 0, itemsCommitted, nextCursor: cursor, completed: false };
+  }
 
   for (let pageNumber = 1; pageNumber <= options.maxPages; pageNumber++) {
     options.signal?.throwIfAborted();
@@ -62,6 +76,11 @@ export async function runCursorPages<T>(
     itemsCommitted += page.items.length;
 
     if (completed) return { pagesCommitted: pageNumber, itemsCommitted, nextCursor: null, completed: true };
+    // Never discard the remainder of an HTTP page. The target is a minimum
+    // observed count and the opaque next cursor stays durable for later reads.
+    if (stopAfter !== undefined && itemsCommitted >= stopAfter) {
+      return { pagesCommitted: pageNumber, itemsCommitted, nextCursor: cursor, completed: false };
+    }
   }
 
   return { pagesCommitted: options.maxPages, itemsCommitted, nextCursor: cursor, completed: false };
