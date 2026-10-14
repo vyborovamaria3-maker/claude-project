@@ -1,5 +1,5 @@
 import { parseTransactions } from "./dev-helpers";
-import { fetchEnrichedTxsForMint, txsToTrades, type RawTrade } from "./helius";
+import { fetchEnrichedTxsForMintWithMeta, txsToTrades, type RawTrade } from "./helius";
 
 const SOLSCAN_API_TOKEN = process.env.SOLSCAN_API_TOKEN || "";
 const HELIUS_FAST_ENOUGH_TRADES = 100;
@@ -195,15 +195,22 @@ function mergeTrades(...groups: RawTrade[][]): RawTrade[] {
 export async function fetchMergedTradesForMint(
   mint: string,
   maxTrades: number = 1000,
-  onProgress?: (info: { fetched: number; page: number }) => void
+  onProgress?: (info: { fetched: number; page: number }) => void,
+  knownSignatures?: ReadonlySet<string>,
 ): Promise<RawTrade[]> {
   let heliusTxs: EnrichedTxInput = [];
   let solscanTxs: ParsedHeliusTx[] = [];
   let heliusError: Error | null = null;
   let solscanError: Error | null = null;
+  let reachedStoredHistory = false;
 
   try {
-    heliusTxs = await fetchEnrichedTxsForMint(mint, maxTrades);
+    const history = await fetchEnrichedTxsForMintWithMeta(mint, maxTrades, knownSignatures);
+    heliusTxs = history.transactions;
+    reachedStoredHistory = history.reachedKnownHistory === true;
+    if (knownSignatures?.size && history.truncated && !reachedStoredHistory) {
+      console.warn("[fetchMergedTradesForMint] incremental cap reached without overlap; history coverage is incomplete");
+    }
     onProgress?.({
       fetched: Math.min(maxTrades, heliusTxs.length),
       page: Math.max(1, Math.ceil(heliusTxs.length / 100)),
@@ -213,7 +220,9 @@ export async function fetchMergedTradesForMint(
   }
 
   const heliusTrades = txsToTrades(heliusTxs, mint);
-  if (heliusTrades.length >= HELIUS_FAST_ENOUGH_TRADES) {
+  // The historical SQLite tail is already known: no need for Solscan fallback
+  // or parsing historical transactions a second time.
+  if (reachedStoredHistory || heliusTrades.length >= HELIUS_FAST_ENOUGH_TRADES) {
     const fastTrades = mergeTrades(heliusTrades);
     console.log(
       `[fetchMergedTradesForMint] mint=${mint.slice(0, 8)}... helius=${heliusTxs.length} solscan=skipped merged=${fastTrades.length}`
