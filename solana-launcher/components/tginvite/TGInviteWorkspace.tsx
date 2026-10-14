@@ -3059,11 +3059,45 @@ function MTProtoSettings({
   const [passwordRequired, setPasswordRequired] = useState(false);
   const [codeDelivery, setCodeDelivery] = useState<"app" | "sms" | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    // Rehydrate only the connection indicator, never MTProto secrets.
+    void fetch("/api/tginvite/mtproto", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const state = (await response.json()) as { connected?: boolean };
+        if (!cancelled && state.connected) setConnected(true);
+      })
+      .catch(() => { /* Authentication and vault errors are shown on explicit connection. */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleDisconnect = async () => {
+    setConnecting(true);
+    try {
+      const result = await call<{ status?: string }>("/api/tginvite/mtproto", {
+        body: { action: "disconnect" },
+      });
+      if (result?.status === "disconnected") {
+        setConnected(false);
+        setNeedsPhone(false);
+        setCodeSent(false);
+        setPasswordRequired(false);
+        setApiHash("");
+        setPhoneCode("");
+        setTwoFactorPassword("");
+        success("Telegram disconnected", "The stored TGInvite session was removed.");
+      }
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   const handleConnect = async () => {
     if (!apiId.trim() || !apiHash.trim()) return;
     setConnecting(true);
     try {
-      const result = await call<{ status?: string; error?: string; sessionString?: string }>(
+      const result = await call<{ status?: string; error?: string }>(
         "/api/tginvite/mtproto",
         { body: { action: "connect", apiId: apiId.trim(), apiHash: apiHash.trim() } }
       );
@@ -3119,7 +3153,7 @@ function MTProtoSettings({
           password: passwordRequired ? twoFactorPassword : undefined,
         }),
       });
-      const result = (await response.json()) as { status?: string; error?: string; sessionString?: string };
+      const result = (await response.json()) as { status?: string; error?: string };
       if (result?.status === "authenticated") {
         setConnected(true);
         setNeedsPhone(false);
@@ -3152,12 +3186,22 @@ function MTProtoSettings({
 
   if (connected) {
     return (
-      <div className="flex items-center gap-3 p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
-        <CheckCircle2 className="h-5 w-5 text-green-400" />
-        <div>
-          <div className="text-sm font-medium text-green-400">MTProto Connected</div>
-          <div className="text-xs text-content-muted">Real member fetching with activity filtering is available</div>
+      <div className="flex items-center justify-between gap-3 p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
+        <div className="flex items-center gap-3">
+          <CheckCircle2 className="h-5 w-5 text-green-400" />
+          <div>
+            <div className="text-sm font-medium text-green-400">MTProto Connected</div>
+            <div className="text-xs text-content-muted">Your authorized Telegram account is connected.</div>
+          </div>
         </div>
+        <button
+          type="button"
+          disabled={connecting}
+          onClick={handleDisconnect}
+          className="rounded-lg border border-red-400/30 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+        >
+          Disconnect
+        </button>
       </div>
     );
   }
