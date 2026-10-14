@@ -317,7 +317,7 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
     config.phoneNumber
   );
 
-  pendingAuthByOwner.set(ownerId, {
+  const challenge: PendingAuth = {
     createdAt: Date.now(),
     apiId: config.apiId,
     apiHash: config.apiHash,
@@ -325,8 +325,18 @@ export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: strin
     phoneCodeHash: result.phoneCodeHash,
     isCodeViaApp: result.isCodeViaApp,
     client: tgClient,
-  });
+  };
+  pendingAuthByOwner.set(ownerId, challenge);
   setClient(tgClient, ownerId);
+
+  // Best-effort early cleanup in long-running workers. Expiry is enforced
+  // independently in completeLogin, even if the timer never executes.
+  const cleanup = setTimeout(() => {
+    if (pendingAuthByOwner.get(ownerId) === challenge) {
+      void clearClient(ownerId);
+    }
+  }, PENDING_LOGIN_TTL_MS);
+  cleanup.unref?.();
 
   return { isCodeViaApp: result.isCodeViaApp };
 }
