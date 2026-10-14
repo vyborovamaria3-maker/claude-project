@@ -20,6 +20,22 @@ export interface XActionsHttpTweet {
   inReplyTo?: { tweetId?: string | null } | null;
 }
 
+export type VerificationEvidence = "verified" | "unverified" | "unknown";
+export type XActionsNormalizedProfile = AccountProfileData & { verificationEvidence: VerificationEvidence };
+
+/** Explicit GraphQL verification field is stronger than an upstream parser's
+ * default false. Absence must remain unknown, not a negative observation. */
+export function explicitVerificationEvidence(raw: unknown): VerificationEvidence {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "unknown";
+  const value = raw as Record<string, unknown>;
+  const verification = value.verification;
+  if (verification && typeof verification === "object" && !Array.isArray(verification)) {
+    const confirmed = (verification as Record<string, unknown>).verified;
+    if (typeof confirmed === "boolean") return confirmed ? "verified" : "unverified";
+  }
+  return "unknown";
+}
+
 export interface XActionsHttpProfile {
   username?: string | null;
   name?: string | null;
@@ -98,7 +114,7 @@ export function normalizeXActionsTweet(input: XActionsHttpTweet, observedAt = Da
   };
 }
 
-export function normalizeXActionsProfile(input: XActionsHttpProfile): AccountProfileData {
+export function normalizeXActionsProfile(input: XActionsHttpProfile, evidence: VerificationEvidence = "unknown"): XActionsNormalizedProfile {
   const username = handle(input.username);
   return {
     handle: username,
@@ -108,6 +124,7 @@ export function normalizeXActionsProfile(input: XActionsHttpProfile): AccountPro
     following: uncertainCount(input.following ?? input.followingCount),
     postsCount: uncertainCount(input.tweets),
     isVerified: input.verified === true,
+    verificationEvidence: input.verified === true ? "verified" : evidence,
     joinedAt: timestamp(input.joined),
     avatarUrl: validHttpUrl(input.avatar),
   };
