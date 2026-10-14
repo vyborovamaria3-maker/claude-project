@@ -104,6 +104,19 @@ describe("TGInvite cross-worker vault invalidation (mocked)", () => {
     expect(createClient).not.toHaveBeenCalled();
   });
 
+  it("does not delete a newer central session after stale local authorization fails", async () => {
+    const fetcher = mockVaultResponse(200);
+    vi.mocked(isAuthorized).mockResolvedValue(false);
+
+    expect(await resolveTGInviteClient(ownerId, authorization)).toBeNull();
+    expect(clearClient).toHaveBeenCalledWith(ownerId);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("shares an in-flight restore within a worker instead of creating competing clients", async () => {
     mockVaultResponse(200);
     let release!: (value: Record<string, unknown>) => void;
