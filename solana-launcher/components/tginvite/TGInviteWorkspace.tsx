@@ -3110,6 +3110,28 @@ function MTProtoSettings({
     }
   };
 
+  const handleRestartLogin = async () => {
+    setConnecting(true);
+    try {
+      const result = await call<{ status?: string; error?: string }>("/api/tginvite/mtproto", {
+        body: { action: "cancelLogin" },
+      });
+      if (result?.status !== "login_cancelled") {
+        toastError("Unable to restart login", result?.error || "Try again after the current login expires");
+        return;
+      }
+      setCodeSent(false);
+      setPasswordRequired(false);
+      setPhoneCode("");
+      setTwoFactorPassword("");
+      setCodeDelivery(null);
+    } catch {
+      toastError("Unable to restart login", "Shared Telegram login coordination is unavailable");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   const handleConnect = async () => {
     if (!apiId.trim() || !apiHash.trim()) return;
     setConnecting(true);
@@ -3184,6 +3206,11 @@ function MTProtoSettings({
         setPasswordRequired(true);
         setTwoFactorPassword("");
         toastError("Invalid 2FA password", result?.error || "Check your Telegram cloud password and try again");
+      } else if (result?.status === "login_lease_unavailable" && response.status === 409) {
+        setCodeSent(false);
+        setPasswordRequired(false);
+        setNeedsPhone(true);
+        toastError("Login conflict", "Another login attempt replaced this one. Restart your Telegram login.");
       } else if (result?.status === "login_not_started") {
         setCodeSent(false);
         setPasswordRequired(false);
@@ -3302,13 +3329,9 @@ function MTProtoSettings({
         {codeSent && (
           <button
             type="button"
-            onClick={() => {
-              setCodeSent(false);
-              setPasswordRequired(false);
-              setPhoneCode("");
-              setTwoFactorPassword("");
-            }}
-            className="text-xs text-content-muted hover:text-content"
+            onClick={handleRestartLogin}
+            disabled={connecting}
+            className="text-xs text-content-muted hover:text-content disabled:opacity-50"
           >
             Change phone or resend code
           </button>
