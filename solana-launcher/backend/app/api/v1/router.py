@@ -14,6 +14,7 @@ from app.api.v1 import (
     tasks,
     telegram_intelligence,
     teragram_invite,
+    tginvite_ledger,
     tginvite_vault,
     twitter_crawler_admin,
     twitter_registry_admin,
@@ -35,6 +36,9 @@ api_router.include_router(kols_backtest.router, prefix="/kols", tags=["kol-backt
 api_router.include_router(kols.router, prefix="/kols", tags=["kol-intelligence"])
 api_router.include_router(
     tginvite_vault.router, prefix="/tginvite", tags=["tginvite-vault"]
+)
+api_router.include_router(
+    tginvite_ledger.router, prefix="/tginvite", tags=["tginvite-ledger"]
 )
 api_router.include_router(
     telegram_intelligence.router,
