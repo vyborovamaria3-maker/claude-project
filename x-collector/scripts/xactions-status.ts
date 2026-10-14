@@ -12,6 +12,7 @@ interface CheckpointRow {
   source_key: string;
   pages_committed: number;
   items_committed: string;
+  consecutive_empty_pages: number;
   completed: boolean;
   has_cursor: boolean;
   updated_at: string;
@@ -30,7 +31,7 @@ async function main(): Promise<void> {
   );
   if (!task) throw new Error("XActions: task ID not found");
   const states = await q<CheckpointRow>(
-    `SELECT source_kind,source_key,pages_committed,items_committed::text,completed,
+    `SELECT source_kind,source_key,pages_committed,items_committed::text,consecutive_empty_pages,completed,
        (cursor IS NOT NULL) AS has_cursor,updated_at::text
      FROM xc_http_checkpoints WHERE task_id=$1
      ORDER BY source_kind,source_key`,
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
       sourceKey: p.source_key,
       pagesCommitted: p.pages_committed,
       uniqueItemsCommitted: Number(p.items_committed),
+      consecutiveEmptyPages: p.consecutive_empty_pages,
       completed: p.completed,
       hasResumeCursor: p.has_cursor,
       updatedAt: new Date(Number(p.updated_at)).toISOString(),
