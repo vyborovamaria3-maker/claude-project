@@ -207,8 +207,12 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     else if (failure.code === "ACCESS_REQUIRED") kindErr = "captcha";
     else if (failure.code === "AUTH_EXPIRED") kindErr = "auth_expired";
 
-    if (!leaseLost && !isStopping()) await recordAccountError(acc.name,e).catch(()=>{});
-    if (!leaseLost && !isStopping()) await recordError(acc.name, kindErr, taskFailure(e).retryAfterMs, accountLeaseOwner).catch(() => {});
+    // A private/forbidden resource is a task permission issue, not evidence
+    // of a broken authenticated session or a CAPTCHA challenge.
+    if (failure.code !== "ACCESS_DENIED" && !leaseLost && !isStopping()) {
+      await recordAccountError(acc.name,e).catch(()=>{});
+      await recordError(acc.name, kindErr, failure.retryAfterMs, accountLeaseOwner).catch(() => {});
+    }
     const result = isStopping() ? await deferTask(task.id,workerId,5000,"worker shutdown",task.attempts).then(ok=>ok?"requeued" as const:"lost" as const) : await failTask(task.id, workerId, e, task.attempts).catch(() => "lost" as const);
     if (result === "dlq") tasksTotal.inc({ kind, result: "dlq" });
     else if (result === "requeued") tasksTotal.inc({ kind, result: "retry" });
