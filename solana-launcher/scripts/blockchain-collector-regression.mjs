@@ -57,7 +57,11 @@ class FakeWebSocket {
 const collector = loadTs("lib/marketCollector.ts", {
   ws: FakeWebSocket,
   "./trade/db": {
-    persistMarketEvent: (event) => events.push(event),
+    persistMarketEvent: (event) => {
+      if (events.some((item) => item.eventId === event.eventId)) return false;
+      events.push(event);
+      return true;
+    },
     getMarketCollectorStatus: () => ({
       events: events.length, lastEventAt: null, launches: 0, migrations: 0, trades: 0,
     }),
@@ -74,8 +78,10 @@ ws.emit("message", JSON.stringify({ txType: "buy", mint: "mintA", signature: "tw
 ws.emit("message", JSON.stringify({ txType: "buy", mint: "mintA", signature: "three", pool: "pool-id" }));
 ws.emit("message", JSON.stringify({ txType: "other", mint: "mintA", signature: "four" }));
 assert.deepEqual(events.map((event) => event.kind), ["launch", "trade", "migration"]);
+const firstId = events[0].eventId;
 ws.emit("message", JSON.stringify({ txType: "create", mint: "mintA", signature: "one" }));
-assert.equal(events.at(-1).eventId, events[0].eventId, "replay must have a stable ID");
+assert.equal(events[0].eventId, firstId);
+assert.equal(events.length, 3, "replayed event must be deduplicated");
 ws.emit("close");
 assert.equal(collector.getCollectorStatus().needsBackfill, true);
 assert.equal(timers.size, 1, "disconnect must schedule one reconnect");
