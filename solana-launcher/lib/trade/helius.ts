@@ -65,57 +65,90 @@ export type EnrichedTxMeta = {
   truncated: boolean;
 };
 
+const HELIUS_TIMEOUT_MS = (() => {
+  const value = Number(process.env.HELIUS_FETCH_TIMEOUT_MS || 12_000);
+  return Number.isFinite(value) ? Math.max(1000, Math.min(60_000, value)) : 12_000;
+})();
+const HELIUS_MAX_ROUNDS = (() => {
+  const value = Number(process.env.HELIUS_FETCH_MAX_ROUNDS || 2);
+  return Number.isFinite(value) ? Math.max(1, Math.min(4, Math.floor(value))) : 2;
+})();
+
+async function fetchHeliusPage(
+  mint: string,
+  before: string | undefined,
+  limit: number,
+  keys: string[],
+): Promise<HeliusEnrichedTx[]> {
+  let lastError: Error | null = null;
+  for (let round = 0; round < HELIUS_MAX_ROUNDS; round++) {
+    for (const apiKey of keys) {
+      const url = new URL(appendHeliusApiKey("https://api.helius.xyz/v0/addresses/" + mint + "/transactions", apiKey));
+      url.searchParams.set("limit", String(limit));
+      if (before) url.searchParams.set("before", before);
+      try {
+        const response = await fetch(url.toString(), {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(HELIUS_TIMEOUT_MS),
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          if (!isHeliusRetryableStatus(response.status)) throw new Error("Helius HTTP " + response.status);
+          lastError = new Error("Helius retryable HTTP " + response.status);
+          continue;
+        }
+        const page: unknown = await response.json();
+        if (!Array.isArray(page)) throw new Error("Helius page has invalid shape");
+        return page as HeliusEnrichedTx[];
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        // Non-retryable 4xx means no API key rotation will help.
+        if (/^Helius HTTP 4\d\d$/.test(lastError.message)) throw lastError;
+      }
+    }
+    if (round + 1 < HELIUS_MAX_ROUNDS) {
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(1500, 250 * 2 ** round)));
+    }
+  }
+  throw lastError ?? new Error("All Helius API keys failed");
+}
+
 export async function fetchEnrichedTxsForMintWithMeta(
   mint: string,
   maxTxs: number = 1000
 ): Promise<EnrichedTxMeta> {
-  const keys = HELIUS_API_KEYS.length > 0 ? HELIUS_API_KEYS : [];
-  if (keys.length === 0) {
-    throw new Error("Helius API key not configured (set NEXT_PUBLIC_HELIUS_RPC_URL with ?api-key=...)");
+  const keys = HELIUS_API_KEYS;
+  if (!keys.length) {
+    throw new Error("Helius API key not configured (set HELIUS_API_KEY or HELIUS_API_KEYS)");
   }
+  if (!Number.isInteger(maxTxs) || maxTxs < 1) throw new Error("maxTxs must be a positive integer");
 
   const all: HeliusEnrichedTx[] = [];
+  const seen = new Set<string>();
   let before: string | undefined;
-  const pageSize = 100; // Helius max
   let exhausted = false;
 
   while (all.length < maxTxs) {
-    let page: HeliusEnrichedTx[] | null = null;
-    for (let attempt = 0; attempt < keys.length; attempt += 1) {
-      const apiKey = keys[attempt] ?? "";
-      const url = appendHeliusApiKey(`https://api.helius.xyz/v0/addresses/${mint}/transactions`, apiKey);
-      const nextUrl = new URL(url);
-      nextUrl.searchParams.set("limit", String(pageSize));
-      if (before) nextUrl.searchParams.set("before", before);
-
-      let response: Response;
-      try {
-        response = await fetch(nextUrl.toString(), { headers: { Accept: "application/json" } });
-      } catch (error) {
-        if (attempt < keys.length - 1) continue;
-        throw new Error(`Helius fetch failed: ${(error as Error).message}`);
-      }
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        if (isHeliusRetryableStatus(response.status) && attempt < keys.length - 1) continue;
-        throw new Error(`Helius HTTP ${response.status}: ${body.slice(0, 200)}`);
-      }
-
-      page = (await response.json()) as HeliusEnrichedTx[];
-      break;
-    }
-
-    if (!page || !Array.isArray(page) || page.length === 0) {
+    const requested = Math.min(100, maxTxs - all.length);
+    const page = await fetchHeliusPage(mint, before, requested, keys);
+    if (!page.length) {
       exhausted = true;
       break;
     }
-    all.push(...page);
-    if (page.length < pageSize) {
+    for (const tx of page) {
+      if (!tx || typeof tx.signature !== "string" || !tx.signature || seen.has(tx.signature)) continue;
+      seen.add(tx.signature);
+      all.push(tx);
+    }
+    if (page.length < requested) {
       exhausted = true;
       break;
     }
-    before = page[page.length - 1]?.signature;
+    const nextBefore = page[page.length - 1]?.signature;
+    if (!nextBefore || nextBefore === before) {
+      throw new Error("Helius pagination stalled: cursor did not advance");
+    }
+    before = nextBefore;
   }
 
   const truncated = !exhausted && all.length >= maxTxs;
@@ -253,14 +286,17 @@ export async function getWalletFirstSeen(address: string): Promise<number | null
       url.searchParams.set("limit", "100");
       // Single page is enough for fresh-detection (<1h old wallets have very few txs).
       // If wallet has >100 txs, it's definitely not fresh — return earliest of this page as approximation.
-      const r = await fetch(url.toString());
+      const r = await fetch(url.toString(), { signal: AbortSignal.timeout(HELIUS_TIMEOUT_MS), cache: "no-store" });
       if (!r.ok) {
         if (isHeliusRetryableStatus(r.status) && attempt < keys.length - 1) continue;
         return null;
       }
       const page = (await r.json()) as HeliusEnrichedTx[];
       if (!Array.isArray(page) || page.length === 0) return null;
-      return Math.min(...page.map((t) => t.timestamp || Infinity));
+      // A full newest-first page is not proof of the wallet's first activity.
+      if (page.length >= 100) return null;
+      const earliest = Math.min(...page.map((t) => t.timestamp || Infinity));
+      return Number.isFinite(earliest) ? earliest : null;
     } catch {
       if (attempt === keys.length - 1) return null;
     }
