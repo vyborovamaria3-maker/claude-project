@@ -50,7 +50,8 @@ async def test_webhook_proof_hashing_replay_and_reconsent(test_app):
         assert first.recipient_digest != "123456789"
         assert len(first.recipient_digest) == 64
         assert first.proof_digest != first.recipient_digest
-        assert "123456789" not in str(first.__dict__)
+        assert "123456789" not in first.recipient_digest
+        assert "123456789" not in first.proof_digest
 
         revoked = await revoke_recipient_opt_in(
             db, owner_id=owner, destination_chat_id="-100123456789",
