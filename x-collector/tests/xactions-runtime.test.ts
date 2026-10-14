@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { ScrapeAuthState } from "../lib/trade/twitter-scraper";
 import { cookiesFromStorageState } from "../src/xactions/session";
-import { createHttpQuotaGate, HttpAccountQuotaError } from "../src/xactions/account-http-quota";
+import { createHttpQuotaGate, HttpAccountQuotaError, HttpAccountLeaseError } from "../src/xactions/account-http-quota";
 import { isXActionsEligible } from "../src/xactions/task";
 import { assertXActionsRuntime, createXActionsRuntime } from "../src/xactions/runtime";
 import { MembersPayload, parseTaskPayload } from "../lib/trade/schemas";
@@ -30,7 +30,7 @@ test("HTTP quota gate precharges only first weighted call, then charges each ext
   const weights: number[] = [];
   const gate = createHttpQuotaGate("timeline", async weight => {
     weights.push(weight);
-    return weights.length <= 2;
+    return weights.length <= 2 ? "reserved" : "quota";
   });
   await gate();
   assert.deepEqual(weights, []);
@@ -41,11 +41,14 @@ test("HTTP quota gate precharges only first weighted call, then charges each ext
   assert.deepEqual(weights, [5, 5, 5]);
   const profileWeights: number[] = [];
   const profileGate = createHttpQuotaGate("profile", async weight => {
-    profileWeights.push(weight); return true;
+    profileWeights.push(weight); return "reserved";
   });
   await profileGate();
   await profileGate();
   assert.deepEqual(profileWeights, [1]);
+  const lostLease = createHttpQuotaGate("profile", async () => "lease");
+  await lostLease();
+  await assert.rejects(lostLease(), HttpAccountLeaseError);
 });
 
 test("engine selection excludes historical/discovery and keyword search", () => {
@@ -126,13 +129,20 @@ test("injected HTTP client receives cookies, no signing/refresh and no network b
   assert.equal(typeof opts.fetch, "function");
   assert.ok(String(opts.cookies).includes("auth_token="));
   await assert.rejects((opts.fetch as typeof fetch)("https://example.com/private"), /not x.com/);
-  const onResponse = opts.onResponse as (result: { status: number; remaining: number | null; resetAt: number | null }) => void;
-  onResponse({ status: 200, remaining: 0, resetAt: Date.now() + 60_000 });
+  const onResponse = opts.onResponse as (result: { url: string; status: number; remaining: number | null; resetAt: number | null }) => void;
+  onResponse({ url: "https://x.com/i/api/graphql/a/UserByScreenName",
+    status: 200, remaining: 0, resetAt: Date.now() + 60_000 });
   // Quota reset blocks a new network request before the user callback runs;
   // this regression test performs no socket connection.
   await assert.rejects(
-    (opts.fetch as typeof fetch)("https://x.com/i/api/graphql/test/UserTweets"),
+    (opts.fetch as typeof fetch)("https://x.com/i/api/graphql/a/UserByScreenName"),
     (error: unknown) => error instanceof Error && error.name === "RateLimitError",
+  );
+  // Unrelated endpoints retain their own budgets. The injected quota gate
+  // refuses the call before a socket can be opened; it is not RateLimitError.
+  await assert.rejects(
+    (opts.fetch as typeof fetch)("https://x.com/i/api/graphql/test/UserTweets"),
+    /no outgoing calls expected/,
   );
 });
 
