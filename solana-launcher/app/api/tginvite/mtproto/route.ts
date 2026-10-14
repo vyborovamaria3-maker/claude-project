@@ -1,3 +1,4 @@
+import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode, setClient, startClient } from "@/lib/tginvite-mtproto";
 import { DEFAULT_FILTER_CONFIG, filterMembers, getFilterSummary, type FilterConfig } from "@/lib/tginvite-filter";
@@ -29,6 +30,8 @@ function parserError(message: string): { status: number; body: { error: string; 
 }
 
 export async function POST(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   try {
     const body = await request.json();
     const { action, apiId, apiHash, phoneNumber, sessionString, channelUsername, limit, filterConfig, activityMode, phoneCode, password } = body;
@@ -412,7 +415,9 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   const existingClient = getClient();
   return NextResponse.json({
     connected: isConnected(),

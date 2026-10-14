@@ -1,7 +1,10 @@
+import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { getChatInfo } from "@/lib/telegram";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   return NextResponse.json({
     status: "ok",
     features: {
@@ -15,6 +18,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   try {
     const { token, targetChatId, sourceChatIds, settings } = await request.json();
 

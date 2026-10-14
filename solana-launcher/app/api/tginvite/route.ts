@@ -1,6 +1,9 @@
+import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   return NextResponse.json({
     channels: [],
     stats: { total: 0, imported: 0, pending: 0, failed: 0 },
@@ -9,6 +12,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   try {
     const body = await request.json();
     const { action, channels, filters } = body;

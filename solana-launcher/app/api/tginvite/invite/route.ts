@@ -1,9 +1,12 @@
+import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 import { createInviteLink, getChatInfo } from "@/lib/telegram";
 import { filterMembers, getFilterSummary, FilterConfig, DEFAULT_FILTER_CONFIG } from "@/lib/tginvite-filter";
 import { getClient, fetchChannelMembers, inviteUsers } from "@/lib/tginvite-mtproto";
 
 export async function POST(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   try {
     const body = await request.json();
     const { action, token, chatId, linkName, expireDays, memberLimit, linkCount, filterConfig, channelUsernames, targetChannel, userIds } = body;
