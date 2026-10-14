@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC
 
 import pytest
 from app.models.social_intelligence import TelegramChannel, TelegramMessage
