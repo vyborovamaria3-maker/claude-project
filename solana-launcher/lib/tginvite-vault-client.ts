@@ -25,6 +25,7 @@ async function vaultRequest(
   method: "GET" | "PUT" | "DELETE",
   authorization: string,
   body?: VaultSession,
+  expectedGeneration?: number,
 ): Promise<Response> {
   const secret = process.env.TG_INVITE_INTERNAL_KEY;
   if (!secret || secret.length < 32) {
@@ -36,6 +37,9 @@ async function vaultRequest(
       Authorization: authorization,
       "X-TGInvite-Service-Key": secret,
       ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(expectedGeneration !== undefined ? {
+        "X-TGInvite-Expected-Generation": String(expectedGeneration),
+      } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
     cache: "no-store",
@@ -111,7 +115,7 @@ async function loginLeaseRequest(
   authorization: string,
   action: "acquire" | "verify" | "release" | "reset",
   token?: string,
-): Promise<{ token?: string }> {
+): Promise<{ token?: string; generation?: number }> {
   const secret = process.env.TG_INVITE_INTERNAL_KEY;
   if (!secret || secret.length < 32) throw new TGInviteLoginLeaseError(503);
   let response: Response;
@@ -135,8 +139,10 @@ async function loginLeaseRequest(
     const data: unknown = await response.json();
     if (data && typeof data === "object" &&
         "token" in data && typeof data.token === "string" &&
-        data.token.length >= 32 && data.token.length <= 128) {
-      return { token: data.token };
+        data.token.length >= 32 && data.token.length <= 128 &&
+        "generation" in data && Number.isSafeInteger(data.generation) &&
+        typeof data.generation === "number" && data.generation >= 0) {
+      return { token: data.token, generation: data.generation };
     }
   } catch {
     // Invalid backend response: never proceed without a lease token.
@@ -144,10 +150,10 @@ async function loginLeaseRequest(
   throw new TGInviteLoginLeaseError(503);
 }
 
-export async function acquireTGInviteLoginLease(authorization: string): Promise<string> {
+export async function acquireTGInviteLoginLease(authorization: string): Promise<{ token: string; generation: number }> {
   const response = await loginLeaseRequest(authorization, "acquire");
-  if (!response.token) throw new TGInviteLoginLeaseError(503);
-  return response.token;
+  if (!response.token || response.generation === undefined) throw new TGInviteLoginLeaseError(503);
+  return { token: response.token, generation: response.generation };
 }
 
 export async function verifyTGInviteLoginLease(authorization: string, token: string): Promise<void> {
@@ -172,8 +178,12 @@ export async function loadVaultSession(authorization: string): Promise<VaultSess
 export async function persistVaultSession(
   authorization: string,
   session: VaultSession,
+  expectedGeneration: number,
 ): Promise<void> {
-  const response = await vaultRequest("PUT", authorization, session);
+  if (!Number.isSafeInteger(expectedGeneration) || expectedGeneration < 0) {
+    throw new TGInviteVaultConflict();
+  }
+  const response = await vaultRequest("PUT", authorization, session, expectedGeneration);
   if (response.status === 409) throw new TGInviteVaultConflict();
   if (!response.ok) throw new Error(`TGInvite vault save failed (HTTP ${response.status})`);
 }
