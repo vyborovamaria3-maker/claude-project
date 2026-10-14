@@ -94,3 +94,56 @@ def test_tgparser_archive_json_and_csv_match_documented_schema(tmp_path):
     csv_path.write_text("id,channel,date\n1,channel,2026-10-14T00:00:00Z\n")
     assert read_archive(json_path)[0]["id"] == 1
     assert read_archive(csv_path)[0]["id"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_tgparser_archive_rejects_mutable_title_and_conflicting_duplicate_ids(test_app):
+    async with test_app.state.sessionmaker() as session:
+        channel = TelegramChannel(
+            telegram_id=987656, username="realchannel", title="Untrusted Mutable Title"
+        )
+        session.add(channel)
+        await session.commit()
+        base = {
+            "id": 7,
+            "channel": "realchannel",
+            "date": "2026-10-14T10:00:00Z",
+            "text": "original",
+        }
+        with pytest.raises(ValueError, match="username"):
+            await import_tgparser_archive(
+                session, channel_id=channel.id,
+                records=[{**base, "channel": "Untrusted Mutable Title"}],
+            )
+        with pytest.raises(ValueError, match="Conflicting entries"):
+            await import_tgparser_archive(
+                session, channel_id=channel.id,
+                records=[base, {**base, "text": "changed"}],
+            )
+        with pytest.raises(ValueError, match="channel ID"):
+            await import_tgparser_archive(
+                session, channel_id=channel.id,
+                records=[{**base, "telegram_channel_id": 123456}],
+            )
+        assert (await session.execute(
+            select(func.count(TelegramMessage.id)).where(
+                TelegramMessage.channel_id == channel.id
+            )
+        )).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_tgparser_archive_supports_stable_numeric_channel_id(test_app):
+    async with test_app.state.sessionmaker() as session:
+        channel = TelegramChannel(telegram_id=987657, username=None, title="Private Label")
+        session.add(channel)
+        await session.commit()
+        row = {
+            "id": 8, "telegram_channel_id": "987657", "text": "Allowed archive",
+            "date": "2026-10-14T10:00:00Z",
+        }
+        result = await import_tgparser_archive(
+            session, channel_id=channel.id, records=[row]
+        )
+        await session.commit()
+        assert result["inserted"] == 1

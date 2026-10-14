@@ -430,13 +430,19 @@ class TelegramIntelligenceService:
         cursor_after = 0
         oldest_before = 0
         oldest_after = 0
+        # Imported archives are lower-trust and may contain fabricated message IDs.
+        # They must not determine the MTProto incremental/backfill position.
+        trusted_cursor = or_(
+            TelegramMessage.raw.is_(None),  # Pre-provenance legacy MTProto rows.
+            TelegramMessage.raw["collector"].as_string() == "mtproto",
+        )
         async with self.sessionmaker() as session:
             channel = await self.upsert_channel(session, entity)
             if incremental:
                 latest_id = (
                     await session.execute(
                         select(func.max(TelegramMessage.telegram_message_id)).where(
-                            TelegramMessage.channel_id == channel.id
+                            TelegramMessage.channel_id == channel.id, trusted_cursor
                         )
                     )
                 ).scalar_one_or_none()
@@ -446,7 +452,7 @@ class TelegramIntelligenceService:
                 oldest_id = (
                     await session.execute(
                         select(func.min(TelegramMessage.telegram_message_id)).where(
-                            TelegramMessage.channel_id == channel.id
+                            TelegramMessage.channel_id == channel.id, trusted_cursor
                         )
                     )
                 ).scalar_one_or_none()

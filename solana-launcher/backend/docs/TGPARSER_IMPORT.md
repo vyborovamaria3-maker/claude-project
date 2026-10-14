@@ -18,14 +18,24 @@ python -m app.cli.telegram_import_tgparser data/my-channel.csv --channel-id 42
 ```
 
 `--channel-id` refers to an **existing** `telegram_channels.id`.
-The archive's `channel` field must match that record's username or title.
+The archive's `channel` field must match that record's public username.
+Mutable/non-unique channel titles are not accepted as identity. For a channel
+without a username, each row must instead contain a matching
+`telegram_channel_id` (the stable Telegram ID, **not** the local DB ID).
+If both fields are present, both must agree with the selected channel.
 The importer does not automatically create or discover channels.
 
 ### Behavior and privacy
 
 - Processes at most 500 messages per transaction; 20 MiB input file limit.
 - Existing `(channel_id, telegram_message_id)` records are not overwritten.
+  Concurrent re-imports use atomic database conflict handling on PostgreSQL and SQLite.
   Re-running the same archive is idempotent.
+- Conflicting entries with the same message ID within an archive batch are rejected.
+- Archive messages are not used as MTProto scan/backfill cursors: fabricated high
+  IDs in a local archive cannot cause live Telegram messages to be skipped.
+- An archive username/ID match validates the destination label but is **not**
+  cryptographic evidence of the archive's origin. Use only archives you trust.
 - Validates message ID, ISO timestamp, source identity, text length and reaction counts.
 - Stores message text, timestamp, total reactions and source marker.
 - Does **not** import message authors, Telegram user IDs, phone numbers, media links,

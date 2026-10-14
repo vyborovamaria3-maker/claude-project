@@ -9,7 +9,8 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.social_intelligence import TelegramChannel, TelegramMessage
@@ -36,7 +37,9 @@ def _reaction_total(raw: Any) -> int:
     return min(total, 2_147_483_647)
 
 
-def _normalize_row(row: dict[str, Any], allowed_channels: set[str]) -> dict[str, Any]:
+def _normalize_row(
+    row: dict[str, Any], *, username: str | None, telegram_id: int
+) -> dict[str, Any]:
     if not isinstance(row, dict):
         raise ValueError("Each archive entry must be an object")
     raw_id = row.get("id")
@@ -48,9 +51,21 @@ def _normalize_row(row: dict[str, Any], allowed_channels: set[str]) -> dict[str,
     if message_id <= 0 or message_id >= 2**63:
         raise ValueError("Archive message id is out of range")
 
-    source = str(row.get("channel") or "").strip().lstrip("@").lower()
-    if not source or source not in allowed_channels:
-        raise ValueError("Archive channel does not match the selected destination channel")
+    # Channel titles are mutable and non-unique; never use them as identity.
+    source = row.get("channel")
+    if source is not None and not isinstance(source, str):
+        raise ValueError("Archive channel must be a public username")
+    handle = (source or "").strip().removeprefix("@").casefold()
+    if handle and (not username or handle != username.casefold()):
+        raise ValueError("Archive username does not match the selected channel")
+    raw_telegram_id = row.get("telegram_channel_id")
+    if raw_telegram_id is not None:
+        if isinstance(raw_telegram_id, bool) or not str(raw_telegram_id).isdecimal():
+            raise ValueError("Archive Telegram channel ID must be a positive integer")
+        if int(raw_telegram_id) != telegram_id:
+            raise ValueError("Archive Telegram channel ID does not match the selected channel")
+    if not handle and raw_telegram_id is None:
+        raise ValueError("Archive requires a channel username or numeric Telegram channel ID")
 
     raw_date = row.get("date")
     if not isinstance(raw_date, str):
@@ -98,32 +113,47 @@ async def import_tgparser_archive(
     channel = await session.get(TelegramChannel, channel_id)
     if channel is None:
         raise LookupError("Selected Telegram channel does not exist")
-    allowed = {
-        value.strip().lstrip("@").lower()
-        for value in (channel.username, channel.title)
-        if value
-    }
     normalized: dict[int, dict[str, Any]] = {}
     for record in records:
-        parsed = _normalize_row(record, allowed)
-        normalized.setdefault(parsed["telegram_message_id"], parsed)
-
-    known_ids = (
-        await session.execute(
-            select(TelegramMessage.telegram_message_id).where(
-                TelegramMessage.channel_id == channel_id,
-                TelegramMessage.telegram_message_id.in_(list(normalized)),
-            )
+        parsed = _normalize_row(
+            record, username=channel.username, telegram_id=channel.telegram_id
         )
-    ).scalars().all()
-    known = set(known_ids)
-    missing = [record for msg_id, record in normalized.items() if msg_id not in known]
-    for record in missing:
-        session.add(TelegramMessage(channel_id=channel_id, **record))
-    await session.flush()
+        message_id = parsed["telegram_message_id"]
+        previous = normalized.get(message_id)
+        if previous is not None and previous != parsed:
+            raise ValueError("Conflicting entries for the same Telegram message ID")
+        normalized[message_id] = parsed
+
+    # An archive must never overwrite MTProto messages. The DB unique constraint
+    # also protects against a second worker importing the same batch concurrently.
+    # Only SQLite (tests) and PostgreSQL (production) are supported.
+    dialect = session.get_bind().dialect.name
+    rows = [{"channel_id": channel_id, **record} for record in normalized.values()]
+    if dialect == "postgresql":
+        stmt = (
+            postgresql_insert(TelegramMessage)
+            .values(rows)
+            .on_conflict_do_nothing(
+                index_elements=["channel_id", "telegram_message_id"]
+            )
+            .returning(TelegramMessage.id)
+        )
+        inserted = len((await session.execute(stmt)).scalars().all())
+    elif dialect == "sqlite":
+        stmt = (
+            sqlite_insert(TelegramMessage)
+            .values(rows)
+            .on_conflict_do_nothing(
+                index_elements=["channel_id", "telegram_message_id"]
+            )
+            .returning(TelegramMessage.id)
+        )
+        inserted = len((await session.execute(stmt)).scalars().all())
+    else:
+        raise RuntimeError("Archive importer requires PostgreSQL or SQLite")
     return {
         "channel_id": channel_id,
         "received": len(records),
-        "inserted": len(missing),
-        "duplicates": len(records) - len(missing),
+        "inserted": inserted,
+        "duplicates": len(records) - inserted,
     }
