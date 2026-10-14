@@ -52,6 +52,13 @@ def backfill_max_id(oldest_id: int | None) -> int:
     return max(0, int(oldest_id or 0))
 
 
+def is_first_trusted_observation(stored: TelegramMessage | None) -> bool:
+    """An archive-only record has not yet been observed and linked via MTProto."""
+    if stored is None:
+        return True
+    return (stored.raw or {}).get("collector") == "tgparser_cli_archive"
+
+
 def message_replies(message: Any) -> int:
     return int(getattr(getattr(message, "replies", None), "replies", 0) or 0)
 
@@ -236,7 +243,7 @@ class TelegramIntelligenceService:
                 )
             )
         ).scalar_one_or_none()
-        is_new_message = stored is None
+        is_new_message = is_first_trusted_observation(stored)
         values = {
             "sender_id": sender.id if sender else None,
             "sender_telegram_id": int(sender_telegram_id) if sender_telegram_id else None,
