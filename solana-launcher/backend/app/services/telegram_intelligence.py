@@ -47,6 +47,11 @@ def incremental_min_id(latest_id: int | None, *, lookback_ids: int = 250) -> int
     return max(0, int(latest_id) - max(0, lookback_ids))
 
 
+def backfill_max_id(oldest_id: int | None) -> int:
+    """Resume older history strictly before the oldest stored Telegram message."""
+    return max(0, int(oldest_id or 0))
+
+
 def message_replies(message: Any) -> int:
     return int(getattr(getattr(message, "replies", None), "replies", 0) or 0)
 
@@ -408,7 +413,12 @@ class TelegramIntelligenceService:
         return parsed, created
 
     async def scan_channel(
-        self, username: str, *, post_limit: int = 200, incremental: bool = True
+        self,
+        username: str,
+        *,
+        post_limit: int = 200,
+        incremental: bool = True,
+        backfill: bool = False,
     ) -> dict[str, Any]:
         entity = await self.client.get_entity(username)
         if not isinstance(entity, Channel):
@@ -418,6 +428,8 @@ class TelegramIntelligenceService:
         saved = mentions = 0
         cursor_before = 0
         cursor_after = 0
+        oldest_before = 0
+        oldest_after = 0
         async with self.sessionmaker() as session:
             channel = await self.upsert_channel(session, entity)
             if incremental:
@@ -430,6 +442,16 @@ class TelegramIntelligenceService:
                 ).scalar_one_or_none()
                 cursor_before = int(latest_id or 0)
             cursor_after = cursor_before
+            if backfill:
+                oldest_id = (
+                    await session.execute(
+                        select(func.min(TelegramMessage.telegram_message_id)).where(
+                            TelegramMessage.channel_id == channel.id
+                        )
+                    )
+                ).scalar_one_or_none()
+                oldest_before = backfill_max_id(oldest_id)
+                oldest_after = oldest_before
             source_handle = (channel.username or str(channel.telegram_id)).lower()
             profile = parse_telegram_message(channel.about)
             discovered_tg.update(profile.telegram_links)
@@ -450,9 +472,12 @@ class TelegramIntelligenceService:
             new_messages = 0
 
             async def record_messages(messages: Any, *, count_new: bool) -> None:
-                nonlocal saved, mentions, cursor_after, new_messages
+                nonlocal saved, mentions, cursor_after, new_messages, oldest_after
                 async for message in messages:
-                    cursor_after = max(cursor_after, int(message.id))
+                    message_id = int(message.id)
+                    cursor_after = max(cursor_after, message_id)
+                    if backfill:
+                        oldest_after = min(oldest_after, message_id) if oldest_after else message_id
                     parsed, created = await self.save_message(
                         session, channel, message, update_score=False
                     )
@@ -463,7 +488,16 @@ class TelegramIntelligenceService:
                     if count_new:
                         new_messages += 1
 
-            if incremental and cursor_before:
+            if backfill:
+                # Use the oldest row as a durable checkpoint. Repeated backfill
+                # calls walk backwards without duplicates or restarting at newest.
+                await record_messages(
+                    self.client.iter_messages(
+                        entity, max_id=backfill_max_id(oldest_before), limit=batch_limit
+                    ),
+                    count_new=True,
+                )
+            elif incremental and cursor_before:
                 # Oldest unseen messages first: large backlogs are processed
                 # across runs without skipping the middle of the history.
                 await record_messages(
@@ -503,7 +537,13 @@ class TelegramIntelligenceService:
             "entity_type": channel.entity_type,
             "posts_saved": saved,
             "new_messages": new_messages,
-            "backlog_may_remain": incremental and cursor_before > 0 and new_messages >= batch_limit,
+            "mode": "backfill" if backfill else ("incremental" if incremental else "latest"),
+            "oldest_before": oldest_before,
+            "oldest_after": oldest_after,
+            "backfill_may_remain": backfill and new_messages >= batch_limit,
+            "backlog_may_remain": (
+                not backfill and incremental and cursor_before > 0 and new_messages >= batch_limit
+            ),
             "cursor_before": cursor_before,
             "cursor_after": cursor_after,
             "incremental": incremental,

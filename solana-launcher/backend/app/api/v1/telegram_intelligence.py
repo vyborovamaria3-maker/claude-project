@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models.social_intelligence import TelegramMessage
 from app.schemas.social_intelligence import (
     TelegramAttachSessionRequest,
+    TelegramBackfillRequest,
     TelegramMonitorRequest,
     TelegramScanRequest,
     XSocialIngestRequest,
@@ -169,6 +170,26 @@ async def scan_telegram(
             max_depth=payload.max_depth,
             post_limit=payload.post_limit,
             entity_limit=payload.entity_limit,
+        )
+    except (TelegramSessionError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/backfill")
+async def backfill_telegram_history(
+    payload: TelegramBackfillRequest,
+    request: Request,
+    current_user=Depends(get_current_superuser),
+) -> dict:
+    """Continue importing older posts for an accessible channel without gaps.
+
+    This endpoint never imports private invite links or joins a chat.
+    The oldest stored message ID acts as the durable resume cursor.
+    """
+    try:
+        service = await _manager(request).get_service()
+        return await service.scan_channel(
+            payload.channel, post_limit=payload.post_limit, backfill=True
         )
     except (TelegramSessionError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

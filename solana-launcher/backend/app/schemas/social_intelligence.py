@@ -10,6 +10,13 @@ class TelegramScanRequest(BaseModel):
     entity_limit: int = Field(default=100, ge=1, le=1000)
 
 
+class TelegramBackfillRequest(BaseModel):
+    """Explicit and bounded administrator request to fetch older channel history."""
+
+    channel: str = Field(min_length=5, max_length=33, pattern=r"^@?[A-Za-z][A-Za-z0-9_]{4,31}$")
+    post_limit: int = Field(default=200, ge=1, le=1000)
+
+
 class TelegramMonitorRequest(BaseModel):
     channels: list[str] = Field(min_length=1, max_length=200)
 

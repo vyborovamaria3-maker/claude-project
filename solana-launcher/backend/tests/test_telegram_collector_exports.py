@@ -4,7 +4,7 @@ import json
 
 import pytest
 from app.services.telegram_collector.exports import encode_messages
-from app.services.telegram_intelligence import incremental_min_id
+from app.services.telegram_intelligence import backfill_max_id, incremental_min_id
 
 
 def test_incremental_cursor_keeps_bounded_recheck_window():
@@ -35,3 +35,10 @@ def test_csv_export_escapes_formulas_and_text():
 def test_invalid_export_format_rejected():
     with pytest.raises(ValueError):
         encode_messages([], "invalid")
+
+
+def test_backfill_cursor_resumes_before_oldest_saved_message():
+    assert backfill_max_id(None) == 0
+    assert backfill_max_id(0) == 0
+    assert backfill_max_id(512) == 512
+    assert backfill_max_id(1) == 1
