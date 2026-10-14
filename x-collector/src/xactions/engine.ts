@@ -174,6 +174,7 @@ export class XActionsReadEngine {
     const rawInstructions = nested(data, ["list", "tweets_timeline", "timeline", "instructions"]);
     if (!Array.isArray(rawInstructions)) throw new Error("XActions: list timeline response shape changed");
     const page = this.parsers.parseTimelineInstructions(rawInstructions);
+    verifyHttpPageEnd(rawInstructions, page.tweets.length, page.cursor);
     return { items: page.tweets.map(tweet => normalizeXActionsTweet(tweet)), nextCursor: page.cursor };
   }
 }
