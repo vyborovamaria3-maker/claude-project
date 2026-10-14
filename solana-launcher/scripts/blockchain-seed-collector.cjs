@@ -82,7 +82,7 @@ function initDb(db) {
     "  kind TEXT NOT NULL, address TEXT NOT NULL, source_mask INTEGER NOT NULL DEFAULT 0,",
     "  priority INTEGER NOT NULL DEFAULT 0, next_run_at INTEGER NOT NULL DEFAULT 0,",
     "  last_success_at INTEGER, lease_until INTEGER, attempts INTEGER NOT NULL DEFAULT 0,",
-    "  last_error TEXT, backfill_cursor TEXT, backfill_complete INTEGER NOT NULL DEFAULT 0,",
+    "  last_error TEXT, backfill_cursor TEXT, forward_cursor TEXT, backfill_complete INTEGER NOT NULL DEFAULT 0,",
     "  possible_gap INTEGER NOT NULL DEFAULT 0, events_saved INTEGER NOT NULL DEFAULT 0,",
     "  PRIMARY KEY (kind,address))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_targets_queue",
@@ -94,6 +94,9 @@ function initDb(db) {
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
     "  ON chain_seed_events(kind,address,block_time DESC)",
   ].join("\n"));
+  if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "forward_cursor")) {
+    db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
+  }
 }
 
 function refreshTargets(db) {
@@ -299,20 +302,42 @@ async function processOne(db, row, cfg, api) {
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
   ).all(row.kind, row.address).map(r => r.signature));
   const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known);
-  let events = [...recent.transactions], backfillCursor = row.backfill_cursor;
+  let events = [...recent.transactions];
+  let backfillCursor = row.backfill_cursor;
+  let forwardCursor = row.forward_cursor;
   let complete = Boolean(row.backfill_complete);
   let gap = Boolean(row.possible_gap);
-  if (recent.truncated && !recent.reachedKnownHistory) gap = true;
+
+  // A high-volume wallet may accumulate >recentLimit transactions during
+  // downtime. Persist the forward catch-up cursor and drain it across runs.
+  // The cold-start cap is not a gap: the historical cursor handles that case.
+  if (known.size && recent.truncated && !recent.reachedKnownHistory) {
+    if (!forwardCursor) forwardCursor = recent.transactions.at(-1)?.signature || null;
+    gap = true;
+  }
+  if (forwardCursor && known.size) {
+    const bridge = await api.fetchEnrichedTxsForMintWithMeta(
+      row.address, cfg.backfillLimit, known, forwardCursor
+    );
+    events.push(...bridge.transactions);
+    if (bridge.reachedKnownHistory || bridge.exhausted) {
+      forwardCursor = null;
+      gap = false;
+    } else {
+      const next = bridge.transactions.at(-1)?.signature;
+      if (!next || next === forwardCursor) throw new Error("Catch-up cursor did not advance");
+      forwardCursor = next;
+    }
+  }
 
   if (!complete && !backfillCursor) {
     backfillCursor = recent.transactions.at(-1)?.signature || null;
     if (recent.exhausted) complete = true;
-    // The new head is already the first historical page; avoid fetching twice.
   } else if (!complete && backfillCursor) {
     const historical = await api.fetchEnrichedTxsForMintWithMeta(
       row.address, cfg.backfillLimit, null, backfillCursor
     );
-    events = events.concat(historical.transactions);
+    events.push(...historical.transactions);
     if (historical.exhausted) complete = true;
     else {
       const next = historical.transactions.at(-1)?.signature;
@@ -344,10 +369,12 @@ async function processOne(db, row, cfg, api) {
     row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
   db.prepare(
     "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,"
-    + "attempts=0,last_error=NULL,backfill_cursor=?,backfill_complete=?,possible_gap=?,"
-    + "events_saved=events_saved+? WHERE kind=? AND address=?"
-  ).run(Date.now(), Date.now() + (complete ? cadence : 60_000),
-    backfillCursor, complete ? 1 : 0, gap ? 1 : 0, added, row.kind, row.address);
+    + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
+    + "backfill_complete=?,possible_gap=?,events_saved=events_saved+?"
+    + " WHERE kind=? AND address=?"
+  ).run(Date.now(), Date.now() + (complete && !forwardCursor ? cadence : 60_000),
+    backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
+    added, row.kind, row.address);
   return { kind: row.kind, address: row.address, newEvents: added,
     normalizedTrades: trades.length, complete, possibleGap: gap };
 }
