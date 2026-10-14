@@ -30,10 +30,6 @@ def utcnow() -> datetime:
 class TelegramInviteConsent(Base):
     __tablename__ = "telegram_invite_consents"
     __table_args__ = (
-        UniqueConstraint(
-            "owner_id", "destination_chat_id", "recipient_digest",
-            name="uq_tginvite_consent_owner_chat_recipient",
-        ),
         UniqueConstraint("proof_digest", name="uq_tginvite_consent_proof_digest"),
         CheckConstraint(
             "proof_kind IN ('telegram_bot_start', 'telegram_chat_join_request')",
