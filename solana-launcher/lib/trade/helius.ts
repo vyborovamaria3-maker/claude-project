@@ -119,6 +119,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
   mint: string,
   maxTxs: number = 1000,
   stopAtSignatures: ReadonlySet<string> | null = null,
+  startBefore?: string,
 ): Promise<EnrichedTxMeta> {
   const keys = HELIUS_API_KEYS;
   if (!keys.length) {
@@ -128,7 +129,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
 
   const all: HeliusEnrichedTx[] = [];
   const seen = new Set<string>();
-  let before: string | undefined;
+  let before: string | undefined = startBefore;
   let exhausted = false;
   let reachedKnownHistory = false;
   const seenCursors = new Set<string>();
