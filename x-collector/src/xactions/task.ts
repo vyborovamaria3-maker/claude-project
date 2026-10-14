@@ -103,7 +103,8 @@ export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise
   let nextToFetch = saved?.cursor ?? null;
   let totalItems = saved?.itemsCommitted ?? 0;
   const pageOptions = { initialCursor: nextToFetch, maxPages: pageBudget,
-    stopAfterItems: limit, itemsCommittedBefore: totalItems, signal };
+    stopAfterItems: limit, itemsCommittedBefore: totalItems,
+    consecutiveEmptyBefore: saved?.consecutiveEmptyPages ?? 0, signal };
   if (sourceKind === "members") {
     const result = await runCursorPages(async cursor => {
       signal.throwIfAborted();
