@@ -103,9 +103,8 @@ export async function POST(request: Request) {
 
     if (action === "disconnect") {
       try {
-        // Cancels pending logins in other workers before removing the vault row.
-        // This still requires a separate DB generation fence to eliminate the
-        // narrow Redis/SQL interleaving during a concurrent completion.
+        // Cancel pending logins across workers. The SQL generation tombstone
+        // below also rejects completions that already passed lease verification.
         await resetTGInviteLoginLease(authorization);
         await revokeVaultSession(authorization);
       } finally {
@@ -125,13 +124,13 @@ export async function POST(request: Request) {
       const denied = loginPermitError(permit);
       if (denied) return denied;
 
-      const leaseToken = await acquireTGInviteLoginLease(authorization);
+      const lease = await acquireTGInviteLoginLease(authorization);
       try {
         const result = await sendLoginCode({
           apiId: Number(apiId),
           apiHash,
           phoneNumber,
-        }, ownerId, leaseToken);
+        }, ownerId, lease.token, lease.generation);
 
         return NextResponse.json({
           status: "code_sent",
@@ -140,7 +139,7 @@ export async function POST(request: Request) {
         });
       } catch (error) {
         await clearClient(ownerId);
-        try { await releaseTGInviteLoginLease(authorization, leaseToken); } catch {}
+        try { await releaseTGInviteLoginLease(authorization, lease.token); } catch {}
         throw error;
       }
     }
@@ -151,24 +150,24 @@ export async function POST(request: Request) {
         const denied = loginPermitError(permit);
         if (denied) return denied;
 
-        const leaseToken = getPendingLoginLease(ownerId);
-        if (!leaseToken) {
+        const lease = getPendingLoginLease(ownerId);
+        if (!lease) {
           return NextResponse.json(
             { error: "No active login challenge on this worker. Start login again.", status: "login_not_started" },
             { status: 409 },
           );
         }
-        await verifyTGInviteLoginLease(authorization, leaseToken);
+        await verifyTGInviteLoginLease(authorization, lease.token);
         const completed = await completeLogin({ phoneCode, password }, ownerId);
         try {
           // Re-check after the Telegram RPC: a concurrent disconnect may have
           // invalidated our lease while Telegram was verifying the code.
-          await verifyTGInviteLoginLease(authorization, leaseToken);
+          await verifyTGInviteLoginLease(authorization, lease.token);
           await persistVaultSession(authorization, {
             api_id: completed.apiId,
             api_hash: completed.apiHash,
             session_string: completed.sessionString,
-          });
+          }, lease.generation);
         } catch (vaultError: unknown) {
           // Never report a non-persisted Telegram session as a successful login.
           await clearClient(ownerId);
@@ -191,7 +190,7 @@ export async function POST(request: Request) {
         }
         // Authenticated credentials are already stored. A failed release
         // must not cause a second Telegram code verification attempt.
-        try { await releaseTGInviteLoginLease(authorization, leaseToken); } catch {}
+        try { await releaseTGInviteLoginLease(authorization, lease.token); } catch {}
         return NextResponse.json({ status: "authenticated" });
       } catch (err: unknown) {
         if (err instanceof TGInviteLoginLeaseError) {
