@@ -446,19 +446,51 @@ class TelegramIntelligenceService:
                     relation_type="discussion",
                     evidence="linked discussion chat",
                 )
-            async for message in self.client.iter_messages(
-                entity,
-                limit=max(1, min(post_limit, 5000)),
-                min_id=incremental_min_id(cursor_before) if incremental else 0,
-            ):
-                cursor_after = max(cursor_after, int(message.id))
-                parsed, created = await self.save_message(
-                    session, channel, message, update_score=False
+            batch_limit = max(1, min(post_limit, 5000))
+            new_messages = 0
+
+            async def record_messages(messages: Any, *, count_new: bool) -> None:
+                nonlocal saved, mentions, cursor_after, new_messages
+                async for message in messages:
+                    cursor_after = max(cursor_after, int(message.id))
+                    parsed, created = await self.save_message(
+                        session, channel, message, update_score=False
+                    )
+                    discovered_tg.update(parsed.telegram_links)
+                    discovered_x.update(parsed.x_usernames)
+                    saved += 1
+                    mentions += created
+                    if count_new:
+                        new_messages += 1
+
+            if incremental and cursor_before:
+                # Oldest unseen messages first: large backlogs are processed
+                # across runs without skipping the middle of the history.
+                await record_messages(
+                    self.client.iter_messages(
+                        entity, min_id=cursor_before, reverse=True, limit=batch_limit
+                    ),
+                    count_new=True,
                 )
-                discovered_tg.update(parsed.telegram_links)
-                discovered_x.update(parsed.x_usernames)
-                saved += 1
-                mentions += created
+                # Re-read recent existing posts for edited text/reactions.
+                # Keep this bounded independently of the new-message budget.
+                lookback_limit = min(batch_limit, 50)
+                await record_messages(
+                    self.client.iter_messages(
+                        entity,
+                        min_id=incremental_min_id(
+                            cursor_before, lookback_ids=lookback_limit
+                        ),
+                        max_id=cursor_before + 1,
+                        limit=lookback_limit,
+                    ),
+                    count_new=False,
+                )
+            else:
+                await record_messages(
+                    self.client.iter_messages(entity, limit=batch_limit),
+                    count_new=True,
+                )
             if mentions:
                 await upsert_channel_score(session, channel.id)
             channel.last_scanned_at = utcnow()
@@ -470,6 +502,8 @@ class TelegramIntelligenceService:
             "telegram_id": channel.telegram_id,
             "entity_type": channel.entity_type,
             "posts_saved": saved,
+            "new_messages": new_messages,
+            "backlog_may_remain": incremental and cursor_before > 0 and new_messages >= batch_limit,
             "cursor_before": cursor_before,
             "cursor_after": cursor_after,
             "incremental": incremental,

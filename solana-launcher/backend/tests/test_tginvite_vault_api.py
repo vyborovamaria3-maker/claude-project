@@ -7,10 +7,10 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
-from sqlalchemy import select
 
 from app.models.telegram_invite_session import TelegramInviteSession
 from app.models.user import User
+from sqlalchemy import select
 
 SERVICE_KEY = "test-tginvite-internal-key-" + "z" * 40
 VAULT_KEY = base64.b64encode(b"n" * 32).decode("ascii")

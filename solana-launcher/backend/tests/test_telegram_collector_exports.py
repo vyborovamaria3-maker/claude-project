@@ -12,6 +12,7 @@ def test_incremental_cursor_keeps_bounded_recheck_window():
     assert incremental_min_id(100) == 0
     assert incremental_min_id(1000) == 750
     assert incremental_min_id(1000, lookback_ids=20) == 980
+    assert incremental_min_id(1000, lookback_ids=0) == 1000
 
 
 def test_json_export_preserves_unicode():
