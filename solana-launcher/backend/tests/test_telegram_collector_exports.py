@@ -32,6 +32,16 @@ def test_csv_export_escapes_formulas_and_text():
     assert rows[0]["text"].startswith("'=HYPERLINK")
 
 
+def test_csv_export_preserves_typed_negative_numeric_fields():
+    body, _, _ = encode_messages(
+        [{"message_id": 5, "views": -2, "forwards": 3, "text": "  =2+2"}], "csv"
+    )
+    rows = list(csv.DictReader(io.StringIO(body.decode("utf-8-sig"))))
+    assert rows[0]["views"] == "-2"
+    assert rows[0]["forwards"] == "3"
+    assert rows[0]["text"].startswith("'  =2+2")
+
+
 def test_invalid_export_format_rejected():
     with pytest.raises(ValueError):
         encode_messages([], "invalid")
