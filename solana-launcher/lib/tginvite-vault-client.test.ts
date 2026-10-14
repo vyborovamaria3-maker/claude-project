@@ -11,7 +11,7 @@ vi.mock("@/lib/tginvite-mtproto", () => ({
   isAuthorized: vi.fn(),
 }));
 
-import { resolveTGInviteClient, persistVaultSession, TGInviteVaultConflict } from "./tginvite-vault-client";
+import { acquireTGInviteLoginLease, verifyTGInviteLoginLease, releaseTGInviteLoginLease, resetTGInviteLoginLease, TGInviteLoginLeaseError, resolveTGInviteClient, persistVaultSession, TGInviteVaultConflict } from "./tginvite-vault-client";
 import { clearClient, createClient, getClient, isAuthorized } from "./tginvite-mtproto";
 
 const ownerId = "123e4567-e89b-12d3-a456-426614174000";
@@ -50,6 +50,59 @@ function mockVaultResponse(status: number, payload = stored) {
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
 }
+
+describe("TGInvite centralized login leases (mocked)", () => {
+  it("acquires a server-owned token and validates it before completing a login", async () => {
+    const token = "t".repeat(45);
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await acquireTGInviteLoginLease(authorization)).toBe(token);
+    await verifyTGInviteLoginLease(authorization, token);
+    await releaseTGInviteLoginLease(authorization, token);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    const payloads = fetcher.mock.calls.map((call) => JSON.parse(call[1].body));
+    expect(payloads).toEqual([
+      { action: "acquire" },
+      { action: "verify", token },
+      { action: "release", token },
+    ]);
+    expect(fetcher.mock.calls[0][1].cache).toBe("no-store");
+  });
+
+  it("returns a conflict when another worker owns the challenge", async () => {
+    mockVaultResponse(409);
+    await expect(acquireTGInviteLoginLease(authorization))
+      .rejects.toMatchObject({ status: 409 });
+  });
+
+  it("fails closed on an unavailable Redis lease service", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Redis offline")));
+    await expect(acquireTGInviteLoginLease(authorization))
+      .rejects.toBeInstanceOf(TGInviteLoginLeaseError);
+    await expect(verifyTGInviteLoginLease(authorization, "t".repeat(42)))
+      .rejects.toMatchObject({ status: 503 });
+  });
+
+  it("rejects empty or truncated server lease tokens", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ token: "short" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    await expect(acquireTGInviteLoginLease(authorization))
+      .rejects.toMatchObject({ status: 503 });
+  });
+
+  it("supports authenticated cancellation without sending tokens to the browser", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetcher);
+    await resetTGInviteLoginLease(authorization);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ action: "reset" });
+    expect(fetcher.mock.calls[0][0]).toBe("https://internal-backend.test/api/v1/tginvite/login-lease");
+  });
+});
 
 describe("TGInvite shared vault write conflicts (mocked)", () => {
   it("turns competing session writes into a typed 409 conflict", async () => {
