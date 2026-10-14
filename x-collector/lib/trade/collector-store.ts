@@ -163,7 +163,8 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
   const write = async (client: PoolClient): Promise<number> => {
   let newlyLinked = 0;
   await assertPersistenceLease(client, taskId, lease);
-  await recordRaw(client,'PROFILE',d.handle.toLowerCase(),d,new Date(now),collectorAccount??null);
+  const observedProfile = options.transport === "http" ? { ...d, verificationEvidence } : d;
+  await recordRaw(client,'PROFILE',d.handle.toLowerCase(),observedProfile,new Date(now),collectorAccount??null);
   await client.query(
     `INSERT INTO twitter_profiles
        (handle, display_name, bio, followers, following, posts_count, is_verified, joined_at, avatar_url, first_seen_at, last_seen_at)
@@ -193,7 +194,7 @@ export async function persistProfile(p: unknown, taskId?: number, collectorAccou
     );
     newlyLinked = inserted.rowCount ?? 0;
   }
-  await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(d)]);
+  await client.query("INSERT INTO twitter_profile_observations(handle,observed_at,raw) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING", [d.handle.toLowerCase(),new Date(now),JSON.stringify(observedProfile)]);
   return newlyLinked;
   };
   return options.client ? write(options.client) : tx(write);
