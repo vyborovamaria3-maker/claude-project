@@ -3,7 +3,6 @@ import io
 import json
 
 import pytest
-
 from app.services.telegram_collector.exports import encode_messages
 from app.services.telegram_intelligence import incremental_min_id
 
