@@ -134,3 +134,85 @@ def test_backfill_request_bounds_and_rejects_private_invites():
         TelegramBackfillRequest(channel="https://t.me/+privateInvite", post_limit=100)
     with pytest.raises(ValidationError):
         TelegramBackfillRequest(channel="@publicchannel", post_limit=1001)
+
+
+
+@pytest.mark.asyncio
+async def test_unverified_archive_message_ids_cannot_move_live_cursors(test_app, monkeypatch):
+    """An imported high ID must not skip legitimate MTProto messages."""
+    from app.services.telegram_collector.tgparser_import import import_tgparser_archive
+
+    monkeypatch.setattr(telegram_intelligence, "Channel", FakeChannel)
+    client = FakeClient()
+    service = object.__new__(TelegramIntelligenceService)
+    service.client = client
+    service.sessionmaker = test_app.state.sessionmaker
+
+    async def upsert_channel(session, entity):
+        found = (
+            await session.execute(
+                select(TelegramChannel).where(TelegramChannel.telegram_id == entity.id)
+            )
+        ).scalar_one_or_none()
+        if found is None:
+            found = TelegramChannel(
+                telegram_id=entity.id,
+                username=entity.username,
+                title=entity.title,
+                entity_type="channel",
+                about="",
+                meta={},
+            )
+            session.add(found)
+            await session.flush()
+        return found
+
+    async def save_message(session, channel, message, *, update_score=True):
+        row = (
+            await session.execute(
+                select(TelegramMessage).where(
+                    TelegramMessage.channel_id == channel.id,
+                    TelegramMessage.telegram_message_id == message.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            session.add(
+                TelegramMessage(
+                    channel_id=channel.id,
+                    telegram_message_id=message.id,
+                    published_at=message.date,
+                    text=message.message,
+                    raw={"collector": "mtproto"},
+                )
+            )
+        await session.flush()
+        return parse_telegram_message(message.message), 0
+
+    service.upsert_channel = upsert_channel
+    service.save_message = save_message
+    async with test_app.state.sessionmaker() as session:
+        channel = await upsert_channel(session, FakeChannel())
+        await import_tgparser_archive(
+            session,
+            channel_id=channel.id,
+            records=[
+                {
+                    "id": 999999999999,
+                    "channel": "publicchannel",
+                    "date": "2026-10-01T00:00:00Z",
+                    "text": "Unverified archive message",
+                }
+            ],
+        )
+        await session.commit()
+
+    live = await service.scan_channel("@publicchannel", post_limit=3)
+    assert live["cursor_before"] == 0
+    assert live["new_messages"] == 3
+    assert client.calls[0]["min_id"] == 0
+    assert live["cursor_after"] == 12
+
+    older = await service.scan_channel("@publicchannel", post_limit=3, backfill=True)
+    assert older["oldest_before"] == 10
+    assert client.calls[1]["max_id"] == 10
