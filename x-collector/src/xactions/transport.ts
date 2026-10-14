@@ -21,13 +21,23 @@ export function socksProxyUrl(proxy: PlaywrightProxy): URL {
   return url;
 }
 
-function decodeBody(data: Buffer, encoding: string | undefined): Buffer {
+/**
+ * Bound decoded output *during* decompression. Checking length afterwards is
+ * insufficient: a very small gzip/deflate/br response can exhaust memory.
+ */
+export function decodeResponseBody(data: Buffer, encoding: string | undefined, maxBytes: number): Buffer {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error("XActions invalid response size limit");
+  if (data.byteLength > maxBytes) throw new Error("XActions: HTTP response exceeds size limit");
   const kind = encoding?.toLowerCase().trim();
-  if (kind === "gzip") return gunzipSync(data);
-  if (kind === "deflate") return inflateSync(data);
-  if (kind === "br") return brotliDecompressSync(data);
-  if (kind && kind !== "identity") throw new Error("XActions unsupported HTTP content encoding");
-  return data;
+  const maxOutputLength = maxBytes + 1;
+  let decoded: Buffer;
+  if (kind === "gzip") decoded = gunzipSync(data, { maxOutputLength });
+  else if (kind === "deflate") decoded = inflateSync(data, { maxOutputLength });
+  else if (kind === "br") decoded = brotliDecompressSync(data, { maxOutputLength });
+  else if (!kind || kind === "identity") decoded = data;
+  else throw new Error("XActions unsupported HTTP content encoding");
+  if (decoded.byteLength > maxBytes) throw new Error("XActions: decoded HTTP response exceeds size limit");
+  return decoded;
 }
 
 /**
@@ -87,10 +97,7 @@ export function createSocks5Fetch(proxy: PlaywrightProxy, options: SocksFetchOpt
               if (Array.isArray(value)) value.forEach(v => out.append(name, v));
               else if (value !== undefined) out.set(name, value);
             }
-            const payload = decodeBody(Buffer.concat(chunks), res.headers["content-encoding"]);
-            if (payload.byteLength > maxResponseBytes) {
-              throw new Error("XActions: decoded HTTP response exceeds size limit");
-            }
+            const payload = decodeResponseBody(Buffer.concat(chunks), res.headers["content-encoding"], maxResponseBytes);
             out.delete("content-encoding");
             out.delete("content-length");
             const status = res.statusCode ?? 502;
