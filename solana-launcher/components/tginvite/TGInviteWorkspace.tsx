@@ -3092,7 +3092,7 @@ function MTProtoSettings({
   const handleDisconnect = async () => {
     setConnecting(true);
     try {
-      const result = await call<{ status?: string }>("/api/tginvite/mtproto", {
+      const result = await call<{ status?: string; warning?: string }>("/api/tginvite/mtproto", {
         body: { action: "disconnect" },
       });
       if (result?.status === "disconnected") {
@@ -3103,7 +3103,8 @@ function MTProtoSettings({
         setApiHash("");
         setPhoneCode("");
         setTwoFactorPassword("");
-        success("Telegram disconnected", "The stored TGInvite session was removed.");
+        success("Telegram disconnected", "The stored TGInvite session was revoked.");
+        if (result.warning) warning("Login reset unavailable", result.warning);
       }
     } finally {
       setConnecting(false);
