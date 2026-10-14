@@ -140,11 +140,19 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
 
       if (useXActions && isXActionsEligible(kind, payload, task.payloadJson)) {
         const t0 = Date.now();
-        await executeXActionsReadTask({
+        try { await executeXActionsReadTask({
           task, payload, account: acc, authState,
           leaseOwner: accountLeaseOwner, workerId,
           signal: operationSignal, publish,
-        });
+          beforeRequest: kind === "search" ? scrapeOpts.beforeHttpRequest : undefined,
+        }); } catch (error) {
+          // A retired list operation may still have accessible indexed matches.
+          // Share the same quota gate across both transports; no second free call.
+          if (!useLegacyHttpSearch || taskFailure(error).code !== "ENDPOINT_UNAVAILABLE") throw error;
+          const p = payload as { query: string; limit: number; sort: "top" | "latest" };
+          log.warn("native list endpoint unavailable; reading indexed list search", { taskId: task.id });
+          await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
+        }
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
       } else if (kind === "search") {

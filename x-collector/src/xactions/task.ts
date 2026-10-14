@@ -56,13 +56,14 @@ export interface XActionsTaskContext {
   workerId: string;
   signal: AbortSignal;
   publish: (progress: Progress) => Promise<void>;
+  beforeRequest?: () => Promise<void>;
 }
 
 export async function executeXActionsReadTask(ctx: XActionsTaskContext): Promise<void> {
   const { task, payload, account, authState, leaseOwner, workerId, signal, publish } = ctx;
   if (!isXActionsEligible(task.kind, payload, task.payloadJson)) throw new Error("XActions: task is not eligible for HTTP");
   const accountKind = task.kind === "search" ? "search" : task.kind === "timeline" ? "timeline" : "profile";
-  const charge = createHttpQuotaGate(accountKind,
+  const charge = ctx.beforeRequest ?? createHttpQuotaGate(accountKind,
     weight => reserveAdditionalHttpRequest(account.name, leaseOwner, weight));
   const lease: HttpLease = {
     workerId, attempt: task.attempts,

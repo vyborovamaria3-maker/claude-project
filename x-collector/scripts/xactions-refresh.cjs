@@ -17,6 +17,8 @@ async function main() {
   if (!root || !cache || !path.isAbsolute(cache)) throw Error('Configure XACTIONS_ROOT and absolute XACTIONS_HOME');
   await require('./xactions-http-loader.cjs').loadPinnedXActions(root);
   const sdk = await import(pathToFileURL(path.join(root, 'src/scrapers/twitter/http/queryIds.js')).href);
+  // The pinned core sweep predates list operations moving into list chunks.
+  sdk.CORE_CHUNK_PATTERNS.push(/^bundle\..*List/, /^loader\..*List/, /^shared~.*List/);
   const owner = 'query-refresh-' + randomUUID();
   const account = await accounts.pickAccount('profile', owner, process.argv[2], false, true);
   if (!account) throw Error('No available proxy account or quota; retry later');
