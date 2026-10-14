@@ -30,6 +30,8 @@ export interface CursorRunOptions {
   stopAfterItems?: number;
   /** Already persisted items when resuming an HTTP checkpoint. */
   itemsCommittedBefore?: number;
+  /** Durable count of consecutive pages without newly linked items. */
+  consecutiveEmptyBefore?: number;
   signal?: AbortSignal;
 }
 
@@ -53,7 +55,11 @@ export async function runCursorPages<T>(
   if (!Number.isSafeInteger(maxWithoutNew) || maxWithoutNew < 1) {
     throw new Error("XActions: invalid no-progress threshold");
   }
-  let consecutiveEmpty = 0;
+  let consecutiveEmpty = options.consecutiveEmptyBefore ?? 0;
+  if (!Number.isSafeInteger(consecutiveEmpty) || consecutiveEmpty < 0) {
+    throw new Error("XActions: invalid saved no-progress count");
+  }
+  if (consecutiveEmpty >= maxWithoutNew) throw new HttpNoProgressError(consecutiveEmpty);
   const stopAfter = options.stopAfterItems;
   const prior = options.itemsCommittedBefore ?? 0;
   if (stopAfter !== undefined && (!Number.isSafeInteger(stopAfter) || stopAfter < 1)) {
