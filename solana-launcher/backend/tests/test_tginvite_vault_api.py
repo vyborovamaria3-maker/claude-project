@@ -160,3 +160,39 @@ async def test_login_attempt_endpoint_requires_service_credentials(test_app, cli
         json={"kind": "delete_all_sessions"},
     )
     assert invalid_kind.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_read_permit_requires_internal_key_and_is_owner_scoped(test_app, client):
+    settings = test_app.state.settings
+    settings.tginvite_internal_key = SERVICE_KEY
+    owner_a = await _user(test_app, "read-permit-owner-a")
+    owner_b = await _user(test_app, "read-permit-owner-b")
+    url = "/api/v1/tginvite/read-permit"
+    headers_a = {
+        "Authorization": f"Bearer {owner_a}",
+        "X-TGInvite-Service-Key": SERVICE_KEY,
+    }
+    headers_b = {
+        "Authorization": f"Bearer {owner_b}",
+        "X-TGInvite-Service-Key": SERVICE_KEY,
+    }
+
+    not_internal = await client.post(
+        url, headers={"Authorization": f"Bearer {owner_a}"}, json={"kind": "fetch_members"}
+    )
+    assert not_internal.status_code == 403
+    wrong_action = await client.post(url, headers=headers_a, json={"kind": "invite_users"})
+    assert wrong_action.status_code == 422
+
+    for _ in range(2):
+        allowed = await client.post(url, headers=headers_a, json={"kind": "validate_candidates"})
+        assert allowed.status_code == 204
+    denied = await client.post(url, headers=headers_a, json={"kind": "validate_candidates"})
+    assert denied.status_code == 429
+    assert int(denied.headers["retry-after"]) > 0
+
+    independent = await client.post(url, headers=headers_b, json={"kind": "validate_candidates"})
+    assert independent.status_code == 204
+    other_kind = await client.post(url, headers=headers_a, json={"kind": "fetch_members"})
+    assert other_kind.status_code == 204
