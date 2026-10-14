@@ -47,10 +47,12 @@ async function loadPinnedXActions(root) {
   const http = await import(pathToFileURL(entry).href);
   const tweetParser = await import(pathToFileURL(path.join(root, 'src', 'scrapers', 'twitter', 'http', 'parse', 'tweet.js')).href);
   const relationshipParser = await import(pathToFileURL(path.join(root, 'src', 'scrapers', 'twitter', 'http', 'relationships.js')).href);
+  const endpoints = await import(pathToFileURL(path.join(root, 'src', 'scrapers', 'twitter', 'http', 'endpoints.js')).href);
   return {
     ...http,
     userTimelineInstructions: tweetParser.userTimelineInstructions,
     parseUserList: relationshipParser.parseUserList,
+    graphqlRequestMethod: endpoints.graphqlRequestMethod,
   };
 }
 module.exports = { loadPinnedXActions };
