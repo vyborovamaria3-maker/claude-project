@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   InvalidInviteRequest,
+  safeInviteError,
   batchInviteLinkName,
   reconcileInviteToChannelResult,
   validateInviteLinkRequest,
@@ -42,6 +43,7 @@ describe("invitation link validation (no Telegram network)", () => {
       { ...required, memberLimit: 100000 },
       { ...required, memberLimit: -5 },
       { ...required, chatId: "https://t.me/+private" },
+      { ...required, chatId: "-99999999999999999999" },
     ];
     for (const item of invalid) {
       expect(() => validateInviteLinkRequest(item, "createLink")).toThrow(InvalidInviteRequest);
@@ -71,6 +73,27 @@ describe("MTProto invitation receipt reconciliation (mocked results only)", () =
     });
     expect(result.declined).toBe(1);
     expect(result.invited).toBe(0);
+  });
+
+  it("handles GramJS integer objects without unsafe JS number conversion", () => {
+    const bigIntegerLike = { toString: () => "9007199254740993" };
+    const result = reconcileInviteToChannelResult(["9007199254740993"], {
+      missingInvitees: [{ userId: bigIntegerLike }],
+    });
+    expect(result).toMatchObject({ invited: 0, declined: 1, unknown: 0 });
+    const unsafe = reconcileInviteToChannelResult([Number.MAX_SAFE_INTEGER + 2], {
+      missingInvitees: [],
+    });
+    expect(unsafe).toMatchObject({ invited: 0, unknown: 1 });
+  });
+
+  it("does not echo bot tokens, URLs or arbitrary Telegram upstream errors", () => {
+    expect(safeInviteError("CHAT_ADMIN_REQUIRED", "secret")).toBe("CHAT_ADMIN_REQUIRED");
+    const leak = safeInviteError(
+      "Bot token 123:longsecret123 & internal URL https://internal.local/",
+      "123:longsecret123",
+    );
+    expect(leak).toBe("Telegram invite link operation failed");
   });
 
   it("does not invent success when response metadata is missing or malformed", () => {

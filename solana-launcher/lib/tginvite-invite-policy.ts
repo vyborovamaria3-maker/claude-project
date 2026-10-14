@@ -40,6 +40,9 @@ export function validateInviteLinkRequest(
   if (!/^(@[A-Za-z][A-Za-z0-9_]{4,31}|-?[0-9]{1,20})$/.test(chatId)) {
     throw new InvalidInviteRequest("Valid chat ID or public @username required");
   }
+  if (/^-?[0-9]+$/.test(chatId) && !Number.isSafeInteger(Number(chatId))) {
+    throw new InvalidInviteRequest("Chat ID is outside Telegram's supported integer range");
+  }
   const name = body.linkName == null ? "TGInvite" :
     typeof body.linkName === "string" ? body.linkName.trim() : "";
   if (name.length > 32) throw new InvalidInviteRequest("Link name must be at most 32 characters");
@@ -70,6 +73,21 @@ export interface InviteResultAccounting {
   unknown: number;
   declinedUserIds: string[];
 }
+function normalizedTelegramId(value: unknown): string | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? String(value) : null;
+  }
+  if (typeof value === "bigint") return value > 0n ? String(value) : null;
+  if (typeof value === "string") return /^[1-9][0-9]{0,19}$/.test(value) ? value : null;
+  // GramJS may return bigint-like values from its integer library rather
+  // than native JavaScript bigint. Only canonical decimal representations pass.
+  if (value && typeof value === "object" && typeof (value as { toString?: unknown }).toString === "function") {
+    const decimal = (value as { toString: () => string }).toString();
+    return /^[1-9][0-9]{0,19}$/.test(decimal) ? decimal : null;
+  }
+  return null;
+}
+
 export function reconcileInviteToChannelResult(
   requestedIds: readonly (number | string | bigint)[],
   response: unknown,
@@ -82,17 +100,16 @@ export function reconcileInviteToChannelResult(
   // GramJS camelCase field, or MTProto snake_case serialized output.
   const missing = result.missingInvitees ?? result.missing_invitees;
   if (!Array.isArray(missing)) return failClosed();
-  const expected = new Set(requestedIds.map(String));
+  const requested = requestedIds.map(normalizedTelegramId);
+  if (requested.some((id) => id === null)) return failClosed();
+  const expected = new Set(requested);
   if (expected.size !== requestedIds.length) return failClosed();
   const failures = new Set<string>();
   for (const raw of missing) {
     if (!raw || typeof raw !== "object") return failClosed();
     const item = raw as Record<string, unknown>;
-    const id = item.userId ?? item.user_id;
-    if (typeof id !== "string" && typeof id !== "number" && typeof id !== "bigint") {
-      return failClosed();
-    }
-    const asString = String(id);
+    const asString = normalizedTelegramId(item.userId ?? item.user_id);
+    if (!asString) return failClosed();
     if (!expected.has(asString) || failures.has(asString)) return failClosed();
     failures.add(asString);
   }
@@ -105,7 +122,7 @@ export function reconcileInviteToChannelResult(
 }
 
 /** Avoid echoing bot tokens or unbounded upstream exception strings to clients. */
-export function safeInviteError(error: unknown, token: string): string {
+export function safeInviteError(error: unknown, _token: string): string {
   const message = typeof error === "string" ? error :
     error instanceof Error ? error.message : "Telegram operation failed";
   // Do not expose arbitrary upstream text: it can include bot credentials,
