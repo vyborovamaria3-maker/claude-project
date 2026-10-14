@@ -84,6 +84,7 @@ assert.equal(timers.size, 0, "stop must cancel reconnect");
 
 let fetchImpl = async () => ({ ok: true, json: async () => [] });
 const helius = loadTs("lib/trade/helius.ts", {
+  "./chain/types": { WRAPPED_SOL_MINT: "So11111111111111111111111111111111111111112" },
   "./helius-rotation": {
     appendHeliusApiKey: (url, key) => url + "?api-key=" + encodeURIComponent(key),
     getHeliusApiKeys: () => ["key-a", "key-b"],
