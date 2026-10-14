@@ -49,7 +49,8 @@ test("native PostgreSQL: claim -> partial/checkpoint -> defer -> reclaim -> comp
 
     const first = (await claimTasks("worker-one",1,600000))[0];
     assert.ok(first);
-    assert.equal(first.id,1);
+    // node-postgres returns BIGINT IDs as strings by default.
+    assert.equal(Number(first.id),1);
     assert.equal(first.attempts,1);
     const fingerprint = httpQueryFingerprint({handle:"NASA",limit:3});
     const key = { taskId:1,sourceKind:"timeline" as const,sourceKey:"NASA",queryFingerprint:fingerprint };
