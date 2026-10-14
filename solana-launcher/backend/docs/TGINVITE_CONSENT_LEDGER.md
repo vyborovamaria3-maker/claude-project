@@ -43,6 +43,31 @@ join requests. **Do not reconfigure the site's existing Telegram bot webhook**:
 one Telegram bot has only one webhook endpoint, so either use a separate opt-in
 bot or build a verified fan-out router in a later stage.
 
+A guarded operator CLI can verify the bot's `getMe` identity, its
+`getChatMember` administrative join-request rights in every configured
+chat, then set **only** the join-request webhook. It never enables invitation
+dispatch. Run from `solana-launcher/backend`:
+
+```bash
+# Validate settings and public HTTPS URL only; no Telegram calls or changes:
+python -m app.cli.configure_tginvite_consent_webhook \
+  --url https://your-public-domain.example/api/v1/tginvite/consent-webhook
+
+# Explicit setup after bot/chat administrator approval:
+# Supply TG_INVITE_CONSENT_BOT_TOKEN via a protected environment secret,
+# never via command arguments, chat or source control.
+python -m app.cli.configure_tginvite_consent_webhook \
+  --url https://your-public-domain.example/api/v1/tginvite/consent-webhook --apply
+```
+
+The CLI refuses the application's primary `TELEGRAM_BOT_TOKEN`, private/IP
+webhook URLs, mismatched `getMe` identities, or chats where the opt-in bot
+lacks invite/join-request rights. Deployment still requires an HTTPS reverse
+proxy rule exposing this **specific FastAPI route** (not the site's separate
+Next.js Telegram webhook). Keep the opt-in bot token out of the runtime backend
+container if you only need the deployed webhook receiver.
+
+
 Backend-only environment settings (all default empty; absence yields HTTP 503):
 
 - `TG_INVITE_CONSENT_WEBHOOK_SECRET`: exactly the secret configured through
