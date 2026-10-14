@@ -141,32 +141,15 @@ class TgInviteService {
     return Array.from(this.activeImports.values()).map((a) => a.progress);
   }
 
-  previewImport(config: ImportJobConfig): {
+  previewImport(_config: ImportJobConfig): {
     estimatedTime: string;
     estimatedInvited: number;
     estimatedFailed: number;
     channelBreakdown: { channel: string; estimatedMembers: number }[];
   } {
-    const delayMs = config.minDelay;
-    const totalBatches = Math.ceil(config.sources.length / config.batchSize);
-    const inviteTime = totalBatches * delayMs;
-    const pauseTime = totalBatches * config.batchPause * 1000;
-    const totalMs = inviteTime + pauseTime;
-
-    const hours = Math.floor(totalMs / 3600000);
-    const minutes = Math.floor((totalMs % 3600000) / 60000);
-
-    let estimatedTime: string;
-    if (hours > 0) estimatedTime = `~${hours}h ${minutes}m`;
-    else if (minutes > 0) estimatedTime = `~${minutes}m`;
-    else estimatedTime = `~${Math.floor((totalMs % 60000) / 1000)}s`;
-
-    return {
-      estimatedTime,
-      estimatedInvited: Math.floor(config.sources.length * 0.7),
-      estimatedFailed: Math.floor(config.sources.length * 0.1),
-      channelBreakdown: config.sources.map((ch) => ({ channel: ch, estimatedMembers: 1000 })),
-    };
+    // The former forecast used invented 70% success, 10% failure and 1000
+    // members per channel. Do not expose fabricated forecasts.
+    throw new Error("Import forecasting is unavailable until backed by real server data");
   }
 
   private computeStats(members: RawMember[]): FilterStats {
