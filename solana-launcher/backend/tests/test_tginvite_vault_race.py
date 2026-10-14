@@ -58,7 +58,10 @@ async def test_vault_recovers_when_another_worker_inserts_owner_first(test_app):
     )
 
     with pytest.raises(HTTPException) as caught:
-        await store_session(session, request, owner=SimpleNamespace(id=owner_id), db=db)
+        await store_session(
+            session, request, expected_generation=0,
+            owner=SimpleNamespace(id=owner_id), db=db
+        )
 
     assert caught.value.status_code == 409
     assert db.rolled_back is True
