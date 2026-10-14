@@ -101,7 +101,7 @@ async def test_apply_fails_before_setwebhook_for_bad_bot_identity_or_rights(
 ):
     settings = configure(test_app)
     for fake in [StubBotApi(bot_id=987654321), StubBotApi(admin=False)]:
-        monkeypatch.setattr(setup.httpx, "AsyncClient", lambda **_kwargs: fake)
+        monkeypatch.setattr(setup.httpx, "AsyncClient", lambda current=fake, **_kwargs: current)
         with pytest.raises(setup.SetupRejected):
             await setup.configure_webhook(settings, PUBLIC_URL, apply=True, bot_token=TOKEN)
         assert "setWebhook" not in [method for method, _ in fake.calls]
