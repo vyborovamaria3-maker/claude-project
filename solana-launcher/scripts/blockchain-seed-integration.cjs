@@ -64,10 +64,9 @@ try {
   workbook(path.join(folders.wallets, "profitable.xlsx"), [
     ["Wallet", "PnL"], [WALLET, "10000"] ]);
 
-  const dry = run("import", folders);
-  // Non-network import is idempotent and category-specific.
-  const first = JSON.parse(run("import", folders).match(/"import":\s*(\{[\s\S]*?\})\s*,\s*"status"/)?.[1] || "null");
-  // Full CLI emits two JSON documents; checking SQLite is the authoritative test.
+  const firstOutput = run("import", folders);
+  assert.match(firstOutput, /"changedFiles": 3/);
+  // Full CLI emits two JSON documents; checking SQLite is authoritative.
   const dbPath = path.join(root, "data", "trade.db");
   assert(fs.existsSync(dbPath));
   const db = new Database(dbPath);
@@ -90,7 +89,7 @@ try {
   const output = run("import", folders);
   assert.match(output, /"unchangedFiles": 3/);
   assert.match(output, /"changedFiles": 0/);
-  assert.match(dry, /"scannedFiles": 3/);
+  assert.match(firstOutput, /"scannedFiles": 3/);
   console.log("[blockchain-seed-integration] OK: safe XLSX -> SQLite, categories, dedup, priorities, incremental reimport");
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
