@@ -62,6 +62,7 @@ import GoalTracking from "@/components/tginvite/GoalTracking";
 import ABTesting from "@/components/tginvite/ABTesting";
 import { tgInviteService, ImportJobConfig, ImportProgress } from "@/lib/tginvite-service";
 import { tginviteEvents, TGEvent } from "@/lib/tginvite-events";
+import AuthorizedHistoryPanel from "@/components/tginvite/AuthorizedHistoryPanel";
 import TeraGramInviteSource from "@/components/tginvite/TeraGramInviteSource";
 import TeraGramScannerControl from "@/components/tginvite/TeraGramScannerControl";
 import { TeraGramLiveValidation } from "@/components/tginvite/TeraGramLiveValidation";
@@ -1496,6 +1497,8 @@ function TGInvitePageInner() {
               </div>
             </div>
           </div>
+
+          <AuthorizedHistoryPanel username={parserInput} />
 
           {recentAnalysis && (
             <div className={siteDesign.page.panelClassName}>
