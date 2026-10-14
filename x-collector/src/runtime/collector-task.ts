@@ -132,7 +132,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
         headless: cfg.twitter.headless,
       };
 
-      if (useXActions && isXActionsEligible(kind, payload)) {
+      if (useXActions && isXActionsEligible(kind, payload, task.payloadJson)) {
         const t0 = Date.now();
         await executeXActionsReadTask({
           task, payload, account: acc, authState,
