@@ -51,9 +51,10 @@ export const storage = {
     if (typeof window === "undefined") return;
     const scoped = scopedKey("");
     if (!scoped) return;
-    Object.keys(localStorage)
-      .filter((k) => k.startsWith(scoped))
-      .forEach((k) => localStorage.removeItem(k));
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const entryKey = localStorage.key(index);
+      if (entryKey?.startsWith(scoped)) localStorage.removeItem(entryKey);
+    }
   },
 };
 
