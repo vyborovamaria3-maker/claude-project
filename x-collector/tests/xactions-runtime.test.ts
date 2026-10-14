@@ -78,6 +78,7 @@ test("injected HTTP client receives cookies, no signing/refresh and no network b
         UserTweets: { queryId: "t", operationName: "UserTweets" },
         ListTimeline: { queryId: "l", operationName: "ListLatestTweetsTimeline" },
         ListMembers: { queryId: "m", operationName: "ListMembers" },
+        SearchTimeline: { queryId: "s", operationName: "SearchTimeline" },
       },
       parseUserData: () => ({ username: "NASA", name: "NASA" }),
       parseTimelineInstructions: () => ({ tweets: [], cursor: null }),
