@@ -109,6 +109,31 @@ test("native PostgreSQL: claim -> partial/checkpoint -> defer -> reclaim -> comp
     assert.equal(progress?.attempts,1);
     const row=await q1<{n:number}>("SELECT count(*)::int AS n FROM x_task_items WHERE task_id=1");
     assert.equal(row?.n,3);
+
+    // Two workers race for one queued task: SKIP LOCKED must elect one.
+    await getPool().query(`INSERT INTO x_tasks(id,kind,payload_json,available_at,created_at,updated_at)
+      VALUES(2,'timeline','{"handle":"NASA","limit":1}',0,0,0)`);
+    const [left,right]=await Promise.all([
+      claimTasks("racer-left",1,600000),
+      claimTasks("racer-right",1,600000),
+    ]);
+    assert.equal(left.length+right.length,1);
+    const winner=(left[0]??right[0])!;
+    const loser=left.length?"racer-right":"racer-left";
+    assert.equal(Number(winner.id),2);
+    await assert.rejects(commitHttpPage({
+      taskId:2,sourceKind:"timeline",sourceKey:"NASA",
+      queryFingerprint:fingerprint,
+      lease:{workerId:loser,attempt:winner.attempts,
+        accountName:"collector",accountOwner:"owner-two"},
+      expectedCursor:null,nextCursor:null,completed:true,itemsWritten:1,
+    }, async client => {
+      await client.query("INSERT INTO x_task_items(task_id,post_id) VALUES(2,'bad')");
+      return 1;
+    }), /task lease lost/);
+    const leaked=await q1<{n:number}>("SELECT count(*)::int AS n FROM x_task_items WHERE task_id=2");
+    assert.equal(leaked?.n,0);
+    assert.equal(await finishTask(2,winner.claimedBy,winner.attempts),true);
   } finally {
     await closePool();
     await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(()=>{});
