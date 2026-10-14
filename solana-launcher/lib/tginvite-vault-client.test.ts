@@ -6,13 +6,14 @@ vi.mock("@/lib/authProxy", () => ({
 }));
 vi.mock("@/lib/tginvite-mtproto", () => ({
   getClient: vi.fn(),
+  hasTGInviteLoginInProgress: vi.fn(),
   clearClient: vi.fn(),
   createClient: vi.fn(),
   isAuthorized: vi.fn(),
 }));
 
 import { acquireTGInviteLoginLease, verifyTGInviteLoginLease, releaseTGInviteLoginLease, resetTGInviteLoginLease, TGInviteLoginLeaseError, resolveTGInviteClient, persistVaultSession, TGInviteVaultConflict } from "./tginvite-vault-client";
-import { clearClient, createClient, getClient, isAuthorized } from "./tginvite-mtproto";
+import { clearClient, createClient, getClient, hasTGInviteLoginInProgress, isAuthorized } from "./tginvite-mtproto";
 
 const ownerId = "123e4567-e89b-12d3-a456-426614174000";
 const authorization = "Bearer test-owner-token";
@@ -32,6 +33,7 @@ beforeEach(() => {
   vi.mocked(clearClient).mockResolvedValue(undefined);
   vi.mocked(isAuthorized).mockResolvedValue(true);
   vi.mocked(getClient).mockReturnValue(null);
+  vi.mocked(hasTGInviteLoginInProgress).mockReturnValue(false);
   vi.mocked(createClient).mockResolvedValue(active(stored.session_string));
 });
 
@@ -113,6 +115,18 @@ describe("TGInvite shared vault write conflicts (mocked)", () => {
       "https://internal-backend.test/api/v1/tginvite/session",
       expect.objectContaining({ method: "PUT" }),
     );
+  });
+});
+
+describe("TGInvite pending challenge preservation (mocked)", () => {
+  it("does not tear down a pending code flow during a connection status probe", async () => {
+    vi.mocked(hasTGInviteLoginInProgress).mockReturnValue(true);
+    vi.mocked(getClient).mockReturnValue(active("pending-not-persisted"));
+    const fetcher = mockVaultResponse(404);
+    expect(await resolveTGInviteClient(ownerId, authorization)).toBeNull();
+    expect(clearClient).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(createClient).not.toHaveBeenCalled();
   });
 });
 
