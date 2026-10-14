@@ -32,7 +32,7 @@ export interface CursorRunResult {
 
 export async function runCursorPages<T>(
   fetchPage: (cursor: string | null, signal?: AbortSignal) => Promise<CursorPage<T>>,
-  commitPage: (page: PageCommit<T>) => Promise<void>,
+  commitPage: (page: PageCommit<T>) => Promise<number | void>,
   options: CursorRunOptions,
 ): Promise<CursorRunResult> {
   if (!Number.isSafeInteger(options.maxPages) || options.maxPages < 1) {
@@ -71,9 +71,13 @@ export async function runCursorPages<T>(
 
     const completed = page.nextCursor === null;
     // Advance ONLY after the caller's atomic DB commit has resolved.
-    await commitPage({ ...page, pageNumber, completed });
+    const committedCount = await commitPage({ ...page, pageNumber, completed });
+    if (committedCount !== undefined &&
+        (!Number.isSafeInteger(committedCount) || committedCount < 0 || committedCount > page.items.length)) {
+      throw new Error("XActions: invalid unique page commit count");
+    }
     cursor = page.nextCursor;
-    itemsCommitted += page.items.length;
+    itemsCommitted += committedCount === undefined ? page.items.length : committedCount;
 
     if (completed) return { pagesCommitted: pageNumber, itemsCommitted, nextCursor: null, completed: true };
     // Never discard the remainder of an HTTP page. The target is a minimum
