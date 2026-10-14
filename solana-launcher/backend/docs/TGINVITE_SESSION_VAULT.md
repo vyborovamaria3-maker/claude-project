@@ -61,4 +61,15 @@ The command acquires database row locks where supported and re-encrypts all exis
 6. Verify the job completed, restart backend workers using **only** the new primary key with `TG_INVITE_SESSION_PREVIOUS_KEYS` unset, and verify a permitted test account can reconnect from its saved session.
 7. Re-enable login and session writes. Retire the previous key from runtime secrets only after the rotation and recovery checks have passed.
 
-**Limitations:** This is database encryption-key rotation, not revocation of Telegram's own authorization keys. It does not implement distributed session leases or coordination of in-memory GramJS login challenges between Next.js workers. For production multi-worker operation, centralize login coordination and ensure revocation cannot race an active Telegram RPC.
+**Limitations:** This is database encryption-key rotation, not revocation of Telegram's own authorization keys. Revocation and active Telegram RPCs still need a database-backed generation fence, or an equivalent fully serialized command worker, before production use with multiple Next.js processes.
+
+## Shared login challenge leases
+
+The Next.js `sendCode` operation now acquires an owner-scoped, ten-minute login lease via the internal FastAPI endpoint `POST /api/v1/tginvite/login-lease`. FastAPI generates a high-entropy token stored atomically in Redis with `SET NX EX`; the token remains only in the worker's in-memory challenge state, never in browser responses or localStorage. `completeLogin` verifies that token against Redis before submitting a Telegram code or 2FA password. Successful login releases the lease; cancelling/restarting a login explicitly resets it and closes the local client.
+
+A second worker attempting `sendCode` while a lease is active receives HTTP 409 instead of creating an overlapping Telegram challenge. All operations return 503 if Redis is unavailable; **there is no process-local fallback**. Cancelling the login through the UI should release a stuck lease. Otherwise Redis automatically expires it after ten minutes. An application restart may lose its in-process challenge even if the Redis lease remains, so the user may need to cancel the attempt.
+
+The lease avoids simultaneous active login challenges but does **not** make Next.js requests sticky to the original worker. If `completeLogin` is routed to a different instance, the user receives a controlled error and must retry through the original worker or restart. For production, use consistent worker routing or move the entire Telegram login state to a single durable/authenticated backend worker.
+
+**Unresolved race:** Redis-based login lease reset and SQL vault deletion are not a single distributed transaction. A verification already past its lease check might still finish and persist after a concurrent disconnect. Consequently this PR remains draft, and multi-process operations must not be called revocation-atomic until a vault generation compare-and-set fence is implemented and tested.
+
