@@ -39,17 +39,22 @@ async def reencrypt_all(
         select(TelegramInviteSession).order_by(TelegramInviteSession.id).with_for_update()
     )
     rows = result.scalars().all()
+    rotated = 0
     try:
         for row in rows:
+            if row.encrypted_payload is None:
+                # Revoked-session tombstone; preserve its generation as-is.
+                continue
             plaintext = decrypt_session(
                 str(row.owner_id), row.encrypted_payload, active_key, previous_keys
             )
             row.encrypted_payload = encrypt_session(str(row.owner_id), plaintext, active_key)
+            rotated += 1
         await db.commit()
     except Exception:
         await db.rollback()
         raise
-    return len(rows)
+    return rotated
 
 
 async def main_async() -> None:
