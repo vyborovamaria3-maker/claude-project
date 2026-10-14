@@ -19,6 +19,13 @@ from app.services.telegram_collector.user_history import (
     load_public_history,
     normalize_public_channel,
 )
+from app.services.tginvite_login_lease import (
+    TelegramLoginLeaseUnavailable,
+    acquire_login_lease,
+    release_login_lease,
+    reset_login_lease,
+    verify_login_lease,
+)
 from app.services.telegram_invite_vault import (
     TelegramInviteVaultError,
     _key,
@@ -200,6 +207,50 @@ async def limit_telegram_login_attempt(
             headers={"Retry-After": str(result.retry_after)},
         )
     return Response(status_code=204)
+
+
+class TelegramLoginLeaseRequest(BaseModel):
+    action: Literal["acquire", "verify", "release", "reset"]
+    token: str | None = Field(default=None, min_length=32, max_length=128)
+
+
+@router.post("/login-lease", dependencies=[Depends(_internal_only)])
+async def telegram_login_lease(
+    payload: TelegramLoginLeaseRequest,
+    request: Request,
+    owner=Depends(get_current_subscriber),
+) -> Response:
+    """Shared login challenge fence, never exposed to unauthenticated clients."""
+    if payload.action in {"verify", "release"} and not payload.token:
+        raise HTTPException(status_code=422, detail="Login lease token required")
+    try:
+        redis = request.app.state.redis
+        owner_id = str(owner.id)
+        if payload.action == "acquire":
+            token = await acquire_login_lease(redis, owner_id)
+            if token is None:
+                raise HTTPException(
+                    status_code=409, detail="Another Telegram login is in progress"
+                )
+            return Response(
+                content='{"token":"' + token + '"}',
+                status_code=200,
+                media_type="application/json",
+                headers={"Cache-Control": "private, no-store"},
+            )
+        if payload.action == "verify":
+            if not await verify_login_lease(redis, owner_id, payload.token or ""):
+                raise HTTPException(status_code=409, detail="Telegram login lease expired")
+        elif payload.action == "release":
+            if not await release_login_lease(redis, owner_id, payload.token or ""):
+                raise HTTPException(status_code=409, detail="Telegram login lease changed")
+        else:
+            await reset_login_lease(redis, owner_id)
+        return Response(status_code=204)
+    except TelegramLoginLeaseUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail="Shared Telegram login coordination unavailable"
+        ) from exc
 
 
 class TelegramReadPermitRequest(BaseModel):
