@@ -711,6 +711,102 @@ export async function inviteUsers(
   };
 }
 
+/**
+ * One consent-gated direct invitation. Only the server route may call this,
+ * after the backend has atomically reserved an authenticated /join request.
+ * Neither access hashes nor Telegram entities are sent to the browser.
+ *
+ * The destination must match the exact Telegram chat verified by the opt-in
+ * webhook. The caller cannot substitute a different channel's username.
+ */
+export async function inviteOneConsentingUser(
+  tgClient: Record<string, unknown>,
+  input: {
+    destinationChatId: string;
+    targetChannel: string;
+    recipientId: number;
+    sourceChannel?: string;
+  },
+): Promise<"invited" | "declined" | "unknown"> {
+  if (!/^-100[1-9][0-9]{4,16}$/.test(input.destinationChatId) ||
+      !Number.isSafeInteger(input.recipientId) || input.recipientId <= 0) {
+    return "unknown";
+  }
+  const client = tgClient as {
+    connected?: boolean;
+    connect?: () => Promise<void>;
+    getEntity: (id: string) => Promise<unknown>;
+    getInputEntity?: (id: number) => Promise<unknown>;
+    invoke: (query: unknown) => Promise<unknown>;
+  };
+  try {
+    await ensureConnected(client);
+    const channel = await resolveChannelEntity(client, input.targetChannel);
+    const channelId = (channel as { id?: unknown }).id;
+    if (!channelId || !/^[1-9][0-9]{4,16}$/.test(String(channelId)) ||
+        `-100${String(channelId)}` !== input.destinationChatId) {
+      return "unknown";
+    }
+    const { Api } = await import("telegram");
+    let accessHash: string | null = null;
+    // A client cache entry from the authenticated account may already have
+    // a valid InputPeerUser. It is not sourced from browser-supplied metadata.
+    if (client.getInputEntity) {
+      try {
+        const entity = await client.getInputEntity(input.recipientId);
+        const peer = entity as { userId?: unknown; accessHash?: unknown };
+        if (String(peer.userId) === String(input.recipientId) &&
+            /^-?[0-9]{1,20}$/.test(String(peer.accessHash ?? ""))) {
+          accessHash = String(peer.accessHash);
+        }
+      } catch {
+        // Fall back to a small bounded source-channel read below.
+      }
+    }
+    if (!accessHash && input.sourceChannel) {
+      const source = await resolveChannelEntity(client, input.sourceChannel);
+      let offset = 0;
+      while (!accessHash && offset < 500) {
+        const result = await client.invoke(new Api.channels.GetParticipants({
+          channel: source as never,
+          filter: new Api.ChannelParticipantsSearch({ q: "" }) as never,
+          offset,
+          limit: Math.min(100, 500 - offset),
+          hash: 0 as never,
+        }));
+        const users = (result as { users?: Array<Record<string, unknown>> }).users;
+        if (!Array.isArray(users) || users.length === 0) break;
+        for (const user of users) {
+          if (String(user.id) !== String(input.recipientId)) continue;
+          const hash = String(user.accessHash ?? user.access_hash ?? "");
+          if (/^-?[0-9]{1,20}$/.test(hash)) accessHash = hash;
+          break;
+        }
+        offset += users.length;
+      }
+    }
+    if (!accessHash) return "unknown";
+    const response = await client.invoke(new Api.channels.InviteToChannel({
+      channel: channel as never,
+      users: [new Api.InputUser({
+        userId: input.recipientId as never,
+        accessHash: accessHash as never,
+      })] as never,
+    }));
+    const result = reconcileInviteToChannelResult([input.recipientId], response);
+    if (result.invited === 1 && result.declined === 0 && result.unknown === 0) {
+      return "invited";
+    }
+    if (result.declined === 1 && result.unknown === 0) return "declined";
+    // Unknown results are NEVER automatically retried.
+    return "unknown";
+  } catch {
+    // Includes flood waits, missing access hashes, insufficient rights,
+    // unknown Telegram responses and privacy restrictions. No retries.
+    return "unknown";
+  }
+}
+
 export function isConnected(ownerId: string): boolean {
   const client = clients.get(ownerId) as TelegramClientLike | undefined;
   return Boolean(client?.connected);
