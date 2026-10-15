@@ -58,14 +58,24 @@ function rebuildWallet(db, wallet, force = false) {
 
   const rows = db.prepare("SELECT signature,payload_gzip FROM chain_seed_events WHERE kind='wallet' AND address=?").all(wallet);
   const events = [];
+  let undecodedSwap = false;
   for (const row of rows) {
     let tx;
     try { tx = JSON.parse(gunzipSync(row.payload_gzip).toString("utf8")); }
     catch (error) { throw new Error("Invalid cached transaction " + row.signature + ": " + String(error)); }
     if (tx.signature !== row.signature) throw new Error("Cached signature mismatch: " + row.signature);
+    if (tx.type === "SWAP" && !tx.events?.swap && tx.transactionError == null && tx.error == null) undecodedSwap = true;
     events.push(...parseEvidence(tx, wallet));
   }
-  const pnl = computePnl(events, complete);
+  const evidenceComplete = complete && !undecodedSwap;
+  const pnl = computePnl(events, evidenceComplete);
+  if (undecodedSwap) {
+    for (const item of pnl) {
+      item.reasons.push("undecoded_swap_in_wallet_history");
+      item.status = "unknown";
+      item.totalRealizedPnlSol = null;
+    }
+  }
   const insertEvent = db.prepare(
     "INSERT INTO chain_forensic_activities(wallet,signature,leg_index,slot,block_time,kind,mint,amount_tokens,amount_sol,fee_sol,counterparty) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
   );
@@ -90,7 +100,7 @@ function rebuildWallet(db, wallet, force = false) {
     }
     const now = Date.now();
     for (const item of pnl) {
-      insertPnl.run(wallet, item.mint, complete ? 1 : 0, item.status, item.buys,
+      insertPnl.run(wallet, item.mint, evidenceComplete ? 1 : 0, item.status, item.buys,
         item.sells, item.transfers, item.knownSellCount, item.knownRealizedPnlSol,
         item.totalRealizedPnlSol, JSON.stringify(item.reasons), now);
     }
@@ -100,7 +110,7 @@ function rebuildWallet(db, wallet, force = false) {
   })();
   return { wallet, skipped: false, transactions: rows.length, activities: events.length,
     pricedTrades: events.filter(e => e.kind === "buy" || e.kind === "sell").length,
-    coverageComplete: complete, verifiedTokens: pnl.filter(p => p.status === "verified").length,
+    coverageComplete: evidenceComplete, verifiedTokens: pnl.filter(p => p.status === "verified").length,
     unknownTokens: pnl.filter(p => p.status === "unknown").length };
 }
 
