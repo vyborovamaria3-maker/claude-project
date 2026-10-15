@@ -200,6 +200,9 @@ export async function collectArticles(page: Page, limit: number, deadlineMs: num
     await page.mouse.wheel(0, 1800);
     await page.waitForTimeout(500 + Math.random() * 500);
   }
+  // Preserve the caller's richer diagnosis of a completely missing search
+  // feed (unloaded vs explicit empty state), including safe DOM signals.
+  if (tweets.length === 0) return tweets;
   if (tweets.length < limit) {
     // Batches have already been persisted via onBatch. Treat the remaining
     // range as partial rather than silently claiming complete X coverage.
