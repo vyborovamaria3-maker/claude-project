@@ -5,7 +5,7 @@
 const { gunzipSync } = require("node:zlib");
 const path = require("node:path");
 const { parseEvidence, computePnl } = require("./blockchain-forensics-core.cjs");
-const REVISION = 2;
+const REVISION = 3;
 
 function initForensics(db) {
   db.exec([
@@ -79,10 +79,12 @@ function rebuildWallet(db, wallet, force = false) {
     try { tx = JSON.parse(gunzipSync(row.payload_gzip).toString("utf8")); }
     catch (error) { throw new Error("Invalid cached transaction " + row.signature + ": " + String(error)); }
     if (tx.signature !== row.signature) throw new Error("Cached signature mismatch: " + row.signature);
-    const undecoded = tx.type === "SWAP" && !tx.events?.swap &&
-      tx.transactionError == null && tx.error == null;
+    const decoded = parseEvidence(tx, wallet);
+    const undecoded = tx.transactionError == null && tx.error == null &&
+      ((tx.type === "SWAP" && (!tx.events?.swap || decoded.length === 0)) ||
+      (tx.type === "UNKNOWN" && !Array.isArray(tx.accountData)));
     processed.push({ signature: row.signature, undecoded });
-    freshlyParsed.push(...parseEvidence(tx, wallet));
+    freshlyParsed.push(...decoded);
   }
   const historical = canIncrement ? db.prepare(
     "SELECT signature,slot,block_time AS timestamp,leg_index AS event_index,kind,mint," +
