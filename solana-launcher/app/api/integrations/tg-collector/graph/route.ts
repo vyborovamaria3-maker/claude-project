@@ -140,7 +140,7 @@ export async function GET(request: NextRequest) {
         SELECT l.target_kind, l.target_key,
           count(DISTINCT l.source_id)::integer AS observed_in_sources,
           sum(l.evidence_count)::integer AS occurrences,
-          min(l.day::timestamp AT TIME ZONE 'UTC') AS first_observed_at,
+          min(l.first_seen) AS first_observed_at,
           max(l.last_seen) AS last_observed_at
         FROM tg_graph_daily_edges l
         WHERE l.kind='address'
