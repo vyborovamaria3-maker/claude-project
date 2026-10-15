@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2, Pause, Play, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import TGGraphPanel from "./TGGraphPanel";
 
 type Source = {
   id: string;
@@ -231,6 +232,8 @@ export default function TGCollectorTab() {
           ))}
         </div>
       </section>
+
+      <TGGraphPanel sources={data?.sources ?? []} />
 
       <section className="surface-panel p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
