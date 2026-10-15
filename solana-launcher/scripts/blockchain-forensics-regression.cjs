@@ -10,12 +10,16 @@ const quote = (qty) => ({ tokenAmount: String(qty * 1000000), decimals: 6 });
 function buy(signature, slot, qty, sol, opts = {}) {
   return { signature, timestamp: slot * 100, slot, feePayer: WALLET,
     fee: 5000, type: "SWAP", ...opts,
+    accountData: [{account: WALLET, nativeBalanceChange: -(sol * 1e9) - 5000,
+      tokenBalanceChanges:[{userAccount:WALLET,mint:MINT,rawTokenAmount:quote(qty)}]}],
     events: { swap: { nativeInput: { account: WALLET, amount: String(sol * 1e9) },
       tokenOutputs: [{ userAccount: WALLET, mint: MINT, rawTokenAmount: quote(qty) }] } } };
 }
 function sell(signature, slot, qty, sol, opts = {}) {
   return { signature, timestamp: slot * 100, slot, feePayer: WALLET,
     fee: 5000, type: "SWAP", ...opts,
+    accountData: [{account: WALLET, nativeBalanceChange: sol * 1e9 - 5000,
+      tokenBalanceChanges:[{userAccount:WALLET,mint:MINT,rawTokenAmount:quote(-qty)}]}],
     events: { swap: { nativeOutput: { account: WALLET, amount: String(sol * 1e9) },
       tokenInputs: [{ userAccount: WALLET, mint: MINT, rawTokenAmount: quote(qty) }] } } };
 }
@@ -53,6 +57,8 @@ const wsol = buy("wsol-input", 7, 1, 1);
 delete wsol.events.swap.nativeInput;
 wsol.events.swap.tokenInputs = [{ userAccount: WALLET, mint: WSOL,
   rawTokenAmount: { tokenAmount: "1000000000", decimals: 9 } }];
+wsol.accountData[0].nativeBalanceChange = -5000;
+wsol.accountData[0].tokenBalanceChanges.push({userAccount:WALLET,mint:WSOL,rawTokenAmount:{tokenAmount:"-1000000000",decimals:9}});
 assert.equal(parseEvidence(wsol, WALLET)[0].kind, "buy");
 const noFee = buy("no-fee", 8, 1, 1);
 delete noFee.fee;
@@ -64,6 +70,17 @@ const nativeEvents=parseEvidence(nativeTx,WALLET);
 assert.equal(nativeEvents[0].kind,"sol_transfer_out");
 assert.equal(nativeEvents[0].amountSol,0.1);
 assert.equal(computePnl(nativeEvents,true).length,0,"SOL transfers cannot become token realized PnL");
+const phantomBalance = buy("phantom-balance", 15, 5, 1);
+phantomBalance.accountData[0].tokenBalanceChanges[0].rawTokenAmount.tokenAmount = "4000000";
+assert(parseEvidence(phantomBalance, WALLET).some(e => e.kind === "unpriced"));
+const unknownTx = {signature:"unknown-wallet-delta",slot:16,timestamp:1600,type:"UNKNOWN",
+ accountData:[{account:WALLET,nativeBalanceChange:0,
+ tokenBalanceChanges:[{mint:ALT,userAccount:WALLET,rawTokenAmount:quote(5)}]}]};
+assert.equal(parseEvidence(unknownTx,WALLET)[0].kind,"unpriced");
+const extraFee = buy("native-fee", 17, 5, 1);
+extraFee.events.swap.nativeFees = [{account:WALLET,amount:"1000"}];
+assert.equal(computePnl([...parseEvidence(extraFee,WALLET),
+ ...parseEvidence(sell("native-fee-sale",18,5,2),WALLET)],true)[0].status,"unknown");
 const noOrdering = buy("missing-order", 11, 1, 1);
 delete noOrdering.slot;
 assert.equal(computePnl([...parseEvidence(noOrdering, WALLET),
