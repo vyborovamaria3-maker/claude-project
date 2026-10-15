@@ -166,7 +166,7 @@ export function extractTweetArticles(articles: Element[]): RawTweet[] {
       }).filter((t): t is RawTweet => t !== null);
 }
 
-export async function collectArticles(page: Page, limit: number, deadlineMs: number, onProgress?:ScrapeOptions["onProgress"], onBatch?:ScrapeOptions["onBatch"]): Promise<RawTweet[]> {
+export async function collectArticles(page: Page, limit: number, deadlineMs: number, onProgress?:ScrapeOptions["onProgress"], onBatch?:ScrapeOptions["onBatch"], beforeScroll?:ScrapeOptions["beforeHttpRequest"]): Promise<RawTweet[]> {
   const seen = new Set<string>();
   const tweets: RawTweet[] = [];
   let stale = 0;
@@ -197,6 +197,7 @@ export async function collectArticles(page: Page, limit: number, deadlineMs: num
     // An explicit empty-state element is evidence for an empty feed only
     // when no posts have been seen. Stale scrolling is not an end marker.
     if (tweets.length === 0 && await page.locator('[data-testid="emptyState"]').count() > 0) return tweets;
+    await beforeScroll?.();
     await page.mouse.wheel(0, 1800);
     await page.waitForTimeout(500 + Math.random() * 500);
   }
@@ -243,12 +244,13 @@ export async function searchTweets(
   return withBrowser(opts, async (page) => {
     const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
     await opts.onProgress?.({phase:"opening",limit});
+    await opts.beforeHttpRequest?.();
     await navigate(page, url);
     await waitForTweetsOrEmpty(page, Math.min(15_000, cfg.twitter.requestTimeoutMs));
     const text = await page.locator("body").innerText().catch(() => "");
     const err = detectError(page.url(), text);
     if (err) throw new Error(err);
-    const tweets = await collectArticles(page, limit, deadline, opts.onProgress,opts.onBatch);
+    const tweets = await collectArticles(page, limit, deadline, opts.onProgress,opts.onBatch,opts.beforeHttpRequest);
     if (tweets.length === 0) {
       const hasEmptyState = await page.locator('[data-testid="emptyState"]').count() > 0;
       if (!hasEmptyState) {
@@ -275,12 +277,13 @@ export async function fetchUserTimeline(
   return withBrowser(opts, async (page) => {
     const deadline = Date.now() + cfg.twitter.collectionDeadlineMs;
     await opts.onProgress?.({phase:"opening",limit});
+    await opts.beforeHttpRequest?.();
     await navigate(page, url);
     await waitForTweetsOrEmpty(page, Math.min(15_000, cfg.twitter.requestTimeoutMs));
     const text = await page.locator("body").innerText().catch(() => "");
     const err = detectError(page.url(), text);
     if (err) throw new Error(err);
-    const tweets = await collectArticles(page, limit, deadline, opts.onProgress,opts.onBatch);
+    const tweets = await collectArticles(page, limit, deadline, opts.onProgress,opts.onBatch,opts.beforeHttpRequest);
     if (tweets.length === 0) {
       const hasEmptyState = await page.locator('[data-testid="emptyState"]').count() > 0;
       if (!hasEmptyState) {
@@ -308,6 +311,7 @@ export async function fetchAccountProfile(
   const cfg = getConfig();
   return withBrowser(opts, async (page) => {
     await opts.onProgress?.({phase:"profile",currentAuthor:handle});
+    await opts.beforeHttpRequest?.();
     await navigate(page, `https://x.com/${handle}`);
     await page.waitForSelector('[data-testid="UserName"], [data-testid="emptyState"], [data-testid="error-detail"]', {timeout:Math.min(15000,cfg.twitter.requestTimeoutMs)}).catch(()=>{});
     const err = detectError(page.url(), await page.locator("body").innerText().catch(() => ""));
