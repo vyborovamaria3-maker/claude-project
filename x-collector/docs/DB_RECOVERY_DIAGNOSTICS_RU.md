@@ -16,6 +16,11 @@ These changes do not alter X platform limits or allow bypassing restricted accou
   source shape change, SOCKS5 connection error and collection timeout.
 - Proxy/collection failures are no longer recorded as evidence that an X
   account has a broken authenticated session.
+- Failed SOCKS5 endpoints trigger a lease-fenced 60-second account cooldown,
+  with a secret-free audit record (not a shared proxy-wide health checker).
+- A read-only local report (`npm run x:errors`) shows 1-hour and 24-hour
+  task-error snapshots, timestamped account-error events, and queue/account
+  counts; those are **different measures** and must not be added together.
 
 ## Operator checks
 
@@ -28,12 +33,14 @@ These changes do not alter X platform limits or allow bypassing restricted accou
    restored; the same job must not be claimed by two live workers.
 4. Stop the collector with its normal IPC stop during a database outage. It
    should finish shutdown without a retry loop hanging indefinitely.
-5. In the task-error logs compare rolling 1h/24h error counts with the
-   historical total. Existing rows are not rewritten or reclassified.
+5. Run `npm run x:errors` to compare the 1h/24h snapshots and event counters.
+   Existing rows are not rewritten or reclassified, and snapshot counts
+   are not a complete historical error-event series.
 
 ## Outstanding work (not claimed complete by this patch)
 
-- Dedicated SOCKS5 health/circuit-breaker and per-proxy statistics.
+- Dedicated shared SOCKS5 health/circuit-breaker and per-proxy statistics
+  (account-bound cooldown is implemented, but not a shared proxy breaker).
 - Visual search evidence capture (redacted DOM/screenshot) for the 132
   historical unconfirmed searches; verify current X selectors in the user's
   authenticated sandbox.
