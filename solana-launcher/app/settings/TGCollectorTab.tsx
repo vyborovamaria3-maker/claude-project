@@ -37,6 +37,7 @@ type Snapshot = {
   configured: boolean;
   workerOnline: boolean;
   heartbeatAt: string | null;
+  blockReason: string | null;
   pausedUntil: string | null;
   stats: { sources: number; messages: number; running: number; failed: number };
   sources: Source[];
@@ -168,6 +169,7 @@ export default function TGCollectorTab() {
           </span>
           <span className="rounded-lg border border-bg-border px-3 py-2 text-content-muted">Последний сигнал: {formatDate(data?.heartbeatAt ?? null)}</span>
           {globallyPaused && <span className="rounded-lg border border-amber-500/30 px-3 py-2 text-amber-300">Telegram FloodWait до {formatDate(data?.pausedUntil ?? null)}</span>}
+          {data?.blockReason && <span className="rounded-lg border border-red-500/30 px-3 py-2 text-red-300">Telegram заблокирован для сборщика: {data.blockReason}. Проверьте аккаунт перед повторным запуском.</span>}
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {metrics.map(item => (
