@@ -55,7 +55,7 @@ async function refreshDiagnostics(){
   el('diag-summary').textContent='Очередь: '+counters+'. Аккаунты: '+accountCounters+'.';
   el('diag-jobs').replaceChildren(...data.tasks.map(task=>cells([
    '#'+task.id+' · '+task.kind,
-   diagnosticStates[task.state]??task.state,
+   (diagnosticStates[task.state]??task.state)+(task.persistedPartialOutput?' · есть сохранённые данные':''),
    task.attempts+' / '+task.maxAttempts,
    task.lastErrorCode??'—',
    task.nextEligibleInSeconds>0?task.nextEligibleInSeconds+' сек':'—',
