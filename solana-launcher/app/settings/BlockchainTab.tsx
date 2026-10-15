@@ -1,216 +1,61 @@
 "use client";
+import {useCallback,useEffect,useRef,useState} from 'react';
+import {useI18n} from '@/components/providers/I18nProvider';
 
-import { useEffect, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, Database, ExternalLink, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
-
-type RpcHealth = {
-  status?: string;
-  latency?: number | null;
-};
-
-type HealthState = {
-  state: "checking" | "ok" | "degraded" | "error";
-  latency: number | null;
-  checkedAt: string | null;
-  error: string | null;
-};
-
-const SOURCES = [
-  {
-    title: "Мигрировавшие токены",
-    description: "Входные списки токенов, перешедших с launch-платформ на DEX.",
-    label: "migrated",
-  },
-  {
-    title: "DEX Trending",
-    description: "Токены из трендов для последующей проверки on-chain активности.",
-    label: "trending",
-  },
-  {
-    title: "Профитные кошельки",
-    description: "Списки кошельков для сопоставления сделок и источников финансирования.",
-    label: "wallets",
-  },
-] as const;
-
-const INITIAL_HEALTH: HealthState = {
-  state: "checking",
-  latency: null,
-  checkedAt: null,
-  error: null,
-};
-
-export default function BlockchainTab() {
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [health, setHealth] = useState<HealthState>(INITIAL_HEALTH);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    async function checkHealth() {
-      setHealth({ state: "checking", latency: null, checkedAt: null, error: null });
-
-      try {
-        const response = await fetch("/api/rpc-health", {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new Error("RPC health API: HTTP " + response.status);
-        }
-
-        const payload = (await response.json()) as RpcHealth;
-        if (controller.signal.aborted) return;
-        const healthy = payload.status === "ok";
-        setHealth({
-          state: healthy ? "ok" : "degraded",
-          latency: typeof payload.latency === "number" && Number.isFinite(payload.latency)
-            ? payload.latency
-            : null,
-          checkedAt: new Date().toLocaleString("ru-RU"),
-          error: null,
-        });
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setHealth({
-          state: "error",
-          latency: null,
-          checkedAt: new Date().toLocaleString("ru-RU"),
-          error: error instanceof Error ? error.message : "Не удалось проверить RPC",
-        });
-      }
-    }
-
-    void checkHealth();
-    return () => controller.abort();
-  }, [refreshKey]);
-
-  const checking = health.state === "checking";
-  const healthy = health.state === "ok";
-
-  return (
-    <div data-tag="settings.blockchain" className="space-y-6">
-      <header className="surface-panel px-5 py-5 sm:px-6">
-        <div className="flex items-center gap-2">
-          <Activity className="h-5 w-5 text-primary" aria-hidden="true" />
-          <h2 className="text-lg font-bold text-content">Блокчейн · Solana</h2>
-        </div>
-        <p className="mt-2 text-sm leading-6 text-content-muted">
-          Состояние RPC, входные наборы данных и переходы к on-chain аналитике.
-          Серверные ключи и конфигурация сборщика здесь не изменяются.
-        </p>
-      </header>
-
-      <section className="surface-panel space-y-4 p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-content">Подключение к Solana RPC</h3>
-            <p className="mt-1 text-xs text-content-muted">
-              Проверяется действующий RPC сервера через /api/rpc-health, без передачи ключей в браузер.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setRefreshKey((value) => value + 1)}
-            disabled={checking}
-            className="inline-flex items-center gap-2 rounded-xl border border-bg-border bg-bg-soft px-4 py-2 text-sm text-content transition hover:border-primary-border disabled:cursor-wait disabled:opacity-60"
-          >
-            <RefreshCw className={"h-4 w-4 " + (checking ? "animate-spin" : "")} aria-hidden="true" />
-            Проверить снова
-          </button>
-        </div>
-
-        <div
-          role="status"
-          aria-live="polite"
-          className={"rounded-xl border px-4 py-4 " + (
-            checking ? "border-bg-border bg-bg-soft" :
-            healthy ? "border-green-500/30 bg-green-500/10" :
-            "border-amber-500/30 bg-amber-500/10"
-          )}
-        >
-          <div className="flex items-start gap-3">
-            {checking
-              ? <Loader2 className="mt-0.5 h-5 w-5 animate-spin text-content-muted" aria-hidden="true" />
-              : healthy
-                ? <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-400" aria-hidden="true" />
-                : <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-400" aria-hidden="true" />}
-            <div>
-              <p className="font-semibold text-content">
-                {checking ? "Проверка подключения…" :
-                  healthy ? "Solana RPC доступен" :
-                  health.state === "degraded" ? "Solana RPC деградировал" : "Не удалось проверить RPC"}
-              </p>
-              <p className="mt-1 text-sm text-content-muted">
-                {health.error ||
-                  (checking ? "Ожидание ответа сервера." :
-                    health.latency !== null ? "Задержка: " + health.latency + " мс" :
-                      "Задержка не определена.")}
-              </p>
-              {health.checkedAt && (
-                <p className="mt-1 text-xs text-content-muted">Проверено: {health.checkedAt}</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="surface-panel space-y-4 p-5 sm:p-6">
-        <div>
-          <h3 className="text-base font-semibold text-content">Источники для блокчейн-аналитики</h3>
-          <p className="mt-1 text-sm text-content-muted">
-            Три типа исходных наборов. Это описание входных данных, а не индикатор запущенного импорта.
-          </p>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          {SOURCES.map((source) => (
-            <div key={source.label} className="rounded-xl border border-bg-border bg-bg-soft p-4">
-              <div className="flex items-center gap-2">
-                <Database className="h-4 w-4 text-primary" aria-hidden="true" />
-                <p className="font-medium text-content">{source.title}</p>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-content-muted">{source.description}</p>
-              <code className="mt-3 inline-block rounded-md border border-bg-border px-2 py-1 text-xs text-content-muted">
-                {source.label}
-              </code>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs leading-5 text-content-muted">
-          Фактическое наличие записей и полноту истории проверяйте в базе данных.
-          Отсутствие найденных подозрительных сделок при неполных данных не доказывает их отсутствие.
-        </p>
-      </section>
-
-      <section className="surface-panel space-y-3 p-5 sm:p-6">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />
-          <h3 className="text-base font-semibold text-content">Конфигурация источников</h3>
-        </div>
-        <p className="text-sm leading-6 text-content-muted">
-          Активный RPC выбирается сервером в следующем порядке. Чтобы изменить подключение,
-          обновите переменные окружения приложения и перезапустите его.
-        </p>
-        <div className="rounded-xl border border-bg-border bg-bg-soft p-4 text-xs leading-7 text-content-muted">
-          <code className="break-all">HELIUS_RPC_URL → NEXT_PUBLIC_HELIUS_RPC_URL → RPC_URL → NEXT_PUBLIC_RPC_URL → Solana mainnet public RPC</code>
-        </div>
-        <p className="text-xs leading-5 text-content-muted">
-          Секретные API-ключи храните в серверных переменных окружения, а не в NEXT_PUBLIC_*.
-          Вкладка не показывает значения ключей и не сохраняет настройки в браузере.
-        </p>
-      </section>
-
-      <section className="surface-panel space-y-3 p-5 sm:p-6">
-        <h3 className="text-base font-semibold text-content">Данные и аналитика</h3>
-        <div className="flex flex-wrap gap-3">
-          <a href="/database" className="inline-flex items-center gap-2 rounded-xl border border-primary-border bg-bg-soft px-4 py-2 text-sm font-medium text-content hover:opacity-80">
-            <Database className="h-4 w-4" aria-hidden="true" /> Базы данных <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-          </a>
-          <a href="/intelligence" className="inline-flex items-center gap-2 rounded-xl border border-bg-border bg-bg-soft px-4 py-2 text-sm font-medium text-content hover:border-primary-border">
-            <Activity className="h-4 w-4" aria-hidden="true" /> Blockchain Intelligence <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-          </a>
-        </div>
-      </section>
-    </div>
-  );
+type Config={primary:string;fallback:string;batchSize:number;concurrency:number;requestsPerSecond:number;timeoutMs:number;retries:number;retryDelayMs:number;enabled:boolean};
+type Data={values:Config;slots:{name:string;configured:boolean}[];heliusConfigured:boolean;metrics:{errors:number;retries:number};
+  collection:{collectedEvents:number;targets:{kind:string;total:number;synced:number;complete:number;possibleGaps:number}[]};
+  runs:{id:string;state:string;heartbeat_at:number;started_at:number;finished_at:number|null;targets:number;events:number;errors:number}[];
+  imports:{id:string;name:string;category:string;status:string;records:number;error:string|null}[]};
+const endpoint='/api/blockchain/settings';
+const numeric=['batchSize','concurrency','requestsPerSecond','timeoutMs','retries','retryDelayMs'] as const;
+const limits={batchSize:[1,100],concurrency:[1,4],requestsPerSecond:[1,10],timeoutMs:[1000,30000],retries:[0,3],retryDelayMs:[100,10000]};
+const style='rounded-lg border border-bg-border bg-bg-soft px-3 py-2 text-content disabled:opacity-50';
+export default function BlockchainTab(){
+ const {locale}=useI18n();const ru=locale==='ru';
+ const tr=(en:string,rus:string)=>ru?rus:en;
+ const [data,setData]=useState<Data|null>(null),[config,setConfig]=useState<Config|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[health,setHealth]=useState(''),[mint,setMint]=useState('');
+ const controller=useRef<AbortController|null>(null);
+ const refresh=useCallback(async(signal?:AbortSignal)=>{
+  const r=await fetch(endpoint,{cache:'no-store',signal});if(!r.ok)throw Error(r.status===403?'operator_required':'status_failed');
+  const d:Data=await r.json();setData(d);setConfig(old=>old??d.values);
+ },[]);
+ useEffect(()=>{const abort=new AbortController();const update=()=>void refresh(abort.signal).catch(e=>{if(!abort.signal.aborted)setError(e.message)});update();const timer=setInterval(update,15000);return()=>{abort.abort();controller.current?.abort();clearInterval(timer)}},[refresh]);
+ async function post(body:unknown){
+  setBusy(true);setError('');setMessage('');const abort=new AbortController();controller.current=abort;
+  try{const r=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:abort.signal});if(!r.ok)throw Error((await r.json()).error);await refresh(abort.signal);setMessage(tr('Applied','Применено'))}
+  catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'failed')}finally{setBusy(false)}
+ }
+ async function check(){
+  setBusy(true);const abort=new AbortController();controller.current=abort;
+  try{const r=await fetch('/api/rpc-health',{cache:'no-store',signal:abort.signal});if(!r.ok)throw Error();const h=await r.json();if(!abort.signal.aborted)setHealth(h.status+(h.latency!==null?' · '+h.latency+' ms':''))}
+  catch{if(!abort.signal.aborted)setError('rpc_failed')}finally{setBusy(false)}
+ }
+ async function upload(files:FileList|null,category:string){
+  if(!files)return;setBusy(true);setError('');const abort=new AbortController();controller.current=abort;let done=0;
+  try{for(const file of Array.from(files).filter(f=>f.name.toLowerCase().endsWith('.xlsx'))){
+   if(file.size>16*1024*1024)throw Error('request_too_large');
+   const r=await fetch(endpoint+'?action=import&category='+category+'&name='+encodeURIComponent(file.name),{method:'POST',body:file,signal:abort.signal});if(!r.ok)throw Error((await r.json()).error);done++;setMessage(tr('Files processed: ','Обработано файлов: ')+done);
+  }await refresh(abort.signal)}catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'failed')}finally{setBusy(false)}
+ }
+ const labels={batchSize:tr('Batch size','Размер пакета'),concurrency:tr('Concurrent requests','Параллельные запросы'),requestsPerSecond:tr('Requests / second','Запросов в секунду'),timeoutMs:tr('Timeout (ms)','Таймаут (мс)'),retries:tr('Retries','Повторные попытки'),retryDelayMs:tr('Retry delay (ms)','Задержка повтора (мс)')};
+ const run=data?.runs[0],running=run?.state==='running'&&Date.now()-run.heartbeat_at<600000;
+ const last=data?.runs.find(r=>r.finished_at&&r.targets>0&&r.errors===0);
+ return <div data-tag="settings.blockchain" className="space-y-6">
+  <header className="surface-panel p-5"><h2 className="text-lg font-bold text-content">{tr('Blockchain · Solana','Блокчейн · Solana')}</h2><p className="mt-2 text-sm text-content-muted">{tr('Settings apply to the seed collector and Blockchain Intelligence JSON-RPC. Trading and X Collector are managed separately.','Настройки применяются к seed-collector и JSON-RPC Blockchain Intelligence. Торговля и X Collector управляются отдельно.')}</p></header>
+  {error&&<p role="alert" className="break-words text-amber-400">{error==='operator_required'?tr('Operator access required: sign in as a backend superuser. Loopback development can explicitly enable BLOCKCHAIN_LOCAL_OPERATOR=1.','Нужен доступ оператора: войдите как superuser backend. Для локальной разработки на loopback можно явно включить BLOCKCHAIN_LOCAL_OPERATOR=1.'):tr('Operation failed: ','Операция не выполнена: ')+error}</p>}
+  {message&&<p role="status" className="text-content-muted">{message}</p>}
+  {!!data?.runs[0]?.errors&&<p role="alert" className="text-amber-400">{tr('Collector errors in the last batch: ','Ошибок сборщика в последнем пакете: ')}{data.runs[0].errors}</p>}
+  <section className="surface-panel space-y-4 p-5"><h3 className="font-semibold text-content">{tr('RPC and collection','RPC и сбор данных')}</h3><button className={style} disabled={busy} onClick={()=>void check()}>{busy?tr('Loading…','Загрузка…'):tr('Check RPC','Проверить RPC')}</button><span className="ml-3 text-content-muted" role="status">{health||tr('Not checked','Не проверено')}</span>
+   <p className="text-sm text-content-muted">{tr('API keys stay in server environment variables. Endpoint choices are references to server configuration; secret URLs are never returned.','API-ключи остаются в серверных переменных окружения. Выбор RPC ссылается на серверную конфигурацию; секретные URL не возвращаются.')}</p>
+   {config&&data&&<><div className="grid gap-4 sm:grid-cols-2">{(['primary','fallback'] as const).map(key=><label key={key} className="text-sm text-content-muted">{key==='primary'?tr('Primary RPC','Основной RPC'):tr('Fallback RPC','Резервный RPC')}<select className={style+' w-full'} value={config[key]} onChange={e=>setConfig({...config,[key]:e.target.value})}>{key==='fallback'&&<option value="">{tr('None','Нет')}</option>}{data.slots.map(s=><option key={s.name} disabled={!s.configured} value={s.name}>{s.name}</option>)}</select></label>)}
+    {numeric.map(key=><label key={key} className="text-sm text-content-muted">{labels[key]}<input className={style+' w-full'} type="number" min={limits[key][0]} max={limits[key][1]} value={config[key]} onChange={e=>setConfig({...config,[key]:Number(e.target.value)})}/></label>)}</div>
+    <label className="flex gap-2 text-content"><input type="checkbox" checked={config.enabled} onChange={e=>setConfig({...config,enabled:e.target.checked})}/>{tr('Collection enabled','Сбор включён')}</label>
+    <button className={style} disabled={busy} onClick={()=>{if((!config.enabled||config.primary!==data.values.primary||config.fallback!==data.values.fallback)&&!window.confirm(tr('Apply connection changes or pause collection? Active requests may finish first.','Применить изменения подключения или приостановить сбор? Активные запросы могут завершиться.')))return;void post({action:'save',settings:config})}}>{tr('Apply settings','Применить настройки')}</button> <button className={style} disabled={busy||running||!data.values.enabled||!data.heliusConfigured} onClick={()=>void post({action:'run'})}>{tr('Collect one batch','Собрать один пакет')}</button></>}
+  </section>
+  {data&&<section className="surface-panel space-y-3 p-5"><h3 className="font-semibold text-content">{tr('Collector status','Состояние сборщика')}</h3><p className="text-content">{running?tr('Running','Работает'):run?.state==='running'||run?.state==='stale'?tr('Worker heartbeat expired','Сборщик перестал обновлять состояние'):tr('Idle / stopped','Ожидает / остановлен')}</p><div className="grid gap-2 text-sm text-content-muted sm:grid-cols-2"><p>{tr('Processed targets','Обработано адресов')}: {run?.targets??0}</p><p>{tr('Stored events','Сохранено событий')}: {data.collection.collectedEvents}</p><p>{tr('Events / second','Событий в секунду')}: {run?.finished_at?(run.events*1000/Math.max(1,run.finished_at-run.started_at)).toFixed(2):'—'}</p><p>{tr('Last successful collection','Последний успешный сбор')}: {last?.finished_at?new Date(last.finished_at).toLocaleString(locale):'—'}</p><p>{tr('Errors / retries','Ошибки / повторы')}: {data.metrics.errors} / {data.metrics.retries}</p></div>{data.collection.targets.map(r=><p key={r.kind} className="text-sm text-content-muted">{r.kind}: {r.synced}/{r.total} · {tr('Backfill exhausted / gaps','Backfill завершён / пропуски')}: {r.complete}/{r.possibleGaps}</p>)}</section>}
+  <section className="surface-panel space-y-4 p-5"><h3 className="font-semibold text-content">{tr('Excel sources','Источники Excel')}</h3><p className="text-sm text-content-muted">{tr('The browser uploads selected XLSX files (up to 16 MiB each), not persistent folder paths. For automatic laptop folder scanning run blockchain:watch locally. Data is stored on the machine hosting this app.','Браузер загружает выбранные XLSX (до 16 МиБ каждый), а не постоянные пути к папкам. Для автоматического обхода папок ноутбука запускайте blockchain:watch локально. Данные сохраняются на машине, где запущено приложение.')}</p><div className="grid gap-4 lg:grid-cols-3">{(['migrated','dex_trending','profitable_wallets'] as const).map(category=><div className="space-y-3 rounded-xl border border-bg-border p-4" key={category}><h4 className="text-content">{category==='migrated'?tr('Migrated Tokens','Мигрировавшие токены'):category==='dex_trending'?'DEX Trending':tr('Profitable Wallets','Прибыльные кошельки')}</h4><label className="block text-sm text-content-muted">{tr('Files','Файлы')}<input className="block max-w-full" type="file" multiple accept=".xlsx" disabled={busy||!data} onChange={e=>{void upload(e.target.files,category);e.target.value=''}}/></label><label className="block text-sm text-content-muted">{tr('Folder','Папка')}<input ref={el=>{el?.setAttribute('webkitdirectory','')}} className="block max-w-full" type="file" multiple disabled={busy||!data} onChange={e=>{void upload(e.target.files,category);e.target.value=''}}/></label></div>)}</div><p className="text-sm text-content-muted">{tr('Excel categories do not prove migration or profitability. Address history is not complete token-wide coverage.','Категории Excel не доказывают миграцию или прибыльность. История адреса не является полной историей сделок токена.')}</p></section>
+  <section className="surface-panel p-5"><h3 className="mb-3 font-semibold text-content">{tr('Import history','История импорта')}</h3><div className="overflow-x-auto"><table className="w-full text-left text-sm text-content-muted"><thead><tr><th>{tr('File','Файл')}</th><th>{tr('Category','Категория')}</th><th>{tr('Status','Статус')}</th><th>{tr('Records','Записей')}</th></tr></thead><tbody>{data?.imports.map(r=><tr key={r.id}><td className="break-all py-2">{r.name}</td><td>{r.category}</td><td>{r.status}{r.error?' · '+r.error:''}</td><td>{r.records}</td></tr>)}</tbody></table>{!data?.imports.length&&<p>{tr('No records','Записей нет')}</p>}</div></section>
+  <section className="surface-panel space-y-3 p-5"><h3 className="font-semibold text-content">{tr('Existing analytics','Существующая аналитика')}</h3><a className={style+' inline-block'} href="/database">{tr('Database','База данных')}</a> <a className={style+' inline-block'} href="/intelligence">Blockchain Intelligence</a><label className="block text-sm text-content-muted">{tr('Token mint','Mint токена')}<input className={style+' w-full'} value={mint} onChange={e=>setMint(e.target.value)}/></label>{/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)&&<a className={style+' inline-block'} href={'/trade?mint='+encodeURIComponent(mint)}>{tr('Open transaction and wallet analysis','Открыть анализ транзакций и кошельков')}</a>}</section>
+ </div>;
 }

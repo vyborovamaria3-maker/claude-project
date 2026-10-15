@@ -28,7 +28,13 @@
     "gmgn:wallet": "node ../scripts/gmgn-wallet.mjs",
     "gmgn:exec": "node ../scripts/gmgn-exec.mjs",
     "bot:dev": "ts-node telegram-bot/index.ts",
-    "bot:start": "NODE_ENV=production ts-node telegram-bot/index.ts"
+    "bot:start": "NODE_ENV=production ts-node telegram-bot/index.ts",
+    "blockchain:seeds": "node scripts/blockchain-seed-collector.cjs --mode import",
+    "blockchain:collect": "node scripts/blockchain-seed-collector.cjs --mode collect",
+    "blockchain:watch": "node scripts/blockchain-seed-collector.cjs --mode watch",
+    "blockchain:status": "node scripts/blockchain-seed-collector.cjs --mode status",
+    "blockchain:analytics": "node scripts/blockchain-seed-analytics.cjs",
+    "blockchain:test": "node scripts/blockchain-settings-test.cjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-seed-integration.cjs && node scripts/blockchain-seed-persistence-test.cjs && node scripts/blockchain-seed-analytics-test.cjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
