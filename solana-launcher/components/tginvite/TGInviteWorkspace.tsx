@@ -682,6 +682,7 @@ function TGInvitePageInner() {
       return;
     }
 
+    setParserResult(null); // Do not display stale member data if a subsequent fetch fails.
     setParserLoading(true);
     try {
       const response = await fetch("/api/tginvite/mtproto", {
@@ -1775,7 +1776,7 @@ function TGInvitePageInner() {
               <input
                 type="text"
                 value={targetChannel}
-                onChange={(e) => setTargetChannel(e.target.value)}
+                onChange={(e) => { setTargetChannel(e.target.value); setOptInInviteLink(null); }}
                 placeholder="@your_channel or https://t.me/your_channel"
                 className={siteDesign.controls.inputClassName}
               />
@@ -2297,7 +2298,7 @@ function TGInvitePageInner() {
                         if (config.channels) setChannels(config.channels.map((ch: Channel) => ({ ...ch, selected: ch.selected ?? false })));
                         if (config.filters) setFilters(config.filters);
                         if (config.schedule) setSchedule(config.schedule);
-                        if (config.targetChannel) setTargetChannel(config.targetChannel);
+                        if (config.targetChannel) { setTargetChannel(config.targetChannel); setOptInInviteLink(null); }
                         if (config.batchSize) setBatchSize(config.batchSize);
                         if (config.batchPause) setBatchPause(config.batchPause);
                         success("Config loaded", "Configuration restored from file");
@@ -2817,7 +2818,7 @@ function TGInvitePageInner() {
                     <div className="text-xs text-content-muted">ID: {botInfo.id} | {botInfo.firstName}</div>
                   </div>
                   <button
-                    onClick={() => { setBotToken(""); setBotInfo(null); }}
+                    onClick={() => { setBotToken(""); setBotInfo(null); setOptInInviteLink(null); }}
                     className="ml-auto text-xs text-red-400 hover:text-red-300"
                   >
                     Disconnect
@@ -2830,7 +2831,7 @@ function TGInvitePageInner() {
                     <input
                       type="password"
                       value={botToken}
-                      onChange={(e) => setBotToken(e.target.value)}
+                      onChange={(e) => { setBotToken(e.target.value); setBotInfo(null); setOptInInviteLink(null); }}
                       placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
                       className={siteDesign.controls.inputClassName}
                     />
@@ -2877,7 +2878,7 @@ function TGInvitePageInner() {
                   <input
                     type="text"
                     value={targetChannel}
-                    onChange={(e) => setTargetChannel(e.target.value)}
+                    onChange={(e) => { setTargetChannel(e.target.value); setOptInInviteLink(null); }}
                     placeholder="@your_channel or chat ID"
                     className={siteDesign.controls.inputClassName}
                   />
