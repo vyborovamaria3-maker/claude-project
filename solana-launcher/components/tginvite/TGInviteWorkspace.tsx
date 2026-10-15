@@ -61,6 +61,7 @@ import RealTimeMonitor from "@/components/tginvite/RealTimeMonitor";
 import GoalTracking from "@/components/tginvite/GoalTracking";
 import ABTesting from "@/components/tginvite/ABTesting";
 import { tgInviteService, ImportJobConfig, ImportProgress } from "@/lib/tginvite-service";
+import { confirmedTGInviteLink, normalizeTGInviteDestination } from "@/lib/tginvite-optin";
 import { tginviteEvents, TGEvent } from "@/lib/tginvite-events";
 import AuthorizedHistoryPanel from "@/components/tginvite/AuthorizedHistoryPanel";
 import TeraGramInviteSource from "@/components/tginvite/TeraGramInviteSource";
@@ -360,6 +361,8 @@ function TGInvitePageInner() {
   const [botInfo, setBotInfo] = useState<BotInfo | null>(null);
   const [botVerifying, setBotVerifying] = useState(false);
   const [channelVerifying, setChannelVerifying] = useState(false);
+  const [optInInviteLink, setOptInInviteLink] = useState<{ url: string; chatId: string } | null>(null);
+  const [optInInviteLoading, setOptInInviteLoading] = useState(false);
   const [parserInput, setParserInput] = useState("");
   const [parserLimit, setParserLimit] = useState(() => filters.limit || 1000);
   const [parserActivityMode, setParserActivityMode] = useState<ParserActivityMode>("active");
@@ -998,12 +1001,41 @@ function TGInvitePageInner() {
   const importDelayerRef = useRef<StealthDelayer | null>(null);
   const importJobIdRef = useRef("");
 
-  // Start import — generates real invite links via Telegram API
-  // The previous workflow simulated successes and never called Telegram.
-  // Keep the button non-operational rather than presenting fictitious results.
-  const startImport = useCallback(async () => {
-    warning("Import unavailable", "Live import requires the server-side job workflow. No invitations were sent.");
-  }, [warning]);
+  // Genuine opt-in link creation. This cannot bulk-add parsed participants.
+  const createOptInInviteLink = useCallback(async () => {
+    const chatId = normalizeTGInviteDestination(targetChannel);
+    if (!botToken.trim()) {
+      warning("Bot required", "Configure a Telegram bot with invite rights in TGInvite Settings.");
+      return;
+    }
+    if (!chatId) {
+      warning("Invalid target", "Enter a public @username, t.me/username or numeric Telegram chat ID.");
+      return;
+    }
+    setOptInInviteLink(null);
+    setOptInInviteLoading(true);
+    try {
+      const response = await call<{ status?: string; link?: { inviteLink?: string } }>(
+        "/api/tginvite/invite",
+        { body: {
+          action: "createLink",
+          token: botToken,
+          chatId,
+          linkName: "TGInvite opt-in",
+          createsJoinRequest: true,
+        } },
+      );
+      const url = confirmedTGInviteLink(response);
+      if (!url) {
+        if (response) toastError("Link creation failed", "Telegram did not confirm an invite link.");
+        return;
+      }
+      setOptInInviteLink({ url, chatId });
+      success("Invite link created", "Share it with people who want to join. Join requests still require approval.");
+    } finally {
+      setOptInInviteLoading(false);
+    }
+  }, [botToken, targetChannel, call, success, toastError, warning]);
 
   // Pause import
   const pauseImport = useCallback(() => {
@@ -2220,16 +2252,15 @@ function TGInvitePageInner() {
               Import Control
             </h3>
             <div className="flex flex-wrap gap-3">
-              {!isRunning && !currentJob && (
-                <button
-                  onClick={startImport}
-                  className={siteDesign.controls.primaryActionClassName}
-                  disabled={selectedChannels.size === 0 || !targetChannel}
-                >
-                  <Play className="h-4 w-4" />
-                  Start Import ({selectedChannels.size} channels)
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={createOptInInviteLink}
+                className={siteDesign.controls.primaryActionClassName}
+                disabled={optInInviteLoading || !botToken.trim() || !normalizeTGInviteDestination(targetChannel)}
+              >
+                {optInInviteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link className="h-4 w-4" />}
+                {optInInviteLoading ? "Creating Telegram link..." : "Create join-request link"}
+              </button>
               {isRunning && (
                 <button onClick={pauseImport} className={siteDesign.controls.actionButtonClassName}>
                   <Pause className="h-4 w-4" />
@@ -2305,6 +2336,48 @@ function TGInvitePageInner() {
                 Load Config
               </button>
             </div>
+            <p className="mt-3 text-sm text-content-muted">
+              Telegram sends a join request only when someone chooses to open this link.
+              No parsed members are automatically added. Direct member import remains unavailable
+              until consent-verified server jobs are implemented.
+            </p>
+            {optInInviteLink && optInInviteLink.chatId === normalizeTGInviteDestination(targetChannel) && (
+              <div className="mt-4 space-y-2" role="status">
+                <label htmlFor="tg-invite-optin-url" className="text-sm font-medium">
+                  Confirmed Telegram join-request link
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    id="tg-invite-optin-url"
+                    readOnly
+                    value={optInInviteLink.url}
+                    className={siteDesign.controls.inputClassName}
+                  />
+                  <button
+                    type="button"
+                    className={siteDesign.controls.actionButtonClassName}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(optInInviteLink.url);
+                        success("Link copied", "Share it only with people who want to join.");
+                      } catch {
+                        warning("Clipboard unavailable", "Select and copy the link manually.");
+                      }
+                    }}
+                  >
+                    Copy link
+                  </button>
+                </div>
+                <a
+                  href={optInInviteLink.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm underline text-[color:var(--theme-primary)]"
+                >
+                  Open in Telegram
+                </a>
+              </div>
+            )}
           </div>
 
           {/* Invite Links (after job completion) */}
