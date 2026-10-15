@@ -23,6 +23,9 @@ async function main(): Promise<void> {
     if (!rows[0]?.acquired) throw new Error("Another TG Collector worker is already running");
     // The singleton lock proves an old worker can no longer own a job lease.
     await pool.query("UPDATE tg_jobs SET state='pending', locked_until=NULL WHERE state='running'");
+    const state = await pool.query<{ block_reason: string | null }>(
+      "SELECT block_reason FROM tg_runtime WHERE id=1");
+    if (state.rows[0]?.block_reason) throw new Error("TG_COLLECTOR_BLOCKED: " + state.rows[0].block_reason);
     client = await authorizedClient();
     stopHeartbeat = await startHeartbeat();
     console.log("TG Collector worker started");
@@ -32,7 +35,7 @@ async function main(): Promise<void> {
       const job = await claim();
       if (!job) { await sleep(3000); continue; }
       try { await processJob(client, job, () => stopping); }
-      catch (error) { await handleFailure(job, error); }
+      catch (error) { if ((await handleFailure(job, error)) === "halt") stopping = true; }
     }
   } finally {
     if (client) await client.disconnect();
