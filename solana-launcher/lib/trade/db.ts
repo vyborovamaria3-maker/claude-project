@@ -19,6 +19,8 @@ declare global {
   var __TRADE_DB__: Database.Database | undefined;
 }
 
+let initializedDb: Database.Database | null = null;
+
 function init(db: Database.Database) {
 
   // ── Migration: extend TTL of pre-existing analysis_cache rows to 24h ──
@@ -511,11 +513,13 @@ function init(db: Database.Database) {
     ["fee", "REAL"],
     ["jito_tip_lamports", "INTEGER"],
   ];
+  const currentTradeColumns = new Set(
+    (db.pragma("table_info(token_trades)") as Array<{ name: string }>).map(c => c.name)
+  );
   for (const [name, type] of tokenTradeColumnMigrations) {
-    try {
+    if (!currentTradeColumns.has(name)) {
+      // Duplicate-column errors are avoided without hiding real migration failures.
       db.exec(`ALTER TABLE token_trades ADD COLUMN ${name} ${type}`);
-    } catch {
-      // Column already exists — ignore
     }
   }
 }
@@ -531,8 +535,11 @@ export function getDb(): Database.Database {
     db.pragma("temp_store = MEMORY");
     global.__TRADE_DB__ = db;
   }
-  // Always run init so new tables are created on hot-reload too
-  init(global.__TRADE_DB__);
+  // Schema runs once per module load (including hot-reload), not on every read.
+  if (initializedDb !== global.__TRADE_DB__) {
+    init(global.__TRADE_DB__);
+    initializedDb = global.__TRADE_DB__;
+  }
   return global.__TRADE_DB__;
 }
 
