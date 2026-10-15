@@ -30,8 +30,6 @@ import {
   Star,
   Target,
   Layers,
-  ArrowUpRight,
-  Minus,
   Bot,
   Lock,
   Unlock,
@@ -141,9 +139,9 @@ interface BotInfo {
 }
 
 interface AnalyticsData {
-  totalInvited: number;
-  successRate: number;
-  avgResponseTime: number;
+  totalInvited: number | null;
+  successRate: number | null;
+  avgResponseTime: number | null;
   topChannels: { name: string; count: number }[];
   dailyStats: { date: string; invited: number; failed: number; skipped: number }[];
 }
@@ -418,28 +416,18 @@ function TGInvitePageInner() {
     storage.set("channelGroups", channelGroups);
   }, [channelGroups]);
 
-  // Analytics data
-  const analytics: AnalyticsData = useMemo(() => {
-    const jobs = jobsStorage.getAll();
-    const totalInvited = jobs.reduce((sum, j) => sum + (j.invited || 0), 0);
-    const totalFailed = jobs.reduce((sum, j) => sum + (j.failed || 0), 0);
-    const total = totalInvited + totalFailed;
-    return {
-      totalInvited,
-      successRate: total > 0 ? Math.round((totalInvited / total) * 100 * 10) / 10 : 94.2,
-      avgResponseTime: 2.5,
-      topChannels: [...channels]
-        .sort((a, b) => (b.members || 0) - (a.members || 0))
-        .slice(0, 5)
-        .map((ch) => ({ name: ch.name, count: ch.members || 0 })),
-      dailyStats: Array.from({ length: 7 }, (_, i) => ({
-        date: new Date(Date.UTC(2026, 0, 24 + i)).toLocaleDateString("en-US"),
-        invited: 50 + ((i * 37 + 17) % 100),
-        failed: 2 + ((i * 11 + 3) % 10),
-        skipped: 3 + ((i * 13 + 5) % 15),
-      })).reverse(),
-    };
-  }, [channels]);
+  // Only authenticated server receipts may prove a Telegram invitation.
+  // Legacy localStorage jobs were simulated and must never count as invites.
+  const analytics: AnalyticsData = useMemo(() => ({
+    totalInvited: null,
+    successRate: null,
+    avgResponseTime: null,
+    topChannels: [...channels]
+      .sort((left, right) => (right.members || 0) - (left.members || 0))
+      .slice(0, 5)
+      .map((channel) => ({ name: channel.name, count: channel.members || 0 })),
+    dailyStats: [],
+  }), [channels]);
 
   // Filter channels based on search
   const filteredChannels = useMemo(() => {
@@ -2707,75 +2695,41 @@ function TGInvitePageInner() {
       {/* Analytics Tab */}
       {activeTab === "analytics" && (
         <div className="space-y-6">
-          {/* Overview Stats */}
+          {/* Only display receipt-backed invitation metrics. */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className={siteDesign.page.panelClassName}>
-              <div className="text-sm text-content-muted">Total Invited</div>
-              <div className="text-3xl font-bold mt-2">{analytics.totalInvited}</div>
-              <div className="flex items-center gap-1 text-xs text-green-400 mt-1">
-                <ArrowUpRight className="h-3 w-3" />
-                <span>+15% this week</span>
-              </div>
+              <div className="text-sm text-content-muted">Verified invites</div>
+              <div className="text-3xl font-bold mt-2">{analytics.totalInvited ?? "—"}</div>
+              <div className="mt-1 text-xs text-content-muted">No confirmed dispatch ledger</div>
             </div>
             <div className={siteDesign.page.panelClassName}>
-              <div className="text-sm text-content-muted">Success Rate</div>
-              <div className="text-3xl font-bold mt-2">{analytics.successRate.toFixed(1)}%</div>
-              <div className="flex items-center gap-1 text-xs text-green-400 mt-1">
-                <ArrowUpRight className="h-3 w-3" />
-                <span>+5% this week</span>
+              <div className="text-sm text-content-muted">Success rate</div>
+              <div className="text-3xl font-bold mt-2">
+                {analytics.successRate == null ? "—" : `${analytics.successRate.toFixed(1)}%`}
               </div>
+              <div className="mt-1 text-xs text-content-muted">Unknown until Telegram receipts exist</div>
             </div>
             <div className={siteDesign.page.panelClassName}>
-              <div className="text-sm text-content-muted">Avg Response Time</div>
-              <div className="text-3xl font-bold mt-2">{analytics.avgResponseTime}s</div>
-              <div className="flex items-center gap-1 text-xs text-yellow-400 mt-1">
-                <Minus className="h-3 w-3" />
-                <span>No change</span>
+              <div className="text-sm text-content-muted">Avg response time</div>
+              <div className="text-3xl font-bold mt-2">
+                {analytics.avgResponseTime == null ? "—" : `${analytics.avgResponseTime}s`}
               </div>
+              <div className="mt-1 text-xs text-content-muted">Not measured</div>
             </div>
             <div className={siteDesign.page.panelClassName}>
-              <div className="text-sm text-content-muted">Active Channels</div>
+              <div className="text-sm text-content-muted">Saved source channels</div>
               <div className="text-3xl font-bold mt-2">{channels.length}</div>
-              <div className="flex items-center gap-1 text-xs text-green-400 mt-1">
-                <ArrowUpRight className="h-3 w-3" />
-                <span>+3 new</span>
-              </div>
+              <div className="mt-1 text-xs text-content-muted">Stored in this workspace</div>
             </div>
           </div>
 
           {/* Daily Chart */}
           <div className={siteDesign.page.panelClassName}>
             <h3 className="text-lg font-semibold mb-4">Daily Activity</h3>
-            <div className="h-64 flex items-end gap-2">
-              {(() => {
-                const maxVal = Math.max(...analytics.dailyStats.map((s) => Math.max(s.invited, s.failed)), 1);
-                return analytics.dailyStats.map((stat, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                  <div className="w-full flex gap-1 items-end justify-center" style={{ height: "200px" }}>
-                    <div
-                      className="w-1/2 bg-green-400 rounded-t"
-                      style={{ height: `${Math.min((stat.invited / maxVal) * 100, 100)}%` }}
-                    />
-                    <div
-                      className="w-1/2 bg-red-400 rounded-t"
-                      style={{ height: `${Math.min((stat.failed / maxVal) * 100, 100)}%` }}
-                    />
-                  </div>
-                  <div className="text-xs text-content-muted">{stat.date}</div>
-                </div>
-                ));
-              })()}
-            </div>
-            <div className="flex items-center justify-center gap-6 mt-4">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-green-400 rounded" />
-                <span className="text-sm text-content-muted">Invited</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-red-400 rounded" />
-                <span className="text-sm text-content-muted">Failed</span>
-              </div>
-            </div>
+            <p className="py-8 text-sm text-content-muted" role="status">
+              No verified daily invitation activity is available. Previously saved browser jobs
+              are not proof of successful invitations, and creating a link does not count as a join.
+            </p>
           </div>
 
           {/* Export Analytics */}
@@ -2788,9 +2742,9 @@ function TGInvitePageInner() {
                     "TGInvite Analytics Report",
                     "========================",
                     "",
-                    `Total Invited: ${analytics.totalInvited}`,
-                    `Success Rate: ${analytics.successRate}%`,
-                    `Avg Response Time: ${analytics.avgResponseTime}s`,
+                    `Verified invites: ${analytics.totalInvited ?? "unknown"}`,
+                    `Success Rate: ${analytics.successRate == null ? "unknown" : `${analytics.successRate}%`}`,
+                    `Avg Response Time: ${analytics.avgResponseTime == null ? "unknown" : `${analytics.avgResponseTime}s`}`,
                     "",
                     "Daily Stats:",
                     ...analytics.dailyStats.map((s) => `  ${s.date}: Invited=${s.invited}, Failed=${s.failed}, Skipped=${s.skipped}`),
