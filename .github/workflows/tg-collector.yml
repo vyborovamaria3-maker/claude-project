@@ -4,6 +4,8 @@ on:
     paths:
       - 'tg-collector/**'
       - 'solana-launcher/app/settings/TGCollectorTab.tsx'
+      - 'solana-launcher/app/settings/TGGraphPanel.tsx'
+      - 'solana-launcher/app/api/integrations/tg-collector/graph/**'
       - 'solana-launcher/app/settings/page.tsx'
       - 'solana-launcher/app/api/integrations/tg-collector/**'
       - '.github/workflows/tg-collector.yml'
