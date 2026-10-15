@@ -80,6 +80,10 @@ for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundatio
  await page.waitForFunction(()=>document.getElementById('live-jobs')?.textContent?.includes('1 постов'));
  assert.match(await page.locator('#live-jobs').innerText(),/alice/);assert.equal(await finishTask(Number(id),'controlled-worker'),true);
  await page.locator('#refresh').click();await page.waitForFunction(()=>document.getElementById('progress')?.textContent?.includes('Сбор завершён'));assert.equal(await page.locator('#tweets tr').count(),1);assert.match(await page.locator('#tweets').innerText(),/alice/);assert.match(await page.locator('#tweets').innerText(),/—/);
+ await db.query("UPDATE x_tasks SET last_error='[SENSITIVE_PASSWORD] credential=secret' WHERE id=$1",[id]);
+ assert.equal((await taskDetails(String(id)))?.task.last_error,'LEGACY_OR_UNKNOWN');
+ assert.equal((await liveSnapshot()).jobs.find(j=>String(j.id)===String(id))?.last_error,'LEGACY_OR_UNKNOWN');
+ await db.query("UPDATE x_tasks SET last_error=NULL WHERE id=$1",[id]);
  const profile=await startCollection({kind:'profile',payload:{handle:'alice'},requestId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'},startWorker);const [profileTask]=await claimTasks('controlled-worker',1,60000);
  await persistProfile({handle:'alice',displayName:'Alice',bio:'Solana',followers:10,following:null,postsCount:null,isVerified:false,joinedAt:null,avatarUrl:null},Number(profile.id));await finishTask(profileTask.id,'controlled-worker');assert.equal(Number((await taskDetails(String(profile.id)))!.counts!.profiles),1);
  const partial=await startCollection({kind:'timeline',payload:{handle:'alice',limit:5},requestId:'cccccccc-cccc-4ccc-8ccc-cccccccccccc'},startWorker);
