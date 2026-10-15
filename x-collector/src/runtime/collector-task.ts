@@ -228,7 +228,9 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
 
     // A private/forbidden resource is a task permission issue, not evidence
     // of a broken authenticated session or a CAPTCHA challenge.
-    if (failure.code !== "ACCESS_DENIED" && failure.code !== "ACCESS_UNVERIFIED" && failure.code !== "ENDPOINT_UNAVAILABLE" &&
+    if (!["ACCESS_DENIED", "ACCESS_UNVERIFIED", "ENDPOINT_UNAVAILABLE",
+          "SEARCH_UNCONFIRMED", "PAGE_END_UNVERIFIED", "PAGINATION_STALLED",
+          "SOURCE_SHAPE_CHANGED", "PROXY_CONNECT", "COLLECTION_TIMEOUT"].includes(failure.code) &&
         !(e instanceof HttpNoProgressError) && !leaseLost && !isStopping()) {
       await recordAccountError(acc.name,e).catch(()=>{});
       await recordError(acc.name, kindErr, failure.retryAfterMs, accountLeaseOwner).catch(() => {});
