@@ -2,7 +2,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const Database = require("better-sqlite3");
-const { initDb, syncDexProgramSources, processOne } = require("./blockchain-seed-collector.cjs");
+const { initDb, syncDexProgramSources, processOne, claimOne } = require("./blockchain-seed-collector.cjs");
 const { extractDexObservations, indexProgramBatch, replayProgram, configuredDexPrograms } = require("./blockchain-dex-index.cjs");
 const program="1".repeat(32);
 const wallet="2".repeat(44);
@@ -20,6 +20,10 @@ try {
   const target=db.prepare("SELECT * FROM chain_seed_targets WHERE kind='dex_program' AND address=?").get(program);
   assert.equal(target.source_mask,16);
   assert.equal(target.priority,105);
+  db.prepare("INSERT INTO chain_seed_targets(kind,address,source_mask,priority) VALUES('token',?,1,120)").run(mint);
+  const claim=claimOne(db,false);
+  assert.equal(claim.kind,"dex_program","opt-in DEX scanning ignores expensive mint-only history even if higher priority");
+
   const tx={signature:"dex-sig-1",slot:111500000,timestamp:1700000000,
     type:"SWAP",source:"RAYDIUM",feePayer:wallet,fee:5000,
     events:{swap:{nativeInput:{account:wallet,amount:"2000000000"},
