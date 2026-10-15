@@ -35,8 +35,8 @@ async function claim(): Promise<Job | undefined> {
       SELECT j.id FROM tg_jobs j JOIN tg_sources s ON s.id=j.source_id
       WHERE s.enabled AND ((j.state IN ('pending','delayed') AND j.run_at <= now())
          OR (j.state='running' AND j.locked_until < now()))
-      ORDER BY run_at, id
-      FOR UPDATE SKIP LOCKED LIMIT 1
+      ORDER BY j.run_at, j.id
+      FOR UPDATE OF j SKIP LOCKED LIMIT 1
     )
     UPDATE tg_jobs j SET state='running', attempts=attempts+1,
            locked_until=now()+interval '15 minutes', updated_at=now()
@@ -132,6 +132,11 @@ async function processJob(client: TelegramClient, job: Job): Promise<void> {
   }
 
   for (let page=0; page<maxPages && !stopping; page++) {
+    const activeSource = await pool.query<{enabled:boolean}>("SELECT enabled FROM tg_sources WHERE id=$1", [job.source_id]);
+    if (!activeSource.rows[0]?.enabled) {
+      await pool.query("UPDATE tg_jobs SET state='pending', locked_until=NULL, run_at=now()+interval '5 seconds' WHERE id=$1", [job.id]);
+      return;
+    }
     const batch = await client.getMessages(entity, {
       limit: batchSize,
       offsetId: cursor || highId+1,
@@ -210,7 +215,7 @@ async function main(): Promise<void> {
       const pause = await pool.query<{ wait_seconds: number }>(
         "SELECT GREATEST(0,EXTRACT(EPOCH FROM (pause_until-now())))::float8 AS wait_seconds FROM tg_runtime WHERE id=1");
       const seconds = Number(pause.rows[0]?.wait_seconds ?? 0);
-      if (seconds > 0) { await sleep(Math.min(seconds*1000,60000)); continue; }
+      if (seconds > 0) { await sleep(Math.min(seconds*1000,5000)); continue; }
       const job = await claim();
       if (!job) { await sleep(3000); continue; }
       try { await processJob(client,job); }
