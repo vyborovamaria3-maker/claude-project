@@ -2,7 +2,10 @@
  * Evidence-only Telegram relationship extraction.
  * Mentions and address co-occurrence do not establish identity, ownership or coordinated behavior.
  */
-export const ANALYSIS_VERSION = 1;
+export const ANALYSIS_VERSION = 2;
+
+import { isSolanaAddress, normalizeTarget } from "./normalize.js";
+export { isSolanaAddress } from "./normalize.js";
 
 export type LinkKind = "mention" | "forward" | "address";
 export type TargetKind = "handle" | "channel_id" | "solana_address" | "evm_address";
@@ -20,63 +23,40 @@ export interface RawTelegramMessage {
     fromId?: { className?: string; channelId?: { toString(): string } };
     fromName?: string;
   };
+  /** Future adapter: Bot API channel forwarding, not GramJS forward_from user. */
+  forward_from_chat?: { id?: number | string; username?: string; type?: string };
+  forward_sender_name?: string;
+  forward_from?: { id?: number | string };
 }
 
-const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const TOKEN_RE = /(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])/g;
 const EVM_RE = /(?<![0-9a-fA-F])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
 const MENTION_RE = /(?<![\w@])@([a-zA-Z][a-zA-Z0-9_]{4,31})\b/g;
 const TME_RE = /(?<![a-zA-Z0-9_.-])(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/([a-zA-Z][a-zA-Z0-9_]{4,31})(?![\w])/gi;
-const RESERVED = new Set(["joinchat", "addlist", "share", "proxy", "login", "boost", "iv"]);
-
-export function isSolanaAddress(input: string): boolean {
-  if (input.length < 32 || input.length > 44) return false;
-  let bytes = [0];
-  for (const char of input) {
-    const value = BASE58.indexOf(char);
-    if (value < 0) return false;
-    let carry = value;
-    for (let i = 0; i < bytes.length; i++) {
-      carry += bytes[i] * 58;
-      bytes[i] = carry & 255;
-      carry = Math.floor(carry / 256);
-    }
-    while (carry > 0) {
-      bytes.push(carry & 255);
-      carry = Math.floor(carry / 256);
-    }
-  }
-  for (const char of input) {
-    if (char === "1") bytes.push(0);
-    else break;
-  }
-  return bytes.length === 32;
-}
 
 export function extractLinks(message: RawTelegramMessage): MessageLink[] {
   const links = new Map<string, MessageLink>();
-  const add = (kind: LinkKind, targetKind: TargetKind, targetKey: string) => {
-    links.set(`${kind}:${targetKind}:${targetKey}`, { kind, targetKind, targetKey });
+  const add = (kind: LinkKind, targetKind: TargetKind, raw: string) => {
+    const key = normalizeTarget(targetKind, raw);
+    if (key) links.set(`${kind}:${targetKind}:${key}`, { kind, targetKind, targetKey: key });
   };
+  // GramJS MTProto MessageFwdHeader.fromId: only PeerChannel is a verified channel origin.
   const forward = message.fwdFrom?.fromId;
   if (forward?.className === "PeerChannel" && forward.channelId) {
-    const id = forward.channelId.toString();
-    if (/^[1-9]\d{0,19}$/.test(id)) add("forward", "channel_id", id);
+    add("forward", "channel_id", forward.channelId.toString());
   }
-  // fromName is unverified attribution: never turn it into an identity/edge.
-  const text = message.message ?? "";
-  for (const match of text.matchAll(MENTION_RE)) {
-    const handle = match[1].toLowerCase();
-    if (!RESERVED.has(handle)) add("mention", "handle", handle);
+  // Bot API adapter only: channel/supergroup forwarding; anonymous names do not imply an identity.
+  const botChat = message.forward_from_chat;
+  if (botChat && (botChat.type === "channel" || botChat.type === "supergroup")) {
+    if (botChat.id !== undefined) add("forward", "channel_id", String(botChat.id));
+    else if (botChat.username) add("forward", "handle", botChat.username);
   }
-  for (const match of text.matchAll(TME_RE)) {
-    const handle = match[1].toLowerCase();
-    if (!RESERVED.has(handle)) add("mention", "handle", handle);
-  }
-  for (const match of text.matchAll(EVM_RE)) add("address", "evm_address", match[0].toLowerCase());
-  for (const match of text.matchAll(TOKEN_RE)) {
-    if (isSolanaAddress(match[0])) add("address", "solana_address", match[0]);
-  }
-  return [...links.values()].sort((a, b) => a.kind.localeCompare(b.kind) ||
+  // forward_sender_name/fromName/forward_from are unverified/private-person attribution.
+  const txt = message.message ?? "";
+  for (const match of txt.matchAll(MENTION_RE)) add("mention", "handle", match[1]);
+  for (const match of txt.matchAll(TME_RE)) add("mention", "handle", match[1]);
+  for (const match of txt.matchAll(EVM_RE)) add("address", "evm_address", match[0]);
+  for (const match of txt.matchAll(TOKEN_RE)) add("address", "solana_address", match[0]);
+  return [...links.values()].sort((a,b) => a.kind.localeCompare(b.kind) ||
     a.targetKind.localeCompare(b.targetKind) || a.targetKey.localeCompare(b.targetKey));
 }
