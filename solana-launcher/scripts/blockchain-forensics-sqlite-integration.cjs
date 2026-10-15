@@ -48,8 +48,17 @@ try {
   pnl=db.prepare("SELECT * FROM chain_forensic_wallet_pnl WHERE wallet=? AND mint=?").get(wallet,mint);
   assert.equal(pnl.coverage_complete,0);
   assert.equal(pnl.total_realized_pnl_sol,null);
+  // Unknown swap instructions can hide a missing token leg, so even a fully
+  // paginated wallet cannot advertise verified aggregate PnL.
+  db.prepare("UPDATE chain_seed_targets SET possible_gap=0 WHERE address=?").run(wallet);
+  const opaque={signature:"opaque-swap",slot:5,timestamp:50,type:"SWAP",feePayer:wallet,fee:5000};
+  put.run(wallet,"opaque-swap",5,gzipSync(Buffer.from(JSON.stringify(opaque))));
+  rebuildWallet(db,wallet);
+  pnl=db.prepare("SELECT * FROM chain_forensic_wallet_pnl WHERE wallet=? AND mint=?").get(wallet,mint);
+  assert.equal(pnl.coverage_complete,0);
+  assert(JSON.parse(pnl.unknown_reasons).includes("undecoded_swap_in_wallet_history"));
   const current=db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_activities").get().n;
-  put.run(wallet,"bad-cache",5,Buffer.from("not-gzip"));
+  put.run(wallet,"bad-cache",6,Buffer.from("not-gzip"));
   assert.throws(()=>rebuildWallet(db,wallet),/Invalid cached transaction/);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_activities").get().n,current,
     "invalid raw cache must never partially replace materialized evidence");
