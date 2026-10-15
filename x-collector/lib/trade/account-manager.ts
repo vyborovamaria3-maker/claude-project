@@ -1,6 +1,21 @@
 import { q, q1, exec, tx } from "./pg";
 import { log } from "./logger";
 import { getConfig } from "./config";
+import { createRequire } from "node:module";
+
+// The shared parser strips probe metadata (latency, geolocation, timestamps),
+// preserving actual proxy endpoint and credentials as connection identity.
+type NormalProxy = {type:string;host:string;port:number;username?:string;password?:string};
+const {normalizeProxy} = createRequire(__filename)("../../scripts/account-health.cjs") as {
+  normalizeProxy: (input:unknown)=>NormalProxy|null;
+};
+export function proxyConnectionIdentity(raw:unknown):string|null {
+  try {
+    const proxy=normalizeProxy(raw);
+    if (!proxy) return null;
+    return JSON.stringify([proxy.type,proxy.host.toLowerCase(),proxy.port,proxy.username??"",proxy.password??""]);
+  } catch { return null; }
+}
 
 export type AccountTier = "new" | "warm" | "hot" | "retired";
 export type AccountStatus = "active" | "cooldown" | "captcha" | "banned";
@@ -149,14 +164,26 @@ export async function cooldownAccountProxy(name: string, leaseOwner: string, coo
     if (!proxy) return false;
     // Isolate every collector sharing this EXACT saved proxy configuration.
     // Different credentials/settings are deliberately not conflated.
+    const identity = proxyConnectionIdentity(proxy);
+    if (!identity) return false;
+    // All active candidate rows are locked before comparing normalized
+    // configuration, so a concurrent proxy edit cannot quarantine a newly
+    // configured unrelated route. This is a local-laptop control plane.
+    const candidates = await client.query<{name:string;proxy_json:string}>(
+      `SELECT name,proxy_json FROM x_accounts
+       WHERE role='collector' AND status='active' AND proxy_json IS NOT NULL
+       ORDER BY name FOR UPDATE`,
+    );
+    const matches = candidates.rows.filter(row => proxyConnectionIdentity(row.proxy_json) === identity).map(row=>row.name);
+    if (!matches.includes(name)) return false;
     const changed = await client.query<{ name: string }>(
       `UPDATE x_accounts
        SET status='cooldown',
            cooldown_until=GREATEST(COALESCE(cooldown_until,0), $1::bigint + $2::bigint),
            updated_at=$1
-       WHERE role='collector' AND status='active' AND proxy_json=$3
+       WHERE role='collector' AND status='active' AND name=ANY($3::text[])
        RETURNING name`,
-      [now, cooldownMs, proxy],
+      [now, cooldownMs, matches],
     );
     if (!changed.rows.length) return false;
     // Only account identifiers and a constant message are persisted.
