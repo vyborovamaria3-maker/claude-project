@@ -39,6 +39,20 @@ export interface HttpRuntimeContext {
 }
 
 /**
+ * Collapse upstream transport details to fixed, credential-free error messages.
+ * In particular, a full request timeout or invalid response is NOT evidence
+ * that the SOCKS5 proxy itself is broken.
+ */
+export function sanitizeXActionsTransportFailure(error: unknown): Error {
+  const message = error instanceof Error ? error.message : "";
+  if (/^XActions: HTTP request timed out/.test(message))
+    return new Error("XACTIONS_TRANSPORT_TIMEOUT: request deadline exceeded");
+  if (/HTTP response exceeds size limit|decoded HTTP response exceeds size limit|unsupported HTTP content encoding/i.test(message))
+    return new Error("XACTIONS_RESPONSE_INVALID: response payload rejected");
+  return new Error("PROXY_FAILED: XActions SOCKS5 transport request failed");
+}
+
+/**
  * Load the pinned ESM module lazily: the default Playwright path does not
  * evaluate or require XActions. Disable query-ID discovery and transaction
  * signatures to avoid unaccounted background fetches.
@@ -97,10 +111,10 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     ctx.signal.throwIfAborted();
     try {
       return await networkFetch(input, { ...init, signal: ctx.signal });
-    } catch {
+    } catch (error) {
       ctx.signal.throwIfAborted();
       // Do not forward transport/agent messages that could contain proxy secrets.
-      throw new Error("PROXY_FAILED: XActions SOCKS5 transport request failed");
+      throw sanitizeXActionsTransportFailure(error);
     }
   };
   const client = new module.TwitterHttpClient({
