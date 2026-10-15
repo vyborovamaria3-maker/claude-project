@@ -18,6 +18,12 @@ export async function persistMessage(
       msg.message, msg.views ?? null, msg.forwards ?? null,
       msg.replies?.replies ?? null, ANALYSIS_VERSION]
   );
+  await replaceEvidence(tx, sourceId, msg);
+}
+
+export async function replaceEvidence(
+  tx: PoolClient, sourceId: string, msg: RawTelegramMessage
+): Promise<void> {
   // Reconstructing the complete set per message avoids stale evidence after edits/retries.
   await tx.query("DELETE FROM tg_message_links WHERE source_id=$1 AND message_id=$2", [sourceId, msg.id]);
   for (const link of extractLinks(msg)) {
@@ -27,4 +33,6 @@ export async function persistMessage(
       [sourceId, msg.id, link.kind, link.targetKind, link.targetKey]
     );
   }
+  await tx.query("UPDATE tg_messages SET analysis_version=$3 WHERE source_id=$1 AND message_id=$2",
+    [sourceId, msg.id, ANALYSIS_VERSION]);
 }
