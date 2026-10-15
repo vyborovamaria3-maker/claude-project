@@ -167,15 +167,12 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
           const selected=filterHistory(tweets,historical).filter(t=>!(listPayload.list_source_id||listPayload.discovery_source) || ((!listPayload.list_since_id || BigInt(t.id)>BigInt(listPayload.list_since_id)) && (!listPayload.list_max_id || BigInt(t.id)<=BigInt(listPayload.list_max_id))));
           const sourceQuery=listPayload.list_source_id?`list:${listPayload.list_source_id}`:query;
           if(browserKey) {
-            // Save task links and observed-page checkpoint in one transaction.
-            // Large DOM batches use bounded commits; we intentionally do not
-            // use the oldest ID as an automatic cursor after a partial write.
-            for(let i=0;i<selected.length;i+=200) {
-              const chunk=selected.slice(i,i+200);
-              await commitBrowserBatch({...browserKey,lease:persistenceLease,ids:chunk.map(t=>t.id)},
-                client=>persistTweets(kind==="search"?task.mint:null,chunk,sourceQuery,
-                  task.id,acc.name,persistenceLease,{client}));
-            }
+            // The whole DOM batch and its checkpoint commit atomically.
+            // PersistTweets breaks the SQL work into 200-row chunks inside
+            // the SAME transaction; a crash never advances past unsaved IDs.
+            await commitBrowserBatch({...browserKey,lease:persistenceLease,ids:selected.map(t=>t.id)},
+              client=>persistTweets(kind==="search"?task.mint:null,selected,sourceQuery,
+                task.id,acc.name,persistenceLease,{client,atomicBrowserBatch:true}));
           } else {
             await persistTweets(kind==="search"?task.mint:null,selected,sourceQuery,task.id,acc.name,persistenceLease,
               useLegacyHttpSearch ? { transport: "http" } : {});
