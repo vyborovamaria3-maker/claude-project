@@ -152,6 +152,9 @@ export async function fetchEnrichedTxsForMintWithMeta(
     for (const tx of page) {
       if (!tx || typeof tx.signature !== "string" || !tx.signature) continue;
       if (stopAtSignatures?.has(tx.signature)) {
+        // Keep the overlap anchor: Helius may have enriched its payload since
+        // the last visit. PersistEvents fingerprints it and updates if changed.
+        if (!seen.has(tx.signature)) { seen.add(tx.signature); all.push(tx); }
         reachedKnownHistory = true;
         break;
       }
