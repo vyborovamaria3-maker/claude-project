@@ -81,12 +81,15 @@ async function fetchHeliusPage(
   before: string | undefined,
   limit: number,
   keys: string[],
+  includeTokenAccounts: boolean = false,
 ): Promise<HeliusEnrichedTx[]> {
   let lastError: Error | null = null;
   for (let round = 0; round < HELIUS_MAX_ROUNDS; round++) {
     for (const apiKey of keys) {
       const url = new URL(appendHeliusApiKey("https://api.helius.xyz/v0/addresses/" + mint + "/transactions", apiKey));
       url.searchParams.set("limit", String(limit));
+      // Wallet history must include changes to SPL token accounts, not just the owner address.
+      if (includeTokenAccounts) url.searchParams.set("token-accounts", "balanceChanged");
       if (before) url.searchParams.set("before", before);
       try {
         const response = await fetch(url.toString(), {
@@ -120,6 +123,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
   maxTxs: number = 1000,
   stopAtSignatures: ReadonlySet<string> | null = null,
   startBefore?: string,
+  includeTokenAccounts: boolean = false,
 ): Promise<EnrichedTxMeta> {
   const keys = HELIUS_API_KEYS;
   if (!keys.length) {
@@ -136,7 +140,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
 
   while (all.length < maxTxs) {
     const requested = Math.min(100, maxTxs - all.length);
-    const page = await fetchHeliusPage(mint, before, requested, keys);
+    const page = await fetchHeliusPage(mint, before, requested, keys, includeTokenAccounts);
     if (!page.length) {
       exhausted = true;
       break;
@@ -152,10 +156,8 @@ export async function fetchEnrichedTxsForMintWithMeta(
       all.push(tx);
     }
     if (reachedKnownHistory) break;
-    if (page.length < requested) {
-      exhausted = true;
-      break;
-    }
+    // A short filtered page is not proof of archive exhaustion.
+    // Only an empty page is considered exhausted.
     const nextBefore = page[page.length - 1]?.signature;
     if (!nextBefore || nextBefore === before || seenCursors.has(nextBefore)) {
       throw new Error("Helius pagination stalled: cursor repeated");
@@ -251,38 +253,9 @@ function extractTrade(tx: HeliusEnrichedTx, mint: string): RawTrade | null {
     }
   }
 
-  // 2. Fallback: correlate tokenTransfers + nativeTransfers
-  const tokenTransfers = (tx.tokenTransfers || []).filter((t) => t.mint === mint);
-  if (tokenTransfers.length === 0) return null;
-  const nativeTransfers = tx.nativeTransfers || [];
-  if (nativeTransfers.length === 0) return null;
-
-  // Largest native transfer = the swap leg
-  const largestNative = nativeTransfers.reduce((a, b) => (b.amount > a.amount ? b : a));
-  const largestToken = tokenTransfers.reduce((a, b) => (b.tokenAmount > a.tokenAmount ? b : a));
-
-  const amountSol = largestNative.amount / LAMPORTS_PER_SOL;
-  const amountTokens = largestToken.tokenAmount;
-  if (amountSol < 1e-6 || amountTokens < 1e-9) return null;
-
-  // BUY: trader sends SOL out, receives tokens
-  // SELL: trader sends tokens out, receives SOL
-  const trader = tx.feePayer || largestNative.fromUserAccount || largestToken.toUserAccount || "";
-  const isBuy = largestNative.fromUserAccount === trader && largestToken.toUserAccount === trader;
-  const isSell = largestToken.fromUserAccount === trader && largestNative.toUserAccount === trader;
-
-  if (!isBuy && !isSell) return null;
-  return {
-    signature: tx.signature,
-    timestamp: tx.timestamp,
-    trader,
-    type: isBuy ? "buy" : "sell",
-    amountSol,
-    amountTokens,
-    priceSol: amountSol / amountTokens,
-    fee: tx.fee,
-    source: tx.source,
-  };
+  // Do not infer a swap by pairing the largest SOL/token transfers:
+  // unrelated transfers, LP operations and aggregator legs can look identical.
+  return null;
 }
 
 /**
