@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { Pool } from "pg";
 import { AmbiguousCommitError, closePool, isAmbiguousPgCommit, tx } from "../lib/trade/pg";
+import { taskFailure } from "../lib/trade/task-errors";
 
 test("lost COMMIT outcome never replays a PostgreSQL write, even on ECONNREFUSED", async () => {
   const previous = process.env.DATABASE_URL;
@@ -70,4 +71,13 @@ test("COMMIT errors with no SQLSTATE are uncertain, but known constraint errors 
   assert.equal(isAmbiguousPgCommit(Object.assign(new Error("lost"), { code: "EPIPE" })), true);
   assert.equal(isAmbiguousPgCommit(Object.assign(new Error("deadlock"), { code: "40P01" })), false);
   assert.equal(isAmbiguousPgCommit(Object.assign(new Error("unique"), { code: "23505" })), false);
+});
+
+test("an uncertain SQL COMMIT is not an X session or proxy failure", () => {
+  const result = taskFailure(new AmbiguousCommitError(Object.assign(
+    new Error("connection refused"), { code: "ECONNREFUSED" },
+  )));
+  assert.equal(result.code, "DB_COMMIT_UNCERTAIN");
+  assert.equal(result.permanent, false);
+  assert(result.retryAfterMs >= 60_000);
 });
