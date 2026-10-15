@@ -6,7 +6,21 @@ import { normalizePublicUsername } from "./validation.js";
 
 async function main(): Promise<void> {
   const action = process.argv[2];
-  if (action === "login") { await login(); return; }
+  if (action === "login") {
+    await login();
+    // A new verified session resolves revoked credentials, but not an account-level restriction.
+    await migrate();
+    await pool.query("UPDATE tg_runtime SET block_reason=NULL, blocked_at=NULL WHERE id=1 AND block_reason='TG_SESSION_INVALID'");
+    return;
+  }
+  if (action === "unblock") {
+    if (process.argv[3] !== "--i-confirm-restriction-cleared") {
+      throw new Error("Review Telegram account status first; then: npx tsx src/cli.ts unblock --i-confirm-restriction-cleared");
+    }
+    await pool.query("UPDATE tg_runtime SET block_reason=NULL,blocked_at=NULL WHERE id=1");
+    console.log("Manual unblock recorded. No accounts were rotated.");
+    return;
+  }
   if (action === "migrate") { await migrate(); console.log("TG schema migrated"); return; }
   if (action === "add") {
     const identifier = normalizePublicUsername(process.argv[3] || "");
