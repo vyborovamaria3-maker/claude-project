@@ -10,7 +10,7 @@
     "security:test": "node scripts/security-regression.mjs",
     "landing:test": "node scripts/landing-regression.mjs",
     "kols:test": "node scripts/kols-regression.mjs",
-    "analysis:test": "node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/kols-regression.mjs && node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-seed-integration.cjs && node scripts/blockchain-forensics-regression.cjs && node scripts/blockchain-forensics-sqlite-integration.cjs && node scripts/blockchain-helius-pagination.cjs && node scripts/blockchain-collector-forensics-integration.cjs",
+    "analysis:test": "node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/kols-regression.mjs && node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-seed-integration.cjs && node scripts/blockchain-forensics-regression.cjs && node scripts/blockchain-forensics-sqlite-integration.cjs && node scripts/blockchain-helius-pagination.cjs && node scripts/blockchain-collector-forensics-integration.cjs && node scripts/blockchain-dex-index-regression.cjs",
     "blockchain:test": "node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-forensics-regression.cjs",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
@@ -33,9 +33,10 @@
     "blockchain:seeds": "node scripts/blockchain-seed-collector.cjs --mode import",
     "blockchain:collect": "node scripts/blockchain-seed-collector.cjs --mode collect",
     "blockchain:status": "node scripts/blockchain-seed-collector.cjs --mode status",
+    "blockchain:dex-replay": "node scripts/blockchain-dex-replay.cjs",
     "blockchain:forensics": "node scripts/blockchain-forensics.cjs",
     "blockchain:watch": "node scripts/blockchain-seed-collector.cjs --mode watch",
-    "blockchain:integration-test": "node scripts/blockchain-seed-integration.cjs && node scripts/blockchain-forensics-sqlite-integration.cjs && node scripts/blockchain-helius-pagination.cjs && node scripts/blockchain-collector-forensics-integration.cjs"
+    "blockchain:integration-test": "node scripts/blockchain-seed-integration.cjs && node scripts/blockchain-forensics-sqlite-integration.cjs && node scripts/blockchain-helius-pagination.cjs && node scripts/blockchain-collector-forensics-integration.cjs && node scripts/blockchain-dex-index-regression.cjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
