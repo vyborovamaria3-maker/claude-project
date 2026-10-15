@@ -20,6 +20,22 @@ permissions:
 jobs:
   collector:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: tg_collector_test
+          POSTGRES_USER: tg
+          POSTGRES_PASSWORD: tg
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tg -d tg_collector_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://tg:tg@127.0.0.1:5432/tg_collector_test
     defaults:
       run:
         working-directory: tg-collector
@@ -32,5 +48,5 @@ jobs:
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Typecheck
         run: npm run typecheck
-      - name: Regression tests
+      - name: Unit and database integration tests
         run: npm test
