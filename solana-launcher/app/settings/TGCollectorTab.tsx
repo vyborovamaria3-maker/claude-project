@@ -1,0 +1,277 @@
+"use client";
+
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2, Pause, Play, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+
+type Source = {
+  id: string;
+  identifier: string;
+  title: string | null;
+  peer_id: string | null;
+  enabled: boolean;
+  history_partial: boolean;
+  last_message_id: string;
+  last_success_at: string | null;
+  message_count: number;
+  state: "pending" | "running" | "delayed" | "failed" | null;
+  run_at: string | null;
+  attempts: number | null;
+  scanned_count: number | null;
+  last_error: string | null;
+};
+
+type CollectedMessage = {
+  source_id: string;
+  identifier: string;
+  message_id: string;
+  sender_id: string | null;
+  posted_at: string | null;
+  text: string;
+  views: number | null;
+  forwards: number | null;
+  replies: number | null;
+};
+
+type Snapshot = {
+  configured: boolean;
+  workerOnline: boolean;
+  heartbeatAt: string | null;
+  pausedUntil: string | null;
+  stats: { sources: number; messages: number; running: number; failed: number };
+  sources: Source[];
+  messages: CollectedMessage[];
+  page: number;
+};
+
+const endpoint = "/api/integrations/tg-collector";
+
+function formatDate(value: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "—" : date.toLocaleString("ru-RU");
+}
+
+function pill(state: Source["state"]) {
+  switch (state) {
+    case "running": return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "failed": return "border-red-500/30 bg-red-500/10 text-red-300";
+    case "delayed": return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    default: return "border-white/10 bg-white/5 text-content-muted";
+  }
+}
+
+export default function TGCollectorTab() {
+  const [data, setData] = useState<Snapshot | null>(null);
+  const [selected, setSelected] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const [channel, setChannel] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    const params = new URLSearchParams({ page: String(page) });
+    if (selected) params.set("source", selected);
+    if (query) params.set("q", query);
+    try {
+      const response = await fetch(`${endpoint}?${params}`, { cache: "no-store", signal });
+      const value = await response.json() as Snapshot & { error?: string };
+      if (!response.ok) throw new Error(value.error || "Не удалось получить данные");
+      if (signal?.aborted) return;
+      setData(value);
+      setError(null);
+    } catch (cause) {
+      if (!signal?.aborted) setError(cause instanceof Error ? cause.message : "Ошибка соединения");
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, [selected, query, page]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    const interval = setInterval(() => void refresh(controller.signal), 15000);
+    return () => { controller.abort(); clearInterval(interval); };
+  }, [refresh]);
+
+  async function command(action: "add" | "pause" | "resume" | "sync" | "retry" | "remove", source?: Source) {
+    if (busy) return;
+    if (action === "remove" && source &&
+      !window.confirm(`Удалить @${source.identifier} и все собранные сообщения из TG Collector? Это нельзя отменить.`)) return;
+    setBusy(action + (source?.id ?? ""));
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          action === "add" ? { action, username: channel.trim() }
+            : { action, sourceId: source?.id, confirm: action === "remove" ? source?.identifier : undefined }
+        ),
+      });
+      const result: { error?: string } = await response.json();
+      if (!response.ok) throw new Error(result.error || "Действие не выполнено");
+      if (action === "add") setChannel("");
+      if (action === "remove" && source?.id === selected) setSelected("");
+      setNotice(action === "add" ? "Источник добавлен в очередь." :
+        action === "remove" ? "Источник и его сообщения удалены." :
+        action === "pause" ? "Источник приостановлен после текущего запроса." :
+        action === "resume" ? "Сбор источника возобновлён." : "Задача поставлена в очередь.");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Ошибка выполнения команды");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function onAdd(event: FormEvent) {
+    event.preventDefault();
+    void command("add");
+  }
+  function onSearch(event: FormEvent) {
+    event.preventDefault();
+    setPage(0);
+    setQuery(searchInput.trim());
+  }
+
+  const metrics = [
+    { title: "Источники", value: data?.stats.sources ?? 0 },
+    { title: "Сообщения", value: data?.stats.messages ?? 0 },
+    { title: "Задания выполняются", value: data?.stats.running ?? 0 },
+    { title: "С ошибкой", value: data?.stats.failed ?? 0 },
+  ];
+  const globallyPaused = Boolean(data?.pausedUntil && new Date(data.pausedUntil) > new Date());
+
+  return (
+    <div className="space-y-6">
+      <div className="surface-panel p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2"><Database className="h-5 w-5 text-primary" /><h2 className="text-xl font-bold text-content">TG Collector</h2></div>
+            <p className="mt-2 text-sm text-content-muted">Локальный сбор публичных каналов и супергрупп Telegram через MTProto.</p>
+          </div>
+          <button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-2 rounded-xl border border-bg-border px-3 py-2 text-sm text-content-muted hover:text-content">
+            <RefreshCw className="h-4 w-4" /> Обновить
+          </button>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-3 text-xs">
+          <span className={`rounded-lg border px-3 py-2 ${data?.workerOnline ? "border-emerald-500/30 text-emerald-300" : "border-amber-500/30 text-amber-300"}`}>
+            {data?.workerOnline ? <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" /> : <Clock3 className="mr-1 inline h-3.5 w-3.5" />}
+            Worker: {data?.workerOnline ? "работает" : "не обнаружен"}
+          </span>
+          <span className="rounded-lg border border-bg-border px-3 py-2 text-content-muted">Последний сигнал: {formatDate(data?.heartbeatAt ?? null)}</span>
+          {globallyPaused && <span className="rounded-lg border border-amber-500/30 px-3 py-2 text-amber-300">Telegram FloodWait до {formatDate(data?.pausedUntil ?? null)}</span>}
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {metrics.map(item => (
+            <div key={item.title} className="rounded-xl border border-bg-border bg-bg-soft p-4">
+              <div className="text-xs text-content-muted">{item.title}</div>
+              <div className="mt-1 text-2xl font-semibold text-content">{item.value.toLocaleString("ru-RU")}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {loading && !data && <div className="surface-panel flex items-center gap-2 p-4 text-sm text-content-muted"><Loader2 className="h-4 w-4 animate-spin" /> Загрузка состояния...</div>}
+      {error && <div role="alert" className="flex gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
+      {notice && <div role="status" className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-300">{notice}</div>}
+
+      <section className="surface-panel p-5 sm:p-6">
+        <h3 className="font-semibold text-content">Добавить источник</h3>
+        <p className="mt-1 text-xs text-content-muted">Публичный @username или ссылка t.me/username. Без вступления в закрытые чаты.</p>
+        <form onSubmit={onAdd} className="mt-4 flex flex-wrap gap-2">
+          <input aria-label="Telegram username" value={channel} onChange={event => setChannel(event.target.value)} maxLength={128}
+            placeholder="@channel или https://t.me/channel" required
+            className="min-w-0 flex-1 rounded-xl border border-bg-border bg-bg-soft px-4 py-3 text-sm text-content outline-none focus:border-primary-border" />
+          <button type="submit" disabled={!channel.trim() || busy !== null} className="inline-flex items-center gap-2 rounded-xl border border-primary-border bg-primary/10 px-4 py-3 text-sm font-medium text-primary disabled:opacity-40">
+            {busy === "add" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Добавить
+          </button>
+        </form>
+      </section>
+
+      <section className="surface-panel p-5 sm:p-6">
+        <h3 className="font-semibold text-content">Источники и задания</h3>
+        <div className="mt-4 space-y-3">
+          {data?.sources.length === 0 && <p className="text-sm text-content-muted">Источников пока нет. Добавьте публичный канал выше.</p>}
+          {data?.sources.map(source => (
+            <div key={source.id} className="rounded-xl border border-bg-border bg-bg-soft p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-content">{source.title || "@" + source.identifier}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${pill(source.state)}`}>{source.enabled ? source.state ?? "без задачи" : "пауза"}</span>
+                    {source.history_partial && <span className="text-xs text-amber-300">История неполная</span>}
+                  </div>
+                  <a href={`https://t.me/${source.identifier}`} rel="noreferrer noopener" target="_blank" className="text-xs text-primary hover:underline">@{source.identifier}</a>
+                  <div className="mt-2 text-xs text-content-muted">{source.message_count} сообщений · ID {source.last_message_id} · Успешная синхронизация: {formatDate(source.last_success_at)}</div>
+                  {source.last_error && <div className="mt-2 max-w-xl break-words text-xs text-red-300">Ошибка: {source.last_error}</div>}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" disabled={busy !== null} onClick={() => { setSelected(source.id); setPage(0); }} className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted hover:text-content">Сообщения</button>
+                  {source.enabled ? (
+                    <button type="button" disabled={busy !== null} title="Отключает новые задания" onClick={() => void command("pause", source)}
+                      className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted hover:text-content"><Pause className="mr-1 inline h-3.5 w-3.5" /> Пауза</button>
+                  ) : (
+                    <button type="button" disabled={busy !== null} onClick={() => void command("resume", source)}
+                      className="rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-300"><Play className="mr-1 inline h-3.5 w-3.5" /> Возобновить</button>
+                  )}
+                  <button type="button" disabled={busy !== null || !source.enabled || source.state === "running"} onClick={() => void command(source.state === "failed" ? "retry" : "sync", source)}
+                    className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted disabled:opacity-30 hover:text-content"><RefreshCw className="mr-1 inline h-3.5 w-3.5" /> {source.state === "failed" ? "Повтор" : "Синхронизировать"}</button>
+                  <button type="button" disabled={busy !== null || source.state === "running"} onClick={() => void command("remove", source)}
+                    className="rounded-lg border border-red-500/20 px-3 py-2 text-xs text-red-300 disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" aria-label="Удалить" /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="surface-panel p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-semibold text-content">Сообщения</h3>
+          <select aria-label="Фильтр по источнику" value={selected} onChange={event => { setSelected(event.target.value); setPage(0); }}
+            className="min-w-40 rounded-xl border border-bg-border bg-bg-soft px-3 py-2 text-sm text-content">
+            <option value="">Все источники</option>
+            {data?.sources.map(source => <option key={source.id} value={source.id}>@{source.identifier}</option>)}
+          </select>
+        </div>
+        <form onSubmit={onSearch} className="mt-4 flex gap-2">
+          <input value={searchInput} maxLength={120} onChange={event => setSearchInput(event.target.value)}
+            placeholder="Поиск по тексту сообщений" className="min-w-0 flex-1 rounded-xl border border-bg-border bg-bg-soft px-3 py-2 text-sm text-content outline-none focus:border-primary-border" />
+          <button type="submit" className="rounded-xl border border-bg-border px-4 py-2 text-sm text-content-muted hover:text-content"><Search className="mr-1 inline h-4 w-4" /> Найти</button>
+        </form>
+        <div className="mt-4 space-y-2">
+          {data?.messages.length === 0 && <p className="text-sm text-content-muted">Нет сообщений по выбранным условиям.</p>}
+          {data?.messages.map(message => (
+            <article key={`${message.source_id}:${message.message_id}`} className="rounded-xl border border-bg-border bg-bg-soft p-4">
+              <div className="flex flex-wrap justify-between gap-2 text-xs text-content-muted">
+                <a href={`https://t.me/${message.identifier}/${message.message_id}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">@{message.identifier} · #{message.message_id}</a>
+                <span>{formatDate(message.posted_at)}</span>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-content">{message.text || "(медиа без текста)"}</p>
+              <p className="mt-2 text-xs text-content-muted">Автор: {message.sender_id || "—"} · Просмотры: {message.views ?? "—"} · Пересылки: {message.forwards ?? "—"} · Ответы: {message.replies ?? "—"}</p>
+            </article>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-between gap-3">
+          <button type="button" disabled={page === 0} onClick={() => setPage(n => Math.max(0, n - 1))} className="rounded-lg border border-bg-border px-4 py-2 text-xs text-content-muted disabled:opacity-30">Назад</button>
+          <span className="self-center text-xs text-content-muted">Страница {page + 1}</span>
+          <button type="button" disabled={!data || data.messages.length < 40 || page >= 100} onClick={() => setPage(n => n + 1)} className="rounded-lg border border-bg-border px-4 py-2 text-xs text-content-muted disabled:opacity-30">Далее</button>
+        </div>
+      </section>
+
+      <section className="surface-panel p-5 text-xs leading-6 text-content-muted">
+        <strong className="text-content">Локальный запуск:</strong> в папке <code>tg-collector</code> выполните
+        <code> npm run migrate</code>, <code>npm run login</code>, затем <code>npm run worker</code>.
+        Не вводите API hash, пароль Telegram или строку сессии в браузере — они хранятся локально у воркера.
+        При первом запуске собираются только последние сообщения в пределах заданного лимита.
+      </section>
+    </div>
+  );
+}
