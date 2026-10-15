@@ -116,7 +116,7 @@ export async function createInviteLink(
 ): Promise<{
   success: boolean;
   link?: string;
-  inviteLink?: { name?: string; inviteLink: string; expireDate?: number; memberLimit?: number };
+  inviteLink?: { name?: string; inviteLink: string; expireDate?: number; memberLimit?: number; createsJoinRequest: boolean };
   error?: string;
 }> {
   const botInstance = getBot(token);
@@ -128,6 +128,22 @@ export async function createInviteLink(
       member_limit: options?.createsJoinRequest ? undefined : options?.memberLimit,
       creates_join_request: options?.createsJoinRequest,
     });
+    // Do not misrepresent a regular membership link as a moderated opt-in link.
+    // An unexpected Bot API result must fail closed. Best-effort revoke any
+    // newly created link that does not enforce the requested approval policy.
+    if (options?.createsJoinRequest && linkResult.creates_join_request !== true) {
+      if (linkResult.invite_link) {
+        try {
+          await botInstance.telegram.revokeChatInviteLink(chatId, linkResult.invite_link);
+        } catch {
+          // Do not leak the bot token, chat ID, or unapproved link to clients.
+        }
+      }
+      return { success: false, error: "JOIN_REQUEST_NOT_ENFORCED" };
+    }
+    if (typeof linkResult.invite_link !== "string" || !linkResult.invite_link) {
+      return { success: false, error: "INVITE_LINK_MISSING" };
+    }
     return {
       success: true,
       link: linkResult.invite_link,
@@ -136,6 +152,7 @@ export async function createInviteLink(
         inviteLink: linkResult.invite_link,
         expireDate: linkResult.expire_date,
         memberLimit: linkResult.member_limit,
+        createsJoinRequest: linkResult.creates_join_request === true,
       },
     };
   } catch (err: unknown) {
