@@ -10,7 +10,7 @@ async function main(args=process.argv.slice(2)) {
   if (!["check","backup"].includes(mode)) throw new Error("Usage: blockchain:db-health [check|backup] [--db existing.db]");
   const at=args.indexOf("--db");
   if (at>=0 && !args[at+1]) throw new Error("Missing --db path");
-  const dbPath=path.resolve(at>=0?args[at+1]:path.join(process.cwd(),"data","trade.db"));
+  const dbPath=path.resolve(at>=0?args[at+1]:(process.env.SOLANA_TRADE_DB_PATH?.trim() || path.join(process.cwd(),"data","trade.db")));
   if (!fs.existsSync(dbPath)) throw new Error("SQLite database not found: "+dbPath);
   const source=new Database(dbPath,{readonly:true,fileMustExist:true});
   try {
