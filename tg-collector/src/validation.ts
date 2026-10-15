@@ -4,7 +4,7 @@ export function normalizePublicUsername(input: string): string {
     .replace(/^@/, "")
     .split(/[/?#]/)[0]
     .toLowerCase();
-  if (!/^[a-z][a-z0-9_]{4,31}$/.test(value)) {
+  if (!/^[a-z][a-z0-9_]{4,31}$/.test(value) || /^(joinchat|addlist|share|proxy|login|boost)$/i.test(value)) {
     throw new Error("Only public Telegram @usernames (5-32 characters) are supported.");
   }
   return value;
