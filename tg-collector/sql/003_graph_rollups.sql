@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS tg_graph_daily_edges (
   target_kind TEXT NOT NULL CHECK (target_kind IN ('handle','channel_id','solana_address','evm_address')),
   target_key TEXT NOT NULL,
   evidence_count INTEGER NOT NULL CHECK(evidence_count > 0),
+  first_seen TIMESTAMPTZ,
   last_seen TIMESTAMPTZ,
   sample_message_id BIGINT NOT NULL,
   refreshed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -19,3 +20,4 @@ CREATE INDEX IF NOT EXISTS tg_graph_daily_time_idx
 DROP INDEX IF EXISTS tg_messages_analysis_pending_idx;
 CREATE INDEX IF NOT EXISTS tg_messages_analysis_pending_idx
   ON tg_messages(source_id,message_id) WHERE analysis_version < 2;
+ALTER TABLE tg_graph_daily_edges ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ;
