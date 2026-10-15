@@ -20,6 +20,7 @@ from app.services.tginvite_consent_ledger import ConsentLedgerError, record_veri
 from app.services.tginvite_webhook_verify import (
     TelegramWebhookInvalid,
     verified_join_request,
+    verified_direct_invite_request,
     verify_operator_bindings,
 )
 
@@ -81,10 +82,12 @@ async def receive_telegram_join_request(
         raise HTTPException(status_code=422, detail="Invalid Telegram update") from exc
     try:
         verified = verified_join_request(update, settings=identity)
+        if verified is None:
+            verified = verified_direct_invite_request(update, settings=identity)
     except TelegramWebhookInvalid as exc:
-        raise HTTPException(status_code=422, detail="Invalid Telegram join request") from exc
-    # A dedicated opt-in webhook records no messages, bot starts, user lists,
-    # forwarded metadata or unrelated Telegram events.
+        raise HTTPException(status_code=422, detail="Invalid Telegram consent request") from exc
+    # Only a verified chat join request or an explicit private /join command
+    # authorizes a scoped proof. Other Telegram messages are ignored.
     if verified is None:
         return Response(status_code=204)
     try:
