@@ -175,6 +175,7 @@ function rebuildWallet(db, wallet, force = false) {
 }
 
 function rebuildAll(db, limit = 100, force = false) {
+  require("./blockchain-seed-collector.cjs").initDb(db);
   initForensics(db);
   const wallets = db.prepare(
     "SELECT t.address FROM chain_seed_targets t LEFT JOIN chain_forensic_wallet_sync s ON s.wallet=t.address WHERE t.kind='wallet' AND t.source_mask<>0 ORDER BY COALESCE(s.analyzed_at,0) ASC,t.priority DESC,t.address LIMIT ?"
