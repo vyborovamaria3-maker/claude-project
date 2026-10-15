@@ -386,6 +386,11 @@ function AnalysisResults({ data }: { data: AnalysisData }) {
 
   return (
     <div className="space-y-4">
+      <div role="note" className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-white/70">
+        <strong className="text-amber-200">Оценочная статистика:</strong> PnL и число уникальных трейдеров ниже
+        могут быть неполными; это не подтверждённый расчёт по всей истории Solana.
+        {" "}<a className="underline text-white" href={"/trade/analysis/evidence?mint="+encodeURIComponent(data.mint)}>Смотреть сохранённые on-chain доказательства</a>.
+      </div>
       {/* Token info card */}
       <TokenInfo mint={data.mint} />
 
