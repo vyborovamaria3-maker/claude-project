@@ -67,7 +67,7 @@ npm install
 npm run dev
 ```
 
-Откройте `http://localhost:3000/settings` и выберите вкладку **TG Collector** рядом с X Collector. Здесь доступны:
+Откройте `http://localhost:3000/tg-collector` (пункт меню **рядом с TGInvite**) или `http://localhost:3000/settings` → **TG Collector**. Здесь доступны:
 
 - счётчики каналов, сообщений и ошибок;
 - проверка heartbeat локального воркера и FloodWait;
