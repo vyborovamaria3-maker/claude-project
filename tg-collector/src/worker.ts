@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { pool, migrate } from "./db.js";
 import { authorizedClient } from "./telegram.js";
 import { telegramWaitSeconds } from "./validation.js";
+import { persistMessage } from "./persistence/messages.js";
 import type { TelegramClient } from "telegram";
 
 type Job = {
@@ -11,11 +12,7 @@ type Job = {
   cursor_before_id: string | null; scanned_count: number;
 };
 type Source = { identifier: string; last_message_id: string };
-type TgMessage = {
-  id: number; message?: string; senderId?: { toString(): string };
-  date?: number; views?: number; forwards?: number;
-  replies?: { replies?: number };
-};
+import type { RawTelegramMessage as TgMessage } from "./analytics/extract.js";
 
 function envInt(name: string, fallback: number, min: number, max: number): number {
   const n = Number(process.env[name] ?? fallback);
@@ -71,23 +68,7 @@ async function storePage(job: Job, rows: TgMessage[], lowId: number): Promise<vo
   const tx = await pool.connect();
   try {
     await tx.query("BEGIN");
-    for (const msg of rows) {
-      // Telegram's service events and deleted placeholders have no message text.
-      if (typeof msg.message !== "string") continue;
-      await tx.query(
-        `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT(source_id,message_id) DO UPDATE SET
-           sender_id=EXCLUDED.sender_id, posted_at=EXCLUDED.posted_at,
-           text=EXCLUDED.text, views=EXCLUDED.views,
-           forwards=EXCLUDED.forwards, replies=EXCLUDED.replies,
-           collected_at=now()`,
-        [job.source_id, msg.id, msg.senderId?.toString() ?? null,
-         typeof msg.date === "number" ? new Date(msg.date*1000) : null,
-         msg.message, msg.views ?? null, msg.forwards ?? null,
-         msg.replies?.replies ?? null]
-      );
-    }
+    for (const msg of rows) await persistMessage(tx, job.source_id, msg);
     await tx.query(`UPDATE tg_jobs SET cursor_before_id=$2,
       scanned_count=scanned_count+$3, locked_until=now()+interval '15 minutes',
       updated_at=now() WHERE id=$1`, [job.id, lowId, rows.length]);
