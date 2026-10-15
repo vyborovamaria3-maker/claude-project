@@ -136,20 +136,34 @@ export async function cooldownAccountProxy(name: string, leaseOwner: string, coo
     throw new Error("Invalid proxy cooldown");
   const now = Date.now();
   return tx(async client => {
-    const changed = await client.query(
+    // Verify the reporting account still owns its lease; a stale worker
+    // must not quarantine shared infrastructure for new owners.
+    const owner = await client.query<{ proxy_json: string | null }>(
+      `SELECT proxy_json FROM x_accounts
+       WHERE name=$1 AND account_claimed_by=$2 AND account_busy_until>$3
+         AND role='collector' AND status='active'
+       FOR UPDATE`,
+      [name, leaseOwner, now],
+    );
+    const proxy = owner.rows[0]?.proxy_json;
+    if (!proxy) return false;
+    // Isolate every collector sharing this EXACT saved proxy configuration.
+    // Different credentials/settings are deliberately not conflated.
+    const changed = await client.query<{ name: string }>(
       `UPDATE x_accounts
        SET status='cooldown',
            cooldown_until=GREATEST(COALESCE(cooldown_until,0), $1::bigint + $2::bigint),
            updated_at=$1
-       WHERE name=$3 AND account_claimed_by=$4 AND account_busy_until>$1 AND status='active'
+       WHERE role='collector' AND status='active' AND proxy_json=$3
        RETURNING name`,
-      [now, cooldownMs, name, leaseOwner],
+      [now, cooldownMs, proxy],
     );
     if (!changed.rows.length) return false;
-    // This audit record contains a constant message, never proxy credentials.
+    // Only account identifiers and a constant message are persisted.
     await client.query(
-      "INSERT INTO xc_account_errors(account_name,type,message,created_at) VALUES($1,'PROXY_FAILED',$2,$3)",
-      [name, "SOCKS5 account proxy unavailable; temporary cooldown", now],
+      `INSERT INTO xc_account_errors(account_name,type,message,created_at)
+       SELECT unnest($1::text[]),'PROXY_FAILED',$2,$3`,
+      [changed.rows.map(row => row.name), "SOCKS5 account proxy unavailable; temporary cooldown", now],
     );
     return true;
   });
