@@ -100,6 +100,12 @@ function initDb(db) {
   if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
   }
+  // Existing wallet cursors were built without token-account coverage.
+  // Invalidate them once rather than falsely declaring the old scan complete.
+  if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "wallet_history_mode")) {
+    db.exec("ALTER TABLE chain_seed_targets ADD COLUMN wallet_history_mode TEXT");
+    db.prepare("UPDATE chain_seed_targets SET backfill_complete=0,backfill_cursor=NULL,forward_cursor=NULL,possible_gap=1,last_success_at=NULL,next_run_at=0 WHERE kind=\'wallet\'").run();
+  }
 }
 
 function refreshTargets(db) {
@@ -267,18 +273,16 @@ function persistEvents(db, kind, address, transactions) {
   return saved;
 }
 
-function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
+function appendDiscovered(db, ownerWallet, transactions) {
+  const { parseEvidence } = require("./blockchain-forensics-core.cjs");
   const discovered = new Set();
   for (const tx of transactions) {
-    const swap = tx.events && tx.events.swap;
-    if (!swap) continue;
-    const mints = [...(swap.tokenInputs || []), ...(swap.tokenOutputs || [])];
-    for (const leg of mints) {
-      const mint = leg && leg.mint;
+    // Only an attributable, parsed wallet swap is discovery evidence.
+    for (const event of parseEvidence(tx, ownerWallet)) {
+      if (event.kind !== "buy" && event.kind !== "sell") continue;
+      const mint = event.mint;
       if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) continue;
-      if (txsToTrades([tx], mint).some(t => t.type === "buy" || t.type === "sell")) {
-        discovered.add(mint);
-      }
+      discovered.add(mint);
     }
     if (discovered.size >= 25) break;
   }
@@ -292,24 +296,21 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
     "source_mask=(chain_seed_targets.source_mask | 8),",
     "priority=MAX(chain_seed_targets.priority,40)",
   ].join(" "));
-  const tx = db.transaction(() => {
+  return db.transaction(() => {
     let count = 0;
     for (const mint of discovered) {
-      const inserted = link.run("@wallet:" + ownerWallet, "discovered", "token", mint);
-      if (inserted.changes) count++;
+      count += link.run("@wallet:" + ownerWallet, "discovered", "token", mint).changes;
       target.run(mint);
     }
     return count;
-  });
-  return tx();
+  })();
 }
-
 async function processOne(db, row, cfg, api) {
-  const known = new Set(db.prepare(
+  const known = row.last_success_at ? new Set(db.prepare(
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
-  ).all(row.kind, row.address).map(r => r.signature));
-  const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known);
+  ).all(row.kind, row.address).map(r => r.signature)) : new Set();
+  const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known, undefined, row.kind === "wallet");
   let events = [...recent.transactions];
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
@@ -325,7 +326,7 @@ async function processOne(db, row, cfg, api) {
   }
   if (forwardCursor && known.size) {
     const bridge = await api.fetchEnrichedTxsForMintWithMeta(
-      row.address, cfg.backfillLimit, known, forwardCursor
+      row.address, cfg.backfillLimit, known, forwardCursor, row.kind === "wallet"
     );
     events.push(...bridge.transactions);
     if (bridge.reachedKnownHistory || bridge.exhausted) {
@@ -343,7 +344,7 @@ async function processOne(db, row, cfg, api) {
     if (recent.exhausted) complete = true;
   } else if (!complete && backfillCursor) {
     const historical = await api.fetchEnrichedTxsForMintWithMeta(
-      row.address, cfg.backfillLimit, null, backfillCursor
+      row.address, cfg.backfillLimit, null, backfillCursor, row.kind === "wallet"
     );
     events.push(...historical.transactions);
     if (historical.exhausted) complete = true;
@@ -356,7 +357,9 @@ async function processOne(db, row, cfg, api) {
 
   const unique = [...new Map(events.filter(tx => tx && tx.signature)
     .map(tx => [tx.signature, tx])).values()];
-  const trades = row.kind === "token" ? api.txsToTrades(unique, row.address) : [];
+  // Mint-address traffic is not a complete trade index. Never feed such
+  // observations into the legacy PnL/trade table as established fills.
+  const trades = [];
   // SQLite savepoints keep raw events and normalized token trades atomic.
   const added = db.transaction(() => {
     const n = persistEvents(db, row.kind, row.address, unique);
@@ -370,10 +373,10 @@ async function processOne(db, row, cfg, api) {
         jitoTipLamports: t.jitoTipLamports,
       })));
     }
-    if (row.kind === "token") api.markTokenTradeChecked(row.address);
-    if (row.kind === "wallet") appendDiscovered(db, row.address, unique, api.txsToTrades);
+    if (row.kind === "wallet") appendDiscovered(db, row.address, unique);
     return n;
   })();
+  if (complete && !forwardCursor) gap = false;
   const cadence = row.priority >= 100 ? 5 * 60_000 :
     row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
   db.prepare(
@@ -384,6 +387,9 @@ async function processOne(db, row, cfg, api) {
   ).run(Date.now(), Date.now() + (complete && !forwardCursor ? cadence : 60_000),
     backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
     added, row.kind, row.address);
+  // The forensic index is derived ONLY from persisted wallet evidence, not
+  // from workbook labels or guessed mint-level activity.
+  if (row.kind === "wallet") require("./blockchain-forensics.cjs").rebuildWallet(db, row.address);
   return { kind: row.kind, address: row.address, newEvents: added,
     normalizedTrades: trades.length, complete, possibleGap: gap };
 }
