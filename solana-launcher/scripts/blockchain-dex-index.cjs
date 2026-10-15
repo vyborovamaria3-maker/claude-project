@@ -16,7 +16,9 @@ function configuredDexPrograms(input = process.env.CHAIN_DEX_PROGRAM_IDS || "") 
     throw new Error("CHAIN_DEX_PROGRAM_IDS must contain valid 32-byte base58 Solana program addresses");
   return unique;
 }
+const dexInitialized = new WeakSet();
 function initDexIndex(db) {
+  if (dexInitialized.has(db)) return;
   db.exec([
     "CREATE TABLE IF NOT EXISTS chain_dex_observed_trades (",
     "program TEXT NOT NULL,signature TEXT NOT NULL,wallet TEXT NOT NULL,",
@@ -45,6 +47,7 @@ function initDexIndex(db) {
     "DELETE FROM chain_dex_observed_trades WHERE program=OLD.address AND signature=OLD.signature;",
     "DELETE FROM chain_dex_indexed_signatures WHERE program=OLD.address AND signature=OLD.signature; END;",
   ].join("\n"));
+  dexInitialized.add(db);
 }
 function extractDexObservations(tx, program) {
   if (!tx || !tx.signature || !tx.events?.swap || tx.transactionError != null ||
