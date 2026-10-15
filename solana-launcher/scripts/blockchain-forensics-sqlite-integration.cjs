@@ -44,7 +44,7 @@ try {
   assert(pnl.total_realized_pnl_sol > 0.99 && pnl.total_realized_pnl_sol < 1.01);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_activities").get().n,2);
   assert.equal(rebuildWallet(db,wallet).skipped,true,"no event changes -> no duplicate rebuild");
-  const transfer = { signature:"transfer-sig",slot:3,timestamp:30,type:"TRANSFER",
+  const transfer = { signature:"transfer-sig",slot:111491823,timestamp:30,type:"TRANSFER",
     tokenTransfers:[{ fromUserAccount:other,toUserAccount:wallet,mint,tokenAmount:3 }] };
   put.run(wallet,"transfer-sig",3,111491823,gzipSync(Buffer.from(JSON.stringify(transfer))));
   record("sell-after-transfer",4,{nativeOutput:{account:wallet,amount:"1000000000"},tokenInputs:[leg(3)]});
