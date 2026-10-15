@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     try {
       await tx.query("BEGIN");
       const { rows } = await tx.query<{ id: string }>(
-        "INSERT INTO tg_sources(identifier) VALUES ($1) ON CONFLICT(identifier) DO UPDATE SET identifier=EXCLUDED.identifier RETURNING id",
+        "INSERT INTO tg_sources(identifier) VALUES ($1) ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE RETURNING id",
         [identifier]
       );
       await tx.query(
@@ -31,6 +31,9 @@ async function main(): Promise<void> {
          ON CONFLICT DO NOTHING`,
         [rows[0].id]
       );
+      await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0, run_at=now(),
+        locked_until=NULL, last_error=NULL
+        WHERE source_id=$1 AND state IN ('pending','failed','delayed')`, [rows[0].id]);
       await tx.query("COMMIT");
       console.log("Added source:", identifier);
     } catch (error) {
