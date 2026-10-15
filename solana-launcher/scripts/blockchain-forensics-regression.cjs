@@ -59,6 +59,11 @@ delete noFee.fee;
 assert.equal(computePnl([...parseEvidence(noFee, WALLET),
   ...parseEvidence(sell("no-fee-sell", 9, 1, 2), WALLET)], true)[0].totalRealizedPnlSol, null);
 assert.equal(computePnl([parseEvidence(buy("only-buy", 10, 1, 1), WALLET)[0]],true)[0].status,"unknown");
+const nativeTx={signature:"sol-transfer",slot:14,timestamp:1400,type:"TRANSFER",nativeTransfers:[{fromUserAccount:WALLET,toUserAccount:OTHER,amount:100000000}]};
+const nativeEvents=parseEvidence(nativeTx,WALLET);
+assert.equal(nativeEvents[0].kind,"sol_transfer_out");
+assert.equal(nativeEvents[0].amountSol,0.1);
+assert.equal(computePnl(nativeEvents,true).length,0,"SOL transfers cannot become token realized PnL");
 const noOrdering = buy("missing-order", 11, 1, 1);
 delete noOrdering.slot;
 assert.equal(computePnl([...parseEvidence(noOrdering, WALLET),
