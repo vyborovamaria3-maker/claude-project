@@ -29,7 +29,9 @@ export function taskFailure(error: unknown): { code: string; permanent: boolean;
     return { code: "ACCESS_REQUIRED", permanent: false, retryAfterMs: 0 };
   // Distinguish uncertain collection states from verified empty results or
   // broken account credentials. These are operational failures, not bans.
-  if (/search results did not load|no tweets and no empty state/i.test(message))
+  if (/^SEARCH_PARSE_UNCONFIRMED/i.test(message))
+    return { code: "SEARCH_PARSE_UNCONFIRMED", permanent: false, retryAfterMs: 120_000 };
+  if (/^SEARCH_UNCONFIRMED|search results did not load|no tweets and no empty state/i.test(message))
     return { code: "SEARCH_UNCONFIRMED", permanent: false, retryAfterMs: 30_000 };
   if (/XActions: ambiguous timeline end/i.test(message))
     return { code: "PAGE_END_UNVERIFIED", permanent: false, retryAfterMs: 120_000 };
