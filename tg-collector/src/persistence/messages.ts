@@ -22,10 +22,12 @@ export async function persistMessage(
 }
 
 export async function replaceEvidence(
-  tx: PoolClient, sourceId: string, msg: RawTelegramMessage
+  tx: PoolClient, sourceId: string, msg: RawTelegramMessage,
+  options: { preserveExistingForwards?: boolean } = {}
 ): Promise<void> {
   // Reconstructing the complete set per message avoids stale evidence after edits/retries.
-  await tx.query("DELETE FROM tg_message_links WHERE source_id=$1 AND message_id=$2", [sourceId, msg.id]);
+  await tx.query(`DELETE FROM tg_message_links WHERE source_id=$1 AND message_id=$2
+    AND ($3::boolean=false OR kind <> 'forward')`, [sourceId, msg.id, options.preserveExistingForwards === true]);
   for (const link of extractLinks(msg)) {
     await tx.query(
       `INSERT INTO tg_message_links(source_id,message_id,kind,target_kind,target_key)
