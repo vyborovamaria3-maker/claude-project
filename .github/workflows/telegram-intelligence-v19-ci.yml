@@ -78,7 +78,7 @@ jobs:
       - name: TypeScript check
         run: npx tsc --noEmit
       - name: TGInvite unit tests
-        run: npx vitest run --environment node lib/tginvite-storage.test.ts lib/tginvite-invite-policy.test.ts lib/tginvite-invite-route.test.ts lib/tginvite-telegram-client.test.ts lib/tginvite-vault-client.test.ts lib/tginvite-jobs-route.test.ts lib/tginvite-invite-transport.test.ts lib/tginvite-history-export.test.ts lib/tginvite-mtproto.test.ts lib/tginvite-auth.test.ts lib/tginvite-encryption.test.ts lib/tginvite-filter.test.ts lib/tginvite-job-queue.test.ts lib/tginvite-rate-limiter.test.ts
+        run: npx vitest run --environment node lib/tginvite-storage.test.ts lib/tginvite-invite-policy.test.ts lib/tginvite-invite-route.test.ts lib/tginvite-telegram-client.test.ts lib/tginvite-vault-client.test.ts lib/tginvite-jobs-route.test.ts lib/tginvite-invite-transport.test.ts lib/tginvite-history-export.test.ts lib/tginvite-mtproto.test.ts lib/tginvite-auth.test.ts lib/tginvite-encryption.test.ts lib/tginvite-filter.test.ts lib/tginvite-job-queue.test.ts lib/tginvite-rate-limiter.test.ts lib/tginvite-optin.test.ts
 
   compose:
     runs-on: ${{ vars.POTAPOFF_RUNNER || 'self-hosted' }}
