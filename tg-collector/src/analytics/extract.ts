@@ -4,8 +4,8 @@
  */
 export const ANALYSIS_VERSION = 1;
 
-export type LinkKind = "mention" | "forward" | "contract";
-export type TargetKind = "handle" | "channel_id" | "solana_contract" | "evm_contract";
+export type LinkKind = "mention" | "forward" | "address";
+export type TargetKind = "handle" | "channel_id" | "solana_address" | "evm_address";
 export type MessageLink = { kind: LinkKind; targetKind: TargetKind; targetKey: string };
 
 export interface RawTelegramMessage {
@@ -73,9 +73,9 @@ export function extractLinks(message: RawTelegramMessage): MessageLink[] {
     const handle = match[1].toLowerCase();
     if (!RESERVED.has(handle)) add("mention", "handle", handle);
   }
-  for (const match of text.matchAll(EVM_RE)) add("contract", "evm_contract", match[0].toLowerCase());
+  for (const match of text.matchAll(EVM_RE)) add("address", "evm_address", match[0].toLowerCase());
   for (const match of text.matchAll(TOKEN_RE)) {
-    if (isSolanaAddress(match[0])) add("contract", "solana_contract", match[0]);
+    if (isSolanaAddress(match[0])) add("address", "solana_address", match[0]);
   }
   return [...links.values()].sort((a, b) => a.kind.localeCompare(b.kind) ||
     a.targetKind.localeCompare(b.targetKind) || a.targetKey.localeCompare(b.targetKey));
