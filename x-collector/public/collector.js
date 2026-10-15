@@ -40,3 +40,30 @@ live.addEventListener('snapshot',event=>{try{showLive(JSON.parse(event.data));}c
 live.addEventListener('unavailable',()=>{el('live-state').textContent='Мониторинг недоступен: проверьте базу и миграции. Повторное подключение автоматически.';el('live-state').className='bad';});
 live.onerror=()=>{el('live-state').textContent='Соединение прервано. Переподключаюсь…';el('live-state').className='bad';};
 window.addEventListener('pagehide',()=>live.close());
+
+const diagnosticStates={
+ queued:'В очереди',waiting_account:'Нет свободного аккаунта',
+ retry_wait:'Ожидание повтора',running:'Выполняется',
+ partial:'Частично сохранено',completed:'Завершено',failed:'Ошибка',
+};
+async function refreshDiagnostics(){
+ try{
+  const data=await api('/api/collector/diagnostics');
+  const counters=data.queue.map(item=>item.status+': '+item.count).join('; ')||'заданий нет';
+  const accountCounters=data.accounts.map(item=>item.status+': '+item.count).join('; ')||'аккаунтов нет';
+  el('diag-summary').className='ok';
+  el('diag-summary').textContent='Очередь: '+counters+'. Аккаунты: '+accountCounters+'.';
+  el('diag-jobs').replaceChildren(...data.tasks.map(task=>cells([
+   '#'+task.id+' · '+task.kind,
+   diagnosticStates[task.state]??task.state,
+   task.attempts+' / '+task.maxAttempts,
+   task.lastErrorCode??'—',
+   task.nextEligibleInSeconds>0?task.nextEligibleInSeconds+' сек':'—',
+  ])));
+ }catch(error){
+  el('diag-summary').className='bad';
+  el('diag-summary').textContent='Диагностика недоступна: '+error.message;
+ }
+}
+el('diag-refresh').addEventListener('click',refreshDiagnostics);
+refreshDiagnostics();
