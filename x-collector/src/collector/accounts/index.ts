@@ -2,3 +2,4 @@
 export * from "./account-manager";
 export { parseProxy } from "../../x/proxy";
 export { recordAccountError } from "../../accounts/errors";
+export * from "./quota";
