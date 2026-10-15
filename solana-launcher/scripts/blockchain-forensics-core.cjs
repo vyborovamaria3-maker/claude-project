@@ -97,11 +97,18 @@ function computePnl(events, coverageComplete) {
       || a.signature.localeCompare(b.signature) || a.index - b.index);
     const lots = [], reasons = new Set();
     let knownPnl = 0, knownSellCount = 0, sells = 0, buys = 0, transfers = 0;
+    // A matched pair is not proven FIFO if earlier history or intermediate
+    // balance-changing activity could be missing or undecodable.
+    let basisTainted = !coverageComplete;
     if (!coverageComplete) reasons.add("history_incomplete");
+    if (rows.some(e => e.slot == null || e.timestamp == null)) {
+      reasons.add("missing_order_metadata");
+      basisTainted = true;
+    }
     for (let i = 1; i < rows.length; i++) {
       if (rows[i].slot != null && rows[i].slot === rows[i - 1].slot
           && rows[i].signature !== rows[i - 1].signature)
-        reasons.add("same_slot_order_unverified");
+        { reasons.add("same_slot_order_unverified"); basisTainted = true; }
     }
     function consume(qty) {
       const consumed = [];
@@ -130,17 +137,20 @@ function computePnl(events, coverageComplete) {
         reasons.add("incoming_transfer_unknown_basis");
       } else if (e.kind === "transfer_out") {
         transfers++;
-        if (consume(e.amountTokens).some(m => m.cost == null)) reasons.add("outgoing_transfer_without_basis");
+        if (consume(e.amountTokens).some(m => m.cost == null)) {
+          reasons.add("outgoing_transfer_without_basis"); basisTainted = true;
+        }
       } else if (e.kind === "sell") {
         sells++;
         const matches = consume(e.amountTokens);
         const allKnown = matches.every(m => m.cost != null);
-        if (allKnown && e.amountSol != null && e.feeSol != null) {
+        if (!basisTainted && allKnown && e.amountSol != null && e.feeSol != null) {
           knownPnl += e.amountSol - e.feeSol - matches.reduce((sum,m) => sum + m.cost, 0);
           knownSellCount++;
         } else reasons.add("sale_without_verified_cost_basis");
       } else {
         reasons.add("unpriced_or_undecoded_activity");
+        basisTainted = true;
         // Any subsequent cost-basis computation may be invalid: do not
         // fabricate a quantity or a direction from incomplete decoding.
       }
