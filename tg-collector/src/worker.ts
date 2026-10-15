@@ -2,6 +2,7 @@ import "dotenv/config";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pool, migrate } from "./db.js";
 import { authorizedClient } from "./telegram.js";
+import { telegramWaitSeconds } from "./validation.js";
 import type { TelegramClient } from "telegram";
 
 type Job = {
@@ -169,16 +170,10 @@ async function processJob(client: TelegramClient, job: Job): Promise<void> {
     updated_at=now() WHERE id=$1`, [job.id]);
 }
 
-function floodSeconds(error: unknown): number | null {
-  const e = error as { seconds?: unknown; message?: string };
-  if (typeof e?.seconds === "number" && e.seconds > 0) return Math.ceil(e.seconds);
-  const match = String(e?.message ?? error).match(/FLOOD_WAIT_?(\d+)/i);
-  return match ? Number(match[1]) : null;
-}
 
 async function handleFailure(job: Job, error: unknown): Promise<void> {
   const message = (error instanceof Error ? error.message : String(error)).slice(0,300);
-  const seconds = floodSeconds(error);
+  const seconds = telegramWaitSeconds(error);
   if (seconds !== null) {
     const wait = Math.min(seconds + 15, 86400 * 30);
     await pool.query(
