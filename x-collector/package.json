@@ -43,6 +43,7 @@
     "xactions:refresh": "node scripts/xactions-refresh.cjs",
     "xactions:status": "tsx scripts/xactions-status.ts",
     "x:errors": "tsx scripts/collector-error-report.ts",
+    "x:quality": "tsx scripts/collector-quality-report.ts",
     "xactions:archive-gc": "tsx scripts/xactions-archive-gc.ts",
     "enqueue-mints": "tsx scripts/enqueue-mints.ts",
     "worker": "tsx scripts/worker.ts",
