@@ -83,6 +83,8 @@ const RETRYABLE_PG_CODES = new Set([
   "57P02", // cannot_connect_now
   "57P03", // crash_shutdown
   "57P04", // database_is_shutting_down
+  // Node.js connection errors may expose a code without echoing it in message.
+  "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENETUNREACH", "EHOSTUNREACH", "EPIPE",
 ]);
 
 export function pgErrorCode(error: unknown): string | undefined {
