@@ -25,7 +25,7 @@ function request(body: unknown) {
     body: JSON.stringify(body),
   });
 }
-const params = { action: "createLink", token: "123456789:abcdefghijklmnopqrstuvwxyzABCDE123456", chatId: "@test_group" };
+const params = { action: "createLink", token: ["123456789", "a".repeat(35)].join(":"), chatId: "@test_group" };
 
 beforeEach(() => {
   vi.clearAllMocks();
