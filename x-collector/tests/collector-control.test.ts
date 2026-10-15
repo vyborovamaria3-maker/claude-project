@@ -40,7 +40,7 @@ test('Start button reaches queue, real storage and task results; retries and set
  const browser = await chromium.launch({ headless: true });
  try{
  assert.equal((await readiness()).ready,false);
-for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql','019_account_roles.sql','020_account_profile.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql','019_account_roles.sql','020_account_profile.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql','044_browser_checkpoints.sql','045_collector_trace.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
  await db.exec('ALTER TABLE x_accounts ADD COLUMN IF NOT EXISTS account_claimed_by text');
  assert.equal((await readiness()).ready,false);
  const blob=encryptBuffer(Buffer.from(JSON.stringify({cookies:[{name:'auth_token',value:'controlled-fixture',domain:'.x.com',expires:-1}],origins:[]})));
@@ -64,7 +64,8 @@ for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundatio
  assert.match(await page.locator('#diag-jobs').innerText(),/есть сохранённые данные/);
  await page.locator('#value').fill('solana');
  const [response]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/collector/start')),page.locator('#start').click()]);assert.equal(response.status(),202);const {id}=await response.json();assert.equal(launches,1);
- await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/collector/resume')),page.locator('#resume').click()]);assert.equal(launches,2);
+ await page.locator('#resume').waitFor({state:'visible'});
+  await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/collector/resume')),page.locator('#resume').click()]);assert.equal(launches,2);
  const task=(await db.query<{idempotency_key:string;payload_json:unknown}>("SELECT * FROM x_tasks WHERE id=$1",[id])).rows[0];
  const retry={kind:'search',payload:task.payload_json,requestId:task.idempotency_key.slice(3)};
  assert.equal((await startCollection(retry,startWorker)).reused,true);assert.equal((await db.query('SELECT * FROM x_tasks')).rows.length,1);
