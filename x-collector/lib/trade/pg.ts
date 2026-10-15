@@ -89,13 +89,32 @@ export async function exec(sql: string, params: unknown[] = []): Promise<number>
   return r.rowCount ?? 0;
 }
 
-/** Bound the HTTP probe including time spent waiting for a pooled connection. */
+/** A single shared DB probe avoids piling up abandoned pool queries during outages. */
+let healthProbe: Promise<void> | null = null;
+
+/**
+ * Bound the HTTP response even while a pool connection is unavailable.
+ * Promise.race does not cancel a pg query: reuse one in-flight probe rather
+ * than starting another on every dashboard/worker health request.
+ */
 export async function checkDatabase(timeoutMs = 3000): Promise<void> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000)
+    throw new Error("Invalid database health timeout");
+  if (!healthProbe) {
+    const started: Promise<void> = getPool().query("SELECT 1").then(() => {});
+    healthProbe = started;
+    void started.then(
+      () => { if (healthProbe === started) healthProbe = null; },
+      () => { if (healthProbe === started) healthProbe = null; },
+    );
+  }
   let timer: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
-      getPool().query("SELECT 1"),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("database health timeout")), timeoutMs); }),
+      healthProbe,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("database health timeout")), timeoutMs);
+      }),
     ]);
   } finally { if (timer) clearTimeout(timer); }
 }
@@ -137,6 +156,7 @@ export async function tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
 export async function closePool(): Promise<void> {
   const p = pool;
   pool = null;
+  healthProbe = null;
   if (!p) return;
   try {
     await p.end();
