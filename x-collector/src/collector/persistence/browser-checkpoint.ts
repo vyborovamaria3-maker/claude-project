@@ -74,7 +74,7 @@ export async function writeBrowserBatchInTransaction(
   persist:(client:PoolClient)=>Promise<number>,
 ):Promise<number> {
   validateKey(write);
-  if(write.ids.length>200||write.ids.some(id=>safeId(id)===null))
+  if(write.ids.length>1000||write.ids.some(id=>safeId(id)===null))
     throw new Error("Invalid browser page identifiers");
   const now=Date.now();
   const task=await client.query(`SELECT 1 FROM x_tasks WHERE id=$1 AND status='claimed'
