@@ -1,0 +1,34 @@
+name: TG Collector checks
+on:
+  pull_request:
+    paths:
+      - 'tg-collector/**'
+      - 'solana-launcher/app/settings/TGCollectorTab.tsx'
+      - 'solana-launcher/app/settings/page.tsx'
+      - 'solana-launcher/app/api/integrations/tg-collector/**'
+      - '.github/workflows/tg-collector.yml'
+  push:
+    branches:
+      - 'feature/tg-collector-mvp'
+    paths:
+      - 'tg-collector/**'
+      - '.github/workflows/tg-collector.yml'
+permissions:
+  contents: read
+jobs:
+  collector:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tg-collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Regression tests
+        run: npm test
