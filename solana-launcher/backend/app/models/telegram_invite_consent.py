@@ -57,12 +57,22 @@ class TelegramInviteJob(Base):
     __tablename__ = "telegram_invite_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('blocked_transport', 'cancelled')",
+            "status IN ('blocked_transport', 'cancelled', 'reserved', 'invited', 'declined', 'unknown')",
             name="ck_tginvite_job_status_no_dispatch",
         ),
         UniqueConstraint(
             "owner_id", "idempotency_key", name="uq_tginvite_job_owner_request",
         ),
+        UniqueConstraint(
+            "owner_id", "destination_chat_id", "direct_recipient_digest",
+            name="uq_tginvite_direct_once_per_recipient",
+        ),
+        CheckConstraint(
+            "(status NOT IN ('reserved', 'invited', 'declined', 'unknown')) "
+            "OR direct_recipient_digest IS NOT NULL",
+            name="ck_tginvite_direct_requires_digest",
+        ),
+
     )
 
     id: Mapped[str] = mapped_column(
@@ -78,6 +88,8 @@ class TelegramInviteJob(Base):
         nullable=False,
     )
     destination_chat_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Only HMAC of Telegram recipient ID; never store raw IDs or access hashes.
+    direct_recipient_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(96), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="blocked_transport",
