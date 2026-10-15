@@ -10,7 +10,7 @@ try {
   db.exec([
     "CREATE TABLE chain_seed_targets(kind TEXT,address TEXT,source_mask INTEGER,priority INTEGER,backfill_complete INTEGER,",
     "possible_gap INTEGER,forward_cursor TEXT,last_success_at INTEGER,last_error TEXT,PRIMARY KEY(kind,address));",
-    "CREATE TABLE chain_seed_events(kind TEXT,address TEXT,signature TEXT,observed_at INTEGER,slot INTEGER,payload_gzip BLOB,",
+    "CREATE TABLE chain_seed_events(kind TEXT,address TEXT,signature TEXT,observed_at INTEGER,slot INTEGER,payload_gzip BLOB,raw_revision INTEGER NOT NULL DEFAULT 1,",
     "PRIMARY KEY(kind,address,signature));"
   ].join(""));
   // Simulate a pre-upgrade local forensic cache table: migration must be additive.
@@ -18,7 +18,7 @@ try {
     "observed_count INTEGER NOT NULL, max_observed_at INTEGER NOT NULL, " +
     "coverage_complete INTEGER NOT NULL, analyzed_at INTEGER NOT NULL)");
   db.prepare("INSERT INTO chain_seed_targets VALUES('wallet',?,4,90,1,0,NULL,123,NULL)").run(wallet);
-  const put = db.prepare("INSERT INTO chain_seed_events VALUES('wallet',?,?,?,?,?)");
+  const put = db.prepare("INSERT INTO chain_seed_events(kind,address,signature,observed_at,slot,payload_gzip) VALUES('wallet',?,?,?,?,?)");
   const leg = (quantity) => ({ userAccount: wallet, mint,
     rawTokenAmount: { tokenAmount: String(quantity * 1e6), decimals: 6 } });
   function record(signature,slot,event) {
@@ -44,6 +44,22 @@ try {
   assert(pnl.total_realized_pnl_sol > 0.99 && pnl.total_realized_pnl_sol < 1.01);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_activities").get().n,2);
   assert.equal(rebuildWallet(db,wallet).skipped,true,"no event changes -> no duplicate rebuild");
+  // A richer Helius re-decode with the same signature must invalidate cached
+  // PnL and atomically replace only that signature's materialized legs.
+  const originalBuy=db.prepare("SELECT payload_gzip FROM chain_seed_events WHERE signature='buy-sig'").get();
+  const revisedBuy=JSON.parse(require("node:zlib").gunzipSync(originalBuy.payload_gzip).toString("utf8"));
+  revisedBuy.events.swap.nativeInput.amount="1250000000";
+  revisedBuy.accountData[0].nativeBalanceChange=-1250005000;
+  db.prepare("UPDATE chain_seed_events SET payload_gzip=?,raw_revision=raw_revision+1 WHERE signature='buy-sig'")
+    .run(gzipSync(Buffer.from(JSON.stringify(revisedBuy))));
+  result=rebuildWallet(db,wallet);
+  assert.equal(result.newlyParsed,1,"same-signature payload update must be decoded");
+  assert.equal(result.verifiedTokens,1);
+  pnl=db.prepare("SELECT * FROM chain_forensic_wallet_pnl WHERE wallet=? AND mint=?").get(wallet,mint);
+  assert(pnl.total_realized_pnl_sol>0.74 && pnl.total_realized_pnl_sol<0.76);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_activities").get().n,2,"modified signature must replace, not duplicate");
+  assert.equal(rebuildWallet(db,wallet).skipped,true);
+
   const transfer = { signature:"transfer-sig",slot:111491823,timestamp:30,type:"TRANSFER",
     tokenTransfers:[{ fromUserAccount:other,toUserAccount:wallet,mint,tokenAmount:3 }] };
   put.run(wallet,"transfer-sig",3,111491823,gzipSync(Buffer.from(JSON.stringify(transfer))));
