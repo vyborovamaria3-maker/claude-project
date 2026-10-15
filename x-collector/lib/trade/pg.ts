@@ -2,7 +2,7 @@ import "dotenv/config";
 import { Pool, PoolClient, QueryResultRow } from "pg";
 import { log } from "./logger";
 import { getConfig } from "./config";
-import { isRetryablePgError, retry } from "./retry";
+import { isRetryablePgError, pgErrorCode, retry } from "./retry";
 
 let pool: Pool | null = null;
 
@@ -34,9 +34,16 @@ export class AmbiguousCommitError extends Error {
   }
 }
 
-function isCommitRelated(error: unknown): boolean {
-  const message = String((error as Error | undefined)?.message ?? error);
-  return /commit|connection (reset|lost|closed)|terminated|ECONNRESET|socket hang up/i.test(message);
+/**
+ * A server-side serialization/deadlock error at COMMIT guarantees abort;
+ * all connection failures and errors without a PostgreSQL SQLSTATE leave
+ * the COMMIT outcome uncertain. Never replay such a transaction.
+ */
+export function isAmbiguousPgCommit(error: unknown): boolean {
+  const code = pgErrorCode(error);
+  if (code === "40001" || code === "40P01") return false;
+  if (!code) return true;
+  return isRetryablePgError(error);
 }
 
 async function withPgRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
@@ -101,22 +108,28 @@ export async function checkDatabase(timeoutMs = 3000): Promise<void> {
 export async function tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
   return withPgRetry(async () => {
     const client = await getPool().connect();
+    let discardClient = false;
     try {
       await client.query("BEGIN");
       const result = await fn(client);
       try {
         await client.query("COMMIT");
       } catch (commitError) {
-        if (isCommitRelated(commitError)) throw new AmbiguousCommitError(commitError);
+        if (isAmbiguousPgCommit(commitError)) {
+          discardClient = true;
+          throw new AmbiguousCommitError(commitError);
+        }
         throw commitError;
       }
       return result;
     } catch (e) {
       if (e instanceof AmbiguousCommitError) throw e;
-      await client.query("ROLLBACK").catch(() => {});
+      if (isRetryablePgError(e)) discardClient = true;
+      await client.query("ROLLBACK").catch(() => { discardClient = true; });
       throw e;
     } finally {
-      client.release();
+      // Broken/uncertain connections must never go back to the pool.
+      client.release(discardClient);
     }
   }, "tx");
 }
