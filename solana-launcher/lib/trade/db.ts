@@ -757,21 +757,28 @@ export function markTokenTradeChecked(mint: string, checkedAt = Date.now()): voi
 }
 
 export function getTokenTrades(mint: string, limit = 10_000): StoredTokenTrade[] {
-  return getDb()
-    .prepare(
-      `SELECT signature, timestamp, trader, type,
-              amount_sol AS amountSol, amount_tokens AS amountTokens,
-              price_sol AS priceSol, slot,
-              quote_mint AS quoteMint, quote_amount AS quoteAmount,
-              quote_decimals AS quoteDecimals, quote_usd_value AS quoteUsdValue,
-              fee, jito_tip_lamports AS jitoTipLamports, source
-       FROM token_trades
-       WHERE mint = ?
-       ORDER BY timestamp DESC
-       LIMIT ?`
-    )
-    .all(mint, limit)
-    .reverse() as StoredTokenTrade[];
+  // Explicit fills shadow the corresponding historical one-row-per-signature
+  // record. Other legacy signatures remain visible without migration.
+  return getDb().prepare(
+    `SELECT signature,leg_index AS legIndex,timestamp,trader,type,
+            amount_sol AS amountSol,amount_tokens AS amountTokens,
+            price_sol AS priceSol,slot,quote_mint AS quoteMint,
+            quote_amount AS quoteAmount,quote_decimals AS quoteDecimals,
+            quote_usd_value AS quoteUsdValue,fee,
+            jito_tip_lamports AS jitoTipLamports,source
+     FROM (
+       SELECT * FROM token_trade_fills WHERE mint=?
+       UNION ALL
+       SELECT mint,signature,NULL AS leg_index,timestamp,trader,type,
+              amount_sol,amount_tokens,price_sol,slot,quote_mint,
+              quote_amount,quote_decimals,quote_usd_value,fee,
+              jito_tip_lamports,source,inserted_at
+       FROM token_trades l WHERE l.mint=? AND NOT EXISTS (
+         SELECT 1 FROM token_trade_fills f
+         WHERE f.mint=l.mint AND f.signature=l.signature
+       )
+     ) ORDER BY timestamp DESC,signature DESC,leg_index DESC LIMIT ?`
+  ).all(mint,mint,limit).reverse() as StoredTokenTrade[];
 }
 
 export function persistTokenTrades(mint: string, trades: StoredTokenTrade[]) {
