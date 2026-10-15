@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS tg_sources (
   identifier TEXT NOT NULL UNIQUE,
   peer_id TEXT,
   title TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
   last_message_id BIGINT NOT NULL DEFAULT 0,
   history_partial BOOLEAN NOT NULL DEFAULT FALSE,
   last_success_at TIMESTAMPTZ,
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS tg_messages (
   collected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (source_id, message_id)
 );
+ALTER TABLE tg_sources ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS tg_messages_posted_at_idx ON tg_messages (source_id, posted_at DESC);
 CREATE INDEX IF NOT EXISTS tg_messages_sender_id_idx ON tg_messages (sender_id);
 CREATE TABLE IF NOT EXISTS tg_jobs (
@@ -44,6 +46,10 @@ CREATE INDEX IF NOT EXISTS tg_jobs_claim_idx ON tg_jobs (run_at, id)
 
 CREATE TABLE IF NOT EXISTS tg_runtime (
   id INTEGER PRIMARY KEY CHECK (id=1),
-  pause_until TIMESTAMPTZ
+  pause_until TIMESTAMPTZ,
+  heartbeat_at TIMESTAMPTZ,
+  worker_started_at TIMESTAMPTZ
 );
+ALTER TABLE tg_runtime ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE tg_runtime ADD COLUMN IF NOT EXISTS worker_started_at TIMESTAMPTZ;
 INSERT INTO tg_runtime(id) VALUES(1) ON CONFLICT(id) DO NOTHING;
