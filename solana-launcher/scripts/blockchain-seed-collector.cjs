@@ -288,7 +288,6 @@ function appendDiscovered(db, ownerWallet, transactions) {
       if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) continue;
       discovered.add(mint);
     }
-    if (discovered.size >= 25) break;
   }
   if (!discovered.size) return 0;
   const link = db.prepare(
