@@ -41,6 +41,10 @@ export function taskFailure(error: unknown): { code: string; permanent: boolean;
     return { code: "PAGINATION_STALLED", permanent: false, retryAfterMs: 120_000 };
   if (/response shape changed|SearchTimeline endpoint unavailable/i.test(message))
     return { code: "SOURCE_SHAPE_CHANGED", permanent: false, retryAfterMs: 300_000 };
+  if (/^XACTIONS_TRANSPORT_TIMEOUT/.test(message))
+    return { code: "COLLECTION_TIMEOUT", permanent: false, retryAfterMs: 30_000 };
+  if (/^XACTIONS_RESPONSE_INVALID/.test(message))
+    return { code: "HTTP_RESPONSE_INVALID", permanent: false, retryAfterMs: 120_000 };
   if (/^PROXY_FAILED:\s*invalid account proxy/i.test(message))
     return { code: "PROXY_CONFIG_INVALID", permanent: true, retryAfterMs: 0 };
   if (/SOCKS(?:4|5)?|PROXY_FAILED|proxy authentication|proxy connection|proxy handshake|ERR_PROXY_CONNECTION_FAILED/i.test(message))
