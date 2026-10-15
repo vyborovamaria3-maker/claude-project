@@ -3,9 +3,9 @@ import { createRequire } from "node:module";
 import { parseProxy } from "../../x/proxy";
 import { recordAccountError } from "../../accounts/errors";
 import { recordProgress, Progress } from "../monitoring";
-import { persistTweets, persistProfile } from "../persistence";
+import { persistTweets, persistProfile, browserFingerprint, loadBrowserCheckpoint, browserResumeQuery, commitBrowserBatch, finalizeBrowserCheckpoint } from "../persistence";
 import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../queue";
-import { pickAccount, accountWaitMs, recordSuccess, recordError, cooldownAccountProxy, getAccountDelay, extendAccountLease, releaseAccount, releaseUnconfirmedAccountReservation, WEIGHTS, XAccount } from "../accounts";
+import { pickAccount, accountWaitMs, recordSuccess, recordError, cooldownAccountProxy, getAccountDelay, extendAccountLease, releaseAccount, releaseUnconfirmedAccountReservation, WEIGHTS, XAccount, createCollectorQuotaGate, reserveAdditionalCollectorRequest } from "../accounts";
 import { WorkerRegistry } from "./worker-registry";
 import { decryptBuffer } from "../../../lib/trade/crypto";
 import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState, RawTweet } from "../engines";
@@ -22,7 +22,7 @@ import { listId } from "../../../lib/trade/list-source";
 import { filterHistory, persistHistory } from "../../../lib/trade/history-filter";
 import { taskFailure } from "../../../lib/trade/task-errors";
 import { executeXActionsReadTask, isXActionsEligible, HttpPartialProgressError } from "../../xactions/task";
-import { HttpAccountQuotaError, HttpAccountLeaseError, httpQuotaWaitMs, createHttpQuotaGate, reserveAdditionalHttpRequest } from "../../xactions/account-http-quota";
+import { HttpAccountQuotaError, HttpAccountLeaseError, httpQuotaWaitMs } from "../../xactions/account-http-quota";
 import { HttpNoProgressError } from "../../xactions/pagination";
 function buildProxy(acc: XAccount) {
   const proxy = parseProxy(acc.proxy_json);
@@ -102,6 +102,14 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
   const leaseAbort = new AbortController();
   const operationSignal = AbortSignal.any([signal, leaseAbort.signal]);
   const persistenceLease = { workerId, attempt: task.attempts, accountName: acc.name, accountOwner: accountLeaseOwner };
+  const browserEnabled = (kind === "search" || kind === "timeline") &&
+    !useLegacyHttpSearch && !(useXActions && isXActionsEligible(kind, payload, task.payloadJson));
+  const browserTarget = payload as {query?:string;handle?:string;sort?: "latest"|"top";limit?:number};
+  const browserKey = browserEnabled ? {
+    taskId: task.id,
+    fingerprint: browserFingerprint(kind, browserTarget.query ?? browserTarget.handle ?? "", browserTarget.limit ?? 0,
+      browserTarget.sort ?? "latest"),
+  } : null;
   let leaseLost: "task" | "account" | null = null;
   const assertLeases = () => {
     operationSignal.throwIfAborted();
@@ -121,6 +129,13 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
 
   try {
     await publish({phase:"opening",account:acc.name});
+    // The durable checkpoint belongs to the task payload; never reuse it
+    // if the original query/limit was changed while a task was pending.
+    const savedBrowser = browserKey ? await loadBrowserCheckpoint(browserKey) : null;
+    const accountQuota = createCollectorQuotaGate(
+      kind === "timeline" ? "timeline" : kind === "search" ? "search" : "profile",
+      weight => reserveAdditionalCollectorRequest(acc.name,accountLeaseOwner,weight),
+    );
     const decryptedSession = decryptBuffer(acc.session_encrypted);
     let authState: ScrapeAuthState | undefined;
     try {
@@ -137,8 +152,21 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
           const query=kind==="search"?(payload as {query:string}).query:null;
           const listPayload=payload as {list_source_id?:string;discovery_source?:string;list_since_id?:string;list_max_id?:string};
           const selected=filterHistory(tweets,historical).filter(t=>!(listPayload.list_source_id||listPayload.discovery_source) || ((!listPayload.list_since_id || BigInt(t.id)>BigInt(listPayload.list_since_id)) && (!listPayload.list_max_id || BigInt(t.id)<=BigInt(listPayload.list_max_id))));
-          await persistTweets(kind==="search"?task.mint:null,selected,listPayload.list_source_id?`list:${listPayload.list_source_id}`:query,task.id,acc.name,persistenceLease,
-            useLegacyHttpSearch ? { transport: "http" } : {});
+          const sourceQuery=listPayload.list_source_id?`list:${listPayload.list_source_id}`:query;
+          if(browserKey) {
+            // Save task links and observed-page checkpoint in one transaction.
+            // Large DOM batches use bounded commits; we intentionally do not
+            // use the oldest ID as an automatic cursor after a partial write.
+            for(let i=0;i<selected.length;i+=200) {
+              const chunk=selected.slice(i,i+200);
+              await commitBrowserBatch({...browserKey,lease:persistenceLease,ids:chunk.map(t=>t.id)},
+                client=>persistTweets(kind==="search"?task.mint:null,chunk,sourceQuery,
+                  task.id,acc.name,persistenceLease,{client}));
+            }
+          } else {
+            await persistTweets(kind==="search"?task.mint:null,selected,sourceQuery,task.id,acc.name,persistenceLease,
+              useLegacyHttpSearch ? { transport: "http" } : {});
+          }
           if(historical.history_run_id)await persistHistory(historical.history_run_id,task.id);
           assertLeases();await publish({phase:"collecting"});
         },
@@ -147,8 +175,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
         timezone: acc.timezone ?? undefined,
         language: acc.language ?? undefined,
         headless: cfg.twitter.headless,
-        beforeHttpRequest: useXActions ? createHttpQuotaGate("search",
-          weight => reserveAdditionalHttpRequest(acc.name, accountLeaseOwner, weight)) : undefined,
+        beforeHttpRequest: accountQuota,
       };
 
       if (useXActions && isXActionsEligible(kind, payload, task.payloadJson)) {
@@ -175,7 +202,16 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
           const tweets = await handleSearchTask(task, { getAccount: async () => acc, signal: operationSignal });
           assertLeases();
           await persistTweets(task.mint, normalizeTweets(tweets), p.query, task.id, acc.name, persistenceLease);
-        } else await searchTweets(p.query, { ...scrapeOpts, limit: p.limit, sort: p.sort });
+        } else {
+          // Reuse saved task results after retry; conservative default re-reads
+          // the timeline and deduplicates by post ID. Max-ID resume is opt-in,
+          // because X search order/coverage is not always monotonic.
+          const resumed=browserResumeQuery(p.query,p.sort,p.limit,savedBrowser,
+            process.env.X_BROWSER_RESUME_CURSOR==="true" &&
+            !historical.history_run_id && !(payload as {list_source_id?:string;discovery_source?:string}).list_source_id &&
+            !(payload as {discovery_source?:string}).discovery_source);
+          if(resumed.limit>0)await searchTweets(resumed.query,{...scrapeOpts,limit:resumed.limit,sort:p.sort});
+        }
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
 
@@ -202,6 +238,10 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     }
 
     assertLeases();
+    if(browserKey) {
+      const coverage=await finalizeBrowserCheckpoint(browserKey,persistenceLease,browserTarget.limit??0);
+      if(coverage) log.info("browser checkpoint coverage", {taskId:task.id,coverage});
+    }
     await publish({phase:"finishing"});
     await recordSuccess(acc.name, accountLeaseOwner);
     assertLeases();
