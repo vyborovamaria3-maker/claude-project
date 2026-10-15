@@ -116,3 +116,66 @@ def verified_join_request(
         telegram_update_id=update["update_id"],
         proof_kind="telegram_chat_join_request",
     )
+
+def verified_direct_invite_request(
+    update: object,
+    *,
+    settings: TelegramWebhookSettings,
+    now: datetime | None = None,
+) -> VerifiedTelegramOptIn | None:
+    """Verify a fresh user-authored private DM: /join -100xxxxxxxxxx.
+
+    The dedicated consent bot receives the user's own authenticated sender ID
+    via Telegram's secret-protected webhook. Forwarded messages, group messages,
+    unbound destinations and any other commands do not mint consent.
+    """
+    if not isinstance(update, dict):
+        raise TelegramWebhookInvalid("Malformed Telegram update")
+    update_id = update.get("update_id")
+    if not isinstance(update_id, int) or isinstance(update_id, bool) or update_id < 0:
+        raise TelegramWebhookInvalid("Malformed Telegram update")
+    message = update.get("message")
+    if message is None:
+        return None
+    if not isinstance(message, dict):
+        raise TelegramWebhookInvalid("Malformed Telegram message")
+    text = message.get("text")
+    if not isinstance(text, str) or len(text) > 128:
+        return None
+    command = re.fullmatch(r"/join(?:@[A-Za-z][A-Za-z0-9_]{4,31})?\s+(-[1-9][0-9]{0,19})", text.strip())
+    if command is None:
+        return None
+    sender = message.get("from")
+    chat = message.get("chat")
+    sent_at = message.get("date")
+    if not isinstance(sender, dict) or not isinstance(chat, dict):
+        raise TelegramWebhookInvalid("Malformed Telegram direct consent")
+    telegram_user_id = sender.get("id")
+    if (
+        not isinstance(telegram_user_id, int)
+        or isinstance(telegram_user_id, bool)
+        or telegram_user_id <= 0
+        or sender.get("is_bot") is True
+        or chat.get("type") != "private"
+        or chat.get("id") != telegram_user_id
+        or not isinstance(sent_at, int)
+        or isinstance(sent_at, bool)
+    ):
+        raise TelegramWebhookInvalid("Malformed Telegram direct consent")
+    timestamp = int((now or datetime.now(UTC)).timestamp())
+    if not timestamp - MAX_UPDATE_AGE_SECONDS <= sent_at <= timestamp + MAX_CLOCK_SKEW_SECONDS:
+        raise TelegramWebhookInvalid("Telegram direct consent is outside the safe age window")
+    destination = command.group(1)
+    owner_id = settings.bindings.get(destination)
+    if owner_id is None:
+        raise TelegramWebhookInvalid("Requested chat is not authorized for direct opt-in")
+    if not _BOT_ID.fullmatch(str(telegram_user_id)):
+        raise TelegramWebhookInvalid("Malformed Telegram user identity")
+    return VerifiedTelegramOptIn(
+        owner_id=owner_id,
+        destination_chat_id=destination,
+        recipient_telegram_id=str(telegram_user_id),
+        telegram_bot_id=settings.bot_id,
+        telegram_update_id=update_id,
+        proof_kind="telegram_bot_start",
+    )
