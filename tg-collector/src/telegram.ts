@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { TelegramClient } from "telegram";
-import { StringSession } from "telegram/sessions";
+import { StringSession } from "telegram/sessions/index.js";
 
 function credentials(): { apiId: number; apiHash: string } {
   const apiId = Number(process.env.TG_API_ID);
@@ -35,7 +35,11 @@ export async function login(): Promise<void> {
     });
     if (!(await client.isUserAuthorized())) throw new Error("Telegram authorization failed");
     const path = sessionPath();
-    await writeFile(path, client.session.save(), { mode: 0o600 });
+    const sessionString = (client.session as unknown as { save: () => string }).save();
+    if (typeof sessionString !== "string" || !sessionString) {
+      throw new Error("Telegram returned an invalid session string");
+    }
+    await writeFile(path, sessionString, { mode: 0o600 });
     await chmod(path, 0o600);
     console.log("Session saved locally. Keep .tg-session private and out of Git.");
   } finally {
