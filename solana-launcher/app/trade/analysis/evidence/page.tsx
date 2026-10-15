@@ -1,12 +1,12 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Database } from "lucide-react";
 
 type Pnl = {wallet:string;mint:string;status:string;coverageComplete:boolean;buys:number;sells:number;
  totalRealizedPnlSol:number|null;unknownReasons:string[]};
-type Trade = {signature:string;wallet:string;side?:string;kind?:string;
+type Trade = {signature:string;wallet:string;side?:string;kind?:string;slot?:number|null;
  amount_tokens?:number|null;amount_sol?:number|null;program?:string};
 type Evidence = {mode:"mint"|"wallet";mint?:string;wallet?:string;
  meta:{coverage:string;globallyComplete:boolean;forensicIndexAvailable:boolean;dexIndexAvailable:boolean;
@@ -16,7 +16,7 @@ type Evidence = {mode:"mint"|"wallet";mint?:string;wallet?:string;
 
 const display=(value:number|null|undefined)=>
  value==null||!Number.isFinite(value)?"Неизвестно":value.toLocaleString("ru-RU",{maximumFractionDigits:8});
-const short=(addr:string)=>addr.length>18?addr.slice(0,7)+"…"+addr.slice(-7):addr;
+const short=(addr:string|undefined)=>!addr?"—":addr.length>18?addr.slice(0,7)+"…"+addr.slice(-7):addr;
 
 export default function ForensicEvidencePage() {
  const params=useSearchParams();
@@ -26,21 +26,26 @@ export default function ForensicEvidencePage() {
  const [result,setResult]=useState<Evidence|null>(null);
  const [error,setError]=useState<string|null>(null);
  const [loading,setLoading]=useState(false);
+ const pending=useRef<AbortController|null>(null);
  const load=useCallback(async(kind:"mint"|"wallet",value:string)=>{
-   if(!value.trim()){setResult(null);return;}
+   pending.current?.abort();
+   const abort=new AbortController();pending.current=abort;
+   if(!value.trim()){setResult(null);setLoading(false);return;}
    setLoading(true);setError(null);setResult(null);
    try{
-     const r=await fetch("/api/blockchain/evidence?"+kind+"="+encodeURIComponent(value.trim())+"&limit=100",{cache:"no-store"});
+     const r=await fetch("/api/blockchain/evidence?"+kind+"="+encodeURIComponent(value.trim())+"&limit=100",{cache:"no-store",signal:abort.signal});
      const data=await r.json() as Evidence & {error?:string};
      if(!r.ok)throw new Error(data.error||"HTTP "+r.status);
-     setResult(data);
-   }catch(e){setError(e instanceof Error?e.message:"Ошибка чтения локальной базы");}
-   finally{setLoading(false);}
+     if(!abort.signal.aborted)setResult(data);
+   }catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:"Ошибка чтения локальной базы");}
+   finally{if(!abort.signal.aborted)setLoading(false);}
  },[]);
- useEffect(()=>{if(initial)void load(params.has("wallet")?"wallet":"mint",initial);},[initial,load,params]);
+ useEffect(()=>{if(initial)void load(params.has("wallet")?"wallet":"mint",initial);return()=>pending.current?.abort();},[initial,load,params]);
  const submit=(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();void load(mode,address);};
  const pnls=result?.mode==="wallet"?result.pnl:result?.walletPnl;
- const trades=result?.mode==="wallet"?result.activities:result?.observedDexTrades;
+ const trades=result?.mode==="wallet"?result.activities:Array.from(new Map(
+  [...(result?.observedDexTrades||[]),...(result?.seedWalletTrades||[])].map(t=>
+   [[t.signature,t.wallet,t.side||t.kind].join(":"),t] as const)).values()).sort((a,b)=>(b.slot??0)-(a.slot??0));
  return <section className="space-y-5 text-white" data-tag="trade.analysis.onchain.evidence">
   <header className="space-y-2">
    <h1 className="text-xl font-semibold">Доказательства Solana</h1>

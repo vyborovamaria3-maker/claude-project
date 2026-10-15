@@ -129,4 +129,22 @@ assert.equal(many.length,1);
 assert.equal(many[0].sells,20000);
 assert.equal(many[0].knownSellCount,20000);
 assert.equal(many[0].totalRealizedPnlSol,20000);
-console.log("[blockchain-forensics-regression] OK: verified swap lots, paid fees, transfer basis, unknown coverage, missed decode, multi-leg safeguards, failed tx");
+// Token decimals can represent quantities below 1e-10. Absolute FIFO dust
+// thresholds must never turn an unmatched sale into verified profit.
+for (const calculate of [computePnl, computePnlOrdered]) {
+  const sale={mint:MINT,signature:"tiny-sale",slot:2,timestamp:2,index:0,
+    kind:"sell",amountTokens:1e-12,amountSol:2,feeSol:0};
+  assert.equal(calculate([sale],true)[0].totalRealizedPnlSol,null);
+  const purchase={...sale,signature:"tiny-buy",slot:1,timestamp:1,
+    kind:"buy",amountTokens:2e-12,amountSol:2};
+  assert.equal(calculate([purchase,sale],true)[0].totalRealizedPnlSol,1);
+  assert.equal(calculate([{...purchase,amountTokens:0.5e-12},sale],true)[0].totalRealizedPnlSol,null);
+}
+const oneLamportMismatch=buy("one-lamport-mismatch",20,1,1);
+oneLamportMismatch.accountData[0].nativeBalanceChange-=1;
+assert(parseEvidence(oneLamportMismatch,WALLET).some(e=>e.kind==="unpriced"));
+const tinyMismatch=buy("tiny-balance-mismatch",21,1,1);
+tinyMismatch.events.swap.tokenOutputs[0].rawTokenAmount={tokenAmount:"1",decimals:12};
+tinyMismatch.accountData[0].tokenBalanceChanges[0].rawTokenAmount={tokenAmount:"0",decimals:12};
+assert(parseEvidence(tinyMismatch,WALLET).some(e=>e.kind==="unpriced"));
+console.log("[blockchain-forensics-regression] OK: FIFO, tiny quantities, exact lamports, balance reconciliation, fees, unknown coverage and failed tx");

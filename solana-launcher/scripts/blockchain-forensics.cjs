@@ -5,7 +5,7 @@
 const { gunzipSync } = require("node:zlib");
 const path = require("node:path");
 const { parseEvidence, computePnlOrdered } = require("./blockchain-forensics-core.cjs");
-const REVISION = 4;
+const REVISION = 5;
 
 const forensicInitialized = new WeakSet();
 function initForensics(db) {
@@ -241,4 +241,4 @@ if (require.main === module) {
   console.log(JSON.stringify(result, null, 2));
   if (result.errors.length) process.exitCode = 1;
 }
-module.exports = { initForensics, walletCoverage, rebuildWallet, rebuildAll };
+module.exports = { REVISION, initForensics, walletCoverage, rebuildWallet, rebuildAll };

@@ -3,7 +3,6 @@
 // Evidence rules: never infer swaps from the largest transfers in a transaction.
 // Only verified Helius swap legs with an attributable SOL/WSOL quote become priced trades.
 const WSOL = "So11111111111111111111111111111111111111112";
-const EPS = 1e-10;
 function num(v) { if (v === null || v === undefined || v === "") return null;
   const n = Number(v); return Number.isFinite(n) ? n : null; }
 function rawQty(leg) {
@@ -65,7 +64,7 @@ function reconcileEvidence(tx, wallet, out, add, swap = null) {
   for (const mint of touched) {
     if (mint === WSOL) continue;
     const actual = observed.get(mint), predicted = expected.get(mint);
-    const eps = Math.max(1e-9, Math.abs(predicted ?? 0) * 1e-9);
+    const eps = Math.max(Math.abs(actual ?? 0), Math.abs(predicted ?? 0)) * Number.EPSILON * 8;
     if (invalidMints.has(mint) || actual == null || predicted == null ||
         Math.abs(actual - predicted) > eps) {
       add("unpriced", mint, null, null, null);
@@ -87,12 +86,13 @@ function reconcileEvidence(tx, wallet, out, add, swap = null) {
       else expectedNative += direction * e.amountSol;
     }
     // Native balance amounts are lamports, swap amounts are SOL.
-    if (unsafeFees || !accounts.length || !Number.isFinite(native) ||
+    if (unsafeFees || !accounts.length || !Number.isSafeInteger(native) ||
         !Number.isFinite(expectedNative) ||
-        Math.abs(native / 1e9 - expectedNative) > 1e-8 ||
+        native !== Math.round(expectedNative * 1e9) ||
         (expectedWsol !== 0 &&
           (observed.get(WSOL) == null ||
-           Math.abs(observed.get(WSOL) - expectedWsol) > 1e-8))) {
+           Math.abs(observed.get(WSOL) - expectedWsol) >
+             Math.max(Math.abs(observed.get(WSOL)), Math.abs(expectedWsol)) * Number.EPSILON * 8))) {
       for (const e of priced) add("unpriced", e.mint, null, null, null);
     }
   }
@@ -205,16 +205,16 @@ function computePnl(events, coverageComplete) {
     }
     function consume(qty) {
       const consumed = [];
-      while (qty > EPS && lots.length) {
+      while (qty > 0 && lots.length) {
         const lot = lots[0], n = Math.min(qty, lot.qty);
         const cost = lot.cost == null ? null : lot.cost * n / lot.qty;
         consumed.push({ qty: n, cost });
         lot.qty -= n;
         if (lot.cost != null) lot.cost -= cost;
         qty -= n;
-        if (lot.qty <= EPS) lots.shift();
+        if (lot.qty <= 0) lots.shift();
       }
-      if (qty > EPS) consumed.push({ qty, cost: null });
+      if (qty > 0) consumed.push({ qty, cost: null });
       return consumed;
     }
     for (const e of rows) {
@@ -287,19 +287,19 @@ function computePnlOrdered(ordered, coverageComplete) {
   };
   const consume = (qty) => {
     const consumed = [];
-    while (qty > EPS && s.lotHead < s.lots.length) {
+    while (qty > 0 && s.lotHead < s.lots.length) {
       const lot = s.lots[s.lotHead], n = Math.min(qty, lot.qty);
       const cost = lot.cost == null ? null : lot.cost * n / lot.qty;
       consumed.push({ qty: n, cost });
       lot.qty -= n;
       if (lot.cost != null) lot.cost -= cost;
       qty -= n;
-      if (lot.qty <= EPS) s.lotHead++;
+      if (lot.qty <= 0) s.lotHead++;
     }
     if (s.lotHead > 1024 && s.lotHead * 2 >= s.lots.length) {
       s.lots = s.lots.slice(s.lotHead); s.lotHead = 0;
     }
-    if (qty > EPS) consumed.push({ qty, cost: null });
+    if (qty > 0) consumed.push({ qty, cost: null });
     return consumed;
   };
   for (const e of ordered) {

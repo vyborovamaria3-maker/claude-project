@@ -7,7 +7,7 @@ const { gunzipSync } = require("node:zlib");
 const { createHash } = require("node:crypto");
 const { parseEvidence } = require("./blockchain-forensics-core.cjs");
 const { isSolanaAddress } = require("./blockchain-seed-core.cjs");
-const REVISION = 2;
+const REVISION = 3;
 function configuredDexPrograms(input = process.env.CHAIN_DEX_PROGRAM_IDS || "") {
   const values = input.split(/[,\s;]+/).map(x => x.trim()).filter(Boolean);
   if (values.length > 8) throw new Error("At most eight DEX program addresses per local collection");
@@ -133,4 +133,4 @@ function replayProgram(db, program, limit = 10000) {
   });
   return indexProgramBatch(db,program,txs);
 }
-module.exports = { configuredDexPrograms, initDexIndex, extractDexObservations, indexProgramBatch, replayProgram };
+module.exports = { REVISION, configuredDexPrograms, initDexIndex, extractDexObservations, indexProgramBatch, replayProgram };
