@@ -14,6 +14,7 @@
     "test": "node --import tsx scripts/test.ts",
     "migrate": "tsx scripts/migrate.ts",
     "db:backup:windows": "node scripts/backup-windows.cjs",
+    "db:backup:schedule:windows": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/install-backup-task-windows.ps1",
     "install-browser": "playwright install chromium",
     "login": "tsx scripts/x-login.ts",
     "x:import": "tsx scripts/import-session.ts",
