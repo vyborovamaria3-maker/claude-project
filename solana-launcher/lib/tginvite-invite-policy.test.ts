@@ -96,6 +96,19 @@ describe("MTProto invitation receipt reconciliation (mocked results only)", () =
     expect(unsafe).toMatchObject({ invited: 0, unknown: 1 });
   });
 
+  it("classifies safe actionable Bot API messages without echoing their originals", () => {
+    expect(safeInviteError("Bad Request: chat not found", "123:secret"))
+      .toBe("TELEGRAM_CHAT_NOT_FOUND");
+    expect(safeInviteError("Forbidden: bot is not a member of the channel chat", "123:secret"))
+      .toBe("TELEGRAM_BOT_NEEDS_ADMIN_RIGHTS");
+    expect(safeInviteError("Bad Request: not enough rights to manage chat invite links", "123:secret"))
+      .toBe("TELEGRAM_BOT_NEEDS_ADMIN_RIGHTS");
+    expect(safeInviteError("JOIN_REQUEST_NOT_ENFORCED", "secret"))
+      .toBe("JOIN_REQUEST_NOT_ENFORCED");
+    expect(safeInviteError("TELEGRAM_RATE_LIMITED", "secret"))
+      .toBe("TELEGRAM_RATE_LIMITED");
+  });
+
   it("does not echo bot tokens, URLs or arbitrary Telegram upstream errors", () => {
     expect(safeInviteError("CHAT_ADMIN_REQUIRED", "secret")).toBe("CHAT_ADMIN_REQUIRED");
     const leak = safeInviteError(
