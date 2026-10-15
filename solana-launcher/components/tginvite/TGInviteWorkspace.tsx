@@ -330,7 +330,7 @@ function TGInvitePageInner() {
   const [schedule, setSchedule] = useState<ScheduleConfig>(() => {
     const saved = settingsStorage.get();
     return {
-      enabled: saved.scheduleEnabled ?? false,
+      enabled: false, // No server-side scheduler exists; never restore a legacy enabled flag.
       interval: (saved.scheduleInterval as ScheduleConfig["interval"]) ?? "daily",
       maxPerDay: saved.maxPerDay ?? 100,
       timezone: saved.scheduleTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -522,7 +522,7 @@ function TGInvitePageInner() {
     } else {
       // Fallback: add without verification
       const newChannels: Channel[] = usernames.map((username) => ({
-        id: Date.now().toString() + Math.random().toString(36).substring(2, 11),
+        id: crypto.randomUUID(),
         name: `@${username}`,
         username,
         members: 0,
@@ -613,13 +613,11 @@ function TGInvitePageInner() {
           .map((u) => u.replace(/@/g, "").replace(/https?:\/\/t\.me\//g, "").trim())
           .filter((username) => username && !channels.some((ch) => ch.username === username))
           .map((username) => ({
-            id: Date.now().toString() + Math.random().toString(36).substring(2, 11),
+            id: crypto.randomUUID(),
             name: `@${username}`,
             username,
             members: 0,
             selected: true,
-            activity: Math.random(),
-            quality: Math.random(),
             status: "active" as const,
           }));
 
@@ -983,7 +981,7 @@ function TGInvitePageInner() {
     setNewWhitelistItem("");
   }, [newWhitelistItem]);
 
-  // Refs for import simulation
+  // References for legacy, non-dispatching job display only
   const importChannelsRef = useRef<Channel[]>([]);
   const importIndexRef = useRef(0);
   const importDelayerRef = useRef<StealthDelayer | null>(null);
@@ -1230,7 +1228,7 @@ function TGInvitePageInner() {
             </div>
             <div>
               <h1 className="text-3xl font-bold tracking-tight">TGInvite</h1>
-              <p className="text-content-muted">Smart member import with anti-detection</p>
+              <p className="text-content-muted">Telegram parsing and opt-in join requests</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1245,16 +1243,9 @@ function TGInvitePageInner() {
                 No bot connected
               </div>
             )}
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${schedule.enabled ? "bg-green-500/20 text-green-400" : "bg-content-muted/20 text-content-muted"}`}>
-              <div className={`w-2 h-2 rounded-full ${schedule.enabled ? "bg-green-400" : "bg-content-muted"}`} />
-              Auto-Invite: {schedule.enabled ? "ON" : "OFF"}
+            <div className="rounded-full bg-content-muted/20 px-3 py-1.5 text-xs text-content-muted">
+              Scheduled invitations unavailable
             </div>
-            <button
-              onClick={() => setSchedule((prev) => ({ ...prev, enabled: !prev.enabled }))}
-              className={`${siteDesign.controls.iconButtonClassName} ${schedule.enabled ? "!border-green-500/50 !text-green-400" : ""}`}
-            >
-              <Zap className="h-4 w-4" />
-            </button>
           </div>
         </div>
       </div>
@@ -1293,7 +1284,7 @@ function TGInvitePageInner() {
       </div>
 
       {/* Dashboard Tab - EnhancedDashboard */}
-      {activeTab === "dashboard" && <EnhancedDashboard />}
+      {activeTab === "dashboard" && <EnhancedDashboard sources={channels} parser={parserResult} hasJoinRequestLink={Boolean(optInInviteLink && optInInviteLink.chatId === normalizeTGInviteDestination(targetChannel))} botVerified={Boolean(botInfo)} />}
 
       {/* Data Set TG Tab */}
       {activeTab === "data" && (
@@ -2588,13 +2579,17 @@ function TGInvitePageInner() {
             <label className="flex items-center gap-3 p-4 bg-bg-elevated rounded-lg cursor-pointer">
               <input
                 type="checkbox"
-                checked={schedule.enabled}
-                onChange={(e) => setSchedule((prev) => ({ ...prev, enabled: e.target.checked }))}
+                checked={false}
+                disabled
+                aria-label="Automated invitations are unavailable"
                 className="h-5 w-5 rounded border-bg-border"
               />
               <div>
-                <div className="font-medium">Enable Scheduled Imports</div>
-                <div className="text-sm text-content-muted">Automatically run imports on schedule</div>
+                <div className="font-medium">Scheduled imports are unavailable</div>
+                <div className="text-sm text-content-muted">
+                  There is no server-side invitation worker or opt-in consent dispatch job.
+                  Previous schedule settings do not start invitations.
+                </div>
               </div>
             </label>
 
