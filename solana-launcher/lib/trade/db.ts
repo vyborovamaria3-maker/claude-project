@@ -522,6 +522,22 @@ function init(db: Database.Database) {
       db.exec(`ALTER TABLE token_trades ADD COLUMN ${name} ${type}`);
     }
   }
+  // Durable source revisions invalidate materialized API caches even on UPDATE
+  // or DELETE of an older row (MAX(rowid) cannot detect those operations).
+  db.exec("CREATE TABLE IF NOT EXISTS database_source_revisions(name TEXT PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 0)");
+  for (const table of [
+    "migration_wallet_rows","migration_token_rows","wallet_stats",
+    "wallet_tags","wallet_token_stats","token_trades"
+  ]) {
+    db.prepare("INSERT OR IGNORE INTO database_source_revisions(name,revision) VALUES(?,0)").run(table);
+    for (const operation of ["INSERT","UPDATE","DELETE"]) {
+      db.exec(
+        "CREATE TRIGGER IF NOT EXISTS dbrev_" + table + "_" + operation.toLowerCase() +
+        " AFTER " + operation + " ON " + table + " BEGIN " +
+        "UPDATE database_source_revisions SET revision=revision+1 WHERE name='" + table + "'; END"
+      );
+    }
+  }
 }
 
 export function getDb(): Database.Database {
