@@ -193,10 +193,14 @@ seeded wallet, потребует индексатора событий DEX-пр
 
 В solana-launcher/.env.local добавьте строку:
 
-    CHAIN_DEX_PROGRAM_IDS=REAL_PROGRAM_ID_1,REAL_PROGRAM_ID_2
+    CHAIN_DEX_PROGRAM_IDS=6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P,pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA
 
-Замените шаблоны реальными 32-байтными base58 **адресами программ DEX**,
-проверенными в официальных источниках. Адреса токенов, пулов и кошельков
+В этом примере — официальные идентификаторы программ Pump.fun и PumpSwap.
+Они указаны в документации проекта pump-fun/pump-public-docs и SDK.
+Другой официальный пример для Orca Whirlpools:
+whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc.
+Используйте только реальные 32-байтные base58 **адреса программ DEX**,
+проверенные в официальных источниках. Адреса токенов, пулов и кошельков
 не заменяют адресов программ. Можно указать не более 8 программ; без настройки
 DEX-сканирование полностью отключено, чтобы не расходовать Helius кредиты.
 
