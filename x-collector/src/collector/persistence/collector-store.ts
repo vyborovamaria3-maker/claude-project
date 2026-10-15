@@ -19,7 +19,12 @@ async function assertPersistenceLease(client: PoolClient, taskId: number | undef
     [lease.accountName, lease.accountOwner, now]);
   if (!account.rows.length) throw new Error("account lease lost before persistence");
 }
-export interface TweetPersistenceOptions { client?: PoolClient; transport?: "browser" | "http"; }
+export interface TweetPersistenceOptions {
+  client?: PoolClient;
+  transport?: "browser" | "http";
+  /** Large browser DOM batches are split into SQL chunks inside ONE transaction. */
+  atomicBrowserBatch?: boolean;
+}
 export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease, options: TweetPersistenceOptions = {}): Promise<number> {
   let newTaskLinks = 0;
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
@@ -36,7 +41,9 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   const now = Date.now();
   const BATCH = 200;
   // A page checkpoint and all of its posts must share one transaction.
-  if (options.client && valid.length > BATCH) throw new Error("XActions: HTTP page exceeds transactional batch limit");
+  if (options.client && valid.length > BATCH &&
+      !(options.atomicBrowserBatch === true && options.transport !== "http" && valid.length <= 1000))
+    throw new Error("Collector: page exceeds transactional batch limit");
   const fromHttp = options.transport === "http";
   // archive.sourceId hashes URL/license/kind (not name). Distinct URLs keep
   // HTTP observations from inheriting the old browser-only source metadata.
