@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ evidence: details.rows }, { headers: noStore });
     }
 
-    const [sourceResult, edgeResult, metricResult] = await Promise.all([
+    const [sourceResult, edgeResult, metricResult, overlapResult, addressResult] = await Promise.all([
       p.query<Source>("SELECT id::text, identifier, title, peer_id FROM tg_sources ORDER BY id LIMIT 500"),
       p.query<LinkRow>(`
         SELECT l.source_id::text, s.identifier, l.kind, l.target_kind, l.target_key,
@@ -116,6 +116,43 @@ export async function GET(request: NextRequest) {
         ) l ON l.source_id=s.id
         WHERE ($1::bigint IS NULL OR s.id=$1)
         ORDER BY coalesce(m.posts_7d,0) DESC, s.id LIMIT 100`, [selected]),
+      p.query(`
+        WITH observed AS (
+          SELECT DISTINCT l.source_id, l.target_kind, l.target_key
+          FROM tg_message_links l
+          JOIN tg_messages m USING(source_id,message_id)
+          WHERE l.kind='address'
+            AND ($2::integer=0 OR m.posted_at>=now()-($2::integer * interval '1 day'))
+        ),
+        pairs AS (
+          SELECT a.source_id AS left_id, b.source_id AS right_id,
+                 count(*)::integer AS shared_addresses
+          FROM observed a JOIN observed b
+            ON a.target_kind=b.target_kind AND a.target_key=b.target_key
+           AND a.source_id<b.source_id
+          WHERE ($1::bigint IS NULL OR a.source_id=$1 OR b.source_id=$1)
+          GROUP BY a.source_id,b.source_id
+          ORDER BY shared_addresses DESC LIMIT 20
+        )
+        SELECT a.identifier AS left_channel, b.identifier AS right_channel, p.shared_addresses
+        FROM pairs p
+        JOIN tg_sources a ON a.id=p.left_id
+        JOIN tg_sources b ON b.id=p.right_id
+        ORDER BY p.shared_addresses DESC, a.identifier, b.identifier`, [selected, days]),
+      p.query(`
+        SELECT l.target_kind, l.target_key,
+          count(DISTINCT l.source_id)::integer AS observed_in_sources,
+          count(*)::integer AS occurrences,
+          min(m.posted_at) AS first_observed_at,
+          max(m.posted_at) AS last_observed_at
+        FROM tg_message_links l
+        JOIN tg_messages m USING(source_id,message_id)
+        WHERE l.kind='address'
+          AND ($1::bigint IS NULL OR l.source_id=$1)
+          AND ($2::integer=0 OR m.posted_at>=now()-($2::integer * interval '1 day'))
+        GROUP BY l.target_kind,l.target_key
+        ORDER BY observed_in_sources DESC, occurrences DESC, l.target_key LIMIT 20`,
+        [selected, days]),
     ]);
 
     const sources = sourceResult.rows;
@@ -163,6 +200,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       nodes: [...nodes.values()], edges: graphEdges,
       metrics: metricResult.rows,
+      sharedAddresses: overlapResult.rows,
+      observedAddresses: addressResult.rows,
       sampled: edgeResult.rows.length >= 160,
       days,
       legend: {
