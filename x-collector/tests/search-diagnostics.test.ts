@@ -20,3 +20,14 @@ test("search diagnostics never include body text, request URL or authentication 
   assert(!message.includes("auth_token"));
   assert(!message.includes("rawQuery"));
 });
+
+test("unconfirmed timeline cannot be treated as proof of account restriction", () => {
+  const missing = searchFailureMessage({ articleNodes: 0, errorBanner: false, loading: true })
+    .replace(/^SEARCH_/, "TIMELINE_");
+  const unparsed = searchFailureMessage({ articleNodes: 5, errorBanner: false, loading: false })
+    .replace(/^SEARCH_/, "TIMELINE_");
+  assert.equal(taskFailure(new Error(missing)).code, "TIMELINE_UNCONFIRMED");
+  assert.equal(taskFailure(new Error(unparsed)).code, "TIMELINE_PARSE_UNCONFIRMED");
+  assert.equal(taskFailure(new Error(missing)).permanent, false);
+  assert.equal(taskFailure(new Error(unparsed)).permanent, false);
+});
