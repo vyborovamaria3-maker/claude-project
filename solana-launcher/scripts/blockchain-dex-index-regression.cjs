@@ -2,7 +2,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const Database = require("better-sqlite3");
-const { initDb, syncDexProgramSources, processOne, claimOne } = require("./blockchain-seed-collector.cjs");
+const { initDb, syncDexProgramSources, processOne, claimOne, persistEvents } = require("./blockchain-seed-collector.cjs");
 const { extractDexObservations, indexProgramBatch, replayProgram, configuredDexPrograms } = require("./blockchain-dex-index.cjs");
 const program="1".repeat(32);
 const wallet="2".repeat(44);
@@ -54,13 +54,29 @@ try {
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='dex_program'").get().n,1);
   assert.equal(indexProgramBatch(db,program,[tx]).observations,0,"No duplicate DEX evidence on replay");
   assert.equal(replayProgram(db,program,100).observations,0,"Raw transactions already indexed");
+  const improved=JSON.parse(JSON.stringify(tx));
+  improved.events.swap.nativeInput.amount="2500000000";
+  improved.accountData[0].nativeBalanceChange=-2500005000;
+  assert.equal(persistEvents(db,"dex_program",program,[improved]),1);
+  assert.equal(replayProgram(db,program,1).observations,1,"changed JSON must invalidate signature index");
+  assert.equal(db.prepare("SELECT amount_sol FROM chain_dex_observed_trades WHERE program=? AND signature=?").get(program,tx.signature).amount_sol,2.5);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades WHERE program=?").get(program).n,1,"changed fill must replace old fill, not duplicate");
+  const older1={...tx,signature:"dex-old-1",timestamp:1699999999,slot:111499999};
+  const older2={...tx,signature:"dex-old-2",timestamp:1699999998,slot:111499998};
+  assert.equal(persistEvents(db,"dex_program",program,[older1,older2]),2);
+  assert.equal(replayProgram(db,program,1).transactionsIndexed,1);
+  assert.equal(replayProgram(db,program,1).transactionsIndexed,1,
+    "keyset-like pending replay must move to next older signature instead of rescanning same newest page");
+  assert.equal(replayProgram(db,program,1).transactionsIndexed,0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades WHERE program=?").get(program).n,3);
+
   const otherProgram="4".repeat(44);
   assert.equal(indexProgramBatch(db,otherProgram,[tx]).observations,1);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades").get().n,2,
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades").get().n,4,
     "Observations retain distinct program provenance for deduplication in API");
   syncDexProgramSources(db,"");
   assert.equal(db.prepare("SELECT source_mask FROM chain_seed_targets WHERE kind='dex_program' AND address=?").get(program).source_mask,0);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades").get().n,2,
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades").get().n,4,
     "Removing programs from queue must not delete persisted audit trail");
   console.log("[blockchain-dex-index-regression] OK: program opt-in, raw persistence, wallet attribution, conserved balance, dedup, replay, configured removal");
 }finally{db.close();}
