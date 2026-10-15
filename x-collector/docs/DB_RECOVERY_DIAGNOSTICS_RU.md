@@ -12,6 +12,12 @@ These changes do not alter X platform limits or allow bypassing restricted accou
 - Unexpected SQL errors such as missing migrations are NOT retried forever.
 - Existing task leases, PostgreSQL atomic queue claims and transactional page
   checkpoints are retained; no job COMMIT is blindly replayed.
+- PostgreSQL COMMIT failure with an uncertain outcome now raises
+  AmbiguousCommitError, **including Node connection errors such as ECONNREFUSED
+  reported only in error.code**. The connection is discarded, not pooled.
+  Server-confirmed SQLSTATE 40001/40P01 aborts can still retry.
+- Unverified empty user timelines now have distinct retryable diagnostics
+  instead of assuming an X account was restricted.
 - Task errors now distinguish unverified empty search, pagination ambiguity,
   source shape change, SOCKS5 connection error and collection timeout.
 - Proxy/collection failures are no longer recorded as evidence that an X
