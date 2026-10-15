@@ -15,13 +15,13 @@ test("many health requests share one pending PostgreSQL probe and recover", asyn
     return { rows: [{ "?column?": 1 }], rowCount: 1 };
   });
   try {
-    const first = checkDatabase(20);
-    const second = checkDatabase(50);
+    const first = checkDatabase(250);
+    const second = checkDatabase(2000);
     await assert.rejects(first, /database health timeout/);
     assert.equal(probes, 1, "timed out health request must not spawn a second pooled query");
     finish?.();
     await second;
-    await checkDatabase(50);
+    await checkDatabase(2000);
     assert.equal(probes, 2, "next probe starts after the previous query settles");
     await assert.rejects(checkDatabase(0), /Invalid database health timeout/);
   } finally {
