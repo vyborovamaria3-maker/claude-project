@@ -1,6 +1,6 @@
 /**
  * Evidence-only Telegram relationship extraction.
- * Mentions and contract co-occurrence do not establish identity, ownership or coordinated behavior.
+ * Mentions and address co-occurrence do not establish identity, ownership or coordinated behavior.
  */
 export const ANALYSIS_VERSION = 1;
 
@@ -26,7 +26,7 @@ const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const TOKEN_RE = /(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])/g;
 const EVM_RE = /(?<![0-9a-fA-F])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
 const MENTION_RE = /(?<![\w@])@([a-zA-Z][a-zA-Z0-9_]{4,31})\b/g;
-const TME_RE = /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/([a-zA-Z][a-zA-Z0-9_]{4,31})(?![\w])/gi;
+const TME_RE = /(?<![a-zA-Z0-9_.-])(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me)\/([a-zA-Z][a-zA-Z0-9_]{4,31})(?![\w])/gi;
 const RESERVED = new Set(["joinchat", "addlist", "share", "proxy", "login", "boost", "iv"]);
 
 export function isSolanaAddress(input: string): boolean {
