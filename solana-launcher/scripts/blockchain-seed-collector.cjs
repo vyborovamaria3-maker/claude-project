@@ -219,7 +219,7 @@ function importFolders(db, args) {
 function status(db) {
   const targets = db.prepare(
     "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS synced,"
-    + "SUM(CASE WHEN backfill_complete=1 THEN 1 ELSE 0 END) AS complete,"
+    + "SUM(CASE WHEN backfill_complete=1 THEN 1 ELSE 0 END) AS providerExhausted,"
     + "SUM(CASE WHEN possible_gap=1 THEN 1 ELSE 0 END) AS possibleGaps "
     + "FROM chain_seed_targets WHERE source_mask<>0 GROUP BY kind"
   ).all();
