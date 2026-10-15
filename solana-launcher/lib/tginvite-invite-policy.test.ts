@@ -7,7 +7,7 @@ import {
   validateInviteLinkRequest,
 } from "./tginvite-invite-policy";
 
-const required = { token: "1234:my-token", chatId: "@example_channel" };
+const required = { token: "123456789:abcdefghijklmnopqrstuvwxyzABCDE123456", chatId: "@example_channel" };
 
 describe("invitation link validation (no Telegram network)", () => {
   it("prepares a bounded single-use link with expiration", () => {
@@ -33,6 +33,13 @@ describe("invitation link validation (no Telegram network)", () => {
       expect(() => validateInviteLinkRequest({
         ...required, linkCount,
       }, "batchLinks")).toThrow(InvalidInviteRequest);
+    }
+  });
+
+  it("rejects malformed bot tokens without consuming Telegram API quota", () => {
+    for (const token of ["", "short", "abc/../../evil", "123:too-short", "12345:"+ "a".repeat(280)]) {
+      expect(() => validateInviteLinkRequest({ ...required, token }, "createLink"))
+        .toThrow(InvalidInviteRequest);
     }
   });
 
