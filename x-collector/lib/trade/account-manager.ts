@@ -126,6 +126,35 @@ export async function releaseAccount(name: string, leaseOwner: string, cooldownM
   return changed > 0;
 }
 
+/**
+ * A failed account-bound proxy is an infrastructure outage, not an X ban.
+ * Temporarily exclude this account from claims without incrementing its X
+ * authentication/rate-limit counters. Fenced by the current account lease.
+ */
+export async function cooldownAccountProxy(name: string, leaseOwner: string, cooldownMs = 60_000): Promise<boolean> {
+  if (!Number.isSafeInteger(cooldownMs) || cooldownMs < 1 || cooldownMs > 3_600_000)
+    throw new Error("Invalid proxy cooldown");
+  const now = Date.now();
+  return tx(async client => {
+    const changed = await client.query(
+      `UPDATE x_accounts
+       SET status='cooldown',
+           cooldown_until=GREATEST(COALESCE(cooldown_until,0), $1::bigint + $2::bigint),
+           updated_at=$1
+       WHERE name=$3 AND account_claimed_by=$4 AND account_busy_until>$1 AND status='active'
+       RETURNING name`,
+      [now, cooldownMs, name, leaseOwner],
+    );
+    if (!changed.rows.length) return false;
+    // This audit record contains a constant message, never proxy credentials.
+    await client.query(
+      "INSERT INTO xc_account_errors(account_name,type,message,created_at) VALUES($1,'PROXY_FAILED',$2,$3)",
+      [name, "SOCKS5 account proxy unavailable; temporary cooldown", now],
+    );
+    return true;
+  });
+}
+
 export async function recordSuccess(name: string, leaseOwner?: string) {
   await exec(
     `UPDATE x_accounts SET consecutive_errors=0, last_success_at=$1, updated_at=$1 WHERE name=$2
