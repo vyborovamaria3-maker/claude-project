@@ -2,22 +2,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { collectArticles } from "../lib/trade/twitter-scraper";
-import { taskFailure } from "../lib/trade/task-errors";
 
-test("browser feed without explicit end retains persisted batches but refuses success", async () => {
+test("browser short feed persists observed batches without stopping recurring collection", async () => {
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
     await page.setContent(`<article data-testid="tweet"><a href="/nasa/status/1878727153048777016"><time datetime="2026-10-12T00:00:00Z"></time></a><div data-testid="tweetText">fixture</div></article>`);
     let persisted = 0;
-    await assert.rejects(
-      collectArticles(page, 10, Date.now() + 15_000, undefined, async batch => { persisted += batch.length; }),
-      /BROWSER_END_UNVERIFIED: 1 observed, target 10/,
-    );
+    const phases: string[] = [];
+    const tweets = await collectArticles(page, 10, Date.now() + 15_000,
+      async progress => { phases.push(progress.phase); },
+      async batch => { persisted += batch.length; });
+    assert.equal(tweets.length, 1);
     assert.equal(persisted, 1);
-    const fail = taskFailure(new Error("BROWSER_END_UNVERIFIED: 1 observed, target 10; no explicit end signal"));
-    assert.equal(fail.code, "BROWSER_END_UNVERIFIED");
-    assert.equal(fail.permanent, false);
+    assert.equal(phases.at(-1), "unverified_end", "coverage remains unverified without blocking the scheduled source");
   } finally { await browser.close(); }
 });
 
