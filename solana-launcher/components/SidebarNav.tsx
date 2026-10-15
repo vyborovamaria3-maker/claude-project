@@ -65,7 +65,7 @@ export default function SidebarNav() {
 
   const navItems = siteDesign.nav[activeTab];
   const allNavItems = useMemo(
-    () => [...navItems, ...siteDesign.nav.common].filter((item) => !item.href.startsWith("/database")),
+    () => [...navItems, ...siteDesign.nav.common].filter((item) => !item.href.startsWith("/database") && (process.env.NODE_ENV !== "production" || item.href !== "/tg-collector")),
     [navItems]
   );
 
