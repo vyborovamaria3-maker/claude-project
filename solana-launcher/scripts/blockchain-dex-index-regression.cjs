@@ -5,8 +5,8 @@ const Database = require("better-sqlite3");
 const { initDb, syncDexProgramSources, processOne } = require("./blockchain-seed-collector.cjs");
 const { extractDexObservations, indexProgramBatch, replayProgram, configuredDexPrograms } = require("./blockchain-dex-index.cjs");
 const program="1".repeat(32);
-const wallet="2".repeat(32);
-const mint="3".repeat(32);
+const wallet="2".repeat(44);
+const mint="3".repeat(44);
 const db=new Database(":memory:");
 (async()=>{
 try {
@@ -50,7 +50,7 @@ try {
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='dex_program'").get().n,1);
   assert.equal(indexProgramBatch(db,program,[tx]).observations,0,"No duplicate DEX evidence on replay");
   assert.equal(replayProgram(db,program,100).observations,0,"Raw transactions already indexed");
-  const otherProgram="4".repeat(32);
+  const otherProgram="4".repeat(44);
   assert.equal(indexProgramBatch(db,otherProgram,[tx]).observations,1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades").get().n,2,
     "Observations retain distinct program provenance for deduplication in API");
