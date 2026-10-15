@@ -43,7 +43,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   const httpSourceUrl = "https://x.com/i/api/graphql";
   const sourceKey = fromHttp
     ? sourceId(httpSourceUrl, "X platform terms", "x")
-    : await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" });
+    : await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" }, options.client);
 
   for (let i = 0; i < valid.length; i += BATCH) {
     const chunk = valid.slice(i, i + BATCH);
