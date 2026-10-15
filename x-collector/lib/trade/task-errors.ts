@@ -18,6 +18,10 @@ export function taskFailure(error: unknown): { code: string; permanent: boolean;
   if (error instanceof Error && error.name === "AmbiguousCommitError")
     return { code: "DB_COMMIT_UNCERTAIN", permanent: false, retryAfterMs: 60_000 };
   const message = error instanceof Error ? error.message : String(error);
+  if (/^BROWSER_CHECKPOINT_CHANGED$/.test(message))
+    return { code: "BROWSER_CHECKPOINT_CHANGED", permanent: true, retryAfterMs: 0 };
+  if (/^(Browser checkpoint (task|account) lease lost|task lease lost before persistence|account lease lost before persistence)/.test(message))
+    return { code: "ACCOUNT_LEASE_LOST", permanent: false, retryAfterMs: 5000 };
   const status = error instanceof CollectorHttpError ? error.status : Number(message.match(/(?:HTTP\s*|status\s*[:=]?\s*)(\d{3})/i)?.[1]);
   if (/^XACTIONS_ENDPOINT_UNAVAILABLE/.test(message))
     return { code: "ENDPOINT_UNAVAILABLE", permanent: false, retryAfterMs: 120_000 };
