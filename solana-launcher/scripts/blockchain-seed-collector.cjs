@@ -216,6 +216,21 @@ function importFolders(db, args) {
   return stats;
 }
 
+function syncDexProgramSources(db, raw = process.env.CHAIN_DEX_PROGRAM_IDS || "") {
+  const {configuredDexPrograms} = require("./blockchain-dex-index.cjs");
+  const wanted = configuredDexPrograms(raw);
+  const filePath = "@config:dex-programs";
+  const current = db.prepare("SELECT address FROM chain_seed_file_sources WHERE file_path=? AND kind='dex_program' ORDER BY address")
+    .all(filePath).map(row=>row.address);
+  if (JSON.stringify(current) === JSON.stringify([...wanted].sort())) return { changed:false, programs:wanted };
+  db.transaction(()=>{
+    db.prepare("DELETE FROM chain_seed_file_sources WHERE file_path=?").run(filePath);
+    const add=db.prepare("INSERT INTO chain_seed_file_sources(file_path,category,kind,address) VALUES(?,?,?,?)");
+    for (const program of wanted) add.run(filePath,"dex_program","dex_program",program);
+    refreshTargets(db);
+  })();
+  return { changed:true, programs:wanted };
+}
 function status(db) {
   const targets = db.prepare(
     "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS synced,"
@@ -377,6 +392,7 @@ async function processOne(db, row, cfg, api) {
       })));
     }
     if (row.kind === "wallet") appendDiscovered(db, row.address, unique);
+    if (row.kind === "dex_program") require("./blockchain-dex-index.cjs").indexProgramBatch(db, row.address, unique);
     return n;
   })();
   if (complete && !forwardCursor) gap = false;
@@ -461,6 +477,7 @@ async function main() {
   });
   const db = require("../lib/trade/db").getDb();
   initDb(db);
+  syncDexProgramSources(db);
   if (args.mode === "watch") {
     while (!stopRequested) {
       try {
@@ -490,4 +507,4 @@ async function main() {
 if (require.main === module) main().catch(error => {
   console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1;
 });
-module.exports = { initDb, appendDiscovered, persistEvents, processOne, claimOne };
+module.exports = { initDb, appendDiscovered, persistEvents, processOne, claimOne, syncDexProgramSources };
