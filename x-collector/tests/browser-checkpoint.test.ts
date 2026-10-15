@@ -70,6 +70,14 @@ test("browser post batch and lease-fenced checkpoint commit atomically and dedup
     "SELECT observed_count::text,oldest_id,newest_id FROM xc_browser_checkpoints WHERE task_id=7")).rows[0];
   assert.equal(saved.observed_count,"2");
   assert.equal(saved.newest_id,"1878727153048777017");
+  const bigBatch={...write,ids:Array.from({length:250},(_,i)=>(1878727153048777018n+BigInt(i)).toString())};
+  assert.equal(await atomic(()=>writeBrowserBatchInTransaction(fake,bigBatch,
+    async client=>(await client.query("INSERT INTO saved_posts SELECT unnest($1::text[]) ON CONFLICT DO NOTHING RETURNING id",
+      [bigBatch.ids])).rows.length)),250);
+  saved=(await db.query<{observed_count:string;oldest_id:string;newest_id:string}>(
+    "SELECT observed_count::text,oldest_id,newest_id FROM xc_browser_checkpoints WHERE task_id=7")).rows[0];
+  assert.equal(saved.observed_count,"252");
+  assert.equal(saved.newest_id,(1878727153048777018n+249n).toString());
  }finally{await db.close();}
 });
 
