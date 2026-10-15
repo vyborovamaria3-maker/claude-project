@@ -150,5 +150,18 @@ export function safeInviteError(error: unknown, _token: string): string {
   for (const code of safeCodes) {
     if (message.includes(code)) return code;
   }
+  // Telegram Bot API often uses human-readable "Bad Request" descriptions,
+  // not MTProto error codes. Return fixed labels; never echo upstream text.
+  const normalized = message.toLowerCase();
+  if (normalized.includes("chat not found") || normalized.includes("chat_id_invalid")) {
+    return "TELEGRAM_CHAT_NOT_FOUND";
+  }
+  if (normalized.includes("not enough rights") ||
+      normalized.includes("not an administrator") ||
+      normalized.includes("bot is not a member") ||
+      normalized.includes("bot was kicked") ||
+      normalized.includes("not enough permission")) {
+    return "TELEGRAM_BOT_NEEDS_ADMIN_RIGHTS";
+  }
   return "Telegram invite link operation failed";
 }
