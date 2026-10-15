@@ -41,3 +41,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS tg_jobs_one_open_job_idx ON tg_jobs (source_id
   WHERE state IN ('pending','running','delayed');
 CREATE INDEX IF NOT EXISTS tg_jobs_claim_idx ON tg_jobs (run_at, id)
   WHERE state IN ('pending','running','delayed');
+
+CREATE TABLE IF NOT EXISTS tg_runtime (
+  id INTEGER PRIMARY KEY CHECK (id=1),
+  pause_until TIMESTAMPTZ
+);
+INSERT INTO tg_runtime(id) VALUES(1) ON CONFLICT(id) DO NOTHING;
