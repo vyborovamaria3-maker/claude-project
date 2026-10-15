@@ -16,6 +16,12 @@ type Metric = {
 };
 type GraphData = {
   nodes: Node[]; edges: Edge[]; metrics: Metric[];
+  sharedAddresses: { left_channel: string; right_channel: string; shared_addresses: number }[];
+  observedAddresses: {
+    target_kind: "solana_address" | "evm_address"; target_key: string;
+    observed_in_sources: number; occurrences: number;
+    first_observed_at: string | null; last_observed_at: string | null;
+  }[];
   sampled: boolean; days: number;
 };
 type Evidence = { identifier: string; message_id: string; posted_at: string | null; text: string };
@@ -249,6 +255,41 @@ export default function TGGraphPanel({ sources }: { sources: SourceOption[] }) {
                 <span className="mt-1 block break-words whitespace-pre-wrap text-content-muted">{item.text.slice(0,260) || "(без текста)"}</span>
               </a>
             ))}
+          </div>
+        </div>
+      )}
+
+      {data && (data.sharedAddresses.length > 0 || data.observedAddresses.length > 0) && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-bg-border p-4">
+            <h4 className="text-sm font-semibold text-content">Общие адреса в разных источниках</h4>
+            <p className="mt-1 text-xs text-content-muted">Совпадения в собранных текстах за выбранный период. Не подтверждают совместное управление.</p>
+            <div className="mt-3 space-y-2">
+              {data.sharedAddresses.slice(0,12).map((item,i)=>(
+                <div key={i} className="flex justify-between gap-3 rounded-lg border border-bg-border bg-bg-soft px-3 py-2 text-xs">
+                  <span className="break-all text-content">@{item.left_channel} ↔ @{item.right_channel}</span>
+                  <span className="shrink-0 text-content-muted">{item.shared_addresses} общих</span>
+                </div>
+              ))}
+              {!data.sharedAddresses.length && <p className="text-xs text-content-muted">Пересечений не обнаружено.</p>}
+            </div>
+          </div>
+          <div className="rounded-xl border border-bg-border p-4">
+            <h4 className="text-sm font-semibold text-content">Первые наблюдения адресов</h4>
+            <p className="mt-1 text-xs text-content-muted">Дата первого сообщения только в нашем наборе данных, не дата создания актива.</p>
+            <div className="mt-3 space-y-2">
+              {data.observedAddresses.slice(0,12).map(item=>(
+                <div key={item.target_kind + ":" + item.target_key}
+                  className="rounded-lg border border-bg-border bg-bg-soft px-3 py-2 text-xs">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-content">{item.target_kind === "solana_address" ? "Solana" : "EVM"}</span>
+                    <span className="text-content-muted">{item.observed_in_sources} источн. · {item.occurrences} упом.</span>
+                  </div>
+                  <div className="mt-1 break-all font-mono text-content-muted">{item.target_key}</div>
+                  <div className="mt-1 text-content-muted">Впервые: {prettyDate(item.first_observed_at)}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
