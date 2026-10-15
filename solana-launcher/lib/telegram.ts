@@ -1,5 +1,15 @@
 import { Telegraf } from "telegraf";
 
+/** Extract bounded retry metadata without exposing any upstream Telegram URL or secret. */
+function telegramRetryAfter(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("response" in error)) return undefined;
+  const response = (error as { response?: { error_code?: unknown; parameters?: { retry_after?: unknown } } }).response;
+  if (response?.error_code !== 429) return undefined;
+  const seconds = response.parameters?.retry_after;
+  return typeof seconds === "number" && Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= 86400
+    ? seconds : 60;
+}
+
 /**
  * Do not share a mutable Bot singleton between authenticated operators.
  * A request may use its own token without replacing another user's bot.
@@ -49,7 +59,7 @@ export async function verifyBotToken(token: string): Promise<{
 export async function checkBotInviteRights(
   token: string,
   chatId: string,
-): Promise<{ allowed: boolean; reason?: string }> {
+): Promise<{ allowed: boolean; reason?: string; retryAfter?: number }> {
   try {
     const client = getBot(token);
     if (!client) return { allowed: false, reason: "Bot token is not configured" };
@@ -60,7 +70,9 @@ export async function checkBotInviteRights(
       return { allowed: false, reason: "Bot needs administrator rights to invite users" };
     }
     return { allowed: true };
-  } catch {
+  } catch (error) {
+    const retryAfter = telegramRetryAfter(error);
+    if (retryAfter) return { allowed: false, reason: "TELEGRAM_RATE_LIMITED", retryAfter };
     return { allowed: false, reason: "Unable to verify bot invite permissions" };
   }
 }
@@ -79,6 +91,7 @@ export async function getChatInfo(
     description?: string;
   };
   error?: string;
+  retryAfter?: number;
 }> {
   const botInstance = getBot(token);
   if (!botInstance) return { success: false, error: "No bot token" };
@@ -102,9 +115,11 @@ export async function getChatInfo(
     };
   } catch (err: unknown) {
     const error = err as { response?: { description?: string }; message?: string };
+    const retryAfter = telegramRetryAfter(err);
     return {
       success: false,
-      error: error.response?.description || error.message || "Failed to get chat",
+      error: retryAfter ? "TELEGRAM_RATE_LIMITED" : error.response?.description || error.message || "Failed to get chat",
+      retryAfter,
     };
   }
 }
@@ -118,6 +133,7 @@ export async function createInviteLink(
   link?: string;
   inviteLink?: { name?: string; inviteLink: string; expireDate?: number; memberLimit?: number; createsJoinRequest: boolean };
   error?: string;
+  retryAfter?: number;
 }> {
   const botInstance = getBot(token);
   if (!botInstance) return { success: false, error: "No bot token" };
@@ -157,9 +173,11 @@ export async function createInviteLink(
     };
   } catch (err: unknown) {
     const error = err as { response?: { description?: string }; message?: string };
+    const retryAfter = telegramRetryAfter(err);
     return {
       success: false,
-      error: error.response?.description || error.message || "Failed to create invite link",
+      error: retryAfter ? "TELEGRAM_RATE_LIMITED" : error.response?.description || error.message || "Failed to create invite link",
+      retryAfter,
     };
   }
 }
