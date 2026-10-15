@@ -1,12 +1,11 @@
 import { CollectorActionError } from "./errors";
-import { subscribeLive } from "./live";
+import { subscribeLive, activeTaskSnapshot } from "../../src/collector/monitoring";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { ZodError } from "zod";
 import { checkOrigin } from "../trade/http-security";
 import { readiness, startCollection, taskDetails, resumeCollection } from "./control";
-import { activeTaskSnapshot } from "../trade/task-dashboard";
 import { q } from "../trade/pg";
 export async function handleCollectorRequest(req:IncomingMessage,res:ServerResponse,origin:string,services={readiness,startCollection,taskDetails,resumeCollection}):Promise<boolean> {
  const url=new URL(req.url??"/","http://localhost");
