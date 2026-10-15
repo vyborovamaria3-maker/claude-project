@@ -10,7 +10,7 @@ try {
   db.exec([
     "CREATE TABLE chain_seed_targets(kind TEXT,address TEXT,source_mask INTEGER,priority INTEGER,backfill_complete INTEGER,",
     "possible_gap INTEGER,forward_cursor TEXT,last_success_at INTEGER,last_error TEXT,PRIMARY KEY(kind,address));",
-    "CREATE TABLE chain_seed_events(kind TEXT,address TEXT,signature TEXT,observed_at INTEGER,slot INTEGER,payload_gzip BLOB,raw_revision INTEGER NOT NULL DEFAULT 1,",
+    "CREATE TABLE chain_seed_events(kind TEXT,address TEXT,signature TEXT,observed_at INTEGER,slot INTEGER,payload_gzip BLOB,payload_hash TEXT,raw_revision INTEGER NOT NULL DEFAULT 1,",
     "PRIMARY KEY(kind,address,signature));"
   ].join(""));
   // Simulate a pre-upgrade local forensic cache table: migration must be additive.
@@ -52,6 +52,10 @@ try {
   revisedBuy.accountData[0].nativeBalanceChange=-1250005000;
   db.prepare("UPDATE chain_seed_events SET payload_gzip=?,raw_revision=raw_revision+1 WHERE signature='buy-sig'")
     .run(gzipSync(Buffer.from(JSON.stringify(revisedBuy))));
+  pnl=db.prepare("SELECT * FROM chain_forensic_wallet_pnl WHERE wallet=? AND mint=?").get(wallet,mint);
+  assert.equal(pnl.status,"unknown","raw revision trigger must invalidate previously verified PnL immediately");
+  assert.equal(pnl.total_realized_pnl_sol,null);
+
   result=rebuildWallet(db,wallet);
   assert.equal(result.newlyParsed,1,"same-signature payload update must be decoded");
   assert.equal(result.verifiedTokens,1);
