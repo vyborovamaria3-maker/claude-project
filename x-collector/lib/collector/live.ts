@@ -3,6 +3,9 @@ import { q } from '../trade/pg';
 import { Handle } from '../trade/schemas';
 import { safeLastErrorCode } from '../trade/task-status';
 export interface Progress {phase:string;account?:string|null;found?:number;authors?:string[];currentAuthor?:string|null;limit?:number|null;startedAt?:number;}
+interface LiveJobRow {
+ id:string; saved_tweets:string; saved_profiles:string; last_error:string|null;
+}
 export async function recordProgress(taskId:number,workerId:string,attempt:number,p:Progress) {
  const authors=[...new Set((p.authors??[]).filter(a=>Handle.safeParse(a).success))].slice(-20);
  const rows=await q(`WITH owned AS (SELECT id FROM x_tasks WHERE id=$1 AND claimed_by=$2 AND attempts=$3 AND status='claimed' AND lease_expires_at>$11 FOR SHARE)
@@ -14,7 +17,7 @@ export async function recordProgress(taskId:number,workerId:string,attempt:numbe
 }
 export async function liveSnapshot() {
  const [jobs,accounts,workers]=await Promise.all([
- q(`WITH ids AS (SELECT id FROM (SELECT id FROM x_tasks ORDER BY id DESC LIMIT 50) recent UNION SELECT id FROM (SELECT id FROM x_tasks WHERE status='claimed' ORDER BY id DESC LIMIT 50) active)
+ q<LiveJobRow>(`WITH ids AS (SELECT id FROM (SELECT id FROM x_tasks ORDER BY id DESC LIMIT 50) recent UNION SELECT id FROM (SELECT id FROM x_tasks WHERE status='claimed' ORDER BY id DESC LIMIT 50) active)
  SELECT t.id,t.kind,t.status,t.handle,t.payload_json->>'query' query,t.attempts,t.max_attempts,t.available_at,t.last_error,t.claimed_by,
  p.account_name,p.phase,p.found,p.authors,p.current_author,p.target_limit,p.started_at,p.updated_at progress_at,
  (SELECT count(*) FROM x_task_tweets r WHERE r.task_id=t.id) saved_tweets,
