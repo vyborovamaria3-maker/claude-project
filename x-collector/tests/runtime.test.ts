@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import { Pool } from 'pg';
 import { PGlite } from '@electric-sql/pglite';
 import { enqueueTask, claimTasks, finishTask, deferTask, failTask, extendLease, replayDeadLetter, QueueBackpressureError } from '../lib/trade/tasks';
-import { pickAccount, accountWaitMs, releaseAccount, recordError, extendAccountLease, cooldownAccountProxy } from '../lib/trade/account-manager';
+import { pickAccount, accountWaitMs, releaseAccount, recordError, extendAccountLease, cooldownAccountProxy, releaseUnconfirmedAccountReservation, proxyConnectionIdentity } from '../lib/trade/account-manager';
 import { CollectorHttpError, taskFailure, retryAfterMs } from '../lib/trade/task-errors';
 import { WorkerRuntime } from '../src/runtime/worker-runtime';
 import { activeTaskSnapshot } from '../lib/trade/task-dashboard';
@@ -118,6 +118,16 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
       (name,session_encrypted,hour_window_start,created_at,updated_at,role,proxy_json)
       SELECT 'shared-proxy', session_encrypted, 0,0,0,'collector',proxy_json
       FROM x_accounts WHERE name='second'`);
+    await db.query("UPDATE x_accounts SET proxy_json=$1 WHERE name='shared-proxy'",
+      [JSON.stringify({type:'socks5',host:'127.0.0.1',port:9050,
+        latency:240,status:'connected',last_check:Date.now(),country:'EE'})]);
+    assert.equal(proxyConnectionIdentity(JSON.stringify({type:'socks5',host:'127.0.0.1',port:9050})),
+      proxyConnectionIdentity(JSON.stringify({type:'socks5',host:'127.0.0.1',port:9050,last_check:Date.now(),latency:240})));
+    await db.query(`INSERT INTO x_accounts
+      (name,session_encrypted,hour_window_start,created_at,updated_at,role,proxy_json)
+      SELECT 'different-auth', session_encrypted, 0,0,0,'collector',
+        '{"type":"socks5","host":"127.0.0.1","port":9050,"username":"different","password":"secret"}'
+      FROM x_accounts WHERE name='second'`);
     await db.query(`INSERT INTO x_accounts
       (name,session_encrypted,hour_window_start,created_at,updated_at,role,proxy_json)
       SELECT 'other-proxy', session_encrypted, 0,0,0,'collector',
@@ -133,11 +143,22 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
       "SELECT status FROM x_accounts WHERE name='shared-proxy'")).rows[0].status,'cooldown');
     assert.equal((await db.query<{status:string}>(
       "SELECT status FROM x_accounts WHERE name='other-proxy'")).rows[0].status,'active');
+    assert.equal((await db.query<{status:string}>(
+      "SELECT status FROM x_accounts WHERE name='different-auth'")).rows[0].status,'active');
     assert.equal((await db.query(
       "SELECT 1 FROM xc_account_errors WHERE account_name IN ('second','shared-proxy') AND type='PROXY_FAILED'")).rows.length,2);
     await releaseAccount('second','proxy-fallback');
-    await db.query("DELETE FROM x_accounts WHERE name IN ('second','shared-proxy','other-proxy')");
-    await db.query("UPDATE x_accounts SET account_busy_until=0,account_claimed_by=NULL WHERE name='fallback'");
+    await db.query("DELETE FROM x_accounts WHERE name IN ('second','shared-proxy','other-proxy','different-auth')");
+    await db.query("UPDATE x_accounts SET account_busy_until=0,account_claimed_by=NULL,role='collector',status='active',weight_used_this_hour=0,weight_quota_per_hour=15,tier='new' WHERE name='fallback'");
+    const reserved=await pickAccount('search','unconfirmed-reservation','fallback');
+    assert.equal(reserved?.name,'fallback');
+    assert.equal(await releaseUnconfirmedAccountReservation('wrong-reservation',3),0);
+    assert.equal(await releaseUnconfirmedAccountReservation('unconfirmed-reservation',3),1);
+    assert.equal(await releaseUnconfirmedAccountReservation('unconfirmed-reservation',3),0);
+    const refunded=(await db.query<{account_claimed_by:string|null;weight_used_this_hour:number}>(
+      "SELECT account_claimed_by,weight_used_this_hour FROM x_accounts WHERE name='fallback'")).rows[0];
+    assert.equal(refunded.account_claimed_by,null);
+    assert.equal(refunded.weight_used_this_hour,0);
     await db.query("DELETE FROM x_accounts WHERE name IN ('fallback','publisher-only')");
     await enqueueTask({ ...input, payload: { query: 'retry' }, maxAttempts: 2 });
     const [retry] = await claimTasks('worker-c', 1, 60000);
