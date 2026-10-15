@@ -4,7 +4,8 @@
 // Only verified Helius swap legs with an attributable SOL/WSOL quote become priced trades.
 const WSOL = "So11111111111111111111111111111111111111112";
 const EPS = 1e-10;
-function num(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+function num(v) { if (v === null || v === undefined || v === "") return null;
+  const n = Number(v); return Number.isFinite(n) ? n : null; }
 function rawQty(leg) {
   const r = leg && leg.rawTokenAmount;
   if (!r || !/^\d+$/.test(String(r.tokenAmount ?? ""))) return null;
