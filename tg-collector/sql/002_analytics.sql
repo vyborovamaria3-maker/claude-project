@@ -4,8 +4,8 @@ ALTER TABLE tg_messages ADD COLUMN IF NOT EXISTS analysis_version SMALLINT NOT N
 CREATE TABLE IF NOT EXISTS tg_message_links (
   source_id BIGINT NOT NULL,
   message_id BIGINT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('mention','forward','contract')),
-  target_kind TEXT NOT NULL CHECK (target_kind IN ('handle','channel_id','solana_contract','evm_contract')),
+  kind TEXT NOT NULL CHECK (kind IN ('mention','forward','address')),
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('handle','channel_id','solana_address','evm_address')),
   target_key TEXT NOT NULL,
   PRIMARY KEY (source_id,message_id,kind,target_kind,target_key),
   FOREIGN KEY (source_id,message_id) REFERENCES tg_messages(source_id,message_id) ON DELETE CASCADE
