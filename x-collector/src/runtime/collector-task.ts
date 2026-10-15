@@ -5,12 +5,14 @@ import { recordAccountError } from "../accounts/errors";
 import { recordProgress, Progress } from "../../lib/collector/live";
 import { persistTweets, persistProfile } from "../../lib/trade/collector-store";
 import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../../lib/trade/tasks";
-import { pickAccount, accountWaitMs, recordSuccess, recordError, cooldownAccountProxy, getAccountDelay, extendAccountLease, releaseAccount, XAccount } from "../../lib/trade/account-manager";
+import { pickAccount, accountWaitMs, recordSuccess, recordError, cooldownAccountProxy, getAccountDelay, extendAccountLease, releaseAccount, releaseUnconfirmedAccountReservation, WEIGHTS, XAccount } from "../../lib/trade/account-manager";
 import { WorkerRegistry } from "../../lib/trade/worker-registry";
 import { decryptBuffer } from "../../lib/trade/crypto";
 import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState, RawTweet } from "../../lib/trade/twitter-scraper";
 import { parseTaskPayload } from "../../lib/trade/schemas";
-import { q, getPool } from "../../lib/trade/pg";
+import { q, getPool, checkDatabase, AmbiguousCommitError } from "../../lib/trade/pg";
+import { isRetryablePgError } from "../../lib/trade/retry";
+import { waitForDatabaseRecovery } from "./db-recovery";
 import { log } from "../../lib/trade/logger";
 import { tasksTotal, taskDuration, scrapeDuration } from "../../lib/trade/metrics";
 import { getConfig } from "../../lib/trade/config";
@@ -70,6 +72,17 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     account = await pickAccount(task.kind === "search" ? "search"
       : task.kind === "timeline" ? "timeline" : "profile", accountLeaseOwner, (payload as {account_name?:string}).account_name, (payload as {account_fallback?:boolean}).account_fallback === true, needsProxy);
   } catch (e) {
+    if (e instanceof AmbiguousCommitError || isRetryablePgError(e)) {
+      // Selection may have committed despite the connection failing. Resolve
+      // that exact owner token before retrying the same job; do not consume
+      // retries for infrastructure failures or leak a leased account.
+      await waitForDatabaseRecovery(() => checkDatabase(), signal);
+      await releaseUnconfirmedAccountReservation(
+        accountLeaseOwner, WEIGHTS[task.kind === "timeline" ? "timeline" :
+          task.kind === "search" ? "search" : "profile"],
+      );
+      throw e; // Worker defers the still-claimed task with its attempt fence.
+    }
     const msg = e instanceof Error ? e.message : String(e);
     await failTask(task.id, workerId, `pickAccount: ${msg}`, task.attempts).catch(() => {});
     return "pick-failed";
