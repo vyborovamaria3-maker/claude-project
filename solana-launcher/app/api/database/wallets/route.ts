@@ -449,7 +449,15 @@ export async function GET(req: NextRequest) {
         SUM(amount_sol) AS trade_volume_sol,
         MIN(timestamp) AS first_trade_at,
         MAX(timestamp) AS last_trade_at
-      FROM token_trades
+      FROM (
+        SELECT mint,signature,trader,type,amount_sol,timestamp FROM token_trade_fills
+        UNION ALL
+        SELECT l.mint,l.signature,l.trader,l.type,l.amount_sol,l.timestamp
+        FROM token_trades l WHERE NOT EXISTS (
+          SELECT 1 FROM token_trade_fills f
+          WHERE f.mint=l.mint AND f.signature=l.signature
+        )
+      ) effective
       WHERE mint IN (SELECT token_address FROM parsed_base)
       GROUP BY mint
     )
