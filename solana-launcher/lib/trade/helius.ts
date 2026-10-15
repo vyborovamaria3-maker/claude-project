@@ -91,7 +91,7 @@ async function fetchHeliusPage(
       url.searchParams.set("commitment", "finalized");
       // Wallet history must include changes to SPL token accounts, not just the owner address.
       if (includeTokenAccounts) url.searchParams.set("token-accounts", "balanceChanged");
-      if (before) url.searchParams.set("before", before);
+      if (before) url.searchParams.set("before-signature", before);
       try {
         const response = await fetch(url.toString(), {
           headers: { Accept: "application/json" },
@@ -105,6 +105,9 @@ async function fetchHeliusPage(
         }
         const page: unknown = await response.json();
         if (!Array.isArray(page)) throw new Error("Helius page has invalid shape");
+        if (page.some(tx => !tx || typeof tx.signature !== "string" || !tx.signature)) {
+          throw new Error("Helius page contains transaction without signature");
+        }
         return page as HeliusEnrichedTx[];
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
