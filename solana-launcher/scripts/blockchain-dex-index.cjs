@@ -34,6 +34,17 @@ function initDexIndex(db) {
   const cols=db.pragma("table_info(chain_dex_indexed_signatures)").map(c=>c.name);
   if (!cols.includes("payload_hash")) db.exec("ALTER TABLE chain_dex_indexed_signatures ADD COLUMN payload_hash TEXT");
   if (!cols.includes("decode_status")) db.exec("ALTER TABLE chain_dex_indexed_signatures ADD COLUMN decode_status TEXT NOT NULL DEFAULT 'unknown'");
+
+  // Keep materialized trades tied to the exact original Helius event.
+  db.exec([
+    "CREATE TRIGGER IF NOT EXISTS dex_raw_revision AFTER UPDATE OF payload_hash,raw_revision ON chain_seed_events",
+    "WHEN NEW.kind='dex_program' AND (OLD.payload_hash IS NOT NEW.payload_hash OR OLD.raw_revision<>NEW.raw_revision) BEGIN",
+    "DELETE FROM chain_dex_observed_trades WHERE program=NEW.address AND signature=NEW.signature;",
+    "DELETE FROM chain_dex_indexed_signatures WHERE program=NEW.address AND signature=NEW.signature; END;",
+    "CREATE TRIGGER IF NOT EXISTS dex_raw_delete AFTER DELETE ON chain_seed_events WHEN OLD.kind='dex_program' BEGIN",
+    "DELETE FROM chain_dex_observed_trades WHERE program=OLD.address AND signature=OLD.signature;",
+    "DELETE FROM chain_dex_indexed_signatures WHERE program=OLD.address AND signature=OLD.signature; END;",
+  ].join("\n"));
 }
 function extractDexObservations(tx, program) {
   if (!tx || !tx.signature || !tx.events?.swap || tx.transactionError != null ||
