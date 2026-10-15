@@ -104,7 +104,11 @@ async function processJob(client: TelegramClient, job: Job): Promise<void> {
   if (!source) throw new Error("Source was deleted");
 
   const entity = await client.getEntity(source.identifier);
-  const channel = entity as { id?: {toString(): string}; title?: string };
+  // Never collect from user profiles/DMs: this module is channel/group-only.
+  const channel = entity as { className?: string; id?: {toString(): string}; title?: string };
+  if (channel.className !== "Channel") {
+    throw new Error("TG_SOURCE_UNSUPPORTED: only public channels and supergroups are allowed");
+  }
   await pool.query("UPDATE tg_sources SET peer_id=$2,title=$3 WHERE id=$1",
     [job.source_id, channel.id?.toString() ?? null, channel.title ?? source.identifier]);
 
@@ -180,7 +184,7 @@ async function handleFailure(job: Job, error: unknown): Promise<void> {
     console.warn("Telegram requested a pause (seconds):", seconds);
     return;
   }
-  const permanent = /CHANNEL_PRIVATE|USERNAME_INVALID|USERNAME_NOT_OCCUPIED|CHAT_ADMIN_REQUIRED|USER_NOT_PARTICIPANT/.test(message);
+  const permanent = /CHANNEL_PRIVATE|USERNAME_INVALID|USERNAME_NOT_OCCUPIED|CHAT_ADMIN_REQUIRED|USER_NOT_PARTICIPANT|TG_SOURCE_UNSUPPORTED/.test(message);
   const retry = !permanent && job.attempts < 5;
   const wait = Math.min(900, Math.pow(2, job.attempts) * 15);
   await pool.query(`UPDATE tg_jobs SET state=$2,run_at=now()+($3::int * interval '1 second'),
