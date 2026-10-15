@@ -45,6 +45,12 @@ export function taskFailure(error: unknown): { code: string; permanent: boolean;
     return { code: "COLLECTION_TIMEOUT", permanent: false, retryAfterMs: 30_000 };
   if (/^XACTIONS_RESPONSE_INVALID/.test(message))
     return { code: "HTTP_RESPONSE_INVALID", permanent: false, retryAfterMs: 120_000 };
+  if (/^XACTIONS_PROXY_AUTH_FAILED/.test(message))
+    return { code: "PROXY_AUTH", permanent: false, retryAfterMs: 3_600_000 };
+  if (/^XACTIONS_PROXY_DNS_FAILED/.test(message))
+    return { code: "PROXY_DNS", permanent: false, retryAfterMs: 60_000 };
+  if (/^XACTIONS_NETWORK_IO_UNVERIFIED/.test(message))
+    return { code: "NETWORK_IO_UNVERIFIED", permanent: false, retryAfterMs: 30_000 };
   if (/^PROXY_FAILED:\s*invalid account proxy/i.test(message))
     return { code: "PROXY_CONFIG_INVALID", permanent: true, retryAfterMs: 0 };
   if (/SOCKS(?:4|5)?|PROXY_FAILED|proxy authentication|proxy connection|proxy handshake|ERR_PROXY_CONNECTION_FAILED/i.test(message))
