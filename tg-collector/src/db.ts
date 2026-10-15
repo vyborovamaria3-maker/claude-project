@@ -14,7 +14,7 @@ export const pool = new pg.Pool({
 
 export async function migrate(): Promise<void> {
   // Migrations are additive and idempotent. All writers must apply both before processing messages.
-  for (const name of ["001_init.sql", "002_analytics.sql", "003_graph_rollups.sql"]) {
+  for (const name of ["001_init.sql", "002_analytics.sql", "003_graph_rollups.sql", "004_runtime_restrictions.sql"]) {
     const sql = await readFile(new URL("../sql/" + name, import.meta.url), "utf8");
     await pool.query(sql);
   }
