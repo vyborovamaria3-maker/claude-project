@@ -808,8 +808,41 @@ export function persistTokenTrades(mint: string, trades: StoredTokenTrade[]) {
        source = COALESCE(excluded.source, token_trades.source)`
   );
 
+  const indexedStmt = db.prepare(
+    `INSERT INTO token_trade_fills
+      (mint,signature,leg_index,timestamp,trader,type,amount_sol,amount_tokens,price_sol,
+       slot,quote_mint,quote_amount,quote_decimals,quote_usd_value,fee,jito_tip_lamports,source,inserted_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(mint,signature,leg_index) DO UPDATE SET
+       timestamp=excluded.timestamp,trader=excluded.trader,type=excluded.type,
+       amount_sol=excluded.amount_sol,amount_tokens=excluded.amount_tokens,
+       price_sol=excluded.price_sol,slot=COALESCE(excluded.slot,token_trade_fills.slot),
+       quote_mint=COALESCE(excluded.quote_mint,token_trade_fills.quote_mint),
+       quote_amount=COALESCE(excluded.quote_amount,token_trade_fills.quote_amount),
+       quote_decimals=COALESCE(excluded.quote_decimals,token_trade_fills.quote_decimals),
+       quote_usd_value=COALESCE(excluded.quote_usd_value,token_trade_fills.quote_usd_value),
+       fee=COALESCE(excluded.fee,token_trade_fills.fee),
+       jito_tip_lamports=COALESCE(excluded.jito_tip_lamports,token_trade_fills.jito_tip_lamports),
+       source=COALESCE(excluded.source,token_trade_fills.source)`
+  );
+  const seenLegs = new Set<string>();
+  for (const t of trades) {
+    if (t.legIndex === undefined || t.legIndex === null) continue;
+    if (!Number.isSafeInteger(t.legIndex) || t.legIndex < 0)
+      throw new Error('Token trade legIndex must be a non-negative safe integer');
+    const key = JSON.stringify([mint,t.signature,t.legIndex]);
+    if (seenLegs.has(key)) throw new Error('Duplicate leg index in batch: '+key);
+    seenLegs.add(key);
+  }
   const tx = db.transaction((rows: StoredTokenTrade[]) => {
     for (const t of rows) {
+      if (t.legIndex !== undefined && t.legIndex !== null) {
+        indexedStmt.run(mint,t.signature,t.legIndex,t.timestamp,t.trader,t.type,
+          t.amountSol,t.amountTokens,t.priceSol,t.slot??null,t.quoteMint??null,
+          t.quoteAmount??null,t.quoteDecimals??null,t.quoteUsdValue??null,
+          t.fee??null,t.jitoTipLamports??null,t.source??null,now);
+        continue;
+      }
       stmt.run(
         mint,
         t.signature,
