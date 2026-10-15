@@ -122,7 +122,7 @@ export async function finalizeBrowserCheckpoint(
     const row=r.rows[0];
     if(!row)return null;
     if(row.query_fingerprint!==key.fingerprint)throw new Error("BROWSER_CHECKPOINT_CHANGED");
-    const coverage:Number=Number(row.observed_count);
+    const coverage=Number(row.observed_count);
     const status:BrowserCoverage=coverage>=target?"target_reached":"unverified";
     await client.query("UPDATE xc_browser_checkpoints SET coverage=$2,updated_at=$3 WHERE task_id=$1",
       [key.taskId,status,now]);
