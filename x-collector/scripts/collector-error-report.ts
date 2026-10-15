@@ -1,6 +1,5 @@
 import { q, closePool } from "../lib/trade/pg";
-import { activeTaskSnapshot } from "../lib/trade/task-dashboard";
-import { collapseErrorTags, type TaskErrorRow } from "../lib/trade/error-report";
+import { activeTaskSnapshot, collapseErrorTags, type TaskErrorRow } from "../src/collector/monitoring";
 
 interface AccountErrorRow { type: string; events: number; }
 interface CountRow { status: string; count: number; }
