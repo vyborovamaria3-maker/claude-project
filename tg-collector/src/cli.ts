@@ -1,24 +1,15 @@
 import "dotenv/config";
 import { pool, migrate } from "./db.js";
 import { login } from "./telegram.js";
+import { normalizePublicUsername } from "./validation.js";
 
-function normalizePublicSource(input: string): string {
-  const value = input.trim()
-    .replace(/^https?:\/\/(www\.)?(t\.me|telegram\.me)\//i, "")
-    .replace(/^@/, "")
-    .split(/[/?#]/)[0];
-  if (!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(value)) {
-    throw new Error("Only public Telegram @usernames are supported (5-32 chars).");
-  }
-  return value.toLowerCase();
-}
 
 async function main(): Promise<void> {
   const action = process.argv[2];
   if (action === "login") { await login(); return; }
   if (action === "migrate") { await migrate(); console.log("TG schema migrated"); return; }
   if (action === "add") {
-    const identifier = normalizePublicSource(process.argv[3] || "");
+    const identifier = normalizePublicUsername(process.argv[3] || "");
     const tx = await pool.connect();
     try {
       await tx.query("BEGIN");
