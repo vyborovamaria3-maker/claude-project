@@ -257,4 +257,94 @@ function computePnl(events, coverageComplete) {
   }
   return results;
 }
-module.exports = { parseEvidence, computePnl, WSOL };
+
+/**
+ * Stream a pre-ordered SQL evidence cursor (mint, slot, block_time, signature,
+ * leg_index). Retains only open FIFO lots for the current mint, not all wallet
+ * transactions; the legacy computePnl remains an independent test oracle.
+ */
+function computePnlOrdered(ordered, coverageComplete) {
+  const results = [];
+  let s = null;
+  const finish = () => {
+    if (!s) return;
+    const verifiedTotal = coverageComplete && s.reasons.size === 0 && s.sells > 0;
+    results.push({ mint: s.mint, buys: s.buys, sells: s.sells,
+      transfers: s.transfers, activityCount: s.activityCount,
+      knownSellCount: s.knownSellCount,
+      knownRealizedPnlSol: s.knownSellCount ? s.knownPnl : null,
+      totalRealizedPnlSol: verifiedTotal ? s.knownPnl : null,
+      status: verifiedTotal ? "verified" : "unknown",
+      reasons: s.reasons.size ? [...s.reasons] : s.sells ? [] : ["no_sales"] });
+  };
+  const consume = (qty) => {
+    const consumed = [];
+    while (qty > EPS && s.lotHead < s.lots.length) {
+      const lot = s.lots[s.lotHead], n = Math.min(qty, lot.qty);
+      const cost = lot.cost == null ? null : lot.cost * n / lot.qty;
+      consumed.push({ qty: n, cost });
+      lot.qty -= n;
+      if (lot.cost != null) lot.cost -= cost;
+      qty -= n;
+      if (lot.qty <= EPS) s.lotHead++;
+    }
+    if (s.lotHead > 1024 && s.lotHead * 2 >= s.lots.length) {
+      s.lots = s.lots.slice(s.lotHead); s.lotHead = 0;
+    }
+    if (qty > EPS) consumed.push({ qty, cost: null });
+    return consumed;
+  };
+  for (const e of ordered) {
+    if (!e.mint || e.mint === WSOL) continue;
+    if (s && e.mint < s.mint) throw new Error("Evidence iterator is not mint-ordered");
+    if (!s || e.mint !== s.mint) {
+      finish();
+      s = { mint: e.mint, reasons: new Set(coverageComplete ? [] : ["history_incomplete"]),
+        basisTainted: !coverageComplete, lots: [], lotHead: 0, prev: null,
+        knownPnl: 0, knownSellCount: 0, buys: 0, sells: 0, transfers: 0, activityCount: 0 };
+    }
+    s.activityCount++;
+    if (e.slot == null || e.timestamp == null) {
+      s.reasons.add("missing_order_metadata");
+      s.basisTainted = true;
+    }
+    if (s.prev && e.slot != null && e.slot === s.prev.slot &&
+        e.signature !== s.prev.signature) {
+      s.reasons.add("same_slot_order_unverified");
+      s.basisTainted = true;
+    }
+    s.prev = {slot: e.slot,signature: e.signature};
+    if (e.kind === "buy") {
+      s.buys++;
+      const cost = e.amountSol != null && e.feeSol != null
+        ? e.amountSol + e.feeSol : null;
+      if (cost == null) s.reasons.add("missing_quote_or_fee");
+      s.lots.push({qty: e.amountTokens, cost});
+    } else if (e.kind === "transfer_in") {
+      s.transfers++;
+      s.lots.push({qty: e.amountTokens, cost: null});
+      s.reasons.add("incoming_transfer_unknown_basis");
+    } else if (e.kind === "transfer_out") {
+      s.transfers++;
+      if (consume(e.amountTokens).some(m => m.cost == null)) {
+        s.reasons.add("outgoing_transfer_without_basis");
+        s.basisTainted = true;
+      }
+    } else if (e.kind === "sell") {
+      s.sells++;
+      const matches = consume(e.amountTokens);
+      const allKnown = matches.every(m => m.cost != null);
+      if (!s.basisTainted && allKnown && e.amountSol != null && e.feeSol != null) {
+        s.knownPnl += e.amountSol - e.feeSol -
+          matches.reduce((sum,m) => sum + m.cost, 0);
+        s.knownSellCount++;
+      } else s.reasons.add("sale_without_verified_cost_basis");
+    } else {
+      s.reasons.add("unpriced_or_undecoded_activity");
+      s.basisTainted = true;
+    }
+  }
+  finish();
+  return results;
+}
+module.exports = { parseEvidence, computePnl, computePnlOrdered, WSOL };
