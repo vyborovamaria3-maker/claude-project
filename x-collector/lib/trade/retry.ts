@@ -95,6 +95,6 @@ export function isRetryablePgError(error: unknown): boolean {
   const code = pgErrorCode(error);
   if (code && RETRYABLE_PG_CODES.has(code)) return true;
   const message = String((error as Error | undefined)?.message ?? error);
-  return /terminated|connection (reset|lost|closed)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up/i
+  return /terminated|connection (reset|lost|closed)|timeout exceeded when trying to connect|connection timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EPIPE|socket hang up/i
     .test(message);
 }
