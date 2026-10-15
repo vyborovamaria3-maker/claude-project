@@ -153,7 +153,10 @@ export async function POST(request: NextRequest) {
           RETURNING id::text`, [username]);
         await tx.query(`
           INSERT INTO tg_jobs(source_id) VALUES($1)
-          ON CONFLICT DO NOTHING`, [source.rows[0].id]);
+          ON CONFLICT (source_id) DO NOTHING`, [source.rows[0].id]);
+        await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,
+          run_at=now(), locked_until=NULL, last_error=NULL, updated_at=now()
+          WHERE source_id=$1 AND state='failed'`, [source.rows[0].id]);
         await tx.query("COMMIT");
         return NextResponse.json({ ok: true, sourceId: source.rows[0].id }, { headers: noStore });
       } catch (error) {
