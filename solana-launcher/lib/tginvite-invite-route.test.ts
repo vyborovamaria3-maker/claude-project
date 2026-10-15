@@ -25,7 +25,7 @@ function request(body: unknown) {
     body: JSON.stringify(body),
   });
 }
-const params = { action: "createLink", token: "123:fake-bot-token", chatId: "@test_group" };
+const params = { action: "createLink", token: "123456789:abcdefghijklmnopqrstuvwxyzABCDE123456", chatId: "@test_group" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -60,6 +60,14 @@ describe("TGInvite invitation endpoint mocked integration", () => {
     });
     const response = await POST(request(params));
     expect(response.status).toBe(401);
+    expect(createInviteLink).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed bot tokens before quota or Telegram side effects", async () => {
+    const response = await POST(request({ ...params, token: "abc/bad:token" }));
+    expect(response.status).toBe(422);
+    expect(consumeTGInviteReadPermit).not.toHaveBeenCalled();
+    expect(getChatInfo).not.toHaveBeenCalled();
     expect(createInviteLink).not.toHaveBeenCalled();
   });
 
