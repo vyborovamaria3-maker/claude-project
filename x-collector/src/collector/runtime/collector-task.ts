@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { parseProxy } from "../../x/proxy";
 import { recordAccountError } from "../../accounts/errors";
-import { recordProgress, Progress } from "../monitoring";
+import { recordProgress, traceTaskStage, TASK_STAGES, type TaskStage, type Progress } from "../monitoring";
 import { persistTweets, persistProfile, browserFingerprint, loadBrowserCheckpoint, browserResumeQuery, commitBrowserBatch, finalizeBrowserCheckpoint } from "../persistence";
 import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../queue";
 import { pickAccount, accountWaitMs, recordSuccess, recordError, cooldownAccountProxy, getAccountDelay, extendAccountLease, releaseAccount, releaseUnconfirmedAccountReservation, WEIGHTS, XAccount, createCollectorQuotaGate, reserveAdditionalCollectorRequest } from "../accounts";
@@ -34,7 +34,20 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
   const { workerId, registry, signal, isStopping, useSourceCollector, useXActions = false } = context;
   const cfg = getConfig();
   let progress:Progress={phase:"selecting",found:0,startedAt:Date.now()};
-  const publish=async(p:Progress)=>{progress={...progress,...p};if(!await recordProgress(task.id,workerId,task.attempts,progress))throw new Error("task lease lost during progress update");};
+  let lastTracedStage:string|null=null;
+  const publish=async(p:Progress)=>{
+    progress={...progress,...p};
+    if(!await recordProgress(task.id,workerId,task.attempts,progress))throw new Error("task lease lost during progress update");
+    // Diagnostic event writes are best-effort and never jeopardize task
+    // persistence. Only allowlisted stages and bounded counts are recorded.
+    if(progress.phase!==lastTracedStage &&
+      (TASK_STAGES as readonly string[]).includes(progress.phase)){
+      lastTracedStage=progress.phase;
+      await traceTaskStage(task.id,workerId,task.attempts,progress.phase as TaskStage,{
+        accountName:progress.account,observedCount:progress.found,
+      }).catch(()=>{});
+    }
+  };
   await publish({phase:"selecting"});
 
   let payload: ReturnType<typeof parseTaskPayload>;
@@ -240,7 +253,12 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     assertLeases();
     if(browserKey) {
       const coverage=await finalizeBrowserCheckpoint(browserKey,persistenceLease,browserTarget.limit??0);
-      if(coverage) log.info("browser checkpoint coverage", {taskId:task.id,coverage});
+      if(coverage) {
+        log.info("browser checkpoint coverage", {taskId:task.id,coverage});
+        await traceTaskStage(task.id,workerId,task.attempts,"checkpoint",{
+          accountName:acc.name,observedCount:progress.found,
+        }).catch(()=>{});
+      }
     }
     await publish({phase:"finishing"});
     await recordSuccess(acc.name, accountLeaseOwner);
