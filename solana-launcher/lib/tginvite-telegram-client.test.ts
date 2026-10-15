@@ -3,21 +3,33 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   getMe: vi.fn(),
   getChatMember: vi.fn(),
+  createChatInviteLink: vi.fn(),
+  revokeChatInviteLink: vi.fn(),
 }));
 
 vi.mock("telegraf", () => ({
   Telegraf: class {
     constructor(public token: string) {}
-    telegram = { getMe: state.getMe, getChatMember: state.getChatMember };
+    telegram = {
+      getMe: state.getMe,
+      getChatMember: state.getChatMember,
+      createChatInviteLink: state.createChatInviteLink,
+      revokeChatInviteLink: state.revokeChatInviteLink,
+    };
   },
 }));
 
-import { checkBotInviteRights, getBot, verifyBotToken } from "./telegram";
+import { checkBotInviteRights, createInviteLink, getBot, verifyBotToken } from "./telegram";
 
 beforeEach(() => {
   vi.clearAllMocks();
   state.getMe.mockResolvedValue({ id: 12 });
   state.getChatMember.mockResolvedValue({ status: "administrator", can_invite_users: true });
+  state.revokeChatInviteLink.mockResolvedValue({ is_revoked: true });
+  state.createChatInviteLink.mockResolvedValue({
+    invite_link: "https://t.me/+sandbox",
+    creates_join_request: true,
+  });
 });
 
 describe("isolated bot instances and real permission semantics (mocked)", () => {
@@ -81,3 +93,55 @@ describe("bot token verification confidentiality (mocked)", () => {
     expect(JSON.stringify(result)).not.toContain(token);
   });
 });
+
+describe("Telegram-issued opt-in links (mocked Bot API)", () => {
+  it("returns a link only after Telegram confirms admin join requests", async () => {
+    const result = await createInviteLink("bot-token-A", "@my_group", {
+      name: "TGInvite opt-in", createsJoinRequest: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.inviteLink).toMatchObject({
+      inviteLink: "https://t.me/+sandbox", createsJoinRequest: true,
+    });
+    expect(state.createChatInviteLink).toHaveBeenCalledWith(
+      "@my_group",
+      expect.objectContaining({
+        creates_join_request: true,
+        member_limit: undefined,
+        name: "TGInvite opt-in",
+      }),
+    );
+    expect(state.revokeChatInviteLink).not.toHaveBeenCalled();
+  });
+
+  it("revokes any link that Telegram unexpectedly creates without join approval", async () => {
+    state.createChatInviteLink.mockResolvedValueOnce({
+      invite_link: "https://t.me/+unexpected",
+      creates_join_request: false,
+    });
+    const result = await createInviteLink("bot-token-A", "@my_group", {
+      createsJoinRequest: true,
+    });
+    expect(result).toEqual({ success: false, error: "JOIN_REQUEST_NOT_ENFORCED" });
+    expect(state.revokeChatInviteLink).toHaveBeenCalledWith("@my_group", "https://t.me/+unexpected");
+    expect(JSON.stringify(result)).not.toContain("unexpected");
+  });
+
+  it("fails closed even if Telegram also rejects emergency link revocation", async () => {
+    state.createChatInviteLink.mockResolvedValueOnce({
+      invite_link: "https://t.me/+unexpected",
+      creates_join_request: false,
+    });
+    state.revokeChatInviteLink.mockRejectedValueOnce(new Error("Telegram unavailable"));
+    const result = await createInviteLink("bot-token-A", "@my_group", { createsJoinRequest: true });
+    expect(result).toEqual({ success: false, error: "JOIN_REQUEST_NOT_ENFORCED" });
+  });
+
+  it("does not accept an empty invite URL in the Bot API response", async () => {
+    state.createChatInviteLink.mockResolvedValueOnce({ invite_link: "", creates_join_request: true });
+    expect(await createInviteLink("bot-token-A", "@my_group", {
+      createsJoinRequest: true,
+    })).toMatchObject({ success: false, error: "INVITE_LINK_MISSING" });
+  });
+});
+
