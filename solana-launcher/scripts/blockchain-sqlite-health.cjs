@@ -4,6 +4,8 @@
 // directly: data may reside in its -wal file while collection is active.
 const fs=require("node:fs");
 const path=require("node:path");
+require("dotenv").config({path:path.join(process.cwd(),".env.local"),quiet:true});
+require("dotenv").config({path:path.join(process.cwd(),".env"),quiet:true});
 const Database=require("better-sqlite3");
 async function main(args=process.argv.slice(2)) {
   const mode=args[0] || "check";
