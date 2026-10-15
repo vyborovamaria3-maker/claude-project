@@ -236,7 +236,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
           "SEARCH_UNCONFIRMED", "SEARCH_PARSE_UNCONFIRMED",
           "TIMELINE_UNCONFIRMED", "TIMELINE_PARSE_UNCONFIRMED", "PAGE_END_UNVERIFIED", "BROWSER_END_UNVERIFIED", "PAGINATION_STALLED",
           "SOURCE_SHAPE_CHANGED", "PROXY_CONNECT", "PROXY_AUTH", "PROXY_DNS", "PROXY_CONFIG_INVALID",
-          "COLLECTION_TIMEOUT", "HTTP_RESPONSE_INVALID", "NETWORK_IO_UNVERIFIED"].includes(failure.code) &&
+          "COLLECTION_TIMEOUT", "HTTP_RESPONSE_INVALID", "NETWORK_IO_UNVERIFIED", "DB_COMMIT_UNCERTAIN"].includes(failure.code) &&
         !(e instanceof HttpNoProgressError) && !leaseLost && !isStopping()) {
       await recordAccountError(acc.name,e).catch(()=>{});
       await recordError(acc.name, kindErr, failure.retryAfterMs, accountLeaseOwner).catch(() => {});
