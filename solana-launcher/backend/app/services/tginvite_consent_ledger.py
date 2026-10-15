@@ -251,3 +251,113 @@ async def plan_non_dispatching_job(
         return winner
     await db.refresh(job)
     return job
+
+# A bot message /join <chat ID> is a new, chat-specific direct-invite request.
+# An existing join-request proof is NOT sufficient for this transport.
+DIRECT_CONSENT_VALID_FOR = timedelta(days=2)
+
+
+async def claim_direct_invite(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    destination_chat_id: str,
+    recipient_telegram_id: str,
+    telegram_bot_id: str,
+    hmac_key: bytes,
+    idempotency_key: str,
+) -> TelegramInviteJob:
+    """Atomically reserve a single Telegram invocation for a verified DM opt-in.
+
+    If the process crashes, "reserved" stays ambiguous: no automatic retry.
+    The DB unique constraint prevents repeated dispatches to the same recipient
+    for the same owner/destination even with a new idempotency key.
+    """
+    owner = _uuid(owner_id)
+    chat = _chat(destination_chat_id)
+    if (
+        not _USER_ID.fullmatch(recipient_telegram_id)
+        or not _USER_ID.fullmatch(telegram_bot_id)
+        or not isinstance(idempotency_key, str)
+        or not _REQUEST_ID.fullmatch(idempotency_key)
+    ):
+        raise ConsentLedgerError("Invalid direct invitation request")
+
+    digest = _digest(hmac_key, "recipient:v1", telegram_bot_id, recipient_telegram_id)
+    # Do not accept a generic join-request proof as authorization to dispatch.
+    proof = (
+        await db.execute(
+            select(TelegramInviteConsent)
+            .where(
+                TelegramInviteConsent.owner_id == owner,
+                TelegramInviteConsent.destination_chat_id == chat,
+                TelegramInviteConsent.recipient_digest == digest,
+                TelegramInviteConsent.proof_kind == "telegram_bot_start",
+                TelegramInviteConsent.revoked_at.is_(None),
+                TelegramInviteConsent.verified_at >= datetime.now(UTC) - DIRECT_CONSENT_VALID_FOR,
+            )
+            .order_by(TelegramInviteConsent.verified_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if proof is None:
+        raise ConsentLedgerError("Recipient has not requested a direct invite to this chat")
+
+    # Explicit duplicate check gives a useful safe error before unique
+    # constraint handles races across workers.
+    previous = (
+        await db.execute(
+            select(TelegramInviteJob.id).where(
+                TelegramInviteJob.owner_id == owner,
+                TelegramInviteJob.destination_chat_id == chat,
+                TelegramInviteJob.direct_recipient_digest == digest,
+            )
+        )
+    ).scalar_one_or_none()
+    if previous is not None:
+        raise ConsentLedgerError("Invitation already attempted or reserved")
+
+    job = TelegramInviteJob(
+        owner_id=owner,
+        consent_id=str(proof.id),
+        destination_chat_id=chat,
+        direct_recipient_digest=digest,
+        idempotency_key=idempotency_key,
+        status="reserved",
+    )
+    db.add(job)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConsentLedgerError("Invitation already attempted or reserved") from exc
+    await db.refresh(job)
+    return job
+
+
+async def finish_direct_invite(
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    job_id: str,
+    outcome: str,
+) -> TelegramInviteJob:
+    """Persist a Telegram-confirmed outcome; never replay network requests."""
+    if outcome not in {"invited", "declined", "unknown"}:
+        raise ConsentLedgerError("Invalid direct invite outcome")
+    job = (
+        await db.execute(
+            select(TelegramInviteJob).where(
+                TelegramInviteJob.id == _uuid(job_id),
+                TelegramInviteJob.owner_id == _uuid(owner_id),
+                TelegramInviteJob.direct_recipient_digest.is_not(None),
+            ).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job is None or job.status != "reserved":
+        raise ConsentLedgerError("Direct invite is missing, cancelled or already finalized")
+    job.status = outcome
+    await db.commit()
+    await db.refresh(job)
+    return job
