@@ -13,6 +13,10 @@ export function retryAfterMs(value: string | undefined, now = Date.now()): numbe
 }
 
 export function taskFailure(error: unknown): { code: string; permanent: boolean; retryAfterMs: number } {
+  // An uncertain database COMMIT is not evidence of X rate limits, a bad
+  // authenticated session, or a network/proxy problem.
+  if (error instanceof Error && error.name === "AmbiguousCommitError")
+    return { code: "DB_COMMIT_UNCERTAIN", permanent: false, retryAfterMs: 60_000 };
   const message = error instanceof Error ? error.message : String(error);
   const status = error instanceof CollectorHttpError ? error.status : Number(message.match(/(?:HTTP\s*|status\s*[:=]?\s*)(\d{3})/i)?.[1]);
   if (/^XACTIONS_ENDPOINT_UNAVAILABLE/.test(message))
