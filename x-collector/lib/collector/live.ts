@@ -1,6 +1,7 @@
 import { ServerResponse } from 'node:http';
 import { q } from '../trade/pg';
 import { Handle } from '../trade/schemas';
+import { safeLastErrorCode } from '../trade/task-status';
 export interface Progress {phase:string;account?:string|null;found?:number;authors?:string[];currentAuthor?:string|null;limit?:number|null;startedAt?:number;}
 export async function recordProgress(taskId:number,workerId:string,attempt:number,p:Progress) {
  const authors=[...new Set((p.authors??[]).filter(a=>Handle.safeParse(a).success))].slice(-20);
@@ -21,7 +22,7 @@ export async function liveSnapshot() {
  FROM ids JOIN x_tasks t ON t.id=ids.id LEFT JOIN x_task_progress p ON p.task_id=t.id AND p.attempt=t.attempts ORDER BY t.id DESC`),
  q("SELECT name,status,tier,weight_used_this_hour,weight_quota_per_hour,hour_window_start,cooldown_until,account_busy_until,last_success_at FROM x_accounts ORDER BY name LIMIT 100"),
  q("SELECT id,status,last_heartbeat,tasks_done,tasks_failed FROM x_workers ORDER BY last_heartbeat DESC LIMIT 50"),
- ]);return {at:Date.now(),jobs,accounts,workers};
+ ]);return {at:Date.now(),jobs:jobs.map(j=>({...j,last_error:safeLastErrorCode(j.last_error)})),accounts,workers};
 }
 const clients=new Set<ServerResponse>();
 let polling=false,timer:NodeJS.Timeout|undefined,stopping=false;
