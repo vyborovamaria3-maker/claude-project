@@ -39,7 +39,7 @@ beforeEach(() => {
     success: true, chat: { id: -100123, title: "Owned sandbox", type: "supergroup" },
   });
   vi.mocked(createInviteLink).mockResolvedValue({
-    success: true, inviteLink: { inviteLink: "https://t.me/+sandbox", name: "Mock link" },
+    success: true, inviteLink: { inviteLink: "https://t.me/+sandbox", name: "Mock link", createsJoinRequest: true },
   });
 });
 
@@ -112,6 +112,34 @@ describe("TGInvite invitation endpoint mocked integration", () => {
     expect((await response.json()).status).toBe("created");
   });
 
+  it("rejects an unmoderated link even if Telegram reports successful creation", async () => {
+    vi.mocked(createInviteLink).mockResolvedValueOnce({
+      success: true,
+      inviteLink: { inviteLink: "https://t.me/+unmoderated", createsJoinRequest: false },
+    });
+    const response = await POST(request({ ...params, createsJoinRequest: true }));
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.status).not.toBe("created");
+    expect(payload.error).toBe("JOIN_REQUEST_NOT_ENFORCED");
+    expect(JSON.stringify(payload)).not.toContain("unmoderated");
+  });
+
+  it("never counts an unmoderated link in opt-in batches", async () => {
+    vi.mocked(createInviteLink).mockResolvedValueOnce({
+      success: true,
+      inviteLink: { inviteLink: "https://t.me/+unmoderated", createsJoinRequest: false },
+    });
+    const response = await POST(request({
+      ...params, action: "batchLinks", linkCount: 3, createsJoinRequest: true,
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      links: [], count: 0, requestedCount: 3, status: "failed", error: "JOIN_REQUEST_NOT_ENFORCED",
+    });
+    expect(createInviteLink).toHaveBeenCalledTimes(1);
+  });
+
   it("does not leak bot tokens and stops after a thrown Telegram error", async () => {
     vi.mocked(createInviteLink).mockRejectedValueOnce(
       new Error(`Bot token ${params.token} was rejected`),
@@ -129,7 +157,7 @@ describe("TGInvite invitation endpoint mocked integration", () => {
   it("reports partial batches honestly and stops after first Telegram error", async () => {
     vi.mocked(createInviteLink)
       .mockResolvedValueOnce({
-        success: true, inviteLink: { inviteLink: "https://t.me/+one", name: "one" },
+        success: true, inviteLink: { inviteLink: "https://t.me/+one", name: "one", createsJoinRequest: false },
       })
       .mockResolvedValueOnce({ success: false, error: "CHAT_ADMIN_REQUIRED" });
     const response = await POST(request({
