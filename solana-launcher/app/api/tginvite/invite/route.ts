@@ -43,13 +43,22 @@ export async function POST(request: Request) {
       }
       const chatResult = await getChatInfo(options.token, options.chatId);
       if (!chatResult.success) {
-        return NextResponse.json({ error: safeInviteError(chatResult.error || "Chat not accessible", options.token) }, { status: 400 });
+        return NextResponse.json(
+          { error: safeInviteError(chatResult.error || "Chat not accessible", options.token) },
+          {
+            status: chatResult.retryAfter ? 429 : 400,
+            headers: chatResult.retryAfter ? { "Retry-After": String(chatResult.retryAfter) } : undefined,
+          },
+        );
       }
       const permission = await checkBotInviteRights(options.token, options.chatId);
       if (!permission.allowed) {
         return NextResponse.json(
           { error: permission.reason || "Bot cannot create invite links" },
-          { status: 403 },
+          {
+            status: permission.retryAfter ? 429 : 403,
+            headers: permission.retryAfter ? { "Retry-After": String(permission.retryAfter) } : undefined,
+          },
         );
       }
 
@@ -64,7 +73,10 @@ export async function POST(request: Request) {
             (options.createsJoinRequest && result.inviteLink.createsJoinRequest !== true)) {
           return NextResponse.json(
             { error: safeInviteError(result.error || "JOIN_REQUEST_NOT_ENFORCED", options.token) },
-            { status: 400 },
+            {
+              status: result.retryAfter ? 429 : 400,
+              headers: result.retryAfter ? { "Retry-After": String(result.retryAfter) } : undefined,
+            },
           );
         }
         return NextResponse.json(
@@ -75,6 +87,7 @@ export async function POST(request: Request) {
 
       const links: NonNullable<Awaited<ReturnType<typeof createInviteLink>>["inviteLink"]>[] = [];
       let failure: string | undefined;
+      let failureRetryAfter: number | undefined;
       for (let i = 0; i < options.count; i++) {
         try {
           const result = await createInviteLink(options.token, options.chatId, {
@@ -86,6 +99,7 @@ export async function POST(request: Request) {
           if (!result.success || !result.inviteLink ||
               (options.createsJoinRequest && result.inviteLink.createsJoinRequest !== true)) {
             failure = safeInviteError(result.error || "JOIN_REQUEST_NOT_ENFORCED", options.token);
+            failureRetryAfter = result.retryAfter;
             break;
           }
           links.push(result.inviteLink);
@@ -100,7 +114,13 @@ export async function POST(request: Request) {
           status: failure ? (links.length ? "partial" : "failed") : "completed",
           ...(failure ? { error: failure } : {}),
         },
-        { headers: { "Cache-Control": "private, no-store" } },
+        {
+          status: failureRetryAfter && links.length === 0 ? 429 : 200,
+          headers: {
+            "Cache-Control": "private, no-store",
+            ...(failureRetryAfter ? { "Retry-After": String(failureRetryAfter) } : {}),
+          },
+        },
       );
     }
 
