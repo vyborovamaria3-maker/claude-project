@@ -10,7 +10,8 @@
     "migrate": "tsx src/cli.ts migrate",
     "worker": "tsx src/worker.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "analyze:backfill": "tsx src/analytics/backfill.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.6",
