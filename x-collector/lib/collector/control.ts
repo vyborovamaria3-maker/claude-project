@@ -8,7 +8,7 @@ import { chromium } from "playwright";
 import { z } from "zod";
 import { q, q1, checkDatabase } from "../trade/pg";
 import { decryptBuffer } from "../trade/crypto";
-import { enqueueTask } from "../trade/tasks";
+import { enqueueTask } from "../../src/collector/queue";
 import { SearchPayload, TimelinePayload, ProfilePayload } from "../trade/schemas";
 import { ensureWorker, runtimeStatus } from "./runtime";
 const Input=z.discriminatedUnion("kind",[
