@@ -194,8 +194,16 @@ export async function collectArticles(page: Page, limit: number, deadlineMs: num
 
     if(tweets.length>before)await onBatch?.(tweets.slice(before));
     if (tweets.length >= limit) break;
+    // An explicit empty-state element is evidence for an empty feed only
+    // when no posts have been seen. Stale scrolling is not an end marker.
+    if (tweets.length === 0 && await page.locator('[data-testid="emptyState"]').count() > 0) return tweets;
     await page.mouse.wheel(0, 1800);
     await page.waitForTimeout(500 + Math.random() * 500);
+  }
+  if (tweets.length < limit) {
+    // Batches have already been persisted via onBatch. Treat the remaining
+    // range as partial rather than silently claiming complete X coverage.
+    throw new Error(`BROWSER_END_UNVERIFIED: ${tweets.length} observed, target ${limit}; no explicit end signal`);
   }
   return tweets;
 }
