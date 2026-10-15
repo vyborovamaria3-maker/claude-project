@@ -2,6 +2,7 @@ import "dotenv/config";
 import { pool, migrate } from "../db.js";
 import { replaceEvidence } from "../persistence/messages.js";
 import { ANALYSIS_VERSION } from "./extract.js";
+import { refreshGraphDays, utcDay } from "./rollups.js";
 
 /**
  * Offline reindex of existing messages. No Telegram calls.
@@ -22,17 +23,21 @@ async function main(): Promise<void> {
       try {
         await client.query("BEGIN");
         const { rows } = await client.query<{
-          source_id: string; message_id: string; text: string;
-        }>(`SELECT source_id::text, message_id::text, text
+          source_id: string; message_id: string; text: string; posted_at: Date | null;
+        }>(`SELECT source_id::text, message_id::text, text, posted_at
               FROM tg_messages WHERE analysis_version < $1
               ORDER BY source_id, message_id FOR UPDATE SKIP LOCKED LIMIT 100`,
           [ANALYSIS_VERSION]);
+        const affected = new Map<string, string[]>();
         for (const row of rows) {
           await replaceEvidence(client, row.source_id, {
             id: Number(row.message_id), message: row.text,
-          });
+          }, { preserveExistingForwards: true });
+          const day = utcDay(row.posted_at);
+          if (day) affected.set(row.source_id, [...(affected.get(row.source_id) ?? []), day]);
           count++;
         }
+        for (const [sourceId, days] of affected) await refreshGraphDays(client, sourceId, days);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
