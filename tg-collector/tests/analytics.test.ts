@@ -30,3 +30,8 @@ test("empty content and repeated links do not produce invented relationships", (
     {kind:"mention",targetKind:"handle",targetKey:"teamalpha"}
   ]);
 });
+
+test("does not treat lookalike hostnames as public Telegram references", () => {
+  const edges = extractLinks({ id: 50, message: "https://evil.t.me/notreal https://t.me/realchannel" });
+  assert.deepEqual(edges.filter(e => e.targetKind === "handle").map(e => e.targetKey), ["realchannel"]);
+});
