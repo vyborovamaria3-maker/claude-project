@@ -9,7 +9,8 @@
     "list": "tsx src/cli.ts list",
     "migrate": "tsx src/cli.ts migrate",
     "worker": "tsx src/worker.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.6",
