@@ -229,6 +229,21 @@ export default function TGGraphPanel({ sources }: { sources: SourceOption[] }) {
         ))}
         <span>Толщина линии = число сообщений-оснований.</span>
       </div>
+      {graph.visible.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold text-content">Связи и подтверждающие сообщения</h4>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {graph.visible.slice(0,12).map(edge=>(
+              <button key={edge.id} type="button" onClick={()=>setSelection(edge)}
+                aria-pressed={selection?.id===edge.id}
+                className="rounded-lg border border-bg-border bg-bg-soft p-3 text-left text-xs hover:border-primary-border">
+                <span className="block truncate text-content">{graph.byId.get(edge.from)?.label} → {graph.byId.get(edge.to)?.label}</span>
+                <span className="mt-1 block text-content-muted">{kindName[edge.kind]} · {edge.strength} сообщений</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {selection && (
         <div className="rounded-xl border border-primary-border bg-bg-soft p-4">
