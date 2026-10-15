@@ -56,7 +56,7 @@ export default function SidebarNav() {
 
   const activeTab: SiteNavMode = useMemo(
     () => (
-      pathname.startsWith("/trade") || pathname === "/x-analysis" || pathname === "/telegram-intelligence"
+      pathname.startsWith("/trade") || pathname === "/x-analysis" || pathname === "/telegram-intelligence" || pathname === "/tg-collector"
         ? "trade"
         : "launch"
     ),
@@ -119,6 +119,7 @@ export default function SidebarNav() {
             <Link
               key={item.href}
               href={item.href}
+              aria-label={item.href === "/tg-collector" ? "TG Collector" : translate(item.labelKey)}
               aria-current={active ? "page" : undefined}
               data-tag={item.tag}
               className={clsx(
@@ -127,7 +128,7 @@ export default function SidebarNav() {
               )}
             >
               <Icon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-105" />
-              <span className="truncate">{translate(item.labelKey)}</span>
+              <span className="truncate">{item.href === "/tg-collector" ? "TG Collector" : translate(item.labelKey)}</span>
             </Link>
           );
         })}
