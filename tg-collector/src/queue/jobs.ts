@@ -1,5 +1,5 @@
 import { pool } from "../db.js";
-import { telegramWaitSeconds } from "../validation.js";
+import { classifyTelegramError } from "./retry.js";
 import { pollSeconds } from "../runtime/config.js";
 export type Job = {
   id: string; source_id: string; attempts: number;
@@ -46,25 +46,43 @@ export async function finishJob(job: Job, highId: number, partial: boolean): Pro
 }
 
 
-export async function handleFailure(job: Job, error: unknown): Promise<void> {
+/** Account/session level errors halt the worker. No automatic account rotation. */
+export async function handleFailure(job: Job, error: unknown): Promise<"halt" | "continue"> {
   const message = (error instanceof Error ? error.message : String(error)).slice(0,300);
-  const seconds = telegramWaitSeconds(error);
-  if (seconds !== null) {
-    const wait = Math.min(seconds + 15, 86400 * 30);
-    await pool.query(
-      "UPDATE tg_runtime SET pause_until=GREATEST(COALESCE(pause_until, now()), now()+($1::int * interval '1 second')) WHERE id=1",
-      [wait]);
-    await pool.query(`UPDATE tg_jobs SET state='delayed',run_at=now()+($2::int * interval '1 second'),
-      locked_until=NULL,last_error=$3,updated_at=now() WHERE id=$1`, [job.id, wait, "FLOOD_WAIT"]);
-    console.warn("Telegram requested a pause (seconds):", seconds);
-    return;
+  const decision = classifyTelegramError(error, job.attempts);
+  if (decision.action === "halt") {
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      await tx.query(
+        "UPDATE tg_runtime SET block_reason=$1, blocked_at=now() WHERE id=1",
+        [decision.code]
+      );
+      await tx.query(`UPDATE tg_jobs SET state='failed',locked_until=NULL,
+        last_error=$2,updated_at=now() WHERE id=$1`, [job.id, decision.code]);
+      await tx.query("COMMIT");
+    } catch (failure) {
+      await tx.query("ROLLBACK");
+      throw failure;
+    } finally { tx.release(); }
+    console.error("TG Collector halted:", decision.code, message);
+    return "halt";
   }
-  const permanent = /CHANNEL_PRIVATE|USERNAME_INVALID|USERNAME_NOT_OCCUPIED|CHAT_ADMIN_REQUIRED|USER_NOT_PARTICIPANT|TG_SOURCE_UNSUPPORTED/.test(message);
-  const retry = !permanent && job.attempts < 5;
-  const wait = Math.min(900, Math.pow(2, job.attempts) * 15);
-  await pool.query(`UPDATE tg_jobs SET state=$2,run_at=now()+($3::int * interval '1 second'),
-    locked_until=NULL,last_error=$4,updated_at=now() WHERE id=$1`,
-    [job.id, retry ? "delayed" : "failed", wait, message]);
-  console.error("TG job error:", job.id, message);
+  if (decision.action === "delay") {
+    if (decision.global) {
+      await pool.query(`UPDATE tg_runtime SET pause_until=GREATEST(
+        COALESCE(pause_until,now()),now()+($1::int * interval '1 second'))
+        WHERE id=1`, [decision.seconds]);
+    }
+    await pool.query(`UPDATE tg_jobs SET state='delayed',
+      run_at=now()+($2::int * interval '1 second'),
+      locked_until=NULL,last_error=$3,updated_at=now() WHERE id=$1`,
+      [job.id, decision.seconds, decision.code]);
+    console.warn("TG job delayed", job.id, decision.code, decision.seconds);
+    return "continue";
+  }
+  await pool.query(`UPDATE tg_jobs SET state='failed',locked_until=NULL,
+    last_error=$2,updated_at=now() WHERE id=$1`, [job.id, decision.code + ": " + message]);
+  console.error("TG job permanently failed", job.id, decision.code);
+  return "continue";
 }
-
