@@ -171,7 +171,7 @@ export async function collectArticles(page: Page, limit: number, deadlineMs: num
   const tweets: RawTweet[] = [];
   let stale = 0;
 
-  while (tweets.length < limit && stale < 3) {
+  while (tweets.length < limit && stale < 2) {
     // Общий дедлайн на весь скролл: страница не может «залипнуть» навсегда.
     if (Date.now() > deadlineMs) {
       throw new Error("scrape deadline exceeded; saved batches are incomplete");
@@ -197,6 +197,8 @@ export async function collectArticles(page: Page, limit: number, deadlineMs: num
     // An explicit empty-state element is evidence for an empty feed only
     // when no posts have been seen. Stale scrolling is not an end marker.
     if (tweets.length === 0 && await page.locator('[data-testid="emptyState"]').count() > 0) return tweets;
+    // Do not spend another weighted request after the bounded stale probe.
+    if(stale >= 2) break;
     await beforeScroll?.();
     await page.mouse.wheel(0, 1800);
     await page.waitForTimeout(500 + Math.random() * 500);
