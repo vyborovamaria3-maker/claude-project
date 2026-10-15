@@ -159,10 +159,16 @@ test("HTTP timeout and invalid response must not be mistaken for broken SOCKS5",
   const timeout = sanitizeXActionsTransportFailure(new Error("XActions: HTTP request timed out"));
   const invalid = sanitizeXActionsTransportFailure(new Error("XActions: decoded HTTP response exceeds size limit"));
   const proxy = sanitizeXActionsTransportFailure(new Error("Socks5 proxy rejected connection: token=SUPERSECRET"));
+  const auth = sanitizeXActionsTransportFailure(new Error("SOCKS5 authentication failed: password=SUPERSECRET"));
+  const dns = sanitizeXActionsTransportFailure(new Error("getaddrinfo ENOTFOUND proxy.example"));
+  const unknown = sanitizeXActionsTransportFailure(new Error("socket hang up"));
   assert.equal(taskFailure(timeout).code, "COLLECTION_TIMEOUT");
   assert.equal(taskFailure(invalid).code, "HTTP_RESPONSE_INVALID");
   assert.equal(taskFailure(proxy).code, "PROXY_CONNECT");
-  for (const failure of [timeout, invalid, proxy]) {
+  assert.equal(taskFailure(auth).code, "PROXY_AUTH");
+  assert.equal(taskFailure(dns).code, "PROXY_DNS");
+  assert.equal(taskFailure(unknown).code, "NETWORK_IO_UNVERIFIED");
+  for (const failure of [timeout, invalid, proxy, auth, dns, unknown]) {
     assert.equal(failure.message.includes("SUPERSECRET"), false);
   }
 });
