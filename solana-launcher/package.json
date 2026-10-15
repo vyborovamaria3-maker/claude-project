@@ -11,7 +11,7 @@
     "landing:test": "node scripts/landing-regression.mjs",
     "kols:test": "node scripts/kols-regression.mjs",
     "analysis:test": "node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/kols-regression.mjs && node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-seed-integration.cjs",
-    "blockchain:test": "node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs",
+    "blockchain:test": "node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-forensics-regression.cjs",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",
@@ -33,6 +33,7 @@
     "blockchain:seeds": "node scripts/blockchain-seed-collector.cjs --mode import",
     "blockchain:collect": "node scripts/blockchain-seed-collector.cjs --mode collect",
     "blockchain:status": "node scripts/blockchain-seed-collector.cjs --mode status",
+    "blockchain:forensics": "node scripts/blockchain-forensics.cjs",
     "blockchain:watch": "node scripts/blockchain-seed-collector.cjs --mode watch",
     "blockchain:integration-test": "node scripts/blockchain-seed-integration.cjs"
   },
