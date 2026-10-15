@@ -29,7 +29,7 @@ function parseEvidence(tx, wallet) {
   const slot = num(tx.slot), timestamp = num(tx.timestamp);
   const out = [];
   const add = (kind, mint, amountTokens, amountSol, feeSol, counterparty = null) => {
-    if (!mint || mint === WSOL) return;
+    if (!mint || (mint === WSOL && !kind.startsWith("sol_transfer"))) return;
     const quantity = Number.isFinite(amountTokens) && amountTokens > 0 ? amountTokens : null;
     if (quantity == null && kind !== "unpriced") return;
     out.push({ wallet, signature: tx.signature, slot, timestamp, index: out.length,
@@ -82,12 +82,25 @@ function parseEvidence(tx, wallet) {
     const other = leg.toUserAccount === wallet ? leg.fromUserAccount : leg.toUserAccount;
     add(kind, leg.mint, quantity, null, null, other || null);
   }
+  if (recognizedTransfer) {
+    for (const leg of tx.nativeTransfers || []) {
+      if (leg.fromUserAccount !== wallet && leg.toUserAccount !== wallet) continue;
+      const amountSol = lamports(leg.amount);
+      if (!(amountSol > 0)) continue;
+      const incoming = leg.toUserAccount === wallet;
+      add(incoming ? "sol_transfer_in" : "sol_transfer_out", WSOL,
+        amountSol, amountSol, null,
+        incoming ? (leg.fromUserAccount || null) : (leg.toUserAccount || null));
+    }
+  }
   return out;
 }
 
 function computePnl(events, coverageComplete) {
   const grouped = new Map();
   for (const ev of events) {
+    // SOL funding transfers are graph evidence, not a profitable token trade.
+    if (ev.mint === WSOL) continue;
     if (!grouped.has(ev.mint)) grouped.set(ev.mint, []);
     grouped.get(ev.mint).push(ev);
   }
