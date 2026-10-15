@@ -13,6 +13,7 @@ if(args.some((value,i)=>value==="--limit"?i===args.length-1:false)) throw new Er
 require("ts-node").register({skipProject:true,transpileOnly:true,
   compilerOptions:{module:"commonjs",moduleResolution:"node",esModuleInterop:true}});
 const db=require("../lib/trade/db").getDb();
+require("./blockchain-seed-collector.cjs").initDb(db);
 initDexIndex(db);
 const existing=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chain_seed_events'").get();
 if(!existing){console.log(JSON.stringify({programs:[],message:"No persisted Helius seed events yet"}));process.exit(0);}
