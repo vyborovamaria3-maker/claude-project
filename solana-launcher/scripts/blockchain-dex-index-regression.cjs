@@ -58,6 +58,9 @@ try {
   improved.events.swap.nativeInput.amount="2500000000";
   improved.accountData[0].nativeBalanceChange=-2500005000;
   assert.equal(persistEvents(db,"dex_program",program,[improved]),1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades WHERE program=?").get(program).n,0,
+    "raw payload upgrade must immediately invalidate old DEX materialization");
+
   assert.equal(replayProgram(db,program,1).observations,1,"changed JSON must invalidate signature index");
   assert.equal(db.prepare("SELECT amount_sol FROM chain_dex_observed_trades WHERE program=? AND signature=?").get(program,tx.signature).amount_sol,2.5);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades WHERE program=?").get(program).n,1,"changed fill must replace old fill, not duplicate");
