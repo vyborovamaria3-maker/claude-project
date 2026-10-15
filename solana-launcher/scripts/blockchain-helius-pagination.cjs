@@ -32,7 +32,8 @@ global.fetch = async (input) => {
   assert.equal(requests.length,3,"short page must be followed by empty page");
   requests.length=0;
   meta=await fetchEnrichedTxsForMintWithMeta("wallet-fixture",105,new Set([history[100].signature]),undefined,true);
-  assert.equal(meta.transactions.length,100);
+  assert.equal(meta.transactions.length,101,"known overlap signature must be included for raw payload revisions");
+  assert.equal(meta.transactions.at(-1).signature,history[100].signature);
   assert.equal(meta.reachedKnownHistory,true);
   assert.equal(meta.exhausted,false);
   requests.length=0;
