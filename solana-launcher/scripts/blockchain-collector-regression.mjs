@@ -21,15 +21,15 @@ function loadTs(path, mocks = {}, globals = {}) {
   });
   const errors = (compiled.diagnostics || []).filter((d) => d.category === ts.DiagnosticCategory.Error);
   assert.equal(errors.length, 0, path + " must transpile");
-  const module = { exports: {} };
+  const sandboxModule = { exports: {} };
   const context = vm.createContext({
     console, Date, Math, Map, Set, URL, AbortSignal, setTimeout, clearTimeout,
     process: { env: {} }, ...globals,
   });
   const code = "(function (require, module, exports) { " + compiled.outputText + "\n })";
   const wrapper = vm.runInContext(code, context, { filename: path });
-  wrapper((id) => id in mocks ? mocks[id] : require(id), module, module.exports);
-  return module.exports;
+  wrapper((id) => id in mocks ? mocks[id] : require(id), sandboxModule, sandboxModule.exports);
+  return sandboxModule.exports;
 }
 
 const indexerSource = read("lib/trade/pump-portal-indexer.ts");
