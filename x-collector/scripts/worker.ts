@@ -1,6 +1,6 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { claimTasks, deferTask } from "../lib/trade/tasks";
+import { claimTasks, deferTask, failTask } from "../lib/trade/tasks";
 import { WorkerRegistry, reapDeadWorkers } from "../lib/trade/worker-registry";
 import { checkDatabase, closePool, AmbiguousCommitError } from "../lib/trade/pg";
 import { isRetryablePgError, pgErrorCode } from "../lib/trade/retry";
@@ -100,13 +100,36 @@ async function loop() {
       }
       for (const task of tasks) {
         if (shuttingDown) { await deferTask(task.id, workerId, 0, "worker shutdown", task.attempts); break; }
-        await withContext(
-          { taskId: task.id, workerId, mint: task.mint ?? undefined, handle: task.handle ?? undefined },
-          async () => {
-            const result = await runtime.runJob(task, job => executeTask(job, { workerId, registry, signal: cancellation.signal, isStopping: () => shuttingDown, useSourceCollector: USE_X_COLLECTOR, useXActions: USE_XACTIONS }));
-            log.info("task result", { result });
+        try {
+          await withContext(
+            { taskId: task.id, workerId, mint: task.mint ?? undefined, handle: task.handle ?? undefined },
+            async () => {
+              const result = await runtime.runJob(task, job => executeTask(job, { workerId, registry, signal: cancellation.signal, isStopping: () => shuttingDown, useSourceCollector: USE_X_COLLECTOR, useXActions: USE_XACTIONS }));
+              log.info("task result", { result });
+            },
+          );
+        } catch (error) {
+          runtime.degraded();
+          const databaseFailure = isRetryablePgError(error) || error instanceof AmbiguousCommitError;
+          log.error("task runner crashed", {
+            taskId: task.id, type: databaseFailure ? "database" : "runtime",
+          });
+          if (databaseFailure && !shuttingDown) {
+            // Do not spend an X attempt on DB downtime. If COMMIT actually
+            // completed, this fenced update will change zero rows.
+            await recoverDatabase();
+            const deferred = await deferTask(task.id, workerId, 5_000,
+              "database unavailable; task deferred", task.attempts);
+            if (!deferred) log.warn("task ownership changed before DB recovery", { taskId: task.id });
+          } else if (shuttingDown) {
+            await deferTask(task.id, workerId, 5_000, "worker shutdown", task.attempts).catch(() => {});
+          } else {
+            // Unexpected handler failures should use the bounded retry/DLQ
+            // policy instead of remaining claimed until the lease expires.
+            await failTask(task.id, workerId, new Error("WORKER_RUNTIME_FAILURE"), task.attempts);
           }
-        ).catch((e) => log.error("task runner crashed", { error: String(e) }));
+          if (!shuttingDown) runtime.ready();
+        }
       }
     } catch (e) {
       runtime.degraded();
