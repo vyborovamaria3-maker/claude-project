@@ -28,7 +28,8 @@ assert(Math.abs(verified.totalRealizedPnlSol - (1.5 - 0.000005 - (2 + 0.000005)/
 const missing = computePnl(events, false)[0];
 assert.equal(missing.totalRealizedPnlSol, null);
 assert.equal(missing.status, "unknown");
-assert.equal(missing.knownSellCount, 1);
+assert.equal(missing.knownSellCount, 0);
+assert.equal(missing.knownRealizedPnlSol, null);
 assert(missing.reasons.includes("history_incomplete"));
 const transfer = { signature: "tx-transfer", slot: 3, timestamp: 300,
   feePayer: OTHER, fee: 5000, type: "TRANSFER",
