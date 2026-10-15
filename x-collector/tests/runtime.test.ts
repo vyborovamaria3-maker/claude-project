@@ -8,6 +8,7 @@ import { enqueueTask, claimTasks, finishTask, deferTask, failTask, extendLease, 
 import { pickAccount, accountWaitMs, releaseAccount, recordError, extendAccountLease, cooldownAccountProxy } from '../lib/trade/account-manager';
 import { CollectorHttpError, taskFailure, retryAfterMs } from '../lib/trade/task-errors';
 import { WorkerRuntime } from '../src/runtime/worker-runtime';
+import { activeTaskSnapshot } from '../lib/trade/task-dashboard';
 import { executeTask } from '../src/runtime/collector-task';
 import { WorkerRegistry, reapDeadWorkers } from '../lib/trade/worker-registry';
 import { getDailyDigest, getMintFullReport, getTopShillers, getTrendingWords, getCashtagTrends, getWorkerEfficiency, getAccountHealth } from '../lib/trade/analytics';
@@ -186,6 +187,12 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     const [waiting] = await claimTasks('handler-worker', 1, 60000);
     assert.equal(await runtime.runJob(waiting,job=>executeTask(job,context)), 'no-account');
     assert.equal((await db.query<{attempts:number}>('SELECT attempts FROM x_tasks WHERE id=$1',[waiting.id])).rows[0].attempts,0);
+    const waitingSample = await activeTaskSnapshot(Date.now());
+    const waitingDisplay = waitingSample.find(row => row.id === String(waiting.id));
+    assert.equal(waitingDisplay?.state, 'waiting_account');
+    assert.equal(waitingDisplay?.lastErrorCode, 'WAITING_ACCOUNT');
+    assert.equal(waitingDisplay?.persistedPartialOutput, false);
+    await assert.rejects(activeTaskSnapshot(Date.now(), 51), /Invalid dashboard task limit/);
     await db.query("UPDATE x_tasks SET status='done' WHERE status='pending'");
     // Account failures quarantine only that account; a second account can finish the job.
     const previousKey = process.env.MASTER_KEY;
