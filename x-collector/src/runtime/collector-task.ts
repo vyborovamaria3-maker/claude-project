@@ -5,7 +5,7 @@ import { recordAccountError } from "../accounts/errors";
 import { recordProgress, Progress } from "../../lib/collector/live";
 import { persistTweets, persistProfile } from "../../lib/trade/collector-store";
 import { claimTasks, extendLease, finishTask, failTask, deferTask } from "../../lib/trade/tasks";
-import { pickAccount, accountWaitMs, recordSuccess, recordError, getAccountDelay, extendAccountLease, releaseAccount, XAccount } from "../../lib/trade/account-manager";
+import { pickAccount, accountWaitMs, recordSuccess, recordError, cooldownAccountProxy, getAccountDelay, extendAccountLease, releaseAccount, XAccount } from "../../lib/trade/account-manager";
 import { WorkerRegistry } from "../../lib/trade/worker-registry";
 import { decryptBuffer } from "../../lib/trade/crypto";
 import { searchTweets, fetchUserTimeline, fetchAccountProfile, ScrapeAuthState, RawTweet } from "../../lib/trade/twitter-scraper";
@@ -222,6 +222,10 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     await publish({phase:isStopping()?"waiting":"failed"}).catch(()=>{});
     let kindErr: "rate_limit" | "captcha" | "ban" | "auth_expired" | "other" = "other";
     const failure = taskFailure(e);
+    if (failure.code === "PROXY_CONNECT" && !leaseLost && !isStopping()) {
+      await cooldownAccountProxy(acc.name, accountLeaseOwner, failure.retryAfterMs || 60_000)
+        .catch(error => log.warn("proxy cooldown write failed", { account: acc.name, error: String(error) }));
+    }
     if (failure.code === "RATE_LIMIT") kindErr = "rate_limit";
     else if (failure.code === "ACCESS_REQUIRED") kindErr = "captcha";
     else if (failure.code === "AUTH_EXPIRED") kindErr = "auth_expired";
