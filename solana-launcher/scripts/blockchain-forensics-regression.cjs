@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 const assert = require("node:assert/strict");
-const { parseEvidence, computePnl, WSOL } = require("./blockchain-forensics-core.cjs");
+const { parseEvidence, computePnl, computePnlOrdered, WSOL } = require("./blockchain-forensics-core.cjs");
 const WALLET = "Wallet11111111111111111111111111111111111";
 const OTHER = "Other111111111111111111111111111111111111";
 const MINT = "Mint1111111111111111111111111111111111111";
@@ -85,4 +85,48 @@ const noOrdering = buy("missing-order", 11, 1, 1);
 delete noOrdering.slot;
 assert.equal(computePnl([...parseEvidence(noOrdering, WALLET),
   ...parseEvidence(sell("after-no-order", 12, 1, 2), WALLET)], true)[0].totalRealizedPnlSol, null);
+
+function sorted(items) {
+  return [...items].sort((a,b)=>a.mint.localeCompare(b.mint) ||
+    (a.slot??a.timestamp??0)-(b.slot??b.timestamp??0) ||
+    (a.timestamp??0)-(b.timestamp??0) ||
+    a.signature.localeCompare(b.signature) || a.index-b.index);
+}
+// Equivalent FIFO results without retaining a wallet-wide list of activities.
+const sampleGroups=[
+  events,
+  [...received,...parseEvidence(sell("sell-received",4,7,2),WALLET)],
+  [...parseEvidence(buy("early",1,1,1),WALLET),...parseEvidence(sell("first-sale",2,1,2),WALLET),
+    ...parseEvidence(noOrdering,WALLET)],
+  [...parseEvidence(buy("same-slot-buy",1,1,1),WALLET),
+    ...parseEvidence(sell("same-slot-sale",1,1,2),WALLET)],
+  [...parseEvidence(buy("good",1,1,1),WALLET),
+    ...parseEvidence(sell("good-sale",2,1,2),WALLET),
+    ...parseEvidence(unknownTx,WALLET)],
+];
+for (const caseEvents of sampleGroups) for(const complete of [true,false]) {
+  const oracle=computePnl(caseEvents,complete).sort((a,b)=>a.mint.localeCompare(b.mint));
+  const streaming=computePnlOrdered(sorted(caseEvents),complete);
+  assert.equal(streaming.length,oracle.length);
+  for (let i=0;i<oracle.length;i++) {
+    const a=oracle[i],b=streaming[i];
+    for(const field of ["mint","buys","sells","transfers","knownSellCount","status",
+      "totalRealizedPnlSol","knownRealizedPnlSol"])
+      assert.equal(b[field],a[field],field+" must match batch FIFO oracle");
+    assert.deepEqual([...b.reasons].sort(),[...a.reasons].sort());
+  }
+}
+function* largeWalletEvidence(n) {
+  for(let i=0;i<n;i++) {
+    yield {mint:MINT,signature:"big-buy-"+i,slot:i*2+1,timestamp:i*2+1,
+      index:0,kind:"buy",amountTokens:1,amountSol:1,feeSol:0};
+    yield {mint:MINT,signature:"big-sell-"+i,slot:i*2+2,timestamp:i*2+2,
+      index:0,kind:"sell",amountTokens:1,amountSol:2,feeSol:0};
+  }
+}
+const many=computePnlOrdered(largeWalletEvidence(20000),true);
+assert.equal(many.length,1);
+assert.equal(many[0].sells,20000);
+assert.equal(many[0].knownSellCount,20000);
+assert.equal(many[0].totalRealizedPnlSol,20000);
 console.log("[blockchain-forensics-regression] OK: verified swap lots, paid fees, transfer basis, unknown coverage, missed decode, multi-leg safeguards, failed tx");
