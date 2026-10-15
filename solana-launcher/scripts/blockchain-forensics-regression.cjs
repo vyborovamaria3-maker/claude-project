@@ -59,4 +59,8 @@ delete noFee.fee;
 assert.equal(computePnl([...parseEvidence(noFee, WALLET),
   ...parseEvidence(sell("no-fee-sell", 9, 1, 2), WALLET)], true)[0].totalRealizedPnlSol, null);
 assert.equal(computePnl([parseEvidence(buy("only-buy", 10, 1, 1), WALLET)[0]],true)[0].status,"unknown");
+const noOrdering = buy("missing-order", 11, 1, 1);
+delete noOrdering.slot;
+assert.equal(computePnl([...parseEvidence(noOrdering, WALLET),
+  ...parseEvidence(sell("after-no-order", 12, 1, 2), WALLET)], true)[0].totalRealizedPnlSol, null);
 console.log("[blockchain-forensics-regression] OK: verified swap lots, paid fees, transfer basis, unknown coverage, missed decode, multi-leg safeguards, failed tx");
