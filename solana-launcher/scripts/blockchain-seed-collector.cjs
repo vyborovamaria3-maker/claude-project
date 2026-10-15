@@ -30,7 +30,7 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (!arg.startsWith("--")) throw new Error("Unexpected argument: " + arg);
     const key = arg.slice(2);
-    if (["dry-run", "prune-missing", "help"].includes(key)) { flags[key] = true; continue; }
+    if (["dry-run", "prune-missing", "help", "scan-mint-addresses"].includes(key)) { flags[key] = true; continue; }
     if (!argv[i + 1] || argv[i + 1].startsWith("--")) throw new Error("Missing --" + key + " value");
     flags[key] = argv[++i];
   }
@@ -50,6 +50,7 @@ function parseArgs(argv) {
     watchInterval: intFlag(flags["watch-interval"], 60, 10, 3600),
     dryRun: Boolean(flags["dry-run"]),
     pruneMissing: Boolean(flags["prune-missing"]),
+    scanMintAddresses: Boolean(flags["scan-mint-addresses"]),
     help: Boolean(flags.help),
   };
 }
@@ -63,6 +64,7 @@ function usage() {
     "  --dry-run                 Inspect the spreadsheets without writing DB/network",
     "  --prune-missing           Remove mappings for deleted XLSX files",
     "  --max-files 5000",
+    "  --scan-mint-addresses    Diagnostic mint-account traffic (off by default, not a complete trade tape)",
     "Default folders: data/seed-folders/{migrated,trending,wallets}",
     "Collection requires HELIUS_API_KEY or HELIUS_API_KEYS. Existing trade.db is reused.",
   ].join("\n"));
@@ -250,14 +252,14 @@ function status(db) {
     db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count, forensic: verified };
 }
 
-function claimOne(db) {
+function claimOne(db, includeMintAddresses = true) {
   const now = Date.now();
   return db.transaction(() => {
     const row = db.prepare(
-      "SELECT * FROM chain_seed_targets WHERE source_mask<>0 AND next_run_at<=?"
+      "SELECT * FROM chain_seed_targets WHERE source_mask<>0 AND (?=1 OR kind<>'token') AND next_run_at<=?"
       + " AND (lease_until IS NULL OR lease_until<?)"
       + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 1"
-    ).get(now, now);
+    ).get(includeMintAddresses ? 1 : 0, now, now);
     if (!row) return null;
     const updated = db.prepare(
       "UPDATE chain_seed_targets SET lease_until=? WHERE kind=? AND address=?"
@@ -436,7 +438,7 @@ async function collect(db, args) {
   let claimed = 0, succeeded = 0, failed = 0, inserted = 0, gaps = 0;
   async function worker() {
     while (!stopRequested && claimed < args.limit) {
-      const row = claimOne(db);
+      const row = claimOne(db, Boolean(args.scanMintAddresses));
       if (!row) break;
       claimed++;
       try {
