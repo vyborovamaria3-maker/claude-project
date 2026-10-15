@@ -10,8 +10,8 @@ test("extracts only validated tokens, deduplicates mentions, and distinguishes c
   assert.equal(isSolanaAddress("1".repeat(40)), false);
   const edges = extractLinks({ id: 1, message: `@AlphaCalls https://t.me/alphacalls calls ${sol} ${sol} ${evm} ${evm}` });
   assert.deepEqual(edges.filter(e=>e.targetKind==="handle").map(e=>e.targetKey), ["alphacalls"]);
-  assert.equal(edges.filter(e=>e.targetKind==="solana_contract").length, 1);
-  assert.equal(edges.filter(e=>e.targetKind==="evm_contract").length, 1);
+  assert.equal(edges.filter(e=>e.targetKind==="solana_address").length, 1);
+  assert.equal(edges.filter(e=>e.targetKind==="evm_address").length, 1);
 });
 test("only verified PeerChannel forwarding creates direct forward edge", () => {
   assert.deepEqual(extractLinks({id:10,message:"",fwdFrom:{fromName:"Not Verified"}}),[]);
