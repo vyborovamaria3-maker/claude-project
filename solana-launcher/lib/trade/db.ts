@@ -138,6 +138,20 @@ function init(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_token_trades_mint_ts ON token_trades(mint, timestamp);
     CREATE INDEX IF NOT EXISTS idx_token_trades_mint_trader ON token_trades(mint, trader);
+    -- Additional normalized fills are additive: never rewrite existing
+    -- mint+signature aggregates or discard older on-disk transactions.
+    CREATE TABLE IF NOT EXISTS token_trade_fills (
+      mint TEXT NOT NULL, signature TEXT NOT NULL,
+      leg_index INTEGER NOT NULL CHECK(leg_index >= 0),
+      timestamp INTEGER NOT NULL, trader TEXT NOT NULL, type TEXT NOT NULL,
+      amount_sol REAL NOT NULL, amount_tokens REAL NOT NULL, price_sol REAL NOT NULL,
+      slot INTEGER, quote_mint TEXT, quote_amount REAL, quote_decimals INTEGER,
+      quote_usd_value REAL, fee REAL, jito_tip_lamports INTEGER, source TEXT,
+      inserted_at INTEGER NOT NULL, PRIMARY KEY(mint,signature,leg_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_trade_fills_mint_ts ON token_trade_fills(mint,timestamp DESC,signature,leg_index);
+    CREATE INDEX IF NOT EXISTS idx_trade_fills_mint_trader ON token_trade_fills(mint,trader);
+
     -- Separates provider freshness from the arrival time of the last trade.
     CREATE TABLE IF NOT EXISTS token_trade_sync (
       mint TEXT PRIMARY KEY,
@@ -528,7 +542,7 @@ function init(db: Database.Database) {
   db.exec("CREATE TABLE IF NOT EXISTS database_source_revisions(name TEXT PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 0)");
   for (const table of [
     "migration_wallet_rows","migration_token_rows","wallet_stats",
-    "wallet_tags","wallet_token_stats","token_trades"
+    "wallet_tags","wallet_token_stats","token_trades","token_trade_fills"
   ]) {
     db.prepare("INSERT OR IGNORE INTO database_source_revisions(name,revision) VALUES(?,0)").run(table);
     for (const operation of ["INSERT","UPDATE","DELETE"]) {
@@ -709,6 +723,8 @@ export function listAnalyzedMints(limit = 100): AnalyzedMintRow[] {
 
 export interface StoredTokenTrade {
   signature: string;
+  /** Stable instruction/leg index: absent = legacy aggregate, not individual fill. */
+  legIndex?: number | null;
   timestamp: number;
   trader: string;
   type: "buy" | "sell" | "transfer" | "unknown";
