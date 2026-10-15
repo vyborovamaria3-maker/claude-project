@@ -90,6 +90,50 @@ describe("TGInvite invitation endpoint mocked integration", () => {
     expect(createInviteLink).not.toHaveBeenCalled();
   });
 
+  it("returns 429 with bounded Retry-After when Telegram limits chat lookup", async () => {
+    vi.mocked(getChatInfo).mockResolvedValueOnce({
+      success: false, error: "TELEGRAM_RATE_LIMITED", retryAfter: 23,
+    });
+    const response = await POST(request(params));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("23");
+    expect((await response.json()).error).toBe("TELEGRAM_RATE_LIMITED");
+    expect(createInviteLink).not.toHaveBeenCalled();
+  });
+
+  it("reports Telegram permission-lookup flood limits as retryable, not forbidden", async () => {
+    vi.mocked(checkBotInviteRights).mockResolvedValueOnce({
+      allowed: false, reason: "TELEGRAM_RATE_LIMITED", retryAfter: 31,
+    });
+    const response = await POST(request(params));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("31");
+    expect(createInviteLink).not.toHaveBeenCalled();
+  });
+
+  it("does not disguise creation rate limits as broken chat permissions", async () => {
+    vi.mocked(createInviteLink).mockResolvedValueOnce({
+      success: false, error: "TELEGRAM_RATE_LIMITED", retryAfter: 41,
+    });
+    const response = await POST(request({ ...params, createsJoinRequest: true }));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("41");
+    expect((await response.json()).error).toBe("TELEGRAM_RATE_LIMITED");
+  });
+
+  it("stops a batch immediately when Telegram imposes rate limits", async () => {
+    vi.mocked(createInviteLink).mockResolvedValueOnce({
+      success: false, error: "TELEGRAM_RATE_LIMITED", retryAfter: 17,
+    });
+    const response = await POST(request({ ...params, action: "batchLinks", linkCount: 3 }));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("17");
+    expect(await response.json()).toMatchObject({
+      count: 0, requestedCount: 3, error: "TELEGRAM_RATE_LIMITED", status: "failed",
+    });
+    expect(createInviteLink).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed if the bot lacks invite rights", async () => {
     vi.mocked(checkBotInviteRights).mockResolvedValueOnce({
       allowed: false, reason: "Bot needs administrator rights to invite users",
