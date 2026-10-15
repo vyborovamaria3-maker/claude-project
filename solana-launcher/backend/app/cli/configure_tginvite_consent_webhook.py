@@ -122,7 +122,7 @@ async def configure_webhook(
                 json={
                     "url": public_url,
                     "secret_token": settings.tginvite_consent_webhook_secret,
-                    "allowed_updates": ["chat_join_request"],
+                    "allowed_updates": ["chat_join_request", "message"],
                     "max_connections": 5,
                     "drop_pending_updates": False,
                 },
