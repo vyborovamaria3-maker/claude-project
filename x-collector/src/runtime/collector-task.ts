@@ -222,7 +222,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     await publish({phase:isStopping()?"waiting":"failed"}).catch(()=>{});
     let kindErr: "rate_limit" | "captcha" | "ban" | "auth_expired" | "other" = "other";
     const failure = taskFailure(e);
-    if (failure.code === "PROXY_CONNECT" && !leaseLost && !isStopping()) {
+    if (["PROXY_CONNECT", "PROXY_AUTH", "PROXY_DNS"].includes(failure.code) && !leaseLost && !isStopping()) {
       await cooldownAccountProxy(acc.name, accountLeaseOwner, failure.retryAfterMs || 60_000)
         .catch(error => log.warn("proxy cooldown write failed", { account: acc.name, error: String(error) }));
     }
@@ -234,7 +234,8 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     // of a broken authenticated session or a CAPTCHA challenge.
     if (!["ACCESS_DENIED", "ACCESS_UNVERIFIED", "ENDPOINT_UNAVAILABLE",
           "SEARCH_UNCONFIRMED", "SEARCH_PARSE_UNCONFIRMED", "PAGE_END_UNVERIFIED", "BROWSER_END_UNVERIFIED", "PAGINATION_STALLED",
-          "SOURCE_SHAPE_CHANGED", "PROXY_CONNECT", "PROXY_CONFIG_INVALID", "COLLECTION_TIMEOUT", "HTTP_RESPONSE_INVALID"].includes(failure.code) &&
+          "SOURCE_SHAPE_CHANGED", "PROXY_CONNECT", "PROXY_AUTH", "PROXY_DNS", "PROXY_CONFIG_INVALID",
+          "COLLECTION_TIMEOUT", "HTTP_RESPONSE_INVALID", "NETWORK_IO_UNVERIFIED"].includes(failure.code) &&
         !(e instanceof HttpNoProgressError) && !leaseLost && !isStopping()) {
       await recordAccountError(acc.name,e).catch(()=>{});
       await recordError(acc.name, kindErr, failure.retryAfterMs, accountLeaseOwner).catch(() => {});
