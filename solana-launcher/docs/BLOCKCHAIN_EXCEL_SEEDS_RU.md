@@ -120,7 +120,7 @@ payload: повторный forensic replay **не делает HTTP-запро�
 Таблицы:
 - chain_seed_events: сырые Helius JSON в gzip с ключом (kind,address,signature).
 - chain_forensic_activities: tx signature, slot, timestamp, wallet, mint, buy/sell/transfer/unpriced, quote в SOL, комиссия, индекс события.
-- chain_forensic_edges: прямой token transfer между адресами, подпись транзакции; **не** доказательство общего владельца.
+- chain_forensic_edges: прямой SPL или SOL transfer между адресами, подпись транзакции; **не** доказательство общего владельца.
 - chain_forensic_wallet_pnl: консервативная FIFO realised PnL в SOL либо SQL NULL + reasons.
 - chain_forensic_wallet_sync: число обработанных raw events, версия алгоритма, coverage.
 
