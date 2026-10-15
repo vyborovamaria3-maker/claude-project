@@ -47,7 +47,7 @@ try {
     assert.equal(cursor,undefined);
     return {transactions:[tx],exhausted:true,truncated:false,reachedKnownHistory:false};
   }};
-  const result=await processOne(db,target,{recentLimit:50,backfillLimit:50},api);
+  const result=await processOne(db,claim,{recentLimit:50,backfillLimit:50},api);
   assert.equal(result.newEvents,1);
   assert.equal(result.complete,true);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_dex_observed_trades").get().n,1);
