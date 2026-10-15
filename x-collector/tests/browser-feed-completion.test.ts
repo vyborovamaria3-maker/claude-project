@@ -27,6 +27,10 @@ test("explicit empty state and requested target both conclude a browser scan", a
     const page = await browser.newPage();
     await page.setContent('<div data-testid="emptyState">Nothing found</div>');
     assert.deepEqual(await collectArticles(page, 10, Date.now() + 5_000), []);
+    await page.setContent('<div data-testid="stillLoading">No content</div>');
+    // No explicit empty state: let searchTweets inspect DOM and report
+    // SEARCH_UNCONFIRMED rather than misreporting a verified feed end.
+    assert.deepEqual(await collectArticles(page, 10, Date.now() + 5_000), []);
     await page.setContent('<article data-testid="tweet"><a href="/nasa/status/1878727153048777016"><time datetime="2026-10-12T00:00:00Z"></time></a></article>');
     assert.equal((await collectArticles(page, 1, Date.now() + 5_000)).length, 1);
   } finally { await browser.close(); }
