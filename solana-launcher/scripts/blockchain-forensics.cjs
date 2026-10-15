@@ -5,7 +5,7 @@
 const { gunzipSync } = require("node:zlib");
 const path = require("node:path");
 const { parseEvidence, computePnl } = require("./blockchain-forensics-core.cjs");
-const REVISION = 1;
+const REVISION = 2;
 
 function initForensics(db) {
   db.exec([
@@ -36,8 +36,15 @@ function initForensics(db) {
     ";CREATE TABLE IF NOT EXISTS chain_forensic_wallet_sync (",
     " wallet TEXT PRIMARY KEY, revision INTEGER NOT NULL, observed_count INTEGER NOT NULL,",
     " max_observed_at INTEGER NOT NULL, coverage_complete INTEGER NOT NULL,",
-    " analyzed_at INTEGER NOT NULL)",
+    " analyzed_at INTEGER NOT NULL, source_coverage_complete INTEGER NOT NULL DEFAULT 0)",
+    ";CREATE TABLE IF NOT EXISTS chain_forensic_processed_signatures (",
+    " wallet TEXT NOT NULL, signature TEXT NOT NULL, revision INTEGER NOT NULL,",
+    " undecoded_swap INTEGER NOT NULL DEFAULT 0,",
+    " PRIMARY KEY(wallet,signature))",
   ].join("\n"));
+  if (!db.pragma("table_info(chain_forensic_wallet_sync)").some(column => column.name === "source_coverage_complete")) {
+    db.exec("ALTER TABLE chain_forensic_wallet_sync ADD COLUMN source_coverage_complete INTEGER NOT NULL DEFAULT 0");
+  }
 }
 function walletCoverage(row) {
   return row.backfill_complete === 1 && row.possible_gap === 0
@@ -51,22 +58,43 @@ function rebuildWallet(db, wallet, force = false) {
   const summary = db.prepare("SELECT COUNT(*) AS n,COALESCE(MAX(observed_at),0) AS latest FROM chain_seed_events WHERE kind='wallet' AND address=?").get(wallet);
   const complete = walletCoverage(target);
   const cached = db.prepare("SELECT * FROM chain_forensic_wallet_sync WHERE wallet=?").get(wallet);
-  if (!force && cached && cached.revision === REVISION && cached.observed_count === summary.n
-    && cached.max_observed_at === summary.latest && Boolean(cached.coverage_complete) === complete) {
-    return { wallet, skipped: true, transactions: summary.n, coverageComplete: complete };
+  const canIncrement = !force && cached && cached.revision === REVISION;
+  if (canIncrement && cached.observed_count === summary.n
+    && cached.max_observed_at === summary.latest &&
+    Boolean(cached.source_coverage_complete) === complete) {
+    return { wallet, skipped: true, transactions: summary.n,
+      coverageComplete: Boolean(cached.coverage_complete) };
   }
-
-  const rows = db.prepare("SELECT signature,payload_gzip FROM chain_seed_events WHERE kind='wallet' AND address=?").all(wallet);
-  const events = [];
-  let undecodedSwap = false;
+  const rows = canIncrement ? db.prepare(
+    "SELECT e.signature,e.payload_gzip FROM chain_seed_events e " +
+    "LEFT JOIN chain_forensic_processed_signatures p ON p.wallet=e.address AND p.signature=e.signature " +
+    "WHERE e.kind='wallet' AND e.address=? AND (p.signature IS NULL OR p.revision<>?)"
+  ).all(wallet, REVISION) : db.prepare(
+    "SELECT signature,payload_gzip FROM chain_seed_events WHERE kind='wallet' AND address=?"
+  ).all(wallet);
+  const freshlyParsed = [];
+  const processed = [];
   for (const row of rows) {
     let tx;
     try { tx = JSON.parse(gunzipSync(row.payload_gzip).toString("utf8")); }
     catch (error) { throw new Error("Invalid cached transaction " + row.signature + ": " + String(error)); }
     if (tx.signature !== row.signature) throw new Error("Cached signature mismatch: " + row.signature);
-    if (tx.type === "SWAP" && !tx.events?.swap && tx.transactionError == null && tx.error == null) undecodedSwap = true;
-    events.push(...parseEvidence(tx, wallet));
+    const undecoded = tx.type === "SWAP" && !tx.events?.swap &&
+      tx.transactionError == null && tx.error == null;
+    processed.push({ signature: row.signature, undecoded });
+    freshlyParsed.push(...parseEvidence(tx, wallet));
   }
+  const historical = canIncrement ? db.prepare(
+    "SELECT signature,slot,block_time AS timestamp,leg_index AS event_index,kind,mint," +
+    "amount_tokens AS amountTokens,amount_sol AS amountSol,fee_sol AS feeSol,counterparty " +
+    "FROM chain_forensic_activities WHERE wallet=?"
+  ).all(wallet).map(row => ({...row, index: row.event_index})) : [];
+  const events = [...historical, ...freshlyParsed];
+  const unknownOld = canIncrement ? db.prepare(
+    "SELECT COUNT(*) AS count FROM chain_forensic_processed_signatures " +
+    "WHERE wallet=? AND revision=? AND undecoded_swap=1"
+  ).get(wallet, REVISION).count > 0 : false;
+  const undecodedSwap = unknownOld || processed.some(p => p.undecoded);
   const evidenceComplete = complete && !undecodedSwap;
   const pnl = computePnl(events, evidenceComplete);
   if (undecodedSwap) {
@@ -86,10 +114,15 @@ function rebuildWallet(db, wallet, force = false) {
     "INSERT INTO chain_forensic_wallet_pnl(wallet,mint,coverage_complete,status,buys,sells,transfers,known_sells,known_realized_pnl_sol,total_realized_pnl_sol,unknown_reasons,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"
   );
   db.transaction(() => {
-    db.prepare("DELETE FROM chain_forensic_activities WHERE wallet=?").run(wallet);
-    db.prepare("DELETE FROM chain_forensic_edges WHERE observer_wallet=?").run(wallet);
+    if (!canIncrement) {
+      db.prepare("DELETE FROM chain_forensic_activities WHERE wallet=?").run(wallet);
+      db.prepare("DELETE FROM chain_forensic_edges WHERE observer_wallet=?").run(wallet);
+      db.prepare("DELETE FROM chain_forensic_processed_signatures WHERE wallet=?").run(wallet);
+    }
     db.prepare("DELETE FROM chain_forensic_wallet_pnl WHERE wallet=?").run(wallet);
-    for (const ev of events) {
+    const putSignature = db.prepare("INSERT INTO chain_forensic_processed_signatures(wallet,signature,revision,undecoded_swap) VALUES(?,?,?,?)");
+    for (const row of processed) putSignature.run(wallet,row.signature,REVISION,row.undecoded ? 1 : 0);
+    for (const ev of freshlyParsed) {
       insertEvent.run(wallet, ev.signature, ev.index, ev.slot, ev.timestamp, ev.kind,
         ev.mint, ev.amountTokens, ev.amountSol, ev.feeSol, ev.counterparty);
       if (["transfer_in", "transfer_out", "sol_transfer_in", "sol_transfer_out"].includes(ev.kind) && ev.counterparty) {
@@ -105,10 +138,10 @@ function rebuildWallet(db, wallet, force = false) {
         item.totalRealizedPnlSol, JSON.stringify(item.reasons), now);
     }
     db.prepare(
-      "INSERT INTO chain_forensic_wallet_sync(wallet,revision,observed_count,max_observed_at,coverage_complete,analyzed_at) VALUES(?,?,?,?,?,?) ON CONFLICT(wallet) DO UPDATE SET revision=excluded.revision,observed_count=excluded.observed_count,max_observed_at=excluded.max_observed_at,coverage_complete=excluded.coverage_complete,analyzed_at=excluded.analyzed_at"
-    ).run(wallet, REVISION, summary.n, summary.latest, complete ? 1 : 0, now);
+      "INSERT INTO chain_forensic_wallet_sync(wallet,revision,observed_count,max_observed_at,coverage_complete,analyzed_at,source_coverage_complete) VALUES(?,?,?,?,?,?,?) ON CONFLICT(wallet) DO UPDATE SET revision=excluded.revision,observed_count=excluded.observed_count,max_observed_at=excluded.max_observed_at,coverage_complete=excluded.coverage_complete,analyzed_at=excluded.analyzed_at,source_coverage_complete=excluded.source_coverage_complete"
+    ).run(wallet, REVISION, summary.n, summary.latest, evidenceComplete ? 1 : 0, now, complete ? 1 : 0);
   })();
-  return { wallet, skipped: false, transactions: rows.length, activities: events.length,
+  return { wallet, skipped: false, transactions: summary.n, newlyParsed: rows.length, activities: events.length,
     pricedTrades: events.filter(e => e.kind === "buy" || e.kind === "sell").length,
     coverageComplete: evidenceComplete, verifiedTokens: pnl.filter(p => p.status === "verified").length,
     unknownTokens: pnl.filter(p => p.status === "unknown").length };
