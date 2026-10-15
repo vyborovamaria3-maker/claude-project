@@ -39,8 +39,9 @@ CREATE TABLE IF NOT EXISTS tg_jobs (
   last_error TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS tg_jobs_one_open_job_idx ON tg_jobs (source_id)
-  WHERE state IN ('pending','running','delayed');
+-- One logical sync cursor per source; do not create a second job after failure.
+DROP INDEX IF EXISTS tg_jobs_one_open_job_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS tg_jobs_source_unique_idx ON tg_jobs (source_id);
 CREATE INDEX IF NOT EXISTS tg_jobs_claim_idx ON tg_jobs (run_at, id)
   WHERE state IN ('pending','running','delayed');
 
