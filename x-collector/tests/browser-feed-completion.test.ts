@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { collectArticles } from "../lib/trade/twitter-scraper";
+import { HttpAccountQuotaError } from "../src/xactions/account-http-quota";
 
 test("browser short feed persists observed batches without stopping recurring collection", async () => {
   const browser = await chromium.launch({ headless: true });
@@ -32,4 +33,19 @@ test("explicit empty state and requested target both conclude a browser scan", a
     await page.setContent('<article data-testid="tweet"><a href="/nasa/status/1878727153048777016"><time datetime="2026-10-12T00:00:00Z"></time></a></article>');
     assert.equal((await collectArticles(page, 1, Date.now() + 5_000)).length, 1);
   } finally { await browser.close(); }
+});
+
+test("browser scrolling reserves quota before each further navigation-like action",async()=>{
+  const browser=await chromium.launch({headless:true});
+  try{
+    const page=await browser.newPage();
+    await page.setContent('<article data-testid="tweet"><a href="/nasa/status/1878727153048777016"><time datetime="2026-10-12T00:00:00Z"></time></a></article>');
+    let calls=0,saved=0;
+    await assert.rejects(collectArticles(page,10,Date.now()+15_000,
+      undefined,async batch=>{saved+=batch.length;},
+      async()=>{calls++;if(calls===2)throw new HttpAccountQuotaError();}),
+      HttpAccountQuotaError);
+    assert.equal(calls,2);
+    assert.equal(saved,1,"saved posts remain durable when quota is exhausted");
+  }finally{await browser.close();}
 });
