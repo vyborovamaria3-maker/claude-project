@@ -9,7 +9,7 @@ import { siteDesign } from "@/lib/siteDesign";
 const tabs = [
   {
     href: "/trade/analysis",
-    label: "On-chain",
+    label: "On-chain · оценка",
     icon: Activity,
     matches: (pathname: string) => pathname === "/trade/analysis",
   },
