@@ -60,8 +60,12 @@ export async function POST(request: Request) {
           memberLimit: options.memberLimit,
           createsJoinRequest: options.createsJoinRequest,
         });
-        if (!result.success || !result.inviteLink) {
-          return NextResponse.json({ error: safeInviteError(result.error || "Telegram did not create the link", options.token) }, { status: 400 });
+        if (!result.success || !result.inviteLink ||
+            (options.createsJoinRequest && result.inviteLink.createsJoinRequest !== true)) {
+          return NextResponse.json(
+            { error: safeInviteError(result.error || "JOIN_REQUEST_NOT_ENFORCED", options.token) },
+            { status: 400 },
+          );
         }
         return NextResponse.json(
           { link: result.inviteLink, chat: chatResult.chat, status: "created" },
@@ -79,8 +83,9 @@ export async function POST(request: Request) {
             memberLimit: options.createsJoinRequest ? undefined : (options.memberLimit ?? 1),
             createsJoinRequest: options.createsJoinRequest,
           });
-          if (!result.success || !result.inviteLink) {
-            failure = safeInviteError(result.error || "Telegram did not return an invite link", options.token);
+          if (!result.success || !result.inviteLink ||
+              (options.createsJoinRequest && result.inviteLink.createsJoinRequest !== true)) {
+            failure = safeInviteError(result.error || "JOIN_REQUEST_NOT_ENFORCED", options.token);
             break;
           }
           links.push(result.inviteLink);
