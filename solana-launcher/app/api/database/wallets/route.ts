@@ -161,21 +161,13 @@ function ensureWalletSummary(db: ReturnType<typeof getDb>) {
 
   const source = db.prepare(`
     SELECT
-      COALESCE(MAX(rowid), 0) AS max_rowid
+      COALESCE(MAX(rowid), 0) AS max_rowid,
+      (SELECT revision FROM database_source_revisions WHERE name='migration_wallet_rows') AS revision
     FROM migration_wallet_rows
-  `).get() as { max_rowid: number };
-  const sourceSignature = `${source.max_rowid}`;
+  `).get() as { max_rowid: number; revision: number };
+  const sourceSignature = `${source.max_rowid}:${source.revision}`;
   const stored = db.prepare("SELECT value FROM database_wallet_summary_meta WHERE key = 'source_signature'").get() as { value: string } | undefined;
   if (stored?.value === sourceSignature) return;
-  if (stored?.value.endsWith(`:${source.max_rowid}`)) {
-    db.prepare(`
-      INSERT INTO database_wallet_summary_meta (key, value)
-      VALUES ('source_signature', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(sourceSignature);
-    return;
-  }
-
   const rebuild = db.transaction(() => {
     db.prepare("DELETE FROM database_wallet_summary").run();
     db.prepare(`
@@ -228,7 +220,8 @@ function getSourceSignature(db: ReturnType<typeof getDb>) {
       (SELECT COALESCE(MAX(rowid), 0) FROM migration_token_rows) AS migration_token_rows,
       (SELECT COALESCE(MAX(rowid), 0) FROM token_trades) AS token_trades
   `).get() as Record<string, number>;
-  return Object.values(rows).join(":");
+  const versions = db.prepare("SELECT name,revision FROM database_source_revisions ORDER BY name").all() as Array<{ name: string; revision: number }>;
+  return Object.values(rows).join(":") + "|" + versions.map(r => r.name + ":" + r.revision).join("|");
 }
 
 export async function GET(req: NextRequest) {
