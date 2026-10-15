@@ -13,6 +13,10 @@ try {
     "CREATE TABLE chain_seed_events(kind TEXT,address TEXT,signature TEXT,observed_at INTEGER,payload_gzip BLOB,",
     "PRIMARY KEY(kind,address,signature));"
   ].join(""));
+  // Simulate a pre-upgrade local forensic cache table: migration must be additive.
+  db.exec("CREATE TABLE chain_forensic_wallet_sync(wallet TEXT PRIMARY KEY, revision INTEGER NOT NULL, " +
+    "observed_count INTEGER NOT NULL, max_observed_at INTEGER NOT NULL, " +
+    "coverage_complete INTEGER NOT NULL, analyzed_at INTEGER NOT NULL)");
   db.prepare("INSERT INTO chain_seed_targets VALUES('wallet',?,4,90,1,0,NULL,123,NULL)").run(wallet);
   const put = db.prepare("INSERT INTO chain_seed_events VALUES('wallet',?,?,?,?)");
   const leg = (quantity) => ({ userAccount: wallet, mint,
@@ -33,6 +37,7 @@ try {
   record("sell-sig",2,{ nativeOutput: { account: wallet, amount: "2000000000" }, tokenInputs:[leg(5)] });
   let result = rebuildWallet(db,wallet);
   assert.equal(result.transactions,2);
+  assert(db.pragma("table_info(chain_forensic_wallet_sync)").some(c=>c.name==="source_coverage_complete"));
   assert.equal(result.verifiedTokens,1);
   let pnl=db.prepare("SELECT * FROM chain_forensic_wallet_pnl WHERE wallet=? AND mint=?").get(wallet,mint);
   assert.equal(pnl.status,"verified");
@@ -66,6 +71,12 @@ try {
   assert.equal(pnl.coverage_complete,0);
   assert(JSON.parse(pnl.unknown_reasons).includes("undecoded_swap_in_wallet_history"));
   assert.equal(rebuildWallet(db,wallet).coverageComplete,false,"cached evidence must remain incomplete");
+  const unknownTx={signature:"uninspectable-unknown",slot:6,timestamp:60,type:"UNKNOWN"};
+  put.run(wallet,"uninspectable-unknown",6,gzipSync(Buffer.from(JSON.stringify(unknownTx))));
+  result=rebuildWallet(db,wallet);
+  assert.equal(result.newlyParsed,1);
+  assert.equal(result.coverageComplete,false);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_processed_signatures WHERE undecoded_swap=1").get().n,2);
   const current=db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_activities").get().n;
   put.run(wallet,"bad-cache",6,Buffer.from("not-gzip"));
   assert.throws(()=>rebuildWallet(db,wallet),/Invalid cached transaction/);
