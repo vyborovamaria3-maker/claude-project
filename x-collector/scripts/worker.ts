@@ -2,7 +2,9 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { claimTasks, deferTask } from "../lib/trade/tasks";
 import { WorkerRegistry, reapDeadWorkers } from "../lib/trade/worker-registry";
-import { checkDatabase, closePool } from "../lib/trade/pg";
+import { checkDatabase, closePool, AmbiguousCommitError } from "../lib/trade/pg";
+import { isRetryablePgError, pgErrorCode } from "../lib/trade/retry";
+import { waitForDatabaseRecovery } from "../src/runtime/db-recovery";
 import { log, withContext, closeLogger } from "../lib/trade/logger";
 import { registry as promRegistry, startMetricsCollector, httpRequests, httpRequestDuration } from "../lib/trade/metrics";
 import { getConfig } from "../lib/trade/config";
@@ -59,11 +61,29 @@ process.on("message", message => {
 });
 
 
+async function recoverDatabase() {
+  // Registration is an idempotent write; never replay a task transaction.
+  await waitForDatabaseRecovery(() => registry.register(), cancellation.signal, {
+    onRetry: ({ attempt, delayMs, error }) => {
+      log.warn("database offline; retrying worker registration", {
+        attempt, delayMs, code: pgErrorCode(error) ?? "CONNECTION_ERROR",
+      });
+    },
+  });
+}
+
 async function loop() {
-  await registry.register();
-  registry.start();
-  runtime.ready();
-  process.send?.({ ready: true });
+  try {
+    await recoverDatabase();
+  } catch (error) {
+    // Graceful shutdown during the initial database outage is not fatal.
+    if (!shuttingDown) throw error;
+  }
+  if (!shuttingDown) {
+    registry.start();
+    runtime.ready();
+    process.send?.({ ready: true });
+  }
   const stopMetrics = startMetricsCollector();
   log.info("worker started", { workerId, pid: process.pid });
 
@@ -91,7 +111,17 @@ async function loop() {
     } catch (e) {
       runtime.degraded();
       log.error("loop error", { error: String(e) });
-      await delay(10000, undefined, { signal: cancellation.signal }).catch(() => {});
+      if (isRetryablePgError(e) || e instanceof AmbiguousCommitError) {
+        // Do not claim READY after a fixed sleep if PostgreSQL is still down.
+        // Re-register only; claimed task leases recover via the existing queue.
+        try {
+          await recoverDatabase();
+        } catch (recoveryError) {
+          if (!shuttingDown) throw recoveryError;
+        }
+      } else {
+        await delay(10000, undefined, { signal: cancellation.signal }).catch(() => {});
+      }
       if (!shuttingDown) runtime.ready();
     }
   }
