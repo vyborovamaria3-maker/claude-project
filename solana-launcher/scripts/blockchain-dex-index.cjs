@@ -25,6 +25,7 @@ function initDexIndex(db) {
     "indexed_at INTEGER NOT NULL,PRIMARY KEY(program,signature,wallet,mint,side))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_dex_mint_time ON chain_dex_observed_trades(mint,block_time DESC)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_dex_wallet ON chain_dex_observed_trades(wallet,mint)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_dex_mint_slot ON chain_dex_observed_trades(mint,slot DESC)",
     ";CREATE TABLE IF NOT EXISTS chain_dex_indexed_signatures (",
     "program TEXT NOT NULL,signature TEXT NOT NULL,revision INTEGER NOT NULL,",
     "payload_hash TEXT,decode_status TEXT NOT NULL DEFAULT 'unknown',",
