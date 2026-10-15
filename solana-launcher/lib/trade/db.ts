@@ -11,7 +11,8 @@ import type { RecurringDevWalletInput } from "./dev-history";
 const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const DB_PATH = path.join(DATA_DIR, "trade.db");
+const DB_PATH = path.resolve(process.env.SOLANA_TRADE_DB_PATH?.trim() || path.join(DATA_DIR, "trade.db"));
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 // Singleton — Next.js dev hot-reload friendly
 declare global {
