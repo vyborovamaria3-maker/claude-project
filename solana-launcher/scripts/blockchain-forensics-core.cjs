@@ -24,6 +24,80 @@ function feeOf(tx, wallet) {
   if (tx.feePayer !== wallet) return tx.feePayer ? 0 : null;
   return lamports(tx.fee);
 }
+
+function signedRawQty(leg) {
+  const raw = leg && leg.rawTokenAmount;
+  if (!raw || !/^-?\d+$/.test(String(raw.tokenAmount ?? ""))) return null;
+  const decimals = Number(raw.decimals);
+  const amount = Number(raw.tokenAmount);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18 ||
+      !Number.isSafeInteger(amount)) return null;
+  return amount / 10 ** decimals;
+}
+
+// Reconcile *all* wallet-owned token balance changes against recognized legs.
+// Undecodable or missing evidence is unknown, never an implicit zero trade.
+function reconcileEvidence(tx, wallet, out, add, swap = null) {
+  const priced = out.filter(e => e.kind === "buy" || e.kind === "sell");
+  if (!Array.isArray(tx.accountData)) {
+    for (const e of priced) add("unpriced", e.mint, null, null, null);
+    return;
+  }
+  const observed = new Map();
+  const invalidMints = new Set();
+  for (const item of tx.accountData) {
+    for (const change of item.tokenBalanceChanges || []) {
+      if (change.userAccount !== wallet) continue;
+      const mint = change.mint;
+      if (!mint) continue;
+      const quantity = signedRawQty(change);
+      if (quantity == null) invalidMints.add(mint);
+      else observed.set(mint, (observed.get(mint) || 0) + quantity);
+    }
+  }
+  const expected = new Map();
+  for (const event of out) {
+    if (event.kind === "unpriced" || event.mint === WSOL) continue;
+    const direction = event.kind === "buy" || event.kind === "transfer_in" ? 1 : -1;
+    expected.set(event.mint, (expected.get(event.mint) || 0) + direction * event.amountTokens);
+  }
+  const touched = new Set([...observed.keys(), ...expected.keys(), ...invalidMints]);
+  for (const mint of touched) {
+    if (mint === WSOL) continue;
+    const actual = observed.get(mint), predicted = expected.get(mint);
+    const eps = Math.max(1e-9, Math.abs(predicted ?? 0) * 1e-9);
+    if (invalidMints.has(mint) || actual == null || predicted == null ||
+        Math.abs(actual - predicted) > eps) {
+      add("unpriced", mint, null, null, null);
+    }
+  }
+
+  if (priced.length && swap) {
+    const unsafeFees = (swap.nativeFees || []).length > 0 ||
+      (swap.tokenFees || []).length > 0 || (swap.innerSwaps || []).length > 1;
+    const accounts = tx.accountData.filter(a => a.account === wallet);
+    const native = accounts.reduce((sum, a) =>
+      sum + (num(a.nativeBalanceChange) ?? NaN), 0);
+    const fee = priced[0].feeSol;
+    let expectedNative = fee == null ? NaN : -fee;
+    let expectedWsol = 0;
+    for (const e of priced) {
+      const direction = e.kind === "buy" ? -1 : 1;
+      if (e.quoteKind === "wsol") expectedWsol += direction * e.amountSol;
+      else expectedNative += direction * e.amountSol;
+    }
+    // Native balance amounts are lamports, swap amounts are SOL.
+    if (unsafeFees || !accounts.length || !Number.isFinite(native) ||
+        !Number.isFinite(expectedNative) ||
+        Math.abs(native / 1e9 - expectedNative) > 1e-8 ||
+        (expectedWsol !== 0 &&
+          (observed.get(WSOL) == null ||
+           Math.abs(observed.get(WSOL) - expectedWsol) > 1e-8))) {
+      for (const e of priced) add("unpriced", e.mint, null, null, null);
+    }
+  }
+}
+
 function parseEvidence(tx, wallet) {
   if (!tx || !tx.signature || tx.transactionError != null || tx.error != null) return [];
   const slot = num(tx.slot), timestamp = num(tx.timestamp);
@@ -49,6 +123,7 @@ function parseEvidence(tx, wallet) {
     const payerOut = swap.nativeOutput ? swap.nativeOutput.account :
       outputs.find(x => x.mint === WSOL)?.userAccount;
     const fee = feeOf(tx, wallet);
+    const quoteKind = swap.nativeInput || swap.nativeOutput ? "native" : "wsol";
     // A swap may carry both token and SOL legs. Never allocate a single quote
     // to multiple assets or to a different wallet.
     for (const leg of ordinaryOut) {
@@ -57,6 +132,7 @@ function parseEvidence(tx, wallet) {
       if (ordinaryOut.length === 1 && ordinaryIn.length === 0
           && solIn != null && solIn > 0 && payerIn === wallet) {
         add("buy", leg.mint, quantity, solIn, fee);
+        if (out.length) out[out.length - 1].quoteKind = quoteKind;
       } else add("unpriced", leg.mint, quantity, null, null);
     }
     for (const leg of ordinaryIn) {
@@ -65,8 +141,10 @@ function parseEvidence(tx, wallet) {
       if (ordinaryIn.length === 1 && ordinaryOut.length === 0
           && solOut != null && solOut > 0 && payerOut === wallet) {
         add("sell", leg.mint, quantity, solOut, fee);
+        if (out.length) out[out.length - 1].quoteKind = quoteKind;
       } else add("unpriced", leg.mint, quantity, null, null);
     }
+    reconcileEvidence(tx, wallet, out, add, swap);
     return out;
   }
   // Only explicitly classified transfers are treated as transfers. An
@@ -93,6 +171,7 @@ function parseEvidence(tx, wallet) {
         incoming ? (leg.fromUserAccount || null) : (leg.toUserAccount || null));
     }
   }
+  reconcileEvidence(tx, wallet, out, add);
   return out;
 }
 
