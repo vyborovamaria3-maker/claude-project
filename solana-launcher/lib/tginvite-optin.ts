@@ -17,7 +17,11 @@ export function confirmedTGInviteLink(response: unknown): string | null {
   if (!response || typeof response !== "object" || Array.isArray(response)) return null;
   const payload = response as Record<string, unknown>;
   if (payload.status !== "created" || !payload.link || typeof payload.link !== "object") return null;
-  const inviteLink = (payload.link as Record<string, unknown>).inviteLink;
+  const link = payload.link as Record<string, unknown>;
+  // The Telegram Bot API must explicitly confirm join-request approval.
+  // A plausible-looking URL alone does not prove that approval is required.
+  if (link.createsJoinRequest !== true) return null;
+  const inviteLink = link.inviteLink;
   if (typeof inviteLink !== "string") return null;
   return /^https:\/\/t\.me\/(?:\+|joinchat\/)[A-Za-z0-9_-]+$/.test(inviteLink) ? inviteLink : null;
 }
