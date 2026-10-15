@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
         JOIN tg_messages m USING(source_id,message_id)
         JOIN tg_sources s ON s.id=l.source_id
         WHERE l.source_id=$1 AND l.kind=$2 AND l.target_kind=$3 AND l.target_key=$4
-          AND ($5::integer=0 OR m.posted_at>=now()-($5::integer * interval '1 day'))
+          AND ($5::integer=0 OR (m.posted_at AT TIME ZONE 'UTC')::date >= (now() AT TIME ZONE 'UTC')::date - ($5::integer - 1))
         ORDER BY m.posted_at DESC NULLS LAST, l.message_id DESC LIMIT 20`,
         [selected, kind, targetKind, targetKey, days]);
       return NextResponse.json({ evidence: details.rows }, { headers: noStore });
@@ -80,17 +80,15 @@ export async function GET(request: NextRequest) {
     const [sourceResult, edgeResult, metricResult, overlapResult, addressResult] = await Promise.all([
       p.query<Source>("SELECT id::text, identifier, title, peer_id FROM tg_sources ORDER BY id LIMIT 500"),
       p.query<LinkRow>(`
-        SELECT l.source_id::text, s.identifier, l.kind, l.target_kind, l.target_key,
-          count(*)::integer AS strength, max(m.posted_at) AS last_seen,
-          min(l.message_id)::text AS sample_message_id
-        FROM tg_message_links l
-        JOIN tg_sources s ON s.id=l.source_id
-        JOIN tg_messages m ON m.source_id=l.source_id AND m.message_id=l.message_id
-        WHERE ($1::bigint IS NULL OR l.source_id=$1)
-          AND ($2::integer=0 OR m.posted_at>=now()-($2::integer * interval '1 day'))
-        GROUP BY l.source_id, s.identifier, l.kind, l.target_kind, l.target_key
-        ORDER BY count(*) DESC, l.source_id, l.kind, l.target_key
-        LIMIT 160`, [selected, days]),
+        SELECT e.source_id::text, s.identifier, e.kind, e.target_kind, e.target_key,
+          sum(e.evidence_count)::integer AS strength, max(e.last_seen) AS last_seen,
+          min(e.sample_message_id)::text AS sample_message_id
+        FROM tg_graph_daily_edges e JOIN tg_sources s ON s.id=e.source_id
+        WHERE ($1::bigint IS NULL OR e.source_id=$1)
+          AND ($2::integer=0 OR e.day >= (now() AT TIME ZONE 'UTC')::date - ($2::integer - 1))
+        GROUP BY e.source_id, s.identifier, e.kind, e.target_kind, e.target_key
+        ORDER BY sum(e.evidence_count) DESC, e.source_id, e.kind, e.target_key LIMIT 160
+      `, [selected, days]),
       p.query(`
         SELECT s.id::text AS source_id, s.identifier,
           coalesce(m.posts_7d,0)::integer AS posts_7d,
@@ -111,18 +109,17 @@ export async function GET(request: NextRequest) {
           SELECT source_id,
             count(DISTINCT target_key) FILTER (WHERE target_kind='handle') mentioned_handles,
             count(DISTINCT (target_kind,target_key)) FILTER (WHERE kind='address') observed_addresses,
-            count(*) FILTER (WHERE kind='forward') forward_events
-          FROM tg_message_links GROUP BY source_id
+            coalesce(sum(evidence_count) FILTER (WHERE kind='forward'), 0) forward_events
+          FROM tg_graph_daily_edges GROUP BY source_id
         ) l ON l.source_id=s.id
         WHERE ($1::bigint IS NULL OR s.id=$1)
         ORDER BY coalesce(m.posts_7d,0) DESC, s.id LIMIT 100`, [selected]),
       p.query(`
         WITH observed AS (
           SELECT DISTINCT l.source_id, l.target_kind, l.target_key
-          FROM tg_message_links l
-          JOIN tg_messages m USING(source_id,message_id)
+          FROM tg_graph_daily_edges l
           WHERE l.kind='address'
-            AND ($2::integer=0 OR m.posted_at>=now()-($2::integer * interval '1 day'))
+            AND ($2::integer=0 OR l.day >= (now() AT TIME ZONE 'UTC')::date - ($2::integer - 1))
         ),
         pairs AS (
           SELECT a.source_id AS left_id, b.source_id AS right_id,
@@ -142,14 +139,13 @@ export async function GET(request: NextRequest) {
       p.query(`
         SELECT l.target_kind, l.target_key,
           count(DISTINCT l.source_id)::integer AS observed_in_sources,
-          count(*)::integer AS occurrences,
-          min(m.posted_at) AS first_observed_at,
-          max(m.posted_at) AS last_observed_at
-        FROM tg_message_links l
-        JOIN tg_messages m USING(source_id,message_id)
+          sum(l.evidence_count)::integer AS occurrences,
+          min(l.day::timestamp AT TIME ZONE 'UTC') AS first_observed_at,
+          max(l.last_seen) AS last_observed_at
+        FROM tg_graph_daily_edges l
         WHERE l.kind='address'
           AND ($1::bigint IS NULL OR l.source_id=$1)
-          AND ($2::integer=0 OR m.posted_at>=now()-($2::integer * interval '1 day'))
+          AND ($2::integer=0 OR l.day >= (now() AT TIME ZONE 'UTC')::date - ($2::integer - 1))
         GROUP BY l.target_kind,l.target_key
         ORDER BY observed_in_sources DESC, occurrences DESC, l.target_key LIMIT 20`,
         [selected, days]),
