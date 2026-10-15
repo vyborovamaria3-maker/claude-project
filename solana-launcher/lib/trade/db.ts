@@ -1011,6 +1011,7 @@ export function listRecentMarketEvents(limit = 100): MarketEventRow[] {
 export interface TokenTradeRow {
   mint: string;
   signature: string;
+  legIndex?: number | null;
   timestamp: number;
   trader: string;
   type: string;
@@ -1022,16 +1023,23 @@ export interface TokenTradeRow {
 }
 
 export function listRecentTokenTrades(limit = 100): TokenTradeRow[] {
-  return getDb()
-    .prepare(
-      `SELECT mint, signature, timestamp, trader, type,
-              amount_sol AS amountSol, amount_tokens AS amountTokens,
-              price_sol AS priceSol, source, inserted_at AS insertedAt
-       FROM token_trades
-       ORDER BY timestamp DESC, inserted_at DESC
-       LIMIT ?`
-    )
-    .all(limit) as TokenTradeRow[];
+  return getDb().prepare(
+    `SELECT mint,signature,leg_index AS legIndex,timestamp,trader,type,
+            amount_sol AS amountSol,amount_tokens AS amountTokens,
+            price_sol AS priceSol,source,inserted_at AS insertedAt
+     FROM (
+       SELECT mint,signature,leg_index,timestamp,trader,type,amount_sol,
+              amount_tokens,price_sol,source,inserted_at
+       FROM token_trade_fills
+       UNION ALL
+       SELECT l.mint,l.signature,NULL AS leg_index,l.timestamp,l.trader,l.type,
+              l.amount_sol,l.amount_tokens,l.price_sol,l.source,l.inserted_at
+       FROM token_trades l WHERE NOT EXISTS (
+         SELECT 1 FROM token_trade_fills f
+         WHERE f.mint=l.mint AND f.signature=l.signature
+       )
+     ) ORDER BY timestamp DESC,signature DESC,leg_index DESC LIMIT ?`
+  ).all(limit) as TokenTradeRow[];
 }
 
 export function getWalletTokens(address: string): Array<{
