@@ -2,3 +2,4 @@
 export * from "./live";
 export * from "./task-dashboard";
 export * from "./error-report";
+export * from "./tracing";
