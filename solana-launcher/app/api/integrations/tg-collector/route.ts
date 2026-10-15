@@ -50,7 +50,7 @@ function publicUsername(input: unknown): string {
   if (typeof input !== "string" || input.length > 128) throw new ApiError("Укажите публичный @username канала");
   const value = input.trim().replace(/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\//i, "")
     .replace(/^@/, "").split(/[/?#]/)[0].toLowerCase();
-  if (!/^[a-z][a-z0-9_]{4,31}$/.test(value)) {
+  if (!/^[a-z][a-z0-9_]{4,31}$/.test(value) || /^(joinchat|addlist|share|proxy|login|boost)$/.test(value)) {
     throw new ApiError("Поддерживаются публичные каналы и супергруппы: @username или t.me/username");
   }
   return value;
