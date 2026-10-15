@@ -234,7 +234,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     // of a broken authenticated session or a CAPTCHA challenge.
     if (!["ACCESS_DENIED", "ACCESS_UNVERIFIED", "ENDPOINT_UNAVAILABLE",
           "SEARCH_UNCONFIRMED", "SEARCH_PARSE_UNCONFIRMED", "PAGE_END_UNVERIFIED", "BROWSER_END_UNVERIFIED", "PAGINATION_STALLED",
-          "SOURCE_SHAPE_CHANGED", "PROXY_CONNECT", "PROXY_CONFIG_INVALID", "COLLECTION_TIMEOUT"].includes(failure.code) &&
+          "SOURCE_SHAPE_CHANGED", "PROXY_CONNECT", "PROXY_CONFIG_INVALID", "COLLECTION_TIMEOUT", "HTTP_RESPONSE_INVALID"].includes(failure.code) &&
         !(e instanceof HttpNoProgressError) && !leaseLost && !isStopping()) {
       await recordAccountError(acc.name,e).catch(()=>{});
       await recordError(acc.name, kindErr, failure.retryAfterMs, accountLeaseOwner).catch(() => {});
