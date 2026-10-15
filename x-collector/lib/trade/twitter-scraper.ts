@@ -204,9 +204,11 @@ export async function collectArticles(page: Page, limit: number, deadlineMs: num
   // feed (unloaded vs explicit empty state), including safe DOM signals.
   if (tweets.length === 0) return tweets;
   if (tweets.length < limit) {
-    // Batches have already been persisted via onBatch. Treat the remaining
-    // range as partial rather than silently claiming complete X coverage.
-    throw new Error(`BROWSER_END_UNVERIFIED: ${tweets.length} observed, target ${limit}; no explicit end signal`);
+    // A stalled nonempty feed is a bounded observation, NOT proof that X has
+    // no more posts. Do not exhaust task retries and permanently stop periodic
+    // list discovery just because the observed page was shorter than limit.
+    // Saved data and source checkpoint carry unverified coverage semantics.
+    await onProgress?.({phase:"unverified_end",found:tweets.length,limit});
   }
   return tweets;
 }
