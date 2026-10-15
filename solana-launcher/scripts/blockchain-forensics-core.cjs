@@ -268,6 +268,14 @@ function computePnlOrdered(ordered, coverageComplete) {
   let s = null;
   const finish = () => {
     if (!s) return;
+    // The legacy FIFO preflight invalidates *all* sells for this mint if
+    // any history ordering metadata is missing/ambiguous, even late events.
+    // Streaming detects such issues as it goes; apply the same conservative
+    // rule at finalization before returning partial known PnL.
+    if (s.orderingUnsafe) {
+      s.knownPnl=0; s.knownSellCount=0;
+      if (s.sells) s.reasons.add("sale_without_verified_cost_basis");
+    }
     const verifiedTotal = coverageComplete && s.reasons.size === 0 && s.sells > 0;
     results.push({ mint: s.mint, buys: s.buys, sells: s.sells,
       transfers: s.transfers, activityCount: s.activityCount,
@@ -300,18 +308,18 @@ function computePnlOrdered(ordered, coverageComplete) {
     if (!s || e.mint !== s.mint) {
       finish();
       s = { mint: e.mint, reasons: new Set(coverageComplete ? [] : ["history_incomplete"]),
-        basisTainted: !coverageComplete, lots: [], lotHead: 0, prev: null,
+        basisTainted: !coverageComplete, orderingUnsafe: false, lots: [], lotHead: 0, prev: null,
         knownPnl: 0, knownSellCount: 0, buys: 0, sells: 0, transfers: 0, activityCount: 0 };
     }
     s.activityCount++;
     if (e.slot == null || e.timestamp == null) {
       s.reasons.add("missing_order_metadata");
-      s.basisTainted = true;
+      s.basisTainted = true; s.orderingUnsafe = true;
     }
     if (s.prev && e.slot != null && e.slot === s.prev.slot &&
         e.signature !== s.prev.signature) {
       s.reasons.add("same_slot_order_unverified");
-      s.basisTainted = true;
+      s.basisTainted = true; s.orderingUnsafe = true;
     }
     s.prev = {slot: e.slot,signature: e.signature};
     if (e.kind === "buy") {
