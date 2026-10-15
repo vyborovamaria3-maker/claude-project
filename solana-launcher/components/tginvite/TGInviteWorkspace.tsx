@@ -361,6 +361,9 @@ function TGInvitePageInner() {
   const [channelVerifying, setChannelVerifying] = useState(false);
   const [optInInviteLink, setOptInInviteLink] = useState<{ url: string; chatId: string } | null>(null);
   const [optInInviteLoading, setOptInInviteLoading] = useState(false);
+  // React state alone does not prevent simultaneous submissions before a rerender.
+  const optInRequestInFlightRef = useRef(false);
+  const optInGenerationRef = useRef(0);
   const [parserInput, setParserInput] = useState("");
   const [parserLimit, setParserLimit] = useState(() => filters.limit || 1000);
   const [parserActivityMode, setParserActivityMode] = useState<ParserActivityMode>("active");
@@ -990,6 +993,7 @@ function TGInvitePageInner() {
 
   // Genuine opt-in link creation. This cannot bulk-add parsed participants.
   const createOptInInviteLink = useCallback(async () => {
+    if (optInRequestInFlightRef.current) return;
     const chatId = normalizeTGInviteDestination(targetChannel);
     if (!botToken.trim()) {
       warning("Bot required", "Configure a Telegram bot with invite rights in TGInvite Settings.");
@@ -999,10 +1003,12 @@ function TGInvitePageInner() {
       warning("Invalid target", "Enter a public @username, t.me/username or numeric Telegram chat ID.");
       return;
     }
+    const startedGeneration = ++optInGenerationRef.current;
+    optInRequestInFlightRef.current = true;
     setOptInInviteLink(null);
     setOptInInviteLoading(true);
     try {
-      const response = await call<{ status?: string; link?: { inviteLink?: string } }>(
+      const response = await call<{ status?: string; link?: { inviteLink?: string; createsJoinRequest?: boolean } }>(
         "/api/tginvite/invite",
         { body: {
           action: "createLink",
@@ -1010,8 +1016,10 @@ function TGInvitePageInner() {
           chatId,
           linkName: "TGInvite opt-in",
           createsJoinRequest: true,
+          expireDays: 7,
         } },
       );
+      if (optInGenerationRef.current !== startedGeneration) return; // Settings changed while Telegram was processing.
       const url = confirmedTGInviteLink(response);
       if (!url) {
         if (response) toastError("Link creation failed", "Telegram did not confirm an invite link.");
@@ -1020,6 +1028,7 @@ function TGInvitePageInner() {
       setOptInInviteLink({ url, chatId });
       success("Invite link created", "Share it with people who want to join. Join requests still require approval.");
     } finally {
+      optInRequestInFlightRef.current = false;
       setOptInInviteLoading(false);
     }
   }, [botToken, targetChannel, call, success, toastError, warning]);
@@ -1748,7 +1757,7 @@ function TGInvitePageInner() {
               <input
                 type="text"
                 value={targetChannel}
-                onChange={(e) => { setTargetChannel(e.target.value); setOptInInviteLink(null); }}
+                onChange={(e) => { optInGenerationRef.current++; setTargetChannel(e.target.value); setOptInInviteLink(null); }}
                 placeholder="@your_channel or https://t.me/your_channel"
                 className={siteDesign.controls.inputClassName}
               />
@@ -2270,7 +2279,7 @@ function TGInvitePageInner() {
                         if (config.channels) setChannels(config.channels.map((ch: Channel) => ({ ...ch, selected: ch.selected ?? false })));
                         if (config.filters) setFilters(config.filters);
                         if (config.schedule) setSchedule(config.schedule);
-                        if (config.targetChannel) { setTargetChannel(config.targetChannel); setOptInInviteLink(null); }
+                        if (config.targetChannel) { optInGenerationRef.current++; setTargetChannel(config.targetChannel); setOptInInviteLink(null); }
                         if (config.batchSize) setBatchSize(config.batchSize);
                         if (config.batchPause) setBatchPause(config.batchPause);
                         success("Config loaded", "Configuration restored from file");
@@ -2289,7 +2298,7 @@ function TGInvitePageInner() {
               </button>
             </div>
             <p className="mt-3 text-sm text-content-muted">
-              People who choose to join can submit a request through this link. An administrator must approve it.
+              Telegram join-request links expire after 7 days. People who choose to join can submit a request; an administrator must approve it.
               No parsed members are automatically added. Direct member import remains unavailable
               until consent-verified server jobs are implemented.
             </p>
@@ -2790,7 +2799,7 @@ function TGInvitePageInner() {
                     <div className="text-xs text-content-muted">ID: {botInfo.id} | {botInfo.firstName}</div>
                   </div>
                   <button
-                    onClick={() => { setBotToken(""); setBotInfo(null); setOptInInviteLink(null); }}
+                    onClick={() => { optInGenerationRef.current++; setBotToken(""); setBotInfo(null); setOptInInviteLink(null); }}
                     className="ml-auto text-xs text-red-400 hover:text-red-300"
                   >
                     Disconnect
@@ -2803,7 +2812,7 @@ function TGInvitePageInner() {
                     <input
                       type="password"
                       value={botToken}
-                      onChange={(e) => { setBotToken(e.target.value); setBotInfo(null); setOptInInviteLink(null); }}
+                      onChange={(e) => { optInGenerationRef.current++; setBotToken(e.target.value); setBotInfo(null); setOptInInviteLink(null); }}
                       placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
                       className={siteDesign.controls.inputClassName}
                     />
@@ -2850,7 +2859,7 @@ function TGInvitePageInner() {
                   <input
                     type="text"
                     value={targetChannel}
-                    onChange={(e) => { setTargetChannel(e.target.value); setOptInInviteLink(null); }}
+                    onChange={(e) => { optInGenerationRef.current++; setTargetChannel(e.target.value); setOptInInviteLink(null); }}
                     placeholder="@your_channel or chat ID"
                     className={siteDesign.controls.inputClassName}
                   />
