@@ -8,6 +8,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { gzipSync } = require("node:zlib");
+const { randomUUID, createHash } = require("node:crypto");
 // The local CLI does not inherit Next.js environment loading.
 require("dotenv").config({ path: path.join(process.cwd(), ".env.local"), quiet: true });
 require("dotenv").config({ path: path.join(process.cwd(), ".env"), quiet: true });
@@ -88,13 +89,14 @@ function initDb(db) {
     "  priority INTEGER NOT NULL DEFAULT 0, next_run_at INTEGER NOT NULL DEFAULT 0,",
     "  last_success_at INTEGER, lease_until INTEGER, attempts INTEGER NOT NULL DEFAULT 0,",
     "  last_error TEXT, backfill_cursor TEXT, forward_cursor TEXT, backfill_complete INTEGER NOT NULL DEFAULT 0,",
-    "  possible_gap INTEGER NOT NULL DEFAULT 0, events_saved INTEGER NOT NULL DEFAULT 0,",
+    "  possible_gap INTEGER NOT NULL DEFAULT 0, events_saved INTEGER NOT NULL DEFAULT 0, lease_token TEXT,",
     "  PRIMARY KEY (kind,address))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_targets_queue",
     "  ON chain_seed_targets(next_run_at,priority,lease_until)",
     ";CREATE TABLE IF NOT EXISTS chain_seed_events (",
     "  kind TEXT NOT NULL, address TEXT NOT NULL, signature TEXT NOT NULL,",
     "  block_time INTEGER, slot INTEGER, payload_gzip BLOB NOT NULL, payload_bytes INTEGER NOT NULL, observed_at INTEGER NOT NULL,",
+    "  payload_hash TEXT, raw_revision INTEGER NOT NULL DEFAULT 1,",
     "  PRIMARY KEY(kind,address,signature))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
     "  ON chain_seed_events(kind,address,block_time DESC)",
@@ -108,6 +110,12 @@ function initDb(db) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN wallet_history_mode TEXT");
     db.prepare("UPDATE chain_seed_targets SET backfill_complete=0,backfill_cursor=NULL,forward_cursor=NULL,possible_gap=1,last_success_at=NULL,next_run_at=0 WHERE kind=\'wallet\'").run();
   }
+  if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "lease_token"))
+    db.exec("ALTER TABLE chain_seed_targets ADD COLUMN lease_token TEXT");
+  if (!db.pragma("table_info(chain_seed_events)").some(c => c.name === "payload_hash"))
+    db.exec("ALTER TABLE chain_seed_events ADD COLUMN payload_hash TEXT");
+  if (!db.pragma("table_info(chain_seed_events)").some(c => c.name === "raw_revision"))
+    db.exec("ALTER TABLE chain_seed_events ADD COLUMN raw_revision INTEGER NOT NULL DEFAULT 1");
 }
 
 function refreshTargets(db) {
@@ -261,19 +269,25 @@ function claimOne(db, includeMintAddresses = true) {
       + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 1"
     ).get(includeMintAddresses ? 1 : 0, now, now);
     if (!row) return null;
+    const leaseToken = randomUUID();
     const updated = db.prepare(
-      "UPDATE chain_seed_targets SET lease_until=? WHERE kind=? AND address=?"
+      "UPDATE chain_seed_targets SET lease_until=?,lease_token=? WHERE kind=? AND address=?"
       + " AND (lease_until IS NULL OR lease_until<?)"
-    ).run(now + 10 * 60_000, row.kind, row.address, now);
-    return updated.changes === 1 ? row : null;
+    ).run(now + 30 * 60_000, leaseToken, row.kind, row.address, now);
+    return updated.changes === 1 ? { ...row, lease_token: leaseToken } : null;
   })();
 }
 
 function persistEvents(db, kind, address, transactions) {
   const insert = db.prepare(
-    "INSERT OR IGNORE INTO chain_seed_events"
-    + "(kind,address,signature,block_time,slot,payload_gzip,payload_bytes,observed_at)"
-    + " VALUES(?,?,?,?,?,?,?,?)"
+    "INSERT INTO chain_seed_events"
+    + "(kind,address,signature,block_time,slot,payload_gzip,payload_bytes,observed_at,payload_hash,raw_revision)"
+    + " VALUES(?,?,?,?,?,?,?,?,?,1)"
+    + " ON CONFLICT(kind,address,signature) DO UPDATE SET"
+    + " block_time=excluded.block_time,slot=excluded.slot,payload_gzip=excluded.payload_gzip,"
+    + " payload_bytes=excluded.payload_bytes,observed_at=excluded.observed_at,"
+    + " payload_hash=excluded.payload_hash,raw_revision=chain_seed_events.raw_revision+1"
+    + " WHERE chain_seed_events.payload_hash IS NOT excluded.payload_hash"
   );
   let saved = 0;
   db.transaction(() => {
@@ -286,9 +300,10 @@ function persistEvents(db, kind, address, transactions) {
       }
       // Fast gzip reduces laptop disk I/O while retaining the original evidence.
       const packed = gzipSync(Buffer.from(serialized), { level: 1 });
+      const hash = createHash("sha256").update(serialized).digest("hex");
       saved += insert.run(kind, address, tx.signature,
         Number.isFinite(tx.timestamp) ? tx.timestamp : null,
-        Number.isFinite(tx.slot) ? tx.slot : null, packed, bytes, Date.now()).changes;
+        Number.isFinite(tx.slot) ? tx.slot : null, packed, bytes, Date.now(), hash).changes;
     }
   })();
   return saved;
@@ -380,37 +395,29 @@ async function processOne(db, row, cfg, api) {
   // Mint-address traffic is not a complete trade index. Never feed such
   // observations into the legacy PnL/trade table as established fills.
   const trades = [];
-  // SQLite savepoints keep raw events and normalized token trades atomic.
-  const added = db.transaction(() => {
-    const n = persistEvents(db, row.kind, row.address, unique);
-    if (trades.length) {
-      api.persistTokenTrades(row.address, trades.map(t => ({
-        signature: t.signature, timestamp: t.timestamp, trader: t.trader,
-        type: t.type, amountSol: t.amountSol, amountTokens: t.amountTokens,
-        priceSol: t.priceSol, slot: t.slot, quoteMint: t.quoteMint,
-        quoteAmount: t.quoteAmount, quoteDecimals: t.quoteDecimals,
-        quoteUsdValue: t.quoteUsdValue, fee: t.fee, source: t.source,
-        jitoTipLamports: t.jitoTipLamports,
-      })));
-    }
-    if (row.kind === "wallet") appendDiscovered(db, row.address, unique);
-    if (row.kind === "dex_program") require("./blockchain-dex-index.cjs").indexProgramBatch(db, row.address, unique);
-    return n;
-  })();
-  if (complete && !forwardCursor) gap = false;
+  // Lease-fenced atomic checkpoint: raw evidence, cursor and derived results.
   const cadence = row.priority >= 100 ? 5 * 60_000 :
     row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
-  db.prepare(
-    "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,"
-    + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
-    + "backfill_complete=?,possible_gap=?,events_saved=events_saved+?"
-    + " WHERE kind=? AND address=?"
-  ).run(Date.now(), Date.now() + (complete && !forwardCursor ? cadence : 60_000),
-    backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
-    added, row.kind, row.address);
-  // The forensic index is derived ONLY from persisted wallet evidence, not
-  // from workbook labels or guessed mint-level activity.
-  if (row.kind === "wallet") require("./blockchain-forensics.cjs").rebuildWallet(db, row.address);
+  if (complete && !forwardCursor) gap = false;
+  const added = db.transaction(() => {
+    const now = Date.now();
+    const owned = db.prepare("SELECT 1 FROM chain_seed_targets WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)").get(row.kind,row.address,row.lease_token??null,now);
+    if (!owned) throw new Error("Collector lease lost before commit: "+row.kind+":"+row.address);
+    const n = persistEvents(db, row.kind, row.address, unique);
+    if (row.kind === "wallet") appendDiscovered(db, row.address, unique);
+    if (row.kind === "dex_program") require("./blockchain-dex-index.cjs").indexProgramBatch(db, row.address, unique);
+    const update=db.prepare(
+      "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,lease_token=NULL,"
+      + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
+      + "backfill_complete=?,possible_gap=?,events_saved=events_saved+?"
+      + " WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)"
+    ).run(now, now + (complete && !forwardCursor ? cadence : 60_000),
+      backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
+      n, row.kind, row.address, row.lease_token??null, now);
+    if (update.changes !== 1) throw new Error("Collector lease changed during commit");
+    if (row.kind === "wallet") require("./blockchain-forensics.cjs").rebuildWallet(db,row.address);
+    return n;
+  })();
   return { kind: row.kind, address: row.address, newEvents: added,
     normalizedTrades: trades.length, complete, possibleGap: gap };
 }
@@ -421,9 +428,9 @@ function failTask(db, row, error) {
   const delay = Math.min(3_600_000, 10_000 * (2 ** Math.min(8, attempts))) + jitter;
   db.prepare(
     "UPDATE chain_seed_targets SET attempts=?,last_error=?,next_run_at=?,"
-    + "lease_until=NULL WHERE kind=? AND address=?"
+    + "lease_until=NULL,lease_token=NULL WHERE kind=? AND address=? AND lease_token IS ?"
   ).run(attempts, String(error && error.message || error).slice(0, 400),
-    Date.now() + delay, row.kind, row.address);
+    Date.now() + delay, row.kind, row.address, row.lease_token??null);
 }
 
 async function collect(db, args) {
