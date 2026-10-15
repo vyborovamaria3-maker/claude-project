@@ -188,7 +188,10 @@ const healthServer = http.createServer(async (req, res) => {
   } catch (e) {
     // El detalle de la excepción va al log, no al cliente.
     log.error("health server request failed", { error: String(e) });
-    res.statusCode = 500; res.end("Internal Server Error"); finish(500);
+    const status = pathname === "/health" ? 503 : 500;
+    res.statusCode = status;
+    res.end(status === 503 ? "Service Unavailable" : "Internal Server Error");
+    finish(status);
   }
 });
 healthServer.on("error", (e) => log.error("health server error", { error: String(e) }));
