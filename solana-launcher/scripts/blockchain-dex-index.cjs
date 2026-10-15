@@ -4,9 +4,10 @@
 // Opt-in, bounded local DEX-program observation index. A program scan does NOT
 // assert global trade-tape completeness, common wallet ownership or FIFO PnL.
 const { gunzipSync } = require("node:zlib");
+const { createHash } = require("node:crypto");
 const { parseEvidence } = require("./blockchain-forensics-core.cjs");
 const { isSolanaAddress } = require("./blockchain-seed-core.cjs");
-const REVISION = 1;
+const REVISION = 2;
 function configuredDexPrograms(input = process.env.CHAIN_DEX_PROGRAM_IDS || "") {
   const values = input.split(/[,\s;]+/).map(x => x.trim()).filter(Boolean);
   if (values.length > 8) throw new Error("At most eight DEX program addresses per local collection");
@@ -26,8 +27,12 @@ function initDexIndex(db) {
     ";CREATE INDEX IF NOT EXISTS idx_chain_dex_wallet ON chain_dex_observed_trades(wallet,mint)",
     ";CREATE TABLE IF NOT EXISTS chain_dex_indexed_signatures (",
     "program TEXT NOT NULL,signature TEXT NOT NULL,revision INTEGER NOT NULL,",
+    "payload_hash TEXT,decode_status TEXT NOT NULL DEFAULT 'unknown',",
     "PRIMARY KEY(program,signature))",
   ].join("\n"));
+  const cols=db.pragma("table_info(chain_dex_indexed_signatures)").map(c=>c.name);
+  if (!cols.includes("payload_hash")) db.exec("ALTER TABLE chain_dex_indexed_signatures ADD COLUMN payload_hash TEXT");
+  if (!cols.includes("decode_status")) db.exec("ALTER TABLE chain_dex_indexed_signatures ADD COLUMN decode_status TEXT NOT NULL DEFAULT 'unknown'");
 }
 function extractDexObservations(tx, program) {
   if (!tx || !tx.signature || !tx.events?.swap || tx.transactionError != null ||
@@ -70,20 +75,24 @@ function indexProgramBatch(db, program, transactions) {
   if (!isSolanaAddress(program)) throw new Error("Invalid DEX program address");
   initDexIndex(db);
   const put = db.prepare("INSERT OR IGNORE INTO chain_dex_observed_trades(program,signature,wallet,mint,side,slot,block_time,amount_tokens,amount_sol,fee_sol,indexed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
-  const mark = db.prepare("INSERT INTO chain_dex_indexed_signatures(program,signature,revision) VALUES(?,?,?) ON CONFLICT(program,signature) DO UPDATE SET revision=excluded.revision");
-  const known = db.prepare("SELECT revision FROM chain_dex_indexed_signatures WHERE program=? AND signature=?");
+  const mark = db.prepare("INSERT INTO chain_dex_indexed_signatures(program,signature,revision,payload_hash,decode_status) VALUES(?,?,?,?,?) ON CONFLICT(program,signature) DO UPDATE SET revision=excluded.revision,payload_hash=excluded.payload_hash,decode_status=excluded.decode_status");
+  const known = db.prepare("SELECT revision,payload_hash FROM chain_dex_indexed_signatures WHERE program=? AND signature=?");
+  const remove = db.prepare("DELETE FROM chain_dex_observed_trades WHERE program=? AND signature=?");
   let observations = 0, transactionsIndexed = 0;
   db.transaction(() => {
     for (const tx of transactions) {
       if (!tx || typeof tx.signature !== "string" || !tx.signature) continue;
-      if (known.get(program,tx.signature)?.revision === REVISION) continue;
-      // One signature may have been saved from a previous parser revision.
-      db.prepare("DELETE FROM chain_dex_observed_trades WHERE program=? AND signature=?").run(program,tx.signature);
-      for (const event of extractDexObservations(tx,program)) {
+      const hash=createHash("sha256").update(JSON.stringify(tx)).digest("hex");
+      const prior=known.get(program,tx.signature);
+      if (prior?.revision === REVISION && prior.payload_hash === hash) continue;
+      // One signature may have been replaced by a richer Helius decoded payload.
+      remove.run(program,tx.signature);
+      const observationsForTx=extractDexObservations(tx,program);
+      for (const event of observationsForTx) {
         observations += put.run(program,tx.signature,event.wallet,event.mint,event.side,
           event.slot,event.timestamp,event.amountTokens,event.amountSol,event.feeSol,Date.now()).changes;
       }
-      mark.run(program,tx.signature,REVISION);
+      mark.run(program,tx.signature,REVISION,hash,observationsForTx.length ? "observed" : "unpriced_or_irrelevant");
       transactionsIndexed++;
     }
   })();
@@ -93,7 +102,13 @@ function replayProgram(db, program, limit = 10000) {
   if (!isSolanaAddress(program)) throw new Error("Invalid DEX program address");
   if (!Number.isInteger(limit) || limit < 1 || limit > 100000) throw new Error("Invalid replay limit");
   initDexIndex(db);
-  const rows = db.prepare("SELECT signature,payload_gzip FROM chain_seed_events WHERE kind='dex_program' AND address=? ORDER BY block_time DESC LIMIT ?").all(program,limit);
+  const rows = db.prepare(
+    "SELECT e.signature,e.payload_gzip FROM chain_seed_events e LEFT JOIN chain_dex_indexed_signatures p " +
+    "ON p.program=e.address AND p.signature=e.signature " +
+    "WHERE e.kind='dex_program' AND e.address=? AND (p.signature IS NULL OR p.revision<>? " +
+    "OR (e.payload_hash IS NOT NULL AND (p.payload_hash IS NULL OR p.payload_hash<>e.payload_hash))) " +
+    "ORDER BY e.block_time DESC,e.signature DESC LIMIT ?"
+  ).all(program,REVISION,limit);
   const txs = rows.map(row => {
     let tx;
     try { tx=JSON.parse(gunzipSync(row.payload_gzip).toString("utf8")); }
