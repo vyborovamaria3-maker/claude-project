@@ -50,6 +50,24 @@ function initForensics(db) {
     db.exec("ALTER TABLE chain_forensic_wallet_sync ADD COLUMN raw_revision_sum INTEGER NOT NULL DEFAULT 0");
   if (!db.pragma("table_info(chain_forensic_processed_signatures)").some(column => column.name === "raw_revision"))
     db.exec("ALTER TABLE chain_forensic_processed_signatures ADD COLUMN raw_revision INTEGER NOT NULL DEFAULT 1");
+
+  // Read paths must never observe a previously verified PnL after raw evidence
+  // changed outside the collector's usual all-in-one SQLite transaction.
+  db.exec([
+    "CREATE TRIGGER IF NOT EXISTS forensic_raw_insert AFTER INSERT ON chain_seed_events WHEN NEW.kind='wallet' BEGIN",
+    "UPDATE chain_forensic_wallet_sync SET raw_revision_sum=-1,coverage_complete=0 WHERE wallet=NEW.address;",
+    "UPDATE chain_forensic_wallet_pnl SET status='unknown',coverage_complete=0,total_realized_pnl_sol=NULL,unknown_reasons='[\"raw_evidence_pending_rebuild\"]' WHERE wallet=NEW.address; END;",
+    "CREATE TRIGGER IF NOT EXISTS forensic_raw_revision AFTER UPDATE OF payload_hash,raw_revision ON chain_seed_events",
+    "WHEN NEW.kind='wallet' AND (OLD.payload_hash IS NOT NEW.payload_hash OR OLD.raw_revision<>NEW.raw_revision) BEGIN",
+    "UPDATE chain_forensic_wallet_sync SET raw_revision_sum=-1,coverage_complete=0 WHERE wallet=NEW.address;",
+    "UPDATE chain_forensic_wallet_pnl SET status='unknown',coverage_complete=0,total_realized_pnl_sol=NULL,unknown_reasons='[\"raw_evidence_pending_rebuild\"]' WHERE wallet=NEW.address; END;",
+    "CREATE TRIGGER IF NOT EXISTS forensic_raw_delete AFTER DELETE ON chain_seed_events WHEN OLD.kind='wallet' BEGIN",
+    "DELETE FROM chain_forensic_activities WHERE wallet=OLD.address AND signature=OLD.signature;",
+    "DELETE FROM chain_forensic_edges WHERE observer_wallet=OLD.address AND signature=OLD.signature;",
+    "DELETE FROM chain_forensic_processed_signatures WHERE wallet=OLD.address AND signature=OLD.signature;",
+    "UPDATE chain_forensic_wallet_sync SET raw_revision_sum=-1,coverage_complete=0 WHERE wallet=OLD.address;",
+    "UPDATE chain_forensic_wallet_pnl SET status='unknown',coverage_complete=0,total_realized_pnl_sol=NULL,unknown_reasons='[\"raw_evidence_removed\"]' WHERE wallet=OLD.address; END;",
+  ].join("\n"));
 }
 function walletCoverage(row) {
   return row.backfill_complete === 1 && row.possible_gap === 0
