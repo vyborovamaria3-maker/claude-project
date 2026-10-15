@@ -34,7 +34,11 @@ export function validateInviteLinkRequest(
   }
   const body = raw as Record<string, unknown>;
   const token = typeof body.token === "string" ? body.token.trim() : "";
-  if (!token || token.length > 256) throw new InvalidInviteRequest("Bot token required");
+  // Match the Telegram format check in verifyBotToken(). Never forward
+  // malformed credentials to Telegram or spend the owner's shared quota.
+  if (!/^\d{5,20}:[A-Za-z0-9_-]{30,}$/.test(token) || token.length > 256) {
+    throw new InvalidInviteRequest("Valid Telegram bot token required");
+  }
   const chatId = typeof body.chatId === "string" ? body.chatId.trim() :
     typeof body.chatId === "number" && Number.isSafeInteger(body.chatId) ? String(body.chatId) : "";
   if (!/^(@[A-Za-z][A-Za-z0-9_]{4,31}|-?[0-9]{1,20})$/.test(chatId)) {
@@ -138,6 +142,9 @@ export function safeInviteError(error: unknown, _token: string): string {
     "BOT_NOT_MEMBER",
     "INVITE_HASH_EXPIRED",
     "INVITE_LINK_NAME_INVALID",
+    "JOIN_REQUEST_NOT_ENFORCED",
+    "INVITE_LINK_MISSING",
+    "EXPIRE_DATE_INVALID",
   ];
   for (const code of safeCodes) {
     if (message.includes(code)) return code;
