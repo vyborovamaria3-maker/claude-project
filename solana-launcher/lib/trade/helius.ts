@@ -86,7 +86,7 @@ async function fetchHeliusPage(
   let lastError: Error | null = null;
   for (let round = 0; round < HELIUS_MAX_ROUNDS; round++) {
     for (const apiKey of keys) {
-      const url = new URL(appendHeliusApiKey("https://api.helius.xyz/v0/addresses/" + mint + "/transactions", apiKey));
+      const url = new URL(appendHeliusApiKey("https://mainnet.helius-rpc.com/v0/addresses/" + mint + "/transactions", apiKey));
       url.searchParams.set("limit", String(limit));
       url.searchParams.set("commitment", "finalized");
       // Wallet history must include changes to SPL token accounts, not just the owner address.
