@@ -55,8 +55,11 @@ function rebuildWallet(db, wallet, force = false) {
   initForensics(db);
   const target = db.prepare("SELECT * FROM chain_seed_targets WHERE kind='wallet' AND address=?").get(wallet);
   if (!target) throw new Error("Wallet is not in seed queue: " + wallet);
-  const summary = db.prepare("SELECT COUNT(*) AS n,COALESCE(MAX(observed_at),0) AS latest FROM chain_seed_events WHERE kind='wallet' AND address=?").get(wallet);
-  const complete = walletCoverage(target);
+  // Token owner metadata needed for ATA inclusion was not present before slot
+  // 111,491,819. Provider exhaustion alone cannot prove a complete wallet tape.
+  const summary = db.prepare("SELECT COUNT(*) AS n,COALESCE(MAX(observed_at),0) AS latest,MIN(slot) AS oldestSlot FROM chain_seed_events WHERE kind='wallet' AND address=?").get(wallet);
+  const legacyAtaGap = summary.oldestSlot != null && summary.oldestSlot < 111491819;
+  const complete = walletCoverage(target) && !legacyAtaGap;
   const cached = db.prepare("SELECT * FROM chain_forensic_wallet_sync WHERE wallet=?").get(wallet);
   const canIncrement = !force && cached && cached.revision === REVISION;
   if (canIncrement && cached.observed_count === summary.n
@@ -99,6 +102,7 @@ function rebuildWallet(db, wallet, force = false) {
   const undecodedSwap = unknownOld || processed.some(p => p.undecoded);
   const evidenceComplete = complete && !undecodedSwap;
   const pnl = computePnl(events, evidenceComplete);
+  if (legacyAtaGap) for (const item of pnl) item.reasons.push("pre_owner_metadata_ata_gap");
   if (undecodedSwap) {
     for (const item of pnl) {
       item.reasons.push("undecoded_swap_in_wallet_history");
