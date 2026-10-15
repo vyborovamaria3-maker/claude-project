@@ -12,7 +12,7 @@ const requests=[];
 global.fetch = async (input) => {
   const u = new URL(String(input));
   requests.push(u);
-  assert.equal(u.origin,"https://mainnet.helius-rpc.com");
+  assert.equal(u.origin,"https://api-mainnet.helius-rpc.com");
   assert.equal(u.searchParams.get("commitment"),"finalized");
   assert.equal(u.searchParams.get("api-key"),"fixture-key");
   assert.equal(u.searchParams.has("before"),false,"legacy before key must not be used");
