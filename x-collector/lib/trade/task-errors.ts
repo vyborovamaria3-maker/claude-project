@@ -27,6 +27,21 @@ export function taskFailure(error: unknown): { code: string; permanent: boolean;
     return { code: "AUTH_EXPIRED", permanent: false, retryAfterMs: 0 };
   if (status === 403 || /captcha|challenge/i.test(message))
     return { code: "ACCESS_REQUIRED", permanent: false, retryAfterMs: 0 };
+  // Distinguish uncertain collection states from verified empty results or
+  // broken account credentials. These are operational failures, not bans.
+  if (/search results did not load|no tweets and no empty state/i.test(message))
+    return { code: "SEARCH_UNCONFIRMED", permanent: false, retryAfterMs: 30_000 };
+  if (/XActions: ambiguous timeline end/i.test(message))
+    return { code: "PAGE_END_UNVERIFIED", permanent: false, retryAfterMs: 120_000 };
+  if (/XACTIONS_NO_PROGRESS|pagination cursor loop|pagination did not advance/i.test(message))
+    return { code: "PAGINATION_STALLED", permanent: false, retryAfterMs: 120_000 };
+  if (/response shape changed|SearchTimeline endpoint unavailable/i.test(message))
+    return { code: "SOURCE_SHAPE_CHANGED", permanent: false, retryAfterMs: 300_000 };
+  if (/SOCKS(?:4|5)?|PROXY_FAILED|proxy authentication|proxy connection|proxy handshake|ERR_PROXY_CONNECTION_FAILED/i.test(message))
+    return { code: "PROXY_CONNECT", permanent: false, retryAfterMs: 60_000 };
+  if ((error instanceof Error && error.name === "TimeoutError") ||
+      /HTTP request timed out|navigation timeout|collection deadline exceeded|scrape deadline exceeded|Timeout .*exceeded/i.test(message))
+    return { code: "COLLECTION_TIMEOUT", permanent: false, retryAfterMs: 30_000 };
   if (/^schema:|malformed|unsupported.*(kind|type)|invalid.*payload/i.test(message))
     return { code: "INVALID_INPUT", permanent: true, retryAfterMs: 0 };
   return { code: status >= 500 ? "UPSTREAM_UNAVAILABLE" : "TRANSIENT_FAILURE", permanent: false, retryAfterMs: 0 };
