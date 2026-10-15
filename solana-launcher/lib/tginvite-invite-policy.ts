@@ -143,6 +143,7 @@ export function safeInviteError(error: unknown, _token: string): string {
     "INVITE_HASH_EXPIRED",
     "INVITE_LINK_NAME_INVALID",
     "JOIN_REQUEST_NOT_ENFORCED",
+    "TELEGRAM_RATE_LIMITED",
     "INVITE_LINK_MISSING",
     "EXPIRE_DATE_INVALID",
   ];
