@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import { Pool } from 'pg';
 import { PGlite } from '@electric-sql/pglite';
 import { enqueueTask, claimTasks, finishTask, deferTask, failTask, extendLease, replayDeadLetter, QueueBackpressureError } from '../lib/trade/tasks';
-import { pickAccount, accountWaitMs, releaseAccount, recordError, extendAccountLease } from '../lib/trade/account-manager';
+import { pickAccount, accountWaitMs, releaseAccount, recordError, extendAccountLease, cooldownAccountProxy } from '../lib/trade/account-manager';
 import { CollectorHttpError, taskFailure, retryAfterMs } from '../lib/trade/task-errors';
 import { WorkerRuntime } from '../src/runtime/worker-runtime';
 import { executeTask } from '../src/runtime/collector-task';
@@ -113,6 +113,14 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     assert.equal(await pickAccount('search','proxy-strict','fallback',false,true),null);
     const proxied=await pickAccount('search','proxy-fallback','fallback',true,true);
     assert.equal(proxied?.name,'second');
+    assert.equal(await cooldownAccountProxy('second','wrong-owner'),false);
+    assert.equal(await cooldownAccountProxy('second','proxy-fallback',60_000),true);
+    const proxyCooldown = (await db.query<{status:string; cooldown_until:string}>(
+      "SELECT status,cooldown_until FROM x_accounts WHERE name='second'")).rows[0];
+    assert.equal(proxyCooldown.status,'cooldown');
+    assert(Number(proxyCooldown.cooldown_until) >= Date.now() + 55_000);
+    assert.equal((await db.query(
+      "SELECT 1 FROM xc_account_errors WHERE account_name='second' AND type='PROXY_FAILED'")).rows.length,1);
     await releaseAccount('second','proxy-fallback');
     await db.query("DELETE FROM x_accounts WHERE name='second'");
     await db.query("UPDATE x_accounts SET account_busy_until=0,account_claimed_by=NULL WHERE name='fallback'");
