@@ -483,7 +483,7 @@ async function main() {
   // Status is strictly read-only. Opening through getDb() would initialize
   // schemas and sync configured programs, unexpectedly mutating the database.
   if (args.mode === "status") {
-    const file=path.join(process.cwd(),"data","trade.db");
+    const file=path.resolve(process.env.SOLANA_TRADE_DB_PATH?.trim() || path.join(process.cwd(),"data","trade.db"));
     if (!fs.existsSync(file)) return console.log(JSON.stringify({status:"not_initialized"},null,2));
     const Database=require("better-sqlite3");
     const readonly=new Database(file,{readonly:true,fileMustExist:true});
