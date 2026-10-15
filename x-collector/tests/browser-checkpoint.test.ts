@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import type { PoolClient } from "pg";
+import { taskFailure } from "../lib/trade/task-errors";
+import { safeLastErrorCode } from "../src/collector/queue/task-status";
 import {
  browserFingerprint,browserResumeQuery,writeBrowserBatchInTransaction,
  type BrowserCheckpointWrite,
@@ -69,4 +71,13 @@ test("browser post batch and lease-fenced checkpoint commit atomically and dedup
   assert.equal(saved.observed_count,"2");
   assert.equal(saved.newest_id,"1878727153048777017");
  }finally{await db.close();}
+});
+
+test("checkpoint ownership and shape errors never punish X sessions",()=>{
+  const changed=taskFailure(new Error("BROWSER_CHECKPOINT_CHANGED"));
+  assert.deepEqual(changed,{code:"BROWSER_CHECKPOINT_CHANGED",permanent:true,retryAfterMs:0});
+  const lost=taskFailure(new Error("Browser checkpoint account lease lost"));
+  assert.equal(lost.code,"ACCOUNT_LEASE_LOST");
+  assert.equal(lost.permanent,false);
+  assert.equal(safeLastErrorCode("[BROWSER_CHECKPOINT_CHANGED] no raw state"),"BROWSER_CHECKPOINT_CHANGED");
 });
