@@ -92,10 +92,10 @@ function rebuildWallet(db, wallet, force = false) {
     for (const ev of events) {
       insertEvent.run(wallet, ev.signature, ev.index, ev.slot, ev.timestamp, ev.kind,
         ev.mint, ev.amountTokens, ev.amountSol, ev.feeSol, ev.counterparty);
-      if ((ev.kind === "transfer_in" || ev.kind === "transfer_out") && ev.counterparty) {
+      if (["transfer_in", "transfer_out", "sol_transfer_in", "sol_transfer_out"].includes(ev.kind) && ev.counterparty) {
         insertEdge.run(wallet, ev.signature, ev.index, ev.mint,
-          ev.kind === "transfer_out" ? wallet : ev.counterparty,
-          ev.kind === "transfer_in" ? wallet : ev.counterparty, ev.amountTokens);
+          ev.kind.endsWith("_out") ? wallet : ev.counterparty,
+          ev.kind.endsWith("_in") ? wallet : ev.counterparty, ev.amountTokens);
       }
     }
     const now = Date.now();
