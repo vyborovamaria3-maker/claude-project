@@ -12,7 +12,7 @@ function initForensics(db) {
     "CREATE TABLE IF NOT EXISTS chain_forensic_activities (",
     " wallet TEXT NOT NULL, signature TEXT NOT NULL, leg_index INTEGER NOT NULL,",
     " slot INTEGER, block_time INTEGER, kind TEXT NOT NULL, mint TEXT NOT NULL,",
-    " amount_tokens REAL NOT NULL, amount_sol REAL, fee_sol REAL, counterparty TEXT,",
+    " amount_tokens REAL, amount_sol REAL, fee_sol REAL, counterparty TEXT,",
     " PRIMARY KEY(wallet,signature,leg_index))",
     ";CREATE INDEX IF NOT EXISTS idx_forensic_trades_mint",
     " ON chain_forensic_activities(mint,kind,slot)",
