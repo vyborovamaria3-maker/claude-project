@@ -26,18 +26,34 @@ These changes do not alter X platform limits or allow bypassing restricted accou
 - Proxy/collection failures are no longer recorded as evidence that an X
   account has a broken authenticated session.
 - Failed SOCKS5 endpoints trigger a lease-fenced 60-second cooldown for
-  collector accounts with the exact same saved proxy settings; other proxy
-  configurations are left alone. This is not a general per-endpoint monitor.
+  collector accounts with the same normalized SOCKS5 endpoint AND credentials;
+  dynamic probe metadata and timestamps do not affect grouping. This is not a general per-endpoint monitor.
 - XActions full HTTP request timeouts and oversized/invalid responses are
   classified separately from SOCKS5 failure, without raw agent errors.
-- Browser feed crawling keeps saved post batches but reports stalled
-  nonempty scrolling as an unverified partial result, not confirmed exhaustion.
+- Browser feed crawling keeps saved post batches and treats short, stalled
+  nonempty pages as a bounded observation with unverified end evidence, not a
+  task failure; periodic list/discovery sources remain schedulable.
   An empty feed still reaches the caller for explicit empty-state diagnosis.
 - A read-only local report (`npm run x:errors`) shows 1-hour and 24-hour
   task-error snapshots, timestamped account-error events, and queue/account
   counts; those are **different measures** and must not be added together.
   Up to 50 pending/claimed tasks include safe derived statuses:
   queued, waiting_account, retry_wait, running, and partial.
+
+## Account reservation and diagnostics fixes
+
+- A PostgreSQL outage before a task starts no longer gets silently swallowed
+  by the worker. The task is fenced-deferred after DB recovery, without
+  consuming an X attempt; ordinary runtime crashes follow bounded retry/DLQ.
+- An uncertain account claim COMMIT is reconciled through the unique
+  account lease owner after recovery, releasing only that reservation and
+  refunding its unused quota without touching a different worker.
+- Periodic source short pages do not go into permanent partial state. The
+  source checkpoint still says X completeness is not guaranteed.
+- Live SSE, task details, and local CLI expose only allowlisted error codes;
+  untrusted bracketed legacy error text is mapped to LEGACY_OR_UNKNOWN.
+- Queue states prioritize wait/retry while saved partial output is a separate
+  flag.
 
 ## Operator checks
 
@@ -62,10 +78,11 @@ These changes do not alter X platform limits or allow bypassing restricted accou
   historical unconfirmed searches; verify current X selectors in the user's
   authenticated sandbox.
 - Verified X browser end-of-feed evidence remains unavailable for feeds without
-  an explicit end marker. Stalled pages now report partial; validate exact
-  source coverage with a test account before changing completion semantics.
-- Rich task states (waiting/partial), account-state explanations and monitoring
-  dashboard improvements.
+  an explicit end marker. Stalled nonempty pages no longer block recurring
+  sources; do not equate a successful bounded sample with complete X coverage.
+- Detailed evidence-grade coverage states, account-state explanations and
+  expanded multi-period monitoring; task wait/retry and persisted-output status
+  are now separate in the local dashboard.
 - Live end-to-end regression against a test X account, real proxy and database,
   followed by laptop memory/throughput benchmarks.
 
