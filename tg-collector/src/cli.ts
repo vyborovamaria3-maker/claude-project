@@ -19,22 +19,25 @@ async function main(): Promise<void> {
   if (action === "migrate") { await migrate(); console.log("TG schema migrated"); return; }
   if (action === "add") {
     const identifier = normalizePublicSource(process.argv[3] || "");
-    await pool.query("BEGIN");
+    const tx = await pool.connect();
     try {
-      const { rows } = await pool.query<{ id: string }>(
+      await tx.query("BEGIN");
+      const { rows } = await tx.query<{ id: string }>(
         "INSERT INTO tg_sources(identifier) VALUES ($1) ON CONFLICT(identifier) DO UPDATE SET identifier=EXCLUDED.identifier RETURNING id",
         [identifier]
       );
-      await pool.query(
+      await tx.query(
         `INSERT INTO tg_jobs(source_id) VALUES ($1)
          ON CONFLICT DO NOTHING`,
         [rows[0].id]
       );
-      await pool.query("COMMIT");
+      await tx.query("COMMIT");
       console.log("Added source:", identifier);
     } catch (error) {
-      await pool.query("ROLLBACK");
+      await tx.query("ROLLBACK");
       throw error;
+    } finally {
+      tx.release();
     }
     return;
   }
