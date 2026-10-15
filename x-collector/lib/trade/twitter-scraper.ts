@@ -281,7 +281,14 @@ export async function fetchUserTimeline(
     const tweets = await collectArticles(page, limit, deadline, opts.onProgress,opts.onBatch);
     if (tweets.length === 0) {
       const hasEmptyState = await page.locator('[data-testid="emptyState"]').count() > 0;
-      if (!hasEmptyState) throw new Error("empty timeline — possibly shadowbanned session");
+      if (!hasEmptyState) {
+        const signals = await page.evaluate(() => ({
+          articleNodes: document.querySelectorAll('article[data-testid="tweet"]').length,
+          errorBanner: Boolean(document.querySelector('[data-testid="error-detail"]')),
+          loading: Boolean(document.querySelector('[role="progressbar"], [data-testid="loading"]')),
+        })).catch(() => null);
+        throw new Error(searchFailureMessage(signals).replace(/^SEARCH_/, "TIMELINE_"));
+      }
     }
     return tweets;
   });
