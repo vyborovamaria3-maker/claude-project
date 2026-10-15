@@ -1157,15 +1157,16 @@ function TGInvitePageInner() {
   }, []);
 
   const verifyTargetChannel = useCallback(async () => {
-    if (!botToken || !targetChannel) {
-      warning("Missing info", "Enter bot token and target channel");
+    const chatId = normalizeTGInviteDestination(targetChannel);
+    if (!botToken.trim() || !chatId) {
+      warning("Missing or invalid target", "Enter a bot token and a valid @username, t.me/username, or numeric chat ID.");
       return;
     }
     setChannelVerifying(true);
     try {
       const result = await call<{ chat?: { id: number; title: string; memberCount?: number }; error?: string }>(
         "/api/tginvite/channels",
-        { body: { action: "verify", token: botToken, chatId: targetChannel } }
+        { body: { action: "verify", token: botToken, chatId } }
       );
       if (result?.chat) {
         success("Target verified", `${result.chat.title} (${result.chat.memberCount?.toLocaleString() || 0} members)`);
@@ -2865,12 +2866,16 @@ function TGInvitePageInner() {
                   />
                   <button
                     onClick={async () => {
-                      if (!targetChannel.trim() || !botToken) return;
+                      const chatId = normalizeTGInviteDestination(targetChannel);
+                      if (!botToken.trim() || !chatId) {
+                        warning("Missing or invalid target", "Provide a bot token and a valid Telegram chat name or ID.");
+                        return;
+                      }
                       setChannelVerifying(true);
                       try {
                         const result = await call<{ chat?: { title: string; memberCount?: number }; error?: string }>(
                           "/api/tginvite/channels",
-                          { body: { action: "verify", token: botToken, chatId: targetChannel } }
+                          { body: { action: "verify", token: botToken, chatId } }
                         );
                         if (result?.chat) {
                           success("Channel verified", `${result.chat.title} (${result.chat.memberCount?.toLocaleString() || "?"} members)`);
