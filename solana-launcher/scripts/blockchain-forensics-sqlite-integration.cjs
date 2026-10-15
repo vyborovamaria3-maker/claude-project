@@ -77,6 +77,14 @@ try {
   assert.equal(result.newlyParsed,1);
   assert.equal(result.coverageComplete,false);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_processed_signatures WHERE undecoded_swap=1").get().n,2);
+  // Helius ATA owner metadata is unavailable before historical slot cutoff.
+  const oldTx={signature:"pre-owner-ata",slot:111491818,timestamp:1,type:"TRANSFER"};
+  put.run(wallet,"pre-owner-ata",99,111491818,gzipSync(Buffer.from(JSON.stringify(oldTx))));
+  result=rebuildWallet(db,wallet);
+  assert.equal(result.coverageComplete,false);
+  assert.equal(db.prepare("SELECT source_coverage_complete AS complete FROM chain_forensic_wallet_sync WHERE wallet=?").get(wallet).complete,0);
+  pnl=db.prepare("SELECT * FROM chain_forensic_wallet_pnl WHERE wallet=? AND mint=?").get(wallet,mint);
+  assert(JSON.parse(pnl.unknown_reasons).includes("pre_owner_metadata_ata_gap"));
   const current=db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_activities").get().n;
   put.run(wallet,"bad-cache",6,111491827,Buffer.from("not-gzip"));
   assert.throws(()=>rebuildWallet(db,wallet),/Invalid cached transaction/);
