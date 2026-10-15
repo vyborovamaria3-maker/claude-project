@@ -4,7 +4,8 @@ import type { ScrapeAuthState } from "../lib/trade/twitter-scraper";
 import { cookiesFromStorageState } from "../src/xactions/session";
 import { createHttpQuotaGate, HttpAccountQuotaError, HttpAccountLeaseError } from "../src/xactions/account-http-quota";
 import { isXActionsEligible } from "../src/xactions/task";
-import { assertXActionsRuntime, createXActionsRuntime } from "../src/xactions/runtime";
+import { assertXActionsRuntime, createXActionsRuntime, sanitizeXActionsTransportFailure } from "../src/xactions/runtime";
+import { taskFailure } from "../lib/trade/task-errors";
 import { MembersPayload, parseTaskPayload } from "../lib/trade/schemas";
 
 function storage(): ScrapeAuthState {
@@ -152,4 +153,16 @@ test("members task accepts only a numeric list ID and bounded requested limit", 
   assert.equal(payload.limit, 75);
   assert.throws(() => parseTaskPayload("members", { list_id: "bad-list" }));
   assert.throws(() => parseTaskPayload("members", { list_id: "953048248406519809", limit: 5000 }));
+});
+
+test("HTTP timeout and invalid response must not be mistaken for broken SOCKS5", () => {
+  const timeout = sanitizeXActionsTransportFailure(new Error("XActions: HTTP request timed out"));
+  const invalid = sanitizeXActionsTransportFailure(new Error("XActions: decoded HTTP response exceeds size limit"));
+  const proxy = sanitizeXActionsTransportFailure(new Error("Socks5 proxy rejected connection: token=SUPERSECRET"));
+  assert.equal(taskFailure(timeout).code, "COLLECTION_TIMEOUT");
+  assert.equal(taskFailure(invalid).code, "HTTP_RESPONSE_INVALID");
+  assert.equal(taskFailure(proxy).code, "PROXY_CONNECT");
+  for (const failure of [timeout, invalid, proxy]) {
+    assert.equal(failure.message.includes("SUPERSECRET"), false);
+  }
 });
