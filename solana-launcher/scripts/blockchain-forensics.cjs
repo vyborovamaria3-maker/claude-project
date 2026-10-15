@@ -19,7 +19,9 @@ function initForensics(db) {
     ";CREATE INDEX IF NOT EXISTS idx_forensic_trades_mint",
     " ON chain_forensic_activities(mint,kind,slot)",
     ";CREATE INDEX IF NOT EXISTS idx_forensic_activities_wallet",
-    " ON chain_forensic_activities(wallet,slot)",
+    " ON chain_forensic_activities(wallet,slot)",,
+    ";CREATE INDEX IF NOT EXISTS idx_forensic_fifo_stream",
+    " ON chain_forensic_activities(wallet,mint,COALESCE(slot,block_time,0),COALESCE(block_time,0),signature,leg_index)"
     ";CREATE TABLE IF NOT EXISTS chain_forensic_edges (",
     " observer_wallet TEXT NOT NULL, signature TEXT NOT NULL, leg_index INTEGER NOT NULL,",
     " mint TEXT NOT NULL, from_wallet TEXT NOT NULL, to_wallet TEXT NOT NULL,",
