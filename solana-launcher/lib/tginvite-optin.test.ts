@@ -22,15 +22,18 @@ describe("TGInvite opt-in destination and response contract", () => {
 
   it("only trusts a confirmed Telegram invite-link response", () => {
     expect(confirmedTGInviteLink({
-      status: "created", link: { inviteLink: "https://t.me/+AbCd123" },
+      status: "created", link: { inviteLink: "https://t.me/+AbCd123", createsJoinRequest: true },
     })).toBe("https://t.me/+AbCd123");
     expect(confirmedTGInviteLink({
-      status: "created", link: { inviteLink: "https://t.me/joinchat/AbCd123" },
+      status: "created", link: { inviteLink: "https://t.me/joinchat/AbCd123", createsJoinRequest: true },
     })).toBe("https://t.me/joinchat/AbCd123");
     for (const response of [
       null, {}, { status: "failed", link: { inviteLink: "https://t.me/+ABC" } },
       { status: "created", link: { inviteLink: "javascript:alert(1)" } },
-      { status: "created", link: { inviteLink: "https://evil.example/join" } },
+      { status: "created", link: { inviteLink: "https://evil.example/join", createsJoinRequest: true } },
+      { status: "created", link: { inviteLink: "https://t.me/+ABC", createsJoinRequest: false } },
+      { status: "created", link: { inviteLink: "https://t.me/+ABC" } },
+      { status: "created", link: { inviteLink: "https://t.me/+ABC", createsJoinRequest: "true" } },
       { status: "created", link: {} },
     ]) {
       expect(confirmedTGInviteLink(response)).toBeNull();
