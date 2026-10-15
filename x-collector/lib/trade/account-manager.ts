@@ -130,6 +130,27 @@ export async function extendAccountLease(name: string, leaseOwner: string, lease
   return changed > 0;
 }
 
+/**
+ * A pickAccount COMMIT can be uncertain: reclaim only the reservation created
+ * by that exact owner token. No X request was issued, so reserved weight is
+ * safely refundable. Never touch a new owner's lease.
+ */
+export async function releaseUnconfirmedAccountReservation(leaseOwner: string, weight: number): Promise<number> {
+  if (!leaseOwner || !Number.isSafeInteger(weight) || weight < 1 || weight > 10)
+    throw new Error("Invalid account reservation recovery");
+  const now = Date.now();
+  const result = await tx(c => c.query<{name:string}>(
+    `UPDATE x_accounts
+     SET account_claimed_by=NULL,account_busy_until=$1,updated_at=$1,
+         weight_used_this_hour=GREATEST(0,weight_used_this_hour-$2),
+         total_requests=GREATEST(0,total_requests-1)
+     WHERE account_claimed_by=$3 AND account_busy_until>$1 AND role='collector'
+     RETURNING name`,
+    [now,weight,leaseOwner],
+  ));
+  return result.rows.length;
+}
+
 export async function releaseAccount(name: string, leaseOwner: string, cooldownMs = 0): Promise<boolean> {
   const now = Date.now();
   const changed = await exec(
