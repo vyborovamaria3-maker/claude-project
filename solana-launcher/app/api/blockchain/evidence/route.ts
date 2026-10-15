@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getDb } from "@/lib/trade/db";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,10 @@ function mapPnl(row: PnlRow) {
     unknownReasons:safeJsonReasons(row.unknown_reasons),updatedAt:row.updated_at};
 }
 export async function GET(req: NextRequest) {
+  const rate=checkRateLimit(getClientIp(req as unknown as Request),30,60);
+  if(!rate.success) return NextResponse.json({error:"Rate limit exceeded"},{
+    status:429,headers:{"Retry-After":String(rate.retryAfter||60),"Cache-Control":"no-store"}
+  });
   const wallet=(req.nextUrl.searchParams.get("wallet")||"").trim();
   const mint=(req.nextUrl.searchParams.get("mint")||"").trim();
   if ((!wallet && !mint) || (wallet && mint) ||
@@ -45,7 +50,7 @@ export async function GET(req: NextRequest) {
     "SELECT address,backfill_complete,possible_gap,forward_cursor,last_success_at,last_error FROM chain_seed_targets WHERE kind='dex_program' AND source_mask<>0 ORDER BY priority DESC,address LIMIT 8"
   ).all() : [];
   const meta={source:"persisted_helius_onchain",coverage:"observed_seeds_and_configured_dex_programs_only",
-    globallyComplete:false,verifiedGlobalPnl:false,forensicIndexAvailable:forensic,
+    globallyComplete:false,verifiedGlobalPnl:false,observationsBounded:true,forensicIndexAvailable:forensic,
     dexIndexAvailable:dex,dexPrograms:sources};
   if (wallet) {
     const sync=forensic?db.prepare(
@@ -73,8 +78,9 @@ export async function GET(req: NextRequest) {
   const observed=dex?db.prepare(
     "SELECT signature,wallet,mint,side,slot,block_time,amount_tokens,amount_sol,fee_sol,program FROM ("+
     " SELECT *,ROW_NUMBER() OVER (PARTITION BY signature,wallet,mint,side ORDER BY program) AS rnk"+
-    " FROM chain_dex_observed_trades WHERE mint=? ) WHERE rnk=1 ORDER BY slot DESC LIMIT ?"
-  ).all(mint,paramLimit):[];
+    " FROM (SELECT * FROM chain_dex_observed_trades WHERE mint=? ORDER BY slot DESC LIMIT ?)" +
+    " ) WHERE rnk=1 ORDER BY slot DESC LIMIT ?"
+  ).all(mint,Math.max(200,paramLimit*10),paramLimit):[];
   const seeded=hasTable(db,"chain_forensic_activities")?db.prepare(
     "SELECT a.signature,a.wallet,a.kind AS side,a.slot,a.block_time,a.amount_tokens,a.amount_sol FROM chain_forensic_activities a "+
     "WHERE a.mint=? AND a.kind IN ('buy','sell') AND NOT EXISTS ("+
