@@ -57,6 +57,14 @@ These changes do not alter X platform limits or allow bypassing restricted accou
 
 ## Operator checks
 
+The standalone historical producer also reconnects its dedicated PostgreSQL
+session after idle disconnects or transient startup failures. It closes the
+broken session, reacquires advisory lock 742098534 and reads durable progress
+before the next cycle. It never replays individual ambiguous transactions.
+Shutdown interrupts reconnect backoff; schema/configuration errors remain fatal.
+Tests terminate only the producer connection in a dedicated test database,
+without stopping the user's PostgreSQL service.
+
 1. Run the migration check and existing local collector tests before switching
    to this branch; keep a PostgreSQL backup. No new SQL migration is required
    by this patch.
