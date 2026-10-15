@@ -69,6 +69,9 @@ test("X scraping failures keep distinct diagnostic codes and do not imply empty 
     assert.equal(failure.permanent, false, message);
     assert(failure.retryAfterMs > 0, message);
   }
+  const badProxy = taskFailure(new Error("PROXY_FAILED: invalid account proxy"));
+  assert.equal(badProxy.code, "PROXY_CONFIG_INVALID");
+  assert.equal(badProxy.permanent, true);
   assert.equal(taskFailure(new Error("schema: invalid payload")).permanent, true);
   assert.equal(taskFailure(new Error("rate limit 429")).code, "RATE_LIMIT");
 });
