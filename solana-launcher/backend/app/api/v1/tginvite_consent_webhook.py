@@ -19,8 +19,8 @@ from app.db.session import get_db
 from app.services.tginvite_consent_ledger import ConsentLedgerError, record_verified_opt_in
 from app.services.tginvite_webhook_verify import (
     TelegramWebhookInvalid,
-    verified_join_request,
     verified_direct_invite_request,
+    verified_join_request,
     verify_operator_bindings,
 )
 
