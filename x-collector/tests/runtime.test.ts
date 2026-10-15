@@ -113,16 +113,29 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     assert.equal(await pickAccount('search','proxy-strict','fallback',false,true),null);
     const proxied=await pickAccount('search','proxy-fallback','fallback',true,true);
     assert.equal(proxied?.name,'second');
+    await db.query(`INSERT INTO x_accounts
+      (name,session_encrypted,hour_window_start,created_at,updated_at,role,proxy_json)
+      SELECT 'shared-proxy', session_encrypted, 0,0,0,'collector',proxy_json
+      FROM x_accounts WHERE name='second'`);
+    await db.query(`INSERT INTO x_accounts
+      (name,session_encrypted,hour_window_start,created_at,updated_at,role,proxy_json)
+      SELECT 'other-proxy', session_encrypted, 0,0,0,'collector',
+        '{"type":"socks5","host":"127.0.0.2","port":9050}'
+      FROM x_accounts WHERE name='second'`);
     assert.equal(await cooldownAccountProxy('second','wrong-owner'),false);
     assert.equal(await cooldownAccountProxy('second','proxy-fallback',60_000),true);
     const proxyCooldown = (await db.query<{status:string; cooldown_until:string}>(
       "SELECT status,cooldown_until FROM x_accounts WHERE name='second'")).rows[0];
     assert.equal(proxyCooldown.status,'cooldown');
     assert(Number(proxyCooldown.cooldown_until) >= Date.now() + 55_000);
+    assert.equal((await db.query<{status:string}>(
+      "SELECT status FROM x_accounts WHERE name='shared-proxy'")).rows[0].status,'cooldown');
+    assert.equal((await db.query<{status:string}>(
+      "SELECT status FROM x_accounts WHERE name='other-proxy'")).rows[0].status,'active');
     assert.equal((await db.query(
-      "SELECT 1 FROM xc_account_errors WHERE account_name='second' AND type='PROXY_FAILED'")).rows.length,1);
+      "SELECT 1 FROM xc_account_errors WHERE account_name IN ('second','shared-proxy') AND type='PROXY_FAILED'")).rows.length,2);
     await releaseAccount('second','proxy-fallback');
-    await db.query("DELETE FROM x_accounts WHERE name='second'");
+    await db.query("DELETE FROM x_accounts WHERE name IN ('second','shared-proxy','other-proxy')");
     await db.query("UPDATE x_accounts SET account_busy_until=0,account_claimed_by=NULL WHERE name='fallback'");
     await db.query("DELETE FROM x_accounts WHERE name IN ('fallback','publisher-only')");
     await enqueueTask({ ...input, payload: { query: 'retry' }, maxAttempts: 2 });
