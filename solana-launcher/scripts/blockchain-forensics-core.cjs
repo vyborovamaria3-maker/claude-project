@@ -28,9 +28,11 @@ function parseEvidence(tx, wallet) {
   const slot = num(tx.slot), timestamp = num(tx.timestamp);
   const out = [];
   const add = (kind, mint, amountTokens, amountSol, feeSol, counterparty = null) => {
-    if (!mint || mint === WSOL || !Number.isFinite(amountTokens) || amountTokens <= 0) return;
+    if (!mint || mint === WSOL) return;
+    const quantity = Number.isFinite(amountTokens) && amountTokens > 0 ? amountTokens : null;
+    if (quantity == null && kind !== "unpriced") return;
     out.push({ wallet, signature: tx.signature, slot, timestamp, index: out.length,
-      kind, mint, amountTokens, amountSol, feeSol, counterparty });
+      kind, mint, amountTokens: quantity, amountSol, feeSol, counterparty });
   };
   const swap = tx.events && tx.events.swap;
   if (swap) {
@@ -128,7 +130,7 @@ function computePnl(events, coverageComplete) {
         reasons.add("incoming_transfer_unknown_basis");
       } else if (e.kind === "transfer_out") {
         transfers++;
-        consume(e.amountTokens);
+        if (consume(e.amountTokens).some(m => m.cost == null)) reasons.add("outgoing_transfer_without_basis");
       } else if (e.kind === "sell") {
         sells++;
         const matches = consume(e.amountTokens);
