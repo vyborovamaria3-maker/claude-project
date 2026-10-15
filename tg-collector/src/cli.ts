@@ -28,7 +28,7 @@ async function main(): Promise<void> {
       );
       await tx.query(
         `INSERT INTO tg_jobs(source_id) VALUES ($1)
-         ON CONFLICT DO NOTHING`,
+         ON CONFLICT (source_id) DO NOTHING`,
         [rows[0].id]
       );
       await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0, run_at=now(),
