@@ -4,7 +4,7 @@
 // Replays persisted Helius evidence. No Excel values, network calls, or guessed PnL.
 const { gunzipSync } = require("node:zlib");
 const path = require("node:path");
-const { parseEvidence, computePnl } = require("./blockchain-forensics-core.cjs");
+const { parseEvidence, computePnlOrdered } = require("./blockchain-forensics-core.cjs");
 const REVISION = 4;
 
 function initForensics(db) {
@@ -113,33 +113,15 @@ function rebuildWallet(db, wallet, force = false) {
     processed.push({ signature: row.signature, undecoded, revision: row.raw_revision });
     freshlyParsed.push(...decoded);
   }
-  // Do not include replaced/deleted raw signatures in old materialized events.
-  const updatedSignatures = new Set(processed.map(p => p.signature));
-  const historical = canIncrement ? db.prepare(
-    "SELECT a.signature,a.slot,a.block_time AS timestamp,a.leg_index AS event_index,a.kind,a.mint," +
-    "a.amount_tokens AS amountTokens,a.amount_sol AS amountSol,a.fee_sol AS feeSol,a.counterparty " +
-    "FROM chain_forensic_activities a INNER JOIN chain_seed_events e " +
-    "ON e.kind='wallet' AND e.address=a.wallet AND e.signature=a.signature " +
-    "WHERE a.wallet=?"
-  ).all(wallet).filter(row => !updatedSignatures.has(row.signature))
-    .map(row => ({...row, index: row.event_index})) : [];
-  const events = [...historical, ...freshlyParsed];
   const unknownOld = canIncrement ? db.prepare(
     "SELECT COUNT(*) AS count FROM chain_forensic_processed_signatures p " +
     "INNER JOIN chain_seed_events e ON e.kind='wallet' AND e.address=p.wallet AND e.signature=p.signature " +
     "WHERE p.wallet=? AND p.revision=? AND p.undecoded_swap=1 AND p.raw_revision=e.raw_revision"
-  ).get(wallet, REVISION).count > 0 : false;
-  const undecodedSwap = unknownOld || processed.some(p => p.undecoded);
+  ).get(wallet,REVISION).count > 0 : false;
+  const undecodedSwap = unknownOld || processed.some(p=>p.undecoded);
   const evidenceComplete = complete && !undecodedSwap;
-  const pnl = computePnl(events, evidenceComplete);
-  if (legacyAtaGap) for (const item of pnl) item.reasons.push("pre_owner_metadata_ata_gap");
-  if (undecodedSwap) {
-    for (const item of pnl) {
-      item.reasons.push("undecoded_swap_in_wallet_history");
-      item.status = "unknown";
-      item.totalRealizedPnlSol = null;
-    }
-  }
+  let pnl = [];
+  let eventStats = {activities:0,priced:0};
   const insertEvent = db.prepare(
     "INSERT INTO chain_forensic_activities(wallet,signature,leg_index,slot,block_time,kind,mint,amount_tokens,amount_sol,fee_sol,counterparty) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
   );
@@ -176,6 +158,20 @@ function rebuildWallet(db, wallet, force = false) {
           ev.kind.endsWith("_in") ? wallet : ev.counterparty, ev.amountTokens);
       }
     }
+    // Compute directly from the SQLite ordered iterator: no all-wallet
+    // materialization in JS memory. The iterator closes before any write.
+    pnl = computePnlOrdered(db.prepare(
+      "SELECT signature,slot,block_time AS timestamp,leg_index AS event_index," +
+      "kind,mint,amount_tokens AS amountTokens,amount_sol AS amountSol," +
+      "fee_sol AS feeSol,counterparty FROM chain_forensic_activities WHERE wallet=? " +
+      "ORDER BY mint,COALESCE(slot,block_time,0),COALESCE(block_time,0),signature,leg_index"
+    ).iterate(wallet),evidenceComplete);
+    if (legacyAtaGap) for (const item of pnl) item.reasons.push("pre_owner_metadata_ata_gap");
+    if (undecodedSwap) for (const item of pnl) {
+      item.reasons.push("undecoded_swap_in_wallet_history");
+      item.status="unknown"; item.totalRealizedPnlSol=null;
+    }
+    eventStats=db.prepare("SELECT COUNT(*) AS activities,SUM(CASE WHEN kind IN ('buy','sell') THEN 1 ELSE 0 END) AS priced FROM chain_forensic_activities WHERE wallet=?").get(wallet);
     const now = Date.now();
     for (const item of pnl) {
       insertPnl.run(wallet, item.mint, evidenceComplete ? 1 : 0, item.status, item.buys,
@@ -186,8 +182,8 @@ function rebuildWallet(db, wallet, force = false) {
       "INSERT INTO chain_forensic_wallet_sync(wallet,revision,observed_count,max_observed_at,coverage_complete,analyzed_at,source_coverage_complete,raw_revision_sum) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(wallet) DO UPDATE SET revision=excluded.revision,observed_count=excluded.observed_count,max_observed_at=excluded.max_observed_at,coverage_complete=excluded.coverage_complete,analyzed_at=excluded.analyzed_at,source_coverage_complete=excluded.source_coverage_complete,raw_revision_sum=excluded.raw_revision_sum"
     ).run(wallet, REVISION, summary.n, summary.latest, evidenceComplete ? 1 : 0, now, complete ? 1 : 0, summary.revisionSum);
   })();
-  return { wallet, skipped: false, transactions: summary.n, newlyParsed: rows.length, activities: events.length,
-    pricedTrades: events.filter(e => e.kind === "buy" || e.kind === "sell").length,
+  return { wallet, skipped: false, transactions: summary.n, newlyParsed: rows.length, activities: eventStats.activities,
+    pricedTrades: eventStats.priced || 0,
     coverageComplete: evidenceComplete, verifiedTokens: pnl.filter(p => p.status === "verified").length,
     unknownTokens: pnl.filter(p => p.status === "unknown").length };
 }
