@@ -110,7 +110,8 @@ fetchImpl = async (url) => {
   };
 };
 const incremental = await helius.fetchEnrichedTxsForMintWithMeta("mintA", 10, new Set(["known"]));
-assert.deepEqual(Array.from(incremental.transactions, (tx) => String(tx.signature)), ["new"]);
+assert.deepEqual(Array.from(incremental.transactions, (tx) => String(tx.signature)), ["new","known"],
+  "known overlap anchor must be preserved so updated Helius payload can replace cached JSON");
 assert.equal(incremental.reachedKnownHistory, true);
 assert.equal(incremental.truncated, false);
 assert.equal(calls.length, 1);
