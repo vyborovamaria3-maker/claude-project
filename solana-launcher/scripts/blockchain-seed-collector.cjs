@@ -227,8 +227,12 @@ function status(db) {
     "SELECT category,COUNT(DISTINCT address) AS addresses FROM chain_seed_file_sources GROUP BY category"
   ).all();
   const files = db.prepare("SELECT COUNT(*) AS count FROM chain_seed_files").get().count;
+  let verified = null;
+  try {
+    verified = db.prepare("SELECT COUNT(*) AS walletMints, SUM(CASE WHEN status=\'verified\' THEN 1 ELSE 0 END) AS verifiedPnl, SUM(CASE WHEN status=\'unknown\' THEN 1 ELSE 0 END) AS unknownPnl FROM chain_forensic_wallet_pnl").get();
+  } catch { /* Forensics tables are initialized on the first wallet replay. */ }
   return { files, categories, targets, collectedEvents:
-    db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count };
+    db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count, forensic: verified };
 }
 
 function claimOne(db) {
