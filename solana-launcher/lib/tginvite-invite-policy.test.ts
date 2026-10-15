@@ -7,7 +7,7 @@ import {
   validateInviteLinkRequest,
 } from "./tginvite-invite-policy";
 
-const required = { token: "123456789:abcdefghijklmnopqrstuvwxyzABCDE123456", chatId: "@example_channel" };
+const required = { token: ["123456789", "a".repeat(35)].join(":"), chatId: "@example_channel" };
 
 describe("invitation link validation (no Telegram network)", () => {
   it("prepares a bounded single-use link with expiration", () => {
