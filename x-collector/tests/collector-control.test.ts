@@ -52,7 +52,15 @@ for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundatio
  await assert.rejects(startCollection({kind:'search',payload:{query:'fixture'},requestId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},async()=>{throw new Error('startup fixture failure');}),/startup fixture/);assert.equal((await db.query('SELECT * FROM x_tasks')).rows.length,0);
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');origin='http://127.0.0.1:'+address.port;
  const context=await browser.newContext({httpCredentials:{username:'fixture',password:'fixture'}}),page=await context.newPage();
+ await page.route('**/api/collector/diagnostics',route=>route.fulfill({status:200,json:{
+   queue:[{status:'pending',count:1}],accounts:[{status:'active',count:1}],
+   tasks:[{id:'123',kind:'search',state:'waiting_account',attempts:0,maxAttempts:3,
+     nextEligibleInSeconds:60,lastErrorCode:'WAITING_ACCOUNT',persistedPartialOutput:false}],
+ }}));
  await page.goto(origin+'/collector');await page.waitForFunction(()=>!(document.getElementById('start') as HTMLButtonElement).disabled);
+ await page.waitForFunction(()=>document.getElementById('diag-jobs')?.textContent?.includes('Нет свободного аккаунта'));
+ assert.match(await page.locator('#diag-summary').innerText(),/pending: 1/);
+ assert.match(await page.locator('#diag-jobs').innerText(),/WAITING_ACCOUNT/);
  await page.locator('#value').fill('solana');
  const [response]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/collector/start')),page.locator('#start').click()]);assert.equal(response.status(),202);const {id}=await response.json();assert.equal(launches,1);
  await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/collector/resume')),page.locator('#resume').click()]);assert.equal(launches,2);
