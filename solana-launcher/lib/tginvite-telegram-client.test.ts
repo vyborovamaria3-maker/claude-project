@@ -137,6 +137,24 @@ describe("Telegram-issued opt-in links (mocked Bot API)", () => {
     expect(result).toEqual({ success: false, error: "JOIN_REQUEST_NOT_ENFORCED" });
   });
 
+  it("returns bounded retry metadata without credential leaks on Telegram 429", async () => {
+    state.createChatInviteLink.mockRejectedValueOnce({
+      response: { error_code: 429, parameters: { retry_after: 27 } },
+      message: "https://api.telegram.org/bot123:secret/createChatInviteLink",
+    });
+    const result = await createInviteLink("123:secret", "@my_group", { createsJoinRequest: true });
+    expect(result).toEqual({ success: false, error: "TELEGRAM_RATE_LIMITED", retryAfter: 27 });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("caps malformed Telegram rate-limit retry metadata", async () => {
+    state.createChatInviteLink.mockRejectedValueOnce({
+      response: { error_code: 429, parameters: { retry_after: 1000000000 } },
+    });
+    expect(await createInviteLink("bot-token", "@my_group", { createsJoinRequest: true }))
+      .toEqual({ success: false, error: "TELEGRAM_RATE_LIMITED", retryAfter: 60 });
+  });
+
   it("does not accept an empty invite URL in the Bot API response", async () => {
     state.createChatInviteLink.mockResolvedValueOnce({ invite_link: "", creates_join_request: true });
     expect(await createInviteLink("bot-token-A", "@my_group", {
