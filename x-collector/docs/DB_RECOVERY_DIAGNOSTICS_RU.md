@@ -16,11 +16,19 @@ These changes do not alter X platform limits or allow bypassing restricted accou
   source shape change, SOCKS5 connection error and collection timeout.
 - Proxy/collection failures are no longer recorded as evidence that an X
   account has a broken authenticated session.
-- Failed SOCKS5 endpoints trigger a lease-fenced 60-second account cooldown,
-  with a secret-free audit record (not a shared proxy-wide health checker).
+- Failed SOCKS5 endpoints trigger a lease-fenced 60-second cooldown for
+  collector accounts with the exact same saved proxy settings; other proxy
+  configurations are left alone. This is not a general per-endpoint monitor.
+- XActions full HTTP request timeouts and oversized/invalid responses are
+  classified separately from SOCKS5 failure, without raw agent errors.
+- Browser feed crawling keeps saved post batches but reports stalled
+  nonempty scrolling as an unverified partial result, not confirmed exhaustion.
+  An empty feed still reaches the caller for explicit empty-state diagnosis.
 - A read-only local report (`npm run x:errors`) shows 1-hour and 24-hour
   task-error snapshots, timestamped account-error events, and queue/account
   counts; those are **different measures** and must not be added together.
+  Up to 50 pending/claimed tasks include safe derived statuses:
+  queued, waiting_account, retry_wait, running, and partial.
 
 ## Operator checks
 
@@ -44,8 +52,9 @@ These changes do not alter X platform limits or allow bypassing restricted accou
 - Visual search evidence capture (redacted DOM/screenshot) for the 132
   historical unconfirmed searches; verify current X selectors in the user's
   authenticated sandbox.
-- Native browser list end-of-feed evidence; do not equate stagnant scrolling
-  with complete source coverage.
+- Verified X browser end-of-feed evidence remains unavailable for feeds without
+  an explicit end marker. Stalled pages now report partial; validate exact
+  source coverage with a test account before changing completion semantics.
 - Rich task states (waiting/partial), account-state explanations and monitoring
   dashboard improvements.
 - Live end-to-end regression against a test X account, real proxy and database,
