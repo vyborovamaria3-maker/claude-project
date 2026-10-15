@@ -49,7 +49,15 @@ export function sanitizeXActionsTransportFailure(error: unknown): Error {
     return new Error("XACTIONS_TRANSPORT_TIMEOUT: request deadline exceeded");
   if (/HTTP response exceeds size limit|decoded HTTP response exceeds size limit|unsupported HTTP content encoding/i.test(message))
     return new Error("XACTIONS_RESPONSE_INVALID: response payload rejected");
-  return new Error("PROXY_FAILED: XActions SOCKS5 transport request failed");
+  if (/socks.{0,30}auth|proxy.{0,30}auth|authentication.{0,30}fail|HTTP 407/i.test(message))
+    return new Error("XACTIONS_PROXY_AUTH_FAILED: SOCKS5 credentials rejected");
+  if (/getaddrinfo|ENOTFOUND|EAI_AGAIN|DNS/i.test(message))
+    return new Error("XACTIONS_PROXY_DNS_FAILED: name resolution failed");
+  if (/socks|proxy.{0,30}(refused|rejected|connect)|ECONNREFUSED|ERR_PROXY_CONNECTION_FAILED/i.test(message))
+    return new Error("PROXY_FAILED: XActions SOCKS5 connection failed");
+  // A connection reset may originate from X itself; without evidence do not
+  // accuse the account's proxy or quarantine a healthy route.
+  return new Error("XACTIONS_NETWORK_IO_UNVERIFIED: HTTP request failed");
 }
 
 /**
