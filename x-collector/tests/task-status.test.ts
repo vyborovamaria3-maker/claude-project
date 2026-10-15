@@ -6,7 +6,9 @@ test("task display statuses distinguish waiting account, retry, partial and runn
   const base = { status: "pending", availableAt: 2000, now: 1000 };
   assert.equal(deriveTaskDisplayState(base), "retry_wait");
   assert.equal(deriveTaskDisplayState({ ...base, phase: "waiting", lastError: "no available account; waiting for lease or quota" }), "waiting_account");
-  assert.equal(deriveTaskDisplayState({ ...base, hasPartialCheckpoint: true }), "partial");
+  assert.equal(deriveTaskDisplayState({ ...base, hasPartialCheckpoint: true }), "retry_wait");
+  assert.equal(deriveTaskDisplayState({ ...base, lastError: "no available account; waiting", hasPartialCheckpoint: true }), "waiting_account");
+  assert.equal(deriveTaskDisplayState({ ...base, availableAt: 0, hasPartialCheckpoint: true }), "partial");
   assert.equal(deriveTaskDisplayState({ ...base, status: "claimed", hasPartialCheckpoint: true }), "running");
   assert.equal(deriveTaskDisplayState({ ...base, status: "done" }), "completed");
   assert.equal(deriveTaskDisplayState({ ...base, status: "failed" }), "failed");
@@ -19,5 +21,7 @@ test("task status reporting only emits allowlisted symbolic error markers", () =
   assert.equal(safeLastErrorCode("XActions account HTTP quota exhausted"), "ACCOUNT_QUOTA_WAIT");
   assert.equal(safeLastErrorCode("token=secret password=secret"), "LEGACY_OR_UNKNOWN");
   assert.equal(safeLastErrorCode("[AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA] raw secret"), "LEGACY_OR_UNKNOWN");
+  assert.equal(safeLastErrorCode("[PASSWORD_XYZ] secret-token"), "LEGACY_OR_UNKNOWN");
+  assert.equal(safeLastErrorCode("[PROXY_AUTH] secret-token"), "PROXY_AUTH");
   assert.equal(safeLastErrorCode(null), null);
 });
