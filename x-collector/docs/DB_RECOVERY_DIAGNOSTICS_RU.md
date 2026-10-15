@@ -18,6 +18,9 @@ These changes do not alter X platform limits or allow bypassing restricted accou
   Server-confirmed SQLSTATE 40001/40P01 aborts can still retry.
 - Unverified empty user timelines now have distinct retryable diagnostics
   instead of assuming an X account was restricted.
+- Concurrent /health queries share a single outstanding PostgreSQL probe.
+  A slow or unavailable database can still return HTTP 503, but repeated
+  checks no longer accumulate a growing pile of timed-out pool queries.
 - Task errors now distinguish unverified empty search, pagination ambiguity,
   source shape change, SOCKS5 connection error and collection timeout.
 - Proxy/collection failures are no longer recorded as evidence that an X
