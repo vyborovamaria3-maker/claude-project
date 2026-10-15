@@ -60,7 +60,7 @@ import EnhancedDashboard from "@/components/tginvite/EnhancedDashboard";
 import RealTimeMonitor from "@/components/tginvite/RealTimeMonitor";
 import GoalTracking from "@/components/tginvite/GoalTracking";
 import ABTesting from "@/components/tginvite/ABTesting";
-import { tgInviteService, ImportJobConfig, ImportProgress } from "@/lib/tginvite-service";
+import { tgInviteService, ImportProgress } from "@/lib/tginvite-service";
 import { confirmedTGInviteLink, normalizeTGInviteDestination } from "@/lib/tginvite-optin";
 import { tginviteEvents, TGEvent } from "@/lib/tginvite-events";
 import AuthorizedHistoryPanel from "@/components/tginvite/AuthorizedHistoryPanel";
@@ -2249,7 +2249,7 @@ function TGInvitePageInner() {
           <div className={siteDesign.page.panelClassName}>
             <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <Zap className="h-5 w-5 text-[color:var(--theme-primary)]" />
-              Import Control
+              Invitation links & legacy jobs
             </h3>
             <div className="flex flex-wrap gap-3">
               <button
@@ -2337,7 +2337,7 @@ function TGInvitePageInner() {
               </button>
             </div>
             <p className="mt-3 text-sm text-content-muted">
-              Telegram sends a join request only when someone chooses to open this link.
+              People who choose to join can submit a request through this link. An administrator must approve it.
               No parsed members are automatically added. Direct member import remains unavailable
               until consent-verified server jobs are implemented.
             </p>
