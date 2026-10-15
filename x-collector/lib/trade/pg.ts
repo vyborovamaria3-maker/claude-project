@@ -52,7 +52,9 @@ async function withPgRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
     attempts: cfg.db.retryAttempts,
     baseDelayMs: cfg.db.retryBaseMs,
     maxDelayMs: cfg.db.retryMaxMs,
-    shouldRetry: isRetryablePgError,
+    // The AmbiguousCommitError message mentions a lost connection, but the
+    // transaction might already be committed: never replay that wrapper.
+    shouldRetry: (error) => !(error instanceof AmbiguousCommitError) && isRetryablePgError(error),
     onRetry: ({ attempt, delayMs, error }) => {
       log.warn("query retrying after transient error", {
         label, attempt, delay: delayMs, error: String(error instanceof Error ? error.message : error),
