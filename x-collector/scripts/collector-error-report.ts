@@ -1,26 +1,9 @@
 import { q, closePool } from "../lib/trade/pg";
 import { activeTaskSnapshot } from "../lib/trade/task-dashboard";
-import { safeLastErrorCode } from "../lib/trade/task-status";
+import { collapseErrorTags, type TaskErrorRow } from "../lib/trade/error-report";
 
-interface TaskErrorRow { status: string; kind: string; code: string; tasks: number; }
 interface AccountErrorRow { type: string; events: number; }
 interface CountRow { status: string; count: number; }
-
-/**
- * PostgreSQL groups historical error tags before returning them; collapse
- * unknown tags into one safe bucket and combine their counts in JS.
- */
-export function collapseErrorTags(rows:TaskErrorRow[]):TaskErrorRow[] {
-  const grouped = new Map<string,TaskErrorRow>();
-  for (const row of rows) {
-    const code = safeLastErrorCode("[" + row.code + "]") ?? "LEGACY_OR_UNKNOWN";
-    const key = JSON.stringify([row.status,row.kind,code]);
-    const previous = grouped.get(key);
-    if (previous) previous.tasks += Number(row.tasks);
-    else grouped.set(key,{status:row.status,kind:row.kind,code,tasks:Number(row.tasks)});
-  }
-  return [...grouped.values()].sort((a,b)=>b.tasks-a.tasks || a.code.localeCompare(b.code));
-}
 
 /** Read-only, account/credential-free failure snapshots for a local laptop. */
 async function collect(windowMs: number, now: number) {
