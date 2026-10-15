@@ -32,9 +32,9 @@ process.on("SIGTERM", () => { stopping = true; });
 async function claim(): Promise<Job | undefined> {
   const { rows } = await pool.query<Job>(`
     WITH pick AS (
-      SELECT id FROM tg_jobs
-      WHERE (state IN ('pending','delayed') AND run_at <= now())
-         OR (state='running' AND locked_until < now())
+      SELECT j.id FROM tg_jobs j JOIN tg_sources s ON s.id=j.source_id
+      WHERE s.enabled AND ((j.state IN ('pending','delayed') AND j.run_at <= now())
+         OR (j.state='running' AND j.locked_until < now()))
       ORDER BY run_at, id
       FOR UPDATE SKIP LOCKED LIMIT 1
     )
@@ -200,9 +200,13 @@ async function main(): Promise<void> {
   try {
     const { rows } = await guard.query<{ acquired: boolean }>("SELECT pg_try_advisory_lock(8260226) AS acquired");
     if (!rows[0]?.acquired) throw new Error("Another TG Collector worker is already running");
+    // Once this exclusive lock is held, no previous worker can still own a lease.
+    await pool.query("UPDATE tg_jobs SET state='pending', locked_until=NULL WHERE state='running'");
     client = await authorizedClient();
+    await pool.query("UPDATE tg_runtime SET worker_started_at=now(), heartbeat_at=now() WHERE id=1");
     console.log("TG Collector worker started");
     while (!stopping) {
+      await pool.query("UPDATE tg_runtime SET heartbeat_at=now() WHERE id=1");
       const pause = await pool.query<{ wait_seconds: number }>(
         "SELECT GREATEST(0,EXTRACT(EPOCH FROM (pause_until-now())))::float8 AS wait_seconds FROM tg_runtime WHERE id=1");
       const seconds = Number(pause.rows[0]?.wait_seconds ?? 0);
@@ -214,6 +218,7 @@ async function main(): Promise<void> {
     }
   } finally {
     if (client) await client.disconnect();
+    await pool.query("UPDATE tg_runtime SET heartbeat_at=NULL WHERE id=1").catch(()=>{});
     try { await guard.query("SELECT pg_advisory_unlock(8260226)"); } finally { guard.release(); await pool.end(); }
   }
 }
