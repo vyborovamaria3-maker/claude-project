@@ -18,8 +18,15 @@ try {
   const leg = (quantity) => ({ userAccount: wallet, mint,
     rawTokenAmount: { tokenAmount: String(quantity * 1e6), decimals: 6 } });
   function record(signature,slot,event) {
+    const isBuy = Boolean(event.nativeInput);
+    const solLamports = Number((event.nativeInput || event.nativeOutput).amount);
+    const quantity = Number((isBuy ? event.tokenOutputs : event.tokenInputs)[0].rawTokenAmount.tokenAmount);
     const tx = { signature, slot, timestamp: slot * 10, feePayer: wallet,
-      fee: 5000, type: "SWAP", events: { swap: event } };
+      fee: 5000, type: "SWAP",
+      accountData:[{account:wallet,nativeBalanceChange:(isBuy ? -solLamports : solLamports)-5000,
+        tokenBalanceChanges:[{mint,userAccount:wallet,rawTokenAmount:{
+          tokenAmount:String(isBuy ? quantity : -quantity),decimals:6}}]}],
+      events: { swap: event } };
     put.run(wallet, signature, slot, gzipSync(Buffer.from(JSON.stringify(tx))));
   }
   record("buy-sig",1,{ nativeInput: { account: wallet, amount: "1000000000" }, tokenOutputs:[leg(5)] });
@@ -37,6 +44,7 @@ try {
   put.run(wallet,"transfer-sig",3,gzipSync(Buffer.from(JSON.stringify(transfer))));
   record("sell-after-transfer",4,{nativeOutput:{account:wallet,amount:"1000000000"},tokenInputs:[leg(3)]});
   result=rebuildWallet(db,wallet);
+  assert.equal(result.newlyParsed,2,"incremental replay parses only new signatures");
   assert.equal(result.unknownTokens,1);
   pnl=db.prepare("SELECT * FROM chain_forensic_wallet_pnl WHERE wallet=? AND mint=?").get(wallet,mint);
   assert.equal(pnl.total_realized_pnl_sol,null);
@@ -57,6 +65,7 @@ try {
   pnl=db.prepare("SELECT * FROM chain_forensic_wallet_pnl WHERE wallet=? AND mint=?").get(wallet,mint);
   assert.equal(pnl.coverage_complete,0);
   assert(JSON.parse(pnl.unknown_reasons).includes("undecoded_swap_in_wallet_history"));
+  assert.equal(rebuildWallet(db,wallet).coverageComplete,false,"cached evidence must remain incomplete");
   const current=db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_activities").get().n;
   put.run(wallet,"bad-cache",6,Buffer.from("not-gzip"));
   assert.throws(()=>rebuildWallet(db,wallet),/Invalid cached transaction/);
