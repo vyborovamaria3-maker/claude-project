@@ -223,7 +223,8 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
             process.env.X_BROWSER_RESUME_CURSOR==="true" &&
             !historical.history_run_id && !(payload as {list_source_id?:string;discovery_source?:string}).list_source_id &&
             !(payload as {discovery_source?:string}).discovery_source);
-          if(resumed.limit>0)await searchTweets(resumed.query,{...scrapeOpts,limit:resumed.limit,sort:p.sort});
+          if((savedBrowser?.observedCount??0)<p.limit && resumed.limit>0)
+            await searchTweets(resumed.query,{...scrapeOpts,limit:resumed.limit,sort:p.sort});
         }
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
@@ -231,7 +232,10 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
       } else if (kind === "timeline") {
         const p = payload as { handle: string; limit: number };
         const t0 = Date.now();
-        await fetchUserTimeline(p.handle, { ...scrapeOpts, limit: p.limit });
+        // The observed target may already be durable even if the worker
+        // died before finishTask. Avoid issuing the same browser reads again.
+        if((savedBrowser?.observedCount??0)<p.limit)
+          await fetchUserTimeline(p.handle, { ...scrapeOpts, limit: p.limit });
         scrapeDuration.observe({ kind }, (Date.now() - t0) / 1000);
         assertLeases();
 
