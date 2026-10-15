@@ -7,7 +7,9 @@ const path = require("node:path");
 const { parseEvidence, computePnlOrdered } = require("./blockchain-forensics-core.cjs");
 const REVISION = 4;
 
+const forensicInitialized = new WeakSet();
 function initForensics(db) {
+  if (forensicInitialized.has(db)) return;
   db.exec([
     "CREATE TABLE IF NOT EXISTS chain_forensic_activities (",
     " wallet TEXT NOT NULL, signature TEXT NOT NULL, leg_index INTEGER NOT NULL,",
@@ -68,6 +70,7 @@ function initForensics(db) {
     "UPDATE chain_forensic_wallet_sync SET raw_revision_sum=-1,coverage_complete=0 WHERE wallet=OLD.address;",
     "UPDATE chain_forensic_wallet_pnl SET status='unknown',coverage_complete=0,total_realized_pnl_sol=NULL,unknown_reasons='[\"raw_evidence_removed\"]' WHERE wallet=OLD.address; END;",
   ].join("\n"));
+  forensicInitialized.add(db);
 }
 function walletCoverage(row) {
   return row.backfill_complete === 1 && row.possible_gap === 0
