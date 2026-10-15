@@ -14,9 +14,9 @@ async function main(): Promise<void> {
   let processed = 0;
   try {
     const result = await lock.query<{ acquired: boolean }>(
-      "SELECT pg_try_advisory_lock(8260227) AS acquired"
+      "SELECT pg_try_advisory_lock(8260226) AS acquired"
     );
-    if (!result.rows[0]?.acquired) throw new Error("Analysis backfill already running");
+    if (!result.rows[0]?.acquired) throw new Error("Stop the Telegram collector worker or other analytics task before backfill");
     while (true) {
       const client = await pool.connect();
       let count = 0;
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
     }
     console.log("Backfill completed:", processed, "messages");
   } finally {
-    try { await lock.query("SELECT pg_advisory_unlock(8260227)"); }
+    try { await lock.query("SELECT pg_advisory_unlock(8260226)"); }
     finally { lock.release(); await pool.end(); }
   }
 }
