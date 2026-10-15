@@ -1,0 +1,25 @@
+{
+  "name": "tg-collector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "login": "tsx src/cli.ts login",
+    "add": "tsx src/cli.ts add",
+    "list": "tsx src/cli.ts list",
+    "migrate": "tsx src/cli.ts migrate",
+    "worker": "tsx src/worker.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.6",
+    "pg": "^8.23.1",
+    "telegram": "^2.26.22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
