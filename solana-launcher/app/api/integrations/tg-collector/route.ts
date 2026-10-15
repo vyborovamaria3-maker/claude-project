@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
           (SELECT count(*)::int FROM tg_messages) AS messages,
           (SELECT count(*)::int FROM tg_jobs WHERE state='running') AS running,
           (SELECT count(*)::int FROM tg_jobs WHERE state='failed') AS failed`),
-      p.query("SELECT pause_until, heartbeat_at, worker_started_at, heartbeat_at > now() - interval '20 seconds' AS worker_online FROM tg_runtime WHERE id=1"),
+      p.query("SELECT pause_until, heartbeat_at, worker_started_at, block_reason, blocked_at, heartbeat_at > now() - interval '20 seconds' AS worker_online FROM tg_runtime WHERE id=1"),
       p.query(`SELECT m.source_id::text, s.identifier, m.message_id::text,
         m.sender_id, m.posted_at, m.text, m.views, m.forwards, m.replies
         FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id
@@ -126,6 +126,7 @@ export async function GET(request: NextRequest) {
       pausedUntil: runtimeState.rows[0]?.pause_until ?? null,
       workerOnline: runtimeState.rows[0]?.worker_online === true,
       heartbeatAt: runtimeState.rows[0]?.heartbeat_at ?? null,
+      blockReason: runtimeState.rows[0]?.block_reason ?? null,
       sources: sources.rows,
       messages: messages.rows,
       page,
