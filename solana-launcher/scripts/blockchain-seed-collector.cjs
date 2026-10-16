@@ -259,13 +259,12 @@ function initDb(db) {
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "max_runtime_ms"))
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN max_runtime_ms INTEGER NOT NULL DEFAULT 21600000");
   db.exec("CREATE TABLE IF NOT EXISTS chain_schema_migrations(migration_key TEXT PRIMARY KEY,applied_at INTEGER NOT NULL)");
-  if (!db.prepare("SELECT 1 FROM chain_schema_migrations WHERE migration_key=?").get("budget-ledger-backfill-v1")) {
-    db.transaction(() => {
-      db.exec("INSERT OR IGNORE INTO chain_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'helius',u.request_id,u.run_id,r.scope_id,u.task_kind,u.task_address,u.endpoint,'credit',u.estimated_credits,u.actual_credits,u.status,u.http_status,u.error,u.created_at,u.finished_at FROM chain_helius_usage_requests u LEFT JOIN chain_collection_runs r ON r.run_id=u.run_id");
-      db.exec("INSERT OR IGNORE INTO chain_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'alchemy',request_id,run_id,scope_id,account_id,task_kind,task_address,method,'cu',estimated_cu,actual_cu,status,http_status,error,created_at,finished_at FROM chain_alchemy_usage_requests");
-      db.prepare("INSERT INTO chain_schema_migrations(migration_key,applied_at) VALUES(?,?)").run("budget-ledger-backfill-v1",Date.now());
-    }).immediate();
-  }
+  db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM chain_schema_migrations WHERE migration_key=?").get("budget-ledger-backfill-v1")) return;
+    db.exec("INSERT OR IGNORE INTO chain_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'helius',u.request_id,u.run_id,r.scope_id,u.task_kind,u.task_address,u.endpoint,'credit',u.estimated_credits,u.actual_credits,u.status,u.http_status,u.error,u.created_at,u.finished_at FROM chain_helius_usage_requests u LEFT JOIN chain_collection_runs r ON r.run_id=u.run_id");
+    db.exec("INSERT OR IGNORE INTO chain_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'alchemy',request_id,run_id,scope_id,account_id,task_kind,task_address,method,'cu',estimated_cu,actual_cu,status,http_status,error,created_at,finished_at FROM chain_alchemy_usage_requests");
+    db.prepare("INSERT OR IGNORE INTO chain_schema_migrations(migration_key,applied_at) VALUES(?,?)").run("budget-ledger-backfill-v1",Date.now());
+  }).immediate();
   // Preserve active-wave accounting when resuming an older pilot scope created
   // before deferred candidates were introduced.
   db.exec(
