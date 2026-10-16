@@ -66,6 +66,9 @@ test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
     const beforeDelete = await pool.query<{evidence_count:number}>(
       "SELECT evidence_count FROM tg_graph_daily_edges WHERE source_id=$1 AND target_key='somechannel' AND kind='mention'",[id]);
     assert.equal(beforeDelete.rows[0]?.evidence_count,2);
+    const beforeActivity = await pool.query<{posts_count:number}>(
+      "SELECT posts_count FROM tg_source_daily_metrics WHERE source_id=$1 AND day=$2::date",[id,day]);
+    assert.equal(beforeActivity.rows[0]?.posts_count,3);
 
     const fourth = await pool.connect();
     try {
@@ -78,6 +81,9 @@ test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
     const afterDelete = await pool.query<{evidence_count:number}>(
       "SELECT evidence_count FROM tg_graph_daily_edges WHERE source_id=$1 AND target_key='somechannel' AND kind='mention'",[id]);
     assert.equal(afterDelete.rows[0]?.evidence_count,1, "Remaining message still proves the relationship");
+    const afterActivity = await pool.query<{posts_count:number}>(
+      "SELECT posts_count FROM tg_source_daily_metrics WHERE source_id=$1 AND day=$2::date",[id,day]);
+    assert.equal(afterActivity.rows[0]?.posts_count,2);
     const survivor = await pool.query("SELECT 1 FROM tg_message_links WHERE source_id=$1 AND message_id=9",[id]);
     assert.equal(survivor.rowCount,1);
 
@@ -88,6 +94,8 @@ test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
     assert.equal(residual.rows[0].count,0);
     const residue = await pool.query("SELECT 1 FROM tg_graph_daily_edges WHERE source_id=$1",[id]);
     assert.equal(residue.rowCount,0);
+    const residualStats = await pool.query("SELECT 1 FROM tg_source_daily_metrics WHERE source_id=$1",[id]);
+    assert.equal(residualStats.rowCount,0);
     await pool.end();
   }
 });
