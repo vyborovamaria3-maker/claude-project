@@ -59,26 +59,23 @@ function normalizeRawTransaction(entry) {
     return typeof value === "string" ? value : value && (value.pubkey || value.toString && value.toString()) || null;
   };
   const tokenBalances = balances => Array.isArray(balances) ? balances : [];
-  const before = new Map(tokenBalances(meta && meta.preTokenBalances).map(x => [String(x.accountIndex)+":"+x.mint,{owner:x.owner||null,amount:Number(x.uiTokenAmount && x.uiTokenAmount.uiAmountString ?? x.uiTokenAmount && x.uiTokenAmount.uiAmount ?? 0),decimals:Number(x.uiTokenAmount && x.uiTokenAmount.decimals||0)}]));
-  const after = new Map(tokenBalances(meta && meta.postTokenBalances).map(x => [String(x.accountIndex)+":"+x.mint,{owner:x.owner||null,amount:Number(x.uiTokenAmount && x.uiTokenAmount.uiAmountString ?? x.uiTokenAmount && x.uiTokenAmount.uiAmount ?? 0),decimals:Number(x.uiTokenAmount && x.uiTokenAmount.decimals||0)}]));
-  const keysSet = new Set([...before.keys(),...after.keys()]);
-  const changes = new Map();
-  for (const tokenKey of keysSet) {
-    const a = before.get(tokenKey), b = after.get(tokenKey);
-    const mint = tokenKey.slice(tokenKey.indexOf(":")+1);
-    const delta = (b ? b.amount : 0) - (a ? a.amount : 0);
-    if (!Number.isFinite(delta) || Math.abs(delta) < 1e-12) continue;
-    const owner = (b && b.owner) || (a && a.owner) || null;
-    if (!owner) continue;
-    if (!changes.has(mint)) changes.set(mint,[]);
-    changes.get(mint).push({owner,delta,accountIndex:Number(tokenKey.slice(0,tokenKey.indexOf(":")))});
-  }
-  const tokenTransfers = [];
-  for (const [mint, legs] of changes) {
-    const debits=legs.filter(x=>x.delta<0), credits=legs.filter(x=>x.delta>0);
-    if (debits.length===1 && credits.length===1 && debits[0].owner!==credits[0].owner) {
-      tokenTransfers.push({mint,tokenAmount:Math.min(Math.abs(debits[0].delta),credits[0].delta),fromUserAccount:debits[0].owner,toUserAccount:credits[0].owner,source:"alchemy-token-balance-delta"});
-    }
+  const balances = rows => tokenBalances(rows).map(x => ({
+    accountIndex:Number(x.accountIndex),mint:x.mint,owner:x.owner||null,
+    amount:String(x.uiTokenAmount && x.uiTokenAmount.amount || "0"),
+    decimals:Number(x.uiTokenAmount && x.uiTokenAmount.decimals || 0),
+  }));
+  const before = new Map(balances(meta && meta.preTokenBalances).map(x => [String(x.accountIndex)+":"+x.mint,x]));
+  const after = new Map(balances(meta && meta.postTokenBalances).map(x => [String(x.accountIndex)+":"+x.mint,x]));
+  const tokenBalanceChanges = [];
+  for (const tokenKey of new Set([...before.keys(),...after.keys()])) {
+    const a=before.get(tokenKey), b=after.get(tokenKey);
+    const rawBefore=BigInt(a?a.amount:"0"), rawAfter=BigInt(b?b.amount:"0");
+    const delta=rawAfter-rawBefore;
+    if (delta===0n) continue;
+    const source=b||a;
+    if (!source || !source.owner || !source.mint) continue;
+    tokenBalanceChanges.push({mint:source.mint,owner:source.owner,accountIndex:source.accountIndex,
+      decimals:source.decimals,rawAmountDelta:delta.toString()});
   }
   const blockTime = Number.isFinite(entry && entry.blockTime) ? entry.blockTime : null;
   return {
@@ -86,7 +83,8 @@ function normalizeRawTransaction(entry) {
     timestamp:blockTime, blockTime, transactionError:meta && meta.err != null ? meta.err : null,
     fee:Number.isFinite(meta && meta.fee)?meta.fee:null,
     sourceProvider:"alchemy", sourceDetailLevel:"raw",
-    tokenTransfers,
+    // Balance changes reveal touched owners/mints but are not proof of a transfer.
+    tokenBalanceChanges,
     // Do not infer native transfers from lamport deltas: fees, rent, and swaps
     // make that inference ambiguous without instruction decoding.
     nativeTransfers:[],
