@@ -22,6 +22,10 @@ const db = new Database(":memory:");
   assert.equal(alchemyLedger.provider,"alchemy");
   assert.equal(alchemyLedger.cost_kind,"cu");
   assert.equal(alchemyLedger.estimated_units,100);
+  initDb(db);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_budget_ledger").get().n,2,
+    "reinitialization must not duplicate or repeatedly backfill ledger entries");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_schema_migrations WHERE migration_key='budget-ledger-backfill-v1'").get().n,1);
   db.prepare("INSERT INTO chain_seed_targets(kind,address,source_mask,priority) VALUES('wallet',?,4,90)").run(wallet);
   const txs=Array.from({length:31},(_,i)=>{
     const mint="1".repeat(31)+BASE58[i+1];
