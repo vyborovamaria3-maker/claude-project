@@ -213,11 +213,7 @@ export async function GET(request: NextRequest) {
       nodeLimit, edgeLimit, edgeOffset,
       nextEdgeOffset: edgeResult.rows.length >= edgeLimit ? edgeOffset + edgeLimit : null,
       days,
-      legend: {
-        forward: "Telegram confirmed a channel-forward origin",
-        mention: "A handle or public link appeared in message text",
-        address: "A chain-format address appeared in message text; ownership/token type unverified",
-      },
-    }, { headers: noStore });
+    };
+    return NextResponse.json(response, { headers: noStore });
   } catch (error) { return errorResponse(error); }
 }
