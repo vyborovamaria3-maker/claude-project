@@ -33,7 +33,8 @@ assert.equal(normalized.signature,"sig-fixture");
 assert.equal(normalized.timestamp,1700000000);
 assert.equal(normalized.fee,5000);
 assert.deepEqual(normalized.tokenBalanceChanges,[{mint:"mint-A",owner:"owner-A",accountIndex:1,decimals:2,rawAmountDelta:"-25"}]);
-assert.equal(normalized.tokenTransfers.length,0,"balance deltas are not proof of a transfer");
+assert.equal(normalized.tokenTransfers,undefined,"balance deltas are not exposed as confirmed token transfers");
+assert.equal(normalized.tokenBalanceChanges.length,1);
 assert.equal(normalized.nativeTransfers.length,0,"lamport deltas are not proof of a transfer");
 
 (async()=>{
