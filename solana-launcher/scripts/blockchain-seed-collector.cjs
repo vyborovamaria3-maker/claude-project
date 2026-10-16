@@ -51,6 +51,7 @@ function parseArgs(argv) {
     backfillLimit: intFlag(flags["backfill-limit"], 200, 1, 1000),
     monthlyBudgetCredits: intFlag(flags["monthly-budget-credits"] ?? process.env.HELIUS_MONTHLY_BUDGET_CREDITS, 10000000, 1, 100000000000),
     monthlyCreditsUsedBaseline: intFlag(flags["monthly-credits-used"] ?? process.env.HELIUS_MONTHLY_CREDITS_USED_BASELINE, 0, 0, 100000000000),
+    budgetPeriodStartDay: intFlag(flags["budget-period-start-day"] ?? process.env.HELIUS_BUDGET_PERIOD_START_DAY, 1, 1, 31),
     runBudgetCredits: intFlag(flags["run-budget-credits"] ?? process.env.HELIUS_RUN_BUDGET_CREDITS, 250000, 1, 100000000000),
     pageCreditEstimate: intFlag(flags["page-credit-estimate"] ?? process.env.HELIUS_ADDRESS_TX_ESTIMATED_CREDITS_PER_REQUEST, 110, 1, 1000000),
     maxFiles: intFlag(flags["max-files"], 5000, 1, 100000),
@@ -73,7 +74,8 @@ function usage() {
     "  --mode import|collect|all|watch|pilot|status  [default: import]",
     "  --seed-token <mint>     Start/resume a recursive pilot scoped to one token; does not import Excel seeds",
     "  --limit 30 --max-objects 10000 --concurrency 2 --recent-limit 200 --backfill-limit 200",
-    "  --monthly-budget-credits 10000000 --monthly-credits-used 0 --run-budget-credits 250000 --page-credit-estimate 110",
+    "  --monthly-budget-credits 10000000 --monthly-credits-used 0 --budget-period-start-day 1",
+    "  --run-budget-credits 250000 --page-credit-estimate 110",
     "  Credit estimates are local guards; provider-reported headers override estimates when available.",
     "  --mode watch --watch-interval 60  Repeat import and bounded collection on a laptop",
     "  --dry-run                 Inspect the spreadsheets without writing DB/network",
@@ -126,7 +128,8 @@ function initDb(db) {
     ";CREATE TABLE IF NOT EXISTS chain_collection_runs (",
     "  run_id TEXT PRIMARY KEY, scope_id TEXT, started_at INTEGER NOT NULL, finished_at INTEGER,",
     "  run_budget_credits INTEGER NOT NULL, monthly_budget_credits INTEGER NOT NULL,",
-    "  monthly_baseline_credits INTEGER NOT NULL DEFAULT 0, page_credit_estimate INTEGER NOT NULL, max_objects INTEGER NOT NULL,",
+    "  monthly_baseline_credits INTEGER NOT NULL DEFAULT 0, budget_period_start_day INTEGER NOT NULL DEFAULT 1,",
+    "  page_credit_estimate INTEGER NOT NULL, max_objects INTEGER NOT NULL,",
     "  status TEXT NOT NULL DEFAULT 'running', stopped_reason TEXT)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_collection_runs_started ON chain_collection_runs(started_at DESC)",
     ";CREATE TABLE IF NOT EXISTS chain_helius_usage_requests (",
@@ -154,11 +157,19 @@ function initDb(db) {
     db.exec("ALTER TABLE chain_seed_events ADD COLUMN raw_revision INTEGER NOT NULL DEFAULT 1");
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "monthly_baseline_credits"))
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN monthly_baseline_credits INTEGER NOT NULL DEFAULT 0");
+  if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "budget_period_start_day"))
+    db.exec("ALTER TABLE chain_collection_runs ADD COLUMN budget_period_start_day INTEGER NOT NULL DEFAULT 1");
 }
 
 
-function currentMonthKey(at = Date.now()) {
-  return new Date(at).toISOString().slice(0, 7);
+function currentMonthKey(at = Date.now(), periodStartDay = 1) {
+  const date=new Date(at);
+  let year=date.getUTCFullYear(),month=date.getUTCMonth();
+  const effectiveDay=Math.min(periodStartDay,new Date(Date.UTC(year,month+1,0)).getUTCDate());
+  if(date.getUTCDate()<effectiveDay){month--;if(month<0){month=11;year--;}}
+  if(periodStartDay===1)return String(year)+"-"+String(month+1).padStart(2,"0");
+  const startDay=Math.min(periodStartDay,new Date(Date.UTC(year,month+1,0)).getUTCDate());
+  return new Date(Date.UTC(year,month,startDay)).toISOString().slice(0,10);
 }
 function budgetError(message) {
   const error = new Error(message);
@@ -203,10 +214,10 @@ function startCollectionRun(db, args, scopeId = null) {
   const runId = randomUUID();
   const now = Date.now();
   db.prepare(
-    "INSERT INTO chain_collection_runs(run_id,scope_id,started_at,run_budget_credits,monthly_budget_credits,monthly_baseline_credits,page_credit_estimate,max_objects,status) " +
-    "VALUES(?,?,?,?,?,?,?,?,'running')"
+    "INSERT INTO chain_collection_runs(run_id,scope_id,started_at,run_budget_credits,monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,page_credit_estimate,max_objects,status) " +
+    "VALUES(?,?,?,?,?,?,?,?,?,'running')"
   ).run(runId,scopeId,now,args.runBudgetCredits,args.monthlyBudgetCredits,
-    args.monthlyCreditsUsedBaseline??0,args.pageCreditEstimate,Math.min(args.limit,args.maxObjects));
+    args.monthlyCreditsUsedBaseline??0,args.budgetPeriodStartDay??1,args.pageCreditEstimate,Math.min(args.limit,args.maxObjects));
   if (scopeId) db.prepare("UPDATE chain_collection_scopes SET last_run_id=?,updated_at=? WHERE scope_id=?")
     .run(runId,now,scopeId);
   return runId;
@@ -214,7 +225,7 @@ function startCollectionRun(db, args, scopeId = null) {
 function reserveHeliusCredits(db, input) {
   const requestId = randomUUID();
   const now = Date.now();
-  const monthKey = currentMonthKey(now);
+  const monthKey = currentMonthKey(now,input.budgetPeriodStartDay??1);
   const credits = Number(input.estimatedCredits);
   if (!Number.isSafeInteger(credits) || credits < 1) throw new Error("Invalid estimated Helius request credits");
   return db.transaction(() => {
@@ -269,14 +280,15 @@ function requestHooksForTask(db, runId, row, args) {
     estimatedCreditsPerRequest: args.pageCreditEstimate,
     beforeRequest: context => reserveHeliusCredits(db,{
       runId,taskKind:row.kind,taskAddress:row.address,endpoint:context.endpoint,
-      estimatedCredits:context.estimatedCredits,
+      estimatedCredits:context.estimatedCredits,budgetPeriodStartDay:args.budgetPeriodStartDay??1,
     }),
     afterResponse: (requestId,response) => recordHeliusResponse(db,requestId,response),
     onError: (requestId,error) => recordHeliusError(db,requestId,error),
   };
 }
 function usageStatus(db, args = {}) {
-  const monthKey = currentMonthKey();
+  const periodStartDay=args.budgetPeriodStartDay??1;
+  const monthKey = currentMonthKey(Date.now(),periodStartDay);
   const hasTable = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
   if (!hasTable("chain_helius_usage_requests")) {
     const monthlyBudgetCredits=args.monthlyBudgetCredits??10000000;
