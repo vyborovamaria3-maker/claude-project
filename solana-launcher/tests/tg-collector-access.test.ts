@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { NextRequest } from "next/server";
-import { guardTgCollector, resetTgCollectorRateLimitForTests } from "../lib/tgCollectorAccess";
+import { guardTgCollector, resetTgCollectorRateLimitForTests } from "../lib/tgCollectorAccess.ts";
 
 const makeRequest = (token?: string, ip = "127.0.0.1", mutation = false) => {
   const url = new URL("http://127.0.0.1:3171/api/integrations/tg-collector");
