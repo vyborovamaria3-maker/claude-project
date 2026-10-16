@@ -631,19 +631,27 @@ async function processOne(db, row, cfg, api) {
     gap = true;
   }
   if (!budgetPaused && forwardCursor && known.size) {
-    const bridge = await api.fetchEnrichedTxsForMintWithMeta(
-      row.address,cfg.backfillLimit,known,forwardCursor,row.kind==="wallet",requestOptions
-    );
-    events.push(...bridge.transactions);
-    budgetPaused = Boolean(bridge.budgetExhausted);
-    if (bridge.reachedKnownHistory || bridge.exhausted) {
-      forwardCursor = null;
-      gap = false;
-    } else {
-      const next = bridge.transactions.at(-1)?.signature;
-      if (!next || next === forwardCursor) {
-        if (!budgetPaused) throw new Error("Catch-up cursor did not advance");
-      } else forwardCursor = next;
+    let bridge = null;
+    try {
+      bridge = await api.fetchEnrichedTxsForMintWithMeta(
+        row.address,cfg.backfillLimit,known,forwardCursor,row.kind==="wallet",requestOptions
+      );
+    } catch(error) {
+      if ((error && error.code)!=="HELIUS_BUDGET_EXCEEDED") throw error;
+      budgetPaused = true;
+    }
+    if (bridge) {
+      events.push(...bridge.transactions);
+      budgetPaused = Boolean(bridge.budgetExhausted);
+      if (bridge.reachedKnownHistory || bridge.exhausted) {
+        forwardCursor = null;
+        gap = false;
+      } else {
+        const next = bridge.transactions.at(-1)?.signature;
+        if (!next || next === forwardCursor) {
+          if (!budgetPaused) throw new Error("Catch-up cursor did not advance");
+        } else forwardCursor = next;
+      }
     }
   }
 
@@ -651,17 +659,25 @@ async function processOne(db, row, cfg, api) {
     backfillCursor = recent.transactions.at(-1)?.signature || null;
     if (recent.exhausted) complete = true;
   } else if (!budgetPaused && !complete && backfillCursor) {
-    const historical = await api.fetchEnrichedTxsForMintWithMeta(
-      row.address,cfg.backfillLimit,null,backfillCursor,row.kind==="wallet",requestOptions
-    );
-    events.push(...historical.transactions);
-    budgetPaused = Boolean(historical.budgetExhausted);
-    if (historical.exhausted) complete = true;
-    else {
-      const next = historical.transactions.at(-1)?.signature;
-      if (!next || next === backfillCursor) {
-        if (!budgetPaused) throw new Error("Backfill made no cursor progress");
-      } else backfillCursor = next;
+    let historical = null;
+    try {
+      historical = await api.fetchEnrichedTxsForMintWithMeta(
+        row.address,cfg.backfillLimit,null,backfillCursor,row.kind==="wallet",requestOptions
+      );
+    } catch(error) {
+      if ((error && error.code)!=="HELIUS_BUDGET_EXCEEDED") throw error;
+      budgetPaused = true;
+    }
+    if (historical) {
+      events.push(...historical.transactions);
+      budgetPaused = Boolean(historical.budgetExhausted);
+      if (historical.exhausted) complete = true;
+      else {
+        const next = historical.transactions.at(-1)?.signature;
+        if (!next || next === backfillCursor) {
+          if (!budgetPaused) throw new Error("Backfill made no cursor progress");
+        } else backfillCursor = next;
+      }
     }
   }
   // A partial page returned because the credit guard fired is committed with
