@@ -165,6 +165,31 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
   collector.finishCollectionRun(capped,run,"budget_paused","run budget reached");
  } finally {capped.close();}
 
+ // Alchemy uses its own CU ledger and must never be added to Helius credits.
+ const alchemyDb=dbFixture();
+ try {
+   const scopeId=collector.ensurePilotScope(alchemyDb,SEED,1000000,false,150,true);
+   const run1=collector.startCollectionRun(alchemyDb,{...args(10000,10000),alchemyRunCuBudget:1000},scopeId);
+   const req=collector.reserveAlchemyCu(alchemyDb,{runId:run1,taskKind:"wallet",taskAddress:WALLET,
+     accountId:"alchemy-1",method:"getTransactionsForAddress",estimatedCu:100,
+     monthlyBudgetCu:30000,baselineCu:0,billingResetDay:1,runBudgetCu:1000});
+   collector.recordAlchemyResponse(alchemyDb,req,{status:200,actualCu:null});
+   collector.finishCollectionRun(alchemyDb,run1,"completed");
+   const run2=collector.startCollectionRun(alchemyDb,{...args(10000,10000),alchemyRunCuBudget:1000},scopeId);
+   assert.throws(()=>collector.reserveAlchemyCu(alchemyDb,{runId:run2,taskKind:"token",taskAddress:SEED,
+     accountId:"alchemy-2",method:"getTransactionsForAddress",estimatedCu:100,
+     monthlyBudgetCu:30000,baselineCu:0,billingResetDay:1,runBudgetCu:1000}),
+     e=>e.code==="ALCHEMY_PILOT_CU_BUDGET_EXCEEDED","pilot CU cap is cumulative across accounts and runs");
+   assert.throws(()=>collector.reserveAlchemyCu(alchemyDb,{runId:run2,taskKind:"token",taskAddress:SEED,
+     accountId:"alchemy-1",method:"getTransactionsForAddress",estimatedCu:100,
+     monthlyBudgetCu:150,baselineCu:100,billingResetDay:1,runBudgetCu:1000}),
+     e=>e.code==="ALCHEMY_ACCOUNT_BUDGET_EXCEEDED","monthly account budget includes dashboard baseline");
+   const snapshot=collector.status(alchemyDb,{monthlyBudgetCredits:10000,monthlyCreditsUsedBaseline:0,monthlyCreditsBaselineConfigured:true});
+   assert.equal(snapshot.scopes[0].alchemyPilotCuUsed,100);
+   assert.equal(snapshot.scopes[0].alchemyPilotCuRemaining,50);
+   collector.finishCollectionRun(alchemyDb,run2,"budget_paused","Alchemy pilot CU budget reached");
+ } finally {alchemyDb.close();}
+
  // The cumulative pilot cap must survive multiple runs/resumes independently
  // of the per-run and monthly limits.
  const lifetime=dbFixture();
