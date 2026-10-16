@@ -41,6 +41,6 @@ jobs:
           const issues=report.issues??[];
           const files=[...new Set(issues.flatMap(issue=>(issue.files??[]).map(v=>v.name??v)))];
           const intelligence=files.filter(file=>file.startsWith('lib/intelligence/'));
-          console.log(JSON.stringify({issueRows:issues.length,potentiallyUnusedFiles:files.length,potentiallyUnusedIntelligenceFiles:intelligence.length,intelligenceCandidates:intelligence},null,2));
+          console.log(JSON.stringify({issueRows:issues.length,potentiallyUnusedFiles:files.length,potentiallyUnusedIntelligenceFiles:intelligence.length,unusedFiles:files,intelligenceCandidates:intelligence},null,2));
           NODE
           if [ "$STATUS" -gt 1 ]; then cat "$RUNNER_TEMP/knip-error.log"; exit "$STATUS"; fi
