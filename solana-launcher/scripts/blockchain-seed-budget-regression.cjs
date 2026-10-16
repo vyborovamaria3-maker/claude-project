@@ -9,15 +9,17 @@ const TOKEN_B="So11111111111111111111111111111111111111112";
 const WALLET="11111111111111111111111111111111";
 assert.equal(collector.currentMonthKey(Date.UTC(2026,9,15),16),"2026-09-16");
 assert.equal(collector.currentMonthKey(Date.UTC(2026,9,16),16),"2026-10-16");
-const parsedPilot=collector.parseArgs(["--seed-token",SEED]);
+const parsedPilot=collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","0"]);
+assert.throws(()=>collector.parseArgs(["--seed-token",SEED]),/monthly-credits-used/);
 assert.equal(parsedPilot.budgetPeriodStartDay,1);
-assert.equal(collector.parseArgs(["--seed-token",SEED,"--budget-period-start-day","16"]).budgetPeriodStartDay,16);
+assert.equal(parsedPilot.monthlyCreditsBaselineConfigured,true);
+assert.equal(collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","0","--budget-period-start-day","16"]).budgetPeriodStartDay,16);
 assert.equal(parsedPilot.mode,"pilot");
 assert.equal(parsedPilot.seedToken,SEED);
 assert.equal(parsedPilot.limit,10000);
 assert.throws(()=>collector.parseArgs(["--mode","pilot"]),/requires --seed-token/);
 assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token","not-a-mint"]),/valid Solana mint/);
-assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token",SEED,"--run-budget-credits","0"]),/Invalid numeric flag/);
+assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token",SEED,"--monthly-credits-used","0","--run-budget-credits","0"]),/Invalid numeric flag/);
 function dbFixture(){const db=new Database(":memory:");collector.initDb(db);return db;}
 function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
  return {runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate,limit:10,maxObjects:10};
