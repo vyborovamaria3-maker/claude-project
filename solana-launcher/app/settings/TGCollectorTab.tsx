@@ -64,6 +64,8 @@ function pill(state: Source["state"]) {
 
 export default function TGCollectorTab() {
   const [data, setData] = useState<Snapshot | null>(null);
+  const [accessKey, setAccessKey] = useState("");
+  const [keyInput, setKeyInput] = useState("");
   const [selected, setSelected] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState("");
@@ -75,12 +77,14 @@ export default function TGCollectorTab() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
+    if (!accessKey) return;
     const params = new URLSearchParams({ page: String(page) });
     if (selected) params.set("source", selected);
     if (query) params.set("q", query);
     try {
-      const response = await fetch(`${endpoint}?${params}`, { cache: "no-store", signal });
+      const response = await fetch(`${endpoint}?${params}`, { cache: "no-store", signal, headers: {Authorization: `Bearer ${accessKey}`} });
       const value = await response.json() as Snapshot & { error?: string };
+      if (response.status === 401) { setAccessKey(""); throw new Error("Неверный ключ доступа TG Collector."); }
       if (!response.ok) throw new Error(value.error || "Не удалось получить данные");
       if (signal?.aborted) return;
       setData(value);
@@ -90,7 +94,7 @@ export default function TGCollectorTab() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [selected, query, page]);
+  }, [selected, query, page, accessKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -109,13 +113,14 @@ export default function TGCollectorTab() {
     try {
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessKey}` },
         body: JSON.stringify(
           action === "add" ? { action, username: channel.trim() }
             : { action, sourceId: source?.id, confirm: action === "remove" ? source?.identifier : undefined }
         ),
       });
       const result: { error?: string } = await response.json();
+      if (response.status === 401) setAccessKey("");
       if (!response.ok) throw new Error(result.error || "Действие не выполнено");
       if (action === "add") setChannel("");
       if (action === "remove" && source?.id === selected) setSelected("");
@@ -149,6 +154,28 @@ export default function TGCollectorTab() {
   ];
   const globallyPaused = Boolean(data?.pausedUntil && new Date(data.pausedUntil) > new Date());
 
+  if (!accessKey) return (
+    <section className="surface-panel mx-auto max-w-2xl space-y-4 p-6">
+      <h2 className="text-lg font-semibold text-content">Доступ к локальному TG Collector</h2>
+      <p className="text-sm text-content-muted">Введите ключ из
+        <code> solana-launcher/.env.local</code> — значение переменной
+        <code> TG_COLLECTOR_ADMIN_TOKEN</code>. Ключ хранится только в памяти этой вкладки,
+        не сохраняется в браузерном хранилище.</p>
+      <form className="flex flex-wrap gap-2" onSubmit={(event) => {
+        event.preventDefault();
+        if (keyInput.length >= 24) { setError(null); setLoading(true); setAccessKey(keyInput); setKeyInput(""); }
+        else setError("Ключ должен содержать не менее 24 символов.");
+      }}>
+        <input type="password" required minLength={24} autoComplete="off" value={keyInput}
+          onChange={event=>setKeyInput(event.target.value)} aria-label="Ключ доступа TG Collector"
+          placeholder="Локальный ключ доступа"
+          className="min-w-48 flex-1 rounded-xl border border-bg-border bg-bg-soft px-3 py-2 text-content" />
+        <button type="submit" className="rounded-xl border border-primary-border px-4 py-2 text-content">Открыть</button>
+      </form>
+      {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
+    </section>
+  );
+
   return (
     <div className="space-y-6">
       <div className="surface-panel p-5 sm:p-6">
@@ -162,6 +189,8 @@ export default function TGCollectorTab() {
           </button>
         </div>
 
+        <button type="button" onClick={() => { setData(null); setAccessKey(""); }}
+          className="mt-3 text-xs text-content-muted hover:text-content">Закрыть доступ к TG Collector</button>
         <div className="mt-5 flex flex-wrap gap-3 text-xs">
           <span className={`rounded-lg border px-3 py-2 ${data?.workerOnline ? "border-emerald-500/30 text-emerald-300" : "border-amber-500/30 text-amber-300"}`}>
             {data?.workerOnline ? <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" /> : <Clock3 className="mr-1 inline h-3.5 w-3.5" />}
@@ -235,7 +264,7 @@ export default function TGCollectorTab() {
         </div>
       </section>
 
-      <TGGraphPanel sources={data?.sources ?? []} />
+      <TGGraphPanel sources={data?.sources ?? []} authToken={accessKey} />
 
       <section className="surface-panel p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
