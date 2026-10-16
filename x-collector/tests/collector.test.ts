@@ -39,7 +39,7 @@ test('legacy X parser and normalizer preserve unknown metrics as NULL but retain
   const normalized=normalizeTweet(tweets[0]);
   assert(normalized);
   assert.equal(normalized.likes,null);
-  assert.equal(normalized.reposts,null);
+  assert.equal(normalized.retweets,null);
   assert.equal(normalized.views,null);
   assert.equal(normalized.replies,0);
  } finally { await browser.close(); }
