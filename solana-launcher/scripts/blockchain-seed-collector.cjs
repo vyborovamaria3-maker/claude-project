@@ -249,6 +249,11 @@ function resolveBudgetSettings(db, args, requireBaseline = false, at = Date.now(
       "Check Helius Dashboard and start once with --monthly-credits-used <credits-already-used>."
     );
   }
+  if (requireBaseline && !args.budgetPeriodStartDayConfigured && !latest) {
+    throw new Error(
+      "The Helius billing reset day is not configured. Check Helius Dashboard and start once with --budget-period-start-day <UTC-day-1-to-31>."
+    );
+  }
   return args;
 }
 
