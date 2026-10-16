@@ -460,6 +460,83 @@ function requestHooksForTask(db, runId, row, args) {
     onError: (requestId,error) => recordHeliusError(db,requestId,error),
   };
 }
+function alchemyBudgetError(code,message) {
+  const error=new Error(message);
+  error.code=code;
+  return error;
+}
+function reserveAlchemyCu(db,input) {
+  const estimatedCu=input.estimatedCu;
+  if(!Number.isSafeInteger(estimatedCu)||estimatedCu<1)throw new Error("Invalid estimated Alchemy CU cost");
+  const now=Date.now();
+  const monthKey=currentMonthKey(now,input.billingResetDay);
+  const requestId=randomUUID();
+  return db.transaction(()=>{
+    const run=db.prepare("SELECT status,scope_id FROM chain_collection_runs WHERE run_id=?").get(input.runId);
+    if(!run||run.status!=="running")throw alchemyBudgetError("ALCHEMY_RUN_CU_BUDGET_EXCEEDED","Collection run is not active; no new Alchemy requests allowed");
+    const accountUsed=db.prepare(
+      "SELECT COALESCE(SUM(COALESCE(actual_cu,estimated_cu)),0) AS n FROM chain_alchemy_usage_requests WHERE account_id=? AND month_key=?"
+    ).get(input.accountId,monthKey).n;
+    if(input.baselineCu+accountUsed+estimatedCu>input.monthlyBudgetCu) {
+      throw alchemyBudgetError("ALCHEMY_ACCOUNT_BUDGET_EXCEEDED",
+        "Alchemy account "+input.accountId+" monthly CU budget reached ("+(input.baselineCu+accountUsed)+"/"+input.monthlyBudgetCu+")");
+    }
+    const runUsed=db.prepare(
+      "SELECT COALESCE(SUM(COALESCE(actual_cu,estimated_cu)),0) AS n FROM chain_alchemy_usage_requests WHERE run_id=?"
+    ).get(input.runId).n;
+    if(runUsed+estimatedCu>input.runBudgetCu) {
+      throw alchemyBudgetError("ALCHEMY_RUN_CU_BUDGET_EXCEEDED","Alchemy CU run budget reached ("+runUsed+"/"+input.runBudgetCu+")");
+    }
+    if(run.scope_id) {
+      const scope=db.prepare("SELECT alchemy_pilot_cu_budget FROM chain_collection_scopes WHERE scope_id=?").get(run.scope_id);
+      if(!scope)throw new Error("Collection scope disappeared: "+run.scope_id);
+      const scopeUsed=db.prepare(
+        "SELECT COALESCE(SUM(COALESCE(actual_cu,estimated_cu)),0) AS n FROM chain_alchemy_usage_requests WHERE scope_id=?"
+      ).get(run.scope_id).n;
+      if(scopeUsed+estimatedCu>scope.alchemy_pilot_cu_budget) {
+        throw alchemyBudgetError("ALCHEMY_PILOT_CU_BUDGET_EXCEEDED",
+          "Alchemy pilot lifetime CU budget reached ("+scopeUsed+"/"+scope.alchemy_pilot_cu_budget+"); increase it explicitly after checking provider quotas");
+      }
+    }
+    db.prepare(
+      "INSERT INTO chain_alchemy_usage_requests(request_id,run_id,scope_id,account_id,month_key,task_kind,task_address,method,estimated_cu,status,created_at) "+
+      "VALUES(?,?,?,?,?,?,?,?,?,'reserved',?)"
+    ).run(requestId,input.runId,run.scope_id||null,input.accountId,monthKey,input.taskKind,input.taskAddress,input.method,estimatedCu,now);
+    return requestId;
+  })();
+}
+function recordAlchemyResponse(db,requestId,response) {
+  if(!requestId)return;
+  db.prepare("UPDATE chain_alchemy_usage_requests SET status=?,http_status=?,actual_cu=?,finished_at=? WHERE request_id=?")
+    .run(response.status>=200&&response.status<300?"success":"http_error",response.status,
+      Number.isSafeInteger(response.actualCu)&&response.actualCu>=0?response.actualCu:null,Date.now(),requestId);
+}
+function recordAlchemyError(db,requestId,error) {
+  if(!requestId)return;
+  db.prepare("UPDATE chain_alchemy_usage_requests SET status='request_error',error=?,finished_at=? WHERE request_id=?")
+    .run(String(error&&error.message||error).slice(0,400),Date.now(),requestId);
+}
+function requestHooksForTask(db, runId, row, args) {
+  return {
+    estimatedCreditsPerRequest: args.pageCreditEstimate,
+    beforeRequest: context => reserveHeliusCredits(db,{
+      runId,taskKind:row.kind,taskAddress:row.address,endpoint:context.endpoint,
+      estimatedCredits:context.estimatedCredits,budgetPeriodStartDay:args.budgetPeriodStartDay??1,
+    }),
+    afterResponse: (requestId,response) => recordHeliusResponse(db,requestId,response),
+    onError: (requestId,error) => recordHeliusError(db,requestId,error),
+    alchemy: {
+      beforeRequest: context => reserveAlchemyCu(db,{
+        runId,taskKind:row.kind,taskAddress:row.address,accountId:context.accountId,method:context.method,
+        estimatedCu:context.estimatedCu,monthlyBudgetCu:context.monthlyBudgetCu,
+        baselineCu:context.baselineCu,billingResetDay:context.billingResetDay,
+        runBudgetCu:args.alchemyRunCuBudget,
+      }),
+      afterResponse: (requestId,response) => recordAlchemyResponse(db,requestId,response),
+      onError: (requestId,error) => recordAlchemyError(db,requestId,error),
+    },
+  };
+}
 function usageStatus(db, args = {}) {
   resolveBudgetSettings(db,args,false);
   const periodStartDay=args.budgetPeriodStartDay??1;
