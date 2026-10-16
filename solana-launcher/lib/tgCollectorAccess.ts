@@ -8,9 +8,10 @@ export function guardTgCollector(request: NextRequest, mutation = false): NextRe
     return NextResponse.json({error:"Not found"}, {status:404,headers:noStore});
   }
   const host = request.nextUrl.hostname.toLowerCase();
-  const incomingHost = (request.headers.get("host") ?? "").split(":")[0].toLowerCase();
+  const incomingHost = (request.headers.get("host") ?? "").toLowerCase();
+  const headerIsLoopback = /^(?:localhost|127\\.0\\.0\\.1)(?::\\d{1,5})?$|^\\[::1\\](?::\\d{1,5})?$/.test(incomingHost);
   if (!["localhost","127.0.0.1","::1","[::1]"].includes(host) ||
-      !["localhost","127.0.0.1","::1","[::1]"].includes(incomingHost)) {
+      !headerIsLoopback) {
     return NextResponse.json({error:"Localhost only"}, {status:403,headers:noStore});
   }
   if (mutation && request.headers.get("origin") !== request.nextUrl.origin) {
