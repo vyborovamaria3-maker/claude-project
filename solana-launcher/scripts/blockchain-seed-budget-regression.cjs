@@ -7,6 +7,13 @@ const collector=require("./blockchain-seed-collector.cjs");
 const SEED="5XaxQZGNEAPvF34iYHuTgfLBzpRGg1spPYeGSzr5pump";
 const TOKEN_B="So11111111111111111111111111111111111111112";
 const WALLET="11111111111111111111111111111111";
+const parsedPilot=collector.parseArgs(["--seed-token",SEED]);
+assert.equal(parsedPilot.mode,"pilot");
+assert.equal(parsedPilot.seedToken,SEED);
+assert.equal(parsedPilot.limit,10000);
+assert.throws(()=>collector.parseArgs(["--mode","pilot"]),/requires --seed-token/);
+assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token","not-a-mint"]),/valid Solana mint/);
+assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token",SEED,"--run-budget-credits","0"]),/Invalid numeric flag/);
 function dbFixture(){const db=new Database(":memory:");collector.initDb(db);return db;}
 function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
  return {runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate,limit:10,maxObjects:10};
@@ -109,9 +116,15 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
  const capped=dbFixture();
  try {
   const scopeId=collector.ensurePilotScope(capped,SEED);
+  const task=collector.claimOne(capped,true,scopeId);
   const run=collector.startCollectionRun(capped,args(100,1000),scopeId);
   assert.throws(()=>collector.reserveHeliusCredits(capped,{runId:run,taskKind:"token",taskAddress:SEED,
     endpoint:"enhanced-address-transactions",estimatedCredits:110}),e=>e.code==="HELIUS_BUDGET_EXCEEDED" && /Run Helius/.test(e.message));
+  collector.releaseTaskForBudget(capped,task);
+  const released=capped.prepare("SELECT attempts,lease_token,last_error FROM chain_seed_targets WHERE kind='token' AND address=?").get(SEED);
+  assert.equal(released.attempts,0,"budget pause must not count as a failed task");
+  assert.equal(released.lease_token,null);
+  assert.equal(released.last_error,null);
   collector.finishCollectionRun(capped,run,"budget_paused","run budget reached");
  } finally {capped.close();}
  console.log("[blockchain-seed-budget-regression] OK: seed-only scope, queue priority, monthly/run guards, estimated vs reported usage, partial-page checkpoint and resume");
