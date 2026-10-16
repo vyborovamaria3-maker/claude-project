@@ -81,6 +81,12 @@ try{
   assert.equal(collector.promoteDeferredWaves(db,scope,{walletWaveCreators:1}),1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_wave_members WHERE scope_id=? AND parent_kind='wallet' AND parent_address=? AND kind='creator'").get(scope,WALLET).n,1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_deferred WHERE scope_id=? AND parent_kind='wallet' AND kind='creator'").get(scope).n,1);
+  const creatorNextRun=Date.now()+24*60*60*1000;
+  db.prepare("UPDATE chain_seed_targets SET backfill_complete=1,last_success_at=?,next_run_at=? WHERE kind='creator' AND address=?")
+    .run(Date.now(),creatorNextRun,CREATOR);
+  collector.appendDiscoveredCreators(db,scope,SEED,[create(SEED)]);
+  assert.equal(db.prepare("SELECT next_run_at FROM chain_seed_targets WHERE kind='creator' AND address=?").get(CREATOR).next_run_at,creatorNextRun,
+    "rediscovering a completed creator must not force a costly full-history reparse");
   const status=collector.status(db,{monthlyCreditsUsedBaseline:0,monthlyCreditsBaselineConfigured:true});
   assert.equal(status.pumpfunCreatorLaunches,3);
   assert(status.deferred.some(x=>x.kind==="creator"&&x.count===1));
