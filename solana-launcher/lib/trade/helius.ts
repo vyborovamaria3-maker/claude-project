@@ -67,6 +67,35 @@ export type EnrichedTxMeta = {
   reachedKnownHistory?: boolean;
 };
 
+export type HeliusRequestContext = {
+  address: string;
+  endpoint: "enhanced-address-transactions";
+  requestedLimit: number;
+  includeTokenAccounts: boolean;
+  beforeSignature?: string;
+  estimatedCredits: number;
+};
+export type HeliusRequestHooks = {
+  beforeRequest?: (context: HeliusRequestContext) => Promise<string> | string;
+  afterResponse?: (reservationId: string | undefined, response: {
+    status: number; actualCredits: number | null;
+  }) => Promise<void> | void;
+  onError?: (reservationId: string | undefined, error: unknown) => Promise<void> | void;
+  /** Local estimate only; provider-reported usage is recorded separately. */
+  estimatedCreditsPerRequest?: number;
+};
+
+function reportedCredits(response: Response): number | null {
+  for (const name of ["x-helius-rpc-units-consumed", "x-rpc-units-consumed", "x-helius-credits-consumed"]) {
+    const raw = response.headers?.get?.(name);
+    if (raw && /^\d+(?:\.\d+)?$/.test(raw)) {
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= 0) return Math.ceil(value);
+    }
+  }
+  return null;
+}
+
 const HELIUS_TIMEOUT_MS = (() => {
   const value = Number(process.env.HELIUS_FETCH_TIMEOUT_MS || 12_000);
   return Number.isFinite(value) ? Math.max(1000, Math.min(60_000, value)) : 12_000;
@@ -82,6 +111,7 @@ async function fetchHeliusPage(
   limit: number,
   keys: string[],
   includeTokenAccounts: boolean = false,
+  requestHooks?: HeliusRequestHooks,
 ): Promise<HeliusEnrichedTx[]> {
   let lastError: Error | null = null;
   for (let round = 0; round < HELIUS_MAX_ROUNDS; round++) {
@@ -92,11 +122,20 @@ async function fetchHeliusPage(
       // Wallet history must include changes to SPL token accounts, not just the owner address.
       if (includeTokenAccounts) url.searchParams.set("token-accounts", "balanceChanged");
       if (before) url.searchParams.set("before-signature", before);
+      const requestContext: HeliusRequestContext = {
+        address: mint, endpoint: "enhanced-address-transactions",
+        requestedLimit: limit, includeTokenAccounts, beforeSignature: before,
+        estimatedCredits: requestHooks?.estimatedCreditsPerRequest ?? 110,
+      };
+      const reservationId = await requestHooks?.beforeRequest?.(requestContext);
       try {
         const response = await fetch(url.toString(), {
           headers: { Accept: "application/json" },
           signal: AbortSignal.timeout(HELIUS_TIMEOUT_MS),
           cache: "no-store",
+        });
+        await requestHooks?.afterResponse?.(reservationId, {
+          status: response.status, actualCredits: reportedCredits(response),
         });
         if (!response.ok) {
           if (!isHeliusRetryableStatus(response.status)) throw new Error("Helius HTTP " + response.status);
@@ -110,6 +149,8 @@ async function fetchHeliusPage(
         }
         return page as HeliusEnrichedTx[];
       } catch (error) {
+        await requestHooks?.onError?.(reservationId, error);
+        if ((error as { code?: string } | null)?.code === "HELIUS_BUDGET_EXCEEDED") throw error;
         lastError = error instanceof Error ? error : new Error(String(error));
         // Non-retryable 4xx means no API key rotation will help.
         if (/^Helius HTTP 4\d\d$/.test(lastError.message)) throw lastError;
@@ -128,6 +169,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
   stopAtSignatures: ReadonlySet<string> | null = null,
   startBefore?: string,
   includeTokenAccounts: boolean = false,
+  requestHooks?: HeliusRequestHooks,
 ): Promise<EnrichedTxMeta> {
   const keys = HELIUS_API_KEYS;
   if (!keys.length) {
@@ -140,11 +182,20 @@ export async function fetchEnrichedTxsForMintWithMeta(
   let before: string | undefined = startBefore;
   let exhausted = false;
   let reachedKnownHistory = false;
+  let budgetExhausted = false;
   const seenCursors = new Set<string>();
 
   while (all.length < maxTxs) {
     const requested = Math.min(100, maxTxs - all.length);
-    const page = await fetchHeliusPage(mint, before, requested, keys, includeTokenAccounts);
+    let page: HeliusEnrichedTx[];
+    try {
+      page = await fetchHeliusPage(mint, before, requested, keys, includeTokenAccounts, requestHooks);
+    } catch (error) {
+      if ((error as { code?: string } | null)?.code !== "HELIUS_BUDGET_EXCEEDED") throw error;
+      if (all.length === 0) throw error;
+      budgetExhausted = true;
+      break;
+    }
     if (!page.length) {
       exhausted = true;
       break;
@@ -173,7 +224,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
     before = nextBefore;
   }
 
-  const truncated = !exhausted && all.length >= maxTxs;
+  const truncated = budgetExhausted || (!exhausted && all.length >= maxTxs);
   const bounded = all.slice(0, maxTxs);
   const oldestTimestamp = bounded.reduce<number | null>(
     (oldest, tx) => {
@@ -183,7 +234,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
     },
     null,
   );
-  return { transactions: bounded, oldestTimestamp, exhausted, truncated, reachedKnownHistory };
+  return { transactions: bounded, oldestTimestamp, exhausted, truncated, reachedKnownHistory, budgetExhausted };
 }
 
 /**
