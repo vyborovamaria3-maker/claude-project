@@ -192,6 +192,13 @@ function initDb(db) {
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN budget_period_start_day INTEGER NOT NULL DEFAULT 1");
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "max_runtime_ms"))
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN max_runtime_ms INTEGER NOT NULL DEFAULT 21600000");
+  // Preserve active-wave accounting when resuming an older pilot scope created
+  // before deferred candidates were introduced.
+  db.exec(
+    "INSERT OR IGNORE INTO chain_collection_scope_wave_members(scope_id,parent_kind,parent_address,kind,address,activated_at) "+
+    "SELECT scope_id,discovered_from_kind,discovered_from_address,kind,address,discovered_at "+
+    "FROM chain_collection_scope_members WHERE discovered_from_kind IS NOT NULL AND discovered_from_address IS NOT NULL"
+  );
 }
 
 
