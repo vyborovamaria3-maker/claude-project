@@ -59,7 +59,28 @@ test("HTTP read engine sends cursor only when provided for list timeline", async
   assert.equal(page.items[0]?.id, validTweet.id);
 });
 
-\ntest("tweet pages retain the GraphQL envelope and request cursor for replay", async () => {\n  const response = {\n    data: { list: { tweets_timeline: { timeline: { instructions: [] } } } },\n    errors: [],\n  };\n  const variables = { listId: "1945268064792068152", count: 20, cursor: "opaque-page-2" };\n  const client: ReadClient = { graphql: async (_id, operation, requestVariables) => {\n    assert.equal(operation, "ListLatestTweetsTimeline");\n    assert.deepEqual(requestVariables, variables);\n    return response;\n  } };\n  const engine = new XActionsReadEngine(client, endpoints, parsers);\n  const page = await engine.listPage(variables.listId, variables.cursor);\n  assert.deepEqual(page.rawResponse, {\n    endpoint: "ListLatestTweetsTimeline",\n    queryId: "c",\n    variables,\n    response,\n  });\n});\ntest("malformed list response must fail instead of silently marking complete", async () => {
+
+test("tweet pages retain the GraphQL envelope and request cursor for replay", async () => {
+  const response = {
+    data: { list: { tweets_timeline: { timeline: { instructions: [] } } } },
+    errors: [],
+  };
+  const variables = { listId: "1945268064792068152", count: 20, cursor: "opaque-page-2" };
+  const client: ReadClient = { graphql: async (_id, operation, requestVariables) => {
+    assert.equal(operation, "ListLatestTweetsTimeline");
+    assert.deepEqual(requestVariables, variables);
+    return response;
+  } };
+  const engine = new XActionsReadEngine(client, endpoints, parsers);
+  const page = await engine.listPage(variables.listId, variables.cursor);
+  assert.deepEqual(page.rawResponse, {
+    endpoint: "ListLatestTweetsTimeline",
+    queryId: "c",
+    variables,
+    response,
+  });
+});
+test("malformed list response must fail instead of silently marking complete", async () => {
   const client: ReadClient = { graphql: async () => ({ data: { list: {} } }) };
   const engine = new XActionsReadEngine(client, endpoints, parsers);
   await assert.rejects(engine.listPage("1945268064792068152"), /response shape changed/);
