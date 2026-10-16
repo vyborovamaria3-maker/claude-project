@@ -35,7 +35,7 @@ const launches=extractPumpFunLaunches([
   {...create(TOKEN_C),transactionError:{InstructionError:[0,"failed"]}},
   {...create(TOKEN_C),instructions:[{programId:RELAYER,name:"create",accounts:[RELAYER,CREATOR,TOKEN_C]}]},
 ]);
-assert.equal(launches.length,2,"only successful, explicit Pump.fun create instruction evidence is accepted");
+assert.equal(launches.length,1,"only successful, explicit Pump.fun create instruction evidence is accepted and deduplicated by creator+mint");
 assert.equal(launches.find(x=>x.mint===SEED).creator,CREATOR,"creator comes from create accounts, not fee payer");
 
 const db=makeDb();
@@ -75,7 +75,7 @@ try{
   collector.deferScopeMember(db,scope,"wallet",WALLET,"creator",CREATOR,750,"creator-from-wallet","wallet",WALLET);
   collector.deferScopeMember(db,scope,"wallet",WALLET,"creator",OTHER_CREATOR,740,"creator-from-wallet","wallet",WALLET);
   assert.equal(collector.promoteDeferredWaves(db,scope,{walletWaveCreators:1}),1);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_members WHERE scope_id=? AND discovered_from_kind='wallet' AND kind='creator'").get(scope).n,1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_wave_members WHERE scope_id=? AND parent_kind='wallet' AND parent_address=? AND kind='creator'").get(scope,WALLET).n,1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_deferred WHERE scope_id=? AND parent_kind='wallet' AND kind='creator'").get(scope).n,1);
   const status=collector.status(db,{monthlyCreditsUsedBaseline:0,monthlyCreditsBaselineConfigured:true});
   assert.equal(status.pumpfunCreatorLaunches,3);
