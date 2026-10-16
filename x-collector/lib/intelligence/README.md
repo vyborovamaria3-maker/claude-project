@@ -1,6 +1,6 @@
 # Legacy intelligence compatibility layer
 
-Only modules still reachable from active legacy CLI entrypoints remain here.
+Only modules still reachable from active compatibility callers remain here.
 The primary current implementation is under `src/intelligence/`.
 
 Do not add new analytics, graph, entity, signal or agent modules here.
