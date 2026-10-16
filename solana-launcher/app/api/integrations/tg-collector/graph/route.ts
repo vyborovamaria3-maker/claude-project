@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
 import { guardTgCollector } from "@/lib/tgCollectorAccess";
+import type { TgGraphResponse } from "@/lib/tgCollectorTypes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +33,11 @@ function daysValue(value: string | null): number {
   if (![0, 7, 30, 90, 365].includes(days)) throw Error("Invalid lookback");
   return days;
 }
+function boundedInt(value: string | null, fallback: number, min: number, max: number, label: string): number {
+  const parsed = Number(value ?? String(fallback));
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) throw Error("Invalid " + label);
+  return parsed;
+}
 function errorResponse(error: unknown) {
   console.error("TG graph API:", error);
   return NextResponse.json({ error: "Не удалось загрузить граф. Проверьте подключение PostgreSQL и миграцию 002_analytics.sql." },
@@ -45,6 +51,9 @@ export async function GET(request: NextRequest) {
     const params = request.nextUrl.searchParams;
     const selected = sourceId(params.get("source"));
     const days = daysValue(params.get("days"));
+    const nodeLimit = boundedInt(params.get("nodeLimit"), 500, 50, 500, "node limit");
+    const edgeLimit = boundedInt(params.get("edgeLimit"), 2000, 50, 2000, "edge limit");
+    const edgeOffset = boundedInt(params.get("edgeOffset"), 0, 0, 20000, "edge offset");
     const p = database();
 
     if (params.get("mode") === "evidence") {
@@ -62,6 +71,7 @@ export async function GET(request: NextRequest) {
         JOIN tg_messages m USING(source_id,message_id)
         JOIN tg_sources s ON s.id=l.source_id
         WHERE l.source_id=$1 AND l.kind=$2 AND l.target_kind=$3 AND l.target_key=$4
+          AND m.deleted_at IS NULL
           AND ($5::integer=0 OR (m.posted_at AT TIME ZONE 'UTC')::date >= (now() AT TIME ZONE 'UTC')::date - ($5::integer - 1))
         ORDER BY m.posted_at DESC NULLS LAST, l.message_id DESC LIMIT 20`,
         [selected, kind, targetKind, targetKey, days]);
@@ -159,25 +169,31 @@ export async function GET(request: NextRequest) {
     };
 
     const sourceById = new Map(sources.map(s => [s.id, s]));
+    let nodeTruncated = false;
     for (const link of edgeResult.rows) {
       const origin = sourceById.get(link.source_id) ?? {
         id: link.source_id, identifier: link.identifier, title: null, peer_id: null,
       };
-      const from = addSource(origin);
+      const from = "source:" + origin.id;
       const known = link.target_kind === "handle" ? byHandle.get(link.target_key)
         : link.target_kind === "channel_id" ? byPeer.get(link.target_key) : undefined;
-      let to: string, label: string, kind: string;
-      if (known) {
-        to = addSource(known);
-      } else {
-        kind = link.target_kind;
-        to = kind + ":" + link.target_key;
-        label = kind === "handle" ? "@" + link.target_key
+      if (known && known.id === origin.id) continue;
+      const to = known ? "source:" + known.id : link.target_kind + ":" + link.target_key;
+      const neededNodes = (nodes.has(from) ? 0 : 1) + (nodes.has(to) ? 0 : 1);
+      if (nodes.size + neededNodes > nodeLimit) {
+        nodeTruncated = true;
+        continue;
+      }
+      addSource(origin);
+      if (!known) {
+        const kind = link.target_kind;
+        const label = kind === "handle" ? "@" + link.target_key
           : kind === "channel_id" ? "Channel #" + link.target_key
           : (kind === "solana_address" ? "SOL " : "EVM ") + link.target_key.slice(0,10) + "…";
         nodes.set(to, { id: to, label, kind });
+      } else {
+        addSource(known);
       }
-      if (from === to) continue;
       graphEdges.push({
         id: [from, to, link.kind].join("|"),
         from, to, sourceId: link.source_id,
@@ -187,12 +203,15 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({
+    const response: TgGraphResponse = {
       nodes: [...nodes.values()], edges: graphEdges,
       metrics: metricResult.rows,
       sharedAddresses: overlapResult.rows,
       observedAddresses: addressResult.rows,
-      sampled: edgeResult.rows.length >= 160,
+      sampled: edgeResult.rows.length >= edgeLimit,
+      truncated: nodeTruncated || edgeResult.rows.length >= edgeLimit,
+      nodeLimit, edgeLimit, edgeOffset,
+      nextEdgeOffset: edgeResult.rows.length >= edgeLimit ? edgeOffset + edgeLimit : null,
       days,
       legend: {
         forward: "Telegram confirmed a channel-forward origin",
