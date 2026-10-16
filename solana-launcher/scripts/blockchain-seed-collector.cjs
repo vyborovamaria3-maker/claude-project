@@ -613,83 +613,101 @@ async function processOne(db, row, cfg, api) {
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
   ).all(row.kind, row.address).map(r => r.signature)) : new Set();
-  const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known, undefined, row.kind === "wallet");
+  const requestOptions = cfg.requestHooks;
+  const recent = await api.fetchEnrichedTxsForMintWithMeta(
+    row.address,cfg.recentLimit,known,undefined,row.kind==="wallet",requestOptions
+  );
   let events = [...recent.transactions];
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
   let complete = Boolean(row.backfill_complete);
   let gap = Boolean(row.possible_gap);
+  let budgetPaused = Boolean(recent.budgetExhausted);
 
   // A high-volume wallet may accumulate >recentLimit transactions during
   // downtime. Persist the forward catch-up cursor and drain it across runs.
-  // The cold-start cap is not a gap: the historical cursor handles that case.
   if (known.size && recent.truncated && !recent.reachedKnownHistory) {
     if (!forwardCursor) forwardCursor = recent.transactions.at(-1)?.signature || null;
     gap = true;
   }
-  if (forwardCursor && known.size) {
+  if (!budgetPaused && forwardCursor && known.size) {
     const bridge = await api.fetchEnrichedTxsForMintWithMeta(
-      row.address, cfg.backfillLimit, known, forwardCursor, row.kind === "wallet"
+      row.address,cfg.backfillLimit,known,forwardCursor,row.kind==="wallet",requestOptions
     );
     events.push(...bridge.transactions);
+    budgetPaused = Boolean(bridge.budgetExhausted);
     if (bridge.reachedKnownHistory || bridge.exhausted) {
       forwardCursor = null;
       gap = false;
     } else {
       const next = bridge.transactions.at(-1)?.signature;
-      if (!next || next === forwardCursor) throw new Error("Catch-up cursor did not advance");
-      forwardCursor = next;
+      if (!next || next === forwardCursor) {
+        if (!budgetPaused) throw new Error("Catch-up cursor did not advance");
+      } else forwardCursor = next;
     }
   }
 
-  if (!complete && !backfillCursor) {
+  if (!budgetPaused && !complete && !backfillCursor) {
     backfillCursor = recent.transactions.at(-1)?.signature || null;
     if (recent.exhausted) complete = true;
-  } else if (!complete && backfillCursor) {
+  } else if (!budgetPaused && !complete && backfillCursor) {
     const historical = await api.fetchEnrichedTxsForMintWithMeta(
-      row.address, cfg.backfillLimit, null, backfillCursor, row.kind === "wallet"
+      row.address,cfg.backfillLimit,null,backfillCursor,row.kind==="wallet",requestOptions
     );
     events.push(...historical.transactions);
+    budgetPaused = Boolean(historical.budgetExhausted);
     if (historical.exhausted) complete = true;
     else {
       const next = historical.transactions.at(-1)?.signature;
-      if (!next || next === backfillCursor) throw new Error("Backfill made no cursor progress");
-      backfillCursor = next;
+      if (!next || next === backfillCursor) {
+        if (!budgetPaused) throw new Error("Backfill made no cursor progress");
+      } else backfillCursor = next;
     }
+  }
+  // A partial page returned because the credit guard fired is committed with
+  // its cursor. This avoids re-downloading pages already paid for on resume.
+  if (budgetPaused && !complete && !backfillCursor && !forwardCursor) {
+    backfillCursor = events.at(-1)?.signature || null;
   }
 
   const unique = [...new Map(events.filter(tx => tx && tx.signature)
     .map(tx => [tx.signature, tx])).values()];
-  // Mint-address traffic is not a complete trade index. Never feed such
-  // observations into the legacy PnL/trade table as established fills.
+  // Address history for a mint is not a complete token transfer/trade index.
+  // Keep the coverage gap visible until a dedicated venue/transfer indexer is used.
   const trades = [];
-  // Lease-fenced atomic checkpoint: raw evidence, cursor and derived results.
   const cadence = row.priority >= 100 ? 5 * 60_000 :
     row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
-  if (complete && !forwardCursor) gap = false;
+  if (row.kind === "token") gap = true;
+  else if (complete && !forwardCursor && !budgetPaused) gap = false;
+
   const added = db.transaction(() => {
     const now = Date.now();
-    const owned = db.prepare("SELECT 1 FROM chain_seed_targets WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)").get(row.kind,row.address,row.lease_token??null,now);
+    const owned = db.prepare("SELECT 1 FROM chain_seed_targets WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)")
+      .get(row.kind,row.address,row.lease_token??null,now);
     if (!owned) throw new Error("Collector lease lost before commit: "+row.kind+":"+row.address);
-    const n = persistEvents(db, row.kind, row.address, unique);
-    if (row.kind === "wallet") appendDiscovered(db, row.address, unique);
-    if (row.kind === "dex_program") require("./blockchain-dex-index.cjs").indexProgramBatch(db, row.address, unique);
+    const n = persistEvents(db,row.kind,row.address,unique);
+    if (row.kind === "wallet") {
+      appendDiscovered(db,row.address,unique,cfg.scopeId||null);
+      if (cfg.scopeId) appendDiscoveredWallets(db,"wallet",row.address,unique,cfg.scopeId);
+    } else if (row.kind === "token" && cfg.scopeId) {
+      appendDiscoveredWallets(db,"token",row.address,unique,cfg.scopeId);
+    }
+    if (row.kind === "dex_program") require("./blockchain-dex-index.cjs").indexProgramBatch(db,row.address,unique);
     const update=db.prepare(
       "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,lease_token=NULL,"
       + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
       + "backfill_complete=?,possible_gap=?,events_saved=events_saved+?"
       + " WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)"
-    ).run(now, now + (complete && !forwardCursor ? cadence : 60_000),
-      backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
-      n, row.kind, row.address, row.lease_token??null, now);
-    if (update.changes !== 1) throw new Error("Collector lease changed during commit");
+    ).run(now,now+(budgetPaused?0:(complete&&!forwardCursor&&!gap?cadence:60_000)),
+      backfillCursor,forwardCursor,complete?1:0,gap?1:0,n,
+      row.kind,row.address,row.lease_token??null,now);
+    if (update.changes!==1) throw new Error("Collector lease changed during commit");
     if (row.kind === "wallet") require("./blockchain-forensics.cjs").rebuildWallet(db,row.address);
     return n;
   })();
-  return { kind: row.kind, address: row.address, newEvents: added,
-    normalizedTrades: trades.length, complete, possibleGap: gap };
+  return {kind:row.kind,address:row.address,newEvents:added,normalizedTrades:trades.length,
+    complete,possibleGap:gap,budgetPaused};
 }
-
 function failTask(db, row, error) {
   const attempts = row.attempts + 1;
   const jitter = Math.floor(Math.random() * 500);
