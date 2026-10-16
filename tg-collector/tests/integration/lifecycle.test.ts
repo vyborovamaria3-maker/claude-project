@@ -6,9 +6,9 @@ import { test } from "node:test";
 test("PostgreSQL: evidence versioning and soft-delete preserve canonical links", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
-  const { pool, migrate } = await import("../src/db.js");
-  const { persistMessage, markMessageDeleted } = await import("../src/persistence/messages.js");
-  const { refreshGraphDays, utcDay } = await import("../src/analytics/rollups.js");
+  const { pool, migrate } = await import("../../src/db.js");
+  const { persistMessage, markMessageDeleted } = await import("../../src/persistence/messages.js");
+  const { refreshGraphDays, utcDay } = await import("../../src/analytics/rollups.js");
   await migrate();
 
   const identifier = "lifecycle_" + randomUUID().replaceAll("-", "").slice(0, 18);
