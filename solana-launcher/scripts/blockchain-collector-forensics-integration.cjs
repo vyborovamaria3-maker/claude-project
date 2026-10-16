@@ -67,6 +67,9 @@ const db = new Database(":memory:");
   assert.equal(revised.raw_revision,2);
   assert.equal(typeof revised.payload_hash,"string");
   assert.equal(persistEvents(db,"wallet",wallet,[improved]),0);
+  const invalidatedCoverage=db.prepare("SELECT coverage_status,gap_reason FROM chain_history_coverage WHERE kind='wallet' AND address=?").get(wallet);
+  assert.equal(invalidatedCoverage.coverage_status,"partial","raw evidence revisions invalidate prior coverage");
+  assert.equal(invalidatedCoverage.gap_reason,"raw_evidence_changed_requires_coverage_refresh");
 
   // A malformed payload that fails forensic indexing must roll back raw
   // evidence, wallet discovery and success cursors together.
