@@ -275,6 +275,16 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
     return "done";
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+
+    // Database outages are worker/runtime failures, not task failures. If we
+    // call failTask() here while PostgreSQL is unavailable, the write can be
+    // lost and the task stays claimed until its lease expires. Re-throw so
+    // scripts/worker.ts enters its database recovery path and then fences the
+    // task before requeueing it.
+    if ((e instanceof AmbiguousCommitError || isRetryablePgError(e)) && !isStopping()) {
+      throw e;
+    }
+
     if (e instanceof HttpAccountLeaseError && !leaseLost && !isStopping()) {
       await publish({phase:"waiting"}).catch(() => {});
       const ok = await deferTask(task.id, workerId, 5000, "XActions account ownership lost", task.attempts).catch(() => false);
