@@ -36,8 +36,8 @@ function parseArgs(argv) {
     flags[key] = argv[++i];
   }
   const defaultFolder = path.join(process.cwd(), "data", "seed-folders");
-  return {
-    mode: flags.mode || "import",
+  const parsed = {
+    mode: flags.mode || (flags["seed-token"] ? "pilot" : "import"),
     folders: {
       migrated: path.resolve(flags["migrated-dir"] || path.join(defaultFolder, "migrated")),
       dex_trending: path.resolve(flags["trending-dir"] || path.join(defaultFolder, "trending")),
@@ -59,6 +59,12 @@ function parseArgs(argv) {
     scanMintAddresses: Boolean(flags["scan-mint-addresses"]),
     help: Boolean(flags.help),
   };
+  if (parsed.seedToken && !isSolanaAddress(parsed.seedToken)) throw new Error("--seed-token must be a valid Solana mint address");
+  if (parsed.mode === "pilot" && !parsed.seedToken) throw new Error("--mode pilot requires --seed-token <mint>");
+  if (parsed.seedToken && !["pilot","collect","watch"].includes(parsed.mode)) {
+    throw new Error("--seed-token is only valid with --mode pilot|collect|watch");
+  }
+  return parsed;
 }
 function usage() {
   console.log([
@@ -145,6 +151,145 @@ function initDb(db) {
     db.exec("ALTER TABLE chain_seed_events ADD COLUMN payload_hash TEXT");
   if (!db.pragma("table_info(chain_seed_events)").some(c => c.name === "raw_revision"))
     db.exec("ALTER TABLE chain_seed_events ADD COLUMN raw_revision INTEGER NOT NULL DEFAULT 1");
+}
+
+
+function currentMonthKey(at = Date.now()) {
+  return new Date(at).toISOString().slice(0, 7);
+}
+function budgetError(message) {
+  const error = new Error(message);
+  error.code = "HELIUS_BUDGET_EXCEEDED";
+  return error;
+}
+function addScopeMember(db, scopeId, kind, address, priority, reason, fromKind = null, fromAddress = null) {
+  const now = Date.now();
+  const work = () => {
+    db.prepare(
+      "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at) VALUES(?,?,8,?,0) " +
+      "ON CONFLICT(kind,address) DO UPDATE SET source_mask=(chain_seed_targets.source_mask | 8)," +
+      "priority=MAX(chain_seed_targets.priority,excluded.priority),next_run_at=MIN(chain_seed_targets.next_run_at,excluded.next_run_at)"
+    ).run(kind,address,priority);
+    db.prepare(
+      "INSERT INTO chain_collection_scope_members(scope_id,kind,address,priority,reason,discovered_from_kind,discovered_from_address,discovered_at) " +
+      "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scope_id,kind,address) DO UPDATE SET " +
+      "priority=MAX(chain_collection_scope_members.priority,excluded.priority)," +
+      "reason=CASE WHEN excluded.priority>chain_collection_scope_members.priority THEN excluded.reason ELSE chain_collection_scope_members.reason END"
+    ).run(scopeId,kind,address,priority,reason,fromKind,fromAddress,now);
+    db.prepare(
+      "INSERT OR IGNORE INTO chain_seed_file_sources(file_path,category,kind,address) VALUES(?,?,?,?)"
+    ).run("@scope:"+scopeId,"discovered",kind,address);
+  };
+  if (db.inTransaction) return work();
+  return db.transaction(work)();
+}
+function ensurePilotScope(db, seedToken) {
+  if (!isSolanaAddress(seedToken)) throw new Error("Invalid pilot seed token");
+  const scopeId = "seed-token:" + seedToken;
+  const now = Date.now();
+  db.transaction(() => {
+    db.prepare(
+      "INSERT INTO chain_collection_scopes(scope_id,seed_token,status,created_at,updated_at) VALUES(?,?,'active',?,?) " +
+      "ON CONFLICT(scope_id) DO UPDATE SET status='active',updated_at=excluded.updated_at"
+    ).run(scopeId,seedToken,now,now);
+    addScopeMember(db,scopeId,"token",seedToken,1000,"seed_token",null,null);
+  }).immediate();
+  return scopeId;
+}
+function startCollectionRun(db, args, scopeId = null) {
+  const runId = randomUUID();
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO chain_collection_runs(run_id,scope_id,started_at,run_budget_credits,monthly_budget_credits,page_credit_estimate,max_objects,status) " +
+    "VALUES(?,?,?,?,?,?,?,'running')"
+  ).run(runId,scopeId,now,args.runBudgetCredits,args.monthlyBudgetCredits,args.pageCreditEstimate,
+    Math.min(args.limit,args.maxObjects));
+  if (scopeId) db.prepare("UPDATE chain_collection_scopes SET last_run_id=?,updated_at=? WHERE scope_id=?")
+    .run(runId,now,scopeId);
+  return runId;
+}
+function reserveHeliusCredits(db, input) {
+  const requestId = randomUUID();
+  const now = Date.now();
+  const monthKey = currentMonthKey(now);
+  const credits = Number(input.estimatedCredits);
+  if (!Number.isSafeInteger(credits) || credits < 1) throw new Error("Invalid estimated Helius request credits");
+  return db.transaction(() => {
+    const run = db.prepare("SELECT * FROM chain_collection_runs WHERE run_id=?").get(input.runId);
+    if (!run || run.status !== "running") throw budgetError("Collection run is not active; no new Helius requests allowed");
+    const runUsed = db.prepare(
+      "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS n FROM chain_helius_usage_requests WHERE run_id=?"
+    ).get(input.runId).n;
+    const monthUsed = db.prepare(
+      "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS n FROM chain_helius_usage_requests WHERE month_key=?"
+    ).get(monthKey).n;
+    if (runUsed + credits > run.run_budget_credits) {
+      throw budgetError("Run Helius credit budget reached ("+runUsed+"/"+run.run_budget_credits+"); pausing before next request");
+    }
+    if (monthUsed + credits > run.monthly_budget_credits) {
+      throw budgetError("Monthly Helius credit budget reached ("+monthUsed+"/"+run.monthly_budget_credits+"); pausing before next request");
+    }
+    db.prepare(
+      "INSERT INTO chain_helius_usage_requests(request_id,run_id,month_key,task_kind,task_address,endpoint,estimated_credits,status,created_at) " +
+      "VALUES(?,?,?,?,?,?,?,'reserved',?)"
+    ).run(requestId,input.runId,monthKey,input.taskKind,input.taskAddress,input.endpoint,credits,now);
+    return requestId;
+  }).immediate();
+}
+function recordHeliusResponse(db, requestId, response) {
+  if (!requestId) return;
+  db.prepare(
+    "UPDATE chain_helius_usage_requests SET status=?,http_status=?,actual_credits=?,finished_at=? WHERE request_id=?"
+  ).run(response.status >= 200 && response.status < 300 ? "completed" : "http_error",
+    response.status,response.actualCredits,Date.now(),requestId);
+}
+function recordHeliusError(db, requestId, error) {
+  if (!requestId) return;
+  db.prepare(
+    "UPDATE chain_helius_usage_requests SET status='request_error',error=?,finished_at=? WHERE request_id=?"
+  ).run(String(error && error.message || error).slice(0,400),Date.now(),requestId);
+}
+function releaseTaskForBudget(db, row) {
+  db.prepare(
+    "UPDATE chain_seed_targets SET lease_until=NULL,lease_token=NULL,next_run_at=?,last_error=NULL " +
+    "WHERE kind=? AND address=? AND lease_token IS ?"
+  ).run(Date.now(),row.kind,row.address,row.lease_token??null);
+}
+function finishCollectionRun(db, runId, status, reason = null) {
+  db.prepare("UPDATE chain_collection_runs SET status=?,stopped_reason=?,finished_at=? WHERE run_id=?")
+    .run(status,reason,Date.now(),runId);
+  db.prepare("UPDATE chain_collection_scopes SET status=?,updated_at=? WHERE last_run_id=?")
+    .run(status==="budget_paused" ? "paused_budget" : status==="failed" ? "failed" : "active",Date.now(),runId);
+}
+function requestHooksForTask(db, runId, row, args) {
+  return {
+    estimatedCreditsPerRequest: args.pageCreditEstimate,
+    beforeRequest: context => reserveHeliusCredits(db,{
+      runId,taskKind:row.kind,taskAddress:row.address,endpoint:context.endpoint,
+      estimatedCredits:context.estimatedCredits,
+    }),
+    afterResponse: (requestId,response) => recordHeliusResponse(db,requestId,response),
+    onError: (requestId,error) => recordHeliusError(db,requestId,error),
+  };
+}
+function usageStatus(db, args = {}) {
+  const monthKey = currentMonthKey();
+  const hasTable = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+  if (!hasTable("chain_helius_usage_requests")) return {
+    monthKey, monthlyBudgetCredits:args.monthlyBudgetCredits ?? 10000000,
+    usedCredits:0, remainingCredits:args.monthlyBudgetCredits ?? 10000000,
+    requests:0, providerReportedRequests:0, note:"No Helius request ledger yet",
+  };
+  const usage = db.prepare(
+    "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS used,"+
+    "COUNT(*) AS requests,SUM(CASE WHEN actual_credits IS NOT NULL THEN 1 ELSE 0 END) AS reported "+
+    "FROM chain_helius_usage_requests WHERE month_key=?"
+  ).get(monthKey);
+  const monthlyBudgetCredits = args.monthlyBudgetCredits ?? 10000000;
+  return {monthKey,monthlyBudgetCredits,usedCredits:usage.used,
+    remainingCredits:Math.max(0,monthlyBudgetCredits-usage.used),requests:usage.requests,
+    providerReportedRequests:usage.reported,
+    estimatedOnlyRequests:usage.requests-(usage.reported||0)};
 }
 
 function refreshTargets(db) {
