@@ -983,7 +983,7 @@ async function processOne(db, row, cfg, api) {
         row.address,cfg.backfillLimit,known,forwardCursor,row.kind==="wallet",requestOptions
       );
     } catch(error) {
-      if ((error && error.code)!=="HELIUS_BUDGET_EXCEEDED") throw error;
+      if (!isCollectionBudgetError(error)) throw error;
       budgetPaused = true;
     }
     if (bridge) {
@@ -993,7 +993,7 @@ async function processOne(db, row, cfg, api) {
         forwardCursor = null;
         gap = false;
       } else {
-        const next = bridge.transactions.at(-1)?.signature;
+        const next = bridge.nextCursor || bridge.transactions.at(-1)?.signature;
         if (!next || next === forwardCursor) {
           if (!budgetPaused) throw new Error("Catch-up cursor did not advance");
         } else forwardCursor = next;
@@ -1002,7 +1002,7 @@ async function processOne(db, row, cfg, api) {
   }
 
   if (!budgetPaused && !complete && !backfillCursor) {
-    backfillCursor = recent.transactions.at(-1)?.signature || null;
+    backfillCursor = recent.nextCursor || recent.transactions.at(-1)?.signature || null;
     if (recent.exhausted) complete = true;
   } else if (!budgetPaused && !complete && backfillCursor) {
     let historical = null;
@@ -1011,7 +1011,7 @@ async function processOne(db, row, cfg, api) {
         row.address,cfg.backfillLimit,null,backfillCursor,row.kind==="wallet",requestOptions
       );
     } catch(error) {
-      if ((error && error.code)!=="HELIUS_BUDGET_EXCEEDED") throw error;
+      if (!isCollectionBudgetError(error)) throw error;
       budgetPaused = true;
     }
     if (historical) {
@@ -1019,7 +1019,7 @@ async function processOne(db, row, cfg, api) {
       budgetPaused = Boolean(historical.budgetExhausted);
       if (historical.exhausted) complete = true;
       else {
-        const next = historical.transactions.at(-1)?.signature;
+        const next = historical.nextCursor || historical.transactions.at(-1)?.signature;
         if (!next || next === backfillCursor) {
           if (!budgetPaused) throw new Error("Backfill made no cursor progress");
         } else backfillCursor = next;
@@ -1087,10 +1087,33 @@ function failTask(db, row, error) {
 
 async function collect(db, args, scopeId = null) {
   const keys = require("../lib/trade/helius-rotation").getHeliusApiKeys();
-  if (!keys.length) throw new Error("Valid HELIUS_API_KEY(S) required for --mode collect/pilot");
   const helius = require("../lib/trade/helius");
+  const alchemyModule = require("./blockchain-alchemy-provider.cjs");
+  const alchemyProvider = alchemyModule.createProvider();
+  if (!keys.length && !alchemyProvider.accounts.length) {
+    throw new Error("Configure HELIUS_API_KEY(S) or ALCHEMY_SOLANA_API_KEY_1..4 before --mode collect/pilot");
+  }
   const { persistTokenTrades, markTokenTradeChecked } = require("../lib/trade/db");
   const api = { ...helius, persistTokenTrades, markTokenTradeChecked };
+  const heliusFetch = helius.fetchEnrichedTxsForMintWithMeta;
+  api.fetchEnrichedTxsForMintWithMeta = async (address,limit,known,startBefore,includeTokenAccounts,requestHooks) => {
+    if (startBefore && startBefore.startsWith("alchemy:")) {
+      return alchemyProvider.fetchHistoryWithMeta(address,limit,known,startBefore,includeTokenAccounts,requestHooks?.alchemy);
+    }
+    if (keys.length) {
+      try {
+        return await heliusFetch(address,limit,known,startBefore,includeTokenAccounts,requestHooks);
+      } catch (error) {
+        // Helius cursors are signatures; Alchemy cursors are opaque page tokens.
+        // Fail over only on a fresh/recent request to preserve cursor semantics.
+        if (startBefore || !alchemyProvider.accounts.length) throw error;
+        if (error && error.code !== "HELIUS_BUDGET_EXCEEDED" && !/Helius|fetch failed|timeout|network|ECONN|429|5\d\d/i.test(String(error.message||error))) throw error;
+        console.warn("[blockchain-collector] Helius recent history unavailable; falling back to Alchemy raw transaction evidence");
+        return alchemyProvider.fetchHistoryWithMeta(address,limit,known,undefined,includeTokenAccounts,requestHooks?.alchemy);
+      }
+    }
+    return alchemyProvider.fetchHistoryWithMeta(address,limit,known,startBefore,includeTokenAccounts,requestHooks?.alchemy);
+  };
   const startedAt = Date.now();
   const maxObjects = Math.min(args.limit,args.maxObjects);
   const maxRuntimeMs=args.maxRuntimeMs??6*60*60*1000;
@@ -1122,7 +1145,7 @@ async function collect(db, args, scopeId = null) {
         }
         if(succeeded%10===0) console.log(JSON.stringify({runId,progress:succeeded,inserted,failed,gaps,budgetPaused,runtimePaused}));
       } catch(error) {
-        if ((error && error.code)==="HELIUS_BUDGET_EXCEEDED") {
+        if (isCollectionBudgetError(error)) {
           budgetPaused=true;
           stopReason=String(error.message||error);
           releaseTaskForBudget(db,row);
