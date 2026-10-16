@@ -111,6 +111,9 @@ export default function TGCollectorTab() {
     { title: "Сообщения", value: data?.stats.messages ?? 0 },
     { title: "Задания выполняются", value: data?.stats.running ?? 0 },
     { title: "С ошибкой", value: data?.stats.failed ?? 0 },
+    { title: "Сообщений сегодня", value: data?.runtimeMetrics.messages_per_day ?? 0 },
+    { title: "Связей сегодня", value: data?.runtimeMetrics.links_per_day ?? 0 },
+    { title: "Всего связей", value: data?.runtimeMetrics.links_total ?? 0 },
   ];
   const globallyPaused = Boolean(data?.pausedUntil && new Date(data.pausedUntil) > new Date());
 
