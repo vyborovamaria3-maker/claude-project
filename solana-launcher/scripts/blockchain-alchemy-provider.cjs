@@ -106,12 +106,26 @@ function createProvider(options = {}) {
   const timeoutMs=positiveInt(env.ALCHEMY_SOLANA_TIMEOUT_MS,12000,"ALCHEMY_SOLANA_TIMEOUT_MS");
   const pilotBudgetCu=positiveInt(env.ALCHEMY_SOLANA_PILOT_CU_BUDGET,DEFAULT_PILOT_CU,"ALCHEMY_SOLANA_PILOT_CU_BUDGET");
   let nextAccount=0;
+  const cooldownUntil=new Map(),failureCounts=new Map(),lastErrors=new Map();
+  function markFailure(account,error,response=null) {
+    const code=error&&error.code;
+    if(code==="ALCHEMY_ACCOUNT_BUDGET_EXCEEDED"||code==="ALCHEMY_PILOT_CU_BUDGET_EXCEEDED"||code==="ALCHEMY_RUN_CU_BUDGET_EXCEEDED")return;
+    const count=(failureCounts.get(account.id)||0)+1;
+    failureCounts.set(account.id,count);
+    lastErrors.set(account.id,String(error&&error.message||error).slice(0,200));
+    const retryHeader=response&&response.headers&&response.headers.get&&Number(response.headers.get("retry-after"));
+    const delay=Number.isFinite(retryHeader)&&retryHeader>0
+      ?Math.min(120000,retryHeader*1000)
+      :Math.min(60000,1000*2**Math.min(6,count-1));
+    cooldownUntil.set(account.id,Date.now()+delay);
+  }
   async function fetchPage(address, paginationToken, limit, hooks = {}) {
     if (!accounts.length) throw new Error("No Alchemy Solana keys configured (ALCHEMY_SOLANA_API_KEY_1..4 or ALCHEMY_SOLANA_API_KEYS)");
     const method="getTransactionsForAddress", cost=getMethodCost(method,env);
     let lastError=null;
     for (let offset=0;offset<accounts.length;offset++) {
       const account=accounts[(nextAccount+offset)%accounts.length];
+      if ((cooldownUntil.get(account.id)||0)>Date.now()) { lastError=new Error("Alchemy account "+account.id+" is in rate-limit cooldown"); continue; }
       if (account.baselineCu===null || account.billingResetDay===null) {
         lastError=new Error("Alchemy account "+account.id+" needs ALCHEMY_SOLANA_CU_USED_BASELINE_"+account.index+" and ALCHEMY_SOLANA_BILLING_RESET_DAY_"+account.index+" from Dashboard before collection");
         continue;
@@ -138,8 +152,10 @@ function createProvider(options = {}) {
         if (!response.ok || payload.error) {
           const err=new Error("Alchemy "+account.id+" "+(payload.error && payload.error.message || "HTTP "+response.status));
           err.status=response.status; err.code=response.status===429?"ALCHEMY_RATE_LIMIT":payload.error&&payload.error.code===-32601?"ALCHEMY_METHOD_UNSUPPORTED":"ALCHEMY_RPC_ERROR";
+          if(response.status===429||response.status>=500)markFailure(account,err,response);
           throw err;
         }
+        failureCounts.delete(account.id);cooldownUntil.delete(account.id);lastErrors.delete(account.id);
         const result=payload.result;
         const rows=Array.isArray(result)?result:Array.isArray(result && result.transactions)?result.transactions:null;
         if (!rows) throw new Error("Alchemy getTransactionsForAddress returned unexpected response shape");
@@ -150,6 +166,7 @@ function createProvider(options = {}) {
         if (error && error.code==="ALCHEMY_CU_BUDGET_EXCEEDED") throw error;
         lastError=error instanceof Error?error:new Error(String(error));
         if (lastError.code==="ALCHEMY_METHOD_UNSUPPORTED") throw lastError;
+        if(lastError.code!=="ALCHEMY_RATE_LIMIT"&&lastError.code!=="ALCHEMY_RPC_ERROR")markFailure(account,lastError);
         nextAccount=(account.index)%accounts.length;
       }
     }
@@ -214,6 +231,8 @@ function createProvider(options = {}) {
     return {transactions,exhausted,reachedKnownHistory,truncated:!exhausted&&!reachedKnownHistory&&transactions.length>=maxTxs,
       budgetExhausted:false,nextCursor:!exhausted?encodeCursor(paginationToken):null,provider:"alchemy"};
   }
-  return {accounts:accounts.map(({key,...safe})=>safe),pilotBudgetCu,fetchPage,fetchHistoryWithMeta,encodeCursor,decodeCursor};
+  return {accounts:accounts.map(({key,...safe})=>safe),pilotBudgetCu,fetchPage,fetchHistoryWithMeta,encodeCursor,decodeCursor,
+    health:()=>accounts.map(({key,...account})=>({...account,cooldownUntil:cooldownUntil.get(account.id)||0,
+      failures:failureCounts.get(account.id)||0,lastError:lastErrors.get(account.id)||null}))};
 }
 module.exports={DEFAULT_MONTHLY_CU,DEFAULT_PILOT_CU,METHOD_COSTS,parseAccounts,getMethodCost,currentBillingMonthKey,normalizeRawTransaction,encodeCursor,decodeCursor,createProvider};
