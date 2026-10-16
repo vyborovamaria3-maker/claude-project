@@ -6,19 +6,20 @@ const BLOCKED_HANDLES = new Set(["joinchat", "addlist", "share", "proxy", "login
 
 export function isSolanaAddress(value: string): boolean {
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) return false;
-  const bytes: number[] = [0];
-  for (const character of value) {
-    let carry = BASE58.indexOf(character);
-    if (carry < 0) return false;
-    for (let i = 0; i < bytes.length; i++) {
-      carry += bytes[i] * 58;
-      bytes[i] = carry & 255;
-      carry = Math.floor(carry / 256);
-    }
-    while (carry) { bytes.push(carry & 255); carry = Math.floor(carry / 256); }
+  let leadingZeroBytes = 0;
+  while (value[leadingZeroBytes] === "1") leadingZeroBytes++;
+  let number = 0n;
+  for (const character of value.slice(leadingZeroBytes)) {
+    const digit = BASE58.indexOf(character);
+    if (digit < 0) return false;
+    number = number * 58n + BigInt(digit);
   }
-  for (const c of value) { if (c === "1") bytes.push(0); else break; }
-  return bytes.length === 32;
+  let decodedBytes = 0;
+  while (number > 0n) {
+    decodedBytes++;
+    number >>= 8n;
+  }
+  return leadingZeroBytes + decodedBytes === 32;
 }
 
 export function normalizeTarget(kind: TargetKind, input: string): string | null {
