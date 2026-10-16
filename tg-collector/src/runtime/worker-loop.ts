@@ -6,6 +6,7 @@ import { claim, handleFailure } from "../queue/jobs.js";
 import { processJob } from "../engines/channel.js";
 import { startHeartbeat, remainingPauseSeconds } from "../monitoring/heartbeat.js";
 import type { TelegramClient } from "telegram";
+import { classifyTelegramError } from "../queue/retry.js";
 
 let stopping = false;
 process.on("SIGINT", () => { stopping = true; });
@@ -26,7 +27,14 @@ async function main(): Promise<void> {
     const state = await pool.query<{ block_reason: string | null }>(
       "SELECT block_reason FROM tg_runtime WHERE id=1");
     if (state.rows[0]?.block_reason) throw new Error("TG_COLLECTOR_BLOCKED: " + state.rows[0].block_reason);
-    client = await authorizedClient();
+    try {
+      client = await authorizedClient();
+    } catch (error) {
+      const classification = classifyTelegramError(error, 0);
+      if (classification.action === "halt")
+        await pool.query("UPDATE tg_runtime SET block_reason=$1,blocked_at=now() WHERE id=1", [classification.code]);
+      throw error;
+    }
     stopHeartbeat = await startHeartbeat();
     console.log("TG Collector worker started");
     while (!stopping) {
