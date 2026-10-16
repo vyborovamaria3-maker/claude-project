@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
     const page = Number(params.get("page") || 0);
     if (!Number.isInteger(page) || page < 0 || page > 100) throw new ApiError("Недопустимая страница");
 
-    const [sources, stats, runtimeState, messages, proxy] = await Promise.all([
+    const [sources, stats, runtimeState, proxy, messages] = await Promise.all([
       p.query(`SELECT s.id::text, s.identifier, s.peer_id, s.title, s.enabled,
         s.history_partial, s.last_message_id::text, s.last_success_at,
         COALESCE(mc.message_count,0)::int AS message_count,
