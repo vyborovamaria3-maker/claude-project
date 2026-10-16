@@ -483,16 +483,26 @@ function persistEvents(db, kind, address, transactions) {
   return saved;
 }
 
-function appendDiscovered(db, ownerWallet, transactions) {
+function appendDiscovered(db, ownerWallet, transactions, scopeId = null) {
   const { parseEvidence } = require("./blockchain-forensics-core.cjs");
-  const discovered = new Set();
+  const discovered = new Map();
+  const addMint = (mint, priority, reason) => {
+    if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) return;
+    const prior = discovered.get(mint);
+    if (!prior || priority > prior.priority) discovered.set(mint,{priority,reason});
+  };
   for (const tx of transactions) {
-    // Only an attributable, parsed wallet swap is discovery evidence.
+    // Parsed swaps are the strongest token-discovery evidence.
     for (const event of parseEvidence(tx, ownerWallet)) {
-      if (event.kind !== "buy" && event.kind !== "sell") continue;
-      const mint = event.mint;
-      if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) continue;
-      discovered.add(mint);
+      if (event.kind === "buy" || event.kind === "sell") addMint(event.mint,700,"wallet_trade");
+    }
+    // In the seed-token pilot, follow tokens received/sent through transfers
+    // too; these are discovery edges, not proof of a trade or PnL.
+    if (scopeId) {
+      for (const transfer of tx?.tokenTransfers || []) addMint(transfer?.mint,500,"wallet_token_transfer");
+      for (const side of [...(tx?.events?.swap?.tokenInputs || []),...(tx?.events?.swap?.tokenOutputs || [])]) {
+        addMint(side?.mint,700,"wallet_swap");
+      }
     }
   }
   if (!discovered.size) return 0;
@@ -503,13 +513,74 @@ function appendDiscovered(db, ownerWallet, transactions) {
     "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at)",
     "VALUES('token',?,8,40,0) ON CONFLICT(kind,address) DO UPDATE SET",
     "source_mask=(chain_seed_targets.source_mask | 8),",
-    "priority=MAX(chain_seed_targets.priority,40)",
+    "priority=MAX(chain_seed_targets.priority,excluded.priority)",
   ].join(" "));
   return db.transaction(() => {
     let count = 0;
-    for (const mint of discovered) {
+    for (const [mint,info] of discovered) {
       count += link.run("@wallet:" + ownerWallet, "discovered", "token", mint).changes;
       target.run(mint);
+      if (scopeId) addScopeMember(db,scopeId,"token",mint,info.priority,info.reason,"wallet",ownerWallet);
+    }
+    return count;
+  })();
+}
+
+function appendDiscoveredWallets(db, ownerKind, ownerAddress, transactions, scopeId) {
+  if (!scopeId) return 0;
+  const { parseEvidence } = require("./blockchain-forensics-core.cjs");
+  const candidates = new Map();
+  const add = (address,priority,reason) => {
+    if (!isSolanaAddress(address) || address === ownerAddress || address === SOL || address === USDC) return;
+    const old=candidates.get(address);
+    if (!old || priority>old.priority) candidates.set(address,{priority,reason});
+  };
+  for (const tx of transactions) {
+    if (!tx || tx.transactionError != null || tx.error != null) continue;
+    if (ownerKind === "token") {
+      const swap=tx.events?.swap;
+      const swapTouchesToken=[...(swap?.tokenInputs||[]),...(swap?.tokenOutputs||[])].some(x=>x?.mint===ownerAddress);
+      if (swapTouchesToken) {
+        for (const x of [...(swap?.tokenInputs||[]),...(swap?.tokenOutputs||[])]) {
+          if (x?.mint===ownerAddress) add(x.userAccount,800,"token_trade_participant");
+        }
+        // Fee payer is useful as a candidate, but may be a relayer rather than
+        // the trader, so its priority is intentionally below userAccount.
+        add(tx.feePayer,600,"token_trade_fee_payer");
+      }
+      for (const transfer of tx.tokenTransfers||[]) {
+        if (transfer?.mint!==ownerAddress) continue;
+        add(transfer.fromUserAccount,500,"token_transfer_sender");
+        add(transfer.toUserAccount,500,"token_transfer_recipient");
+      }
+    } else if (ownerKind === "wallet") {
+      for (const transfer of tx.tokenTransfers||[]) {
+        add(transfer?.fromUserAccount,500,"wallet_token_transfer_counterparty");
+        add(transfer?.toUserAccount,500,"wallet_token_transfer_counterparty");
+      }
+      for (const transfer of tx.nativeTransfers||[]) {
+        add(transfer?.fromUserAccount,300,"wallet_sol_transfer_counterparty");
+        add(transfer?.toUserAccount,300,"wallet_sol_transfer_counterparty");
+      }
+      // A swap can expose owner accounts even when the transfer summary is
+      // sparse. Do not infer ownership from token-account addresses.
+      const swap=tx.events?.swap;
+      for (const x of [...(swap?.tokenInputs||[]),...(swap?.tokenOutputs||[])]) {
+        if (x?.userAccount && x.userAccount!==ownerAddress) add(x.userAccount,650,"wallet_swap_counterparty");
+      }
+      // Keep parser invocation as a validation path; PnL itself is rebuilt
+      // from persisted normalized activities, never from these discovery edges.
+      parseEvidence(tx,ownerAddress);
+    }
+  }
+  if (!candidates.size) return 0;
+  const link=db.prepare("INSERT OR IGNORE INTO chain_seed_file_sources(file_path,category,kind,address) VALUES(?,?,?,?)");
+  return db.transaction(()=>{
+    let count=0;
+    for(const [address,info] of candidates) {
+      link.run("@"+ownerKind+":"+ownerAddress,"discovered","wallet",address);
+      addScopeMember(db,scopeId,"wallet",address,info.priority,info.reason,ownerKind,ownerAddress);
+      count++;
     }
     return count;
   })();
