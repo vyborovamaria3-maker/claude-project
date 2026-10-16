@@ -357,9 +357,9 @@ idx_forensic_fifo_stream уменьшает потребность во врем
 
 Пилот запускается отдельно от Excel-источников и не импортирует остальные seed-листы:
 
-    npm run blockchain:pilot -- --seed-token 5XaxQZGNEAPvF34iYHuTgfLBzpRGg1spPYeGSzr5pump --monthly-credits-used 0 --pilot-budget-credits 1000000
+    npm run blockchain:pilot -- --seed-token 5XaxQZGNEAPvF34iYHuTgfLBzpRGg1spPYeGSzr5pump --monthly-credits-used DASHBOARD_USED_CREDITS --budget-period-start-day BILLING_RESET_DAY --pilot-budget-credits 1000000
 
-Замените `0` на фактические использованные кредиты из Helius Dashboard за текущий billing period. Оставляйте `0` только если Dashboard действительно показывает нулевое использование.
+Перед запуском замените `DASHBOARD_USED_CREDITS` числом использованных кредитов из Helius Dashboard за текущий billing period, а `BILLING_RESET_DAY` — UTC-днём сброса месячной квоты (1–31). Не запускайте команду с буквальными значениями-заполнителями. Не указывайте ноль, если Dashboard не подтверждает нулевое использование.
 
 Начальные ограничения по умолчанию:
 - месячный локальный лимит: 10 000 000 расчётных кредитов;
