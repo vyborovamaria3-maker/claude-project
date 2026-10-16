@@ -54,6 +54,11 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
   collector.finishCollectionRun(db,run2,"budget_paused","monthly budget reached");
   const usage=collector.usageStatus(db,{monthlyBudgetCredits:300});
   assert.equal(usage.usedCredits,260);
+  assert.equal(collector.usageStatus(db,{monthlyBudgetCredits:300,monthlyCreditsUsedBaseline:25}).usedCredits,285);
+  const baselineRun=collector.startCollectionRun(db,{...args(500,300),monthlyCreditsUsedBaseline:290},scopeId);
+  assert.throws(()=>collector.reserveHeliusCredits(db,{runId:baselineRun,taskKind:"token",taskAddress:SEED,
+    endpoint:"enhanced-address-transactions",estimatedCredits:110}),e=>e.code==="HELIUS_BUDGET_EXCEEDED" && /Monthly Helius/.test(e.message));
+  collector.finishCollectionRun(db,baselineRun,"budget_paused","dashboard baseline reached monthly cap");
   assert.equal(usage.remainingCredits,40);
   assert.equal(usage.requests,2);
   assert.equal(usage.providerReportedRequests,1);
