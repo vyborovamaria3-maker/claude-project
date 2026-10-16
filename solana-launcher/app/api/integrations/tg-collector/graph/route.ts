@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [sourceResult, edgeResult, metricResult, overlapResult, addressResult] = await Promise.all([
-      p.query<Source>("SELECT id::text, identifier, title, peer_id FROM tg_sources ORDER BY id LIMIT 500"),
+      p.query<Source>("SELECT id::text, identifier, title, peer_id FROM tg_sources ORDER BY id"),
       p.query<LinkRow>(`
         SELECT e.source_id::text, s.identifier, e.kind, e.target_kind, e.target_key,
           sum(e.evidence_count)::integer AS strength, max(e.last_seen) AS last_seen,
