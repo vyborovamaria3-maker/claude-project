@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createConnection } from "node:net";
 import { Pool } from "pg";
 import { guardTgCollector } from "@/lib/tgCollectorAccess";
+import { clearProxy, getProxyStatus, saveProxy, setProxyEnabled } from "../../../../../../tg-collector/src/runtime/proxy.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +23,34 @@ function pool(): Pool {
     });
   }
   return poolGlobal.__tgCollectorPool;
+}
+
+function proxyType(input: unknown): "socks5" | "socks4" | "mtproxy" {
+  if (input === "socks5" || input === "socks4" || input === "mtproxy") return input;
+  throw new ApiError("Выберите тип прокси: SOCKS5, SOCKS4 или MTProto");
+}
+
+function boundedString(input: unknown, label: string, max = 256): string | undefined {
+  if (input === undefined || input === null || input === "") return undefined;
+  if (typeof input !== "string" || input.length > max || /[\r\n]/.test(input)) {
+    throw new ApiError(`Некорректное поле: ${label}`);
+  }
+  return input.trim();
+}
+
+async function testProxyEndpoint(host: string, port: number): Promise<number> {
+  const started = Date.now();
+  await new Promise<void>((resolve, reject) => {
+    const socket = createConnection({ host, port, timeout: 4000 });
+    const finish = (error?: Error) => {
+      socket.destroy();
+      if (error) reject(error); else resolve();
+    };
+    socket.once("connect", () => finish());
+    socket.once("error", (error) => finish(error));
+    socket.once("timeout", () => finish(new Error("Прокси не ответил за 4 секунды")));
+  });
+  return Date.now() - started;
 }
 
 function errorResponse(error: unknown) {
@@ -84,7 +114,7 @@ export async function GET(request: NextRequest) {
     const page = Number(params.get("page") || 0);
     if (!Number.isInteger(page) || page < 0 || page > 100) throw new ApiError("Недопустимая страница");
 
-    const [sources, stats, runtimeState, messages] = await Promise.all([
+    const [sources, stats, runtimeState, messages, proxy] = await Promise.all([
       p.query(`SELECT s.id::text, s.identifier, s.peer_id, s.title, s.enabled,
         s.history_partial, s.last_message_id::text, s.last_success_at,
         COALESCE(mc.message_count,0)::int AS message_count,
@@ -99,10 +129,11 @@ export async function GET(request: NextRequest) {
           (SELECT count(*)::int FROM tg_jobs WHERE state='running') AS running,
           (SELECT count(*)::int FROM tg_jobs WHERE state='failed') AS failed`),
       p.query(`SELECT pause_until, heartbeat_at, worker_started_at, block_reason, blocked_at,
-        messages_total, messages_per_day, links_total, links_per_day, jobs_pending, jobs_failed,
+        collection_enabled, messages_total, messages_per_day, links_total, links_per_day, jobs_pending, jobs_failed,
         flood_wait_active, metrics_updated_at,
         heartbeat_at > now() - interval '20 seconds' AS worker_online
         FROM tg_runtime WHERE id=1`),
+      getProxyStatus(p),
       p.query(`SELECT m.source_id::text, s.identifier, m.message_id::text,
         m.sender_id, m.posted_at, m.text, m.views, m.forwards, m.replies
         FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id
@@ -116,7 +147,9 @@ export async function GET(request: NextRequest) {
       configured: true,
       stats: stats.rows[0],
       pausedUntil: runtimeState.rows[0]?.pause_until ?? null,
+      collectionEnabled: runtimeState.rows[0]?.collection_enabled !== false,
       workerOnline: runtimeState.rows[0]?.worker_online === true,
+      proxy,
       heartbeatAt: runtimeState.rows[0]?.heartbeat_at ?? null,
       blockReason: runtimeState.rows[0]?.block_reason ?? null,
       runtimeMetrics: {
@@ -167,6 +200,51 @@ export async function POST(request: NextRequest) {
         throw error;
       } finally { tx.release(); }
     }
+    if (action === "start" || action === "stop") {
+      if (action === "start") {
+        const state = await p.query<{block_reason: string | null}>("SELECT block_reason FROM tg_runtime WHERE id=1");
+        if (state.rows[0]?.block_reason) throw new ApiError(`Сборщик заблокирован: ${state.rows[0].block_reason}. Сначала снимите ограничение вручную.`, 409);
+        await p.query("UPDATE tg_runtime SET collection_enabled=TRUE WHERE id=1");
+        await p.query(`UPDATE tg_jobs SET state='pending',run_at=now(),locked_until=NULL,last_error=NULL,updated_at=now()
+          WHERE state IN ('pending','delayed') AND source_id IN (SELECT id FROM tg_sources WHERE enabled)`);
+      } else {
+        await p.query("UPDATE tg_runtime SET collection_enabled=FALSE WHERE id=1");
+      }
+      return NextResponse.json({ ok: true, collectionEnabled: action === "start" }, { headers: noStore });
+    }
+
+    if (action === "proxy-save") {
+      const type = proxyType(input.proxyType);
+      const host = boundedString(input.host, "host", 253);
+      if (!host) throw new ApiError("Укажите адрес прокси");
+      const port = Number(input.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ApiError("Укажите корректный порт");
+      const username = boundedString(input.username, "username");
+      const password = boundedString(input.password, "password");
+      const secret = boundedString(input.secret, "secret");
+      await saveProxy({ proxyType: type, host, port, username, password, secret });
+      return NextResponse.json({ ok: true, proxy: await getProxyStatus(p) }, { headers: noStore });
+    }
+
+    if (action === "proxy-enable" || action === "proxy-disable") {
+      await setProxyEnabled(action === "proxy-enable");
+      return NextResponse.json({ ok: true, proxy: await getProxyStatus(p) }, { headers: noStore });
+    }
+
+    if (action === "proxy-clear") {
+      await clearProxy();
+      return NextResponse.json({ ok: true, proxy: await getProxyStatus(p) }, { headers: noStore });
+    }
+
+    if (action === "proxy-test") {
+      const configured = await getProxyStatus(p);
+      if (!configured.configured || !configured.host || !configured.port) {
+        throw new ApiError("Прокси ещё не настроен", 409);
+      }
+      const latencyMs = await testProxyEndpoint(configured.host, configured.port);
+      return NextResponse.json({ ok: true, latencyMs, message: "TCP-порт прокси доступен. Реальный Telegram handshake выполнит worker при следующем подключении." }, { headers: noStore });
+    }
+
     const id = sourceId(input.sourceId);
     if (action === "pause" || action === "resume") {
       const enabled = action === "resume";
