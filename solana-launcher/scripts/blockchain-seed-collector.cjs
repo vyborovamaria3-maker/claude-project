@@ -1213,7 +1213,7 @@ async function collect(db, args, scopeId = null) {
       providerReportedRequests:runUsage.reported||0,runBudgetCredits:args.runBudgetCredits,
       monthly:usageStatus(db,args)},
     alchemyCu:{estimatedCu:alchemyRunUsage.used,requests:alchemyRunUsage.requests,
-      runBudgetCu:args.alchemyRunCuBudget,pilot:alchemyUsageStatus(db)},
+      runBudgetCu:args.alchemyRunCuBudget,pilot:alchemyUsageStatus(db),providerHealth:alchemyProvider.health()},
     budgetPaused,runtimePaused,stoppedReason:stopReason,stopped:stopRequested,
   };
 }
