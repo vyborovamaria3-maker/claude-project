@@ -30,7 +30,6 @@ test("PostgreSQL: evidence versioning and soft-delete preserve canonical links",
       "SELECT analysis_version,target_key FROM tg_message_links WHERE source_id=$1 AND message_id=501 ORDER BY target_key",
       [sourceId],
     );
-    assert.equal(links.length, 0);
     assert.ok(links.rows.length >= 2);
     assert.ok(links.rows.every(row => row.analysis_version === 2));
 
