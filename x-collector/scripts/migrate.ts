@@ -5,20 +5,16 @@ import { Pool } from "pg";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "migrations");
 import { REQUIRED } from "../lib/trade/migrations";
+import { assertMigrationCatalog } from "../lib/trade/migration-catalog";
 const LOCK_KEY = "x-collector:migrate";
 
 async function main() {
   const statusOnly = process.argv.includes("--status");
 
-  const available = new Set(await fs.readdir(MIGRATIONS_DIR));
-  const missing = REQUIRED.filter((name) => !available.has(name));
-  if (missing.length) {
-    throw new Error(
-      "Migration chain is incomplete; no database changes were made. Missing: " +
-      missing.join(", ") +
-      ". Restore the missing migration file(s) before migrating.",
-    );
-  }
+  // Validate before opening a database connection or performing any writes.
+  // The explicit REQUIRED order is authoritative; numbered legacy collisions
+  // and intentionally omitted SQL are tracked by the inventory.
+  assertMigrationCatalog(await fs.readdir(MIGRATIONS_DIR));
 
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL is required");
