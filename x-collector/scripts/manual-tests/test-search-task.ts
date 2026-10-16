@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { handleSearchTask, SearchTaskDeps } from "../src/x/task-handler";
-import { normalizeTweet, normalizeTweets } from "../src/x/normalize";
-import { TweetSchema } from "../lib/trade/schemas";
-import { encryptBuffer } from "../lib/trade/crypto";
-import { closePool } from "../lib/trade/pg";
-import type { ClaimedTask } from "../lib/trade/tasks";
-import type { CollectorAccount } from "../src/x/account-session";
-import type { XTweet } from "../src/x/types";
+import { handleSearchTask, SearchTaskDeps } from "../../src/x/task-handler";
+import { normalizeTweet, normalizeTweets } from "../../src/x/normalize";
+import { TweetSchema } from "../../lib/trade/schemas";
+import { encryptBuffer } from "../../lib/trade/crypto";
+import { closePool } from "../../lib/trade/pg";
+import type { ClaimedTask } from "../../lib/trade/tasks";
+import type { CollectorAccount } from "../../src/x/account-session";
+import type { XTweet } from "../../src/x/types";
 
 const fakeTask: ClaimedTask = {
   id: 999001,
