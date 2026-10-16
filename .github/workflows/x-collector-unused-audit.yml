@@ -1,0 +1,46 @@
+name: X Collector unused-code inventory
+on:
+  pull_request:
+    paths:
+      - 'x-collector/knip.jsonc'
+      - 'x-collector/package.json'
+      - 'x-collector/docs/CODE_INVENTORY_RU.md'
+      - '.github/workflows/x-collector-unused-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  knip-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: x-collector
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: x-collector/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Knip advisory report
+        shell: bash
+        run: |
+          set +e
+          npm run audit:unused > "$RUNNER_TEMP/knip-output.log" 2> "$RUNNER_TEMP/knip-error.log"
+          STATUS=$?
+          set -e
+          echo "Knip exit status: $STATUS (1 means findings)"
+          node - "$RUNNER_TEMP/knip-output.log" <<'NODE'
+          const fs=require('node:fs');
+          const output=fs.readFileSync(process.argv[2],'utf8');
+          const start=output.indexOf('{"issues"');
+          if(start<0){console.error(output.slice(0,3000));process.exit(1);}
+          const report=JSON.parse(output.slice(start));
+          const issues=report.issues??[];
+          const files=[...new Set(issues.flatMap(issue=>(issue.files??[]).map(v=>v.name??v)))];
+          const intelligence=files.filter(file=>file.startsWith('lib/intelligence/'));
+          console.log(JSON.stringify({issueRows:issues.length,potentiallyUnusedFiles:files.length,potentiallyUnusedIntelligenceFiles:intelligence.length,intelligenceCandidates:intelligence},null,2));
+          NODE
+          if [ "$STATUS" -gt 1 ]; then cat "$RUNNER_TEMP/knip-error.log"; exit "$STATUS"; fi
