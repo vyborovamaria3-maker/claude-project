@@ -174,6 +174,13 @@ function initDb(db) {
     "  http_status INTEGER, error TEXT, created_at INTEGER NOT NULL, finished_at INTEGER)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_helius_usage_month ON chain_helius_usage_requests(month_key,created_at)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_helius_usage_run ON chain_helius_usage_requests(run_id,created_at)",
+    ";CREATE TABLE IF NOT EXISTS chain_alchemy_usage_requests (",
+    "  request_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, scope_id TEXT, account_id TEXT NOT NULL, month_key TEXT NOT NULL,",
+    "  task_kind TEXT NOT NULL, task_address TEXT NOT NULL, method TEXT NOT NULL, estimated_cu INTEGER NOT NULL, actual_cu INTEGER,",
+    "  status TEXT NOT NULL DEFAULT 'reserved', http_status INTEGER, error TEXT, created_at INTEGER NOT NULL, finished_at INTEGER)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_month ON chain_alchemy_usage_requests(account_id,month_key,created_at)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_scope ON chain_alchemy_usage_requests(scope_id,created_at)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_run ON chain_alchemy_usage_requests(run_id,created_at)",
   ].join("\n"));
   if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
