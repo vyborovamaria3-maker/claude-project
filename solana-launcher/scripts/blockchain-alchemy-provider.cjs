@@ -50,7 +50,7 @@ function currentBillingMonthKey(now = Date.now(), resetDay = 1) {
 }
 function normalizeRawTransaction(entry) {
   const tx = entry && (entry.transaction || entry);
-  const meta = entry && entry.meta || tx.meta || null;
+  const meta = (entry && entry.meta) || (tx && tx.meta) || null;
   const signatures = tx && tx.transaction && tx.transaction.signatures || tx && tx.signatures || [];
   const signature = entry && entry.signature || signatures[0];
   if (typeof signature !== "string" || !signature) throw new Error("Alchemy transaction missing signature");
