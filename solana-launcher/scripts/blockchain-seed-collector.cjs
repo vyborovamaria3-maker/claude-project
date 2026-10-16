@@ -415,7 +415,7 @@ function syncDexProgramSources(db, raw = process.env.CHAIN_DEX_PROGRAM_IDS || ""
   })();
   return { changed:true, programs:wanted };
 }
-function status(db) {
+function status(db, args = {}) {
   const targets = db.prepare(
     "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS synced,"
     + "SUM(CASE WHEN backfill_complete=1 THEN 1 ELSE 0 END) AS providerExhausted,"
@@ -428,20 +428,44 @@ function status(db) {
   const files = db.prepare("SELECT COUNT(*) AS count FROM chain_seed_files").get().count;
   let verified = null;
   try {
-    verified = db.prepare("SELECT COUNT(*) AS walletMints, SUM(CASE WHEN status=\'verified\' THEN 1 ELSE 0 END) AS verifiedPnl, SUM(CASE WHEN status=\'unknown\' THEN 1 ELSE 0 END) AS unknownPnl FROM chain_forensic_wallet_pnl").get();
+    verified = db.prepare("SELECT COUNT(*) AS walletMints, SUM(CASE WHEN status='verified' THEN 1 ELSE 0 END) AS verifiedPnl, SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknownPnl FROM chain_forensic_wallet_pnl").get();
   } catch { /* Forensics tables are initialized on the first wallet replay. */ }
-  return { files, categories, targets, collectedEvents:
-    db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count, forensic: verified };
+  const hasTable = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+  let scopes = [];
+  if (hasTable("chain_collection_scopes")) {
+    scopes = db.prepare(
+      "SELECT s.scope_id AS scopeId,s.seed_token AS seedToken,s.status,"+
+      "COUNT(m.address) AS objects,SUM(CASE WHEN t.last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS syncedObjects "+
+      "FROM chain_collection_scopes s LEFT JOIN chain_collection_scope_members m ON m.scope_id=s.scope_id "+
+      "LEFT JOIN chain_seed_targets t ON t.kind=m.kind AND t.address=m.address GROUP BY s.scope_id ORDER BY s.created_at DESC"
+    ).all();
+  }
+  return {
+    files,categories,targets,collectedEvents:db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count,
+    forensic:verified,budget:usageStatus(db,args),scopes,
+    queue:db.prepare(
+      "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS errors,"+
+      "SUM(CASE WHEN lease_until IS NOT NULL AND lease_until>? THEN 1 ELSE 0 END) AS leased "+
+      "FROM chain_seed_targets WHERE source_mask<>0 GROUP BY kind"
+    ).all(Date.now()),
+  };
 }
-
-function claimOne(db, includeMintAddresses = true) {
+function claimOne(db, includeMintAddresses = true, scopeId = null) {
   const now = Date.now();
   return db.transaction(() => {
-    const row = db.prepare(
-      "SELECT * FROM chain_seed_targets WHERE source_mask<>0 AND (?=1 OR kind<>'token') AND next_run_at<=?"
-      + " AND (lease_until IS NULL OR lease_until<?)"
-      + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 1"
-    ).get(includeMintAddresses ? 1 : 0, now, now);
+    const row = scopeId
+      ? db.prepare(
+        "SELECT t.*,m.priority AS scope_priority FROM chain_seed_targets t "+
+        "INNER JOIN chain_collection_scope_members m ON m.kind=t.kind AND m.address=t.address AND m.scope_id=? "+
+        "WHERE t.source_mask<>0 AND (?=1 OR t.kind<>'token') AND t.next_run_at<=? "+
+        "AND (t.lease_until IS NULL OR t.lease_until<?) "+
+        "ORDER BY m.priority DESC,t.next_run_at ASC,t.last_success_at ASC LIMIT 1"
+      ).get(scopeId,includeMintAddresses?1:0,now,now)
+      : db.prepare(
+        "SELECT * FROM chain_seed_targets WHERE source_mask<>0 AND (?=1 OR kind<>'token') AND next_run_at<=?"
+        + " AND (lease_until IS NULL OR lease_until<?)"
+        + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 1"
+      ).get(includeMintAddresses ? 1 : 0, now, now);
     if (!row) return null;
     const leaseToken = randomUUID();
     const updated = db.prepare(
@@ -449,9 +473,8 @@ function claimOne(db, includeMintAddresses = true) {
       + " AND (lease_until IS NULL OR lease_until<?)"
     ).run(now + 30 * 60_000, leaseToken, row.kind, row.address, now);
     return updated.changes === 1 ? { ...row, lease_token: leaseToken } : null;
-  })();
+  }).immediate();
 }
-
 function persistEvents(db, kind, address, transactions) {
   const insert = db.prepare(
     "INSERT INTO chain_seed_events"
