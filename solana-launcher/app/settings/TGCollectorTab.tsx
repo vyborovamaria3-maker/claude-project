@@ -231,7 +231,7 @@ export default function TGCollectorTab() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => void command("start")} disabled={busy !== null || data?.collectionEnabled} className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 disabled:opacity-40">
-              <Play className="h-4 w-4" /> Запустить сбор
+              <Play className="h-4 w-4" /> Запустить парсинг
             </button>
             <button type="button" onClick={() => void command("stop")} disabled={busy !== null || data?.collectionEnabled === false} className="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300 disabled:opacity-40">
               <Square className="h-4 w-4" /> Остановить
