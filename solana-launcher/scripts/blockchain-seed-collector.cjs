@@ -500,7 +500,7 @@ function reserveAlchemyCu(db,input) {
 function recordAlchemyResponse(db,requestId,response) {
   if(!requestId)return;
   db.prepare("UPDATE chain_alchemy_usage_requests SET status=?,http_status=?,actual_cu=?,finished_at=? WHERE request_id=?")
-    .run(response.status>=200&&response.status<300?"success":"http_error",response.status,
+    .run(response.status>=200&&response.status<300&&!response.rpcError?"success":"http_error",response.status,
       Number.isSafeInteger(response.actualCu)&&response.actualCu>=0?response.actualCu:null,Date.now(),requestId);
 }
 function recordAlchemyError(db,requestId,error) {
@@ -731,6 +731,13 @@ function status(db, args = {}) {
         "FROM chain_helius_usage_requests u JOIN chain_collection_runs r ON r.run_id=u.run_id WHERE r.scope_id=?"
       ).get(scope.scopeId).n : 0;
       scope.pilotRemainingCredits = Math.max(0,scope.pilotBudgetCredits-scope.pilotUsedCredits);
+      scope.alchemyPilotCuBudget = db.pragma("table_info(chain_collection_scopes)").some(column=>column.name==="alchemy_pilot_cu_budget")
+        ? db.prepare("SELECT alchemy_pilot_cu_budget AS n FROM chain_collection_scopes WHERE scope_id=?").get(scope.scopeId).n
+        : 3000000;
+      scope.alchemyPilotCuUsed = hasTable("chain_alchemy_usage_requests") ? db.prepare(
+        "SELECT COALESCE(SUM(COALESCE(actual_cu,estimated_cu)),0) AS n FROM chain_alchemy_usage_requests WHERE scope_id=?"
+      ).get(scope.scopeId).n : 0;
+      scope.alchemyPilotCuRemaining = Math.max(0,scope.alchemyPilotCuBudget-scope.alchemyPilotCuUsed);
     }
   }
   const hasDeferred=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_collection_scope_deferred'").get());
@@ -820,6 +827,9 @@ function appendDiscovered(db, ownerWallet, transactions, scopeId = null) {
     // too; these are discovery edges, not proof of a trade or PnL.
     if (scopeId) {
       for (const transfer of tx?.tokenTransfers || []) addMint(transfer?.mint,500,"wallet_token_transfer");
+      // Alchemy raw RPC exposes token balance deltas but does not decode transfers
+      // or swaps. Use these only to discover mints, never as transfer/PnL evidence.
+      for (const change of tx?.tokenBalanceChanges || []) addMint(change?.mint,450,"wallet_token_balance_change");
       for (const side of [...(tx?.events?.swap?.tokenInputs || []),...(tx?.events?.swap?.tokenOutputs || [])]) {
         addMint(side?.mint,700,"wallet_swap");
       }
@@ -1248,4 +1258,5 @@ module.exports = {
   syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
   appendDiscoveredCreators,appendDiscoveredCreatorTokens,savePumpFunLaunches,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,status,
+  reserveAlchemyCu,recordAlchemyResponse,recordAlchemyError,
 };
