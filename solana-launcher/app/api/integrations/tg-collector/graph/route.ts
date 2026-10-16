@@ -88,8 +88,9 @@ export async function GET(request: NextRequest) {
         WHERE ($1::bigint IS NULL OR e.source_id=$1)
           AND ($2::integer=0 OR e.day >= (now() AT TIME ZONE 'UTC')::date - ($2::integer - 1))
         GROUP BY e.source_id, s.identifier, e.kind, e.target_kind, e.target_key
-        ORDER BY sum(e.evidence_count) DESC, e.source_id, e.kind, e.target_key LIMIT 160
-      `, [selected, days]),
+        ORDER BY sum(e.evidence_count) DESC, e.source_id, e.kind, e.target_key
+        LIMIT $3 OFFSET $4
+      `, [selected, days, edgeLimit, edgeOffset]),
       p.query(`
         SELECT s.id::text AS source_id, s.identifier,
           coalesce(m.posts_7d,0)::integer AS posts_7d,
