@@ -859,7 +859,7 @@ if (require.main === module) main().catch(error => {
   console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1;
 });
 module.exports = {
-  initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
+  parseArgs,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
   syncDexProgramSources,ensurePilotScope,addScopeMember,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,
 };
