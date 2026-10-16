@@ -692,6 +692,22 @@ function syncDexProgramSources(db, raw = process.env.CHAIN_DEX_PROGRAM_IDS || ""
   })();
   return { changed:true, programs:wanted };
 }
+function alchemyUsageStatus(db, now = Date.now()) {
+  const provider=require("./blockchain-alchemy-provider.cjs");
+  const accounts=provider.parseAccounts();
+  const hasLedger=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_alchemy_usage_requests'").get());
+  return accounts.map(({id,index,monthlyBudgetCu,baselineCu,billingResetDay})=>{
+    const monthKey=provider.currentBillingMonthKey(now,billingResetDay||1);
+    const localTrackedCu=hasLedger?db.prepare(
+      "SELECT COALESCE(SUM(COALESCE(actual_cu,estimated_cu)),0) AS n FROM chain_alchemy_usage_requests WHERE account_id=? AND month_key=?"
+    ).get(id,monthKey).n:0;
+    const baselineConfigured=baselineCu!==null,resetDayConfigured=billingResetDay!==null;
+    const usedCu=baselineConfigured?baselineCu+localTrackedCu:null;
+    return {id,index,monthKey,monthlyBudgetCu,baselineCu,baselineConfigured,billingResetDay,resetDayConfigured,
+      localTrackedCu,usedCu,remainingCu:usedCu===null?null:Math.max(0,monthlyBudgetCu-usedCu),
+      setupRequired:!baselineConfigured||!resetDayConfigured};
+  });
+}
 function status(db, args = {}) {
   const targets = db.prepare(
     "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS synced,"
@@ -746,7 +762,7 @@ function status(db, args = {}) {
     ?db.prepare("SELECT COUNT(*) AS count FROM chain_pumpfun_creator_launches").get().count:0;
   return {
     files,categories,targets,collectedEvents:db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count,
-    forensic:verified,budget:usageStatus(db,args),scopes,deferred,pumpfunCreatorLaunches:launchCount,
+    forensic:verified,budget:usageStatus(db,args),alchemy:alchemyUsageStatus(db),scopes,deferred,pumpfunCreatorLaunches:launchCount,
     queue:db.prepare(
       "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS errors,"+
       "SUM(CASE WHEN lease_until IS NOT NULL AND lease_until>? THEN 1 ELSE 0 END) AS leased "+
