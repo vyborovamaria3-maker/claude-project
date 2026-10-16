@@ -10,7 +10,8 @@ const WALLET="11111111111111111111111111111111";
 assert.equal(collector.currentMonthKey(Date.UTC(2026,9,15),16),"2026-09-16");
 assert.equal(collector.currentMonthKey(Date.UTC(2026,9,16),16),"2026-10-16");
 const parsedPilot=collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","0"]);
-assert.throws(()=>collector.parseArgs(["--seed-token",SEED]),/monthly-credits-used/);
+const noBaselinePilot=collector.parseArgs(["--seed-token",SEED]);
+assert.equal(noBaselinePilot.monthlyCreditsBaselineConfigured,false);
 assert.equal(parsedPilot.budgetPeriodStartDay,1);
 assert.equal(parsedPilot.monthlyCreditsBaselineConfigured,true);
 assert.equal(collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","0","--budget-period-start-day","16"]).budgetPeriodStartDay,16);
@@ -25,6 +26,22 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
  return {runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate,limit:10,maxObjects:10};
 }
 (async()=>{
+ const configDb=dbFixture();
+ try {
+  const firstArgs=collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","123","--monthly-budget-credits","1000","--budget-period-start-day","16"]);
+  collector.resolveBudgetSettings(configDb,firstArgs,true,Date.UTC(2026,9,20));
+  const configScope=collector.ensurePilotScope(configDb,SEED);
+  const configRun=collector.startCollectionRun(configDb,firstArgs,configScope);
+  collector.finishCollectionRun(configDb,configRun,"completed");
+  const resumedArgs=collector.parseArgs(["--seed-token",SEED]);
+  collector.resolveBudgetSettings(configDb,resumedArgs,true,Date.UTC(2026,9,21));
+  assert.equal(resumedArgs.monthlyCreditsUsedBaseline,123,"saved baseline is reused within the same billing period");
+  assert.equal(resumedArgs.budgetPeriodStartDay,16,"saved billing reset day is reused");
+  assert.equal(resumedArgs.monthlyBudgetCredits,1000,"saved monthly cap is reused");
+  assert.equal(resumedArgs.monthlyCreditsBaselineConfigured,true);
+  const nextPeriodArgs=collector.parseArgs(["--seed-token",SEED]);
+  assert.throws(()=>collector.resolveBudgetSettings(configDb,nextPeriodArgs,true,Date.UTC(2026,10,16)),/No Helius credit baseline/);
+ } finally {configDb.close();}
  const db=dbFixture();
  try {
   const scopeId=collector.ensurePilotScope(db,SEED);
