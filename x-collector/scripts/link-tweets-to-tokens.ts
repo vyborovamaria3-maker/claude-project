@@ -1,5 +1,5 @@
 import { closePool } from "../lib/trade/pg";
-import { linkTweetsToKnownTokens, resetTweetTokenLinkerState } from "../src/intelligence/tweet-token-linker";
+import { linkTweetsToKnownTokens, loadKnownTokenMints, resetTweetTokenLinkerState } from "../src/intelligence/tweet-token-linker";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -12,17 +12,19 @@ async function main() {
     const reset = await resetTweetTokenLinkerState();
     console.log("Reset linker state for " + reset + " tweet(s); existing links were preserved.");
   }
+  const knownMints = await loadKnownTokenMints();
+  if (knownMints.size === 0) {
+    console.log("No known token mints found in archive_tokens or Solana ip_entities; no tweets were marked processed.");
+    return;
+  }
   const processAll = args.includes("--all");
   let scanned = 0;
   let linksWritten = 0;
   let batches = 0;
   do {
-    const result = await linkTweetsToKnownTokens(batchSize);
+    const result = await linkTweetsToKnownTokens(batchSize, knownMints);
     console.log(JSON.stringify(result));
-    if (result.registryEmpty) {
-      console.log("No known token mints found in archive_tokens or Solana ip_entities; no tweets were marked processed.");
-      break;
-    }
+    if (result.registryEmpty) break;
     if (result.scanned === 0) break;
     scanned += result.scanned;
     linksWritten += result.linksWritten;
