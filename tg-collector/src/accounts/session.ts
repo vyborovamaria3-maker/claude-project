@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { TelegramClient } from "telegram";
+import { loadProxy } from "../runtime/proxy.js";
 import { StringSession } from "telegram/sessions/index.js";
 
 function credentials(): { apiId: number; apiHash: string } {
