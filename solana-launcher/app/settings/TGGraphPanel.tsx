@@ -2,32 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, GitBranch, RefreshCw, ExternalLink } from "lucide-react";
+import type { TgGraphEdge as Edge, TgGraphEvidence as Evidence, TgGraphResponse as GraphData } from "@/lib/tgCollectorTypes";
 
-type Node = { id: string; label: string; kind: string };
-type Edge = {
-  id: string; from: string; to: string; sourceId: string;
-  kind: "forward" | "mention" | "address"; targetKind: string; targetKey: string;
-  strength: number; sampleUrl: string; lastSeen: string | null;
-};
-type Metric = {
-  source_id: string; identifier: string; posts_7d: number; posts_30d: number;
-  avg_views_snapshot: number | null; mentioned_handles: number;
-  observed_addresses: number; forward_events: number;
-};
-type GraphData = {
-  nodes: Node[]; edges: Edge[]; metrics: Metric[];
-  sharedAddresses: { left_channel: string; right_channel: string; shared_addresses: number }[];
-  observedAddresses: {
-    target_kind: "solana_address" | "evm_address"; target_key: string;
-    observed_in_sources: number; occurrences: number;
-    first_observed_at: string | null; last_observed_at: string | null;
-  }[];
-  sampled: boolean; days: number;
-};
-type Evidence = { identifier: string; message_id: string; posted_at: string | null; text: string };
-type SourceOption = { id: string; identifier: string };
-
-const endpoint = "/api/integrations/tg-collector/graph";
+type SourceOption = { id: string; identifier: string };const endpoint = "/api/integrations/tg-collector/graph";
 const kindName: Record<Edge["kind"], string> = {
   forward: "Пересылка", mention: "Упоминание", address: "Адрес в тексте",
 };
@@ -170,7 +147,8 @@ export default function TGGraphPanel({ sources, authToken }: { sources: SourceOp
         <div className="flex flex-wrap gap-3 text-xs text-content-muted">
           <span>Узлов: {data.nodes.length}</span>
           <span>Типизированных рёбер: {data.edges.length}</span>
-          {data.sampled && <span className="text-amber-300">Показана выборка самых частых связей (до 160)</span>}
+          {data.sampled && <span className="text-amber-300">Показана ограниченная выборка: до {data.nodeLimit} узлов / {data.edgeLimit} рёбер</span>}
+          {data.truncated && <span className="text-amber-300">Граф обрезан сервером по установленным лимитам</span>}
           {graph.clipped && <span className="text-amber-300">Для читабельности отображается часть рёбер</span>}
         </div>
       )}
