@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
+import { guardTgCollector } from "@/lib/tgCollectorAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,16 +13,6 @@ type LinkRow = {
   target_kind: "handle" | "channel_id" | "solana_address" | "evm_address";
   target_key: string; strength: number; last_seen: string | null; sample_message_id: string;
 };
-
-function deny(request: NextRequest): NextResponse | null {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "Not found" }, { status: 404, headers: noStore });
-  }
-  if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(request.nextUrl.hostname.toLowerCase())) {
-    return NextResponse.json({ error: "Localhost only" }, { status: 403, headers: noStore });
-  }
-  return null;
-}
 
 function database(): Pool {
   const connectionString = process.env.TG_COLLECTOR_DATABASE_URL?.trim();
@@ -48,7 +39,7 @@ function errorResponse(error: unknown) {
 }
 
 export async function GET(request: NextRequest) {
-  const forbidden = deny(request);
+  const forbidden = guardTgCollector(request);
   if (forbidden) return forbidden;
   try {
     const params = request.nextUrl.searchParams;
