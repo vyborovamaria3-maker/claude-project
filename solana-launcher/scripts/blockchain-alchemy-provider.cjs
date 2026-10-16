@@ -91,6 +91,14 @@ function normalizeRawTransaction(entry) {
     rawTransaction:entry,
   };
 }
+function encodeCursor(token) {
+  return token ? "alchemy:" + Buffer.from(token,"utf8").toString("base64url") : null;
+}
+function decodeCursor(cursor) {
+  if (!cursor || !cursor.startsWith("alchemy:")) return null;
+  try { return Buffer.from(cursor.slice("alchemy:".length),"base64url").toString("utf8"); }
+  catch { throw new Error("Invalid Alchemy pagination cursor"); }
+}
 function createProvider(options = {}) {
   const env=options.env || process.env;
   const fetchImpl=options.fetch || globalThis.fetch;
@@ -107,7 +115,13 @@ function createProvider(options = {}) {
       if (account.baselineCu===null || account.billingResetDay===null) {
         throw new Error("Alchemy account "+account.id+" needs ALCHEMY_SOLANA_CU_USED_BASELINE_"+account.index+" and ALCHEMY_SOLANA_BILLING_RESET_DAY_"+account.index+" from Dashboard before collection");
       }
-      const reservationId=await hooks.beforeRequest?.({provider:"alchemy",accountId:account.id,address,method,estimatedCu:cost,monthlyBudgetCu:account.monthlyBudgetCu,baselineCu:account.baselineCu,billingResetDay:account.billingResetDay});
+      let reservationId;
+      try {
+        reservationId=await hooks.beforeRequest?.({provider:"alchemy",accountId:account.id,address,method,estimatedCu:cost,monthlyBudgetCu:account.monthlyBudgetCu,baselineCu:account.baselineCu,billingResetDay:account.billingResetDay});
+      } catch(error) {
+        if (error && error.code==="ALCHEMY_ACCOUNT_BUDGET_EXCEEDED") { lastError=error; continue; }
+        throw error;
+      }
       try {
         const response=await fetchImpl("https://solana-mainnet.g.alchemy.com/v2/"+encodeURIComponent(account.key),{
           method:"POST",headers:{"content-type":"application/json","accept":"application/json"},
@@ -140,6 +154,31 @@ function createProvider(options = {}) {
     }
     throw lastError || new Error("All Alchemy Solana accounts failed");
   }
-  return {accounts:accounts.map(({key,...safe})=>safe),pilotBudgetCu,fetchPage};
+  async function fetchHistoryWithMeta(address,maxTxs,stopAtSignatures=null,startCursor=undefined,includeTokenAccounts=false,hooks={}) {
+    if (!Number.isInteger(maxTxs)||maxTxs<1) throw new Error("maxTxs must be a positive integer");
+    let paginationToken=decodeCursor(startCursor)||undefined;
+    let transactions=[],exhausted=false,reachedKnownHistory=false;
+    const seen=new Set(),seenCursors=new Set();
+    while(transactions.length<maxTxs) {
+      const page=await fetchPage(address,paginationToken,Math.min(100,maxTxs-transactions.length),hooks);
+      if(!page.transactions.length) { exhausted=true; break; }
+      for(const tx of page.transactions) {
+        if(!tx || !tx.signature || seen.has(tx.signature)) continue;
+        seen.add(tx.signature);
+        if(stopAtSignatures && stopAtSignatures.has(tx.signature)) { transactions.push(tx); reachedKnownHistory=true; break; }
+        transactions.push(tx);
+        if(transactions.length>=maxTxs) break;
+      }
+      if(reachedKnownHistory) break;
+      if(!page.paginationToken) { exhausted=true; break; }
+      if(seenCursors.has(page.paginationToken)) throw new Error("Alchemy pagination stalled: token repeated");
+      seenCursors.add(page.paginationToken);
+      paginationToken=page.paginationToken;
+      if(transactions.length>=maxTxs) break;
+    }
+    return {transactions,exhausted,reachedKnownHistory,truncated:!exhausted&&!reachedKnownHistory&&transactions.length>=maxTxs,
+      budgetExhausted:false,nextCursor:!exhausted&&!reachedKnownHistory?encodeCursor(paginationToken):null,provider:"alchemy"};
+  }
+  return {accounts:accounts.map(({key,...safe})=>safe),pilotBudgetCu,fetchPage,fetchHistoryWithMeta,encodeCursor,decodeCursor};
 }
-module.exports={DEFAULT_MONTHLY_CU,DEFAULT_PILOT_CU,METHOD_COSTS,parseAccounts,getMethodCost,currentBillingMonthKey,normalizeRawTransaction,createProvider};
+module.exports={DEFAULT_MONTHLY_CU,DEFAULT_PILOT_CU,METHOD_COSTS,parseAccounts,getMethodCost,currentBillingMonthKey,normalizeRawTransaction,encodeCursor,decodeCursor,createProvider};
