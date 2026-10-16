@@ -33,6 +33,9 @@ test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
     assert.equal(first.rowCount,2);
     assert.equal(first.rows.filter(x=>x.kind==="forward").length,1);
     assert.equal(first.rows.filter(x=>x.kind==="mention").length,1);
+    const initialCounter = await pool.query<{message_count:number}>(
+      "SELECT message_count::int FROM tg_source_message_counters WHERE source_id=$1",[id]);
+    assert.equal(initialCounter.rows[0]?.message_count,1, "On-conflict upsert must not increase totals");
 
     const second = await pool.connect();
     try {
@@ -69,6 +72,9 @@ test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
     const beforeActivity = await pool.query<{posts_count:number}>(
       "SELECT posts_count FROM tg_source_daily_metrics WHERE source_id=$1 AND day=$2::date",[id,day]);
     assert.equal(beforeActivity.rows[0]?.posts_count,3);
+    const counterThree = await pool.query<{message_count:number}>(
+      "SELECT message_count::int FROM tg_source_message_counters WHERE source_id=$1",[id]);
+    assert.equal(counterThree.rows[0]?.message_count,3);
 
     const fourth = await pool.connect();
     try {
@@ -84,6 +90,9 @@ test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
     const afterActivity = await pool.query<{posts_count:number}>(
       "SELECT posts_count FROM tg_source_daily_metrics WHERE source_id=$1 AND day=$2::date",[id,day]);
     assert.equal(afterActivity.rows[0]?.posts_count,2);
+    const counterTwo = await pool.query<{message_count:number}>(
+      "SELECT message_count::int FROM tg_source_message_counters WHERE source_id=$1",[id]);
+    assert.equal(counterTwo.rows[0]?.message_count,2);
     const survivor = await pool.query("SELECT 1 FROM tg_message_links WHERE source_id=$1 AND message_id=9",[id]);
     assert.equal(survivor.rowCount,1);
 
@@ -96,6 +105,8 @@ test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
     assert.equal(residue.rowCount,0);
     const residualStats = await pool.query("SELECT 1 FROM tg_source_daily_metrics WHERE source_id=$1",[id]);
     assert.equal(residualStats.rowCount,0);
+    const noCounter = await pool.query("SELECT 1 FROM tg_source_message_counters WHERE source_id=$1",[id]);
+    assert.equal(noCounter.rowCount,0);
     await pool.end();
   }
 });
