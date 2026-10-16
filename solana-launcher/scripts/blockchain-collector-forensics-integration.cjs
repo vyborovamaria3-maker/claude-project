@@ -10,6 +10,14 @@ const db = new Database(":memory:");
 (async()=>{
  try {
   initDb(db);
+  // Provider-specific request logs feed one idempotent ledger without mixing CU and credits.
+  db.prepare("INSERT INTO chain_collection_runs(run_id,started_at,run_budget_credits,monthly_budget_credits,page_credit_estimate,max_objects) VALUES('run-ledger',1,1000,1000,100,1)").run();
+  db.prepare("INSERT INTO chain_helius_usage_requests(request_id,run_id,month_key,task_kind,task_address,endpoint,estimated_credits,status,created_at) VALUES('h-ledger','run-ledger','2026-10','wallet',?,'history',110,'reserved',2)").run(wallet);
+  assert.equal(db.prepare("SELECT provider,cost_kind,estimated_units FROM chain_budget_ledger WHERE request_id='h-ledger'").get().provider,"helius");
+  db.prepare("UPDATE chain_helius_usage_requests SET actual_credits=95,status='completed',http_status=200,finished_at=3 WHERE request_id='h-ledger'").run();
+  assert.equal(db.prepare("SELECT actual_units,status FROM chain_budget_ledger WHERE request_id='h-ledger'").get().actual_units,95);
+  db.prepare("INSERT INTO chain_alchemy_usage_requests(request_id,run_id,scope_id,account_id,month_key,task_kind,task_address,method,estimated_cu,status,created_at) VALUES('a-ledger','run-ledger',NULL,'alchemy-1','2026-10','wallet',?,'getTransactionsForAddress',100,'reserved',4)").run(wallet);
+  assert.deepEqual(db.prepare("SELECT provider,cost_kind,estimated_units FROM chain_budget_ledger WHERE request_id='a-ledger'").get(),{provider:"alchemy",cost_kind:"cu",estimated_units:100});
   db.prepare("INSERT INTO chain_seed_targets(kind,address,source_mask,priority) VALUES('wallet',?,4,90)").run(wallet);
   const txs=Array.from({length:31},(_,i)=>{
     const mint="1".repeat(31)+BASE58[i+1];
@@ -26,9 +34,9 @@ const db = new Database(":memory:");
     calls++;
     assert.equal(address,wallet);
     assert.equal(tokens,true,"wallet scan must include token accounts");
-    if(calls===1) return {transactions:txs,exhausted:true,truncated:false,reachedKnownHistory:false};
+    if(calls===1) return {provider:"helius",transactions:txs,exhausted:true,truncated:false,reachedKnownHistory:false};
     assert(known.size>0);
-    return {transactions:[],exhausted:false,truncated:false,reachedKnownHistory:true};
+    return {provider:"helius",transactions:[],exhausted:false,truncated:false,reachedKnownHistory:true};
   }};
   let row=db.prepare("SELECT * FROM chain_seed_targets WHERE kind='wallet' AND address=?").get(wallet);
   let result=await processOne(db,row,{recentLimit:200,backfillLimit:200},api);
@@ -38,6 +46,10 @@ const db = new Database(":memory:");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_file_sources WHERE category='discovered'").get().n,31,
     "no arbitrary 25-token discovery limit");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_processed_signatures").get().n,31);
+  assert.equal(db.prepare("SELECT DISTINCT decoder_version AS v FROM chain_forensic_processed_signatures").get().v,"5");
+  assert.equal(db.prepare("SELECT decoder_version AS v FROM chain_forensic_wallet_sync WHERE wallet=?").get(wallet).v,"5");
+  const coverage=db.prepare("SELECT coverage_status,source_provider,observed_transactions,oldest_slot,newest_slot FROM chain_history_coverage WHERE kind='wallet' AND address=?").get(wallet);
+  assert.deepEqual(coverage,{coverage_status:"provider_exhausted",source_provider:"helius",observed_transactions:31,oldest_slot:100,newest_slot:130});
   assert.equal(appendDiscovered(db,wallet,txs),0,"already stored discovered mints remain deduplicated");
   row=db.prepare("SELECT * FROM chain_seed_targets WHERE kind='wallet' AND address=?").get(wallet);
   result=await processOne(db,row,{recentLimit:200,backfillLimit:200},api);
@@ -73,7 +85,7 @@ const db = new Database(":memory:");
   assert.equal(typeof failedTarget.lease_token,"string");
   db.prepare("UPDATE chain_seed_targets SET lease_token='new-owner' WHERE kind='wallet' AND address=?").run(failedWallet);
   const cleanApi={fetchEnrichedTxsForMintWithMeta:async()=>({
-    transactions:[],exhausted:true,truncated:false,reachedKnownHistory:false
+    provider:"helius",transactions:[],exhausted:true,truncated:false,reachedKnownHistory:false
   })};
   await assert.rejects(processOne(db,failedTarget,{recentLimit:100,backfillLimit:100},cleanApi),/lease lost/);
   assert.equal(db.prepare("SELECT lease_token FROM chain_seed_targets WHERE address=?").get(failedWallet).lease_token,"new-owner");
