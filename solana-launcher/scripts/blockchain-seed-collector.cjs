@@ -263,7 +263,7 @@ function deferScopeMember(db,scopeId,parentKind,parentAddress,kind,address,prior
   const now=Date.now();
   const work=()=>{
     db.prepare(
-      "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at) VALUES(?,?,8,0) "+
+      "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at) VALUES(?,?,8,?,0) "+
       "ON CONFLICT(kind,address) DO UPDATE SET source_mask=(chain_seed_targets.source_mask | 8),priority=MAX(chain_seed_targets.priority,excluded.priority)"
     ).run(kind,address,priority);
     db.prepare(
