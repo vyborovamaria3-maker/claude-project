@@ -115,8 +115,7 @@ the complete migration chain and verify actual SQL writes, deduplication,
 rollback, and an injected failure during the event INSERT. This runs without an
 external database; it does not verify concurrency between server connections.
 The separate `test:db` check verifies that on PostgreSQL using two connections.
-The admin X Collector explorer automatically lists both graph tables after migration
-012, with Russian labels and explanations of scores and priorities.
+The admin X Collector explorer automatically lists both graph tables after `012_graph_monitoring.sql`, with Russian labels and explanations of scores and priorities.
 
 GitHub Actions `X Collector monitoring` provisions PostgreSQL 17, checks the build, applies the full migration chain twice, runs the two-connection integration test, and executes the one-cycle monitor on an empty database. It uses disposable test credentials and does not access production.
 
