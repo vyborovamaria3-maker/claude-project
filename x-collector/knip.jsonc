@@ -1,0 +1,22 @@
+{
+  "$schema": "https://unpkg.com/knip@6.41.0/schema.json",
+  // All operational scripts are potential CLI entrypoints, even when only
+  // launched manually on a laptop. Otherwise Knip reports false positives.
+  "entry": [
+    "scripts/**/*.{ts,cjs,js}",
+    "tests/**/*.test.ts",
+    "lib/collector/http.ts",
+    "src/xactions/runtime.ts"
+  ],
+  "project": [
+    "lib/**/*.ts",
+    "src/**/*.ts",
+    "scripts/**/*.{ts,cjs,js}",
+    "tests/**/*.test.ts"
+  ],
+  // Native CJS loaders, runtime createRequire, raw SQL and dynamic plugin
+  // wiring require manual review before deleting any reported file.
+  "ignore": [
+    "**/*.d.ts"
+  ]
+}
