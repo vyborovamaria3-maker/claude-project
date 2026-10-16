@@ -78,9 +78,9 @@ try{
   // according to the wallet-specific cap.
   collector.deferScopeMember(db,scope,"wallet",WALLET,"creator",CREATOR,750,"creator-from-wallet","wallet",WALLET);
   collector.deferScopeMember(db,scope,"wallet",WALLET,"creator",OTHER_CREATOR,740,"creator-from-wallet","wallet",WALLET);
-  assert.equal(collector.promoteDeferredWaves(db,scope,{walletWaveCreators:1}),1);
+  assert(collector.promoteDeferredWaves(db,scope,{walletWaveCreators:1})>=1,"wallet creator candidates should be promoted within each parent-specific cap");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_wave_members WHERE scope_id=? AND parent_kind='wallet' AND parent_address=? AND kind='creator'").get(scope,WALLET).n,1);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_deferred WHERE scope_id=? AND parent_kind='wallet' AND kind='creator'").get(scope).n,1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_deferred WHERE scope_id=? AND parent_kind='wallet' AND parent_address=? AND kind='creator'").get(scope,WALLET).n,1,"the same wallet must retain its second creator candidate for a later wave");
   const creatorNextRun=Date.now()+24*60*60*1000;
   db.prepare("UPDATE chain_seed_targets SET backfill_complete=1,last_success_at=?,next_run_at=? WHERE kind='creator' AND address=?")
     .run(Date.now(),creatorNextRun,CREATOR);
