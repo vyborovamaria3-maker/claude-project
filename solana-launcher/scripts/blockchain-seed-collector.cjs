@@ -802,6 +802,8 @@ function status(db, args = {}) {
     ?db.prepare("SELECT COUNT(*) AS count FROM chain_pumpfun_creator_launches").get().count:0;
   return {
     files,categories,targets,collectedEvents:db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count,
+    coverage:db.prepare("SELECT coverage_status AS status,kind,COUNT(*) AS count FROM chain_history_coverage GROUP BY coverage_status,kind ORDER BY coverage_status,kind").all(),
+    budgetLedger:db.prepare("SELECT provider,cost_kind,COUNT(*) AS requests,SUM(COALESCE(actual_units,estimated_units)) AS units FROM chain_budget_ledger GROUP BY provider,cost_kind ORDER BY provider,cost_kind").all(),
     forensic:verified,budget:usageStatus(db,args),alchemy:alchemyUsageStatus(db),scopes,deferred,pumpfunCreatorLaunches:launchCount,
     queue:db.prepare(
       "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS errors,"+
@@ -1036,6 +1038,10 @@ async function processOne(db, row, cfg, api) {
   let complete = Boolean(row.backfill_complete);
   let gap = Boolean(row.possible_gap);
   let rawHistorySeen = Boolean(row.raw_history_seen) || rawProviderUsed;
+  const providersUsed = new Set(recent.provider ? [recent.provider] : []);
+  if (row.cursor_version !== undefined && row.cursor_version !== CURSOR_VERSION) {
+    backfillCursor=null; forwardCursor=null; complete=false; gap=true;
+  }
   // If Helius is available again after an Alchemy raw-history pass, restart a
   // full Helius backfill from the recent anchor instead of treating raw history
   // as forensically complete. Subsequent runs continue from the Helius signature.
@@ -1066,6 +1072,7 @@ async function processOne(db, row, cfg, api) {
     }
     if (bridge) {
       rawProviderUsed = rawProviderUsed || bridge.provider === "alchemy";
+      if (bridge.provider) providersUsed.add(bridge.provider);
       events.push(...bridge.transactions);
       budgetPaused = Boolean(bridge.budgetExhausted);
       if (bridge.reachedKnownHistory || bridge.exhausted) {
@@ -1095,6 +1102,7 @@ async function processOne(db, row, cfg, api) {
     }
     if (historical) {
       rawProviderUsed = rawProviderUsed || historical.provider === "alchemy";
+      if (historical.provider) providersUsed.add(historical.provider);
       events.push(...historical.transactions);
       budgetPaused = Boolean(historical.budgetExhausted);
       if (historical.exhausted) complete = true;
@@ -1148,12 +1156,17 @@ async function processOne(db, row, cfg, api) {
     const update=db.prepare(
       "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,lease_token=NULL,"
       + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
-      + "backfill_complete=?,possible_gap=?,raw_history_seen=?,events_saved=events_saved+?"
+      + "backfill_complete=?,possible_gap=?,raw_history_seen=?,cursor_version=?,events_saved=events_saved+?"
       + " WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)"
     ).run(now,now+(budgetPaused?0:(complete&&!forwardCursor?cadence:60_000)),
-      backfillCursor,forwardCursor,complete?1:0,gap?1:0,rawHistorySeen?1:0,n,
+      backfillCursor,forwardCursor,complete?1:0,gap?1:0,rawHistorySeen?1:0,CURSOR_VERSION,n,
       row.kind,row.address,row.lease_token??null,now);
     if (update.changes!==1) throw new Error("Collector lease changed during commit");
+    const coverageStats=db.prepare("SELECT COUNT(*) AS n,MIN(slot) AS oldestSlot,MAX(slot) AS newestSlot FROM chain_seed_events WHERE kind=? AND address=?").get(row.kind,row.address);
+    const coverageStatus=budgetPaused || !complete || forwardCursor || gap ? "partial" : "provider_exhausted";
+    const gapReason=budgetPaused ? "budget_paused" : forwardCursor ? "forward_catchup_pending" : rawHistorySeen ? "alchemy_raw_history_not_fully_decoded" : (row.kind==="token" || row.kind==="creator") ? "address_history_is_not_a_complete_token_trade_tape" : !complete ? "historical_backfill_in_progress" : gap ? "possible_history_gap" : null;
+    const sourceProvider=providersUsed.size===0 ? "unknown" : providersUsed.size>1 ? "mixed" : [...providersUsed][0];
+    db.prepare("INSERT INTO chain_history_coverage(kind,address,coverage_status,source_provider,observed_transactions,oldest_slot,newest_slot,backfill_complete,possible_gap,forward_cursor_pending,gap_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(kind,address) DO UPDATE SET coverage_status=excluded.coverage_status,source_provider=excluded.source_provider,observed_transactions=excluded.observed_transactions,oldest_slot=excluded.oldest_slot,newest_slot=excluded.newest_slot,backfill_complete=excluded.backfill_complete,possible_gap=excluded.possible_gap,forward_cursor_pending=excluded.forward_cursor_pending,gap_reason=excluded.gap_reason,updated_at=excluded.updated_at").run(row.kind,row.address,coverageStatus,sourceProvider,coverageStats.n,coverageStats.oldestSlot,coverageStats.newestSlot,complete?1:0,gap?1:0,forwardCursor?1:0,gapReason,now);
     if (row.kind === "wallet") require("./blockchain-forensics.cjs").rebuildWallet(db,row.address);
     return n;
   })();
@@ -1342,5 +1355,5 @@ module.exports = {
   syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
   appendDiscoveredCreators,appendDiscoveredCreatorTokens,savePumpFunLaunches,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,status,
-  reserveAlchemyCu,recordAlchemyResponse,recordAlchemyError,
+  reserveAlchemyCu,recordAlchemyResponse,recordAlchemyError,CURSOR_VERSION,
 };
