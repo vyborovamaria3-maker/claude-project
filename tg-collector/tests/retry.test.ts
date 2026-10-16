@@ -29,3 +29,8 @@ test("FloodWait recognizes Telegram RPC code 420 with retry seconds", () => {
   assert.deepEqual(classifyTelegramError({code:420,seconds:45,message:"A wait is required"},1),
     {action:"delay",code:"TG_FLOOD_WAIT",seconds:60,global:true});
 });
+
+test("RPC 420 slowmode does not pause unrelated sources", () => {
+  assert.deepEqual(classifyTelegramError({code:420,seconds:12,message:"SLOWMODE_WAIT_12"},1),
+    {action:"delay",code:"TG_SLOWMODE_WAIT",seconds:27,global:false});
+});
