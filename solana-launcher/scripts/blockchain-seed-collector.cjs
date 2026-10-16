@@ -278,11 +278,13 @@ function requestHooksForTask(db, runId, row, args) {
 function usageStatus(db, args = {}) {
   const monthKey = currentMonthKey();
   const hasTable = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
-  if (!hasTable("chain_helius_usage_requests")) return {
-    monthKey, monthlyBudgetCredits:args.monthlyBudgetCredits ?? 10000000,
-    usedCredits:0, remainingCredits:args.monthlyBudgetCredits ?? 10000000,
-    requests:0, providerReportedRequests:0, note:"No Helius request ledger yet",
-  };
+  if (!hasTable("chain_helius_usage_requests")) {
+    const monthlyBudgetCredits=args.monthlyBudgetCredits??10000000;
+    const baselineCredits=args.monthlyCreditsUsedBaseline??0;
+    return {monthKey,monthlyBudgetCredits,baselineCredits,localTrackedCredits:0,
+      usedCredits:baselineCredits,remainingCredits:Math.max(0,monthlyBudgetCredits-baselineCredits),
+      requests:0,providerReportedRequests:0,note:"No Helius request ledger yet"};
+  }
   const usage = db.prepare(
     "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS used,"+
     "COUNT(*) AS requests,SUM(CASE WHEN actual_credits IS NOT NULL THEN 1 ELSE 0 END) AS reported "+
