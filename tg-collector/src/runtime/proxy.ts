@@ -116,11 +116,25 @@ export async function loadProxy(): Promise<TgProxyTransport | undefined> {
 }
 
 export async function saveProxy(input: TgProxyConfig, preserveSecrets = true): Promise<void> {
-  validate(input);
   const current = preserveSecrets ? await pool.query<{
     username_enc: string | null; password_enc: string | null; secret_enc: string | null;
   }>("SELECT username_enc,password_enc,secret_enc FROM tg_proxy_config WHERE id=1") : { rows: [] };
   const previous = current.rows[0];
+  const effective: TgProxyConfig = {
+    ...input,
+    username: input.username || undefined,
+    password: input.password || undefined,
+    secret: input.secret || undefined,
+  };
+  if (preserveSecrets && previous) {
+    if (!effective.username && input.proxyType !== "mtproxy") effective.username = decrypt(previous.username_enc);
+    if (!effective.password && input.proxyType !== "mtproxy") effective.password = decrypt(previous.password_enc);
+    if (!effective.secret && input.proxyType === "mtproxy") effective.secret = decrypt(previous.secret_enc);
+  }
+  validate(effective);
+  const usernameEnc = effective.proxyType === "mtproxy" ? null : encrypt(effective.username);
+  const passwordEnc = effective.proxyType === "mtproxy" ? null : encrypt(effective.password);
+  const secretEnc = effective.proxyType === "mtproxy" ? encrypt(effective.secret) : null;
   await pool.query(
     `INSERT INTO tg_proxy_config
       (id,proxy_type,host,port,username_enc,password_enc,secret_enc,enabled,updated_at)
@@ -129,10 +143,7 @@ export async function saveProxy(input: TgProxyConfig, preserveSecrets = true): P
         proxy_type=EXCLUDED.proxy_type,host=EXCLUDED.host,port=EXCLUDED.port,
         username_enc=EXCLUDED.username_enc,password_enc=EXCLUDED.password_enc,
         secret_enc=EXCLUDED.secret_enc,enabled=TRUE,updated_at=now()`,
-    [input.proxyType,input.host,input.port,
-      encrypt(input.username) ?? previous?.username_enc ?? null,
-      encrypt(input.password) ?? previous?.password_enc ?? null,
-      encrypt(input.secret) ?? previous?.secret_enc ?? null],
+    [effective.proxyType,effective.host,effective.port,usernameEnc,passwordEnc,secretEnc],
   );
 }
 
