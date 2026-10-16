@@ -71,7 +71,7 @@
     "ai:export": "node --import tsx scripts/ai/export.ts",
     "runtime:check": "node --import tsx --test tests/runtime.test.ts",
     "jobs:dlq": "tsx scripts/dlq.ts",
-    "audit:unused:files": "npm exec --yes --package=knip@6.41.0 -- knip --config knip.jsonc --include files --reporter json --no-progress"
+    "audit:unused:files": "npm exec --yes --package=knip@6.41.0 -- knip --config knip.jsonc --include files --reporter json --no-progress --treat-config-hints-as-errors"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
