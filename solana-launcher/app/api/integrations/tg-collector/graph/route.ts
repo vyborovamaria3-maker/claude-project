@@ -212,7 +212,7 @@ export async function GET(request: NextRequest) {
       sampled: edgeResult.rows.length >= edgeLimit,
       truncated: nodeTruncated || edgeResult.rows.length >= edgeLimit,
       nodeLimit, edgeLimit, edgeOffset,
-      nextEdgeOffset: edgeResult.rows.length >= edgeLimit ? edgeOffset + edgeLimit : null,
+      nextEdgeOffset: edgeResult.rows.length >= edgeLimit && edgeOffset + edgeLimit <= 20000 ? edgeOffset + edgeLimit : null,
       days,
     };
     return NextResponse.json(response, { headers: noStore });
