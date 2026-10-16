@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2, Pause, Play, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import TGGraphPanel from "./TGGraphPanel";
-import type { TgCollectedMessage, TgCollectorSnapshot as Snapshot, TgCollectorSource as Source } from "@/lib/tgCollectorTypes";
+import type { TgCollectorSnapshot as Snapshot, TgCollectorSource as Source } from "@/lib/tgCollectorTypes";
 
 const endpoint = "/api/integrations/tg-collector";
 
