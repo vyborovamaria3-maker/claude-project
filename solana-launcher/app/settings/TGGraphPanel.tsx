@@ -41,7 +41,7 @@ function prettyDate(value: string | null): string {
   return value ? new Date(value).toLocaleString("ru-RU") : "—";
 }
 
-export default function TGGraphPanel({ sources }: { sources: SourceOption[] }) {
+export default function TGGraphPanel({ sources, authToken }: { sources: SourceOption[]; authToken: string }) {
   const [days, setDays] = useState(90);
   const [source, setSource] = useState("");
   const [onlyKind, setOnlyKind] = useState<"all" | Edge["kind"]>("all");
@@ -57,7 +57,7 @@ export default function TGGraphPanel({ sources }: { sources: SourceOption[] }) {
     if (source) params.set("source", source);
     setBusy(true);
     try {
-      const response = await fetch(endpoint + "?" + params, { cache: "no-store", signal });
+      const response = await fetch(endpoint + "?" + params, { cache: "no-store", signal, headers: {Authorization: "Bearer " + authToken} });
       const body = await response.json() as GraphData & {error?: string};
       if (!response.ok) throw new Error(body.error || "Граф недоступен");
       if (!signal?.aborted) { setData(body); setError(null); }
@@ -66,7 +66,7 @@ export default function TGGraphPanel({ sources }: { sources: SourceOption[] }) {
     } finally {
       if (!signal?.aborted) setBusy(false);
     }
-  }, [source, days]);
+  }, [source, days, authToken]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -91,7 +91,7 @@ export default function TGGraphPanel({ sources }: { sources: SourceOption[] }) {
     });
     void (async () => {
       try {
-        const response = await fetch(endpoint + "?" + params, { cache: "no-store", signal: ctrl.signal });
+        const response = await fetch(endpoint + "?" + params, { cache: "no-store", signal: ctrl.signal, headers: {Authorization: "Bearer " + authToken} });
         const payload = await response.json() as {evidence?: Evidence[]; error?: string};
         if (!response.ok) throw Error(payload.error || "Основания недоступны");
         if (!ctrl.signal.aborted) setEvidence(payload.evidence || []);
@@ -100,7 +100,7 @@ export default function TGGraphPanel({ sources }: { sources: SourceOption[] }) {
       } finally { if (!ctrl.signal.aborted) setLoadingEvidence(false); }
     })();
     return () => ctrl.abort();
-  }, [selection, days]);
+  }, [selection, days, authToken]);
 
   const graph = useMemo(() => {
     const filtered = (data?.edges ?? []).filter(edge => onlyKind === "all" || onlyKind === edge.kind);
