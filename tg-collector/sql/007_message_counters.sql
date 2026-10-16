@@ -20,9 +20,20 @@ BEGIN
   RETURN NULL;
 END
 $counter$;
-DROP TRIGGER IF EXISTS tg_messages_count_trg ON tg_messages;
-CREATE TRIGGER tg_messages_count_trg
-AFTER INSERT OR DELETE ON tg_messages FOR EACH ROW EXECUTE FUNCTION tg_update_message_counter();
+-- Avoid taking a DROP/CREATE trigger lock during every worker startup.
+DO $install$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname='tg_messages_count_trg'
+      AND tgrelid='tg_messages'::regclass
+      AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER tg_messages_count_trg
+    AFTER INSERT OR DELETE ON tg_messages FOR EACH ROW EXECUTE FUNCTION tg_update_message_counter();
+  END IF;
+END
+$install$;
 
 -- One-time reconciliation on existing databases; do not rescan millions on every startup.
 ALTER TABLE tg_runtime ADD COLUMN IF NOT EXISTS counters_initialized BOOLEAN NOT NULL DEFAULT FALSE;
