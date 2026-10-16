@@ -83,6 +83,7 @@ export default function TGGraphPanel({ sources, authToken }: { sources: SourceOp
   useEffect(() => {
     if (!selection) { setEvidence([]); return; }
     const ctrl = new AbortController();
+    setEvidence([]);
     setLoadingEvidence(true);
     const params = new URLSearchParams({
       mode: "evidence", days: String(days),

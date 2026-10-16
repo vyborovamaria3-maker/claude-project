@@ -2,13 +2,13 @@ import "dotenv/config";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { pool, migrate } from "../src/db.js";
 import { persistMessage } from "../src/persistence/messages.js";
 import { refreshGraphDays } from "../src/analytics/rollups.js";
 
 test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
+  const { pool, migrate } = await import("../src/db.js");
   await migrate();
   const handle = "test_" + randomUUID().replaceAll("-", "").slice(0, 20);
   const source = await pool.query<{ id: string }>(

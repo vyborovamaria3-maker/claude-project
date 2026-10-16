@@ -3,11 +3,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { pool } from "../src/db.js";
 
 test("legacy duplicate jobs are archived and safely restarted before UNIQUE", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
+  const { pool } = await import("../src/db.js");
   const sql = await readFile(new URL("../sql/001_init.sql",import.meta.url),"utf8");
   const schema = "tg_migration_" + randomUUID().replaceAll("-", "").slice(0,16);
   const client = await pool.connect();
