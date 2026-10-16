@@ -17,8 +17,8 @@ CREATE INDEX IF NOT EXISTS tg_graph_daily_target_idx
   ON tg_graph_daily_edges(target_kind,target_key,day,source_id);
 CREATE INDEX IF NOT EXISTS tg_graph_daily_time_idx
   ON tg_graph_daily_edges(day DESC,source_id);
-DROP INDEX IF EXISTS tg_messages_analysis_pending_idx;
-CREATE INDEX IF NOT EXISTS tg_messages_analysis_pending_idx
+-- New versioned index avoids dropping/rebuilding the old index on every startup.
+CREATE INDEX IF NOT EXISTS tg_messages_analysis_pending_v2_idx
   ON tg_messages(source_id,message_id) WHERE analysis_version < 2;
 ALTER TABLE tg_graph_daily_edges ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ;
 
