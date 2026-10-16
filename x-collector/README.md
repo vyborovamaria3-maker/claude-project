@@ -58,7 +58,7 @@ See [DEVELOPMENT_REPORT_RU.md](DEVELOPMENT_REPORT_RU.md) for verified behavior a
 
 ## AI Reply Guy
 
-The integrated reply module is available at `/reply` in the dashboard or via `npm run reply:api`. See [REPLY_GUY_RU.md](REPLY_GUY_RU.md) for the plan mapping, official API credentials, Telegram, workers, deployment and verified limits. Migration 012 is additive and must be applied before enabling the module.
+The integrated reply module is available at `/reply` in the dashboard or via `npm run reply:api`. See [REPLY_GUY_RU.md](REPLY_GUY_RU.md) for the plan mapping, official API credentials, Telegram, workers, deployment and verified limits. Migration `012_reply_guy.sql` is additive and must be applied before enabling the module.
 
 Migration `013_reply_performance.sql` adds Reply Guy queue/tenant/budget/alert indexes. See DATABASE_PERFORMANCE_RU.md for measured fixture plans and deployment guidance.
 
