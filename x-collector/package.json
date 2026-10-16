@@ -40,6 +40,7 @@
     "kol:test": "node --import tsx --test tests/authors.test.ts",
     "kol:report": "tsx scripts/kol-report.ts",
     "entities:worker": "tsx scripts/entity-worker.ts",
+    "link:tweet-tokens": "tsx scripts/link-tweets-to-tokens.ts",
     "enqueue-search": "tsx scripts/enqueue-search.ts",
     "xactions:members": "tsx scripts/xactions-enqueue-members.ts",
     "xactions:verify": "tsx scripts/xactions-verify.ts",
