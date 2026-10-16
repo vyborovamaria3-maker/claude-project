@@ -91,5 +91,19 @@ assert.equal(normalized.nativeTransfers.length,0,"lamport deltas are not proof o
   assert.equal(partial.budgetExhausted,true);
   assert.equal(alchemy.decodeCursor(partial.nextCursor),"next-page","partial data retains the next-page cursor");
 
-  console.log("[blockchain-alchemy-provider-regression] OK: key registry, per-account baseline validation, CU method costs, UTC billing windows, raw balance deltas, mock history, signature-anchor resume and partial-budget checkpoint");
+  let rotatedCalls=0;
+  const rotated=alchemy.createProvider({env:{
+    ALCHEMY_SOLANA_API_KEY_1:"rate-limited",ALCHEMY_SOLANA_API_KEY_2:"healthy",
+    ALCHEMY_SOLANA_CU_USED_BASELINE_1:"0",ALCHEMY_SOLANA_CU_USED_BASELINE_2:"0",
+    ALCHEMY_SOLANA_BILLING_RESET_DAY_1:"1",ALCHEMY_SOLANA_BILLING_RESET_DAY_2:"1"
+  },fetch:async(url)=>{rotatedCalls++;if(String(url).endsWith("/rate-limited"))return {ok:false,status:429,headers:{get:()=>null},json:async()=>({error:{message:"rate limit"}})};
+    return {ok:true,status:200,headers:{get:()=>null},json:async()=>({result:{transactions:[rawSig("healthy-result",22)],paginationToken:null}})};}});
+  const rotatedPage=await rotated.fetchPage("address-A",null,100,{
+    beforeRequest:async()=> "r",afterResponse:async()=>{},onError:async()=>{}
+  });
+  assert.equal(rotatedPage.accountId,"alchemy-2","a rate-limited account must fail over to the next configured key");
+  assert.equal(rotatedCalls,2);
+  assert(rotated.health()[0].cooldownUntil>Date.now(),"rate-limited account enters cooldown");
+
+  console.log("[blockchain-alchemy-provider-regression] OK: key registry, per-account baseline validation, CU method costs, UTC billing windows, raw balance deltas, mock history, signature-anchor resume, partial-budget checkpoint and rate-limit failover");
 })().catch(error=>{console.error(error);process.exitCode=1;});
