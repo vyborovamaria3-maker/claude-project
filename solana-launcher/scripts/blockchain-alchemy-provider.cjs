@@ -162,28 +162,53 @@ function createProvider(options = {}) {
   }
   async function fetchHistoryWithMeta(address,maxTxs,stopAtSignatures=null,startCursor=undefined,includeTokenAccounts=false,hooks={}) {
     if (!Number.isInteger(maxTxs)||maxTxs<1) throw new Error("maxTxs must be a positive integer");
-    let paginationToken=decodeCursor(startCursor)||undefined;
+    const alchemyCursor=decodeCursor(startCursor);
+    const anchorSignature=startCursor && !alchemyCursor && !String(startCursor).startsWith("alchemy:") ? startCursor : null;
+    let anchorReached=!anchorSignature;
+    let paginationToken=alchemyCursor||undefined;
     let transactions=[],exhausted=false,reachedKnownHistory=false;
     const seen=new Set(),seenCursors=new Set();
     while(transactions.length<maxTxs) {
       const page=await fetchPage(address,paginationToken,Math.min(100,maxTxs-transactions.length),hooks);
-      if(!page.transactions.length) { exhausted=true; break; }
-      for(const tx of page.transactions) {
-        if(!tx || !tx.signature || seen.has(tx.signature)) continue;
-        seen.add(tx.signature);
-        if(stopAtSignatures && stopAtSignatures.has(tx.signature)) { transactions.push(tx); reachedKnownHistory=true; break; }
-        transactions.push(tx);
-        if(transactions.length>=maxTxs) break;
-      }
-      if(reachedKnownHistory) {
-        paginationToken=page.paginationToken||undefined;
-        exhausted=!paginationToken;
+      if(!page.transactions.length) {
+        if(page.paginationToken && !seenCursors.has(page.paginationToken)) {
+          seenCursors.add(page.paginationToken);paginationToken=page.paginationToken;continue;
+        }
+        exhausted=true;
+        if(!anchorReached) {
+          const error=new Error("Alchemy could not locate saved signature cursor in address history; coverage remains partial");
+          error.code="ALCHEMY_CURSOR_ANCHOR_NOT_FOUND";
+          throw error;
+        }
         break;
       }
-      if(!page.paginationToken) { exhausted=true; break; }
-      if(seenCursors.has(page.paginationToken)) throw new Error("Alchemy pagination stalled: token repeated");
-      seenCursors.add(page.paginationToken);
-      paginationToken=page.paginationToken;
+      let rows=page.transactions;
+      if(!anchorReached) {
+        const anchorIndex=rows.findIndex(tx=>tx && tx.signature===anchorSignature);
+        if(anchorIndex<0) {
+          if(!page.paginationToken) {
+            const error=new Error("Alchemy could not locate saved signature cursor in address history; coverage remains partial");
+            error.code="ALCHEMY_CURSOR_ANCHOR_NOT_FOUND";
+            throw error;
+          }
+          if(seenCursors.has(page.paginationToken)) throw new Error("Alchemy pagination stalled before saved signature cursor");
+          seenCursors.add(page.paginationToken);paginationToken=page.paginationToken;continue;
+        }
+        anchorReached=true;
+        rows=rows.slice(anchorIndex+1);
+      }
+      for(const tx of rows) {
+        if(!tx || !tx.signature || seen.has(tx.signature)) continue;
+        seen.add(tx.signature);
+        transactions.push(tx);
+        if(stopAtSignatures && stopAtSignatures.has(tx.signature)) { reachedKnownHistory=true; break; }
+        if(transactions.length>=maxTxs) break;
+      }
+      paginationToken=page.paginationToken||undefined;
+      if(reachedKnownHistory) { exhausted=!paginationToken; break; }
+      if(!paginationToken) { exhausted=true; break; }
+      if(seenCursors.has(paginationToken)) throw new Error("Alchemy pagination stalled: token repeated");
+      seenCursors.add(paginationToken);
       if(transactions.length>=maxTxs) break;
     }
     return {transactions,exhausted,reachedKnownHistory,truncated:!exhausted&&!reachedKnownHistory&&transactions.length>=maxTxs,
