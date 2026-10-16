@@ -15,6 +15,8 @@ require("dotenv").config({ path: path.join(process.cwd(), ".env"), quiet: true }
 const { PRIORITIES, SOURCE_BITS, parseWorkbook, scanFolder, isSolanaAddress } = require("./blockchain-seed-core.cjs");
 const SOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+// Bump only when provider pagination semantics change.
+const CURSOR_VERSION = 1;
 let stopRequested = false;
 process.once("SIGINT", () => { stopRequested = true; });
 process.once("SIGTERM", () => { stopRequested = true; });
@@ -126,7 +128,7 @@ function initDb(db) {
     "  priority INTEGER NOT NULL DEFAULT 0, next_run_at INTEGER NOT NULL DEFAULT 0,",
     "  last_success_at INTEGER, lease_until INTEGER, attempts INTEGER NOT NULL DEFAULT 0,",
     "  last_error TEXT, backfill_cursor TEXT, forward_cursor TEXT, backfill_complete INTEGER NOT NULL DEFAULT 0,",
-    "  possible_gap INTEGER NOT NULL DEFAULT 0, events_saved INTEGER NOT NULL DEFAULT 0, lease_token TEXT,",
+    "  possible_gap INTEGER NOT NULL DEFAULT 0, events_saved INTEGER NOT NULL DEFAULT 0, lease_token TEXT, cursor_version INTEGER NOT NULL DEFAULT 1,",
     "  PRIMARY KEY (kind,address))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_targets_queue",
     "  ON chain_seed_targets(next_run_at,priority,lease_until)",
@@ -186,9 +188,42 @@ function initDb(db) {
     ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_month ON chain_alchemy_usage_requests(account_id,month_key,created_at)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_scope ON chain_alchemy_usage_requests(scope_id,created_at)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_run ON chain_alchemy_usage_requests(run_id,created_at)",
+    ";CREATE TABLE IF NOT EXISTS chain_budget_ledger (",
+    " ledger_id INTEGER PRIMARY KEY, provider TEXT NOT NULL, request_id TEXT NOT NULL, run_id TEXT NOT NULL, scope_id TEXT, account_id TEXT,",
+    " task_kind TEXT NOT NULL, task_address TEXT NOT NULL, endpoint TEXT NOT NULL, cost_kind TEXT NOT NULL CHECK(cost_kind IN ('credit','cu')),",
+    " estimated_units INTEGER NOT NULL, actual_units INTEGER, status TEXT NOT NULL, http_status INTEGER, error TEXT, created_at INTEGER NOT NULL, finished_at INTEGER,",
+    " UNIQUE(provider,request_id))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_budget_ledger_time ON chain_budget_ledger(created_at,provider,cost_kind)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_budget_ledger_run ON chain_budget_ledger(run_id,created_at)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_budget_ledger_scope ON chain_budget_ledger(scope_id,created_at)",
+    ";CREATE TABLE IF NOT EXISTS chain_history_coverage (",
+    " kind TEXT NOT NULL, address TEXT NOT NULL, coverage_status TEXT NOT NULL, source_provider TEXT NOT NULL,",
+    " observed_transactions INTEGER NOT NULL DEFAULT 0, oldest_slot INTEGER, newest_slot INTEGER, backfill_complete INTEGER NOT NULL DEFAULT 0,",
+    " possible_gap INTEGER NOT NULL DEFAULT 1, forward_cursor_pending INTEGER NOT NULL DEFAULT 0, gap_reason TEXT, updated_at INTEGER NOT NULL,",
+    " PRIMARY KEY(kind,address))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_history_coverage_status ON chain_history_coverage(coverage_status,kind,updated_at)",
+    ";CREATE TRIGGER IF NOT EXISTS chain_budget_helius_insert AFTER INSERT ON chain_helius_usage_requests BEGIN",
+    " INSERT INTO chain_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
+    " VALUES('helius',NEW.request_id,NEW.run_id,(SELECT scope_id FROM chain_collection_runs WHERE run_id=NEW.run_id),NEW.task_kind,NEW.task_address,NEW.endpoint,'credit',NEW.estimated_credits,NEW.actual_credits,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
+    " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
+    ";CREATE TRIGGER IF NOT EXISTS chain_budget_helius_update AFTER UPDATE ON chain_helius_usage_requests BEGIN",
+    " INSERT INTO chain_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
+    " VALUES('helius',NEW.request_id,NEW.run_id,(SELECT scope_id FROM chain_collection_runs WHERE run_id=NEW.run_id),NEW.task_kind,NEW.task_address,NEW.endpoint,'credit',NEW.estimated_credits,NEW.actual_credits,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
+    " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
+    ";CREATE TRIGGER IF NOT EXISTS chain_budget_alchemy_insert AFTER INSERT ON chain_alchemy_usage_requests BEGIN",
+    " INSERT INTO chain_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
+    " VALUES('alchemy',NEW.request_id,NEW.run_id,NEW.scope_id,NEW.account_id,NEW.task_kind,NEW.task_address,NEW.method,'cu',NEW.estimated_cu,NEW.actual_cu,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
+    " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
+    ";CREATE TRIGGER IF NOT EXISTS chain_budget_alchemy_update AFTER UPDATE ON chain_alchemy_usage_requests BEGIN",
+    " INSERT INTO chain_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
+    " VALUES('alchemy',NEW.request_id,NEW.run_id,NEW.scope_id,NEW.account_id,NEW.task_kind,NEW.task_address,NEW.method,'cu',NEW.estimated_cu,NEW.actual_cu,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
+    " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
   ].join("\n"));
   if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
+  }
+  if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "cursor_version")) {
+    db.exec("ALTER TABLE chain_seed_targets ADD COLUMN cursor_version INTEGER NOT NULL DEFAULT 1");
   }
   if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "raw_history_seen")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN raw_history_seen INTEGER NOT NULL DEFAULT 0");
@@ -217,6 +252,8 @@ function initDb(db) {
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN budget_period_start_day_confirmed INTEGER NOT NULL DEFAULT 0");
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "max_runtime_ms"))
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN max_runtime_ms INTEGER NOT NULL DEFAULT 21600000");
+  db.exec("INSERT OR IGNORE INTO chain_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'helius',u.request_id,u.run_id,r.scope_id,u.task_kind,u.task_address,u.endpoint,'credit',u.estimated_credits,u.actual_credits,u.status,u.http_status,u.error,u.created_at,u.finished_at FROM chain_helius_usage_requests u LEFT JOIN chain_collection_runs r ON r.run_id=u.run_id");
+  db.exec("INSERT OR IGNORE INTO chain_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'alchemy',request_id,run_id,scope_id,account_id,task_kind,task_address,method,'cu',estimated_cu,actual_cu,status,http_status,error,created_at,finished_at FROM chain_alchemy_usage_requests");
   // Preserve active-wave accounting when resuming an older pilot scope created
   // before deferred candidates were introduced.
   db.exec(
@@ -498,7 +535,7 @@ function reserveAlchemyCu(db,input) {
       "VALUES(?,?,?,?,?,?,?,?,?,'reserved',?)"
     ).run(requestId,input.runId,run.scope_id||null,input.accountId,monthKey,input.taskKind,input.taskAddress,input.method,estimatedCu,now);
     return requestId;
-  })();
+  }).immediate();
 }
 function recordAlchemyResponse(db,requestId,response) {
   if(!requestId)return;
