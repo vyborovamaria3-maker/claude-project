@@ -1,16 +1,14 @@
-name: X Collector unused-code inventory
+name: X Collector unused-code audit
 on:
   pull_request:
     paths:
-      - 'x-collector/knip.jsonc'
-      - 'x-collector/package.json'
-      - 'x-collector/docs/CODE_INVENTORY_RU.md'
+      - 'x-collector/**'
       - '.github/workflows/x-collector-unused-audit.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  knip-inventory:
+  knip-files:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -24,23 +22,58 @@ jobs:
           cache: npm
           cache-dependency-path: x-collector/package-lock.json
       - run: npm ci --ignore-scripts
-      - name: Knip advisory report
+      - name: Fail on unused files
         shell: bash
         run: |
           set +e
-          npm run audit:unused > "$RUNNER_TEMP/knip-output.log" 2> "$RUNNER_TEMP/knip-error.log"
+          npm run audit:unused:files > "$RUNNER_TEMP/knip-output.log" 2> "$RUNNER_TEMP/knip-error.log"
           STATUS=$?
           set -e
-          echo "Knip exit status: $STATUS (1 means findings)"
-          node - "$RUNNER_TEMP/knip-output.log" <<'NODE'
-          const fs=require('node:fs');
-          const output=fs.readFileSync(process.argv[2],'utf8');
-          const start=output.indexOf('{"issues"');
-          if(start<0){console.error(output.slice(0,3000));process.exit(1);}
-          const report=JSON.parse(output.slice(start));
-          const issues=report.issues??[];
-          const files=[...new Set(issues.flatMap(issue=>(issue.files??[]).map(v=>v.name??v)))];
-          const intelligence=files.filter(file=>file.startsWith('lib/intelligence/'));
-          console.log(JSON.stringify({issueRows:issues.length,potentiallyUnusedFiles:files.length,potentiallyUnusedIntelligenceFiles:intelligence.length,unusedFiles:files,intelligenceCandidates:intelligence},null,2));
+
+          if [ "$STATUS" -gt 1 ]; then
+            cat "$RUNNER_TEMP/knip-error.log"
+            exit "$STATUS"
+          fi
+
+          node - "$RUNNER_TEMP/knip-output.log" "$STATUS" <<'NODE'
+          const fs = require('node:fs');
+
+          const outputPath = process.argv[2];
+          const status = Number(process.argv[3]);
+          const output = fs.readFileSync(outputPath, 'utf8').trim();
+          const start = output.indexOf('{"issues"');
+          if (start < 0) {
+            console.error(output.slice(0, 5000));
+            process.exit(1);
+          }
+
+          let report;
+          try {
+            report = JSON.parse(output.slice(start));
+          } catch (error) {
+            console.error('Cannot parse Knip JSON:', error);
+            console.error(output.slice(0, 5000));
+            process.exit(1);
+          }
+
+          const issues = report.issues ?? [];
+          const files = [...new Set(
+            issues.flatMap(issue => (issue.files ?? []).map(value => value.name ?? value))
+          )].sort();
+
+          console.log(JSON.stringify({
+            knipExitStatus: status,
+            potentiallyUnusedFiles: files.length,
+            unusedFiles: files,
+          }, null, 2));
+
+          if (files.length > 0) {
+            console.error('Unused files detected; remove them or add a real entrypoint before merging.');
+            process.exit(1);
+          }
+
+          if (status !== 0) {
+            console.error(`Knip exited with status ${status} without reporting unused files.`);
+            process.exit(1);
+          }
           NODE
-          if [ "$STATUS" -gt 1 ]; then cat "$RUNNER_TEMP/knip-error.log"; exit "$STATUS"; fi
