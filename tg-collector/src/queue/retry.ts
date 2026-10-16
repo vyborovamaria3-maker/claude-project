@@ -18,6 +18,11 @@ export function classifyTelegramError(error: unknown, attempts: number): RetryDe
   if (/AUTH_KEY_UNREGISTERED|AUTH_KEY_DUPLICATED|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED|USER_DEACTIVATED_BAN/.test(text)) {
     return { action: "halt", code: "TG_SESSION_INVALID", scope: "session" };
   }
+  const slowmode = text.match(/SLOWMODE_WAIT_?([0-9]+)/);
+  if (slowmode) return {
+    action: "delay", code: "TG_SLOWMODE_WAIT",
+    seconds: Math.min(Number(slowmode[1])+15, 30*86400), global: false,
+  };
   if (/FLOOD_WAIT/i.test(text) || (Number(typed?.code) === 420 && typeof typed?.seconds === "number")) {
     const seconds = telegramWaitSeconds(error);
     if (seconds && seconds > 0) {
@@ -25,11 +30,6 @@ export function classifyTelegramError(error: unknown, attempts: number): RetryDe
     }
     return { action: "halt", code: "TG_RATE_LIMIT_UNKNOWN", scope: "account" };
   }
-  const slowmode = text.match(/SLOWMODE_WAIT_?(\d+)/);
-  if (slowmode) return {
-    action: "delay", code: "TG_SLOWMODE_WAIT",
-    seconds: Math.min(Number(slowmode[1])+15, 30*86400), global: false,
-  };
   if (/CHANNEL_PRIVATE|USERNAME_INVALID|USERNAME_NOT_OCCUPIED|CHAT_ADMIN_REQUIRED|USER_NOT_PARTICIPANT|TG_SOURCE_UNSUPPORTED/.test(text)) {
     return { action: "failed", code: "TG_SOURCE_INACCESSIBLE" };
   }
