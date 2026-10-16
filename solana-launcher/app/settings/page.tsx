@@ -64,7 +64,7 @@ export default function SettingsPage() {
 
       <section className="surface-panel-hero p-3 sm:p-4">
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {TABS.filter((item) => process.env.NODE_ENV !== "production" || item.id !== "tgcollector").map((tabItem) => {
+          {TABS.map((tabItem) => {
             const active = tab === tabItem.id;
             return (
               <button
