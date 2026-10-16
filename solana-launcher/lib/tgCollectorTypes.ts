@@ -94,10 +94,24 @@ export type TgCollectedMessage = {
   replies: number | null;
 };
 
+export type TgProxyStatus = {
+  enabled: boolean;
+  configured: boolean;
+  proxyType: "socks5" | "socks4" | "mtproxy" | null;
+  host: string | null;
+  port: number | null;
+  usernameConfigured: boolean;
+  passwordConfigured: boolean;
+  secretConfigured: boolean;
+  updatedAt: string | null;
+};
+
 export type TgCollectorSnapshot = {
   configured: boolean;
   workerOnline: boolean;
   heartbeatAt: string | null;
+  collectionEnabled: boolean;
+  proxy: TgProxyStatus;
   blockReason: string | null;
   pausedUntil: string | null;
   stats: { sources: number; messages: number; running: number; failed: number };
