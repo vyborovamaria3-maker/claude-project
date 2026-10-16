@@ -3,47 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2, Pause, Play, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import TGGraphPanel from "./TGGraphPanel";
-
-type Source = {
-  id: string;
-  identifier: string;
-  title: string | null;
-  peer_id: string | null;
-  enabled: boolean;
-  history_partial: boolean;
-  last_message_id: string;
-  last_success_at: string | null;
-  message_count: number;
-  state: "pending" | "running" | "delayed" | "failed" | null;
-  run_at: string | null;
-  attempts: number | null;
-  scanned_count: number | null;
-  last_error: string | null;
-};
-
-type CollectedMessage = {
-  source_id: string;
-  identifier: string;
-  message_id: string;
-  sender_id: string | null;
-  posted_at: string | null;
-  text: string;
-  views: number | null;
-  forwards: number | null;
-  replies: number | null;
-};
-
-type Snapshot = {
-  configured: boolean;
-  workerOnline: boolean;
-  heartbeatAt: string | null;
-  blockReason: string | null;
-  pausedUntil: string | null;
-  stats: { sources: number; messages: number; running: number; failed: number };
-  sources: Source[];
-  messages: CollectedMessage[];
-  page: number;
-};
+import type { TgCollectedMessage, TgCollectorSnapshot as Snapshot, TgCollectorSource as Source } from "@/lib/tgCollectorTypes";
 
 const endpoint = "/api/integrations/tg-collector";
 
