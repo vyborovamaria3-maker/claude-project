@@ -1267,7 +1267,8 @@ async function main() {
   });
   const db = require("../lib/trade/db").getDb();
   initDb(db);
-  resolveBudgetSettings(db,args,["collect","pilot","watch","all"].includes(args.mode));
+  const heliusConfigured=require("../lib/trade/helius-rotation").getHeliusApiKeys().length>0;
+  resolveBudgetSettings(db,args,heliusConfigured && ["collect","pilot","watch","all"].includes(args.mode));
   const scopeId = args.seedToken ? ensurePilotScope(db,args.seedToken,args.pilotBudgetCredits,args.pilotBudgetConfigured,args.alchemyPilotCuBudget,args.alchemyPilotCuBudgetConfigured) : null;
   if (!scopeId) syncDexProgramSources(db);
   if (args.mode === "watch") {
