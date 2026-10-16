@@ -183,10 +183,17 @@ function createProvider(options = {}) {
     const anchorSignature=startCursor && !alchemyCursor && !String(startCursor).startsWith("alchemy:") ? startCursor : null;
     let anchorReached=!anchorSignature;
     let paginationToken=alchemyCursor||undefined;
-    let transactions=[],exhausted=false,reachedKnownHistory=false;
+    let transactions=[],exhausted=false,reachedKnownHistory=false,budgetExhausted=false;
     const seen=new Set(),seenCursors=new Set();
     while(transactions.length<maxTxs) {
-      const page=await fetchPage(address,paginationToken,Math.min(100,maxTxs-transactions.length),hooks);
+      let page;
+      try {
+        page=await fetchPage(address,paginationToken,Math.min(100,maxTxs-transactions.length),hooks);
+      } catch(error) {
+        if(!error || !["ALCHEMY_PILOT_CU_BUDGET_EXCEEDED","ALCHEMY_RUN_CU_BUDGET_EXCEEDED","ALCHEMY_ALL_ACCOUNTS_BUDGET_EXCEEDED"].includes(error.code) || !transactions.length) throw error;
+        budgetExhausted=true;
+        break;
+      }
       if(!page.transactions.length) {
         if(page.paginationToken && !seenCursors.has(page.paginationToken)) {
           seenCursors.add(page.paginationToken);paginationToken=page.paginationToken;continue;
@@ -229,7 +236,7 @@ function createProvider(options = {}) {
       if(transactions.length>=maxTxs) break;
     }
     return {transactions,exhausted,reachedKnownHistory,truncated:!exhausted&&!reachedKnownHistory&&transactions.length>=maxTxs,
-      budgetExhausted:false,nextCursor:!exhausted?encodeCursor(paginationToken):null,provider:"alchemy"};
+      budgetExhausted,nextCursor:!exhausted?encodeCursor(paginationToken):null,provider:"alchemy"};
   }
   return {accounts:accounts.map(({key,...safe})=>safe),pilotBudgetCu,fetchPage,fetchHistoryWithMeta,encodeCursor,decodeCursor,
     health:()=>accounts.map(({key,...account})=>({...account,cooldownUntil:cooldownUntil.get(account.id)||0,
