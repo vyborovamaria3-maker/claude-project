@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Pool } from "pg";
+import { guardTgCollector } from "@/lib/tgCollectorAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,20 +21,6 @@ function pool(): Pool {
     });
   }
   return poolGlobal.__tgCollectorPool;
-}
-
-// TG Collector manages a local Telegram session and is intentionally not internet-exposed.
-function guard(request: NextRequest, mutation = false): NextResponse | null {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "TG Collector local API is disabled in production" }, { status: 404, headers: noStore });
-  }
-  if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(request.nextUrl.hostname.toLowerCase())) {
-    return NextResponse.json({ error: "TG Collector is available only via localhost" }, { status: 403, headers: noStore });
-  }
-  if (mutation && request.headers.get("origin") !== request.nextUrl.origin) {
-    return NextResponse.json({ error: "Same-origin request required" }, { status: 403, headers: noStore });
-  }
-  return null;
 }
 
 function errorResponse(error: unknown) {
@@ -86,7 +73,7 @@ async function readBody(request: NextRequest): Promise<Record<string, unknown>> 
 }
 
 export async function GET(request: NextRequest) {
-  const forbidden = guard(request);
+  const forbidden = guardTgCollector(request);
   if (forbidden) return forbidden;
   try {
     const p = pool();
@@ -137,7 +124,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const forbidden = guard(request, true);
+  const forbidden = guardTgCollector(request, true);
   if (forbidden) return forbidden;
   try {
     const input = await readBody(request);
