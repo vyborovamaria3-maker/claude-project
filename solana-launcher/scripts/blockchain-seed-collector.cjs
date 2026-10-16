@@ -37,6 +37,8 @@ function parseArgs(argv) {
   }
   const defaultFolder = path.join(process.cwd(), "data", "seed-folders");
   const monthlyBaselineRaw = flags["monthly-credits-used"] ?? (process.env.HELIUS_MONTHLY_CREDITS_USED_BASELINE?.trim() || undefined);
+  const monthlyBudgetRaw = flags["monthly-budget-credits"] ?? (process.env.HELIUS_MONTHLY_BUDGET_CREDITS?.trim() || undefined);
+  const periodStartDayRaw = flags["budget-period-start-day"] ?? (process.env.HELIUS_BUDGET_PERIOD_START_DAY?.trim() || undefined);
   const parsed = {
     mode: flags.mode || (flags["seed-token"] ? "pilot" : "import"),
     folders: {
@@ -50,10 +52,12 @@ function parseArgs(argv) {
     concurrency: intFlag(flags.concurrency, 2, 1, 4),
     recentLimit: intFlag(flags["recent-limit"], 200, 1, 1000),
     backfillLimit: intFlag(flags["backfill-limit"], 200, 1, 1000),
-    monthlyBudgetCredits: intFlag(flags["monthly-budget-credits"] ?? process.env.HELIUS_MONTHLY_BUDGET_CREDITS, 10000000, 1, 100000000000),
+    monthlyBudgetCredits: intFlag(monthlyBudgetRaw, 10000000, 1, 100000000000),
+    monthlyBudgetConfigured: monthlyBudgetRaw !== undefined,
     monthlyCreditsUsedBaseline: intFlag(monthlyBaselineRaw, 0, 0, 100000000000),
     monthlyCreditsBaselineConfigured: monthlyBaselineRaw !== undefined,
-    budgetPeriodStartDay: intFlag(flags["budget-period-start-day"] ?? process.env.HELIUS_BUDGET_PERIOD_START_DAY, 1, 1, 31),
+    budgetPeriodStartDay: intFlag(periodStartDayRaw, 1, 1, 31),
+    budgetPeriodStartDayConfigured: periodStartDayRaw !== undefined,
     runBudgetCredits: intFlag(flags["run-budget-credits"] ?? process.env.HELIUS_RUN_BUDGET_CREDITS, 250000, 1, 100000000000),
     pageCreditEstimate: intFlag(flags["page-credit-estimate"] ?? process.env.HELIUS_ADDRESS_TX_ESTIMATED_CREDITS_PER_REQUEST, 110, 1, 1000000),
     maxFiles: intFlag(flags["max-files"], 5000, 1, 100000),
@@ -65,9 +69,6 @@ function parseArgs(argv) {
   };
   if (parsed.seedToken && !isSolanaAddress(parsed.seedToken)) throw new Error("--seed-token must be a valid Solana mint address");
   if (parsed.mode === "pilot" && !parsed.seedToken) throw new Error("--mode pilot requires --seed-token <mint>");
-  if (["collect","pilot","watch","all"].includes(parsed.mode) && !parsed.monthlyCreditsBaselineConfigured) {
-    throw new Error("Before network collection, set --monthly-credits-used to credits already consumed in the current Helius billing period, or HELIUS_MONTHLY_CREDITS_USED_BASELINE");
-  }
   if (parsed.seedToken && !["pilot","collect","watch"].includes(parsed.mode)) {
     throw new Error("--seed-token is only valid with --mode pilot|collect|watch");
   }
