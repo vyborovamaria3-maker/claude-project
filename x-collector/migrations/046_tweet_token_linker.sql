@@ -1,10 +1,10 @@
 -- Confidence-aware links between tweets and known Solana token mints.
--- Existing task-context links remain intact and start as probable, not confirmed.
+-- Existing task-context links remain intact and start as probable, not confirmed. Confidence is a heuristic score, not a calibrated probability.
 ALTER TABLE tweet_token_links
   ADD COLUMN IF NOT EXISTS match_method TEXT NOT NULL DEFAULT 'task_context',
   ADD COLUMN IF NOT EXISTS match_level TEXT NOT NULL DEFAULT 'probable'
     CHECK (match_level IN ('exact','confirmed','probable','uncertain')),
-  ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION NOT NULL DEFAULT 0.65
+  ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5
     CHECK (confidence BETWEEN 0 AND 1),
   ADD COLUMN IF NOT EXISTS evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
   ADD COLUMN IF NOT EXISTS linker_version TEXT;
