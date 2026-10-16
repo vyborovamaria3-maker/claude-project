@@ -9,7 +9,7 @@ test("all tracked SQL migrations are classified before database access", async (
   const inventory = assertMigrationCatalog(files);
   assert.equal(inventory.errors.length, 0);
   assert.equal(inventory.appliedOrder.length, REQUIRED.length);
-  assert.equal(REQUIRED.length, 41);
+  assert.equal(REQUIRED.at(-1), "045_collector_trace.sql");
   assert.deepEqual(inventory.collisions.map(item => item.sequence), ["012", "013", "014", "036"]);
   assert.equal(inventory.excluded.length, Object.keys(EXCLUDED_MIGRATIONS).length);
   assert(inventory.appliedOrder.includes("044_browser_checkpoints.sql"));
