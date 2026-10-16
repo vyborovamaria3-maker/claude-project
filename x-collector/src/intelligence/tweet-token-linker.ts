@@ -39,7 +39,7 @@ export function matchKnownTokenAddresses(text: string | null, knownMints: Readon
     }));
 }
 
-async function loadKnownTokenMints(): Promise<Set<string>> {
+export async function loadKnownTokenMints(): Promise<Set<string>> {
   const rows = await q1<{ mint: string }>(
     "SELECT mint FROM archive_tokens UNION SELECT external_id AS mint FROM ip_entities WHERE type = 'TOKEN' AND (lower(platform) LIKE '%solana%' OR lower(COALESCE(metadata->>'chain', '')) = 'solana')",
   );
@@ -51,9 +51,9 @@ async function loadKnownTokenMints(): Promise<Set<string>> {
  * only when the tweet text contains the same address and that address exists in
  * archive_tokens or the Solana token entity registry.
  */
-export async function linkTweetsToKnownTokens(limit = 250): Promise<TweetTokenLinkBatchResult> {
+export async function linkTweetsToKnownTokens(limit = 250, registry?: ReadonlySet<string>): Promise<TweetTokenLinkBatchResult> {
   if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("linker limit must be an integer between 1 and 1000");
-  const knownMints = await loadKnownTokenMints();
+  const knownMints = registry ?? await loadKnownTokenMints();
   if (knownMints.size === 0) return { scanned: 0, linksWritten: 0, matchedTweets: 0, registryMints: 0, registryEmpty: true };
 
   return tx(async client => {
