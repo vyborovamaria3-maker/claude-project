@@ -40,11 +40,12 @@ function getMethodCost(method, env = process.env) {
   return positiveInt(configured, METHOD_COSTS[method], "ALCHEMY_SOLANA_CU_COST_"+method);
 }
 function currentBillingMonthKey(now = Date.now(), resetDay = 1) {
-  const date = new Date(now);
-  let year = date.getUTCFullYear(), month = date.getUTCMonth();
-  if (date.getUTCDate() < resetDay) month--;
-  if (month < 0) { month = 11; year--; }
-  return year + "-" + String(month + 1).padStart(2,"0") + "-" + String(resetDay).padStart(2,"0");
+  const date=new Date(now);
+  let year=date.getUTCFullYear(),month=date.getUTCMonth();
+  const effectiveDay=Math.min(resetDay,new Date(Date.UTC(year,month+1,0)).getUTCDate());
+  if(date.getUTCDate()<effectiveDay){month--;if(month<0){month=11;year--;}}
+  const startDay=Math.min(resetDay,new Date(Date.UTC(year,month+1,0)).getUTCDate());
+  return new Date(Date.UTC(year,month,startDay)).toISOString().slice(0,10);
 }
 function normalizeRawTransaction(entry) {
   const tx = entry && (entry.transaction || entry);
