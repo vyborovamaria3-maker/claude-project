@@ -196,7 +196,7 @@ export async function GET(request: NextRequest) {
         addSource(known);
       }
       graphEdges.push({
-        id: [from, to, link.kind].join("|"),
+        id: [from, to, link.kind, link.target_kind, link.target_key].join("|"),
         from, to, sourceId: link.source_id,
         kind: link.kind, targetKind: link.target_kind, targetKey: link.target_key,
         strength: link.strength, lastSeen: link.last_seen,

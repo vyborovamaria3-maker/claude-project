@@ -55,3 +55,17 @@ test("TG Collector access rate-limits abusive callers", () => {
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.status, 429);
 });
+
+
+test("TG Collector uses validated browser Host when Next normalizes loopback URL", () => {
+  resetTgCollectorRateLimitForTests();
+  const request = input(secret, "127.0.0.4", true);
+  request.requestOrigin = "http://localhost:3171";
+  assert.deepEqual(checkTgCollectorAccess(request), { ok: true });
+  request.origin = "http://localhost:3171";
+  const wrongAuthority = checkTgCollectorAccess(request);
+  assert.equal(wrongAuthority.ok, false);
+  if (!wrongAuthority.ok) assert.equal(wrongAuthority.status, 403);
+  request.hostHeader = "evil.invalid";
+  assert.equal(checkTgCollectorAccess(request).ok, false);
+});

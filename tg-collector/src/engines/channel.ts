@@ -43,7 +43,9 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
   }
 
   for (let page=0; page<maxPages && !isStopping(); page++) {
-    const activeSource = await pool.query<{enabled:boolean}>("SELECT enabled FROM tg_sources WHERE id=$1", [job.source_id]);
+    const activeSource = await pool.query<{enabled:boolean}>(`SELECT s.enabled AND r.collection_enabled AND r.block_reason IS NULL
+      AND (r.pause_until IS NULL OR r.pause_until <= now()) AS enabled
+      FROM tg_sources s CROSS JOIN tg_runtime r WHERE s.id=$1 AND r.id=1`, [job.source_id]);
     if (!activeSource.rows[0]?.enabled) {
       await pool.query("UPDATE tg_jobs SET state='pending', locked_until=NULL, run_at=now()+interval '5 seconds' WHERE id=$1", [job.id]);
       return;

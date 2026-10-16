@@ -18,7 +18,7 @@ export async function migrate(): Promise<void> {
     await client.query("BEGIN");
     // Synchronize migrations from worker, CLI, and web smoke scripts.
     await client.query("SELECT pg_advisory_xact_lock(8260225)");
-    for (const name of ["001_init.sql", "002_analytics.sql", "003_graph_rollups.sql", "004_runtime_restrictions.sql", "005_source_metrics.sql", "006_text_search.sql", "007_message_counters.sql", "008_evidence_lifecycle_metrics.sql", "009_runtime_controls_proxy.sql"]) {
+    for (const name of ["001_init.sql", "002_analytics.sql", "003_graph_rollups.sql", "004_runtime_restrictions.sql", "005_source_metrics.sql", "006_text_search.sql", "007_message_counters.sql", "008_evidence_lifecycle_metrics.sql", "009_runtime_controls_proxy.sql", "010_active_message_counters.sql"]) {
       const sql = await readFile(new URL("../sql/" + name, import.meta.url), "utf8");
       await client.query(sql);
     }

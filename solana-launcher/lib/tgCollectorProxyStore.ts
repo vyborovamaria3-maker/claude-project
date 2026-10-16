@@ -79,9 +79,13 @@ export async function readTgProxy(pool: Pool): Promise<TgProxyStatus> {
 
 export async function writeTgProxy(pool: Pool, input: TgProxyInput): Promise<void> {
   const current = await pool.query<{
+    proxy_type: TgProxyType; host: string; port: number;
     username_enc: string | null; password_enc: string | null; secret_enc: string | null;
-  }>("SELECT username_enc,password_enc,secret_enc FROM tg_proxy_config WHERE id=1");
-  const previous = current.rows[0];
+  }>("SELECT username_enc,password_enc,secret_enc,proxy_type,host,port FROM tg_proxy_config WHERE id=1");
+  // Never forward saved credentials to a different proxy endpoint or protocol.
+  const row = current.rows[0];
+  const previous = row?.proxy_type === input.proxyType && row.host === input.host
+    && Number(row.port) === input.port ? row : undefined;
   const effective: TgProxyInput = { ...input };
   if (!effective.username && input.proxyType !== "mtproxy") effective.username = decrypt(previous?.username_enc ?? null);
   if (!effective.password && input.proxyType !== "mtproxy") effective.password = decrypt(previous?.password_enc ?? null);

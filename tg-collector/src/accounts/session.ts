@@ -26,6 +26,7 @@ export async function login(): Promise<void> {
   const client = new TelegramClient(new StringSession(""), apiId, apiHash, {
     connectionRetries: 3,
     floodSleepThreshold: 0,
+    proxy: await loadProxy(),
   });
   try {
     await client.start({
@@ -62,10 +63,14 @@ export async function authorizedClient(): Promise<TelegramClient> {
     useWSS: proxy ? false : undefined,
     proxy,
   });
-  await client.connect();
-  if (!(await client.isUserAuthorized())) {
-    await client.disconnect();
-    throw new Error("Telegram session expired; run npm run login");
+  try {
+    await client.connect();
+    if (!(await client.isUserAuthorized())) {
+      throw new Error("Telegram session expired; run npm run login");
+    }
+    return client;
+  } catch (error) {
+    await client.disconnect().catch(() => {});
+    throw error;
   }
-  return client;
 }

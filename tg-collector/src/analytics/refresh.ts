@@ -17,20 +17,20 @@ async function main(): Promise<void> {
       await guard.query("DELETE FROM tg_source_daily_metrics");
       await guard.query(`
         INSERT INTO tg_graph_daily_edges
-          (source_id,day,kind,target_kind,target_key,evidence_count,first_seen,last_seen,sample_message_id)
+          (source_id,day,kind,target_kind,target_key,evidence_count,message_count,first_seen,last_seen,sample_message_id)
         SELECT l.source_id,(m.posted_at AT TIME ZONE 'UTC')::date,
           l.kind,l.target_kind,l.target_key,
-          count(*)::integer,min(m.posted_at),max(m.posted_at),min(l.message_id)
+          count(*)::integer,count(DISTINCT l.message_id)::integer,min(m.posted_at),max(m.posted_at),min(l.message_id)
         FROM tg_message_links l
         JOIN tg_messages m USING(source_id,message_id)
-        WHERE m.posted_at IS NOT NULL
+        WHERE m.posted_at IS NOT NULL AND m.deleted_at IS NULL
         GROUP BY l.source_id,(m.posted_at AT TIME ZONE 'UTC')::date,l.kind,l.target_kind,l.target_key
       `);
       await guard.query(`
         INSERT INTO tg_source_daily_metrics(source_id,day,posts_count,views_total,views_count)
         SELECT source_id,(posted_at AT TIME ZONE 'UTC')::date,
           count(*)::integer,coalesce(sum(views),0)::bigint,count(views)::integer
-        FROM tg_messages WHERE posted_at IS NOT NULL
+        FROM tg_messages WHERE posted_at IS NOT NULL AND deleted_at IS NULL
         GROUP BY source_id,(posted_at AT TIME ZONE 'UTC')::date
       `);
       await guard.query("COMMIT");

@@ -11,7 +11,9 @@ export async function claim(): Promise<Job | undefined> {
   const { rows } = await pool.query<Job>(`
     WITH pick AS (
       SELECT j.id FROM tg_jobs j JOIN tg_sources s ON s.id=j.source_id
-      WHERE s.enabled AND ((j.state IN ('pending','delayed') AND j.run_at <= now())
+      WHERE s.enabled AND EXISTS (SELECT 1 FROM tg_runtime WHERE id=1 AND collection_enabled
+        AND block_reason IS NULL AND (pause_until IS NULL OR pause_until <= now()))
+        AND ((j.state IN ('pending','delayed') AND j.run_at <= now())
          OR (j.state='running' AND j.locked_until < now()))
       ORDER BY j.run_at, j.id
       FOR UPDATE OF j SKIP LOCKED LIMIT 1

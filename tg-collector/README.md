@@ -395,3 +395,17 @@ This repository is intentionally local-first for Telegram collection:
 Поля логина/пароля/secret не возвращаются в браузер. Они шифруются AES-256-GCM перед записью в tg_proxy_config. Для ключа шифрования рекомендуется задать TG_PROXY_ENCRYPTION_KEY; если он не задан, локально используется TG_API_HASH как источник ключа.
 
 После изменения proxy нужно перезапустить worker: TelegramClient создаётся с proxy при подключении. Для проверки из панели кнопка «Проверить порт» проверяет TCP-доступность host:port; это не подменяет полноценный Telegram handshake. Route Handler работает в Node.js runtime, поэтому TCP-проверка выполняется на серверной стороне.
+
+
+### Review corrections (2026-10-16)
+
+- Stop and source pause take effect before the next Telegram page; an in-flight page is committed with its cursor. Claims also check global enable/block/FloodWait state.
+- Start/resume preserve delayed retry deadlines. `jobs_pending` counts pending/delayed jobs separately from running jobs.
+- SOCKS transport deliberately omits the `MTProxy` property: GramJS checks property presence, not its boolean value. Login uses the configured proxy too.
+- Blank credentials preserve existing values only for the same host, port and protocol. Changing the endpoint requires entering its credentials again. Password whitespace is preserved.
+- The web process and worker must use the same `TG_PROXY_ENCRYPTION_KEY` (or the same fallback `TG_API_HASH`). Proxy changes require a worker restart.
+- `analyze:refresh` excludes soft-deleted messages and rebuilds `message_count`. Additive migration 010 repairs active counters once and prevents double decrement when a soft-deleted row is purged.
+- A lost singleton-lock connection terminates the worker immediately, preventing a replacement worker from racing with an old page write.
+- The localhost access check uses the validated browser Host authority, handling Next.js internal normalization of 127.0.0.1 to localhost while retaining same-origin enforcement.
+
+The global history scanner also sees obsolete branches. The two historical tginvite test files are absent from this branch and main. Only the exact SHA-256 of their synthetic alphabet fixture is ignored in history for those paths; current/diff scans and other historical tokens remain strict. No repository history was rewritten.

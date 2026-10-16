@@ -30,12 +30,12 @@ function proxyType(input: unknown): "socks5" | "socks4" | "mtproxy" {
   throw new ApiError("Выберите тип прокси: SOCKS5, SOCKS4 или MTProto");
 }
 
-function boundedString(input: unknown, label: string, max = 256): string | undefined {
+function boundedString(input: unknown, label: string, max = 256, trim = true): string | undefined {
   if (input === undefined || input === null || input === "") return undefined;
   if (typeof input !== "string" || input.length > max || /[\r\n]/.test(input)) {
     throw new ApiError(`Некорректное поле: ${label}`);
   }
-  return input.trim();
+  return trim ? input.trim() : input;
 }
 
 async function testProxyEndpoint(host: string, port: number): Promise<number> {
@@ -206,7 +206,7 @@ export async function POST(request: NextRequest) {
         if (state.rows[0]?.block_reason) throw new ApiError(`Сборщик заблокирован: ${state.rows[0].block_reason}. Сначала снимите ограничение вручную.`, 409);
         await p.query("UPDATE tg_runtime SET collection_enabled=TRUE WHERE id=1");
         await p.query(`UPDATE tg_jobs SET state='pending',run_at=now(),locked_until=NULL,last_error=NULL,updated_at=now()
-          WHERE state IN ('pending','delayed') AND source_id IN (SELECT id FROM tg_sources WHERE enabled)`);
+          WHERE state='pending' AND source_id IN (SELECT id FROM tg_sources WHERE enabled)`);
       } else {
         await p.query("UPDATE tg_runtime SET collection_enabled=FALSE WHERE id=1");
       }
@@ -220,7 +220,7 @@ export async function POST(request: NextRequest) {
       const port = Number(input.port);
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ApiError("Укажите корректный порт");
       const username = boundedString(input.username, "username");
-      const password = boundedString(input.password, "password");
+      const password = boundedString(input.password, "password", 256, false);
       const secret = boundedString(input.secret, "secret");
       await writeTgProxy(p, { proxyType: type, host, port, username, password, secret });
       return NextResponse.json({ ok: true, proxy: await readTgProxy(p) }, { headers: noStore });
@@ -254,7 +254,7 @@ export async function POST(request: NextRequest) {
       if (enabled) {
         await p.query(`UPDATE tg_jobs SET state='pending', run_at=now(), locked_until=NULL,
           attempts=0, last_error=NULL WHERE source_id=$1 AND state='failed'`, [id]);
-        await p.query("UPDATE tg_jobs SET run_at=now() WHERE source_id=$1 AND state IN ('pending','delayed')", [id]);
+        await p.query("UPDATE tg_jobs SET run_at=now() WHERE source_id=$1 AND state='pending'", [id]);
       }
       return NextResponse.json({ ok: true, enabled }, { headers: noStore });
     }

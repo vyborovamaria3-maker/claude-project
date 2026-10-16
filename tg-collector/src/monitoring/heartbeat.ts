@@ -25,7 +25,7 @@ async function refreshRuntimeMetrics(): Promise<void> {
         ),0),
         jobs_pending = COALESCE((
           SELECT count(*) FROM tg_jobs
-          WHERE state IN ('pending','running')
+          WHERE state IN ('pending','delayed')
         ),0),
         jobs_failed = COALESCE((
           SELECT count(*) FROM tg_jobs WHERE state='failed'

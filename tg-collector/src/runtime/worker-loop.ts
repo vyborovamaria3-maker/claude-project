@@ -15,6 +15,12 @@ process.on("SIGTERM", () => { stopping = true; });
 async function main(): Promise<void> {
   await migrate();
   const guard = await pool.connect();
+  // Losing this connection releases the singleton lock. Exit immediately so a
+  // replacement worker cannot race with this process persisting an in-flight page.
+  guard.on("error", () => {
+    console.error("TG worker lock connection lost; terminating");
+    process.exit(1);
+  });
   let client: TelegramClient | undefined;
   let stopHeartbeat: (() => Promise<void>) | undefined;
   try {
@@ -53,7 +59,7 @@ async function main(): Promise<void> {
       catch (error) { if ((await handleFailure(job, error)) === "halt") stopping = true; }
     }
   } finally {
-    if (client) await client.disconnect();
+    if (client) await client.disconnect().catch(() => {});
     if (stopHeartbeat) await stopHeartbeat().catch(() => {});
     try { await guard.query("SELECT pg_advisory_unlock(8260226)"); }
     finally { guard.release(); await pool.end(); }

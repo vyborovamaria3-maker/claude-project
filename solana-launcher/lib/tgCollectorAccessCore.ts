@@ -72,7 +72,17 @@ export function checkTgCollectorAccess(input: TgAccessInput): TgAccessDecision {
   if (!localHostAllowed(input.hostname, input.hostHeader)) {
     return { ok: false, status: 403, error: "Localhost only" };
   }
-  if (input.mutation && input.origin !== input.requestOrigin) {
+  // Next.js may normalize the internal loopback URL to localhost. The validated
+  // Host header retains the browser-facing authority, including its port.
+  let expectedOrigin: string;
+  try {
+    const external = new URL(input.requestOrigin);
+    external.host = input.hostHeader;
+    expectedOrigin = external.origin;
+  } catch {
+    return { ok: false, status: 403, error: "Invalid request origin" };
+  }
+  if (input.mutation && input.origin !== expectedOrigin) {
     return { ok: false, status: 403, error: "Same-origin request required" };
   }
 

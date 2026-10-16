@@ -15,7 +15,7 @@ export type TgProxyConfig = {
 
 export type TgProxyTransport =
   | { ip: string; port: number; MTProxy: true; secret: string; timeout?: number }
-  | { ip: string; port: number; MTProxy: false; socksType: 4 | 5; username?: string; password?: string; timeout?: number };
+  | { ip: string; port: number; socksType: 4 | 5; username?: string; password?: string; timeout?: number };
 
 export type TgProxyStatus = {
   enabled: boolean;
@@ -102,7 +102,6 @@ export async function loadProxy(): Promise<TgProxyTransport | undefined> {
   return {
     ip: settings.host,
     port: settings.port,
-    MTProxy: false,
     socksType: settings.proxyType === "socks4" ? 4 : 5,
     ...(settings.username ? { username: settings.username } : {}),
     ...(settings.password ? { password: settings.password } : {}),
@@ -112,9 +111,13 @@ export async function loadProxy(): Promise<TgProxyTransport | undefined> {
 
 export async function saveProxy(input: TgProxyConfig, preserveSecrets = true): Promise<void> {
   const current = preserveSecrets ? await pool.query<{
+    proxy_type: TgProxyType; host: string; port: number;
     username_enc: string | null; password_enc: string | null; secret_enc: string | null;
-  }>("SELECT username_enc,password_enc,secret_enc FROM tg_proxy_config WHERE id=1") : { rows: [] };
-  const previous = current.rows[0];
+  }>("SELECT username_enc,password_enc,secret_enc,proxy_type,host,port FROM tg_proxy_config WHERE id=1") : { rows: [] };
+  // Never forward saved credentials to a different proxy endpoint or protocol.
+  const row = current.rows[0];
+  const previous = row?.proxy_type === input.proxyType && row.host === input.host
+    && Number(row.port) === input.port ? row : undefined;
   const effective: TgProxyConfig = {
     ...input,
     username: input.username || undefined,
