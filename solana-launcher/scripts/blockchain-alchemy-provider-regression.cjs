@@ -11,6 +11,7 @@ assert.equal(accounts.length,2);
 assert.equal(accounts[0].monthlyBudgetCu,30000000);
 assert.equal(alchemy.getMethodCost("getTransactionsForAddress",{}),100);
 assert.equal(alchemy.getMethodCost("getTransaction",{}),40);
+assert.equal(alchemy.currentBillingMonthKey(Date.UTC(2026,9,15),1),"2026-10");
 assert.equal(alchemy.currentBillingMonthKey(Date.UTC(2026,9,15),16),"2026-09-16");
 assert.equal(alchemy.currentBillingMonthKey(Date.UTC(2026,9,16),16),"2026-10-16");
 assert.equal(alchemy.currentBillingMonthKey(Date.UTC(2026,1,27),31),"2026-01-31");
