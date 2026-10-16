@@ -113,7 +113,8 @@ function createProvider(options = {}) {
     for (let offset=0;offset<accounts.length;offset++) {
       const account=accounts[(nextAccount+offset)%accounts.length];
       if (account.baselineCu===null || account.billingResetDay===null) {
-        throw new Error("Alchemy account "+account.id+" needs ALCHEMY_SOLANA_CU_USED_BASELINE_"+account.index+" and ALCHEMY_SOLANA_BILLING_RESET_DAY_"+account.index+" from Dashboard before collection");
+        lastError=new Error("Alchemy account "+account.id+" needs ALCHEMY_SOLANA_CU_USED_BASELINE_"+account.index+" and ALCHEMY_SOLANA_BILLING_RESET_DAY_"+account.index+" from Dashboard before collection");
+        continue;
       }
       let reservationId;
       try {
