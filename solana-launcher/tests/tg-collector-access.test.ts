@@ -20,12 +20,16 @@ const input = (token = "", ip = "127.0.0.1", mutation = false) => ({
 
 test("TG Collector access rejects missing token", () => {
   resetTgCollectorRateLimitForTests();
-  assert.equal(checkTgCollectorAccess(input()).status, 401);
+  const result = checkTgCollectorAccess(input());
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.status, 401);
 });
 
 test("TG Collector access rejects wrong token", () => {
   resetTgCollectorRateLimitForTests();
-  assert.equal(checkTgCollectorAccess(input("wrong-token")).status, 401);
+  const result = checkTgCollectorAccess(input("wrong-token"));
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.status, 401);
 });
 
 test("TG Collector access accepts correct token", () => {
@@ -37,7 +41,9 @@ test("TG Collector mutations require same-origin", () => {
   resetTgCollectorRateLimitForTests();
   const request = input(secret, "127.0.0.3", true);
   request.origin = "http://evil.invalid";
-  assert.equal(checkTgCollectorAccess(request).status, 403);
+  const result = checkTgCollectorAccess(request);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.status, 403);
 });
 
 test("TG Collector access rate-limits abusive callers", () => {
@@ -46,5 +52,6 @@ test("TG Collector access rate-limits abusive callers", () => {
   for (let i = 1; i < 121; i += 1) {
     result = checkTgCollectorAccess(input(secret, "127.0.0.2"));
   }
-  assert.equal(result.status, 429);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.status, 429);
 });
