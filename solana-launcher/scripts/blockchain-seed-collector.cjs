@@ -802,8 +802,8 @@ function status(db, args = {}) {
     ?db.prepare("SELECT COUNT(*) AS count FROM chain_pumpfun_creator_launches").get().count:0;
   return {
     files,categories,targets,collectedEvents:db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count,
-    coverage:db.prepare("SELECT coverage_status AS status,kind,COUNT(*) AS count FROM chain_history_coverage GROUP BY coverage_status,kind ORDER BY coverage_status,kind").all(),
-    budgetLedger:db.prepare("SELECT provider,cost_kind,COUNT(*) AS requests,SUM(COALESCE(actual_units,estimated_units)) AS units FROM chain_budget_ledger GROUP BY provider,cost_kind ORDER BY provider,cost_kind").all(),
+    coverage:hasTable("chain_history_coverage") ? db.prepare("SELECT coverage_status AS status,kind,COUNT(*) AS count FROM chain_history_coverage GROUP BY coverage_status,kind ORDER BY coverage_status,kind").all() : [],
+    budgetLedger:hasTable("chain_budget_ledger") ? db.prepare("SELECT provider,cost_kind,COUNT(*) AS requests,SUM(COALESCE(actual_units,estimated_units)) AS units FROM chain_budget_ledger GROUP BY provider,cost_kind ORDER BY provider,cost_kind").all() : [],
     forensic:verified,budget:usageStatus(db,args),alchemy:alchemyUsageStatus(db),scopes,deferred,pumpfunCreatorLaunches:launchCount,
     queue:db.prepare(
       "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS errors,"+
