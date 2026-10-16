@@ -11,3 +11,5 @@
 Для текущей эксплуатации начинать с [README.md](../../README.md).
 Для архитектуры использовать исходники `src/` и актуальные инструкции
 по надёжности после объединения соответствующего PR.
+
+- [STRUCTURE_FULL.txt](STRUCTURE_FULL.txt) — generated historical tree snapshot; not a source-of-truth architecture document.
