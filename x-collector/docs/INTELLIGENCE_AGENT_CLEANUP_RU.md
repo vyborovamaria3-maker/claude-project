@@ -1,10 +1,9 @@
-# Чистка неиспользуемого agent scaffold (16 файлов)
+# Чистка неиспользуемого agent scaffold (15 файлов)
 
 ## Что удалено из исходников
 
 - `agent-collaboration.ts`
 - `agent-coordinator.ts`
-- `agent-core.ts`
 - `agent-events.ts`
 - `agent-feedback-loop.ts`
 - `agent-load-balancer.ts`
@@ -29,7 +28,8 @@
 между удаляемыми файлами (`agent-coordinator` → `agent-registry`,
 `specialized-agents` → `agent-registry`,
 `agent-scheduler` → `agent-runtime`,
-`task-orchestrator` → `agent-core`) входят в удалённую группу.
+`task-orchestrator` → `agent-core`) потребовали сохранить исходный
+`agent-core.ts`: им также пользуется остающийся `analysis-planner.ts`.
 
 **Ограничение проверки**: Knip не гарантирует обнаружение загрузки
 по динамическим строкам или незафиксированных внешних импортёров.
