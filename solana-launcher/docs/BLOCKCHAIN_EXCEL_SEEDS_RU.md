@@ -368,6 +368,8 @@ idx_forensic_fifo_stream уменьшает потребность во врем
 
 Настройки можно переопределить CLI-флагами или переменными окружения:
 - \`--monthly-budget-credits\` / \`HELIUS_MONTHLY_BUDGET_CREDITS\`;
+- \`--monthly-credits-used\` / \`HELIUS_MONTHLY_CREDITS_USED_BASELINE\` — credits already used in the current provider billing period before local tracking began;
+- \`--budget-period-start-day\` / \`HELIUS_BUDGET_PERIOD_START_DAY\` — UTC day-of-month when your Helius monthly period resets (default 1);
 - \`--run-budget-credits\` / \`HELIUS_RUN_BUDGET_CREDITS\`;
 - \`--page-credit-estimate\` / \`HELIUS_ADDRESS_TX_ESTIMATED_CREDITS_PER_REQUEST\`;
 - \`--limit\`, \`--max-objects\`, \`--concurrency\`.
@@ -376,7 +378,7 @@ idx_forensic_fifo_stream уменьшает потребность во врем
 с фактическим расходом записываются, если провайдер их предоставляет; иначе
 для guard используется оценка. Неуспешные попытки остаются в журнале и тоже
 учитываются по оценке, так как нельзя доказать, что они были бесплатными.
-Порог проверяется атомарно между worker-процессами. Когда лимит достигнут,
+Порог проверяется атомарно между worker-процессами. Перед первым запуском укажите \`--monthly-credits-used\` по текущему использованию в Helius Dashboard; этот baseline не должен включать запросы, уже записанные локальным журналом. \`--budget-period-start-day\` должен совпадать с днём сброса квоты аккаунта (например, \`16\` для периода с 16-го числа). После начала нового периода сбросьте baseline на \`0\`. Когда лимит достигнут,
 новые запросы блокируются, очередь и курсоры сохраняются, а уже полученные
 страницы коммитятся вместе с курсором. Следующий запуск продолжает задачу.
 
