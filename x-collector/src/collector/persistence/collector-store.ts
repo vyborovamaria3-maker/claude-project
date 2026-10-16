@@ -2,7 +2,7 @@ import { TweetSchema, ProfileSchema } from "../../../lib/trade/schemas";
 import { processTweetEntities } from "../../intelligence/entities/processor";
 import { tx } from "../../../lib/trade/pg";
 import { log } from "../../../lib/trade/logger";
-import { source, sourceId, rawPage, storePage } from "../../../lib/archive/store";
+import { source, sourceId, rawPage, recordRawPage, storePage } from "../../../lib/archive/store";
 import { Page } from "../../../lib/archive/model";
 import {recordRaw,recordRawBatch} from '../../../lib/trade/intelligence-store';
 import type { PoolClient } from "pg";
@@ -29,6 +29,28 @@ export interface TweetPersistenceOptions {
 }
 export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease, options: TweetPersistenceOptions = {}): Promise<number> {
   let newTaskLinks = 0;
+  const now = Date.now();
+  const fromHttp = options.transport === "http";
+  const httpSourceUrl = "https://x.com/i/api/graphql";
+  let rawCapture: { hash: string; path: string } | undefined;
+  if (options.rawResponse !== undefined) {
+    const rawSourceKey = await source(
+      fromHttp ? "X HTTP collector" : "X browser collector",
+      fromHttp ? httpSourceUrl : "https://x.com",
+      "X platform terms", "x", { transport: fromHttp ? "HTTP GraphQL" : "visible DOM" },
+    );
+    const received = new Date(now);
+    // Capture before TweetSchema parsing so schema drift does not destroy the source evidence.
+    rawCapture = await rawPage({
+      capture_format_version: 1,
+      transport: fromHttp ? "http" : "browser",
+      request: { source_query: sourceQuery, mint },
+      received_at: received.toISOString(),
+      raw_items: tweets,
+      source_response: options.rawResponse,
+    });
+    await recordRawPage(rawSourceKey, rawCapture, received);
+  }
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
   let rejected = 0;
@@ -40,16 +62,13 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   if (rejected > 0) throw new Error(`collector rejected ${rejected} malformed tweets`);
   if (valid.length === 0) return 0;
 
-  const now = Date.now();
   const BATCH = 200;
   // A page checkpoint and all of its posts must share one transaction.
   if (options.client && valid.length > BATCH &&
       !(options.atomicBrowserBatch === true && options.transport !== "http" && valid.length <= 1000))
     throw new Error("Collector: page exceeds transactional batch limit");
-  const fromHttp = options.transport === "http";
   // archive.sourceId hashes URL/license/kind (not name). Distinct URLs keep
   // HTTP observations from inheriting the old browser-only source metadata.
-  const httpSourceUrl = "https://x.com/i/api/graphql";
   const sourceKey = fromHttp
     ? sourceId(httpSourceUrl, "X platform terms", "x")
     : await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" }, options.client);
@@ -58,13 +77,12 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     const chunk = valid.slice(i, i + BATCH);
     if (chunk.length === 0) continue;
     const received = new Date(now);
-    const raw = await rawPage({
+    const raw = rawCapture ?? await rawPage({
       capture_format_version: 1,
       transport: fromHttp ? "http" : "browser",
       request: { source_query: sourceQuery, mint },
       received_at: received.toISOString(),
       tweets: chunk,
-      ...(options.rawResponse === undefined ? {} : { source_response: options.rawResponse }),
     });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
