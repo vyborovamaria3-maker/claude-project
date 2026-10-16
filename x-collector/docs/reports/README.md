@@ -13,3 +13,6 @@
 по надёжности после объединения соответствующего PR.
 
 - [STRUCTURE_FULL.txt](STRUCTURE_FULL.txt) — generated historical tree snapshot; not a source-of-truth architecture document.
+
+- [CODE_REVIEW_XCOLLECTOR.md](CODE_REVIEW_XCOLLECTOR.md) — historical X Collector integration review.
+- [FIX_SUMMARY.md](FIX_SUMMARY.md) — historical integration fix summary.
