@@ -26,4 +26,12 @@ export async function refreshGraphDays(tx: PoolClient, sourceId: string, days: s
       AND (m.posted_at AT TIME ZONE 'UTC')::date = ANY($2::date[])
     GROUP BY l.source_id,(m.posted_at AT TIME ZONE 'UTC')::date,
       l.kind,l.target_kind,l.target_key`, [sourceId, unique]);
+  await tx.query("DELETE FROM tg_source_daily_metrics WHERE source_id=$1 AND day = ANY($2::date[])",[sourceId,unique]);
+  await tx.query(`
+    INSERT INTO tg_source_daily_metrics(source_id,day,posts_count,views_total,views_count)
+    SELECT source_id,(posted_at AT TIME ZONE 'UTC')::date,
+      count(*)::integer, coalesce(sum(views),0)::bigint, count(views)::integer
+    FROM tg_messages
+    WHERE source_id=$1 AND (posted_at AT TIME ZONE 'UTC')::date = ANY($2::date[])
+    GROUP BY source_id,(posted_at AT TIME ZONE 'UTC')::date`,[sourceId,unique]);
 }
