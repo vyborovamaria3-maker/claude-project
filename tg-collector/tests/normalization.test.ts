@@ -37,3 +37,9 @@ test("Bot API channel-forward adapter and anonymity semantics", () => {
     {kind:"forward",targetKind:"channel_id",targetKey:"12345"}]);
   assert.deepEqual(extractLinks({id:2,message:"",forward_sender_name:"Hidden Sender",forward_from:{id:77}}),[]);
 });
+
+test("base58 zero-prefixed 32-byte public keys are not rejected", () => {
+  assert.equal(normalizeTarget("solana_address","1".repeat(32)), "1".repeat(32));
+  assert.equal(normalizeTarget("solana_address","1".repeat(33)), null);
+  assert.equal(normalizeTarget("solana_address","1".repeat(31)+"2"), "1".repeat(31)+"2");
+});
