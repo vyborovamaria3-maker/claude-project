@@ -9,7 +9,11 @@ export function guardTgCollector(request: NextRequest, mutation = false): NextRe
   }
   const host = request.nextUrl.hostname.toLowerCase();
   const incomingHost = (request.headers.get("host") ?? "").toLowerCase();
-  const headerIsLoopback = /^(?:localhost|127\\.0\\.0\\.1)(?::\\d{1,5})?$|^\\[::1\\](?::\\d{1,5})?$/.test(incomingHost);
+  const allowedHosts = ["localhost", "127.0.0.1", "[::1]"];
+  const headerIsLoopback = allowedHosts.some((value) =>
+    incomingHost === value || (incomingHost.startsWith(value + ":") &&
+      /^[0-9]{1,5}$/.test(incomingHost.slice(value.length + 1))));
+
   if (!["localhost","127.0.0.1","::1","[::1]"].includes(host) ||
       !headerIsLoopback) {
     return NextResponse.json({error:"Localhost only"}, {status:403,headers:noStore});
