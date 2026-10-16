@@ -1,5 +1,5 @@
 import { addresses, validMint } from "../../lib/archive/model";
-import { q1, tx } from "../../lib/trade/pg";
+import { q, tx } from "../../lib/trade/pg";
 
 export const TWEET_TOKEN_LINKER_VERSION = "v1";
 
@@ -40,7 +40,7 @@ export function matchKnownTokenAddresses(text: string | null, knownMints: Readon
 }
 
 export async function loadKnownTokenMints(): Promise<Set<string>> {
-  const rows = await q1<{ mint: string }>(
+  const rows = await q<{ mint: string }>(
     "SELECT mint FROM archive_tokens UNION SELECT external_id AS mint FROM ip_entities WHERE type = 'TOKEN' AND (lower(platform) LIKE '%solana%' OR lower(COALESCE(metadata->>'chain', '')) = 'solana')",
   );
   return new Set(rows.map(row => row.mint).filter(validMint));
