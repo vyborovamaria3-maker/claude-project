@@ -41,5 +41,23 @@ global.fetch = async (input) => {
   assert.equal(meta.transactions.length,4);
   assert.equal(meta.exhausted,true);
   assert.equal(requests[0].searchParams.get("before-signature"),history[100].signature);
-  console.log("[blockchain-helius-pagination] OK: correct REST cursor, 105 tx pages, incremental anchor, resumed backfill");
+  requests.length=0;
+  let reservations=0,recorded=[];
+  const partial=await fetchEnrichedTxsForMintWithMeta("wallet-fixture",150,null,undefined,false,{
+    estimatedCreditsPerRequest:110,
+    beforeRequest:async context=>{
+      reservations++;
+      assert.equal(context.estimatedCredits,110);
+      if(reservations===2){const error=new Error("budget reached");error.code="HELIUS_BUDGET_EXCEEDED";throw error;}
+      return "reservation-"+reservations;
+    },
+    afterResponse:(id,response)=>recorded.push({id,status:response.status,actual:response.actualCredits}),
+  });
+  assert.equal(partial.transactions.length,100,"already-paid first page must be returned on budget pause");
+  assert.equal(partial.budgetExhausted,true);
+  assert.equal(partial.truncated,true);
+  assert.equal(partial.exhausted,false);
+  assert.equal(requests.length,1,"budget guard must prevent the second network request");
+  assert.deepEqual(recorded,[{id:"reservation-1",status:200,actual:null}]);
+  console.log("[blockchain-helius-pagination] OK: correct REST cursor, incremental resume, budget guard and partial-page checkpoint support");
 })().catch(e=>{console.error(e);process.exitCode=1;});
