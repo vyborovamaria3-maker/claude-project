@@ -53,11 +53,14 @@ export async function authorizedClient(): Promise<TelegramClient> {
   const { apiId, apiHash } = credentials();
   const sessionString = (await readFile(sessionPath(), "utf8")).trim();
   if (!sessionString) throw new Error("Session file is empty; run npm run login");
+  const proxy = await loadProxy();
   const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
     connectionRetries: 3,
     retryDelay: 1000,
     floodSleepThreshold: 0,
     autoReconnect: true,
+    useWSS: proxy ? false : undefined,
+    proxy,
   });
   await client.connect();
   if (!(await client.isUserAuthorized())) {
