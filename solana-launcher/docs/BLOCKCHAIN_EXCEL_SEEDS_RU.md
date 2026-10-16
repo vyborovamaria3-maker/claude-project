@@ -19,8 +19,9 @@
 установленные npm зависимости. Команда: npm ci --legacy-peer-deps.
 
 Добавьте HELIUS_API_KEY или HELIUS_API_KEYS в solana-launcher/.env.local.
-Никогда не коммитьте реальные ключи. Импорт Excel и просмотр очереди доступны
-без ключей Helius.
+Для резервной истории адресов можно настроить до четырёх аккаунтов Alchemy через
+ALCHEMY_SOLANA_API_KEY_1..4. Никогда не коммитьте реальные ключи. Импорт Excel
+и просмотр очереди доступны без ключей провайдеров.
 
 По умолчанию пути:
 
@@ -352,6 +353,44 @@ idx_forensic_fifo_stream уменьшает потребность во врем
     npm run blockchain:db-backup
     npm run blockchain:integration-test
 
+
+## Резервный Alchemy RPC для Solana
+
+Alchemy используется как резерв для получения **сырых** транзакций адреса, когда Helius не может выполнить свежий запрос. Для Solana метод `getTransactionsForAddress` тарифицируется в 100 CU и возвращает до 100 полных транзакций за страницу; стоимость следует перепроверять в [официальной таблице Alchemy](https://www.alchemy.com/docs/reference/compute-unit-costs).
+
+Добавьте в `solana-launcher/.env.local` ключи и подтверждённые значения из Dashboard каждого аккаунта. Не коммитьте файл и не отправляйте ключи в чат:
+
+```dotenv
+ALCHEMY_SOLANA_API_KEY_1=replace_with_key_1
+ALCHEMY_SOLANA_API_KEY_2=replace_with_key_2
+ALCHEMY_SOLANA_API_KEY_3=replace_with_key_3
+ALCHEMY_SOLANA_API_KEY_4=replace_with_key_4
+
+ALCHEMY_SOLANA_CU_USED_BASELINE_1=dashboard_used_cu
+ALCHEMY_SOLANA_CU_USED_BASELINE_2=dashboard_used_cu
+ALCHEMY_SOLANA_CU_USED_BASELINE_3=dashboard_used_cu
+ALCHEMY_SOLANA_CU_USED_BASELINE_4=dashboard_used_cu
+ALCHEMY_SOLANA_BILLING_RESET_DAY_1=1
+ALCHEMY_SOLANA_BILLING_RESET_DAY_2=1
+ALCHEMY_SOLANA_BILLING_RESET_DAY_3=1
+ALCHEMY_SOLANA_BILLING_RESET_DAY_4=1
+
+ALCHEMY_SOLANA_PILOT_CU_BUDGET=3000000
+ALCHEMY_SOLANA_RUN_CU_BUDGET=1000000
+```
+
+Замените каждый `dashboard_used_cu` реальным числом CU, уже использованных аккаунтом в текущем billing period, а дни сброса — значениями из соответствующих Dashboard. Указанные выше дни сброса — только пример. Не запускайте сбор с буквальными placeholders.
+
+- Каждый аккаунт имеет отдельный месячный лимит, по умолчанию 30 000 000 CU.
+- `ALCHEMY_SOLANA_CU_USED_BASELINE_N` учитывается отдельно для каждого аккаунта.
+- `ALCHEMY_SOLANA_PILOT_CU_BUDGET` — накопительный лимит Alchemy CU всего пилота, по умолчанию 3 000 000 CU.
+- `ALCHEMY_SOLANA_RUN_CU_BUDGET` — лимит Alchemy CU одного запуска, по умолчанию 1 000 000 CU.
+- `ALCHEMY_SOLANA_MONTHLY_CU_BUDGET_N` позволяет изменить месячный лимит аккаунта; `ALCHEMY_SOLANA_CU_COST_getTransactionsForAddress` — стоимость метода.
+- Helius credits и Alchemy CU никогда не складываются в один счётчик.
+
+**Ограничение качества данных:** Alchemy-адаптер сохраняет сырые транзакции и точные изменения token balance, но не выдаёт их за Helius swap events. Он не классифицирует такие изменения автоматически как перевод, покупку или продажу. PnL остаётся неизвестным, если нет подтверждённого декодирования сделки. В этой итерации failover на Alchemy выполняется при неудаче свежего запроса; после выдачи курсора `alchemy:...` последующие страницы продолжаются через Alchemy, чтобы не смешивать несовместимые курсоры.
+
+Проверки Alchemy в CI используют mock HTTP-ответы. Реальные ключи, квоты и покрытие mainnet здесь не проверяются.
 
 ## Пилот рекурсивного сбора одного токена и бюджет Helius
 
