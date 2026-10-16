@@ -38,6 +38,13 @@ async function main(): Promise<void> {
     stopHeartbeat = await startHeartbeat();
     console.log("TG Collector worker started");
     while (!stopping) {
+      const runtime = await pool.query<{collection_enabled: boolean}>(
+        "SELECT collection_enabled FROM tg_runtime WHERE id=1"
+      );
+      if (runtime.rows[0]?.collection_enabled === false) {
+        await sleep(3000);
+        continue;
+      }
       const seconds = await remainingPauseSeconds();
       if (seconds > 0) { await sleep(Math.min(seconds * 1000, 5000)); continue; }
       const job = await claim();
