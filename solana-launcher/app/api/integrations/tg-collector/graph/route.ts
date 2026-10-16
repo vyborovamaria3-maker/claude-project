@@ -160,7 +160,7 @@ export async function GET(request: NextRequest) {
     const nodes = new Map<string, { id: string; label: string; kind: string }>();
     const graphEdges: Array<{
       id: string; from: string; to: string; sourceId: string;
-      kind: string; targetKind: string; targetKey: string; strength: number;
+      kind: LinkRow["kind"]; targetKind: LinkRow["target_kind"]; targetKey: string; strength: number;
       sampleUrl: string; lastSeen: string | null;
     }> = [];
     const addSource = (s: Source) => {
