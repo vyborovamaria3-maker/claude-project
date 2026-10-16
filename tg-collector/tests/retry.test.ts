@@ -24,3 +24,8 @@ test("source access and unknown transient errors have separate policy", () => {
     {action:"delay",code:"TG_TRANSIENT_ERROR",seconds:60,global:false});
   assert.equal(classifyTelegramError(new Error("ECONNRESET"),5).action,"failed");
 });
+
+test("FloodWait recognizes Telegram RPC code 420 with retry seconds", () => {
+  assert.deepEqual(classifyTelegramError({code:420,seconds:45,message:"A wait is required"},1),
+    {action:"delay",code:"TG_FLOOD_WAIT",seconds:60,global:true});
+});
