@@ -4,7 +4,7 @@
 // Local-first import/collection. Run from solana-launcher:
 //   node scripts/blockchain-seed-collector.cjs --mode import --migrated-dir ... --trending-dir ... --wallets-dir ...
 //   node scripts/blockchain-seed-collector.cjs --mode collect --limit 50 --concurrency 2
-// Requires Python 3 for the project's bounded XLSX reader and Helius keys for collection.
+// Requires Python 3 for the bounded XLSX reader; collection supports Helius with Alchemy raw-history fallback.
 const fs = require("node:fs");
 const path = require("node:path");
 const { gzipSync } = require("node:zlib");
@@ -104,7 +104,7 @@ function usage() {
     "  --max-files 5000",
     "  --scan-mint-addresses    Diagnostic mint-account traffic (off by default, not a complete trade tape)",
     "Default folders: data/seed-folders/{migrated,trending,wallets}",
-    "Collection requires HELIUS_API_KEY or HELIUS_API_KEYS. Existing trade.db is reused.",
+    "Collection requires HELIUS_API_KEY(S) or ALCHEMY_SOLANA_API_KEY_1..4. Existing trade.db is reused.",
   ].join("\n"));
 }
 
