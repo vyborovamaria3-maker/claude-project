@@ -237,3 +237,137 @@ Public channel -> TG source -> tg_jobs claim -> GramJS MTProto
 
 Запустите локальный dev-сервер solana-launcher на 127.0.0.1:3171, затем из его каталога выполните `node tests/tg-collector-graph-smoke.mjs`. Другой локальный адрес задаётся через `TG_COLLECTOR_SMOKE_URL`.
 Проверка использует синтетические ответы API: выбор связи → сообщения-основания → корректный URL исходного поста; при переключении связи старые основания должны исчезнуть до завершения следующего запроса. Она не обращается к Telegram и не заменяет `smoke:mtproto`.
+
+## Operational hardening
+
+### Canonical evidence version
+
+`tg_message_links.analysis_version` records the extractor version that created each observed fact. The current extractor is `ANALYSIS_VERSION=2`.
+
+Backfill continues to use `tg_messages.analysis_version` as the message-level work marker, while the link-level version preserves provenance for each canonical fact. If an old forward is intentionally preserved because Telegram no longer exposes its original header, its link keeps the older analysis version instead of being falsely re-labelled as freshly observed.
+
+### Graph limits
+
+The graph API defaults to:
+
+- 500 nodes
+- 2,000 edges
+- edge offset 0
+
+The server reports `truncated`, the applied limits, and `nextEdgeOffset`. Clients may request a smaller bounded page with `nodeLimit`, `edgeLimit`, and `edgeOffset`; the API never accepts more than 500 nodes or 2,000 edges per response.
+
+The UI may additionally clip the rendered SVG for readability. That client-side clipping is separate from server-side truncation.
+
+### Evidence semantics
+
+For each daily graph edge:
+
+- `evidence_count` = number of canonical `tg_message_links` facts for that source/message/target/day.
+- `message_count` = number of distinct source messages supporting the edge in that day.
+- Because canonical links are unique on `(source_id,message_id,kind,target_kind,target_key)`, these counts are equal for a normal edge.
+- `sample_message_id` is selected only from active messages when rollups are rebuilt.
+
+All analytical dates use Telegram `posted_at` converted to UTC. `inserted_at/collected_at` is operational metadata and is not used for 7/30/90-day analytics.
+
+### Deleted messages
+
+Messages use `tg_messages.deleted_at` as a soft-delete marker.
+
+A deleted message is excluded from:
+
+- active message search;
+- message counters;
+- graph rollups after the affected day is rebuilt;
+- evidence lookup in the UI.
+
+Its `tg_message_links` rows are retained so canonical provenance is not silently destroyed. `markMessageDeleted()` updates the counter and rebuilds the affected UTC day in the same transaction.
+
+There is intentionally no heuristic that declares a message deleted merely because a later Telegram history page did not return it. Telegram history gaps are not proof of deletion. A future deletion detector must call the lifecycle helper only when Telegram provides a reliable deletion signal.
+
+### Runtime metrics
+
+`tg_runtime` exposes these explicit operational metrics:
+
+- `messages_total`
+- `messages_per_day`
+- `links_total`
+- `links_per_day`
+- `jobs_pending`
+- `jobs_failed`
+- `flood_wait_active`
+- `metrics_updated_at`
+
+The heartbeat refreshes these every five seconds. Message totals use the maintained per-source counters; link totals use a maintained runtime counter; daily values use the daily rollup tables rather than scanning the entire message/link history.
+
+### Worker concurrency
+
+The worker already takes the session-level PostgreSQL advisory lock `8260226`. A second worker exits instead of sharing the same Telegram session.
+
+Queue claiming remains `FOR UPDATE SKIP LOCKED`, so two consumers cannot claim the same job. The integration suite contains a two-consumer regression test.
+
+### Backups and retention
+
+Run:
+
+```bash
+npm run backup
+```
+
+The script creates a PostgreSQL custom-format archive under `TG_BACKUP_DIR` (default `./backups`), verifies it with `pg_restore --list`, writes a SHA-256 checksum when the platform provides `sha256sum` or `shasum`, and removes local archives older than `TG_BACKUP_RETENTION_DAYS` (default 7).
+
+Optional off-host replication can be enabled with `TG_BACKUP_RCLONE_REMOTE`. The script uses `rclone copy`; the remote itself must be configured outside Git.
+
+Non-destructive archive validation:
+
+```bash
+npm run backup:verify -- ./backups/tg-collector-YYYYMMDDTHHMMSSZ.dump
+```
+
+The custom PostgreSQL format is compressed and designed for `pg_restore`. A real restore test must target a disposable database; `restore-check.sh` never mutates the source database.
+
+**Do not commit `backups/*.dump`, session files, tokens, or database credentials.**
+
+Monthly partitioning of `tg_messages` is deliberately deferred. The current primary key and foreign-key provenance model are not changed casually: partitioning by `posted_at` requires a dedicated key/FK redesign and a rehearsed migration. Until that migration exists, monitor table growth and keep verified off-host backups.
+
+### Deterministic Telegram fixtures
+
+`tests/fixtures/telegram/messages.v1.json` is the stable parser fixture contract. It records `fixture_version` and `gramjs_version`, and serializes bigint-like Telegram IDs as strings.
+
+Unit tests must use these fixtures or equivalent deterministic objects. The live `smoke:mtproto` command remains separate and is the only test that requires a real Telegram session and a public test channel.
+
+### Frontend/API security
+
+The Next.js collector routes use the Node.js runtime because they access PostgreSQL. They remain local-only and require `TG_COLLECTOR_ADMIN_TOKEN`.
+
+`tgCollectorAccess.ts` applies:
+
+- localhost host validation;
+- same-origin validation for mutations;
+- constant-time token comparison after hashing;
+- per-IP/per-token in-memory rate limiting;
+- 120 read requests/minute or 30 mutation requests/minute per bucket.
+
+The rate limiter is an abuse-control layer, not a replacement for localhost binding or authentication.
+
+The frontend has its own CI workflow:
+
+- ESLint;
+- access guard tests: missing token -> 401, wrong token -> 401, correct token -> success, abusive caller -> 429;
+- production build.
+
+The security workflow runs GitHub dependency review on pull requests and high-severity production dependency audits for both `tg-collector` and `solana-launcher`.
+
+### Environment template
+
+`solana-launcher/.env.example` documents the local TG Collector variables. Secrets must be supplied through the local environment and are never exposed through `NEXT_PUBLIC_*` variables.
+
+### Current repository policy
+
+This repository is intentionally local-first for Telegram collection:
+
+- one Telegram session;
+- no automatic account rotation;
+- public sources only;
+- no invitation/join automation;
+- observed facts are not interpreted as ownership, identity, or coordination.
+
