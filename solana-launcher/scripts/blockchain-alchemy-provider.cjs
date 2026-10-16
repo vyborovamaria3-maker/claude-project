@@ -125,8 +125,9 @@ function createProvider(options = {}) {
     if (!accounts.length) throw new Error("No Alchemy Solana keys configured (ALCHEMY_SOLANA_API_KEY_1..4 or ALCHEMY_SOLANA_API_KEYS)");
     const method="getTransactionsForAddress", cost=getMethodCost(method,env);
     let lastError=null;
+    const startIndex=nextAccount;
     for (let offset=0;offset<accounts.length;offset++) {
-      const account=accounts[(nextAccount+offset)%accounts.length];
+      const account=accounts[(startIndex+offset)%accounts.length];
       if ((cooldownUntil.get(account.id)||0)>Date.now()) { lastError=new Error("Alchemy account "+account.id+" is in rate-limit cooldown"); continue; }
       if (account.baselineCu===null || account.billingResetDay===null) {
         lastError=new Error("Alchemy account "+account.id+" needs ALCHEMY_SOLANA_CU_USED_BASELINE_"+account.index+" and ALCHEMY_SOLANA_BILLING_RESET_DAY_"+account.index+" from Dashboard before collection");
