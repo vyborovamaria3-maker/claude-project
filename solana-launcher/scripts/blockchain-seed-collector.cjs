@@ -698,7 +698,7 @@ async function processOne(db, row, cfg, api) {
       + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
       + "backfill_complete=?,possible_gap=?,events_saved=events_saved+?"
       + " WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)"
-    ).run(now,now+(budgetPaused?0:(complete&&!forwardCursor&&!gap?cadence:60_000)),
+    ).run(now,now+(budgetPaused?0:(complete&&!forwardCursor?cadence:60_000)),
       backfillCursor,forwardCursor,complete?1:0,gap?1:0,n,
       row.kind,row.address,row.lease_token??null,now);
     if (update.changes!==1) throw new Error("Collector lease changed during commit");
@@ -732,7 +732,7 @@ async function collect(db, args, scopeId = null) {
   let budgetPaused=false,stopReason=null;
   async function worker() {
     while (!stopRequested && !budgetPaused && claimed<maxObjects) {
-      const row=claimOne(db,Boolean(args.scanMintAddresses),scopeId);
+      const row=claimOne(db,Boolean(args.scanMintAddresses || scopeId),scopeId);
       if (!row) break;
       claimed++;
       const taskCfg={...args,scopeId,requestHooks:requestHooksForTask(db,runId,row,args)};
