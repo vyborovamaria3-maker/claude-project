@@ -1,4 +1,6 @@
 import { CollectorActionError } from "./errors";
+import { safeLastErrorCode } from "../trade/task-status";
+import { taskTrace } from "../../src/collector/monitoring";
 import { hasXSession } from "../trade/x-session";
 import path from "node:path";
 import { constants } from "node:fs";
@@ -7,7 +9,7 @@ import { chromium } from "playwright";
 import { z } from "zod";
 import { q, q1, checkDatabase } from "../trade/pg";
 import { decryptBuffer } from "../trade/crypto";
-import { enqueueTask } from "../trade/tasks";
+import { enqueueTask } from "../../src/collector/queue";
 import { SearchPayload, TimelinePayload, ProfilePayload } from "../trade/schemas";
 import { ensureWorker, runtimeStatus } from "./runtime";
 const Input=z.discriminatedUnion("kind",[
@@ -22,12 +24,12 @@ export async function readiness() {
  if(!process.env.DATABASE_URL)return {ready:false,checks:[{name:"database",ok:false,message:"Настройте DATABASE_URL в .env"}],runtime:runtimeStatus()};
  try { await checkDatabase();checks.push({name:"database",ok:true,message:"PostgreSQL доступен"}); }
  catch { return {ready:false,checks:[{name:"database",ok:false,message:"Нет подключения к PostgreSQL; проверьте .env и службу базы"}],runtime:runtimeStatus()}; }
- const required=["archive_post_versions","x_tasks","x_accounts","x_workers","archive_posts","twitter_tweet_observations","twitter_entity_links","x_task_progress","x_task_tweets","x_task_profiles","twitter_profiles","twitter_profile_observations","archive_metrics","archive_users","archive_raw_pages","archive_sources","archive_token_links","archive_edges"];
+ const required=["archive_post_versions","x_tasks","x_accounts","x_workers","archive_posts","twitter_tweet_observations","twitter_entity_links","x_task_progress","x_task_tweets","x_task_profiles","twitter_profiles","twitter_profile_observations","archive_metrics","archive_users","archive_raw_pages","archive_sources","archive_token_links","archive_edges","xc_browser_checkpoints","xc_task_events"];
  const tables=await q<{name:string;present:boolean}>("SELECT name,to_regclass(name) IS NOT NULL present FROM unnest($1::text[]) AS name",[required]);
  const missing=tables.filter(t=>!t.present).map(t=>t.name);
  if(!missing.includes("x_accounts")&&(await q("SELECT attname FROM pg_attribute WHERE attrelid='x_accounts'::regclass AND attname='account_claimed_by' AND NOT attisdropped")).length===0)missing.push("account lease migration 011");
  if(!missing.includes("x_accounts")&&(await q("SELECT attname FROM pg_attribute WHERE attrelid='x_accounts'::regclass AND attname='role' AND NOT attisdropped")).length===0)missing.push("account role migration 019");
- checks.push({name:"schema",ok:missing.length===0,message:missing.length?"Примените миграции: npm run migrate (нужна 019)":"Схема сборщика готова"});
+ checks.push({name:"schema",ok:missing.length===0,message:missing.length?"Примените миграции: npm run migrate (нужны 044–045)":"Схема сборщика готова"});
  if(missing.length)return {ready:false,checks,runtime:runtimeStatus()};
  let valid=false,after="";
  // Bounded batches, but no arbitrary cap hiding a valid account after the first 20.
@@ -72,7 +74,11 @@ export async function taskDetails(id:string) {
  q("SELECT t.tweet_id,t.handle,t.text,t.url,t.views,t.likes,t.replies,t.retweets,t.posted_at FROM x_task_tweets r JOIN twitter_tweets t ON t.tweet_id=r.tweet_id WHERE r.task_id=$1 ORDER BY t.posted_at DESC NULLS LAST LIMIT 100",[id]),
  q("SELECT p.handle,p.display_name,p.bio,p.followers,p.following FROM x_task_profiles r JOIN twitter_profiles p ON p.handle=r.handle WHERE r.task_id=$1",[id]),
  q("SELECT id FROM x_workers WHERE status='active' AND last_heartbeat>$1 LIMIT 1",[Date.now()-90000]),
- ]);return {task,counts,tweets,profiles,workerActive:workers.length>0,runtime:runtimeStatus()};
+ ]);
+ const traceId=Number(id);
+ const events=Number.isSafeInteger(traceId)&&traceId>0?await taskTrace(traceId,100):[];
+ return {task:{...task,last_error:safeLastErrorCode(task.last_error)},counts,tweets,profiles,
+  events,workerActive:workers.length>0,runtime:runtimeStatus()};
 }
 
 export async function resumeCollection(id:string,startWorker=ensureWorker) {

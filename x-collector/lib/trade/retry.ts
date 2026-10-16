@@ -83,6 +83,8 @@ const RETRYABLE_PG_CODES = new Set([
   "57P02", // cannot_connect_now
   "57P03", // crash_shutdown
   "57P04", // database_is_shutting_down
+  // Node.js connection errors may expose a code without echoing it in message.
+  "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENETUNREACH", "EHOSTUNREACH", "EPIPE",
 ]);
 
 export function pgErrorCode(error: unknown): string | undefined {
@@ -95,6 +97,6 @@ export function isRetryablePgError(error: unknown): boolean {
   const code = pgErrorCode(error);
   if (code && RETRYABLE_PG_CODES.has(code)) return true;
   const message = String((error as Error | undefined)?.message ?? error);
-  return /terminated|connection (reset|lost|closed)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up/i
+  return /terminated|connection (reset|lost|closed)|timeout exceeded when trying to connect|connection timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EPIPE|socket hang up/i
     .test(message);
 }

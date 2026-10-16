@@ -40,7 +40,7 @@ test('Start button reaches queue, real storage and task results; retries and set
  const browser = await chromium.launch({ headless: true });
  try{
  assert.equal((await readiness()).ready,false);
-for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql','019_account_roles.sql','020_account_profile.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','016_collector_task_results.sql','017_collector_live.sql','019_account_roles.sql','020_account_profile.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql','044_browser_checkpoints.sql','045_collector_trace.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
  await db.exec('ALTER TABLE x_accounts ADD COLUMN IF NOT EXISTS account_claimed_by text');
  assert.equal((await readiness()).ready,false);
  const blob=encryptBuffer(Buffer.from(JSON.stringify({cookies:[{name:'auth_token',value:'controlled-fixture',domain:'.x.com',expires:-1}],origins:[]})));
@@ -52,10 +52,20 @@ for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundatio
  await assert.rejects(startCollection({kind:'search',payload:{query:'fixture'},requestId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},async()=>{throw new Error('startup fixture failure');}),/startup fixture/);assert.equal((await db.query('SELECT * FROM x_tasks')).rows.length,0);
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');origin='http://127.0.0.1:'+address.port;
  const context=await browser.newContext({httpCredentials:{username:'fixture',password:'fixture'}}),page=await context.newPage();
+ await page.route('**/api/collector/diagnostics',route=>route.fulfill({status:200,json:{
+   queue:[{status:'pending',count:1}],accounts:[{status:'active',count:1}],
+   tasks:[{id:'123',kind:'search',state:'waiting_account',attempts:0,maxAttempts:3,
+     nextEligibleInSeconds:60,lastErrorCode:'WAITING_ACCOUNT',persistedPartialOutput:true}],
+ }}));
  await page.goto(origin+'/collector');await page.waitForFunction(()=>!(document.getElementById('start') as HTMLButtonElement).disabled);
+ await page.waitForFunction(()=>document.getElementById('diag-jobs')?.textContent?.includes('Нет свободного аккаунта'));
+ assert.match(await page.locator('#diag-summary').innerText(),/pending: 1/);
+ assert.match(await page.locator('#diag-jobs').innerText(),/WAITING_ACCOUNT/);
+ assert.match(await page.locator('#diag-jobs').innerText(),/есть сохранённые данные/);
  await page.locator('#value').fill('solana');
  const [response]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/collector/start')),page.locator('#start').click()]);assert.equal(response.status(),202);const {id}=await response.json();assert.equal(launches,1);
- await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/collector/resume')),page.locator('#resume').click()]);assert.equal(launches,2);
+ await page.locator('#resume').waitFor({state:'visible'});
+  await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/collector/resume')),page.locator('#resume').click()]);assert.equal(launches,2);
  const task=(await db.query<{idempotency_key:string;payload_json:unknown}>("SELECT * FROM x_tasks WHERE id=$1",[id])).rows[0];
  const retry={kind:'search',payload:task.payload_json,requestId:task.idempotency_key.slice(3)};
  assert.equal((await startCollection(retry,startWorker)).reused,true);assert.equal((await db.query('SELECT * FROM x_tasks')).rows.length,1);
@@ -71,6 +81,10 @@ for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundatio
  await page.waitForFunction(()=>document.getElementById('live-jobs')?.textContent?.includes('1 постов'));
  assert.match(await page.locator('#live-jobs').innerText(),/alice/);assert.equal(await finishTask(Number(id),'controlled-worker'),true);
  await page.locator('#refresh').click();await page.waitForFunction(()=>document.getElementById('progress')?.textContent?.includes('Сбор завершён'));assert.equal(await page.locator('#tweets tr').count(),1);assert.match(await page.locator('#tweets').innerText(),/alice/);assert.match(await page.locator('#tweets').innerText(),/—/);
+ await db.query("UPDATE x_tasks SET last_error='[SENSITIVE_PASSWORD] credential=secret' WHERE id=$1",[id]);
+ assert.equal((await taskDetails(String(id)))?.task.last_error,'LEGACY_OR_UNKNOWN');
+ assert.equal((await liveSnapshot()).jobs.find(j=>String(j.id)===String(id))?.last_error,'LEGACY_OR_UNKNOWN');
+ await db.query("UPDATE x_tasks SET last_error=NULL WHERE id=$1",[id]);
  const profile=await startCollection({kind:'profile',payload:{handle:'alice'},requestId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'},startWorker);const [profileTask]=await claimTasks('controlled-worker',1,60000);
  await persistProfile({handle:'alice',displayName:'Alice',bio:'Solana',followers:10,following:null,postsCount:null,isVerified:false,joinedAt:null,avatarUrl:null},Number(profile.id));await finishTask(profileTask.id,'controlled-worker');assert.equal(Number((await taskDetails(String(profile.id)))!.counts!.profiles),1);
  const partial=await startCollection({kind:'timeline',payload:{handle:'alice',limit:5},requestId:'cccccccc-cccc-4ccc-8ccc-cccccccccccc'},startWorker);

@@ -5,9 +5,10 @@ import fs from 'node:fs/promises';
 import { Pool } from 'pg';
 import { PGlite } from '@electric-sql/pglite';
 import { enqueueTask, claimTasks, finishTask, deferTask, failTask, extendLease, replayDeadLetter, QueueBackpressureError } from '../lib/trade/tasks';
-import { pickAccount, accountWaitMs, releaseAccount, recordError, extendAccountLease } from '../lib/trade/account-manager';
+import { pickAccount, accountWaitMs, releaseAccount, recordError, extendAccountLease, cooldownAccountProxy, releaseUnconfirmedAccountReservation, proxyConnectionIdentity } from '../lib/trade/account-manager';
 import { CollectorHttpError, taskFailure, retryAfterMs } from '../lib/trade/task-errors';
 import { WorkerRuntime } from '../src/runtime/worker-runtime';
+import { activeTaskSnapshot } from '../lib/trade/task-dashboard';
 import { executeTask } from '../src/runtime/collector-task';
 import { WorkerRegistry, reapDeadWorkers } from '../lib/trade/worker-registry';
 import { getDailyDigest, getMintFullReport, getTopShillers, getTrendingWords, getCashtagTrends, getWorkerEfficiency, getAccountHealth } from '../lib/trade/analytics';
@@ -113,9 +114,51 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     assert.equal(await pickAccount('search','proxy-strict','fallback',false,true),null);
     const proxied=await pickAccount('search','proxy-fallback','fallback',true,true);
     assert.equal(proxied?.name,'second');
+    await db.query(`INSERT INTO x_accounts
+      (name,session_encrypted,hour_window_start,created_at,updated_at,role,proxy_json)
+      SELECT 'shared-proxy', session_encrypted, 0,0,0,'collector',proxy_json
+      FROM x_accounts WHERE name='second'`);
+    await db.query("UPDATE x_accounts SET proxy_json=$1 WHERE name='shared-proxy'",
+      [JSON.stringify({type:'socks5',host:'127.0.0.1',port:9050,
+        latency:240,status:'connected',last_check:Date.now(),country:'EE'})]);
+    assert.equal(proxyConnectionIdentity(JSON.stringify({type:'socks5',host:'127.0.0.1',port:9050})),
+      proxyConnectionIdentity(JSON.stringify({type:'socks5',host:'127.0.0.1',port:9050,last_check:Date.now(),latency:240})));
+    await db.query(`INSERT INTO x_accounts
+      (name,session_encrypted,hour_window_start,created_at,updated_at,role,proxy_json)
+      SELECT 'different-auth', session_encrypted, 0,0,0,'collector',
+        '{"type":"socks5","host":"127.0.0.1","port":9050,"username":"different","password":"secret"}'
+      FROM x_accounts WHERE name='second'`);
+    await db.query(`INSERT INTO x_accounts
+      (name,session_encrypted,hour_window_start,created_at,updated_at,role,proxy_json)
+      SELECT 'other-proxy', session_encrypted, 0,0,0,'collector',
+        '{"type":"socks5","host":"127.0.0.2","port":9050}'
+      FROM x_accounts WHERE name='second'`);
+    assert.equal(await cooldownAccountProxy('second','wrong-owner'),false);
+    assert.equal(await cooldownAccountProxy('second','proxy-fallback',60_000),true);
+    const proxyCooldown = (await db.query<{status:string; cooldown_until:string}>(
+      "SELECT status,cooldown_until FROM x_accounts WHERE name='second'")).rows[0];
+    assert.equal(proxyCooldown.status,'cooldown');
+    assert(Number(proxyCooldown.cooldown_until) >= Date.now() + 55_000);
+    assert.equal((await db.query<{status:string}>(
+      "SELECT status FROM x_accounts WHERE name='shared-proxy'")).rows[0].status,'cooldown');
+    assert.equal((await db.query<{status:string}>(
+      "SELECT status FROM x_accounts WHERE name='other-proxy'")).rows[0].status,'active');
+    assert.equal((await db.query<{status:string}>(
+      "SELECT status FROM x_accounts WHERE name='different-auth'")).rows[0].status,'active');
+    assert.equal((await db.query(
+      "SELECT 1 FROM xc_account_errors WHERE account_name IN ('second','shared-proxy') AND type='PROXY_FAILED'")).rows.length,2);
     await releaseAccount('second','proxy-fallback');
-    await db.query("DELETE FROM x_accounts WHERE name='second'");
-    await db.query("UPDATE x_accounts SET account_busy_until=0,account_claimed_by=NULL WHERE name='fallback'");
+    await db.query("DELETE FROM x_accounts WHERE name IN ('second','shared-proxy','other-proxy','different-auth')");
+    await db.query("UPDATE x_accounts SET account_busy_until=0,account_claimed_by=NULL,role='collector',status='active',weight_used_this_hour=0,weight_quota_per_hour=15,tier='new' WHERE name='fallback'");
+    const reserved=await pickAccount('search','unconfirmed-reservation','fallback');
+    assert.equal(reserved?.name,'fallback');
+    assert.equal(await releaseUnconfirmedAccountReservation('wrong-reservation',3),0);
+    assert.equal(await releaseUnconfirmedAccountReservation('unconfirmed-reservation',3),1);
+    assert.equal(await releaseUnconfirmedAccountReservation('unconfirmed-reservation',3),0);
+    const refunded=(await db.query<{account_claimed_by:string|null;weight_used_this_hour:number}>(
+      "SELECT account_claimed_by,weight_used_this_hour FROM x_accounts WHERE name='fallback'")).rows[0];
+    assert.equal(refunded.account_claimed_by,null);
+    assert.equal(refunded.weight_used_this_hour,0);
     await db.query("DELETE FROM x_accounts WHERE name IN ('fallback','publisher-only')");
     await enqueueTask({ ...input, payload: { query: 'retry' }, maxAttempts: 2 });
     const [retry] = await claimTasks('worker-c', 1, 60000);
@@ -165,6 +208,12 @@ test('queue lease ownership, retries, DLQ and account ownership against SQL engi
     const [waiting] = await claimTasks('handler-worker', 1, 60000);
     assert.equal(await runtime.runJob(waiting,job=>executeTask(job,context)), 'no-account');
     assert.equal((await db.query<{attempts:number}>('SELECT attempts FROM x_tasks WHERE id=$1',[waiting.id])).rows[0].attempts,0);
+    const waitingSample = await activeTaskSnapshot(Date.now());
+    const waitingDisplay = waitingSample.find(row => row.id === String(waiting.id));
+    assert.equal(waitingDisplay?.state, 'waiting_account');
+    assert.equal(waitingDisplay?.lastErrorCode, 'WAITING_ACCOUNT');
+    assert.equal(waitingDisplay?.persistedPartialOutput, false);
+    await assert.rejects(activeTaskSnapshot(Date.now(), 51), /Invalid dashboard task limit/);
     await db.query("UPDATE x_tasks SET status='done' WHERE status='pending'");
     // Account failures quarantine only that account; a second account can finish the job.
     const previousKey = process.env.MASTER_KEY;
