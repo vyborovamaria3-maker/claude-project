@@ -99,6 +99,13 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     assert.equal((await q("SELECT 1 FROM twitter_tweets")).length,1);
     assert.equal((await q("SELECT 1 FROM tweet_entities WHERE tweet_id=$1",[tweet.id])).length,2);
     assert.equal((await q("SELECT 1 FROM twitter_tweet_observations")).length,1);
+    const rawHashesBeforeInvalid = new Set((await q<{hash:string}>("SELECT hash FROM archive_raw_pages")).map(row=>row.hash));
+    const invalidEnvelope = { ...rawEnvelope, variables: { rawQuery: "malformed" } };
+    await assert.rejects(persistTweets(null,[{...tweet,id:"123"}],null,undefined,undefined,undefined,{rawResponse:invalidEnvelope}),/collector rejected 1 malformed tweets/);
+    const capturedInvalid = (await q<{hash:string;path:string}>("SELECT hash,path FROM archive_raw_pages")).find(row=>!rawHashesBeforeInvalid.has(row.hash));
+    assert(capturedInvalid, "raw response should survive a schema rejection");
+    const capturedInvalidPayload = JSON.parse(gunzipSync(await fs.readFile(capturedInvalid.path)).toString("utf8")) as {source_response?:unknown};
+    assert.deepEqual(capturedInvalidPayload.source_response,invalidEnvelope);
     await getPool().query(`CREATE FUNCTION reject_fixture_entity() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'fixture entity failure'; END $$ LANGUAGE plpgsql`);
     await getPool().query(`CREATE TRIGGER reject_fixture BEFORE INSERT ON tweet_entities FOR EACH ROW EXECUTE FUNCTION reject_fixture_entity()`);
     const bad={...tweet,id:"2234567890123456789"};
