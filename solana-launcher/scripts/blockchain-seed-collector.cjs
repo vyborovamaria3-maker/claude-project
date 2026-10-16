@@ -370,11 +370,26 @@ function reserveHeliusCredits(db, input) {
     const monthUsed = run.monthly_baseline_credits + db.prepare(
       "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS n FROM chain_helius_usage_requests WHERE month_key=?"
     ).get(monthKey).n;
+    let scopeUsed = 0;
+    let scopeBudget = null;
+    if (run.scope_id) {
+      const scope = db.prepare("SELECT pilot_budget_credits FROM chain_collection_scopes WHERE scope_id=?").get(run.scope_id);
+      if (!scope) throw new Error("Collection scope disappeared: " + run.scope_id);
+      scopeBudget = scope.pilot_budget_credits;
+      scopeUsed = db.prepare(
+        "SELECT COALESCE(SUM(COALESCE(u.actual_credits,u.estimated_credits)),0) AS n " +
+        "FROM chain_helius_usage_requests u INNER JOIN chain_collection_runs r ON r.run_id=u.run_id " +
+        "WHERE r.scope_id=?"
+      ).get(run.scope_id).n;
+    }
     if (runUsed + credits > run.run_budget_credits) {
       throw budgetError("Run Helius credit budget reached ("+runUsed+"/"+run.run_budget_credits+"); pausing before next request");
     }
     if (monthUsed + credits > run.monthly_budget_credits) {
       throw budgetError("Monthly Helius credit budget reached ("+monthUsed+"/"+run.monthly_budget_credits+"); pausing before next request");
+    }
+    if (scopeBudget !== null && scopeUsed + credits > scopeBudget) {
+      throw budgetError("Pilot lifetime Helius credit budget reached ("+scopeUsed+"/"+scopeBudget+"); no new request until pilot budget is increased");
     }
     db.prepare(
       "INSERT INTO chain_helius_usage_requests(request_id,run_id,month_key,task_kind,task_address,endpoint,estimated_credits,status,created_at) " +
@@ -590,10 +605,15 @@ function status(db, args = {}) {
   let scopes = [];
   if (hasTable("chain_collection_scopes")) {
     scopes = db.prepare(
-      "SELECT s.scope_id AS scopeId,s.seed_token AS seedToken,s.status,"+
+      "SELECT s.scope_id AS scopeId,s.seed_token AS seedToken,s.status,s.pilot_budget_credits AS pilotBudgetCredits,"+
+      "COALESCE(u.used_credits,0) AS pilotUsedCredits,MAX(0,s.pilot_budget_credits-COALESCE(u.used_credits,0)) AS pilotRemainingCredits,"+
       "COUNT(m.address) AS objects,SUM(CASE WHEN t.last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS syncedObjects "+
       "FROM chain_collection_scopes s LEFT JOIN chain_collection_scope_members m ON m.scope_id=s.scope_id "+
-      "LEFT JOIN chain_seed_targets t ON t.kind=m.kind AND t.address=m.address GROUP BY s.scope_id ORDER BY s.created_at DESC"
+      "LEFT JOIN chain_seed_targets t ON t.kind=m.kind AND t.address=m.address "+
+      "LEFT JOIN (SELECT r.scope_id,SUM(COALESCE(u.actual_credits,u.estimated_credits)) AS used_credits "+
+      "FROM chain_collection_runs r JOIN chain_helius_usage_requests u ON u.run_id=r.run_id "+
+      "WHERE r.scope_id IS NOT NULL GROUP BY r.scope_id) u ON u.scope_id=s.scope_id "+
+      "GROUP BY s.scope_id ORDER BY s.created_at DESC"
     ).all();
   }
   const hasDeferred=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_collection_scope_deferred'").get());
@@ -1052,7 +1072,7 @@ async function main() {
   const db = require("../lib/trade/db").getDb();
   initDb(db);
   resolveBudgetSettings(db,args,["collect","pilot","watch","all"].includes(args.mode));
-  const scopeId = args.seedToken ? ensurePilotScope(db,args.seedToken) : null;
+  const scopeId = args.seedToken ? ensurePilotScope(db,args.seedToken,args.pilotBudgetCredits,args.pilotBudgetConfigured) : null;
   if (!scopeId) syncDexProgramSources(db);
   if (args.mode === "watch") {
     while (!stopRequested) {
