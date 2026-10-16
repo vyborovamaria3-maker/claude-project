@@ -175,7 +175,11 @@ function createProvider(options = {}) {
         transactions.push(tx);
         if(transactions.length>=maxTxs) break;
       }
-      if(reachedKnownHistory) break;
+      if(reachedKnownHistory) {
+        paginationToken=page.paginationToken||undefined;
+        exhausted=!paginationToken;
+        break;
+      }
       if(!page.paginationToken) { exhausted=true; break; }
       if(seenCursors.has(page.paginationToken)) throw new Error("Alchemy pagination stalled: token repeated");
       seenCursors.add(page.paginationToken);
@@ -183,7 +187,7 @@ function createProvider(options = {}) {
       if(transactions.length>=maxTxs) break;
     }
     return {transactions,exhausted,reachedKnownHistory,truncated:!exhausted&&!reachedKnownHistory&&transactions.length>=maxTxs,
-      budgetExhausted:false,nextCursor:!exhausted&&!reachedKnownHistory?encodeCursor(paginationToken):null,provider:"alchemy"};
+      budgetExhausted:false,nextCursor:!exhausted?encodeCursor(paginationToken):null,provider:"alchemy"};
   }
   return {accounts:accounts.map(({key,...safe})=>safe),pilotBudgetCu,fetchPage,fetchHistoryWithMeta,encodeCursor,decodeCursor};
 }
