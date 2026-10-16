@@ -1,12 +1,12 @@
 import type { Response } from "playwright";
-import { getCollectorAccount } from "../src/x/account-session";
-import { parseProxy } from "../src/x/proxy";
-import { createBrowser } from "../src/x/client";
-import { extractCookies } from "../src/x/session";
-import { printDiagnostics } from "../src/x/diagnostics";
-import { decryptBuffer } from "../lib/trade/crypto";
-import { closePool } from "../lib/trade/pg";
-import { getConfig } from "../lib/trade/config";
+import { getCollectorAccount } from "../../src/x/account-session";
+import { parseProxy } from "../../src/x/proxy";
+import { createBrowser } from "../../src/x/client";
+import { extractCookies } from "../../src/x/session";
+import { printDiagnostics } from "../../src/x/diagnostics";
+import { decryptBuffer } from "../../lib/trade/crypto";
+import { closePool } from "../../lib/trade/pg";
+import { getConfig } from "../../lib/trade/config";
 
 const HOME_URL = "https://x.com/home";
 
