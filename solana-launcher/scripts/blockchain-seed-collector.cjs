@@ -163,7 +163,7 @@ function initDb(db) {
     ";CREATE TABLE IF NOT EXISTS chain_collection_runs (",
     "  run_id TEXT PRIMARY KEY, scope_id TEXT, started_at INTEGER NOT NULL, finished_at INTEGER,",
     "  run_budget_credits INTEGER NOT NULL, monthly_budget_credits INTEGER NOT NULL,",
-    "  monthly_baseline_credits INTEGER NOT NULL DEFAULT 0, budget_period_start_day INTEGER NOT NULL DEFAULT 1,",
+    "  monthly_baseline_credits INTEGER NOT NULL DEFAULT 0, budget_period_start_day INTEGER NOT NULL DEFAULT 1, budget_period_start_day_confirmed INTEGER NOT NULL DEFAULT 0,",
     "  page_credit_estimate INTEGER NOT NULL, max_objects INTEGER NOT NULL,max_runtime_ms INTEGER NOT NULL DEFAULT 21600000,",
     "  status TEXT NOT NULL DEFAULT 'running', stopped_reason TEXT)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_collection_runs_started ON chain_collection_runs(started_at DESC)",
