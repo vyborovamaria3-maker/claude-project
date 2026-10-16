@@ -13,6 +13,17 @@ export type TgProxyConfig = {
   secret?: string;
 };
 
+export type TgProxyTransport = {
+  ip: string;
+  port: number;
+  MTProxy: boolean;
+  socksType?: 4 | 5;
+  timeout?: number;
+  username?: string;
+  password?: string;
+  secret?: string;
+};
+
 export type TgProxyStatus = {
   enabled: boolean;
   configured: boolean;
@@ -79,19 +90,29 @@ export async function getProxyStatus(client: PoolClient | typeof pool = pool): P
   };
 }
 
-export async function loadProxy(): Promise<TgProxyConfig | undefined> {
+export async function loadProxy(): Promise<TgProxyTransport | undefined> {
   const { rows } = await pool.query<{
     enabled: boolean; proxy_type: TgProxyType; host: string; port: number;
     username_enc: string | null; password_enc: string | null; secret_enc: string | null;
   }>("SELECT enabled,proxy_type,host,port,username_enc,password_enc,secret_enc FROM tg_proxy_config WHERE id=1");
   const row = rows[0];
   if (!row || !row.enabled) return undefined;
-  const value: TgProxyConfig = {
+  const settings: TgProxyConfig = {
     proxyType: row.proxy_type, host: row.host, port: Number(row.port),
     username: decrypt(row.username_enc), password: decrypt(row.password_enc), secret: decrypt(row.secret_enc),
   };
-  validate(value);
-  return value;
+  validate(settings);
+  return {
+    ip: settings.host,
+    port: settings.port,
+    MTProxy: settings.proxyType === "mtproxy",
+    ...(settings.proxyType === "mtproxy" ? { secret: settings.secret } : {
+      socksType: settings.proxyType === "socks4" ? 4 : 5,
+      ...(settings.username ? { username: settings.username } : {}),
+      ...(settings.password ? { password: settings.password } : {}),
+    }),
+    timeout: 5,
+  };
 }
 
 export async function saveProxy(input: TgProxyConfig, preserveSecrets = true): Promise<void> {
