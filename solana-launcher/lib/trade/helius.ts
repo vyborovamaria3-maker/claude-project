@@ -65,6 +65,8 @@ export type EnrichedTxMeta = {
   truncated: boolean;
   /** Incremental mode stopped at an already-persisted signature, not chain exhaustion. */
   reachedKnownHistory?: boolean;
+  /** True when local credit guard stopped after a partial page was fetched. */
+  budgetExhausted?: boolean;
 };
 
 export type HeliusRequestContext = {
