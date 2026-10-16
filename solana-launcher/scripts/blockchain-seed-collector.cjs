@@ -36,6 +36,7 @@ function parseArgs(argv) {
     flags[key] = argv[++i];
   }
   const defaultFolder = path.join(process.cwd(), "data", "seed-folders");
+  const monthlyBaselineRaw = flags["monthly-credits-used"] ?? (process.env.HELIUS_MONTHLY_CREDITS_USED_BASELINE?.trim() || undefined);
   const parsed = {
     mode: flags.mode || (flags["seed-token"] ? "pilot" : "import"),
     folders: {
@@ -50,7 +51,8 @@ function parseArgs(argv) {
     recentLimit: intFlag(flags["recent-limit"], 200, 1, 1000),
     backfillLimit: intFlag(flags["backfill-limit"], 200, 1, 1000),
     monthlyBudgetCredits: intFlag(flags["monthly-budget-credits"] ?? process.env.HELIUS_MONTHLY_BUDGET_CREDITS, 10000000, 1, 100000000000),
-    monthlyCreditsUsedBaseline: intFlag(flags["monthly-credits-used"] ?? process.env.HELIUS_MONTHLY_CREDITS_USED_BASELINE, 0, 0, 100000000000),
+    monthlyCreditsUsedBaseline: intFlag(monthlyBaselineRaw, 0, 0, 100000000000),
+    monthlyCreditsBaselineConfigured: monthlyBaselineRaw !== undefined,
     budgetPeriodStartDay: intFlag(flags["budget-period-start-day"] ?? process.env.HELIUS_BUDGET_PERIOD_START_DAY, 1, 1, 31),
     runBudgetCredits: intFlag(flags["run-budget-credits"] ?? process.env.HELIUS_RUN_BUDGET_CREDITS, 250000, 1, 100000000000),
     pageCreditEstimate: intFlag(flags["page-credit-estimate"] ?? process.env.HELIUS_ADDRESS_TX_ESTIMATED_CREDITS_PER_REQUEST, 110, 1, 1000000),
@@ -63,6 +65,9 @@ function parseArgs(argv) {
   };
   if (parsed.seedToken && !isSolanaAddress(parsed.seedToken)) throw new Error("--seed-token must be a valid Solana mint address");
   if (parsed.mode === "pilot" && !parsed.seedToken) throw new Error("--mode pilot requires --seed-token <mint>");
+  if (["collect","pilot","watch","all"].includes(parsed.mode) && !parsed.monthlyCreditsBaselineConfigured) {
+    throw new Error("Before network collection, set --monthly-credits-used to credits already consumed in the current Helius billing period, or HELIUS_MONTHLY_CREDITS_USED_BASELINE");
+  }
   if (parsed.seedToken && !["pilot","collect","watch"].includes(parsed.mode)) {
     throw new Error("--seed-token is only valid with --mode pilot|collect|watch");
   }
@@ -74,7 +79,7 @@ function usage() {
     "  --mode import|collect|all|watch|pilot|status  [default: import]",
     "  --seed-token <mint>     Start/resume a recursive pilot scoped to one token; does not import Excel seeds",
     "  --limit 30 --max-objects 10000 --concurrency 2 --recent-limit 200 --backfill-limit 200",
-    "  --monthly-budget-credits 10000000 --monthly-credits-used 0 --budget-period-start-day 1",
+    "  --monthly-budget-credits 10000000 --monthly-credits-used <dashboard-used-credits> --budget-period-start-day 1",
     "  --run-budget-credits 250000 --page-credit-estimate 110",
     "  Credit estimates are local guards; provider-reported headers override estimates when available.",
     "  --mode watch --watch-interval 60  Repeat import and bounded collection on a laptop",
