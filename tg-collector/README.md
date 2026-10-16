@@ -355,7 +355,7 @@ The frontend has its own CI workflow:
 - access guard tests: missing token -> 401, wrong token -> 401, correct token -> success, abusive caller -> 429;
 - production build.
 
-The security workflow runs GitHub dependency review on pull requests and high-severity production dependency audits for both `tg-collector` and `solana-launcher`.
+The security workflow runs high-severity production dependency audits for both `tg-collector` and `solana-launcher`. GitHub Dependency Review is intentionally not used because the repository Dependency graph feature is not enabled for this repository connection; the existing repository-wide Security Gates workflow remains the source of truth for its broader secret/security scans.
 
 ### Environment template
 
