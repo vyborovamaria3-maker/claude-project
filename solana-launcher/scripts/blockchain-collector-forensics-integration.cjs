@@ -17,7 +17,10 @@ const db = new Database(":memory:");
   db.prepare("UPDATE chain_helius_usage_requests SET actual_credits=95,status='completed',http_status=200,finished_at=3 WHERE request_id='h-ledger'").run();
   assert.equal(db.prepare("SELECT actual_units,status FROM chain_budget_ledger WHERE request_id='h-ledger'").get().actual_units,95);
   db.prepare("INSERT INTO chain_alchemy_usage_requests(request_id,run_id,scope_id,account_id,month_key,task_kind,task_address,method,estimated_cu,status,created_at) VALUES('a-ledger','run-ledger',NULL,'alchemy-1','2026-10','wallet',?,'getTransactionsForAddress',100,'reserved',4)").run(wallet);
-  assert.deepEqual(db.prepare("SELECT provider,cost_kind,estimated_units FROM chain_budget_ledger WHERE request_id='a-ledger'").get(),{provider:"alchemy",cost_kind:"cu",estimated_units:100});
+  const alchemyLedger=db.prepare("SELECT provider,cost_kind,estimated_units FROM chain_budget_ledger WHERE request_id='a-ledger'").get();
+  assert.equal(alchemyLedger.provider,"alchemy");
+  assert.equal(alchemyLedger.cost_kind,"cu");
+  assert.equal(alchemyLedger.estimated_units,100);
   db.prepare("INSERT INTO chain_seed_targets(kind,address,source_mask,priority) VALUES('wallet',?,4,90)").run(wallet);
   const txs=Array.from({length:31},(_,i)=>{
     const mint="1".repeat(31)+BASE58[i+1];
