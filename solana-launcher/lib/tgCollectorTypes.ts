@@ -52,3 +52,57 @@ export type TgGraphResponse = {
   nextEdgeOffset: number | null;
   days: number;
 };
+
+
+export type TgRuntimeMetrics = {
+  messages_total: number;
+  messages_per_day: number;
+  links_total: number;
+  links_per_day: number;
+  jobs_pending: number;
+  jobs_failed: number;
+  flood_wait_active: boolean;
+  metrics_updated_at: string | null;
+};
+
+export type TgCollectorSource = {
+  id: string;
+  identifier: string;
+  title: string | null;
+  peer_id: string | null;
+  enabled: boolean;
+  history_partial: boolean;
+  last_message_id: string;
+  last_success_at: string | null;
+  message_count: number;
+  state: "pending" | "running" | "delayed" | "failed" | null;
+  run_at: string | null;
+  attempts: number | null;
+  scanned_count: number | null;
+  last_error: string | null;
+};
+
+export type TgCollectedMessage = {
+  source_id: string;
+  identifier: string;
+  message_id: string;
+  sender_id: string | null;
+  posted_at: string | null;
+  text: string;
+  views: number | null;
+  forwards: number | null;
+  replies: number | null;
+};
+
+export type TgCollectorSnapshot = {
+  configured: boolean;
+  workerOnline: boolean;
+  heartbeatAt: string | null;
+  blockReason: string | null;
+  pausedUntil: string | null;
+  stats: { sources: number; messages: number; running: number; failed: number };
+  runtimeMetrics: TgRuntimeMetrics;
+  sources: TgCollectorSource[];
+  messages: TgCollectedMessage[];
+  page: number;
+};
