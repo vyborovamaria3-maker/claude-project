@@ -31,7 +31,7 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
 
   // Budget reservations are serialized and count estimates until a provider
   // reports actual credits. This models two concurrent workers sharing SQLite.
-  const run1=collector.startCollectionRun(db,args(500,300),scopeId);
+  const run1=collector.startCollectionRun(db,args(300,300),scopeId);
   const request1=collector.reserveHeliusCredits(db,{runId:run1,taskKind:"token",taskAddress:SEED,
     endpoint:"enhanced-address-transactions",estimatedCredits:110});
   collector.recordHeliusResponse(db,request1,{status:200,actualCredits:150});
