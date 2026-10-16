@@ -15,8 +15,14 @@ import { getDailyDigest, getMintFullReport, getTopShillers, getTrendingWords, ge
 import { getTopHype, getEarlySignals, getLeadAuthors, getTopPageRank } from '../lib/trade/analytics-advanced';
 import { getTopUltra, listModels } from '../lib/trade/analytics-predictive';
 import { closePool } from '../lib/trade/pg';
+import { isRetryablePgError } from '../lib/trade/retry';
 import { clearKeyCache, encryptBuffer, decryptBuffer } from '../lib/trade/crypto';
 import { handleSearchTask } from '../src/x/task-handler';
+
+test('database retryable errors are not converted into task failures', () => {
+  assert.equal(isRetryablePgError(Object.assign(new Error('connection reset by peer'), { code: 'ECONNRESET' })), true);
+  assert.equal(taskFailure(Object.assign(new Error('connection reset by peer'), { code: 'ECONNRESET' })).permanent, false);
+});
 
 test('encrypted sessions reject tampering and wrong keys', () => {
   const previous = process.env.MASTER_KEY;
