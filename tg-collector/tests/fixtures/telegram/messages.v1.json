@@ -2,7 +2,7 @@
   "fixture_version": 1,
   "gramjs_version": "2.26.22",
   "format": "json-message-envelope",
-  "notes": "Stable fixture contract. Values mirror the subset of a GramJS Message used by TG Collector; no live Telegram session is required.",
+  "notes": "Stable fixture contract. Values mirror the subset of a GramJS Message used by TG Collector; no live Telegram credentials are required.",
   "messages": [
     {
       "id": 1001,
