@@ -12,7 +12,15 @@ import type { TelegramClient } from "telegram";
  * writes <=100 visible messages to PostgreSQL; does not send messages/invite users.
  */
 async function main(): Promise<void> {
-  const handle = normalizePublicUsername(process.argv[2] ?? "");
+  const configuredHandle = process.argv[2] ?? process.env.TG_SMOKE_TEST_CHANNEL ?? "";
+  if (!configuredHandle) {
+    throw Error("Set TG_SMOKE_TEST_CHANNEL or pass a dedicated public test channel as the first argument.");
+  }
+  const handle = normalizePublicUsername(configuredHandle);
+  const expectedMessages = Number(process.env.TG_SMOKE_EXPECTED_MESSAGES ?? "100");
+  if (!Number.isSafeInteger(expectedMessages) || expectedMessages < 1 || expectedMessages > 100) {
+    throw Error("TG_SMOKE_EXPECTED_MESSAGES must be an integer between 1 and 100.");
+  }
   await migrate();
   const guard = await pool.connect();
   let client: TelegramClient | undefined;
@@ -24,10 +32,12 @@ async function main(): Promise<void> {
     const entity = await client.getEntity(handle);
     const info = entity as { className?: string };
     if (info.className !== "Channel") throw Error("A public channel or supergroup is required.");
-    const batch = await client.getMessages(entity, {limit:100});
+    const batch = await client.getMessages(entity, {limit:expectedMessages});
     const all = batch as unknown as RawTelegramMessage[];
     const messages = all.filter(m=>Number.isSafeInteger(m.id) && m.id>0 && typeof m.message==="string");
-    if (!messages.length) throw Error("No accessible messages with a text field returned.");
+    if (messages.length < expectedMessages) {
+      throw Error(`Smoke channel returned ${messages.length} text messages; expected at least ${expectedMessages}. Keep the smoke channel deterministic and seeded with stable public test posts.`);
+    }
     const tx = await pool.connect();
     let sourceId = "";
     try {
@@ -65,7 +75,7 @@ async function main(): Promise<void> {
       throw Error("Mismatch between received messages and PostgreSQL persistence.");
     }
     console.log(JSON.stringify({
-      source: "@"+handle, received: all.length, persisted: saved.rows[0].count,
+      source: "@"+handle, expectedMessages, received: all.length, persisted: saved.rows[0].count,
       firstFiveMessageIds: ids.slice(0,5), evidence: evidence.rows,
       note: "Verify these message IDs against Telegram manually. Historical completeness is not proven.",
     }, null, 2));
