@@ -10,15 +10,15 @@ export type RetryDecision =
  * revoked credentials require interactive reauthorization.
  */
 export function classifyTelegramError(error: unknown, attempts: number): RetryDecision {
-  const typed = error as { message?: unknown; errorMessage?: unknown; code?: unknown } | null;
+  const typed = error as { message?: unknown; errorMessage?: unknown; code?: unknown; seconds?: unknown } | null;
   const text = [typed?.errorMessage, typed?.message, String(error)].map(String).join(" ").toUpperCase();
-  if (/PEER_FLOOD|USER_RESTRICTED|USER_BANNED_IN_CHANNEL/.test(text)) {
+  if (/PEER[_ ]?FLOOD|USER_RESTRICTED|USER_BANNED_IN_CHANNEL/.test(text)) {
     return { action: "halt", code: "TG_ACCOUNT_RESTRICTED", scope: "account" };
   }
   if (/AUTH_KEY_UNREGISTERED|AUTH_KEY_DUPLICATED|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED|USER_DEACTIVATED_BAN/.test(text)) {
     return { action: "halt", code: "TG_SESSION_INVALID", scope: "session" };
   }
-  if (/FLOOD_WAIT/i.test(text)) {
+  if (/FLOOD_WAIT/i.test(text) || (Number(typed?.code) === 420 && typeof typed?.seconds === "number")) {
     const seconds = telegramWaitSeconds(error);
     if (seconds && seconds > 0) {
       return { action: "delay", code: "TG_FLOOD_WAIT", seconds: Math.min(seconds+15, 30*86400), global: true };
