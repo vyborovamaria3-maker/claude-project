@@ -21,6 +21,9 @@ test("runtime controls and proxy schema are installed", { skip: !process.env.DAT
       "SELECT collection_enabled FROM tg_runtime WHERE id=1"
     );
     assert.equal(runtime.rows[0]?.collection_enabled, true);
+    await client.query("UPDATE tg_runtime SET collection_enabled=FALSE WHERE id=1");
+    const stopped = await client.query<{collection_enabled: boolean}>("SELECT collection_enabled FROM tg_runtime WHERE id=1");
+    assert.equal(stopped.rows[0]?.collection_enabled, false);
 
     const proxy = await client.query<{column_name: string}>(
       "SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name='tg_proxy_config' ORDER BY ordinal_position",
