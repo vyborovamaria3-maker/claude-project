@@ -82,6 +82,7 @@ function usage() {
     "  --monthly-budget-credits 10000000 --monthly-credits-used <dashboard-used-credits> --budget-period-start-day 1",
     "  --run-budget-credits 250000 --page-credit-estimate 110",
     "  Credit estimates are local guards; provider-reported headers override estimates when available.",
+    "  Network modes require --monthly-credits-used or HELIUS_MONTHLY_CREDITS_USED_BASELINE.",
     "  --mode watch --watch-interval 60  Repeat import and bounded collection on a laptop",
     "  --dry-run                 Inspect the spreadsheets without writing DB/network",
     "  --prune-missing           Remove mappings for deleted XLSX files",
