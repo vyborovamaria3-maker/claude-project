@@ -8,6 +8,8 @@ import { chromium } from 'playwright';
 import { Pool } from 'pg';
 import { PGlite } from '@electric-sql/pglite';
 import { extractTweetArticles } from '../lib/trade/twitter-scraper';
+import { parseTweets as parseLegacyXTweets } from '../src/x/parser';
+import { normalizeTweet } from '../src/x/normalize';
 import { persistTweets, persistProfile } from '../lib/trade/collector-store';
 import { closePool } from '../lib/trade/pg';
 test('visible DOM collector keeps canonical ID, unknown counts, media-only posts and active controls', async()=>{
@@ -22,6 +24,27 @@ test('visible DOM collector keeps canonical ID, unknown counts, media-only posts
  assert.equal(tweets[1].text,'');assert.equal(tweets[1].media[0].type,'video');
  }finally{await browser.close();}
 });
+test('legacy X parser and normalizer preserve unknown metrics as NULL but retain known zero', async()=>{
+ const browser=await chromium.launch({headless:true});
+ try {
+  const page=await browser.newPage();
+  await page.addInitScript({content:"if(typeof globalThis.__name!=='function'){globalThis.__name=function(target,value){try{Object.defineProperty(target,'name',{value,configurable:true})}catch(e){}return target}}"});
+  await page.setContent(`<article><a href="/alice/status/1234567890123456789"><time datetime="2025-01-01T00:00:00Z"></time></a><div data-testid="tweetText">hello</div><button data-testid="reply">0 Replies</button></article>`);
+  const tweets=await parseLegacyXTweets(page);
+  assert.equal(tweets.length,1);
+  assert.equal(tweets[0].likes,null);
+  assert.equal(tweets[0].reposts,null);
+  assert.equal(tweets[0].views,null);
+  assert.equal(tweets[0].replies,0);
+  const normalized=normalizeTweet(tweets[0]);
+  assert(normalized);
+  assert.equal(normalized.likes,null);
+  assert.equal(normalized.reposts,null);
+  assert.equal(normalized.views,null);
+  assert.equal(normalized.replies,0);
+ } finally { await browser.close(); }
+});
+
 test('collector writes nullable current metrics, decreasing observations, archive and profile history atomically',async()=>{
  const db=new PGlite(),root=await fs.mkdtemp(path.join(os.tmpdir(),'collector-'));
  const old={url:process.env.DATABASE_URL,root:process.env.ARCHIVE_RAW_DIR,reserve:process.env.ARCHIVE_MIN_FREE_GB};
