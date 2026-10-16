@@ -47,7 +47,7 @@ function extractPumpFunLaunches(transactions) {
       // Enhanced payloads can omit instruction names. In that case require both
       // a CREATE/TOKEN_MINT transaction classification and the exact Pump.fun
       // program; still use only the known create account layout as evidence.
-      if (name && !/(^|create|createv2|createtoken)/.test(name)) continue;
+      if (name && !/(create|createtoken)/.test(name)) continue;
       const accounts = Array.isArray(ix.accounts) ? ix.accounts.map(accountAddress) : [];
       const info = ix.parsed?.info && typeof ix.parsed.info === "object" ? ix.parsed.info : {};
       const creator = [info.creator, info.user, info.owner].find(isSolanaAddress) || accounts[1] || null;
