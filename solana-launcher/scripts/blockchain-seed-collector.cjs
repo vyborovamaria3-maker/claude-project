@@ -1200,6 +1200,10 @@ async function collect(db, args, scopeId = null) {
     "SUM(CASE WHEN actual_credits IS NOT NULL THEN 1 ELSE 0 END) AS reported "+
     "FROM chain_helius_usage_requests WHERE run_id=?"
   ).get(runId);
+  const alchemyRunUsage=db.prepare(
+    "SELECT COALESCE(SUM(COALESCE(actual_cu,estimated_cu)),0) AS used,COUNT(*) AS requests "+
+    "FROM chain_alchemy_usage_requests WHERE run_id=?"
+  ).get(runId);
   return {
     runId,scopeId,status:runStatus,claimed,succeeded,failed,newEvents:inserted,possibleGaps:gaps,
     durationSec:Number(durationSec.toFixed(2)),
@@ -1208,6 +1212,8 @@ async function collect(db, args, scopeId = null) {
     credits:{estimatedOrReported:runUsage.used,requests:runUsage.requests,
       providerReportedRequests:runUsage.reported||0,runBudgetCredits:args.runBudgetCredits,
       monthly:usageStatus(db,args)},
+    alchemyCu:{estimatedCu:alchemyRunUsage.used,requests:alchemyRunUsage.requests,
+      runBudgetCu:args.alchemyRunCuBudget,pilot:alchemyUsageStatus(db)},
     budgetPaused,runtimePaused,stoppedReason:stopReason,stopped:stopRequested,
   };
 }
