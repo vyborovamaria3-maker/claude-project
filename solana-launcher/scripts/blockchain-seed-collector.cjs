@@ -673,6 +673,51 @@ function appendDiscoveredWallets(db, ownerKind, ownerAddress, transactions, scop
     return count;
   })();
 }
+function savePumpFunLaunches(db,scopeId,launches){
+  if(!launches.length)return 0;
+  const insert=db.prepare(
+    "INSERT OR IGNORE INTO chain_pumpfun_creator_launches(scope_id,creator,mint,signature,slot,timestamp,evidence_source,evidence_json) VALUES(?,?,?,?,?,?,?,?)"
+  );
+  let inserted=0;
+  db.transaction(()=>{
+    for(const launch of launches){
+      inserted+=insert.run(scopeId,launch.creator,launch.mint,launch.signature,launch.slot,
+        launch.timestamp??0,launch.evidenceSource,JSON.stringify(launch.evidence)).changes;
+    }
+  })();
+  return inserted;
+}
+function appendDiscoveredCreators(db,scopeId,tokenAddress,transactions){
+  const {extractPumpFunLaunches}=require("./blockchain-pumpfun-discovery.cjs");
+  const launches=extractPumpFunLaunches(transactions).filter(x=>x.mint===tokenAddress);
+  if(!launches.length)return 0;
+  savePumpFunLaunches(db,scopeId,launches);
+  const origin=db.prepare(
+    "SELECT discovered_from_kind AS kind,discovered_from_address AS address FROM chain_collection_scope_members WHERE scope_id=? AND kind='token' AND address=?"
+  ).get(scopeId,tokenAddress);
+  let added=0;
+  for(const launch of launches){
+    if(origin?.kind==="wallet"&&origin.address){
+      deferScopeMember(db,scopeId,"wallet",origin.address,"creator",launch.creator,750,
+        "wallet_token_pumpfun_creator","token",tokenAddress);
+    }else{
+      addScopeMember(db,scopeId,"creator",launch.creator,900,"pumpfun_token_creator","token",tokenAddress);
+    }
+    added++;
+  }
+  return added;
+}
+function appendDiscoveredCreatorTokens(db,scopeId,creatorAddress,transactions){
+  const {extractPumpFunLaunches}=require("./blockchain-pumpfun-discovery.cjs");
+  const launches=extractPumpFunLaunches(transactions).filter(x=>x.creator===creatorAddress);
+  if(!launches.length)return 0;
+  savePumpFunLaunches(db,scopeId,launches);
+  for(const launch of launches){
+    deferScopeMember(db,scopeId,"creator",creatorAddress,"token",launch.mint,900,
+      "pumpfun_creator_launch","creator",creatorAddress);
+  }
+  return launches.length;
+}
 async function processOne(db, row, cfg, api) {
   const known = row.last_success_at ? new Set(db.prepare(
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
