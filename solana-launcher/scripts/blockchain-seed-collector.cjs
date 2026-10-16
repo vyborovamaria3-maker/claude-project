@@ -784,7 +784,7 @@ function appendDiscoveredCreators(db,scopeId,tokenAddress,transactions){
   for(const launch of launches){
     if(origin?.kind==="wallet"&&origin.address){
       deferScopeMember(db,scopeId,"wallet",origin.address,"creator",launch.creator,750,
-        "wallet_token_pumpfun_creator","token",tokenAddress);
+        "wallet_token_pumpfun_creator","wallet",origin.address);
     }else{
       addScopeMember(db,scopeId,"creator",launch.creator,900,"pumpfun_token_creator","token",tokenAddress);
     }
