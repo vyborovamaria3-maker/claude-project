@@ -27,8 +27,9 @@ test('visible DOM collector keeps canonical ID, unknown counts, media-only posts
 test('legacy X parser and normalizer preserve unknown metrics as NULL but retain known zero', async()=>{
  const browser=await chromium.launch({headless:true});
  try {
-  const page=await browser.newPage();
-  await page.addInitScript({content:"if(typeof globalThis.__name!=='function'){globalThis.__name=function(target,value){try{Object.defineProperty(target,'name',{value,configurable:true})}catch(e){}return target}}"});
+  const context=await browser.newContext();
+  await context.addInitScript({content:["if (typeof globalThis.__name !== 'function') {","  globalThis.__name = function (target, value) {","    try { Object.defineProperty(target, 'name', { value: value, configurable: true }); } catch (e) {}","    return target;","  };","}"].join("\n")});
+  const page=await context.newPage();
   await page.setContent(`<article><a href="/alice/status/1234567890123456789"><time datetime="2025-01-01T00:00:00Z"></time></a><div data-testid="tweetText">hello</div><button data-testid="reply">0 Replies</button></article>`);
   const tweets=await parseLegacyXTweets(page);
   assert.equal(tweets.length,1);
