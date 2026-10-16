@@ -41,7 +41,7 @@ export async function persistXActionsTweetPage(
       context.taskId,
       context.lease.accountName,
       persistenceLease,
-      { client, transport: "http" },
+      { client, transport: "http", rawResponse: page.rawResponse },
     );
     return newItems;
   });
