@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/knip@6.41.0/schema.json",
+  "entry": [
+    "scripts/**/*.{ts,cjs,js,mjs}",
+    "tests/**/*.test.ts",
+    "lib/collector/http.ts",
+    "src/xactions/runtime.ts"
+  ],
+  "project": [
+    "lib/**/*.ts",
+    "src/**/*.ts",
+    "scripts/**/*.{ts,cjs,js,mjs}",
+    "tests/**/*.test.ts"
+  ],
+  "ignore": ["**/*.d.ts"]
+}
