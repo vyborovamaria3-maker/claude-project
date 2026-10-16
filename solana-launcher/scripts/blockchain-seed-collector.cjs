@@ -604,17 +604,28 @@ function status(db, args = {}) {
   const hasTable = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
   let scopes = [];
   if (hasTable("chain_collection_scopes")) {
+    // Status mode is read-only and may inspect a DB created by an older build.
+    // Keep its base query compatible, then enrich with budget data only when
+    // the additive migration tables/columns exist.
     scopes = db.prepare(
-      "SELECT s.scope_id AS scopeId,s.seed_token AS seedToken,s.status,s.pilot_budget_credits AS pilotBudgetCredits,"+
-      "COALESCE(u.used_credits,0) AS pilotUsedCredits,MAX(0,s.pilot_budget_credits-COALESCE(u.used_credits,0)) AS pilotRemainingCredits,"+
+      "SELECT s.scope_id AS scopeId,s.seed_token AS seedToken,s.status,"+
       "COUNT(m.address) AS objects,SUM(CASE WHEN t.last_success_at IS NOT NULL THEN 1 ELSE 0 END) AS syncedObjects "+
       "FROM chain_collection_scopes s LEFT JOIN chain_collection_scope_members m ON m.scope_id=s.scope_id "+
       "LEFT JOIN chain_seed_targets t ON t.kind=m.kind AND t.address=m.address "+
-      "LEFT JOIN (SELECT r.scope_id,SUM(COALESCE(u.actual_credits,u.estimated_credits)) AS used_credits "+
-      "FROM chain_collection_runs r JOIN chain_helius_usage_requests u ON u.run_id=r.run_id "+
-      "WHERE r.scope_id IS NOT NULL GROUP BY r.scope_id) u ON u.scope_id=s.scope_id "+
       "GROUP BY s.scope_id ORDER BY s.created_at DESC"
     ).all();
+    const hasScopeBudget = db.pragma("table_info(chain_collection_scopes)").some(column=>column.name==="pilot_budget_credits");
+    const hasUsageLedger = hasTable("chain_collection_runs") && hasTable("chain_helius_usage_requests");
+    for (const scope of scopes) {
+      scope.pilotBudgetCredits = hasScopeBudget
+        ? db.prepare("SELECT pilot_budget_credits AS n FROM chain_collection_scopes WHERE scope_id=?").get(scope.scopeId).n
+        : 1000000;
+      scope.pilotUsedCredits = hasUsageLedger ? db.prepare(
+        "SELECT COALESCE(SUM(COALESCE(u.actual_credits,u.estimated_credits)),0) AS n "+
+        "FROM chain_helius_usage_requests u JOIN chain_collection_runs r ON r.run_id=u.run_id WHERE r.scope_id=?"
+      ).get(scope.scopeId).n : 0;
+      scope.pilotRemainingCredits = Math.max(0,scope.pilotBudgetCredits-scope.pilotUsedCredits);
+    }
   }
   const hasDeferred=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_collection_scope_deferred'").get());
   const deferred=hasDeferred?db.prepare("SELECT kind,COUNT(*) AS count FROM chain_collection_scope_deferred GROUP BY kind").all():[];
