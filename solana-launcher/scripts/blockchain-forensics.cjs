@@ -6,6 +6,8 @@ const { gunzipSync } = require("node:zlib");
 const path = require("node:path");
 const { parseEvidence, computePnlOrdered } = require("./blockchain-forensics-core.cjs");
 const REVISION = 5;
+// Bump when parseEvidence / PnL semantics change; cached raw events remain reusable.
+const DECODER_VERSION = "5";
 
 const forensicInitialized = new WeakSet();
 function initForensics(db) {
@@ -41,10 +43,10 @@ function initForensics(db) {
     " wallet TEXT PRIMARY KEY, revision INTEGER NOT NULL, observed_count INTEGER NOT NULL,",
     " max_observed_at INTEGER NOT NULL, coverage_complete INTEGER NOT NULL,",
     " analyzed_at INTEGER NOT NULL, source_coverage_complete INTEGER NOT NULL DEFAULT 0,",
-    " raw_revision_sum INTEGER NOT NULL DEFAULT 0)",
+    " raw_revision_sum INTEGER NOT NULL DEFAULT 0, decoder_version TEXT NOT NULL DEFAULT 'legacy')",
     ";CREATE TABLE IF NOT EXISTS chain_forensic_processed_signatures (",
     " wallet TEXT NOT NULL, signature TEXT NOT NULL, revision INTEGER NOT NULL,",
-    " undecoded_swap INTEGER NOT NULL DEFAULT 0, raw_revision INTEGER NOT NULL DEFAULT 1,",
+    " undecoded_swap INTEGER NOT NULL DEFAULT 0, raw_revision INTEGER NOT NULL DEFAULT 1, decoder_version TEXT NOT NULL DEFAULT 'legacy',",
     " PRIMARY KEY(wallet,signature))",
   ].join("\n"));
   if (!db.pragma("table_info(chain_forensic_wallet_sync)").some(column => column.name === "source_coverage_complete")) {
@@ -54,6 +56,10 @@ function initForensics(db) {
     db.exec("ALTER TABLE chain_forensic_wallet_sync ADD COLUMN raw_revision_sum INTEGER NOT NULL DEFAULT 0");
   if (!db.pragma("table_info(chain_forensic_processed_signatures)").some(column => column.name === "raw_revision"))
     db.exec("ALTER TABLE chain_forensic_processed_signatures ADD COLUMN raw_revision INTEGER NOT NULL DEFAULT 1");
+  if (!db.pragma("table_info(chain_forensic_processed_signatures)").some(column => column.name === "decoder_version"))
+    db.exec("ALTER TABLE chain_forensic_processed_signatures ADD COLUMN decoder_version TEXT NOT NULL DEFAULT 'legacy'");
+  if (!db.pragma("table_info(chain_forensic_wallet_sync)").some(column => column.name === "decoder_version"))
+    db.exec("ALTER TABLE chain_forensic_wallet_sync ADD COLUMN decoder_version TEXT NOT NULL DEFAULT 'legacy'");
 
   // Read paths must never observe a previously verified PnL after raw evidence
   // changed outside the collector's usual all-in-one SQLite transaction.
@@ -95,7 +101,7 @@ function rebuildWallet(db, wallet, force = false) {
     const legacyAtaGap = summary.oldestSlot != null && summary.oldestSlot < 111491819;
     const complete = walletCoverage(target) && !legacyAtaGap;
     const cached = db.prepare("SELECT * FROM chain_forensic_wallet_sync WHERE wallet=?").get(wallet);
-    const canIncrement = !force && cached && cached.revision === REVISION;
+    const canIncrement = !force && cached && cached.revision === REVISION && cached.decoder_version === DECODER_VERSION;
     if (canIncrement && cached.observed_count === summary.n &&
         cached.max_observed_at === summary.latest &&
         cached.raw_revision_sum === summary.revisionSum &&
@@ -105,9 +111,9 @@ function rebuildWallet(db, wallet, force = false) {
     }
 
     const putSignature = db.prepare(
-      "INSERT INTO chain_forensic_processed_signatures(wallet,signature,revision,undecoded_swap,raw_revision) " +
-      "VALUES(?,?,?,?,?) ON CONFLICT(wallet,signature) DO UPDATE SET " +
-      "revision=excluded.revision,undecoded_swap=excluded.undecoded_swap,raw_revision=excluded.raw_revision"
+      "INSERT INTO chain_forensic_processed_signatures(wallet,signature,revision,undecoded_swap,raw_revision,decoder_version) " +
+      "VALUES(?,?,?,?,?,?) ON CONFLICT(wallet,signature) DO UPDATE SET " +
+      "revision=excluded.revision,undecoded_swap=excluded.undecoded_swap,raw_revision=excluded.raw_revision,decoder_version=excluded.decoder_version"
     );
     const insertEvent = db.prepare(
       "INSERT INTO chain_forensic_activities(wallet,signature,leg_index,slot,block_time,kind,mint,amount_tokens,amount_sol,fee_sol,counterparty) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
@@ -161,7 +167,7 @@ function rebuildWallet(db, wallet, force = false) {
           deleteEvent.run(wallet,row.signature);
           deleteEdge.run(wallet,row.signature);
         }
-        putSignature.run(wallet,row.signature,REVISION,undecoded?1:0,row.raw_revision);
+        putSignature.run(wallet,row.signature,REVISION,undecoded?1:0,row.raw_revision,DECODER_VERSION);
         for (const ev of decoded) {
           insertEvent.run(wallet,ev.signature,ev.index,ev.slot,ev.timestamp,ev.kind,
             ev.mint,ev.amountTokens,ev.amountSol,ev.feeSol,ev.counterparty);
@@ -203,8 +209,8 @@ function rebuildWallet(db, wallet, force = false) {
         item.totalRealizedPnlSol,JSON.stringify(item.reasons),now);
     }
     db.prepare(
-      "INSERT INTO chain_forensic_wallet_sync(wallet,revision,observed_count,max_observed_at,coverage_complete,analyzed_at,source_coverage_complete,raw_revision_sum) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(wallet) DO UPDATE SET revision=excluded.revision,observed_count=excluded.observed_count,max_observed_at=excluded.max_observed_at,coverage_complete=excluded.coverage_complete,analyzed_at=excluded.analyzed_at,source_coverage_complete=excluded.source_coverage_complete,raw_revision_sum=excluded.raw_revision_sum"
-    ).run(wallet,REVISION,summary.n,summary.latest,evidenceComplete?1:0,now,complete?1:0,summary.revisionSum);
+      "INSERT INTO chain_forensic_wallet_sync(wallet,revision,observed_count,max_observed_at,coverage_complete,analyzed_at,source_coverage_complete,raw_revision_sum,decoder_version) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(wallet) DO UPDATE SET revision=excluded.revision,observed_count=excluded.observed_count,max_observed_at=excluded.max_observed_at,coverage_complete=excluded.coverage_complete,analyzed_at=excluded.analyzed_at,source_coverage_complete=excluded.source_coverage_complete,raw_revision_sum=excluded.raw_revision_sum,decoder_version=excluded.decoder_version"
+    ).run(wallet,REVISION,summary.n,summary.latest,evidenceComplete?1:0,now,complete?1:0,summary.revisionSum,DECODER_VERSION);
     return { wallet, skipped:false, transactions:summary.n,newlyParsed,
       activities:eventStats.activities,pricedTrades:eventStats.priced||0,
       coverageComplete:evidenceComplete,verifiedTokens:pnl.filter(p=>p.status==="verified").length,
@@ -241,4 +247,4 @@ if (require.main === module) {
   console.log(JSON.stringify(result, null, 2));
   if (result.errors.length) process.exitCode = 1;
 }
-module.exports = { REVISION, initForensics, walletCoverage, rebuildWallet, rebuildAll };
+module.exports = { REVISION, DECODER_VERSION, initForensics, walletCoverage, rebuildWallet, rebuildAll };
