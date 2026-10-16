@@ -13,16 +13,9 @@ export type TgProxyConfig = {
   secret?: string;
 };
 
-export type TgProxyTransport = {
-  ip: string;
-  port: number;
-  MTProxy: boolean;
-  socksType?: 4 | 5;
-  timeout?: number;
-  username?: string;
-  password?: string;
-  secret?: string;
-};
+export type TgProxyTransport =
+  | { ip: string; port: number; MTProxy: true; secret: string; timeout?: number }
+  | { ip: string; port: number; MTProxy: false; socksType: 4 | 5; username?: string; password?: string; timeout?: number };
 
 export type TgProxyStatus = {
   enabled: boolean;
@@ -102,15 +95,17 @@ export async function loadProxy(): Promise<TgProxyTransport | undefined> {
     username: decrypt(row.username_enc), password: decrypt(row.password_enc), secret: decrypt(row.secret_enc),
   };
   validate(settings);
+  if (settings.proxyType === "mtproxy") {
+    if (!settings.secret) throw new Error("MTProxy secret is missing");
+    return { ip: settings.host, port: settings.port, MTProxy: true, secret: settings.secret, timeout: 5 };
+  }
   return {
     ip: settings.host,
     port: settings.port,
-    MTProxy: settings.proxyType === "mtproxy",
-    ...(settings.proxyType === "mtproxy" ? { secret: settings.secret } : {
-      socksType: settings.proxyType === "socks4" ? 4 : 5,
-      ...(settings.username ? { username: settings.username } : {}),
-      ...(settings.password ? { password: settings.password } : {}),
-    }),
+    MTProxy: false,
+    socksType: settings.proxyType === "socks4" ? 4 : 5,
+    ...(settings.username ? { username: settings.username } : {}),
+    ...(settings.password ? { password: settings.password } : {}),
     timeout: 5,
   };
 }
