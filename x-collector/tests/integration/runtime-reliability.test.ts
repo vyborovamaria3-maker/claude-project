@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 import { Pool } from "pg";
 import { chromium } from "playwright";
 import { REQUIRED } from "../../lib/trade/migrations";
@@ -85,8 +86,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       url:"https://x.com/alice/status/1234567890123456789",views:null,likes:1,retweets:null,replies:0,
       isVerified:false,postedAt:Date.parse("2025-01-01"),observedAt:Date.parse("2025-01-02")};
     // Entity FK must see the outer uncommitted tweet; no nested connection allowed.
-    await persistTweets(null,[tweet]); await persistTweets(null,[tweet]);
-    assert.equal((await q("SELECT 1 FROM twitter_tweets")).length,1);
+    const rawEnvelope = { endpoint: "SearchTimeline", queryId: "fixture-query",\n      variables: { rawQuery: "$SOL", cursor: "fixture-cursor" },\n      response: { data: { search_by_raw_query: { meta: { next_cursor: "fixture-cursor" } } }, errors: [] } };\n    await persistTweets(null,[tweet],null,undefined,undefined,undefined,{rawResponse:rawEnvelope});\n    const archivedRaw = (await q<{path:string}>("SELECT path FROM archive_raw_pages ORDER BY received_at DESC LIMIT 1"))[0];\n    assert(archivedRaw, "raw archive metadata should be committed with the tweet page");\n    const archivedPayload = JSON.parse(gunzipSync(await fs.readFile(archivedRaw.path)).toString("utf8")) as {capture_format_version:number;source_response?:unknown};\n    assert.equal(archivedPayload.capture_format_version,1);\n    assert.deepEqual(archivedPayload.source_response,rawEnvelope);\n    await persistTweets(null,[tweet]);\n    assert.equal((await q("SELECT 1 FROM twitter_tweets")).length,1);
     assert.equal((await q("SELECT 1 FROM tweet_entities WHERE tweet_id=$1",[tweet.id])).length,2);
     assert.equal((await q("SELECT 1 FROM twitter_tweet_observations")).length,1);
     await getPool().query(`CREATE FUNCTION reject_fixture_entity() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'fixture entity failure'; END $$ LANGUAGE plpgsql`);
