@@ -15,7 +15,7 @@ export function classifyTelegramError(error: unknown, attempts: number): RetryDe
   if (/PEER[_ ]?FLOOD|USER_RESTRICTED|USER_BANNED_IN_CHANNEL/.test(text)) {
     return { action: "halt", code: "TG_ACCOUNT_RESTRICTED", scope: "account" };
   }
-  if (/AUTH_KEY_UNREGISTERED|AUTH_KEY_DUPLICATED|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED|USER_DEACTIVATED_BAN/.test(text)) {
+  if (/AUTH_KEY_UNREGISTERED|AUTH_KEY_DUPLICATED|SESSION_REVOKED|SESSION_EXPIRED|SESSION EXPIRED|NOT AUTHORIZED|USER_DEACTIVATED|USER_DEACTIVATED_BAN/.test(text)) {
     return { action: "halt", code: "TG_SESSION_INVALID", scope: "session" };
   }
   const slowmode = text.match(/SLOWMODE_WAIT_?([0-9]+)/);
