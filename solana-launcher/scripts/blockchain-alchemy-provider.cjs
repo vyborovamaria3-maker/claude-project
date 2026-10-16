@@ -132,8 +132,8 @@ function createProvider(options = {}) {
             filters:{status:"any",tokenAccounts:"balanceChanged"}
           }]})
         });
-        await hooks.afterResponse?.(reservationId,{status:response.status,actualCu:null,provider:"alchemy",accountId:account.id});
         const payload=await response.json();
+        await hooks.afterResponse?.(reservationId,{status:response.status,actualCu:null,rpcError:Boolean(payload.error),provider:"alchemy",accountId:account.id});
         if (!response.ok || payload.error) {
           const err=new Error("Alchemy "+account.id+" "+(payload.error && payload.error.message || "HTTP "+response.status));
           err.status=response.status; err.code=response.status===429?"ALCHEMY_RATE_LIMIT":payload.error&&payload.error.code===-32601?"ALCHEMY_METHOD_UNSUPPORTED":"ALCHEMY_RPC_ERROR";
@@ -151,6 +151,11 @@ function createProvider(options = {}) {
         if (lastError.code==="ALCHEMY_METHOD_UNSUPPORTED") throw lastError;
         nextAccount=(account.index)%accounts.length;
       }
+    }
+    if(lastError && lastError.code==="ALCHEMY_ACCOUNT_BUDGET_EXCEEDED") {
+      const error=new Error("All configured Alchemy accounts reached their monthly CU budget");
+      error.code="ALCHEMY_ALL_ACCOUNTS_BUDGET_EXCEEDED";
+      throw error;
     }
     throw lastError || new Error("All Alchemy Solana accounts failed");
   }
