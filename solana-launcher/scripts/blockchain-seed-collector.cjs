@@ -449,16 +449,8 @@ function finishCollectionRun(db, runId, status, reason = null) {
   db.prepare("UPDATE chain_collection_scopes SET status=?,updated_at=? WHERE last_run_id=?")
     .run(status==="budget_paused" ? "paused_budget" : status==="failed" ? "failed" : "active",Date.now(),runId);
 }
-function requestHooksForTask(db, runId, row, args) {
-  return {
-    estimatedCreditsPerRequest: args.pageCreditEstimate,
-    beforeRequest: context => reserveHeliusCredits(db,{
-      runId,taskKind:row.kind,taskAddress:row.address,endpoint:context.endpoint,
-      estimatedCredits:context.estimatedCredits,budgetPeriodStartDay:args.budgetPeriodStartDay??1,
-    }),
-    afterResponse: (requestId,response) => recordHeliusResponse(db,requestId,response),
-    onError: (requestId,error) => recordHeliusError(db,requestId,error),
-  };
+function isCollectionBudgetError(error) {
+  return ["HELIUS_BUDGET_EXCEEDED","ALCHEMY_PILOT_CU_BUDGET_EXCEEDED","ALCHEMY_RUN_CU_BUDGET_EXCEEDED","ALCHEMY_ALL_ACCOUNTS_BUDGET_EXCEEDED"].includes(error&&error.code);
 }
 function alchemyBudgetError(code,message) {
   const error=new Error(message);
