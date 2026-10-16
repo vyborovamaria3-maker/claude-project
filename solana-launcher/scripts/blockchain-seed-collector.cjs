@@ -454,10 +454,15 @@ function usageStatus(db, args = {}) {
     const monthlyBudgetCredits=args.monthlyBudgetCredits??10000000;
     const baselineCredits=args.monthlyCreditsUsedBaseline??0;
     return {monthKey,monthlyBudgetCredits,baselineCredits,
-      baselineConfigured:args.monthlyCreditsBaselineConfigured===true,localTrackedCredits:0,
+      baselineConfigured:args.monthlyCreditsBaselineConfigured===true,
+      billingResetDayConfigured:args.budgetPeriodStartDayConfigured===true,localTrackedCredits:0,
       usedCredits:baselineCredits,remainingCredits:Math.max(0,monthlyBudgetCredits-baselineCredits),
       requests:0,providerReportedRequests:0,
-      note:args.monthlyCreditsBaselineConfigured===true?"No Helius request ledger yet":"Set --monthly-credits-used from Helius Dashboard before collection"};
+      note:args.monthlyCreditsBaselineConfigured!==true
+        ?"Set --monthly-credits-used from Helius Dashboard before collection"
+        :args.budgetPeriodStartDayConfigured!==true
+          ?"Confirm the Helius billing reset day with --budget-period-start-day before collection"
+          :"No Helius request ledger yet"};
   }
   const usage = db.prepare(
     "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS used,"+
@@ -468,10 +473,16 @@ function usageStatus(db, args = {}) {
   const baselineCredits = args.monthlyCreditsUsedBaseline ?? 0;
   const usedCredits = baselineCredits + usage.used;
   return {monthKey,monthlyBudgetCredits,baselineCredits,
-    baselineConfigured:args.monthlyCreditsBaselineConfigured===true,localTrackedCredits:usage.used,usedCredits,
+    baselineConfigured:args.monthlyCreditsBaselineConfigured===true,
+    billingResetDayConfigured:args.budgetPeriodStartDayConfigured===true,
+    localTrackedCredits:usage.used,usedCredits,
     remainingCredits:Math.max(0,monthlyBudgetCredits-usedCredits),requests:usage.requests,
     providerReportedRequests:usage.reported,estimatedOnlyRequests:usage.requests-(usage.reported||0),
-    note:args.monthlyCreditsBaselineConfigured===true?undefined:"Set --monthly-credits-used from Helius Dashboard before collection"};
+    note:args.monthlyCreditsBaselineConfigured!==true
+      ?"Set --monthly-credits-used from Helius Dashboard before collection"
+      :args.budgetPeriodStartDayConfigured!==true
+        ?"Confirm the Helius billing reset day with --budget-period-start-day before collection"
+        :undefined};
 }
 
 function refreshTargets(db) {
