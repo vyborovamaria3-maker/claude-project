@@ -990,6 +990,7 @@ async function processOne(db, row, cfg, api) {
     row.address,cfg.recentLimit,known,undefined,row.kind==="wallet",requestOptions
   );
   let events = [...recent.transactions];
+  let rawProviderUsed = recent.provider === "alchemy";
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
   let complete = Boolean(row.backfill_complete);
@@ -1013,6 +1014,7 @@ async function processOne(db, row, cfg, api) {
       budgetPaused = true;
     }
     if (bridge) {
+      rawProviderUsed = rawProviderUsed || bridge.provider === "alchemy";
       events.push(...bridge.transactions);
       budgetPaused = Boolean(bridge.budgetExhausted);
       if (bridge.reachedKnownHistory || bridge.exhausted) {
@@ -1041,6 +1043,7 @@ async function processOne(db, row, cfg, api) {
       budgetPaused = true;
     }
     if (historical) {
+      rawProviderUsed = rawProviderUsed || historical.provider === "alchemy";
       events.push(...historical.transactions);
       budgetPaused = Boolean(historical.budgetExhausted);
       if (historical.exhausted) complete = true;
@@ -1067,7 +1070,10 @@ async function processOne(db, row, cfg, api) {
   const cadence = row.priority >= 100 ? 5 * 60_000 :
     row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
   if (row.kind === "token" || row.kind === "creator") gap = true;
-  else if (complete && !forwardCursor && !budgetPaused) gap = false;
+  else if (complete && !forwardCursor && !budgetPaused && !rawProviderUsed) gap = false;
+  // Raw Alchemy history is useful discovery evidence, but it does not yet
+  // classify all swaps/transfers. Keep forensic coverage incomplete.
+  if (rawProviderUsed) gap = true;
 
   const added = db.transaction(() => {
     const now = Date.now();
