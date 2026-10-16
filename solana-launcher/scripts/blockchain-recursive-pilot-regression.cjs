@@ -6,11 +6,11 @@ const collector=require("./blockchain-seed-collector.cjs");
 const {PUMP_FUN_PROGRAM_ID,extractPumpFunLaunches}=require("./blockchain-pumpfun-discovery.cjs");
 
 const SEED="5XaxQZGNEAPvF34iYHuTgfLBzpRGg1spPYeGSzr5pump";
-const CREATOR="11111111111111111111111111111111";
+const CREATOR="21111111111111111111111111111111";
 const OTHER_CREATOR="Vote111111111111111111111111111111111111111";
 const TOKEN_B="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const TOKEN_C="So11111111111111111111111111111111111111112";
-const WALLET="ComputeBudget111111111111111111111111111";
+const WALLET="31111111111111111111111111111111";
 const RELAYER="SysvarRent111111111111111111111111111111111";
 const create=(mint,creator=CREATOR,signature="launch-"+mint)=>({
   signature,slot:100,timestamp:1700000000,source:"PUMP_FUN",type:"CREATE",feePayer:RELAYER,
