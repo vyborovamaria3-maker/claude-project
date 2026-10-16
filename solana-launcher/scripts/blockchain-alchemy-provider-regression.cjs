@@ -60,5 +60,33 @@ assert.equal(normalized.nativeTransfers.length,0,"lamport deltas are not proof o
   await assert.rejects(()=>missingBaselineProvider.fetchPage("address-A",null,100),/CU_USED_BASELINE_1/);
   assert.match(seen[0].url,/solana-mainnet\.g\.alchemy\.com\/v2\/a1$/);
   assert.equal(seen[0].body.method,"getTransactionsForAddress");
-  console.log("[blockchain-alchemy-provider-regression] OK: key registry, per-account baseline validation, CU method costs, UTC billing windows, raw balance deltas, mocked history request");
+
+  const rawSig=(signature,slot)=>({...raw,signature,slot,transaction:{...raw.transaction,signatures:[signature]}});
+  const cursorPages=[
+    {result:{transactions:[rawSig("newer",1),rawSig("anchor-signature",2)],paginationToken:"older-page"}},
+    {result:{transactions:[rawSig("older",3)],paginationToken:null}},
+  ];
+  let cursorCall=0;
+  const cursorProvider=alchemy.createProvider({env:{
+    ALCHEMY_SOLANA_API_KEY_1:"cursor-key",ALCHEMY_SOLANA_CU_USED_BASELINE_1:"0",ALCHEMY_SOLANA_BILLING_RESET_DAY_1:"1"
+  },fetch:async()=>({ok:true,status:200,json:async()=>cursorPages[cursorCall++]})});
+  const resumed=await cursorProvider.fetchHistoryWithMeta("address-A",10,null,"anchor-signature",false,{
+    beforeRequest:async()=> "r",afterResponse:async()=>{},onError:async()=>{}
+  });
+  assert.deepEqual(resumed.transactions.map(x=>x.signature),["older"],"a Helius signature cursor resumes strictly after the anchor");
+  assert.equal(resumed.exhausted,true);
+
+  let budgetCalls=0;
+  const partialProvider=alchemy.createProvider({env:{
+    ALCHEMY_SOLANA_API_KEY_1:"partial-key",ALCHEMY_SOLANA_CU_USED_BASELINE_1:"0",ALCHEMY_SOLANA_BILLING_RESET_DAY_1:"1"
+  },fetch:async()=>({ok:true,status:200,json:async()=>({result:{transactions:[rawSig("first-page",10)],paginationToken:"next-page"}})})});
+  const partial=await partialProvider.fetchHistoryWithMeta("address-A",200,null,undefined,false,{
+    beforeRequest:async()=>{budgetCalls++;if(budgetCalls===2){const error=new Error("pilot cap");error.code="ALCHEMY_PILOT_CU_BUDGET_EXCEEDED";throw error;}return "r";},
+    afterResponse:async()=>{},onError:async()=>{}
+  });
+  assert.equal(partial.transactions.length,1);
+  assert.equal(partial.budgetExhausted,true);
+  assert.equal(alchemy.decodeCursor(partial.nextCursor),"next-page","partial data retains the next-page cursor");
+
+  console.log("[blockchain-alchemy-provider-regression] OK: key registry, per-account baseline validation, CU method costs, UTC billing windows, raw balance deltas, mock history, signature-anchor resume and partial-budget checkpoint");
 })().catch(error=>{console.error(error);process.exitCode=1;});
