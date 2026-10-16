@@ -39,6 +39,36 @@ CREATE TABLE IF NOT EXISTS tg_jobs (
   last_error TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Before enforcing one job/source, preserve legacy duplicate rows for audit and
+-- restart the retained job from its last committed tg_sources checkpoint.
+-- This is safe on existing databases with multiple pre-UNIQUE jobs.
+CREATE TABLE IF NOT EXISTS tg_jobs_dedup_archive (
+  original_job_id BIGINT PRIMARY KEY,
+  source_id BIGINT NOT NULL,
+  original_row JSONB NOT NULL,
+  archived_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+WITH ranked AS (
+  SELECT j.*, row_number() OVER (PARTITION BY source_id ORDER BY id) AS row_rank
+  FROM tg_jobs j
+)
+INSERT INTO tg_jobs_dedup_archive (original_job_id,source_id,original_row)
+SELECT id,source_id,to_jsonb(ranked) - 'row_rank'
+FROM ranked WHERE row_rank > 1 ON CONFLICT (original_job_id) DO NOTHING;
+WITH duplicates AS (
+  SELECT source_id FROM tg_jobs GROUP BY source_id HAVING count(*) > 1
+), ranked AS (
+  SELECT j.id, row_number() OVER (PARTITION BY j.source_id ORDER BY j.id) AS row_rank
+  FROM tg_jobs j JOIN duplicates d ON d.source_id=j.source_id
+), removed AS (
+  DELETE FROM tg_jobs WHERE id IN (SELECT id FROM ranked WHERE row_rank > 1)
+  RETURNING source_id
+)
+UPDATE tg_jobs SET state='pending', attempts=0, base_message_id=NULL,
+  high_message_id=NULL, cursor_before_id=NULL, scanned_count=0,
+  run_at=now(), locked_until=NULL, last_error='Legacy jobs reconciled',
+  updated_at=now()
+WHERE source_id IN (SELECT source_id FROM removed);
 -- One logical sync cursor per source; do not create a second job after failure.
 DROP INDEX IF EXISTS tg_jobs_one_open_job_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS tg_jobs_source_unique_idx ON tg_jobs (source_id);
