@@ -999,7 +999,7 @@ async function processOne(db, row, cfg, api) {
   // A high-volume wallet may accumulate >recentLimit transactions during
   // downtime. Persist the forward catch-up cursor and drain it across runs.
   if (known.size && recent.truncated && !recent.reachedKnownHistory) {
-    if (!forwardCursor) forwardCursor = recent.transactions.at(-1)?.signature || null;
+    if (!forwardCursor) forwardCursor = recent.nextCursor || recent.transactions.at(-1)?.signature || null;
     gap = true;
   }
   if (!budgetPaused && forwardCursor && known.size) {
