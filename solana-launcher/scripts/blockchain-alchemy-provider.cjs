@@ -81,6 +81,7 @@ function normalizeRawTransaction(entry) {
   }
   const blockTime = Number.isFinite(entry && entry.blockTime) ? entry.blockTime : null;
   return {
+    ...(entry && typeof entry==="object" ? entry : {}),
     signature, slot:Number.isFinite(entry && entry.slot)?entry.slot:null,
     timestamp:blockTime, blockTime, transactionError:meta && meta.err != null ? meta.err : null,
     fee:Number.isFinite(meta && meta.fee)?meta.fee:null,
@@ -90,7 +91,6 @@ function normalizeRawTransaction(entry) {
     // Do not infer native transfers from lamport deltas: fees, rent, and swaps
     // make that inference ambiguous without instruction decoding.
     nativeTransfers:[],
-    rawTransaction:entry,
   };
 }
 function encodeCursor(token) {
