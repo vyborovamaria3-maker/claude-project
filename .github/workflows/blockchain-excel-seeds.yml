@@ -27,4 +27,4 @@ jobs:
           node-version: "22"
       - name: Offline XLSX parsing and collector syntax regression
         working-directory: solana-launcher
-        run: node scripts/blockchain-seed-regression.cjs && node --check scripts/blockchain-forensics.cjs && node scripts/blockchain-forensics-regression.cjs && node --check scripts/blockchain-dex-index.cjs && node --check scripts/blockchain-dex-replay.cjs
+        run: node scripts/blockchain-seed-regression.cjs && node --check scripts/blockchain-seed-collector.cjs && node --check scripts/blockchain-forensics.cjs && node scripts/blockchain-forensics-regression.cjs && node --check scripts/blockchain-dex-index.cjs && node --check scripts/blockchain-dex-replay.cjs
