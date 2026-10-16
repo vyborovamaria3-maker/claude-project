@@ -2,6 +2,8 @@ import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
+import { assertMigrationCatalog } from "../lib/trade/migration-catalog";
+import { REQUIRED } from "../lib/trade/migrations";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "migrations");
 import { REQUIRED } from "../lib/trade/migrations";
