@@ -25,6 +25,12 @@ assert.throws(()=>collector.parseArgs(["--mode","pilot"]),/requires --seed-token
 assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token","not-a-mint"]),/valid Solana mint/);
 assert.throws(()=>collector.parseArgs(["--mode","pilot","--seed-token",SEED,"--monthly-credits-used","0","--run-budget-credits","0"]),/Invalid numeric flag/);
 function dbFixture(){const db=new Database(":memory:");collector.initDb(db);return db;}
+const missingBillingDayDb=dbFixture();
+try {
+ const unsafeStart=collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","0"]);
+ assert.throws(()=>collector.resolveBudgetSettings(missingBillingDayDb,unsafeStart,true,Date.UTC(2026,9,16)),
+   /billing reset day is not configured/,"first network run must know the provider billing window");
+} finally {missingBillingDayDb.close();}
 function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
  return {runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate,limit:10,maxObjects:10};
 }
