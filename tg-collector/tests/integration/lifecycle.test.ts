@@ -56,7 +56,7 @@ test("PostgreSQL: evidence versioning and soft-delete preserve canonical links",
       "SELECT message_count FROM tg_source_message_counters WHERE source_id=$1",
       [sourceId],
     );
-    assert.equal(counter.rows[0]?.message_count, 0);
+    assert.equal(Number(counter.rows[0]?.message_count ?? 0), 0);
 
     await client.query("UPDATE tg_messages SET deleted_at=NULL WHERE source_id=$1 AND message_id=501", [sourceId]);
     await refreshGraphDays(client, sourceId, [day]);
@@ -64,7 +64,7 @@ test("PostgreSQL: evidence versioning and soft-delete preserve canonical links",
       "SELECT message_count FROM tg_source_message_counters WHERE source_id=$1",
       [sourceId],
     );
-    assert.equal(restoredCounter.rows[0]?.message_count, 1);
+    assert.equal(Number(restoredCounter.rows[0]?.message_count ?? 0), 1);
     const restoredEdges = await client.query("SELECT 1 FROM tg_graph_daily_edges WHERE source_id=$1 AND day=$2", [sourceId, day]);
     assert.ok(restoredEdges.rows.length >= 2);
     await client.query("COMMIT");
