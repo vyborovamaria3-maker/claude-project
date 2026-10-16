@@ -41,6 +41,10 @@ assert.equal(launches.find(x=>x.mint===SEED).creator,CREATOR,"creator comes from
 const db=makeDb();
 try{
   const scope=collector.ensurePilotScope(db,SEED);
+  assert.equal(collector.ensurePilotScope(db,SEED),scope,"resuming the same pilot must reuse its scope");
+  const run=collector.startCollectionRun(db,parsed,scope);
+  assert.equal(db.prepare("SELECT max_runtime_ms FROM chain_collection_runs WHERE run_id=?").get(run).max_runtime_ms,6*60*60*1000);
+  collector.finishCollectionRun(db,run,"completed");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_scope_members WHERE scope_id=?").get(scope).n,1,
     "pilot starts with only the requested token");
   assert.equal(collector.appendDiscoveredCreators(db,scope,SEED,[create(SEED)]),1);
