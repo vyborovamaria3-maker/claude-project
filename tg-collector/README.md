@@ -371,3 +371,5 @@ This repository is intentionally local-first for Telegram collection:
 - no invitation/join automation;
 - observed facts are not interpreted as ownership, identity, or coordination.
 
+
+Тестовые файлы выполняются с `--test-concurrency=1`, поскольку интеграционные сценарии используют общую БД и повторно применяют DDL миграций. Проверка конкурентного `FOR UPDATE SKIP LOCKED` внутри отдельного теста остаётся параллельной.
