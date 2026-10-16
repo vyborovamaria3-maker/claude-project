@@ -890,12 +890,13 @@ async function processOne(db, row, cfg, api) {
 
   const unique = [...new Map(events.filter(tx => tx && tx.signature)
     .map(tx => [tx.signature, tx])).values()];
-  // Address history for a mint is not a complete token transfer/trade index.
-  // Keep the coverage gap visible until a dedicated venue/transfer indexer is used.
+  // Mint-address history is not a complete token trade/transfer index. Creator
+  // address history can be exhausted while the CREATE-instruction decoder still
+  // misses unsupported launch layouts, so neither is labeled gap-free.
   const trades = [];
   const cadence = row.priority >= 100 ? 5 * 60_000 :
     row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
-  if (row.kind === "token") gap = true;
+  if (row.kind === "token" || row.kind === "creator") gap = true;
   else if (complete && !forwardCursor && !budgetPaused) gap = false;
 
   const added = db.transaction(() => {
