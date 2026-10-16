@@ -92,7 +92,7 @@ function usage() {
     "  --pilot-budget-credits 1000000  Cumulative spend cap across all runs of this seed-token pilot",
     "  --run-budget-credits 250000 --page-credit-estimate 110",
     "  Credit estimates are local guards; provider-reported headers override estimates when available.",
-    "  Network modes require --monthly-credits-used or HELIUS_MONTHLY_CREDITS_USED_BASELINE.",
+    "  First network run requires --monthly-credits-used and --budget-period-start-day (actual Dashboard values).",
     "  --mode watch --watch-interval 60  Repeat import and bounded collection on a laptop",
     "  --dry-run                 Inspect the spreadsheets without writing DB/network",
     "  --prune-missing           Remove mappings for deleted XLSX files",
