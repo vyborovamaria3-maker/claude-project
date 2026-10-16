@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createConnection } from "node:net";
 import { Pool } from "pg";
 import { guardTgCollector } from "@/lib/tgCollectorAccess";
-import { clearProxy, getProxyStatus, saveProxy, setProxyEnabled } from "../../../../../../tg-collector/src/runtime/proxy.js";
+import { deleteTgProxy, enableTgProxy, readTgProxy, writeTgProxy } from "@/lib/tgCollectorProxyStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -133,7 +133,7 @@ export async function GET(request: NextRequest) {
         flood_wait_active, metrics_updated_at,
         heartbeat_at > now() - interval '20 seconds' AS worker_online
         FROM tg_runtime WHERE id=1`),
-      getProxyStatus(p),
+      readTgProxy(p),
       p.query(`SELECT m.source_id::text, s.identifier, m.message_id::text,
         m.sender_id, m.posted_at, m.text, m.views, m.forwards, m.replies
         FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id
@@ -222,22 +222,22 @@ export async function POST(request: NextRequest) {
       const username = boundedString(input.username, "username");
       const password = boundedString(input.password, "password");
       const secret = boundedString(input.secret, "secret");
-      await saveProxy({ proxyType: type, host, port, username, password, secret });
-      return NextResponse.json({ ok: true, proxy: await getProxyStatus(p) }, { headers: noStore });
+      await writeTgProxy(p, { proxyType: type, host, port, username, password, secret });
+      return NextResponse.json({ ok: true, proxy: await readTgProxy(p) }, { headers: noStore });
     }
 
     if (action === "proxy-enable" || action === "proxy-disable") {
-      await setProxyEnabled(action === "proxy-enable");
-      return NextResponse.json({ ok: true, proxy: await getProxyStatus(p) }, { headers: noStore });
+      await enableTgProxy(p, action === "proxy-enable");
+      return NextResponse.json({ ok: true, proxy: await readTgProxy(p) }, { headers: noStore });
     }
 
     if (action === "proxy-clear") {
-      await clearProxy();
-      return NextResponse.json({ ok: true, proxy: await getProxyStatus(p) }, { headers: noStore });
+      await deleteTgProxy(p);
+      return NextResponse.json({ ok: true, proxy: await readTgProxy(p) }, { headers: noStore });
     }
 
     if (action === "proxy-test") {
-      const configured = await getProxyStatus(p);
+      const configured = await readTgProxy(p);
       if (!configured.configured || !configured.host || !configured.port) {
         throw new ApiError("Прокси ещё не настроен", 409);
       }
