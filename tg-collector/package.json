@@ -10,7 +10,9 @@
     "migrate": "tsx src/cli.ts migrate",
     "worker": "tsx src/worker.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests",
+    "backup": "bash scripts/backup.sh",
+    "backup:verify": "bash scripts/restore-check.sh",
     "analyze:backfill": "tsx src/analytics/backfill.ts",
     "analyze:refresh": "tsx src/analytics/refresh.ts",
     "smoke:mtproto": "tsx src/runtime/smoke.ts"
