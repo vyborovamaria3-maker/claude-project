@@ -14,13 +14,13 @@ test("PostgreSQL: evidence versioning and soft-delete preserve canonical links",
   const identifier = "lifecycle_" + randomUUID().replaceAll("-", "").slice(0, 18);
   const client = await pool.connect();
   try {
+    await client.query("BEGIN");
     const source = await client.query<{ id: string }>(
       "INSERT INTO tg_sources(identifier,title,enabled) VALUES($1,$2,TRUE) RETURNING id::text",
       [identifier, "Lifecycle fixture"],
     );
     const sourceId = source.rows[0].id;
     const postedAt = new Date("2026-10-15T12:00:00Z");
-    await client.query("BEGIN");
     await persistMessage(client, sourceId, {
       id: 501,
       message: "@alice 0x1111111111111111111111111111111111111111",
