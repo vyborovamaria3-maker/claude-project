@@ -98,11 +98,16 @@ export async function GET(request: NextRequest) {
           (SELECT COALESCE(sum(message_count),0)::int FROM tg_source_message_counters) AS messages,
           (SELECT count(*)::int FROM tg_jobs WHERE state='running') AS running,
           (SELECT count(*)::int FROM tg_jobs WHERE state='failed') AS failed`),
-      p.query("SELECT pause_until, heartbeat_at, worker_started_at, block_reason, blocked_at, heartbeat_at > now() - interval '20 seconds' AS worker_online FROM tg_runtime WHERE id=1"),
+      p.query(`SELECT pause_until, heartbeat_at, worker_started_at, block_reason, blocked_at,
+        messages_total, messages_per_day, links_total, links_per_day, jobs_pending, jobs_failed,
+        flood_wait_active, metrics_updated_at,
+        heartbeat_at > now() - interval '20 seconds' AS worker_online
+        FROM tg_runtime WHERE id=1`),
       p.query(`SELECT m.source_id::text, s.identifier, m.message_id::text,
         m.sender_id, m.posted_at, m.text, m.views, m.forwards, m.replies
         FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id
         WHERE ($1::bigint IS NULL OR m.source_id=$1)
+          AND m.deleted_at IS NULL
           AND ($2::text = '' OR m.text ILIKE '%' || $2 || '%')
         ORDER BY m.posted_at DESC NULLS LAST, m.message_id DESC
         LIMIT 40 OFFSET $3`, [selected, search, page*40]),
@@ -114,6 +119,16 @@ export async function GET(request: NextRequest) {
       workerOnline: runtimeState.rows[0]?.worker_online === true,
       heartbeatAt: runtimeState.rows[0]?.heartbeat_at ?? null,
       blockReason: runtimeState.rows[0]?.block_reason ?? null,
+      runtimeMetrics: {
+        messages_total: Number(runtimeState.rows[0]?.messages_total ?? 0),
+        messages_per_day: Number(runtimeState.rows[0]?.messages_per_day ?? 0),
+        links_total: Number(runtimeState.rows[0]?.links_total ?? 0),
+        links_per_day: Number(runtimeState.rows[0]?.links_per_day ?? 0),
+        jobs_pending: Number(runtimeState.rows[0]?.jobs_pending ?? 0),
+        jobs_failed: Number(runtimeState.rows[0]?.jobs_failed ?? 0),
+        flood_wait_active: runtimeState.rows[0]?.flood_wait_active === true,
+        metrics_updated_at: runtimeState.rows[0]?.metrics_updated_at ?? null,
+      },
       sources: sources.rows,
       messages: messages.rows,
       page,
