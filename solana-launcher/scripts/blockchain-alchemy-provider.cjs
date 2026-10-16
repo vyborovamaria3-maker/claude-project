@@ -45,6 +45,7 @@ function currentBillingMonthKey(now = Date.now(), resetDay = 1) {
   const effectiveDay=Math.min(resetDay,new Date(Date.UTC(year,month+1,0)).getUTCDate());
   if(date.getUTCDate()<effectiveDay){month--;if(month<0){month=11;year--;}}
   const startDay=Math.min(resetDay,new Date(Date.UTC(year,month+1,0)).getUTCDate());
+  if(resetDay===1)return String(year)+"-"+String(month+1).padStart(2,"0");
   return new Date(Date.UTC(year,month,startDay)).toISOString().slice(0,10);
 }
 function normalizeRawTransaction(entry) {
