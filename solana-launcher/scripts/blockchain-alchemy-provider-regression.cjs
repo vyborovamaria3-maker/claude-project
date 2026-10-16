@@ -13,7 +13,8 @@ assert.equal(alchemy.getMethodCost("getTransactionsForAddress",{}),100);
 assert.equal(alchemy.getMethodCost("getTransaction",{}),40);
 assert.equal(alchemy.currentBillingMonthKey(Date.UTC(2026,9,15),16),"2026-09-16");
 assert.equal(alchemy.currentBillingMonthKey(Date.UTC(2026,9,16),16),"2026-10-16");
-assert.throws(()=>alchemy.parseAccounts({ALCHEMY_SOLANA_API_KEY_1:"x"}),/CU_USED_BASELINE_1/);
+const missingBaselineProvider=alchemy.createProvider({env:{ALCHEMY_SOLANA_API_KEY_1:"x"},fetch:async()=>{throw new Error("should not reach network");}});
+assert.equal(missingBaselineProvider.accounts.length,1);
 assert.throws(()=>alchemy.parseAccounts({ALCHEMY_SOLANA_API_KEY_1:"x",ALCHEMY_SOLANA_CU_USED_BASELINE_1:"0",ALCHEMY_SOLANA_BILLING_RESET_DAY_1:"0"}),/BILLING_RESET_DAY_1/);
 assert.throws(()=>alchemy.getMethodCost("getTransactionsForAddress",{ALCHEMY_SOLANA_CU_COST_getTransactionsForAddress:"0"}),/positive integer/);
 
@@ -53,6 +54,10 @@ assert.equal(normalized.nativeTransfers.length,0,"lamport deltas are not proof o
   assert.equal(page.transactions[0].signature,"sig-fixture");
   assert.equal(page.exhausted,true);
   assert.equal(reserved,1);assert.equal(responded,1);assert.equal(seen.length,1);
+  const encoded=alchemy.encodeCursor("page-token-1");
+  assert.equal(alchemy.decodeCursor(encoded),"page-token-1");
+  assert.equal(alchemy.decodeCursor("signature-anchor"),null);
+  await assert.rejects(()=>missingBaselineProvider.fetchPage("address-A",null,100),/CU_USED_BASELINE_1/);
   assert.match(seen[0].url,/solana-mainnet\.g\.alchemy\.com\/v2\/a1$/);
   assert.equal(seen[0].body.method,"getTransactionsForAddress");
   console.log("[blockchain-alchemy-provider-regression] OK: key registry, per-account baseline validation, CU method costs, UTC billing windows, raw balance deltas, mocked history request");
