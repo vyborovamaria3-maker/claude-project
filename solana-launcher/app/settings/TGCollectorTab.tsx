@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2, Pause, Play, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2, Pause, Play, Plus, RefreshCw, Search, Trash2, Wifi, Square, Save } from "lucide-react";
 import TGGraphPanel from "./TGGraphPanel";
 import type { TgCollectorSnapshot as Snapshot, TgCollectorSource as Source } from "@/lib/tgCollectorTypes";
 
@@ -35,6 +35,14 @@ export default function TGCollectorTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [proxyType, setProxyType] = useState<"socks5" | "socks4" | "mtproxy">("socks5");
+  const [proxyHost, setProxyHost] = useState("");
+  const [proxyPort, setProxyPort] = useState("1080");
+  const [proxyUsername, setProxyUsername] = useState("");
+  const [proxyPassword, setProxyPassword] = useState("");
+  const [proxySecret, setProxySecret] = useState("");
+  const [proxyDirty, setProxyDirty] = useState(false);
+  const [proxyBusy, setProxyBusy] = useState(false);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!accessKey) return;
@@ -57,13 +65,29 @@ export default function TGCollectorTab() {
   }, [selected, query, page, accessKey]);
 
   useEffect(() => {
+    if (!data?.proxy || proxyDirty) return;
+    if (data.proxy.configured) {
+      setProxyType(data.proxy.proxyType ?? "socks5");
+      setProxyHost(data.proxy.host ?? "");
+      setProxyPort(String(data.proxy.port ?? 1080));
+    } else {
+      setProxyType("socks5");
+      setProxyHost("");
+      setProxyPort("1080");
+      setProxyUsername("");
+      setProxyPassword("");
+      setProxySecret("");
+    }
+  }, [data?.proxy?.updatedAt, data?.proxy?.configured, proxyDirty]);
+
+  useEffect(() => {
     const controller = new AbortController();
     void refresh(controller.signal);
     const interval = setInterval(() => void refresh(controller.signal), 15000);
     return () => { controller.abort(); clearInterval(interval); };
   }, [refresh]);
 
-  async function command(action: "add" | "pause" | "resume" | "sync" | "retry" | "remove", source?: Source) {
+  async function command(action: "add" | "pause" | "resume" | "sync" | "retry" | "remove" | "start" | "stop", source?: Source) {
     if (busy) return;
     if (action === "remove" && source &&
       !window.confirm(`Удалить @${source.identifier} и все собранные сообщения из TG Collector? Это нельзя отменить.`)) return;
@@ -96,6 +120,58 @@ export default function TGCollectorTab() {
     }
   }
 
+  async function proxyCommand(action: "save" | "enable" | "disable" | "clear" | "test") {
+    if (!accessKey || proxyBusy) return;
+    setProxyBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const payload =
+        action === "save"
+          ? {
+              action: "proxy-save",
+              proxyType,
+              host: proxyHost.trim(),
+              port: Number(proxyPort),
+              username: proxyUsername.trim() || undefined,
+              password: proxyPassword || undefined,
+              secret: proxySecret || undefined,
+            }
+          : { action: `proxy-${action}` };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessKey}` },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json() as { error?: string; proxy?: Snapshot["proxy"]; latencyMs?: number; message?: string };
+      if (response.status === 401) setAccessKey("");
+      if (!response.ok) throw new Error(result.error || "Операция с прокси не выполнена");
+      if (action === "save") {
+        setProxyDirty(false);
+        setProxyPassword("");
+        setProxySecret("");
+        setNotice("Прокси сохранён. Перезапустите TG Collector worker, чтобы новое соединение использовало эту конфигурацию.");
+      } else if (action === "clear") {
+        setProxyDirty(false);
+        setProxyHost("");
+        setProxyPort("1080");
+        setProxyUsername("");
+        setProxyPassword("");
+        setProxySecret("");
+        setNotice("Прокси отключён и удалён из конфигурации.");
+      } else if (action === "test") {
+        setNotice(result.message || `TCP-порт прокси доступен за ${result.latencyMs ?? "—"} мс.`);
+      } else {
+        setNotice(action === "enable" ? "Прокси включён." : "Прокси выключен.");
+      }
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Ошибка операции с прокси");
+    } finally {
+      setProxyBusy(false);
+    }
+  }
+
   function onAdd(event: FormEvent) {
     event.preventDefault();
     void command("add");
@@ -109,11 +185,12 @@ export default function TGCollectorTab() {
   const metrics = [
     { title: "Источники", value: data?.stats.sources ?? 0 },
     { title: "Сообщения", value: data?.stats.messages ?? 0 },
-    { title: "Задания выполняются", value: data?.stats.running ?? 0 },
-    { title: "С ошибкой", value: data?.stats.failed ?? 0 },
+    { title: "Выполняются", value: data?.stats.running ?? 0 },
+    { title: "Ошибки", value: data?.stats.failed ?? 0 },
     { title: "Сообщений сегодня", value: data?.runtimeMetrics.messages_per_day ?? 0 },
     { title: "Связей сегодня", value: data?.runtimeMetrics.links_per_day ?? 0 },
     { title: "Всего связей", value: data?.runtimeMetrics.links_total ?? 0 },
+    { title: "Заданий в очереди", value: data?.runtimeMetrics.jobs_pending ?? 0 },
   ];
   const globallyPaused = Boolean(data?.pausedUntil && new Date(data.pausedUntil) > new Date());
 
@@ -147,14 +224,25 @@ export default function TGCollectorTab() {
             <div className="flex items-center gap-2"><Database className="h-5 w-5 text-primary" /><h2 className="text-xl font-bold text-content">TG Collector</h2></div>
             <p className="mt-2 text-sm text-content-muted">Локальный сбор публичных каналов и супергрупп Telegram через MTProto.</p>
           </div>
-          <button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-2 rounded-xl border border-bg-border px-3 py-2 text-sm text-content-muted hover:text-content">
-            <RefreshCw className="h-4 w-4" /> Обновить
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => void command("start")} disabled={busy !== null || data?.collectionEnabled} className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 disabled:opacity-40">
+              <Play className="h-4 w-4" /> Запустить сбор
+            </button>
+            <button type="button" onClick={() => void command("stop")} disabled={busy !== null || data?.collectionEnabled === false} className="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300 disabled:opacity-40">
+              <Square className="h-4 w-4" /> Остановить
+            </button>
+            <button type="button" onClick={() => void refresh()} disabled={busy !== null} className="inline-flex items-center gap-2 rounded-xl border border-bg-border px-3 py-2 text-sm text-content-muted hover:text-content disabled:opacity-40">
+              <RefreshCw className="h-4 w-4" /> Обновить
+            </button>
+          </div>
         </div>
 
         <button type="button" onClick={() => { setData(null); setAccessKey(""); }}
           className="mt-3 text-xs text-content-muted hover:text-content">Закрыть доступ к TG Collector</button>
         <div className="mt-5 flex flex-wrap gap-3 text-xs">
+          <span className={`rounded-lg border px-3 py-2 ${data?.collectionEnabled === false ? "border-amber-500/30 text-amber-300" : "border-emerald-500/30 text-emerald-300"}`}>
+            {data?.collectionEnabled === false ? "Сбор остановлен" : "Сбор включён"}
+          </span>
           <span className={`rounded-lg border px-3 py-2 ${data?.workerOnline ? "border-emerald-500/30 text-emerald-300" : "border-amber-500/30 text-amber-300"}`}>
             {data?.workerOnline ? <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" /> : <Clock3 className="mr-1 inline h-3.5 w-3.5" />}
             Worker: {data?.workerOnline ? "работает" : "не обнаружен"}
@@ -188,6 +276,69 @@ export default function TGCollectorTab() {
             {busy === "add" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Добавить
           </button>
         </form>
+      </section>
+
+      <section className="surface-panel p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="flex items-center gap-2 font-semibold text-content"><Wifi className="h-4 w-4 text-primary" /> Прокси Telegram</h3>
+            <p className="mt-1 text-xs leading-5 text-content-muted">
+              Поддерживаются SOCKS5, SOCKS4 и MTProto. Логин, пароль и secret не возвращаются в UI и хранятся зашифрованными.
+              Новая конфигурация применяется при следующем подключении worker.
+            </p>
+          </div>
+          <span className={`rounded-full border px-3 py-1 text-xs ${data?.proxy?.enabled ? "border-emerald-500/30 text-emerald-300" : "border-bg-border text-content-muted"}`}>
+            {data?.proxy?.configured ? (data.proxy.enabled ? "Прокси включён" : "Прокси выключен") : "Прокси не настроен"}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <label className="text-xs text-content-muted">Тип
+            <select value={proxyType} onChange={e=>{setProxyType(e.target.value as typeof proxyType);setProxyDirty(true);}}
+              className="mt-1 w-full rounded-xl border border-bg-border bg-bg-soft px-3 py-2.5 text-sm text-content">
+              <option value="socks5">SOCKS5</option><option value="socks4">SOCKS4</option><option value="mtproxy">MTProto</option>
+            </select>
+          </label>
+          <label className="text-xs text-content-muted">Host
+            <input value={proxyHost} onChange={e=>{setProxyHost(e.target.value);setProxyDirty(true);}} maxLength={253}
+              placeholder="127.0.0.1" className="mt-1 w-full rounded-xl border border-bg-border bg-bg-soft px-3 py-2.5 text-sm text-content" />
+          </label>
+          <label className="text-xs text-content-muted">Port
+            <input value={proxyPort} onChange={e=>{setProxyPort(e.target.value);setProxyDirty(true);}} inputMode="numeric" maxLength={5}
+              placeholder="1080" className="mt-1 w-full rounded-xl border border-bg-border bg-bg-soft px-3 py-2.5 text-sm text-content" />
+          </label>
+          <label className="text-xs text-content-muted">Логин
+            <input value={proxyUsername} onChange={e=>{setProxyUsername(e.target.value);setProxyDirty(true);}} autoComplete="off" maxLength={256}
+              disabled={proxyType==="mtproxy"} placeholder="необязательно" className="mt-1 w-full rounded-xl border border-bg-border bg-bg-soft px-3 py-2.5 text-sm text-content disabled:opacity-40" />
+          </label>
+          <label className="text-xs text-content-muted">{proxyType==="mtproxy" ? "Secret" : "Пароль"}
+            <input type="password" value={proxyType==="mtproxy" ? proxySecret : proxyPassword}
+              onChange={e=>{proxyType==="mtproxy" ? setProxySecret(e.target.value) : setProxyPassword(e.target.value);setProxyDirty(true);}}
+              autoComplete="new-password" maxLength={512} placeholder={data?.proxy?.secretConfigured || data?.proxy?.passwordConfigured ? "оставьте пустым для сохранения" : "необязательно"}
+              className="mt-1 w-full rounded-xl border border-bg-border bg-bg-soft px-3 py-2.5 text-sm text-content" />
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" disabled={proxyBusy || !proxyHost.trim()} onClick={()=>void proxyCommand("save")}
+            className="inline-flex items-center gap-2 rounded-xl border border-primary-border bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary disabled:opacity-40">
+            {proxyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Сохранить прокси
+          </button>
+          <button type="button" disabled={proxyBusy || !data?.proxy?.configured} onClick={()=>void proxyCommand(data?.proxy?.enabled ? "disable" : "enable")}
+            className="rounded-xl border border-bg-border px-4 py-2.5 text-sm text-content-muted disabled:opacity-40">
+            {data?.proxy?.enabled ? "Выключить" : "Включить"}
+          </button>
+          <button type="button" disabled={proxyBusy || !data?.proxy?.configured} onClick={()=>void proxyCommand("test")}
+            className="rounded-xl border border-bg-border px-4 py-2.5 text-sm text-content-muted disabled:opacity-40">
+            Проверить порт
+          </button>
+          <button type="button" disabled={proxyBusy || !data?.proxy?.configured} onClick={()=>{if(window.confirm("Удалить сохранённую конфигурацию прокси?")) void proxyCommand("clear");}}
+            className="rounded-xl border border-red-500/20 px-4 py-2.5 text-sm text-red-300 disabled:opacity-40">
+            Удалить
+          </button>
+        </div>
+        {data?.proxy?.configured && <p className="mt-3 text-xs text-content-muted">
+          {data.proxy.host}:{data.proxy.port} · {data.proxy.proxyType?.toUpperCase()} · учётные данные: {data.proxy.usernameConfigured || data.proxy.passwordConfigured || data.proxy.secretConfigured ? "сохранены" : "не заданы"}
+          {data.proxy.updatedAt ? ` · обновлено ${formatDate(data.proxy.updatedAt)}` : ""}
+        </p>}
       </section>
 
       <section className="surface-panel p-5 sm:p-6">
