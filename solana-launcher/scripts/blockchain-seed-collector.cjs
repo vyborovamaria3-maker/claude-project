@@ -196,6 +196,8 @@ function initDb(db) {
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN monthly_baseline_credits INTEGER NOT NULL DEFAULT 0");
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "budget_period_start_day"))
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN budget_period_start_day INTEGER NOT NULL DEFAULT 1");
+  if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "budget_period_start_day_confirmed"))
+    db.exec("ALTER TABLE chain_collection_runs ADD COLUMN budget_period_start_day_confirmed INTEGER NOT NULL DEFAULT 0");
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "max_runtime_ms"))
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN max_runtime_ms INTEGER NOT NULL DEFAULT 21600000");
   // Preserve active-wave accounting when resuming an older pilot scope created
@@ -222,10 +224,13 @@ function resolveBudgetSettings(db, args, requireBaseline = false, at = Date.now(
   const exists = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
   const hasRuns = exists("chain_collection_runs");
   const latest = hasRuns ? db.prepare(
-    "SELECT monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,started_at FROM chain_collection_runs ORDER BY started_at DESC LIMIT 1"
+    "SELECT monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,budget_period_start_day_confirmed,started_at FROM chain_collection_runs ORDER BY started_at DESC LIMIT 1"
   ).get() : null;
   if (latest) {
-    if (!args.budgetPeriodStartDayConfigured) args.budgetPeriodStartDay = latest.budget_period_start_day ?? 1;
+    if (!args.budgetPeriodStartDayConfigured) {
+      args.budgetPeriodStartDay = latest.budget_period_start_day ?? 1;
+      args.budgetPeriodStartDayConfigured = latest.budget_period_start_day_confirmed === 1;
+    }
     if (!args.monthlyBudgetConfigured) args.monthlyBudgetCredits = latest.monthly_budget_credits ?? args.monthlyBudgetCredits;
   }
   const periodStartDay = args.budgetPeriodStartDay ?? 1;
@@ -249,7 +254,7 @@ function resolveBudgetSettings(db, args, requireBaseline = false, at = Date.now(
       "Check Helius Dashboard and start once with --monthly-credits-used <credits-already-used>."
     );
   }
-  if (requireBaseline && !args.budgetPeriodStartDayConfigured && !latest) {
+  if (requireBaseline && !args.budgetPeriodStartDayConfigured) {
     throw new Error(
       "The Helius billing reset day is not configured. Check Helius Dashboard and start once with --budget-period-start-day <UTC-day-1-to-31>."
     );
@@ -352,10 +357,11 @@ function startCollectionRun(db, args, scopeId = null) {
   const runId = randomUUID();
   const now = Date.now();
   db.prepare(
-    "INSERT INTO chain_collection_runs(run_id,scope_id,started_at,run_budget_credits,monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,page_credit_estimate,max_objects,max_runtime_ms,status) " +
-    "VALUES(?,?,?,?,?,?,?,?,?,?,'running')"
+    "INSERT INTO chain_collection_runs(run_id,scope_id,started_at,run_budget_credits,monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,budget_period_start_day_confirmed,page_credit_estimate,max_objects,max_runtime_ms,status) " +
+    "VALUES(?,?,?,?,?,?,?,?,?,?,?,'running')"
   ).run(runId,scopeId,now,args.runBudgetCredits,args.monthlyBudgetCredits,
-    args.monthlyCreditsUsedBaseline??0,args.budgetPeriodStartDay??1,args.pageCreditEstimate,Math.min(args.limit,args.maxObjects),args.maxRuntimeMs??6*60*60*1000);
+    args.monthlyCreditsUsedBaseline??0,args.budgetPeriodStartDay??1,args.budgetPeriodStartDayConfigured?1:0,
+    args.pageCreditEstimate,Math.min(args.limit,args.maxObjects),args.maxRuntimeMs??6*60*60*1000);
   if (scopeId) db.prepare("UPDATE chain_collection_scopes SET last_run_id=?,updated_at=? WHERE scope_id=?")
     .run(runId,now,scopeId);
   return runId;
