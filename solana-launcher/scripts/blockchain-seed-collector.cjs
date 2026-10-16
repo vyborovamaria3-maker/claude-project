@@ -719,48 +719,75 @@ function failTask(db, row, error) {
     Date.now() + delay, row.kind, row.address, row.lease_token??null);
 }
 
-async function collect(db, args) {
-  // ts-node is registered once in main(); avoid stacking require hooks on each
-  // watch cycle. Fail fast before reserving work if API keys are unavailable.
+async function collect(db, args, scopeId = null) {
   const keys = require("../lib/trade/helius-rotation").getHeliusApiKeys();
-  if (!keys.length) throw new Error("Valid HELIUS_API_KEY(S) required for --mode collect");
+  if (!keys.length) throw new Error("Valid HELIUS_API_KEY(S) required for --mode collect/pilot");
   const helius = require("../lib/trade/helius");
   const { persistTokenTrades, markTokenTradeChecked } = require("../lib/trade/db");
   const api = { ...helius, persistTokenTrades, markTokenTradeChecked };
   const startedAt = Date.now();
-  let claimed = 0, succeeded = 0, failed = 0, inserted = 0, gaps = 0;
+  const maxObjects = Math.min(args.limit,args.maxObjects);
+  const runId = startCollectionRun(db,{...args,limit:maxObjects},scopeId);
+  let claimed=0,succeeded=0,failed=0,inserted=0,gaps=0;
+  let budgetPaused=false,stopReason=null;
   async function worker() {
-    while (!stopRequested && claimed < args.limit) {
-      const row = claimOne(db, Boolean(args.scanMintAddresses));
+    while (!stopRequested && !budgetPaused && claimed<maxObjects) {
+      const row=claimOne(db,Boolean(args.scanMintAddresses),scopeId);
       if (!row) break;
       claimed++;
+      const taskCfg={...args,scopeId,requestHooks:requestHooksForTask(db,runId,row,args)};
       try {
-        const result = await processOne(db, row, args, api);
-        succeeded++;
-        inserted += result.newEvents;
-        if (result.possibleGap) gaps++;
-        if (succeeded % 10 === 0) console.log(JSON.stringify({ progress: succeeded, inserted, failed, gaps }));
-      } catch (error) {
+        const result=await processOne(db,row,taskCfg,api);
+        succeeded++;inserted+=result.newEvents;
+        if(result.possibleGap)gaps++;
+        if(result.budgetPaused) {
+          budgetPaused=true;
+          stopReason="Credit guard reached after a partial page was checkpointed";
+        }
+        if(succeeded%10===0) console.log(JSON.stringify({runId,progress:succeeded,inserted,failed,gaps,budgetPaused}));
+      } catch(error) {
+        if ((error && error.code)==="HELIUS_BUDGET_EXCEEDED") {
+          budgetPaused=true;
+          stopReason=String(error.message||error);
+          releaseTaskForBudget(db,row);
+          break;
+        }
         failed++;
-        failTask(db, row, error);
-        console.error("[blockchain-collector]", row.kind, row.address,
-          error instanceof Error ? error.message : String(error));
+        failTask(db,row,error);
+        console.error("[blockchain-collector]",row.kind,row.address,
+          error instanceof Error?error.message:String(error));
       }
     }
   }
-  await Promise.all(Array.from({ length: args.concurrency }, worker));
-  const durationSec = Math.max(0.001, (Date.now() - startedAt) / 1000);
-  return { claimed, succeeded, failed, newEvents: inserted, possibleGaps: gaps,
-    durationSec: Number(durationSec.toFixed(2)),
-    targetsPerSecond: Number((succeeded / durationSec).toFixed(2)),
-    eventsPerSecond: Number((inserted / durationSec).toFixed(2)),
-    stopped: stopRequested };
+  try {
+    await Promise.all(Array.from({length:args.concurrency},worker));
+  } catch(error) {
+    finishCollectionRun(db,runId,"failed",String(error&&error.message||error));
+    throw error;
+  }
+  const durationSec=Math.max(0.001,(Date.now()-startedAt)/1000);
+  const runStatus=budgetPaused?"budget_paused":stopRequested?"stopped":failed>0&&succeeded===0?"failed":"completed";
+  finishCollectionRun(db,runId,runStatus,stopReason);
+  const runUsage=db.prepare(
+    "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS used,COUNT(*) AS requests,"+
+    "SUM(CASE WHEN actual_credits IS NOT NULL THEN 1 ELSE 0 END) AS reported "+
+    "FROM chain_helius_usage_requests WHERE run_id=?"
+  ).get(runId);
+  return {
+    runId,scopeId,status:runStatus,claimed,succeeded,failed,newEvents:inserted,possibleGaps:gaps,
+    durationSec:Number(durationSec.toFixed(2)),
+    targetsPerSecond:Number((succeeded/durationSec).toFixed(2)),
+    eventsPerSecond:Number((inserted/durationSec).toFixed(2)),
+    credits:{estimatedOrReported:runUsage.used,requests:runUsage.requests,
+      providerReportedRequests:runUsage.reported||0,runBudgetCredits:args.runBudgetCredits,
+      monthly:usageStatus(db,args)},
+    budgetPaused,stoppedReason:stopReason,stopped:stopRequested,
+  };
 }
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) return usage();
-  if (!["import", "collect", "all", "watch", "status"].includes(args.mode)) throw new Error("Unknown --mode: " + args.mode);
+  if (!["import", "collect", "all", "watch", "pilot", "status"].includes(args.mode)) throw new Error("Unknown --mode: " + args.mode);
   // In read-only mode no database is opened or changed.
   if (args.dryRun) {
     if (!["import", "all"].includes(args.mode)) throw new Error("--dry-run requires import/all");
@@ -775,7 +802,7 @@ async function main() {
     const readonly=new Database(file,{readonly:true,fileMustExist:true});
     try {
       const exists=readonly.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_seed_targets'").get();
-      return console.log(JSON.stringify({status:exists?status(readonly):"not_initialized"},null,2));
+      return console.log(JSON.stringify({status:exists?status(readonly,args):"not_initialized"},null,2));
     } finally {readonly.close();}
   }
   require("ts-node").register({
@@ -784,13 +811,14 @@ async function main() {
   });
   const db = require("../lib/trade/db").getDb();
   initDb(db);
-  syncDexProgramSources(db);
+  const scopeId = args.seedToken ? ensurePilotScope(db,args.seedToken) : null;
+  if (!scopeId) syncDexProgramSources(db);
   if (args.mode === "watch") {
     while (!stopRequested) {
       try {
-        const imported = importFolders(db, args);
-        const collected = await collect(db, args);
-        console.log(JSON.stringify({ watchCycle: new Date().toISOString(), imported, collected, status: status(db) }));
+        const imported = scopeId ? null : importFolders(db, args);
+        const collected = await collect(db, args, scopeId);
+        console.log(JSON.stringify({ watchCycle: new Date().toISOString(), imported, collected, status: status(db,args) }));
       } catch (error) {
         console.error("[blockchain-collector] watch cycle failed:", error);
         process.exitCode = 1;
@@ -806,12 +834,16 @@ async function main() {
     const imported = importFolders(db, args);
     console.log(JSON.stringify({ import: imported }, null, 2));
   }
-  if (args.mode === "collect" || args.mode === "all") {
-    console.log(JSON.stringify({ collection: await collect(db, args) }, null, 2));
+  if (args.mode === "pilot" || args.mode === "collect" || args.mode === "all") {
+    console.log(JSON.stringify({ collection: await collect(db,args,scopeId) },null,2));
   }
-  console.log(JSON.stringify({ status: status(db) }, null, 2));
+  console.log(JSON.stringify({ status: status(db,args) },null,2));
 }
 if (require.main === module) main().catch(error => {
   console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1;
 });
-module.exports = { initDb, appendDiscovered, persistEvents, processOne, claimOne, syncDexProgramSources };
+module.exports = {
+  initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
+  syncDexProgramSources,ensurePilotScope,addScopeMember,startCollectionRun,reserveHeliusCredits,
+  recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,
+};
