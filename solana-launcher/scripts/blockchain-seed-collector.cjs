@@ -1130,12 +1130,13 @@ async function collect(db, args, scopeId = null) {
       try {
         return await heliusFetch(address,limit,known,startBefore,includeTokenAccounts,requestHooks);
       } catch (error) {
-        // Helius cursors are signatures; Alchemy cursors are opaque page tokens.
-        // Fail over only on a fresh/recent request to preserve cursor semantics.
-        if (startBefore || !alchemyProvider.accounts.length) throw error;
+        // Alchemy can resume its own opaque cursors directly and can locate a
+        // saved Helius signature by walking pages. That scan is expensive but
+        // preserves history instead of silently restarting at the newest page.
+        if (!alchemyProvider.accounts.length) throw error;
         if (error && error.code !== "HELIUS_BUDGET_EXCEEDED" && !/Helius|fetch failed|timeout|network|ECONN|429|5\d\d/i.test(String(error.message||error))) throw error;
         console.warn("[blockchain-collector] Helius recent history unavailable; falling back to Alchemy raw transaction evidence");
-        return alchemyProvider.fetchHistoryWithMeta(address,limit,known,undefined,includeTokenAccounts,requestHooks?.alchemy);
+        return alchemyProvider.fetchHistoryWithMeta(address,limit,known,startBefore,includeTokenAccounts,requestHooks?.alchemy);
       }
     }
     return alchemyProvider.fetchHistoryWithMeta(address,limit,known,startBefore,includeTokenAccounts,requestHooks?.alchemy);
