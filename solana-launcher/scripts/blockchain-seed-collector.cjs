@@ -144,6 +144,12 @@ function initDb(db) {
     " PRIMARY KEY(scope_id,kind,address))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_scope_deferred_parent",
     " ON chain_collection_scope_deferred(scope_id,parent_kind,parent_address,priority DESC,discovered_at)",
+    ";CREATE TABLE IF NOT EXISTS chain_collection_scope_wave_members (",
+    " scope_id TEXT NOT NULL,parent_kind TEXT NOT NULL,parent_address TEXT NOT NULL,",
+    " kind TEXT NOT NULL,address TEXT NOT NULL,activated_at INTEGER NOT NULL,",
+    " PRIMARY KEY(scope_id,parent_kind,parent_address,kind,address))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_scope_wave_active",
+    " ON chain_collection_scope_wave_members(scope_id,parent_kind,parent_address,kind,address)",
     ";CREATE TABLE IF NOT EXISTS chain_pumpfun_creator_launches (",
     " scope_id TEXT NOT NULL,creator TEXT NOT NULL,mint TEXT NOT NULL,signature TEXT NOT NULL,",
     " slot INTEGER,timestamp INTEGER NOT NULL,evidence_source TEXT NOT NULL,evidence_json TEXT NOT NULL,",
@@ -284,8 +290,8 @@ function promoteDeferredWaves(db,scopeId,cfg={}){
   for(const parent of parents){
     const cap=caps[parent.parentKind]?.[parent.kind]??10000;
     const active=db.prepare(
-      "SELECT COUNT(*) AS n FROM chain_collection_scope_members m JOIN chain_seed_targets t ON t.kind=m.kind AND t.address=m.address "+
-      "WHERE m.scope_id=? AND m.discovered_from_kind=? AND m.discovered_from_address=? AND m.kind=? AND t.backfill_complete=0"
+      "SELECT COUNT(*) AS n FROM chain_collection_scope_wave_members w JOIN chain_seed_targets t ON t.kind=w.kind AND t.address=w.address "+
+      "WHERE w.scope_id=? AND w.parent_kind=? AND w.parent_address=? AND w.kind=? AND t.backfill_complete=0"
     ).get(scopeId,parent.parentKind,parent.parentAddress,parent.kind).n;
     const available=Math.max(0,cap-active);
     if(!available)continue;
@@ -294,10 +300,14 @@ function promoteDeferredWaves(db,scopeId,cfg={}){
       "ORDER BY priority DESC,discovered_at,address LIMIT ?"
     ).all(scopeId,parent.parentKind,parent.parentAddress,parent.kind,available);
     for(const candidate of candidates){
-      addScopeMember(db,scopeId,candidate.kind,candidate.address,candidate.priority,candidate.reason,
-        candidate.discovered_from_kind,candidate.discovered_from_address);
-      db.prepare("DELETE FROM chain_collection_scope_deferred WHERE scope_id=? AND kind=? AND address=?")
-        .run(scopeId,candidate.kind,candidate.address);
+      db.transaction(()=>{
+        addScopeMember(db,scopeId,candidate.kind,candidate.address,candidate.priority,candidate.reason,
+          candidate.discovered_from_kind,candidate.discovered_from_address);
+        db.prepare("INSERT OR IGNORE INTO chain_collection_scope_wave_members(scope_id,parent_kind,parent_address,kind,address,activated_at) VALUES(?,?,?,?,?,?)")
+          .run(scopeId,candidate.parent_kind,candidate.parent_address,candidate.kind,candidate.address,Date.now());
+        db.prepare("DELETE FROM chain_collection_scope_deferred WHERE scope_id=? AND kind=? AND address=?")
+          .run(scopeId,candidate.kind,candidate.address);
+      })();
       promoted++;
     }
   }
