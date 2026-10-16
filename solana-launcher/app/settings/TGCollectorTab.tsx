@@ -108,10 +108,15 @@ export default function TGCollectorTab() {
       if (!response.ok) throw new Error(result.error || "Действие не выполнено");
       if (action === "add") setChannel("");
       if (action === "remove" && source?.id === selected) setSelected("");
-      setNotice(action === "add" ? "Источник добавлен в очередь." :
+      setNotice(
+        action === "add" ? "Источник добавлен в очередь." :
         action === "remove" ? "Источник и его сообщения удалены." :
         action === "pause" ? "Источник приостановлен после текущего запроса." :
-        action === "resume" ? "Сбор источника возобновлён." : "Задача поставлена в очередь.");
+        action === "resume" ? "Сбор источника возобновлён." :
+        action === "start" ? "Сбор запущен. Worker начнёт брать доступные задания." :
+        action === "stop" ? "Сбор остановлен. Текущий запрос может завершиться, новые задания не берутся." :
+        "Задача поставлена в очередь."
+      );
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Ошибка выполнения команды");
