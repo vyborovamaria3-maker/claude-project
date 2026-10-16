@@ -1,9 +1,9 @@
-import { getCollectorAccount } from "../src/x/account-session";
-import { handleSearchTask } from "../src/x/task-handler";
-import { normalizeTweets } from "../src/x/normalize";
-import { printDiagnostics } from "../src/x/diagnostics";
-import { enqueueTask, claimTasks, finishTask, failTask, deferTask, ClaimedTask } from "../lib/trade/tasks";
-import { q, q1, tx, closePool } from "../lib/trade/pg";
+import { getCollectorAccount } from "../../src/x/account-session";
+import { handleSearchTask } from "../../src/x/task-handler";
+import { normalizeTweets } from "../../src/x/normalize";
+import { printDiagnostics } from "../../src/x/diagnostics";
+import { enqueueTask, claimTasks, finishTask, failTask, deferTask, ClaimedTask } from "../../lib/trade/tasks";
+import { q, q1, tx, closePool } from "../../lib/trade/pg";
 
 const WORKER_ID = "e2e-test";
 // sort: SearchPayload допускает только top|latest («live» отклонился бы zod'ом);
