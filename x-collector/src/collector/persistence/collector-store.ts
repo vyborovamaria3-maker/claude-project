@@ -22,7 +22,7 @@ async function assertPersistenceLease(client: PoolClient, taskId: number | undef
 export interface TweetPersistenceOptions {
   client?: PoolClient;
   transport?: "browser" | "http";
-  /** Original sanitized source envelope, when the engine exposes one. */
+  /** Source response envelope without HTTP auth headers/cookies, when exposed by the engine. */
   rawResponse?: unknown;
   /** Large browser DOM batches are split into SQL chunks inside ONE transaction. */
   atomicBrowserBatch?: boolean;
@@ -43,7 +43,9 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     // Capture before TweetSchema parsing so schema drift does not destroy the source evidence.
     rawCapture = await rawPage({
       capture_format_version: 1,
+      parser_version: process.env.X_COLLECTOR_PARSER_VERSION ?? "unversioned",
       transport: fromHttp ? "http" : "browser",
+      collection: { task_id: taskId ?? null, collector_account: collectorAccount ?? null },
       request: { source_query: sourceQuery, mint },
       received_at: received.toISOString(),
       raw_items: tweets,
@@ -79,7 +81,9 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     const received = new Date(now);
     const raw = rawCapture ?? await rawPage({
       capture_format_version: 1,
+      parser_version: process.env.X_COLLECTOR_PARSER_VERSION ?? "unversioned",
       transport: fromHttp ? "http" : "browser",
+      collection: { task_id: taskId ?? null, collector_account: collectorAccount ?? null },
       request: { source_query: sourceQuery, mint },
       received_at: received.toISOString(),
       tweets: chunk,
