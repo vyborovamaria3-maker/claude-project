@@ -158,9 +158,11 @@ export async function GET(request: NextRequest) {
       return id;
     };
 
+    const sourceById = new Map(sources.map(s => [s.id, s]));
     for (const link of edgeResult.rows) {
-      const origin = sources.find(s => s.id === link.source_id);
-      if (!origin) continue;
+      const origin = sourceById.get(link.source_id) ?? {
+        id: link.source_id, identifier: link.identifier, title: null, peer_id: null,
+      };
       const from = addSource(origin);
       const known = link.target_kind === "handle" ? byHandle.get(link.target_key)
         : link.target_kind === "channel_id" ? byPeer.get(link.target_key) : undefined;
