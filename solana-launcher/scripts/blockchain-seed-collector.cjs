@@ -1201,7 +1201,8 @@ async function collect(db, args, scopeId = null) {
     }
     if (keys.length) {
       try {
-        return await heliusFetch(address,limit,known,startBefore,includeTokenAccounts,requestHooks);
+        const result=await heliusFetch(address,limit,known,startBefore,includeTokenAccounts,requestHooks);
+        return {...result,provider:result.provider||"helius"};
       } catch (error) {
         // Alchemy can resume its own opaque cursors directly and can locate a
         // saved Helius signature by walking pages. That scan is expensive but
