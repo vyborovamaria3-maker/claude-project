@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, GitBranch, RefreshCw, ExternalLink } from "lucide-react";
 import type { TgGraphEdge as Edge, TgGraphEvidence as Evidence, TgGraphResponse as GraphData } from "@/lib/tgCollectorTypes";
 
-type SourceOption = { id: string; identifier: string };const endpoint = "/api/integrations/tg-collector/graph";
+type SourceOption = { id: string; identifier: string };
+
+const endpoint = "/api/integrations/tg-collector/graph";
 const kindName: Record<Edge["kind"], string> = {
   forward: "Пересылка", mention: "Упоминание", address: "Адрес в тексте",
 };
