@@ -257,7 +257,7 @@ function addScopeMember(db, scopeId, kind, address, priority, reason, fromKind =
     db.prepare(
       "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at) VALUES(?,?,8,?,0) " +
       "ON CONFLICT(kind,address) DO UPDATE SET source_mask=(chain_seed_targets.source_mask | 8)," +
-      "priority=MAX(chain_seed_targets.priority,excluded.priority),next_run_at=MIN(chain_seed_targets.next_run_at,excluded.next_run_at)"
+      "priority=MAX(chain_seed_targets.priority,excluded.priority),next_run_at=CASE WHEN chain_seed_targets.backfill_complete=1 AND chain_seed_targets.last_success_at IS NOT NULL THEN chain_seed_targets.next_run_at ELSE MIN(chain_seed_targets.next_run_at,excluded.next_run_at) END"
     ).run(kind,address,priority);
     db.prepare(
       "INSERT INTO chain_collection_scope_members(scope_id,kind,address,priority,reason,discovered_from_kind,discovered_from_address,discovered_at) " +
