@@ -225,12 +225,12 @@ function startCollectionRun(db, args, scopeId = null) {
 function reserveHeliusCredits(db, input) {
   const requestId = randomUUID();
   const now = Date.now();
-  const monthKey = currentMonthKey(now,input.budgetPeriodStartDay??1);
   const credits = Number(input.estimatedCredits);
   if (!Number.isSafeInteger(credits) || credits < 1) throw new Error("Invalid estimated Helius request credits");
   return db.transaction(() => {
     const run = db.prepare("SELECT * FROM chain_collection_runs WHERE run_id=?").get(input.runId);
     if (!run || run.status !== "running") throw budgetError("Collection run is not active; no new Helius requests allowed");
+    const monthKey = currentMonthKey(now,run.budget_period_start_day??1);
     const runUsed = db.prepare(
       "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS n FROM chain_helius_usage_requests WHERE run_id=?"
     ).get(input.runId).n;
