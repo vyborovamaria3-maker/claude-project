@@ -79,6 +79,23 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='token' AND address=?").get(SEED).n,2);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='token' AND address=? AND signature=?").get(SEED,tx1.signature).n,1);
 
+  // If a later backfill request is blocked before its first page, previously
+  // collected recent evidence must still commit instead of being downloaded again.
+  db.prepare("UPDATE chain_seed_targets SET backfill_complete=0,backfill_cursor=?,next_run_at=0,lease_until=NULL,lease_token=NULL WHERE kind='token' AND address=?")
+    .run(tx1.signature,SEED);
+  row=collector.claimOne(db,true,scopeId);
+  let blockedCalls=0;
+  const blocked=await collector.processOne(db,row,{recentLimit:200,backfillLimit:200,scopeId},{
+    fetchEnrichedTxsForMintWithMeta:async()=>{
+      blockedCalls++;
+      if(blockedCalls===1)return {transactions:[tx1],exhausted:false,truncated:false,reachedKnownHistory:true};
+      const error=new Error("budget reached before historical page");error.code="HELIUS_BUDGET_EXCEEDED";throw error;
+    }
+  });
+  assert.equal(blocked.budgetPaused,true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='token' AND address=?").get(SEED).n,2);
+  assert.equal(db.prepare("SELECT backfill_cursor FROM chain_seed_targets WHERE kind='token' AND address=?").get(SEED).backfill_cursor,tx1.signature);
+
   // Token trade participant discovery is scoped and idempotent.
   const trade={signature:"swap-fixture",events:{swap:{tokenOutputs:[{
     mint:SEED,userAccount:WALLET,rawTokenAmount:{tokenAmount:"1",decimals:0}
