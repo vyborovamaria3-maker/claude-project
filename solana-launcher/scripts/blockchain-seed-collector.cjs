@@ -38,6 +38,7 @@ function parseArgs(argv) {
   const defaultFolder = path.join(process.cwd(), "data", "seed-folders");
   const monthlyBaselineRaw = flags["monthly-credits-used"] ?? (process.env.HELIUS_MONTHLY_CREDITS_USED_BASELINE?.trim() || undefined);
   const monthlyBudgetRaw = flags["monthly-budget-credits"] ?? (process.env.HELIUS_MONTHLY_BUDGET_CREDITS?.trim() || undefined);
+  const pilotBudgetRaw = flags["pilot-budget-credits"] ?? (process.env.HELIUS_PILOT_BUDGET_CREDITS?.trim() || undefined);
   const periodStartDayRaw = flags["budget-period-start-day"] ?? (process.env.HELIUS_BUDGET_PERIOD_START_DAY?.trim() || undefined);
   const parsed = {
     mode: flags.mode || (flags["seed-token"] ? "pilot" : "import"),
@@ -58,6 +59,8 @@ function parseArgs(argv) {
     backfillLimit: intFlag(flags["backfill-limit"], 200, 1, 1000),
     monthlyBudgetCredits: intFlag(monthlyBudgetRaw, 10000000, 1, 100000000000),
     monthlyBudgetConfigured: monthlyBudgetRaw !== undefined,
+    pilotBudgetCredits: intFlag(pilotBudgetRaw, 1000000, 1, 100000000000),
+    pilotBudgetConfigured: pilotBudgetRaw !== undefined,
     monthlyCreditsUsedBaseline: intFlag(monthlyBaselineRaw, 0, 0, 100000000000),
     monthlyCreditsBaselineConfigured: monthlyBaselineRaw !== undefined,
     budgetPeriodStartDay: intFlag(periodStartDayRaw, 1, 1, 31),
@@ -86,6 +89,7 @@ function usage() {
     "  --limit 30 --max-objects 10000 --max-runtime-ms 21600000 --concurrency 2 --recent-limit 200 --backfill-limit 200",
     "  --creator-wave-tokens 200 --token-wave-wallets 5000 --wallet-wave-creators 20",
     "  --monthly-budget-credits 10000000 --monthly-credits-used <dashboard-used-credits> --budget-period-start-day 1",
+    "  --pilot-budget-credits 1000000  Cumulative spend cap across all runs of this seed-token pilot",
     "  --run-budget-credits 250000 --page-credit-estimate 110",
     "  Credit estimates are local guards; provider-reported headers override estimates when available.",
     "  Network modes require --monthly-credits-used or HELIUS_MONTHLY_CREDITS_USED_BASELINE.",
@@ -130,7 +134,7 @@ function initDb(db) {
     "  ON chain_seed_events(kind,address,block_time DESC)",
     ";CREATE TABLE IF NOT EXISTS chain_collection_scopes (",
     "  scope_id TEXT PRIMARY KEY, seed_token TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',",
-    "  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_run_id TEXT)",
+    "  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_run_id TEXT, pilot_budget_credits INTEGER NOT NULL DEFAULT 1000000)",
     ";CREATE TABLE IF NOT EXISTS chain_collection_scope_members (",
     "  scope_id TEXT NOT NULL, kind TEXT NOT NULL, address TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 0,",
     "  reason TEXT NOT NULL, discovered_from_kind TEXT, discovered_from_address TEXT, discovered_at INTEGER NOT NULL,",
@@ -186,6 +190,8 @@ function initDb(db) {
     db.exec("ALTER TABLE chain_seed_events ADD COLUMN payload_hash TEXT");
   if (!db.pragma("table_info(chain_seed_events)").some(c => c.name === "raw_revision"))
     db.exec("ALTER TABLE chain_seed_events ADD COLUMN raw_revision INTEGER NOT NULL DEFAULT 1");
+  if (!db.pragma("table_info(chain_collection_scopes)").some(c => c.name === "pilot_budget_credits"))
+    db.exec("ALTER TABLE chain_collection_scopes ADD COLUMN pilot_budget_credits INTEGER NOT NULL DEFAULT 1000000");
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "monthly_baseline_credits"))
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN monthly_baseline_credits INTEGER NOT NULL DEFAULT 0");
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "budget_period_start_day"))
@@ -323,15 +329,16 @@ function promoteDeferredWaves(db,scopeId,cfg={}){
 function shouldStopForRuntime(startedAt,maxRuntimeMs,now=Date.now()){
   return now-startedAt>=maxRuntimeMs;
 }
-function ensurePilotScope(db, seedToken) {
+function ensurePilotScope(db, seedToken, pilotBudgetCredits = 1000000, pilotBudgetConfigured = false) {
   if (!isSolanaAddress(seedToken)) throw new Error("Invalid pilot seed token");
   const scopeId = "seed-token:" + seedToken;
   const now = Date.now();
   db.transaction(() => {
     db.prepare(
-      "INSERT INTO chain_collection_scopes(scope_id,seed_token,status,created_at,updated_at) VALUES(?,?,'active',?,?) " +
-      "ON CONFLICT(scope_id) DO UPDATE SET status='active',updated_at=excluded.updated_at"
-    ).run(scopeId,seedToken,now,now);
+      "INSERT INTO chain_collection_scopes(scope_id,seed_token,status,created_at,updated_at,pilot_budget_credits) VALUES(?,?,'active',?,?,?) " +
+      "ON CONFLICT(scope_id) DO UPDATE SET status='active',updated_at=excluded.updated_at," +
+      "pilot_budget_credits=CASE WHEN ?=1 THEN excluded.pilot_budget_credits ELSE chain_collection_scopes.pilot_budget_credits END"
+    ).run(scopeId,seedToken,now,now,pilotBudgetCredits,pilotBudgetConfigured?1:0);
     addScopeMember(db,scopeId,"token",seedToken,1000,"seed_token",null,null);
   }).immediate();
   return scopeId;
