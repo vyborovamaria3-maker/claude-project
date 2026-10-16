@@ -87,15 +87,15 @@ export async function GET(request: NextRequest) {
     const [sources, stats, runtimeState, messages] = await Promise.all([
       p.query(`SELECT s.id::text, s.identifier, s.peer_id, s.title, s.enabled,
         s.history_partial, s.last_message_id::text, s.last_success_at,
-        COALESCE(mc.count,0)::int AS message_count,
+        COALESCE(mc.message_count,0)::int AS message_count,
         j.state, j.run_at, j.attempts, j.scanned_count, j.last_error
         FROM tg_sources s
-        LEFT JOIN (SELECT source_id, count(*) AS count FROM tg_messages GROUP BY source_id) mc ON mc.source_id=s.id
+        LEFT JOIN tg_source_message_counters mc ON mc.source_id=s.id
         LEFT JOIN tg_jobs j ON j.source_id=s.id
         ORDER BY s.created_at DESC LIMIT 500`),
       p.query(`SELECT
           (SELECT count(*)::int FROM tg_sources) AS sources,
-          (SELECT count(*)::int FROM tg_messages) AS messages,
+          (SELECT COALESCE(sum(message_count),0)::int FROM tg_source_message_counters) AS messages,
           (SELECT count(*)::int FROM tg_jobs WHERE state='running') AS running,
           (SELECT count(*)::int FROM tg_jobs WHERE state='failed') AS failed`),
       p.query("SELECT pause_until, heartbeat_at, worker_started_at, block_reason, blocked_at, heartbeat_at > now() - interval '20 seconds' AS worker_online FROM tg_runtime WHERE id=1"),
