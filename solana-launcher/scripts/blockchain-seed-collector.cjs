@@ -178,6 +178,41 @@ function currentMonthKey(at = Date.now(), periodStartDay = 1) {
   const startDay=Math.min(periodStartDay,new Date(Date.UTC(year,month+1,0)).getUTCDate());
   return new Date(Date.UTC(year,month,startDay)).toISOString().slice(0,10);
 }
+
+function resolveBudgetSettings(db, args, requireBaseline = false, at = Date.now()) {
+  const exists = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+  const hasRuns = exists("chain_collection_runs");
+  const latest = hasRuns ? db.prepare(
+    "SELECT monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,started_at FROM chain_collection_runs ORDER BY started_at DESC LIMIT 1"
+  ).get() : null;
+  if (latest) {
+    if (!args.budgetPeriodStartDayConfigured) args.budgetPeriodStartDay = latest.budget_period_start_day ?? 1;
+    if (!args.monthlyBudgetConfigured) args.monthlyBudgetCredits = latest.monthly_budget_credits ?? args.monthlyBudgetCredits;
+  }
+  const periodStartDay = args.budgetPeriodStartDay ?? 1;
+  const periodKey = currentMonthKey(at,periodStartDay);
+  if (!args.monthlyCreditsBaselineConfigured && hasRuns) {
+    const priorRuns = db.prepare(
+      "SELECT started_at,monthly_baseline_credits,budget_period_start_day FROM chain_collection_runs " +
+      "WHERE budget_period_start_day=? ORDER BY started_at DESC"
+    ).all(periodStartDay);
+    const currentPeriodRun = priorRuns.find(run =>
+      currentMonthKey(run.started_at,run.budget_period_start_day ?? 1) === periodKey
+    );
+    if (currentPeriodRun) {
+      args.monthlyCreditsUsedBaseline = currentPeriodRun.monthly_baseline_credits;
+      args.monthlyCreditsBaselineConfigured = true;
+    }
+  }
+  if (requireBaseline && !args.monthlyCreditsBaselineConfigured) {
+    throw new Error(
+      "No Helius credit baseline is saved for the current billing period. " +
+      "Check Helius Dashboard and start once with --monthly-credits-used <credits-already-used>."
+    );
+  }
+  return args;
+}
+
 function budgetError(message) {
   const error = new Error(message);
   error.code = "HELIUS_BUDGET_EXCEEDED";
@@ -294,6 +329,7 @@ function requestHooksForTask(db, runId, row, args) {
   };
 }
 function usageStatus(db, args = {}) {
+  resolveBudgetSettings(db,args,false);
   const periodStartDay=args.budgetPeriodStartDay??1;
   const monthKey = currentMonthKey(Date.now(),periodStartDay);
   const hasTable = name => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
@@ -856,6 +892,7 @@ async function main() {
   });
   const db = require("../lib/trade/db").getDb();
   initDb(db);
+  resolveBudgetSettings(db,args,["collect","pilot","watch","all"].includes(args.mode));
   const scopeId = args.seedToken ? ensurePilotScope(db,args.seedToken) : null;
   if (!scopeId) syncDexProgramSources(db);
   if (args.mode === "watch") {
@@ -888,7 +925,7 @@ if (require.main === module) main().catch(error => {
   console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1;
 });
 module.exports = {
-  parseArgs,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
+  parseArgs,resolveBudgetSettings,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
   syncDexProgramSources,ensurePilotScope,addScopeMember,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,
 };
