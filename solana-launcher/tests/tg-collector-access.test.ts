@@ -35,6 +35,16 @@ test("TG Collector access accepts correct token", () => {
   assert.equal(response, null);
 });
 
+test("TG Collector mutations require same-origin", () => {
+  resetTgCollectorRateLimitForTests();
+  process.env.NODE_ENV = "development";
+  process.env.TG_COLLECTOR_ADMIN_TOKEN = "local-browser-fixture-access-key";
+  const request = makeRequest("local-browser-fixture-access-key", "127.0.0.3", true);
+  request.headers.set("origin", "http://evil.invalid");
+  const response = guardTgCollector(request, true);
+  assert.equal(response?.status, 403);
+});
+
 test("TG Collector access rate-limits abusive callers", () => {
   resetTgCollectorRateLimitForTests();
   process.env.NODE_ENV = "development";
