@@ -28,7 +28,8 @@
     "gmgn:wallet": "node ../scripts/gmgn-wallet.mjs",
     "gmgn:exec": "node ../scripts/gmgn-exec.mjs",
     "bot:dev": "ts-node telegram-bot/index.ts",
-    "bot:start": "NODE_ENV=production ts-node telegram-bot/index.ts"
+    "bot:start": "NODE_ENV=production ts-node telegram-bot/index.ts",
+    "dev:local": "next dev --hostname 127.0.0.1"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
