@@ -298,9 +298,11 @@ function usageStatus(db, args = {}) {
   if (!hasTable("chain_helius_usage_requests")) {
     const monthlyBudgetCredits=args.monthlyBudgetCredits??10000000;
     const baselineCredits=args.monthlyCreditsUsedBaseline??0;
-    return {monthKey,monthlyBudgetCredits,baselineCredits,localTrackedCredits:0,
+    return {monthKey,monthlyBudgetCredits,baselineCredits,
+      baselineConfigured:args.monthlyCreditsBaselineConfigured===true,localTrackedCredits:0,
       usedCredits:baselineCredits,remainingCredits:Math.max(0,monthlyBudgetCredits-baselineCredits),
-      requests:0,providerReportedRequests:0,note:"No Helius request ledger yet"};
+      requests:0,providerReportedRequests:0,
+      note:args.monthlyCreditsBaselineConfigured===true?"No Helius request ledger yet":"Set --monthly-credits-used from Helius Dashboard before collection"};
   }
   const usage = db.prepare(
     "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS used,"+
@@ -310,10 +312,11 @@ function usageStatus(db, args = {}) {
   const monthlyBudgetCredits = args.monthlyBudgetCredits ?? 10000000;
   const baselineCredits = args.monthlyCreditsUsedBaseline ?? 0;
   const usedCredits = baselineCredits + usage.used;
-  return {monthKey,monthlyBudgetCredits,baselineCredits,localTrackedCredits:usage.used,usedCredits,
+  return {monthKey,monthlyBudgetCredits,baselineCredits,
+    baselineConfigured:args.monthlyCreditsBaselineConfigured===true,localTrackedCredits:usage.used,usedCredits,
     remainingCredits:Math.max(0,monthlyBudgetCredits-usedCredits),requests:usage.requests,
-    providerReportedRequests:usage.reported,
-    estimatedOnlyRequests:usage.requests-(usage.reported||0)};
+    providerReportedRequests:usage.reported,estimatedOnlyRequests:usage.requests-(usage.reported||0),
+    note:args.monthlyCreditsBaselineConfigured===true?undefined:"Set --monthly-credits-used from Helius Dashboard before collection"};
 }
 
 function refreshTargets(db) {
