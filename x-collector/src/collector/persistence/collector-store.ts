@@ -22,6 +22,8 @@ async function assertPersistenceLease(client: PoolClient, taskId: number | undef
 export interface TweetPersistenceOptions {
   client?: PoolClient;
   transport?: "browser" | "http";
+  /** Original sanitized source envelope, when the engine exposes one. */
+  rawResponse?: unknown;
   /** Large browser DOM batches are split into SQL chunks inside ONE transaction. */
   atomicBrowserBatch?: boolean;
 }
@@ -56,7 +58,14 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     const chunk = valid.slice(i, i + BATCH);
     if (chunk.length === 0) continue;
     const received = new Date(now);
-    const raw = await rawPage({ tweets: chunk, sourceQuery, received_at: received.toISOString() });
+    const raw = await rawPage({
+      capture_format_version: 1,
+      transport: fromHttp ? "http" : "browser",
+      request: { source_query: sourceQuery, mint },
+      received_at: received.toISOString(),
+      tweets: chunk,
+      ...(options.rawResponse === undefined ? {} : { source_response: options.rawResponse }),
+    });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
     const writeChunk = async (client: PoolClient): Promise<number> => {
