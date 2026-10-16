@@ -91,10 +91,11 @@ export async function GET(request: NextRequest) {
         FROM tg_sources s
         LEFT JOIN (
           SELECT source_id,
-            count(*) FILTER (WHERE posted_at >= now()-interval '7 days') posts_7d,
-            count(*) FILTER (WHERE posted_at >= now()-interval '30 days') posts_30d,
-            avg(views) FILTER (WHERE posted_at >= now()-interval '30 days') avg_views
-          FROM tg_messages GROUP BY source_id
+            sum(posts_count) FILTER (WHERE day >= (now() AT TIME ZONE 'UTC')::date - 6) posts_7d,
+            sum(posts_count) FILTER (WHERE day >= (now() AT TIME ZONE 'UTC')::date - 29) posts_30d,
+            (sum(views_total) FILTER (WHERE day >= (now() AT TIME ZONE 'UTC')::date - 29))::numeric
+            / NULLIF(sum(views_count) FILTER (WHERE day >= (now() AT TIME ZONE 'UTC')::date - 29),0) avg_views
+          FROM tg_source_daily_metrics GROUP BY source_id
         ) m ON m.source_id=s.id
         LEFT JOIN (
           SELECT source_id,
