@@ -1,4 +1,4 @@
-import { searchX } from "../src/x/collector";
+import { searchX } from "../../src/x/collector";
 
 async function main() {
   console.log('[test-x] searchX("bitcoin")...');
