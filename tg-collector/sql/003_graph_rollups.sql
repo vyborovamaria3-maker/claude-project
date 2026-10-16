@@ -21,3 +21,5 @@ DROP INDEX IF EXISTS tg_messages_analysis_pending_idx;
 CREATE INDEX IF NOT EXISTS tg_messages_analysis_pending_idx
   ON tg_messages(source_id,message_id) WHERE analysis_version < 2;
 ALTER TABLE tg_graph_daily_edges ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS tg_messages_utc_day_idx ON tg_messages (source_id, ((posted_at AT TIME ZONE 'UTC')::date));
