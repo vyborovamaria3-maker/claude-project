@@ -49,6 +49,10 @@ function parseArgs(argv) {
     seedToken: flags["seed-token"] || null,
     limit: intFlag(flags.limit, flags["seed-token"] ? 10000 : 30, 1, 10000),
     maxObjects: intFlag(flags["max-objects"], 10000, 1, 10000),
+    maxRuntimeMs: intFlag(flags["max-runtime-ms"] ?? process.env.CHAIN_COLLECTION_MAX_RUNTIME_MS, 6 * 60 * 60 * 1000, 60_000, 24 * 60 * 60 * 1000),
+    creatorWaveTokens: intFlag(flags["creator-wave-tokens"] ?? process.env.CHAIN_CREATOR_WAVE_TOKENS, 200, 1, 10000),
+    tokenWaveWallets: intFlag(flags["token-wave-wallets"] ?? process.env.CHAIN_TOKEN_WAVE_WALLETS, 5000, 1, 100000),
+    walletWaveCreators: intFlag(flags["wallet-wave-creators"] ?? process.env.CHAIN_WALLET_WAVE_CREATORS, 20, 1, 1000),
     concurrency: intFlag(flags.concurrency, 2, 1, 4),
     recentLimit: intFlag(flags["recent-limit"], 200, 1, 1000),
     backfillLimit: intFlag(flags["backfill-limit"], 200, 1, 1000),
@@ -79,7 +83,8 @@ function usage() {
     "Blockchain Excel seed collector (local SQLite and Helius)",
     "  --mode import|collect|all|watch|pilot|status  [default: import]",
     "  --seed-token <mint>     Start/resume a recursive pilot scoped to one token; does not import Excel seeds",
-    "  --limit 30 --max-objects 10000 --concurrency 2 --recent-limit 200 --backfill-limit 200",
+    "  --limit 30 --max-objects 10000 --max-runtime-ms 21600000 --concurrency 2 --recent-limit 200 --backfill-limit 200",
+    "  --creator-wave-tokens 200 --token-wave-wallets 5000 --wallet-wave-creators 20",
     "  --monthly-budget-credits 10000000 --monthly-credits-used <dashboard-used-credits> --budget-period-start-day 1",
     "  --run-budget-credits 250000 --page-credit-estimate 110",
     "  Credit estimates are local guards; provider-reported headers override estimates when available.",
@@ -132,11 +137,24 @@ function initDb(db) {
     "  PRIMARY KEY(scope_id,kind,address))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_scope_members_queue",
     "  ON chain_collection_scope_members(scope_id,priority DESC,discovered_at,kind,address)",
+    ";CREATE TABLE IF NOT EXISTS chain_collection_scope_deferred (",
+    " scope_id TEXT NOT NULL,parent_kind TEXT NOT NULL,parent_address TEXT NOT NULL,",
+    " kind TEXT NOT NULL,address TEXT NOT NULL,priority INTEGER NOT NULL,reason TEXT NOT NULL,",
+    " discovered_from_kind TEXT,discovered_from_address TEXT,discovered_at INTEGER NOT NULL,",
+    " PRIMARY KEY(scope_id,kind,address))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_scope_deferred_parent",
+    " ON chain_collection_scope_deferred(scope_id,parent_kind,parent_address,priority DESC,discovered_at)",
+    ";CREATE TABLE IF NOT EXISTS chain_pumpfun_creator_launches (",
+    " scope_id TEXT NOT NULL,creator TEXT NOT NULL,mint TEXT NOT NULL,signature TEXT NOT NULL,",
+    " slot INTEGER,timestamp INTEGER NOT NULL,evidence_source TEXT NOT NULL,evidence_json TEXT NOT NULL,",
+    " PRIMARY KEY(scope_id,creator,mint),UNIQUE(scope_id,signature,mint))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_pumpfun_launch_creator",
+    " ON chain_pumpfun_creator_launches(scope_id,creator,timestamp DESC)",
     ";CREATE TABLE IF NOT EXISTS chain_collection_runs (",
     "  run_id TEXT PRIMARY KEY, scope_id TEXT, started_at INTEGER NOT NULL, finished_at INTEGER,",
     "  run_budget_credits INTEGER NOT NULL, monthly_budget_credits INTEGER NOT NULL,",
     "  monthly_baseline_credits INTEGER NOT NULL DEFAULT 0, budget_period_start_day INTEGER NOT NULL DEFAULT 1,",
-    "  page_credit_estimate INTEGER NOT NULL, max_objects INTEGER NOT NULL,",
+    "  page_credit_estimate INTEGER NOT NULL, max_objects INTEGER NOT NULL,max_runtime_ms INTEGER NOT NULL DEFAULT 21600000,",
     "  status TEXT NOT NULL DEFAULT 'running', stopped_reason TEXT)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_collection_runs_started ON chain_collection_runs(started_at DESC)",
     ";CREATE TABLE IF NOT EXISTS chain_helius_usage_requests (",
@@ -166,6 +184,8 @@ function initDb(db) {
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN monthly_baseline_credits INTEGER NOT NULL DEFAULT 0");
   if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "budget_period_start_day"))
     db.exec("ALTER TABLE chain_collection_runs ADD COLUMN budget_period_start_day INTEGER NOT NULL DEFAULT 1");
+  if (!db.pragma("table_info(chain_collection_runs)").some(c => c.name === "max_runtime_ms"))
+    db.exec("ALTER TABLE chain_collection_runs ADD COLUMN max_runtime_ms INTEGER NOT NULL DEFAULT 21600000");
 }
 
 
@@ -239,6 +259,53 @@ function addScopeMember(db, scopeId, kind, address, priority, reason, fromKind =
   if (db.inTransaction) return work();
   return db.transaction(work)();
 }
+function deferScopeMember(db,scopeId,parentKind,parentAddress,kind,address,priority,reason,fromKind=parentKind,fromAddress=parentAddress) {
+  const now=Date.now();
+  const work=()=>{
+    db.prepare(
+      "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at) VALUES(?,?,8,0) "+
+      "ON CONFLICT(kind,address) DO UPDATE SET source_mask=(chain_seed_targets.source_mask | 8),priority=MAX(chain_seed_targets.priority,excluded.priority)"
+    ).run(kind,address,priority);
+    db.prepare(
+      "INSERT INTO chain_collection_scope_deferred(scope_id,parent_kind,parent_address,kind,address,priority,reason,discovered_from_kind,discovered_from_address,discovered_at) "+
+      "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scope_id,kind,address) DO UPDATE SET priority=MAX(chain_collection_scope_deferred.priority,excluded.priority),reason=CASE WHEN excluded.priority>chain_collection_scope_deferred.priority THEN excluded.reason ELSE chain_collection_scope_deferred.reason END"
+    ).run(scopeId,parentKind,parentAddress,kind,address,priority,reason,fromKind,fromAddress,now);
+  };
+  if(db.inTransaction)return work();
+  return db.transaction(work)();
+}
+function promoteDeferredWaves(db,scopeId,cfg={}){
+  if(!scopeId)return 0;
+  const caps={creator:{token:cfg.creatorWaveTokens??200},token:{wallet:cfg.tokenWaveWallets??5000},wallet:{creator:cfg.walletWaveCreators??20}};
+  const parents=db.prepare(
+    "SELECT DISTINCT parent_kind AS parentKind,parent_address AS parentAddress,kind FROM chain_collection_scope_deferred WHERE scope_id=? ORDER BY parent_kind,parent_address,kind"
+  ).all(scopeId);
+  let promoted=0;
+  for(const parent of parents){
+    const cap=caps[parent.parentKind]?.[parent.kind]??10000;
+    const active=db.prepare(
+      "SELECT COUNT(*) AS n FROM chain_collection_scope_members m JOIN chain_seed_targets t ON t.kind=m.kind AND t.address=m.address "+
+      "WHERE m.scope_id=? AND m.discovered_from_kind=? AND m.discovered_from_address=? AND m.kind=? AND t.backfill_complete=0"
+    ).get(scopeId,parent.parentKind,parent.parentAddress,parent.kind).n;
+    const available=Math.max(0,cap-active);
+    if(!available)continue;
+    const candidates=db.prepare(
+      "SELECT * FROM chain_collection_scope_deferred WHERE scope_id=? AND parent_kind=? AND parent_address=? AND kind=? "+
+      "ORDER BY priority DESC,discovered_at,address LIMIT ?"
+    ).all(scopeId,parent.parentKind,parent.parentAddress,parent.kind,available);
+    for(const candidate of candidates){
+      addScopeMember(db,scopeId,candidate.kind,candidate.address,candidate.priority,candidate.reason,
+        candidate.discovered_from_kind,candidate.discovered_from_address);
+      db.prepare("DELETE FROM chain_collection_scope_deferred WHERE scope_id=? AND kind=? AND address=?")
+        .run(scopeId,candidate.kind,candidate.address);
+      promoted++;
+    }
+  }
+  return promoted;
+}
+function shouldStopForRuntime(startedAt,maxRuntimeMs,now=Date.now()){
+  return now-startedAt>=maxRuntimeMs;
+}
 function ensurePilotScope(db, seedToken) {
   if (!isSolanaAddress(seedToken)) throw new Error("Invalid pilot seed token");
   const scopeId = "seed-token:" + seedToken;
@@ -256,10 +323,10 @@ function startCollectionRun(db, args, scopeId = null) {
   const runId = randomUUID();
   const now = Date.now();
   db.prepare(
-    "INSERT INTO chain_collection_runs(run_id,scope_id,started_at,run_budget_credits,monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,page_credit_estimate,max_objects,status) " +
-    "VALUES(?,?,?,?,?,?,?,?,?,'running')"
+    "INSERT INTO chain_collection_runs(run_id,scope_id,started_at,run_budget_credits,monthly_budget_credits,monthly_baseline_credits,budget_period_start_day,page_credit_estimate,max_objects,max_runtime_ms,status) " +
+    "VALUES(?,?,?,?,?,?,?,?,?,?,'running')"
   ).run(runId,scopeId,now,args.runBudgetCredits,args.monthlyBudgetCredits,
-    args.monthlyCreditsUsedBaseline??0,args.budgetPeriodStartDay??1,args.pageCreditEstimate,Math.min(args.limit,args.maxObjects));
+    args.monthlyCreditsUsedBaseline??0,args.budgetPeriodStartDay??1,args.pageCreditEstimate,Math.min(args.limit,args.maxObjects),args.maxRuntimeMs??6*60*60*1000);
   if (scopeId) db.prepare("UPDATE chain_collection_scopes SET last_run_id=?,updated_at=? WHERE scope_id=?")
     .run(runId,now,scopeId);
   return runId;
@@ -505,9 +572,13 @@ function status(db, args = {}) {
       "LEFT JOIN chain_seed_targets t ON t.kind=m.kind AND t.address=m.address GROUP BY s.scope_id ORDER BY s.created_at DESC"
     ).all();
   }
+  const hasDeferred=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_collection_scope_deferred'").get());
+  const deferred=hasDeferred?db.prepare("SELECT kind,COUNT(*) AS count FROM chain_collection_scope_deferred GROUP BY kind").all():[];
+  const launchCount=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_pumpfun_creator_launches'").get())
+    ?db.prepare("SELECT COUNT(*) AS count FROM chain_pumpfun_creator_launches").get().count:0;
   return {
     files,categories,targets,collectedEvents:db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count,
-    forensic:verified,budget:usageStatus(db,args),scopes,
+    forensic:verified,budget:usageStatus(db,args),scopes,deferred,pumpfunCreatorLaunches:launchCount,
     queue:db.prepare(
       "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS errors,"+
       "SUM(CASE WHEN lease_until IS NOT NULL AND lease_until>? THEN 1 ELSE 0 END) AS leased "+
@@ -667,7 +738,11 @@ function appendDiscoveredWallets(db, ownerKind, ownerAddress, transactions, scop
     let count=0;
     for(const [address,info] of candidates) {
       link.run("@"+ownerKind+":"+ownerAddress,"discovered","wallet",address);
-      addScopeMember(db,scopeId,"wallet",address,info.priority,info.reason,ownerKind,ownerAddress);
+      if(ownerKind==="token"){
+        deferScopeMember(db,scopeId,"token",ownerAddress,"wallet",address,info.priority,info.reason,"token",ownerAddress);
+      }else{
+        addScopeMember(db,scopeId,"wallet",address,info.priority,info.reason,ownerKind,ownerAddress);
+      }
       count++;
     }
     return count;
@@ -817,6 +892,9 @@ async function processOne(db, row, cfg, api) {
       if (cfg.scopeId) appendDiscoveredWallets(db,"wallet",row.address,unique,cfg.scopeId);
     } else if (row.kind === "token" && cfg.scopeId) {
       appendDiscoveredWallets(db,"token",row.address,unique,cfg.scopeId);
+      appendDiscoveredCreators(db,cfg.scopeId,row.address,unique);
+    } else if (row.kind === "creator" && cfg.scopeId) {
+      appendDiscoveredCreatorTokens(db,cfg.scopeId,row.address,unique);
     }
     if (row.kind === "dex_program") require("./blockchain-dex-index.cjs").indexProgramBatch(db,row.address,unique);
     const update=db.prepare(
@@ -853,11 +931,17 @@ async function collect(db, args, scopeId = null) {
   const api = { ...helius, persistTokenTrades, markTokenTradeChecked };
   const startedAt = Date.now();
   const maxObjects = Math.min(args.limit,args.maxObjects);
-  const runId = startCollectionRun(db,{...args,limit:maxObjects},scopeId);
+  const maxRuntimeMs=args.maxRuntimeMs??6*60*60*1000;
+  const runId = startCollectionRun(db,{...args,limit:maxObjects,maxRuntimeMs},scopeId);
   let claimed=0,succeeded=0,failed=0,inserted=0,gaps=0;
-  let budgetPaused=false,stopReason=null;
+  let budgetPaused=false,runtimePaused=false,stopReason=null;
+  if(scopeId)promoteDeferredWaves(db,scopeId,args);
   async function worker() {
-    while (!stopRequested && !budgetPaused && claimed<maxObjects) {
+    while (!stopRequested && !budgetPaused && !runtimePaused && claimed<maxObjects) {
+      if(shouldStopForRuntime(startedAt,maxRuntimeMs)){
+        runtimePaused=true;stopReason="Six-hour runtime limit reached; active tasks were allowed to checkpoint";break;
+      }
+      if(scopeId)promoteDeferredWaves(db,scopeId,args);
       const row=claimOne(db,Boolean(args.scanMintAddresses || scopeId),scopeId);
       if (!row) break;
       claimed++;
@@ -870,7 +954,11 @@ async function collect(db, args, scopeId = null) {
           budgetPaused=true;
           stopReason="Credit guard reached after a partial page was checkpointed";
         }
-        if(succeeded%10===0) console.log(JSON.stringify({runId,progress:succeeded,inserted,failed,gaps,budgetPaused}));
+        if(shouldStopForRuntime(startedAt,maxRuntimeMs)){
+          runtimePaused=true;
+          stopReason="Six-hour runtime limit reached; active tasks were allowed to checkpoint";
+        }
+        if(succeeded%10===0) console.log(JSON.stringify({runId,progress:succeeded,inserted,failed,gaps,budgetPaused,runtimePaused}));
       } catch(error) {
         if ((error && error.code)==="HELIUS_BUDGET_EXCEEDED") {
           budgetPaused=true;
@@ -892,7 +980,8 @@ async function collect(db, args, scopeId = null) {
     throw error;
   }
   const durationSec=Math.max(0.001,(Date.now()-startedAt)/1000);
-  const runStatus=budgetPaused?"budget_paused":stopRequested?"stopped":failed>0&&succeeded===0?"failed":"completed";
+  if(scopeId)promoteDeferredWaves(db,scopeId,args);
+  const runStatus=budgetPaused?"budget_paused":runtimePaused?"time_paused":stopRequested?"stopped":failed>0&&succeeded===0?"failed":"completed";
   finishCollectionRun(db,runId,runStatus,stopReason);
   const runUsage=db.prepare(
     "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS used,COUNT(*) AS requests,"+
@@ -907,7 +996,7 @@ async function collect(db, args, scopeId = null) {
     credits:{estimatedOrReported:runUsage.used,requests:runUsage.requests,
       providerReportedRequests:runUsage.reported||0,runBudgetCredits:args.runBudgetCredits,
       monthly:usageStatus(db,args)},
-    budgetPaused,stoppedReason:stopReason,stopped:stopRequested,
+    budgetPaused,runtimePaused,stoppedReason:stopReason,stopped:stopRequested,
   };
 }
 async function main() {
@@ -971,6 +1060,7 @@ if (require.main === module) main().catch(error => {
 });
 module.exports = {
   parseArgs,resolveBudgetSettings,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
-  syncDexProgramSources,ensurePilotScope,addScopeMember,startCollectionRun,reserveHeliusCredits,
+  syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
+  appendDiscoveredCreators,appendDiscoveredCreatorTokens,savePumpFunLaunches,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,
 };
