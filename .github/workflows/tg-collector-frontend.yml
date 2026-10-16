@@ -28,7 +28,8 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: solana-launcher/package-lock.json
-      - run: npm ci --ignore-scripts --no-audit --no-fund
+      # The existing HeroUI 2.x peer range requires Tailwind 4 while this app intentionally pins Tailwind 3.x.
+      - run: npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
       - name: Lint
         run: npm run lint
       - name: Access guard tests
