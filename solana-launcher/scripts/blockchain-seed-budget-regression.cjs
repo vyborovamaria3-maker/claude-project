@@ -9,6 +9,9 @@ const TOKEN_B="So11111111111111111111111111111111111111112";
 const WALLET="11111111111111111111111111111111";
 assert.equal(collector.currentMonthKey(Date.UTC(2026,9,15),16),"2026-09-16");
 assert.equal(collector.currentMonthKey(Date.UTC(2026,9,16),16),"2026-10-16");
+const explicitPilotCap=collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","0","--pilot-budget-credits","900000"]);
+assert.equal(explicitPilotCap.pilotBudgetCredits,900000);
+assert.equal(explicitPilotCap.pilotBudgetConfigured,true);
 const parsedPilot=collector.parseArgs(["--seed-token",SEED,"--monthly-credits-used","0"]);
 const noBaselinePilot=collector.parseArgs(["--seed-token",SEED]);
 assert.equal(noBaselinePilot.monthlyCreditsBaselineConfigured,false);
@@ -155,5 +158,33 @@ function args(runBudgetCredits,monthlyBudgetCredits,pageCreditEstimate=110){
   assert.equal(released.last_error,null);
   collector.finishCollectionRun(capped,run,"budget_paused","run budget reached");
  } finally {capped.close();}
+
+ // The cumulative pilot cap must survive multiple runs/resumes independently
+ // of the per-run and monthly limits.
+ const lifetime=dbFixture();
+ try {
+   const scopeId=collector.ensurePilotScope(lifetime,SEED,1000,true);
+   const run1=collector.startCollectionRun(lifetime,{...args(700,10000),monthlyCreditsUsedBaseline:0},scopeId);
+   const req1=collector.reserveHeliusCredits(lifetime,{runId:run1,taskKind:"token",taskAddress:SEED,
+     endpoint:"enhanced-address-transactions",estimatedCredits:600});
+   collector.recordHeliusResponse(lifetime,req1,{status:200,actualCredits:600});
+   collector.finishCollectionRun(lifetime,run1,"budget_paused","test checkpoint");
+   collector.ensurePilotScope(lifetime,SEED,1000000,false);
+   assert.equal(lifetime.prepare("SELECT pilot_budget_credits FROM chain_collection_scopes WHERE scope_id=?").get(scopeId).pilot_budget_credits,1000,
+     "resume without an explicit override must preserve the persisted pilot cap");
+   const run2=collector.startCollectionRun(lifetime,{...args(700,10000),monthlyCreditsUsedBaseline:0},scopeId);
+   assert.throws(()=>collector.reserveHeliusCredits(lifetime,{runId:run2,taskKind:"wallet",taskAddress:WALLET,
+     endpoint:"enhanced-address-transactions",estimatedCredits:401}),
+     e=>e.code==="HELIUS_BUDGET_EXCEEDED" && /Pilot lifetime/.test(e.message));
+   assert.equal(collector.usageStatus(lifetime,{monthlyBudgetCredits:10000,monthlyCreditsUsedBaseline:0,monthlyCreditsBaselineConfigured:true}).localTrackedCredits,600);
+   const snapshot=collector.status(lifetime,{monthlyBudgetCredits:10000,monthlyCreditsUsedBaseline:0,monthlyCreditsBaselineConfigured:true});
+   assert.equal(snapshot.scopes[0].pilotBudgetCredits,1000);
+   assert.equal(snapshot.scopes[0].pilotUsedCredits,600);
+   assert.equal(snapshot.scopes[0].pilotRemainingCredits,400);
+   collector.finishCollectionRun(lifetime,run2,"budget_paused","pilot cap reached");
+   collector.ensurePilotScope(lifetime,SEED,2000,true);
+   assert.equal(lifetime.prepare("SELECT pilot_budget_credits FROM chain_collection_scopes WHERE scope_id=?").get(scopeId).pilot_budget_credits,2000,
+     "user can explicitly raise the pilot cap after adding credits");
+ } finally {lifetime.close();}
  console.log("[blockchain-seed-budget-regression] OK: seed-only scope, queue priority, monthly/run guards, estimated vs reported usage, partial-page checkpoint and resume");
 })().catch(error=>{console.error(error);process.exitCode=1;});
