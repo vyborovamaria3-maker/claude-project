@@ -14,6 +14,7 @@ async function main(): Promise<void> {
     await guard.query("BEGIN");
     try {
       await guard.query("DELETE FROM tg_graph_daily_edges");
+      await guard.query("DELETE FROM tg_source_daily_metrics");
       await guard.query(`
         INSERT INTO tg_graph_daily_edges
           (source_id,day,kind,target_kind,target_key,evidence_count,first_seen,last_seen,sample_message_id)
@@ -24,6 +25,13 @@ async function main(): Promise<void> {
         JOIN tg_messages m USING(source_id,message_id)
         WHERE m.posted_at IS NOT NULL
         GROUP BY l.source_id,(m.posted_at AT TIME ZONE 'UTC')::date,l.kind,l.target_kind,l.target_key
+      `);
+      await guard.query(`
+        INSERT INTO tg_source_daily_metrics(source_id,day,posts_count,views_total,views_count)
+        SELECT source_id,(posted_at AT TIME ZONE 'UTC')::date,
+          count(*)::integer,coalesce(sum(views),0)::bigint,count(views)::integer
+        FROM tg_messages WHERE posted_at IS NOT NULL
+        GROUP BY source_id,(posted_at AT TIME ZONE 'UTC')::date
       `);
       await guard.query("COMMIT");
     } catch (error) {
