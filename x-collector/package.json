@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.build.json && node scripts/copy-xactions-loader.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
+    "audit:unused": "npm exec --yes --package=knip@6.41.0 -- knip --config knip.jsonc --include files,exports --reporter json --no-progress",
     "test": "node --import tsx scripts/test.ts",
     "migrate": "tsx scripts/migrate.ts",
     "install-browser": "playwright install chromium",
