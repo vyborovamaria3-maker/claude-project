@@ -28,8 +28,13 @@ function decodeInventoryMovements(tx) {
   const ops = Array.isArray(tx.decodedOperations) ? tx.decodedOperations : [];
   const balances = Array.isArray(tx.tokenBalanceDeltas) ? tx.tokenBalanceDeltas : [];
   const ownerByTokenAccount = new Map();
+  const balanceByTokenAccount = new Map();
   for (const b of balances) {
-    if (b?.tokenAccount && b?.owner) ownerByTokenAccount.set(b.tokenAccount, b.owner);
+    if (!b?.tokenAccount) continue;
+    if (b.owner) ownerByTokenAccount.set(b.tokenAccount, b.owner);
+    // Pre/post balance deltas may contain the same account twice; mint and
+    // decimals are stable for a token account, so retaining either is safe.
+    if (!balanceByTokenAccount.has(b.tokenAccount)) balanceByTokenAccount.set(b.tokenAccount, b);
   }
   const movements = [];
   for (let operationIndex = 0; operationIndex < ops.length; operationIndex++) {
@@ -38,9 +43,16 @@ function decodeInventoryMovements(tx) {
     const type = String(op?.type || "");
     if (!TRANSFER_TYPES.has(type) && !MINT_TYPES.has(type) && !BURN_TYPES.has(type)) continue;
     const amount = amountParts(info);
-    const mint = typeof info.mint === "string" ? info.mint : null;
     const sourceAccount = info.source || info.account || null;
     const destinationAccount = info.destination || null;
+    const sourceBalance = sourceAccount ? balanceByTokenAccount.get(sourceAccount) : null;
+    const destinationBalance = destinationAccount ? balanceByTokenAccount.get(destinationAccount) : null;
+    const accountBalance = sourceBalance || destinationBalance;
+    // SPL Token's unchecked transfer instruction does not include mint or
+    // decimals. Resolve them only from the matching transaction token account.
+    const mint = typeof info.mint === "string" ? info.mint : accountBalance?.mint || null;
+    const decimals = amount.decimals != null ? amount.decimals :
+      (Number.isFinite(Number(accountBalance?.decimals)) ? Number(accountBalance.decimals) : null);
     const sourceOwner = sourceAccount ? ownerByTokenAccount.get(sourceAccount) || null : null;
     const destinationOwner = destinationAccount ? ownerByTokenAccount.get(destinationAccount) || null : null;
     let kind;
@@ -61,7 +73,7 @@ function decodeInventoryMovements(tx) {
       tokenAccount: account || null,
       mint,
       amountRaw: amount.raw,
-      decimals: amount.decimals,
+      decimals,
       sourceAccount,
       destinationAccount,
       sourceOwner,
