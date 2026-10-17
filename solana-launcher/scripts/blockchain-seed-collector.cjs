@@ -4,7 +4,7 @@
 // Local-first import/collection. Run from solana-launcher:
 //   node scripts/blockchain-seed-collector.cjs --mode import --migrated-dir ... --trending-dir ... --wallets-dir ...
 //   node scripts/blockchain-seed-collector.cjs --mode collect --limit 50 --concurrency 2
-// Requires Python 3 for the project's bounded XLSX reader and Helius keys for collection.
+// Requires Python 3 for the project's bounded XLSX reader and Alchemy Solana API credentials for collection.
 const fs = require("node:fs");
 const path = require("node:path");
 const { gzipSync } = require("node:zlib");
@@ -56,7 +56,7 @@ function parseArgs(argv) {
 }
 function usage() {
   console.log([
-    "Blockchain Excel seed collector (local SQLite and Helius)",
+    "Blockchain Excel seed collector (local SQLite and Alchemy Solana API)",
     "  --mode import|collect|all|watch|status  [default: import]",
     "  --migrated-dir <folder> --trending-dir <folder> --wallets-dir <folder>",
     "  --limit 30 --concurrency 2 --recent-limit 200 --backfill-limit 200",
@@ -65,7 +65,7 @@ function usage() {
     "  --prune-missing           Remove mappings for deleted XLSX files",
     "  --max-files 5000",
     "Default folders: data/seed-folders/{migrated,trending,wallets}",
-    "Collection requires HELIUS_API_KEY or HELIUS_API_KEYS. Existing trade.db is reused.",
+    "Collection requires ALCHEMY_API_KEY(S) or ALCHEMY_SOLANA_RPC_URL. Helius is not a fallback. Existing trade.db is reused.",
   ].join("\n"));
 }
 
@@ -265,7 +265,7 @@ function persistEvents(db, kind, address, transactions) {
       const serialized = JSON.stringify(tx);
       const bytes = Buffer.byteLength(serialized);
       if (bytes > 512 * 1024) {
-        throw new Error("Oversized Helius transaction; not silently truncated");
+        throw new Error("Oversized Alchemy transaction; not silently truncated");
       }
       // Fast gzip reduces laptop disk I/O while retaining the original evidence.
       const packed = gzipSync(Buffer.from(serialized), { level: 1 });
@@ -277,11 +277,11 @@ function persistEvents(db, kind, address, transactions) {
   return saved;
 }
 
-function recordHeliusUsage(db, row, httpRequests, pagesFetched, lastPageEmpty, stage) {
+function recordAlchemyUsage(db, row, httpRequests, pagesFetched, lastPageEmpty, stage) {
   if (!(Number(httpRequests) > 0)) return;
   walletCache.recordBudgetUsage(db, {
-    provider: "helius",
-    endpoint: "enhanced_address_transactions",
+    provider: "alchemy",
+    endpoint: "getTransactionsForAddress",
     costUnits: Number(httpRequests),
     costKind: "http",
     taskId: row.kind + ":" + row.address,
@@ -340,10 +340,10 @@ async function processOne(db, row, cfg, api) {
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
   ).all(row.kind, row.address).map(r => r.signature));
-  const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known);
+  const recent = await api.fetchTransactionsForAddress(row.address, cfg.recentLimit, known);
   let pagesFetched = recent.pagesFetched || 0;
   let lastPageEmpty = Boolean(recent.lastPageEmpty);
-  recordHeliusUsage(db, row, recent.httpRequests, recent.pagesFetched, recent.lastPageEmpty, "recent");
+  recordAlchemyUsage(db, row, recent.httpRequests, recent.pagesFetched, recent.lastPageEmpty, "recent");
   const events = [...recent.transactions];
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
@@ -354,42 +354,42 @@ async function processOne(db, row, cfg, api) {
   // downtime. Persist the forward catch-up cursor and drain it across runs.
   // The cold-start cap is not a gap: the historical cursor handles that case.
   if (known.size && recent.truncated && !recent.reachedKnownHistory) {
-    if (!forwardCursor) forwardCursor = recent.transactions.at(-1)?.signature || null;
+    if (!forwardCursor) forwardCursor = recent.nextCursor || null;
     gap = true;
   }
   if (forwardCursor && known.size) {
-    const bridge = await api.fetchEnrichedTxsForMintWithMeta(
+    const bridge = await api.fetchTransactionsForAddress(
       row.address, cfg.backfillLimit, known, forwardCursor
     );
     pagesFetched += bridge.pagesFetched || 0;
     lastPageEmpty = Boolean(bridge.lastPageEmpty);
-    recordHeliusUsage(db, row, bridge.httpRequests, bridge.pagesFetched, bridge.lastPageEmpty, "catch_up");
+    recordAlchemyUsage(db, row, bridge.httpRequests, bridge.pagesFetched, bridge.lastPageEmpty, "catch_up");
     events.push(...bridge.transactions);
     if (bridge.reachedKnownHistory || bridge.exhausted) {
       forwardCursor = null;
       gap = false;
     } else {
-      const next = bridge.transactions.at(-1)?.signature;
-      if (!next || next === forwardCursor) throw new Error("Catch-up cursor did not advance");
+      const next = bridge.nextCursor;
+      if (!next || next === forwardCursor) throw new Error("Alchemy catch-up cursor did not advance");
       forwardCursor = next;
     }
   }
 
   if (!complete && !backfillCursor) {
-    backfillCursor = recent.transactions.at(-1)?.signature || null;
+    backfillCursor = recent.nextCursor || null;
     if (recent.exhausted) complete = true;
   } else if (!complete && backfillCursor) {
-    const historical = await api.fetchEnrichedTxsForMintWithMeta(
-      row.address, cfg.backfillLimit, null, backfillCursor
+    const historical = await api.fetchTransactionsForAddress(
+      row.address, cfg.backfillLimit, new Set(), backfillCursor
     );
     pagesFetched += historical.pagesFetched || 0;
     lastPageEmpty = Boolean(historical.lastPageEmpty);
-    recordHeliusUsage(db, row, historical.httpRequests, historical.pagesFetched, historical.lastPageEmpty, "backfill");
+    recordAlchemyUsage(db, row, historical.httpRequests, historical.pagesFetched, historical.lastPageEmpty, "backfill");
     events.push(...historical.transactions);
     if (historical.exhausted) complete = true;
     else {
-      const next = historical.transactions.at(-1)?.signature;
-      if (!next || next === backfillCursor) throw new Error("Backfill made no cursor progress");
+      const next = historical.nextCursor;
+      if (!next || next === backfillCursor) throw new Error("Alchemy backfill cursor did not advance");
       backfillCursor = next;
     }
   }
@@ -433,7 +433,7 @@ async function processOne(db, row, cfg, api) {
       walletCache.markWalletHistory(db, row.address, {
         complete, backfillCursor, forwardCursor, possibleGap: gap, now: Date.now(),
         decoderCoverage: 'swap_only', decoderVersion: walletCache.DECODER_VERSION,
-        pagesFetched, lastPageEmpty, source: 'helius'
+        pagesFetched, lastPageEmpty, source: 'alchemy'
       });
     } else {
       const slots = unique.map(tx => Number(tx.slot)).filter(Number.isFinite);
@@ -467,11 +467,10 @@ function failTask(db, row, error) {
 async function collect(db, args) {
   // ts-node is registered once in main(); avoid stacking require hooks on each
   // watch cycle. Fail fast before reserving work if API keys are unavailable.
-  const keys = require("../lib/trade/helius-rotation").getHeliusApiKeys();
-  if (!keys.length) throw new Error("Valid HELIUS_API_KEY(S) required for --mode collect");
-  const helius = require("../lib/trade/helius");
+  const { createAlchemyProvider } = require("./blockchain-alchemy-provider.cjs");
+  const alchemy = createAlchemyProvider();
   const { persistTokenTrades, markTokenTradeChecked } = require("../lib/trade/db");
-  const api = { ...helius, persistTokenTrades, markTokenTradeChecked };
+  const api = { ...alchemy, persistTokenTrades, markTokenTradeChecked };
   const startedAt = Date.now();
   let claimed = 0, succeeded = 0, failed = 0, inserted = 0, gaps = 0;
   async function worker() {
@@ -490,7 +489,7 @@ async function collect(db, args) {
         const requestCount = Number(error && error.httpRequests) || 0;
         if (requestCount > 0) {
           try {
-            recordHeliusUsage(db, row, requestCount, error.pagesFetched, error.lastPageEmpty, "failed_request");
+            recordAlchemyUsage(db, row, requestCount, error.pagesFetched, error.lastPageEmpty, "failed_request");
           } catch (ledgerError) {
             console.error("[blockchain-collector] failed to record Helius HTTP usage:", ledgerError);
           }
