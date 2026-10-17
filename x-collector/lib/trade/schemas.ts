@@ -38,7 +38,7 @@ export const TweetSchema = z.object({
   id: z.string().regex(/^\d{15,25}$/),
   text: z.string().max(50_000),
   authorHandle: z.string().min(1).max(50),
-  authorId: z.string().regex(/^\\d{1,25}$/).nullable().optional(),
+  authorId: z.string().regex(/^\d{1,25}$/).nullable().optional(),
   authorDisplayName: z.string().max(200).nullable(),
   url: z.union([z.string().url(), z.literal(""), z.null()]).transform((v) => v || null),
   views: z.number().int().nonnegative().nullable(),
