@@ -2,6 +2,7 @@
 -- archive_raw_pages.hash is already the SHA-256 response/content key; do not duplicate it.
 
 ALTER TABLE archive_raw_pages
+  ADD COLUMN IF NOT EXISTS response_hash TEXT,
   ADD COLUMN IF NOT EXISTS parser_version TEXT NOT NULL DEFAULT 'unversioned',
   ADD COLUMN IF NOT EXISTS parse_status TEXT NOT NULL DEFAULT 'captured',
   ADD COLUMN IF NOT EXISTS response_status TEXT NOT NULL DEFAULT 'unknown',
@@ -41,6 +42,9 @@ ALTER TABLE archive_raw_pages
 
 CREATE INDEX IF NOT EXISTS idx_archive_raw_pages_expiry
   ON archive_raw_pages(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_archive_raw_pages_response_hash
+  ON archive_raw_pages(source_id,response_hash) WHERE response_hash IS NOT NULL;
 
 ALTER TABLE twitter_tweets
   ADD COLUMN IF NOT EXISTS author_id TEXT;
