@@ -244,10 +244,18 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
     for (const event of transactions || []) {
       if (!event || event.transactionError != null || typeof event.signature !== 'string' || !event.signature) continue;
       const swap = event.events && event.events.swap;
-      if (!swap) continue;
-      const mints = new Set([...(swap.tokenInputs || []), ...(swap.tokenOutputs || [])]
-        .map(leg => leg && leg.mint).filter(Boolean));
+      const mints = new Set();
+      // Token transfers are discovery evidence even when the swap decoder cannot
+      // assign a BUY/SELL. They must not silently disappear from wallet coverage.
+      for (const transfer of event.tokenTransfers || []) {
+        if (transfer && (transfer.fromUserAccount === wallet || transfer.toUserAccount === wallet)
+            && transfer.mint) mints.add(transfer.mint);
+      }
+      for (const leg of [...(swap?.tokenInputs || []), ...(swap?.tokenOutputs || [])]) {
+        if (leg && leg.mint && (!leg.userAccount || leg.userAccount === wallet)) mints.add(leg.mint);
+      }
       for (const mint of mints) {
+        if (typeof mint === 'string' && mint) tokenMints.add(mint);
         if (typeof mint !== 'string') continue;
         const trades = txsToTrades([event], mint) || [];
         let legIndex = 0;
@@ -257,11 +265,14 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
           // Missing trader identity is ambiguous and must not contaminate wallet-level FIFO.
           if (!trade.trader || trade.trader !== wallet) continue;
           const direction = String(trade.type).toLowerCase();
+          const tradeSignature = trade.signature || event.signature;
+          // Never persist a decoded trade against a different source transaction.
+          if (tradeSignature !== event.signature) continue;
           // Stable across replay; legIndex distinguishes multiple same-direction legs for a mint.
           const legKey = mint + ':' + direction + ':' + legIndex++;
           const result = insert.run({
             wallet,
-            signature: trade.signature || event.signature,
+            signature: tradeSignature,
             leg_key: legKey,
             instruction_index: finiteNumber(trade.instructionIndex),
             slot: finiteNumber(trade.slot ?? event.slot),
