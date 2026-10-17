@@ -307,3 +307,7 @@ MIT License - см. LICENSE file
 ---
 
 **AI Reply Guy** - Автоматизируйте ответы в X (Twitter) с профессиональным качеством! 🚀
+
+## TG Collector UI
+
+The Settings page contains a **TG Collector** tab for runtime controls, source management, metrics, message search, graph/evidence and Telegram proxy settings. The admin area exposes the same collector through `/admin/tg-collector`, with an **X Collector / TG Collector** switcher alongside the existing X Registry.

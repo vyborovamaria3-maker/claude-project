@@ -1,0 +1,52 @@
+name: TG Collector checks
+on:
+  pull_request:
+    paths:
+      - 'tg-collector/**'
+      - 'solana-launcher/app/settings/TGCollectorTab.tsx'
+      - 'solana-launcher/app/settings/TGGraphPanel.tsx'
+      - 'solana-launcher/app/api/integrations/tg-collector/graph/**'
+      - 'solana-launcher/app/settings/page.tsx'
+      - 'solana-launcher/app/api/integrations/tg-collector/**'
+      - '.github/workflows/tg-collector.yml'
+  push:
+    branches:
+      - 'feature/tg-collector-mvp'
+    paths:
+      - 'tg-collector/**'
+      - '.github/workflows/tg-collector.yml'
+permissions:
+  contents: read
+jobs:
+  collector:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: tg_collector_test
+          POSTGRES_USER: tg
+          POSTGRES_PASSWORD: tg
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tg -d tg_collector_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://tg:tg@127.0.0.1:5432/tg_collector_test
+    defaults:
+      run:
+        working-directory: tg-collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit and database integration tests
+        run: npm test

@@ -1,0 +1,38 @@
+name: TG Collector frontend quality
+
+on:
+  pull_request:
+    paths:
+      - "solana-launcher/**"
+      - ".github/workflows/tg-collector-frontend.yml"
+  push:
+    branches:
+      - "feature/tg-collector-mvp"
+    paths:
+      - "solana-launcher/**"
+      - ".github/workflows/tg-collector-frontend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: solana-launcher
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+      # The existing HeroUI 2.x peer range requires Tailwind 4 while this app intentionally pins Tailwind 3.x.
+      - run: npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Access guard tests
+        run: node --experimental-strip-types --test tests/tg-collector-access.test.ts tests/tgCollectorProxyStore.test.ts tests/tg-collector-browser-session.test.ts
+      - name: Production build
+        run: npm run build

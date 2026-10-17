@@ -133,6 +133,7 @@ export const siteDesign = {
       { href: "/trade/leaderboard", labelKey: "nav.tradeLeaderboard", icon: "trophy", tag: "nav.trade_leaderboard" },
       { href: "/trade/history", labelKey: "nav.tradeHistory", icon: "history", tag: "nav.trade_history" },
       { href: "/tginvite", labelKey: "nav.tgInvite", icon: "userPlus", tag: "nav.tg_invite" },
+      { href: "/tg-collector", labelKey: "nav.tgCollector", icon: "database", tag: "nav.tg_collector" },
     ] satisfies SiteNavItem[],
     common: [
       { href: "/database", labelKey: "nav.database", icon: "database", tag: "nav.database" },
