@@ -4,6 +4,9 @@
 // Raw Helius events remain the evidence layer; this module stores decoded swap legs
 // and conservative summaries without asserting that an incomplete wallet history is complete.
 const DECODER_VERSION = "wallet-trades-v1";
+// Schema creation and legacy backfills are process-local one-time work per DB handle.
+// Avoid rescanning the entire trade cache for NULL evidence columns on every wallet/page.
+const initializedDatabases = new WeakSet();
 
 function createWalletCacheTables(db) {
   db.exec(`
@@ -181,6 +184,7 @@ function ensureColumn(db, table, column, declaration) {
 }
 
 function ensureWalletCacheSchema(db) {
+  if (initializedDatabases.has(db)) return;
   createWalletCacheTables(db);
   db.exec("PRAGMA foreign_keys = ON");
   // CREATE TABLE above handles new databases; these additive migrations also support
@@ -201,6 +205,7 @@ function ensureWalletCacheSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_chain_wallet_discovery_freshness
       ON chain_wallet_discovery(history_status, last_fetched_at);
   `);
+  initializedDatabases.add(db);
 }
 
 function finiteNumber(value) {
