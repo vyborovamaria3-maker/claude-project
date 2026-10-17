@@ -88,7 +88,7 @@ export function normalizeXActionsTweet(input: XActionsHttpTweet, observedAt = Da
   if (typeof input.text !== "string") throw new Error("XActions: missing post text");
   const authorHandle = handle(input.author?.username);
   const authorIdValue = input.author?.id ?? input.author?.restId;
-  const authorId = typeof authorIdValue === "string" && /^\\d{1,25}$/.test(authorIdValue) ? authorIdValue : null;
+  const authorId = typeof authorIdValue === "string" && /^\d{1,25}$/.test(authorIdValue) ? authorIdValue : null;
   const urls = (input.urls ?? []).map(item => validHttpUrl(item.expandedUrl ?? item.url)).filter((s): s is string => Boolean(s));
   const mentions = (input.mentions ?? []).map(item => (item.username ?? "").replace(/^@/, ""))
     .filter(name => /^[A-Za-z0-9_]{1,15}$/.test(name));
