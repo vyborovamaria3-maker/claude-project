@@ -136,8 +136,8 @@ function refreshTargets(db) {
     "SELECT kind,address,group_concat(DISTINCT category) AS categories FROM chain_seed_file_sources GROUP BY kind,address"
   );
   const upsert = db.prepare([
-    "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at)",
-    "VALUES(?,?,?,?,0) ON CONFLICT(kind,address) DO UPDATE SET",
+    "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at,collection_provider,cursor_version)",
+    "VALUES(?,?,?,?,0,'alchemy',1) ON CONFLICT(kind,address) DO UPDATE SET",
     "source_mask=excluded.source_mask,priority=excluded.priority,",
     "next_run_at=CASE WHEN chain_seed_targets.source_mask<>excluded.source_mask",
     "THEN MIN(chain_seed_targets.next_run_at,?) ELSE chain_seed_targets.next_run_at END",
@@ -347,8 +347,8 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
     "INSERT OR IGNORE INTO chain_seed_file_sources(file_path,category,kind,address) VALUES(?,?,?,?)"
   );
   const target = db.prepare([
-    "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at)",
-    "VALUES('token',?,8,40,0) ON CONFLICT(kind,address) DO UPDATE SET",
+    "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at,collection_provider,cursor_version)",
+    "VALUES('token',?,8,40,0,'alchemy',1) ON CONFLICT(kind,address) DO UPDATE SET",
     "source_mask=(chain_seed_targets.source_mask | 8),",
     "priority=MAX(chain_seed_targets.priority,40)",
   ].join(" "));
