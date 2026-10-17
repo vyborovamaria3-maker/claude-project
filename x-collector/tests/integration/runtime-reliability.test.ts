@@ -191,7 +191,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       "SELECT views,likes,captured_at FROM v_twitter_tweet_metrics_history WHERE tweet_id=$1 ORDER BY captured_at DESC LIMIT 1",[tweet.id]);
     assert.equal(metricHistory.length,1);
     assert.equal(metricHistory[0].views,null,"unknown views must remain NULL in metric history");
-    assert.equal(metricHistory[0].likes,1);
+    assert.equal(Number(metricHistory[0].likes),1);
     assert.equal((await q("SELECT 1 FROM tweet_entities WHERE tweet_id=$1",[tweet.id])).length,2);
     assert.equal((await q("SELECT 1 FROM twitter_tweet_observations")).length,1);
     const rawHashesBeforeInvalid = new Set((await q<{hash:string}>("SELECT hash FROM archive_raw_pages")).map(row=>row.hash));
