@@ -498,12 +498,13 @@ function processOne(db, row, cfg, api) {
   const cadence = row.priority >= 100 ? 5 * 60_000 :
     row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
   // SQLite savepoints keep raw events and normalized token trades atomic.
+  let inventoryMovements = 0;
   const added = db.transaction(() => {
     const owned = db.prepare("SELECT 1 FROM chain_seed_targets WHERE kind=? AND address=? AND lease_until=? AND lease_until>?")
       .get(row.kind, row.address, row.lease_until, Date.now());
     if (!owned) throw new Error("Collector lease lost before persistence");
     const n = persistEvents(db, row.kind, row.address, unique);
-    const inventoryMovements = persistInventoryMovements(db, row.kind, row.address, unique);
+    inventoryMovements = persistInventoryMovements(db, row.kind, row.address, unique);
     if (trades.length) {
       api.persistTokenTrades(row.address, trades.map(t => ({
         signature: t.signature, timestamp: t.timestamp, trader: t.trader,
