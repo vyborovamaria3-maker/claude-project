@@ -15,7 +15,10 @@
     "backup:verify": "bash scripts/restore-check.sh",
     "analyze:backfill": "tsx src/analytics/backfill.ts",
     "analyze:refresh": "tsx src/analytics/refresh.ts",
-    "smoke:mtproto": "tsx src/runtime/smoke.ts"
+    "smoke:mtproto": "tsx src/runtime/smoke.ts",
+    "tokens:resolve": "tsx src/analytics/resolve-token-candidates.ts",
+    "market:refresh": "tsx src/analytics/market-data.ts snapshots",
+    "market:outcomes": "tsx src/analytics/market-data.ts outcomes"
   },
   "dependencies": {
     "dotenv": "^18.0.6",
