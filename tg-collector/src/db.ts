@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
 import pg from "pg";
 
 const connectionString = process.env.DATABASE_URL;
@@ -12,19 +13,55 @@ export const pool = new pg.Pool({
   idleTimeoutMillis: 30000,
 });
 
+type MigrationRow = { name: string; checksum: string };
+
 export async function migrate(): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Synchronize migrations from worker, CLI, and web smoke scripts.
+    // Serialize migration runners before inspecting the migration ledger.
     await client.query("SELECT pg_advisory_xact_lock(8260225)");
-    for (const name of ["001_init.sql", "002_analytics.sql", "003_graph_rollups.sql", "004_runtime_restrictions.sql", "005_source_metrics.sql", "006_text_search.sql", "007_message_counters.sql", "008_evidence_lifecycle_metrics.sql", "009_runtime_controls_proxy.sql", "010_active_message_counters.sql"]) {
-      const sql = await readFile(new URL("../sql/" + name, import.meta.url), "utf8");
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        name TEXT PRIMARY KEY,
+        checksum CHAR(64) NOT NULL,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        applied_by TEXT NOT NULL DEFAULT current_user
+      )
+    `);
+    const directory = new URL("../sql/", import.meta.url);
+    const names = (await readdir(directory))
+      .filter((name) => /^\d{3}_[a-z0-9_]+\.sql$/i.test(name))
+      .sort((a, b) => a.localeCompare(b, "en"));
+    const applied = await client.query<MigrationRow>(
+      "SELECT name, checksum FROM schema_migrations ORDER BY name"
+    );
+    const checksums = new Map(applied.rows.map((row) => [row.name, row.checksum.trim()]));
+
+    for (const name of names) {
+      const sql = await readFile(new URL(name, directory), "utf8");
+      const checksum = createHash("sha256").update(sql).digest("hex");
+      const existing = checksums.get(name);
+      if (existing) {
+        if (existing !== checksum) {
+          throw new Error(
+            "Applied migration checksum mismatch for " + name +
+            ". Do not edit applied migrations; create a new migration."
+          );
+        }
+        continue;
+      }
       await client.query(sql);
+      await client.query(
+        "INSERT INTO schema_migrations(name, checksum) VALUES ($1, $2)",
+        [name, checksum]
+      );
     }
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
-  } finally { client.release(); }
+  } finally {
+    client.release();
+  }
 }
