@@ -149,8 +149,8 @@ export default function TGGraphPanel({ sources, authToken }: { sources: SourceOp
         <div className="flex flex-wrap gap-3 text-xs text-content-muted">
           <span>Узлов: {data.nodes.length}</span>
           <span>Типизированных рёбер: {data.edges.length}</span>
-          {data.sampled && <span className="text-amber-300">Показана ограниченная выборка: до {data.nodeLimit} узлов / {data.edgeLimit} рёбер</span>}
-          {data.truncated && <span className="text-amber-300">Граф обрезан сервером по установленным лимитам</span>}
+          {data.sampled && <span className="text-amber-300">Рёбер в выборке: {data.edges.length} из {data.total}</span>}
+          {data.truncated && <span className="text-amber-300">Граф ограничен по: {data.truncated_by === "nodes" ? "числу узлов" : data.truncated_by === "edges" ? "числу рёбер" : "неизвестной причине"}</span>}
           {graph.clipped && <span className="text-amber-300">Для читабельности отображается часть рёбер</span>}
         </div>
       )}
