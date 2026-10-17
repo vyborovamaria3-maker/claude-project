@@ -85,3 +85,27 @@ export async function syncTokenNarratives(
     [chainId, mint, NARRATIVE_MODEL_VERSION],
   );
 }
+
+
+/** Rebuild all token-level narrative aggregates after lifecycle changes or an offline refresh. */
+export async function refreshNarrativeAggregates(tx: PoolClient): Promise<number> {
+  await tx.query(
+    "DELETE FROM tg_token_narratives tn WHERE tn.model_version=$1 AND NOT EXISTS (" +
+    "SELECT 1 FROM tg_message_narratives mn JOIN tg_messages m USING(source_id,message_id) " +
+    "WHERE mn.chain_id=tn.chain_id AND mn.mint=tn.mint AND mn.narrative_id=tn.narrative_id " +
+    "AND mn.model_version=tn.model_version AND m.deleted_at IS NULL)",
+    [NARRATIVE_MODEL_VERSION],
+  );
+  const result = await tx.query(
+    "INSERT INTO tg_token_narratives(chain_id,mint,narrative_id,confidence,evidence_count,first_seen_at,last_seen_at,model_version) " +
+    "SELECT mn.chain_id,mn.mint,mn.narrative_id,avg(mn.confidence)::numeric,count(*)::integer," +
+    "min(COALESCE(m.posted_at,mn.analyzed_at)),max(COALESCE(m.posted_at,mn.analyzed_at)),mn.model_version " +
+    "FROM tg_message_narratives mn JOIN tg_messages m USING(source_id,message_id) " +
+    "WHERE mn.model_version=$1 AND m.deleted_at IS NULL " +
+    "GROUP BY mn.chain_id,mn.mint,mn.narrative_id,mn.model_version " +
+    "ON CONFLICT(chain_id,mint,narrative_id,model_version) DO UPDATE SET confidence=EXCLUDED.confidence," +
+    "evidence_count=EXCLUDED.evidence_count,first_seen_at=EXCLUDED.first_seen_at,last_seen_at=EXCLUDED.last_seen_at",
+    [NARRATIVE_MODEL_VERSION],
+  );
+  return result.rowCount ?? 0;
+}
