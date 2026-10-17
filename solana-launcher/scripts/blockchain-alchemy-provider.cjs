@@ -97,6 +97,7 @@ function normalizeFullTransaction(item) {
     const amount = BigInt(entry.uiTokenAmount?.amount || "0");
     const prior = tokens.get(key) || {
       owner, mint, accountIndex: entry.accountIndex ?? null,
+      tokenAccount: Number.isInteger(entry.accountIndex) ? accountKeys[entry.accountIndex] || null : null,
       decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n
     };
     prior.pre += amount;
@@ -107,6 +108,7 @@ function normalizeFullTransaction(item) {
     const amount = BigInt(entry.uiTokenAmount?.amount || "0");
     const prior = tokens.get(key) || {
       owner, mint, accountIndex: entry.accountIndex ?? null,
+      tokenAccount: Number.isInteger(entry.accountIndex) ? accountKeys[entry.accountIndex] || null : null,
       decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n
     };
     prior.post += amount;
@@ -130,7 +132,7 @@ function normalizeFullTransaction(item) {
     instructionProgramIds: [...new Set(instructionProgramIds)],
     decodedOperations,
     tokenBalanceDeltas: [...tokens.values()].map((v) => ({
-      owner: v.owner, accountIndex: v.accountIndex, mint: v.mint, decimals: v.decimals,
+      owner: v.owner, accountIndex: v.accountIndex, tokenAccount: v.tokenAccount || null, mint: v.mint, decimals: v.decimals,
       ownerKnown: Boolean(v.owner),
       deltaRaw: (v.post - v.pre).toString(),
       delta: Number(v.post - v.pre) / (10 ** v.decimals)
