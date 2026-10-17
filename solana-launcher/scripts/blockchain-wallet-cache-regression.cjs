@@ -120,6 +120,14 @@ try {
     "swap-only wallet history is not reusable as complete");
   cache.markWalletHistory(db, WALLET, {
     complete: true, decoderCoverage: "full", backfillCursor: null, forwardCursor: null,
+    possibleGap: false, now: 1_800_000_002_700
+  });
+  assert.equal(db.prepare("SELECT history_status FROM chain_wallet_discovery WHERE wallet=?").get(WALLET).history_status, "partial",
+    "caller-supplied full coverage cannot override swap-only persisted trade rows");
+  db.prepare("UPDATE chain_wallet_trades SET decoder_coverage='full' WHERE wallet=?").run(WALLET);
+  db.prepare("UPDATE chain_wallet_token_summary SET decoder_coverage='full' WHERE wallet=?").run(WALLET);
+  cache.markWalletHistory(db, WALLET, {
+    complete: true, decoderCoverage: "full", backfillCursor: null, forwardCursor: null,
     possibleGap: false, now: 1_800_000_003_000, pagesFetched: 2, lastPageEmpty: true
   });
   assert.equal(cache.walletHistoryFresh(db, WALLET, 1_800_000_003_500), true,
