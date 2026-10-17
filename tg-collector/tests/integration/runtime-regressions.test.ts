@@ -35,7 +35,9 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
         assert.equal(calls, 2, "Stop must prevent the next Telegram page request");
         await pool.query("UPDATE tg_runtime SET collection_enabled=FALSE WHERE id=1");
         return Array.from({ length: 100 }, (_, i) => ({ id: 1000-i,
-          message: "@fixture_handle", date: 1792065600 }));
+          message: "@fixture_handle", date: 1792065600,
+          editDate: i === 0 ? 1792065610 : undefined,
+          replyToMsgId: i === 0 ? 999 : undefined }));
       },
     } as unknown as TelegramClient;
     await processJob(client, job, () => false);
@@ -44,6 +46,17 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
     assert.equal(checkpoint.rows[0].state, "pending");
     assert.equal(checkpoint.rows[0].cursor_before_id, "901");
     assert.equal(checkpoint.rows[0].scanned_count, 100);
+    const messageMeta = await pool.query<{edited_at: Date | null; reply_to_message_id: string | null}>(
+      "SELECT edited_at,reply_to_message_id::text FROM tg_messages WHERE source_id=$1 AND message_id=1000", [id]);
+    assert.ok(messageMeta.rows[0].edited_at, "Telegram edit_date must be stored");
+    assert.equal(messageMeta.rows[0].reply_to_message_id, "999");
+    const thread = await pool.query("SELECT reply_to_message_id FROM tg_message_threads WHERE source_id=$1 AND message_id=1000", [id]);
+    assert.equal(Number(thread.rows[0].reply_to_message_id), 999);
+    const ledger = await pool.query<{name: string; checksum: string}>(
+      "SELECT name,checksum FROM schema_migrations WHERE name=ANY($1::text[])",
+      [["011_token_intelligence.sql","012_threads_narratives.sql","013_signal_dedup.sql","014_risk_assessment.sql"]]);
+    assert.equal(ledger.rows.length, 4);
+    assert.ok(ledger.rows.every((row) => /^[a-f0-9]{64}$/.test(row.checksum.trim())));
     assert.equal(await claim(), undefined);
 
     const tx = await pool.connect();
@@ -51,6 +64,9 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
       await tx.query("BEGIN");
       assert.equal(await markMessageDeleted(tx, id, 1000), true);
       await tx.query("COMMIT");
+      const orphaned = await pool.query<{all_orphaned: boolean}>(
+        "SELECT bool_and(orphaned) AS all_orphaned FROM tg_message_links WHERE source_id=$1 AND message_id=1000", [id]);
+      assert.equal(orphaned.rows[0].all_orphaned, true, "soft delete must preserve links as orphaned evidence");
     } finally { tx.release(); }
     // Simulate a legacy counter inconsistency and verify the additive repair.
     await pool.query("UPDATE tg_source_message_counters SET message_count=100 WHERE source_id=$1", [id]);
