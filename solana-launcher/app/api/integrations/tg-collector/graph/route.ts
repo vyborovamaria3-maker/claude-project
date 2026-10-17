@@ -78,8 +78,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ evidence: details.rows }, { headers: noStore });
     }
 
-    const [sourceResult, edgeResult, metricResult, overlapResult, addressResult] = await Promise.all([
+    const [sourceResult, edgeResult, totalResult, metricResult, overlapResult, addressResult] = await Promise.all([
       p.query<Source>("SELECT id::text, identifier, title, peer_id FROM tg_sources ORDER BY id"),
+      p.query<{total: number}>(`
+        SELECT count(*)::integer AS total FROM (
+          SELECT e.source_id,e.kind,e.target_kind,e.target_key
+          FROM tg_graph_daily_edges e
+          WHERE ($1::bigint IS NULL OR e.source_id=$1)
+            AND ($2::integer=0 OR e.day >= (now() AT TIME ZONE 'UTC')::date - ($2::integer - 1))
+          GROUP BY e.source_id,e.kind,e.target_kind,e.target_key
+        ) all_edges
+      `, [selected, days]),
       p.query<LinkRow>(`
         SELECT e.source_id::text, s.identifier, e.kind, e.target_kind, e.target_key,
           sum(e.evidence_count)::integer AS strength, max(e.last_seen) AS last_seen,
@@ -204,15 +213,19 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    const total = Number(totalResult.rows[0]?.total ?? 0);
+    const hasMoreEdges = total > edgeOffset + edgeResult.rows.length;
+    const truncatedBy = nodeTruncated ? "nodes" : hasMoreEdges ? "edges" : null;
     const response: TgGraphResponse = {
       nodes: [...nodes.values()], edges: graphEdges,
       metrics: metricResult.rows,
       sharedAddresses: overlapResult.rows,
       observedAddresses: addressResult.rows,
-      sampled: edgeResult.rows.length >= edgeLimit,
-      truncated: nodeTruncated || edgeResult.rows.length >= edgeLimit,
+      sampled: hasMoreEdges,
+      truncated: nodeTruncated || hasMoreEdges,
+      total, truncated_by: truncatedBy,
       nodeLimit, edgeLimit, edgeOffset,
-      nextEdgeOffset: edgeResult.rows.length >= edgeLimit && edgeOffset + edgeLimit <= 20000 ? edgeOffset + edgeLimit : null,
+      nextEdgeOffset: hasMoreEdges && edgeOffset + edgeLimit <= 20000 ? edgeOffset + edgeLimit : null,
       days,
     };
     return NextResponse.json(response, { headers: noStore });
