@@ -130,7 +130,7 @@ export async function storePage(c: PoolClient, source: string, page: ArchivePage
       SELECT DISTINCT x.id,x.target,x.kind FROM jsonb_to_recordset($1::jsonb) AS x(id text,target text,kind text) ON CONFLICT DO NOTHING`,[JSON.stringify(edges)]);
     if(links.length)await c.query(`INSERT INTO archive_token_links(post_id,mint)
       SELECT DISTINCT x.id,x.mint FROM jsonb_to_recordset($1::jsonb) AS x(id text,mint text) ON CONFLICT DO NOTHING`,[JSON.stringify(links)]);
-    await recordRawPage(source, raw, received, c, { ...metadata, parseStatus: metadata.parseStatus ?? "parsed", responseStatus: metadata.responseStatus ?? (posts.size === 0 ? "empty" : "nonempty") });
+    await recordRawPage(source, raw, received, c, { ...metadata, parseStatus: metadata.parseStatus ?? "parsed", responseStatus: metadata.responseStatus ?? (posts.size > 0 ? "nonempty" : "unknown") });
     return posts.size;
 }
 export async function storeToken(c: PoolClient, source: string, row: Record<string, unknown>) {
