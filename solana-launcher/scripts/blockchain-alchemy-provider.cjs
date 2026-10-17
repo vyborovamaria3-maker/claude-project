@@ -28,6 +28,17 @@ function getAlchemyConfig(env = process.env) {
   return { endpoint, keyCount: keys.length || (explicitUrl ? 1 : 0) };
 }
 
+function decodeCursor(cursor) {
+  if (!cursor) return null;
+  if (typeof cursor !== "string" || !cursor.startsWith("alchemy:v1:")) {
+    throw new Error("Incompatible history cursor; reset provider cursor and backfill from Alchemy");
+  }
+  return cursor.slice("alchemy:v1:".length) || null;
+}
+function encodeCursor(token) {
+  return token ? "alchemy:v1:" + token : null;
+}
+
 function normalizeFullTransaction(item) {
   const transaction = item && item.transaction;
   const signature = item?.signature ||
@@ -108,7 +119,9 @@ function createAlchemyProvider(options = {}) {
   let requestId = 0;
   async function rpc(method, params) {
     let lastError;
+    let attempts = 0;
     for (let attempt = 0; attempt < 5; attempt++) {
+      attempts++;
       try {
         const response = await fetchImpl(config.endpoint, {
           method: "POST",
@@ -118,8 +131,10 @@ function createAlchemyProvider(options = {}) {
         });
         if (!response.ok) {
           const error = new Error("Alchemy HTTP " + response.status);
-          error.httpRequests = attempt + 1;
-          if (!RETRYABLE.has(response.status) || attempt === 4) throw error;
+          if (!RETRYABLE.has(response.status) || attempt === 4) {
+            error.httpRequests = attempts;
+            throw error;
+          }
           lastError = error;
           await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
           continue;
@@ -127,31 +142,34 @@ function createAlchemyProvider(options = {}) {
         const body = await response.json();
         if (body?.error) {
           const error = new Error("Alchemy RPC " + String(body.error.code) + ": " + String(body.error.message || "request failed").slice(0, 180));
-          error.httpRequests = attempt + 1;
           if (attempt < 4 && /rate|limit|temporar|busy/i.test(error.message)) {
             lastError = error;
             await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
             continue;
           }
+          error.httpRequests = attempts;
           throw error;
         }
-        return { result: body.result, httpRequests: attempt + 1 };
+        return { result: body.result, httpRequests: attempts };
       } catch (error) {
         lastError = error;
-        if (error?.httpRequests || attempt === 4) {
-          if (!error.httpRequests) error.httpRequests = attempt + 1;
+        if (error?.httpRequests) throw error;
+        if (attempt === 4) {
+          error.httpRequests = attempts;
           throw error;
         }
         await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
       }
     }
-    throw lastError || new Error("Alchemy request failed");
+    lastError = lastError || new Error("Alchemy request failed");
+    lastError.httpRequests = attempts;
+    throw lastError;
   }
 
   async function fetchTransactionsForAddress(address, maxTransactions = 100, knownSignatures = new Set(), paginationToken = null) {
     const limit = Math.min(100, Math.max(1, Number(maxTransactions) || 100));
     const transactions = [];
-    let token = paginationToken || undefined;
+    let token = decodeCursor(paginationToken) || undefined;
     let httpRequests = 0;
     let pagesFetched = 0;
     let reachedKnownHistory = false;
@@ -197,14 +215,14 @@ function createAlchemyProvider(options = {}) {
         if (transactions.length >= limit) break;
       }
       const nextToken = response.result?.paginationToken ?? response.result?.pagination_token ?? null;
-      if (reachedKnownHistory) { token = undefined; break; }
+      if (reachedKnownHistory) break;
       if (typeof nextToken === "string" && nextToken && nextToken !== token) token = nextToken;
       else { token = undefined; exhausted = true; break; }
       if (transactions.length >= limit) break;
     }
     return {
       transactions,
-      nextCursor: token || null,
+      nextCursor: token ? encodeCursor(token) : null,
       exhausted,
       truncated: !exhausted && !reachedKnownHistory && transactions.length >= limit,
       reachedKnownHistory,
