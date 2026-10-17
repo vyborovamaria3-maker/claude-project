@@ -33,6 +33,7 @@ function rawRetentionDays(): number {
     return days;
 }
 export async function rawPage(value: unknown, root = process.env.ARCHIVE_RAW_DIR ?? "data/archive/raw"): Promise<RawPageRef> {
+    rawRetentionDays();
     const json = JSON.stringify(value), hash = createHash("sha256").update(json).digest("hex");
     const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
     const parserVersion = typeof record.parser_version === "string" && record.parser_version.trim()
