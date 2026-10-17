@@ -7,6 +7,10 @@ export async function persistMessage(
   tx: PoolClient, sourceId: string, msg: RawTelegramMessage
 ): Promise<void> {
   if (!Number.isSafeInteger(msg.id) || msg.id <= 0 || typeof msg.message !== "string") return;
+  const rawReplyId = msg.replyToMsgId ?? msg.replyTo?.replyToMsgId;
+  const parsedReplyId = typeof rawReplyId === "number" ? rawReplyId : rawReplyId ? Number(rawReplyId.toString()) : null;
+  const replyToMessageId = parsedReplyId !== null && Number.isSafeInteger(parsedReplyId) && parsedReplyId > 0 && parsedReplyId !== msg.id
+    ? parsedReplyId : null;
   await tx.query(
     `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies,analysis_version,deleted_at,edited_at,reply_to_message_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,$11)
@@ -20,12 +24,12 @@ export async function persistMessage(
       msg.message, msg.views ?? null, msg.forwards ?? null,
       msg.replies?.replies ?? null, ANALYSIS_VERSION,
       typeof msg.editDate === "number" ? new Date(msg.editDate * 1000) : null,
-      typeof msg.replyToMsgId === "number" && Number.isSafeInteger(msg.replyToMsgId) && msg.replyToMsgId > 0 ? msg.replyToMsgId : null]
+      replyToMessageId]
   );
-  if (typeof msg.replyToMsgId === "number" && Number.isSafeInteger(msg.replyToMsgId) && msg.replyToMsgId > 0 && msg.replyToMsgId !== msg.id) {
+  if (replyToMessageId !== null) {
     await tx.query("INSERT INTO tg_message_threads(source_id,message_id,reply_to_message_id) VALUES($1,$2,$3) " +
       "ON CONFLICT(source_id,message_id) DO UPDATE SET reply_to_message_id=EXCLUDED.reply_to_message_id,observed_at=now()",
-      [sourceId, msg.id, msg.replyToMsgId]);
+      [sourceId, msg.id, replyToMessageId]);
   } else {
     await tx.query("DELETE FROM tg_message_threads WHERE source_id=$1 AND message_id=$2", [sourceId, msg.id]);
   }
