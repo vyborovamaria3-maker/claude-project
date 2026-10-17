@@ -416,3 +416,31 @@ The global history scanner also sees obsolete branches. The two historical tginv
 To connect Settings and Admin without retyping the access key, set `TG_COLLECTOR_LOCAL_AUTO_CONNECT=1` and `TG_COLLECTOR_LOCAL_ORIGIN` to the exact loopback browser origin in the frontend environment. Keep `TG_COLLECTOR_ADMIN_TOKEN` configured on the server. The browser requests an origin-bound, signed HttpOnly cookie; it never receives the server token or Telegram credentials. Bootstrap requires a same-origin browser POST, and the existing host/origin/rate checks apply to API operations. Automatic connection remains disabled in production and by default. Both panels use the worker database configured by `TG_COLLECTOR_DATABASE_URL`, with the matching proxy encryption key.
 
 Optional live UI verification: `TG_COLLECTOR_SMOKE_URL=http://127.0.0.1:3100 node tests/tg-collector-local-smoke.mjs` from solana-launcher. It checks real stored messages, HttpOnly access, cross-origin rejection, and stopping in Settings then starting in Admin; it leaves collection enabled.
+
+
+## Solana memecoin intelligence (migration 011)
+
+The Telegram collector now stores Solana-looking addresses as **candidates**, not as confirmed tokens. A base58 string in a post may be a wallet or another account; it is only promoted to `tg_tokens` after the configured Alchemy Solana RPC confirms an initialized SPL Token / Token-2022 mint account.
+
+Set `ALCHEMY_SOLANA_RPC_URL` in `tg-collector/.env` to your Alchemy HTTPS RPC endpoint. Do not commit the endpoint if it embeds a private API key. Then run:
+
+```powershell
+npm run migrate
+npm run analyze:backfill -- --batch-size=1000
+npm run tokens:resolve -- --limit=100
+npm run market:refresh -- --limit=100
+npm run market:outcomes -- --limit=500
+npm run analyze:refresh
+```
+
+- `tg_token_candidates` stores unresolved address/cashtag observations and provider resolution status.
+- `tg_tokens` identifies a token by `(chain_id, mint)`; symbol/name are metadata, not identity.
+- `tg_ticker_registry` keeps confirmed/probable/unresolved ticker mappings. A ticker is not linked automatically unless one explicit cashtag appears with a provider-verified mint in the same message.
+- `tg_token_mentions` contains only resolved token mentions and preserves the source message and analysis version.
+- `tg_token_first_mentions` means earliest in the currently collected history, not proof of the earliest public Telegram post. Source-history completeness is recorded separately.
+- `tg_copy_clusters` uses normalized exact fingerprints as a deterministic first pass. It deliberately ignores very short posts; near-duplicate semantic similarity and bot attribution are not claimed by this pass.
+- `tg_token_velocity` and `tg_channel_metrics_daily` are derived aggregates. `tg_channel_scores` keeps discovery, outcome, originality and risk components separate; the composite remains NULL until at least five complete outcomes exist.
+- `tg_token_market_snapshots` stores timestamped DexScreener observations with provider and quality metadata. A current snapshot is not historical price data. If no snapshot exists close to a message timestamp, `tg_token_outcomes` records insufficient data instead of inventing a price.
+- `tg_signals`, narrative/propagation tables and backtest tables preserve versioned, reviewable results. Similar messages are evidence of similarity, not proof of coordinated behavior.
+
+Migration files are immutable after being applied: `schema_migrations` stores SHA-256 checksums and startup refuses edited applied SQL. Retention policies are registered but disabled by default; no data is deleted automatically until an explicit retention schedule is configured. Monthly partitioning is deferred until the composite keys and foreign-key design are migrated and rehearsed safely.
