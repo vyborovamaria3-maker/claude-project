@@ -34,7 +34,16 @@ function localHostAllowed(hostname: string, hostHeader: string): boolean {
 function rateLimit(input: TgAccessInput): TgAccessDecision {
   const limit = input.mutation ? RATE_LIMIT_MUTATION : RATE_LIMIT_READ;
   const tokenKey = createHash("sha256").update(input.providedToken, "utf8").digest("hex").slice(0, 16);
-  const key = (input.mutation ? "m:" : "r:") + input.clientAddress.slice(0, 128) + ":" + tokenKey;
+  const secret = input.secret;
+  const tokenIsValid = Boolean(secret && secret.length >= 24 && input.providedToken &&
+    timingSafeEqual(
+      createHash("sha256").update(secret, "utf8").digest(),
+      createHash("sha256").update(input.providedToken, "utf8").digest(),
+    ));
+  // Authenticated clients share one bucket per token across IPs. Invalid/anonymous
+  // callers are throttled by client IP so random tokens cannot create unlimited buckets.
+  const identity = tokenIsValid ? "token:" + tokenKey : "ip:" + input.clientAddress.slice(0, 128);
+  const key = (input.mutation ? "m:" : "r:") + identity;
   const now = Date.now();
   const current = rateBuckets.get(key);
   if (!current || now - current.startedAt >= RATE_WINDOW_MS) {
