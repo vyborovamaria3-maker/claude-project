@@ -52,11 +52,14 @@ async function main(): Promise<void> {
       "((o.price_24h/o.price_at_mention-1)*100),o.max_drawdown_pct,$2," +
       "jsonb_build_object('signal_type',s.signal_type,'signal_model_version',s.model_version," +
       "'outcome_model_version',o.model_version,'market_provider',o.market_provider) " +
-      "FROM tg_signals s JOIN tg_token_outcomes o ON o.chain_id=s.chain_id AND o.mint=s.mint " +
-      "AND o.source_id=s.source_id AND o.message_id=s.message_id " +
+      "FROM tg_signals s JOIN LATERAL (" +
+      "SELECT o.* FROM tg_token_outcomes o WHERE o.chain_id=s.chain_id AND o.mint=s.mint " +
+      "AND o.model_version=$5 AND o.outcome_status='complete' AND o.price_at_mention>0 AND o.price_24h>0 " +
+      "AND ((s.source_id IS NOT NULL AND o.source_id=s.source_id AND o.message_id=s.message_id) " +
+      "OR (s.source_id IS NULL AND o.mention_time BETWEEN s.detected_at-interval '5 minutes' AND s.detected_at)) " +
+      "ORDER BY o.mention_time DESC LIMIT 1) o ON TRUE " +
       "WHERE s.detected_at >= $3 AND s.detected_at < $4 AND s.status <> 'dismissed' " +
-      "AND o.model_version=$5 AND o.outcome_status='complete' " +
-      "AND o.mention_time >= $3 AND o.mention_time < $4 AND o.price_at_mention>0 AND o.price_24h>0 " +
+      "AND o.mention_time >= $3 AND o.mention_time < $4 " +
       "ON CONFLICT(run_id,signal_id) DO NOTHING",
       [runId, baselineReturn, testStart, to, OUTCOME_VERSION],
     );
