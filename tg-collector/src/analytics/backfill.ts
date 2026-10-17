@@ -35,6 +35,7 @@ async function main(): Promise<void> {
         for (const row of rows) {
           await replaceEvidence(client, row.source_id, {
             id: Number(row.message_id), message: row.text,
+            date: row.posted_at ? Math.floor(new Date(row.posted_at).getTime() / 1000) : undefined,
           }, { preserveExistingForwards: true });
           const day = utcDay(row.posted_at);
           if (day) affected.set(row.source_id, [...(affected.get(row.source_id) ?? []), day]);
