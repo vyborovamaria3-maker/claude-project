@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ evidence: details.rows }, { headers: noStore });
     }
 
-    const [sourceResult, edgeResult, totalResult, metricResult, overlapResult, addressResult] = await Promise.all([
+    const [sourceResult, totalResult, edgeResult, metricResult, overlapResult, addressResult] = await Promise.all([
       p.query<Source>("SELECT id::text, identifier, title, peer_id FROM tg_sources ORDER BY id"),
       p.query<{total: number}>(`
         SELECT count(*)::integer AS total FROM (
