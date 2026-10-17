@@ -230,14 +230,18 @@ function status(db) {
 function claimOne(db) {
   const now = Date.now();
   return db.transaction(() => {
-    const candidates = db.prepare(
+    const row = db.prepare(
       "SELECT * FROM chain_seed_targets WHERE source_mask<>0 AND next_run_at<=?"
       + " AND (lease_until IS NULL OR lease_until<?)"
-      + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 100"
-    ).all(now, now);
-    // Reuse a complete, fresh wallet history instead of paying for the same RPC crawl again.
-    const row = candidates.find(candidate =>
-      !(candidate.kind === "wallet" && walletCache.walletHistoryFresh(db, candidate.address, now)));
+      + " AND NOT (kind='wallet' AND EXISTS ("
+      + "   SELECT 1 FROM chain_wallet_discovery d WHERE d.wallet=chain_seed_targets.address"
+      + "   AND d.history_status='complete' AND d.last_fetched_at IS NOT NULL"
+      + "   AND (? - d.last_fetched_at) < CASE"
+      + "     WHEN d.last_trade_at IS NOT NULL AND d.last_trade_at >= CAST((? - 86400000) / 1000 AS INTEGER)"
+      + "     THEN 7200000 ELSE 86400000 END))"
+      + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 1"
+    ).get(now, now, now, now);
+    // A fresh complete wallet is filtered in SQL; partial/stale histories remain eligible.
     if (!row) return null;
     const updated = db.prepare(
       "UPDATE chain_seed_targets SET lease_until=? WHERE kind=? AND address=?"
