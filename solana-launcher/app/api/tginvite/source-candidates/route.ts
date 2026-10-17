@@ -1,10 +1,13 @@
+import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { promises as fs } from "fs";
 import path from "path";
 import { NextResponse } from "next/server";
 
 const CANDIDATES_PATH = path.join(process.cwd(), "backend", "data", "tgdataset", "tginvite_source_candidates.json");
 
-export async function GET() {
+export async function GET(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   try {
     const raw = await fs.readFile(CANDIDATES_PATH, "utf-8");
     const candidates = JSON.parse(raw);

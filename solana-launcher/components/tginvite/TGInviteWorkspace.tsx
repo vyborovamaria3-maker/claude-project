@@ -30,8 +30,6 @@ import {
   Star,
   Target,
   Layers,
-  ArrowUpRight,
-  Minus,
   Bot,
   Lock,
   Unlock,
@@ -49,7 +47,7 @@ import {
 import { siteDesign } from "@/lib/siteDesign";
 import { ToastProvider, useToast } from "@/components/tginvite/Toast";
 import { useApi } from "@/components/tginvite/useApi";
-import { storage, channelsStorage, jobsStorage, settingsStorage } from "@/lib/tginvite-storage";
+import { bindTGInviteStorageOwner, storage, channelsStorage, jobsStorage, settingsStorage } from "@/lib/tginvite-storage";
 import { parseUsername, StealthDelayer } from "@/lib/tginvite-stealth";
 import AIAnalysisPanel from "@/components/tginvite/AIAnalysisPanel";
 import MultiAccountPanel from "@/components/tginvite/MultiAccountPanel";
@@ -60,8 +58,10 @@ import EnhancedDashboard from "@/components/tginvite/EnhancedDashboard";
 import RealTimeMonitor from "@/components/tginvite/RealTimeMonitor";
 import GoalTracking from "@/components/tginvite/GoalTracking";
 import ABTesting from "@/components/tginvite/ABTesting";
-import { tgInviteService, ImportJobConfig, ImportProgress } from "@/lib/tginvite-service";
+import { tgInviteService, ImportProgress } from "@/lib/tginvite-service";
+import { confirmedTGInviteLink, normalizeTGInviteDestination } from "@/lib/tginvite-optin";
 import { tginviteEvents, TGEvent } from "@/lib/tginvite-events";
+import AuthorizedHistoryPanel from "@/components/tginvite/AuthorizedHistoryPanel";
 import TeraGramInviteSource from "@/components/tginvite/TeraGramInviteSource";
 import TeraGramScannerControl from "@/components/tginvite/TeraGramScannerControl";
 import { TeraGramLiveValidation } from "@/components/tginvite/TeraGramLiveValidation";
@@ -139,9 +139,9 @@ interface BotInfo {
 }
 
 interface AnalyticsData {
-  totalInvited: number;
-  successRate: number;
-  avgResponseTime: number;
+  totalInvited: number | null;
+  successRate: number | null;
+  avgResponseTime: number | null;
   topChannels: { name: string; count: number }[];
   dailyStats: { date: string; invited: number; failed: number; skipped: number }[];
 }
@@ -261,9 +261,41 @@ function riskClassName(risk?: ParsedMemberScore["riskLevel"]): string {
 }
 
 export default function TGInvitePage() {
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [identityError, setIdentityError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function identify() {
+      try {
+        const response = await fetch("/api/tginvite/identity", { cache: "no-store" });
+        if (!response.ok) throw new Error("Unable to verify TGInvite access");
+        const identity = (await response.json()) as { ownerId?: unknown };
+        if (typeof identity.ownerId !== "string") throw new Error("Invalid owner identity");
+        if (!cancelled) {
+          bindTGInviteStorageOwner(identity.ownerId);
+          setOwnerId(identity.ownerId);
+        }
+      } catch {
+        if (!cancelled) setIdentityError(true);
+      }
+    }
+    void identify();
+    return () => {
+      cancelled = true;
+      bindTGInviteStorageOwner(null);
+    };
+  }, []);
+
+  if (identityError) {
+    return <p role="alert" className="p-6 text-content">Unable to verify TGInvite access. Sign in and retry.</p>;
+  }
+  if (!ownerId) {
+    return <p role="status" className="p-6 text-content-muted">Verifying TGInvite access...</p>;
+  }
   return (
     <ToastProvider>
-      <TGInvitePageInner />
+      <TGInvitePageInner key={ownerId} />
     </ToastProvider>
   );
 }
@@ -298,7 +330,7 @@ function TGInvitePageInner() {
   const [schedule, setSchedule] = useState<ScheduleConfig>(() => {
     const saved = settingsStorage.get();
     return {
-      enabled: saved.scheduleEnabled ?? false,
+      enabled: false, // No server-side scheduler exists; never restore a legacy enabled flag.
       interval: (saved.scheduleInterval as ScheduleConfig["interval"]) ?? "daily",
       maxPerDay: saved.maxPerDay ?? 100,
       timezone: saved.scheduleTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -327,6 +359,11 @@ function TGInvitePageInner() {
   const [botInfo, setBotInfo] = useState<BotInfo | null>(null);
   const [botVerifying, setBotVerifying] = useState(false);
   const [channelVerifying, setChannelVerifying] = useState(false);
+  const [optInInviteLink, setOptInInviteLink] = useState<{ url: string; chatId: string } | null>(null);
+  const [optInInviteLoading, setOptInInviteLoading] = useState(false);
+  // React state alone does not prevent simultaneous submissions before a rerender.
+  const optInRequestInFlightRef = useRef(false);
+  const optInGenerationRef = useRef(0);
   const [parserInput, setParserInput] = useState("");
   const [parserLimit, setParserLimit] = useState(() => filters.limit || 1000);
   const [parserActivityMode, setParserActivityMode] = useState<ParserActivityMode>("active");
@@ -382,28 +419,18 @@ function TGInvitePageInner() {
     storage.set("channelGroups", channelGroups);
   }, [channelGroups]);
 
-  // Analytics data
-  const analytics: AnalyticsData = useMemo(() => {
-    const jobs = jobsStorage.getAll();
-    const totalInvited = jobs.reduce((sum, j) => sum + (j.invited || 0), 0);
-    const totalFailed = jobs.reduce((sum, j) => sum + (j.failed || 0), 0);
-    const total = totalInvited + totalFailed;
-    return {
-      totalInvited,
-      successRate: total > 0 ? Math.round((totalInvited / total) * 100 * 10) / 10 : 94.2,
-      avgResponseTime: 2.5,
-      topChannels: [...channels]
-        .sort((a, b) => (b.members || 0) - (a.members || 0))
-        .slice(0, 5)
-        .map((ch) => ({ name: ch.name, count: ch.members || 0 })),
-      dailyStats: Array.from({ length: 7 }, (_, i) => ({
-        date: new Date(Date.UTC(2026, 0, 24 + i)).toLocaleDateString("en-US"),
-        invited: 50 + ((i * 37 + 17) % 100),
-        failed: 2 + ((i * 11 + 3) % 10),
-        skipped: 3 + ((i * 13 + 5) % 15),
-      })).reverse(),
-    };
-  }, [channels]);
+  // Only authenticated server receipts may prove a Telegram invitation.
+  // Legacy localStorage jobs were simulated and must never count as invites.
+  const analytics: AnalyticsData = useMemo(() => ({
+    totalInvited: null,
+    successRate: null,
+    avgResponseTime: null,
+    topChannels: [...channels]
+      .sort((left, right) => (right.members || 0) - (left.members || 0))
+      .slice(0, 5)
+      .map((channel) => ({ name: channel.name, count: channel.members || 0 })),
+    dailyStats: [],
+  }), [channels]);
 
   // Filter channels based on search
   const filteredChannels = useMemo(() => {
@@ -498,7 +525,7 @@ function TGInvitePageInner() {
     } else {
       // Fallback: add without verification
       const newChannels: Channel[] = usernames.map((username) => ({
-        id: Date.now().toString() + Math.random().toString(36).substring(2, 11),
+        id: crypto.randomUUID(),
         name: `@${username}`,
         username,
         members: 0,
@@ -589,13 +616,11 @@ function TGInvitePageInner() {
           .map((u) => u.replace(/@/g, "").replace(/https?:\/\/t\.me\//g, "").trim())
           .filter((username) => username && !channels.some((ch) => ch.username === username))
           .map((username) => ({
-            id: Date.now().toString() + Math.random().toString(36).substring(2, 11),
+            id: crypto.randomUUID(),
             name: `@${username}`,
             username,
             members: 0,
             selected: true,
-            activity: Math.random(),
-            quality: Math.random(),
             status: "active" as const,
           }));
 
@@ -660,6 +685,7 @@ function TGInvitePageInner() {
       return;
     }
 
+    setParserResult(null); // Do not display stale member data if a subsequent fetch fails.
     setParserLoading(true);
     try {
       const response = await fetch("/api/tginvite/mtproto", {
@@ -959,76 +985,53 @@ function TGInvitePageInner() {
     setNewWhitelistItem("");
   }, [newWhitelistItem]);
 
-  // Refs for import simulation
+  // References for legacy, non-dispatching job display only
   const importChannelsRef = useRef<Channel[]>([]);
   const importIndexRef = useRef(0);
   const importDelayerRef = useRef<StealthDelayer | null>(null);
   const importJobIdRef = useRef("");
 
-  // Start import — generates real invite links via Telegram API
-  const startImport = useCallback(async () => {
-    const selected = channels.filter((ch) => selectedChannels.has(ch.id));
-    if (selected.length === 0) {
-      warning("No channels selected", "Select at least one source channel");
+  // Genuine opt-in link creation. This cannot bulk-add parsed participants.
+  const createOptInInviteLink = useCallback(async () => {
+    if (optInRequestInFlightRef.current) return;
+    const chatId = normalizeTGInviteDestination(targetChannel);
+    if (!botToken.trim()) {
+      warning("Bot required", "Configure a Telegram bot with invite rights in TGInvite Settings.");
       return;
     }
-    if (!targetChannel) {
-      warning("No target channel", "Enter a target channel username");
+    if (!chatId) {
+      warning("Invalid target", "Enter a public @username, t.me/username or numeric Telegram chat ID.");
       return;
     }
-
-    const importConfig: ImportJobConfig = {
-      targetChannel,
-      sources: selected.map((ch) => ch.username),
-      botToken: botToken || undefined,
-      batchSize,
-      batchPause,
-      minDelay: filters.delay,
-      maxDelay: filters.delay * 3,
-      filters: {
-        removeBots: true,
-        removeScam: true,
-        removeFake: true,
-        removeRestricted: true,
-        minActivityScore: filters.minActivity,
-        maxAccountAgeDays: filters.maxAge,
-        minLastSeenDays: 30,
-        requireAvatar: filters.hasAvatar,
-        requireUsername: false,
-        blacklistUsernames: filters.blacklist,
-        whitelistUsernames: filters.whitelist,
-        maxResults: filters.limit,
-      },
-    };
-
-    // Preview the import
-    const preview = tgInviteService.previewImport(importConfig);
-    info(
-      "Import Preview",
-      `Estimated time: ${preview.estimatedTime}, ~${preview.estimatedInvited} invites, ~${preview.estimatedFailed} failures`
-    );
-
-    // Start the import
-    const jobId = tgInviteService.startImport(importConfig);
-    importJobIdRef.current = jobId;
-
-    setCurrentJob({
-      id: jobId,
-      targetChannel,
-      sources: selected.map((ch) => ch.username),
-      status: "running",
-      progress: 0,
-      total: selected.length,
-      invited: 0,
-      skipped: 0,
-      failed: 0,
-      startTime: new Date().toISOString(),
-      logs: [],
-      inviteLinks: [],
-    });
-    setIsRunning(true);
-    isRunningRef.current = true;
-  }, [channels, selectedChannels, targetChannel, botToken, filters.delay, batchSize, batchPause, filters.minActivity, filters.maxAge, filters.hasAvatar, filters.blacklist, filters.whitelist, filters.limit, warning, info]);
+    const startedGeneration = ++optInGenerationRef.current;
+    optInRequestInFlightRef.current = true;
+    setOptInInviteLink(null);
+    setOptInInviteLoading(true);
+    try {
+      const response = await call<{ status?: string; link?: { inviteLink?: string; createsJoinRequest?: boolean } }>(
+        "/api/tginvite/invite",
+        { body: {
+          action: "createLink",
+          token: botToken,
+          chatId,
+          linkName: "TGInvite opt-in",
+          createsJoinRequest: true,
+          expireDays: 7,
+        } },
+      );
+      if (optInGenerationRef.current !== startedGeneration) return; // Settings changed while Telegram was processing.
+      const url = confirmedTGInviteLink(response);
+      if (!url) {
+        if (response) toastError("Link creation failed", "Telegram did not confirm an invite link.");
+        return;
+      }
+      setOptInInviteLink({ url, chatId });
+      success("Invite link created", "Share it with people who want to join. Join requests still require approval.");
+    } finally {
+      optInRequestInFlightRef.current = false;
+      setOptInInviteLoading(false);
+    }
+  }, [botToken, targetChannel, call, success, toastError, warning]);
 
   // Pause import
   const pauseImport = useCallback(() => {
@@ -1050,27 +1053,10 @@ function TGInvitePageInner() {
     });
   }, []);
 
-  // Resume import
+  // No persistent invitation worker exists yet; never label a legacy job as running.
   const resumeImport = useCallback(async () => {
-    if (intervalRef.current) {
-      clearTimeout(intervalRef.current);
-      intervalRef.current = null;
-    }
-
-    if (importJobIdRef.current) {
-      tgInviteService.resumeImport(importJobIdRef.current);
-    }
-
-    isRunningRef.current = true;
-    setIsRunning(true);
-    setCurrentJob((prev) => {
-      if (prev) {
-        jobsStorage.update(prev.id, { status: "running" });
-        return { ...prev, status: "running" };
-      }
-      return null;
-    });
-  }, []);
+    warning("Import unavailable", "A persistent, consent-verified server job is required to resume invitations.");
+  }, [warning]);
 
   // Reset import
   const resetImport = useCallback(() => {
@@ -1163,49 +1149,24 @@ function TGInvitePageInner() {
     };
   }, [success, toastError, warning]);
 
-  // Resume on reload — restore last running/paused job
-  useEffect(() => {
-    const jobs = jobsStorage.getAll();
-    const lastActive = jobs.find((j) => j.status === "running" || j.status === "paused");
-    if (lastActive && lastActive.progress < 100) {
-      setCurrentJob({
-        id: lastActive.id,
-        targetChannel: lastActive.targetChannel,
-        sources: lastActive.sources,
-        status: lastActive.status,
-        progress: lastActive.progress,
-        total: lastActive.total,
-        invited: lastActive.invited,
-        skipped: lastActive.skipped,
-        failed: lastActive.failed,
-        startTime: lastActive.startTime,
-        logs: lastActive.logs,
-        inviteLinks: lastActive.inviteLinks,
-      });
-      importJobIdRef.current = lastActive.id;
-      if (lastActive.status === "running") {
-        setIsRunning(true);
-        isRunningRef.current = true;
-        tgInviteService.resumeImport(lastActive.id);
-      }
-    }
-  }, []);
-
+  // Legacy browser-side import records had simulated counters, not Telegram receipts.
+  // Never resurrect those records as active/failed invitation jobs in the UI.
   // Copy channel username
   const copyUsername = useCallback((username: string) => {
     navigator.clipboard.writeText(`@${username}`);
   }, []);
 
   const verifyTargetChannel = useCallback(async () => {
-    if (!botToken || !targetChannel) {
-      warning("Missing info", "Enter bot token and target channel");
+    const chatId = normalizeTGInviteDestination(targetChannel);
+    if (!botToken.trim() || !chatId) {
+      warning("Missing or invalid target", "Enter a bot token and a valid @username, t.me/username, or numeric chat ID.");
       return;
     }
     setChannelVerifying(true);
     try {
       const result = await call<{ chat?: { id: number; title: string; memberCount?: number }; error?: string }>(
         "/api/tginvite/channels",
-        { body: { action: "verify", token: botToken, chatId: targetChannel } }
+        { body: { action: "verify", token: botToken, chatId } }
       );
       if (result?.chat) {
         success("Target verified", `${result.chat.title} (${result.chat.memberCount?.toLocaleString() || 0} members)`);
@@ -1250,7 +1211,7 @@ function TGInvitePageInner() {
             </div>
             <div>
               <h1 className="text-3xl font-bold tracking-tight">TGInvite</h1>
-              <p className="text-content-muted">Smart member import with anti-detection</p>
+              <p className="text-content-muted">Telegram parsing and opt-in join requests</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1265,16 +1226,9 @@ function TGInvitePageInner() {
                 No bot connected
               </div>
             )}
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${schedule.enabled ? "bg-green-500/20 text-green-400" : "bg-content-muted/20 text-content-muted"}`}>
-              <div className={`w-2 h-2 rounded-full ${schedule.enabled ? "bg-green-400" : "bg-content-muted"}`} />
-              Auto-Invite: {schedule.enabled ? "ON" : "OFF"}
+            <div className="rounded-full bg-content-muted/20 px-3 py-1.5 text-xs text-content-muted">
+              Scheduled invitations unavailable
             </div>
-            <button
-              onClick={() => setSchedule((prev) => ({ ...prev, enabled: !prev.enabled }))}
-              className={`${siteDesign.controls.iconButtonClassName} ${schedule.enabled ? "!border-green-500/50 !text-green-400" : ""}`}
-            >
-              <Zap className="h-4 w-4" />
-            </button>
           </div>
         </div>
       </div>
@@ -1313,7 +1267,7 @@ function TGInvitePageInner() {
       </div>
 
       {/* Dashboard Tab - EnhancedDashboard */}
-      {activeTab === "dashboard" && <EnhancedDashboard />}
+      {activeTab === "dashboard" && <EnhancedDashboard sources={channels} parser={parserResult} hasJoinRequestLink={Boolean(optInInviteLink && optInInviteLink.chatId === normalizeTGInviteDestination(targetChannel))} botVerified={Boolean(botInfo)} />}
 
       {/* Data Set TG Tab */}
       {activeTab === "data" && (
@@ -1551,6 +1505,8 @@ function TGInvitePageInner() {
               </div>
             </div>
           </div>
+
+          <AuthorizedHistoryPanel username={parserInput} />
 
           {recentAnalysis && (
             <div className={siteDesign.page.panelClassName}>
@@ -1802,7 +1758,7 @@ function TGInvitePageInner() {
               <input
                 type="text"
                 value={targetChannel}
-                onChange={(e) => setTargetChannel(e.target.value)}
+                onChange={(e) => { optInGenerationRef.current++; setTargetChannel(e.target.value); setOptInInviteLink(null); }}
                 placeholder="@your_channel or https://t.me/your_channel"
                 className={siteDesign.controls.inputClassName}
               />
@@ -2255,19 +2211,18 @@ function TGInvitePageInner() {
           <div className={siteDesign.page.panelClassName}>
             <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <Zap className="h-5 w-5 text-[color:var(--theme-primary)]" />
-              Import Control
+              Invitation links & legacy jobs
             </h3>
             <div className="flex flex-wrap gap-3">
-              {!isRunning && !currentJob && (
-                <button
-                  onClick={startImport}
-                  className={siteDesign.controls.primaryActionClassName}
-                  disabled={selectedChannels.size === 0 || !targetChannel}
-                >
-                  <Play className="h-4 w-4" />
-                  Start Import ({selectedChannels.size} channels)
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={createOptInInviteLink}
+                className={siteDesign.controls.primaryActionClassName}
+                disabled={optInInviteLoading || !botToken.trim() || !normalizeTGInviteDestination(targetChannel)}
+              >
+                {optInInviteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link className="h-4 w-4" />}
+                {optInInviteLoading ? "Creating Telegram link..." : "Create join-request link"}
+              </button>
               {isRunning && (
                 <button onClick={pauseImport} className={siteDesign.controls.actionButtonClassName}>
                   <Pause className="h-4 w-4" />
@@ -2325,7 +2280,7 @@ function TGInvitePageInner() {
                         if (config.channels) setChannels(config.channels.map((ch: Channel) => ({ ...ch, selected: ch.selected ?? false })));
                         if (config.filters) setFilters(config.filters);
                         if (config.schedule) setSchedule(config.schedule);
-                        if (config.targetChannel) setTargetChannel(config.targetChannel);
+                        if (config.targetChannel) { optInGenerationRef.current++; setTargetChannel(config.targetChannel); setOptInInviteLink(null); }
                         if (config.batchSize) setBatchSize(config.batchSize);
                         if (config.batchPause) setBatchPause(config.batchPause);
                         success("Config loaded", "Configuration restored from file");
@@ -2343,6 +2298,48 @@ function TGInvitePageInner() {
                 Load Config
               </button>
             </div>
+            <p className="mt-3 text-sm text-content-muted">
+              Telegram join-request links expire after 7 days. People who choose to join can submit a request; an administrator must approve it.
+              No parsed members are automatically added. Direct member import remains unavailable
+              until consent-verified server jobs are implemented.
+            </p>
+            {optInInviteLink && optInInviteLink.chatId === normalizeTGInviteDestination(targetChannel) && (
+              <div className="mt-4 space-y-2" role="status">
+                <label htmlFor="tg-invite-optin-url" className="text-sm font-medium">
+                  Confirmed Telegram join-request link
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    id="tg-invite-optin-url"
+                    readOnly
+                    value={optInInviteLink.url}
+                    className={siteDesign.controls.inputClassName}
+                  />
+                  <button
+                    type="button"
+                    className={siteDesign.controls.actionButtonClassName}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(optInInviteLink.url);
+                        success("Link copied", "Share it only with people who want to join.");
+                      } catch {
+                        warning("Clipboard unavailable", "Select and copy the link manually.");
+                      }
+                    }}
+                  >
+                    Copy link
+                  </button>
+                </div>
+                <a
+                  href={optInInviteLink.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm underline text-[color:var(--theme-primary)]"
+                >
+                  Open in Telegram
+                </a>
+              </div>
+            )}
           </div>
 
           {/* Invite Links (after job completion) */}
@@ -2565,13 +2562,17 @@ function TGInvitePageInner() {
             <label className="flex items-center gap-3 p-4 bg-bg-elevated rounded-lg cursor-pointer">
               <input
                 type="checkbox"
-                checked={schedule.enabled}
-                onChange={(e) => setSchedule((prev) => ({ ...prev, enabled: e.target.checked }))}
+                checked={false}
+                disabled
+                aria-label="Automated invitations are unavailable"
                 className="h-5 w-5 rounded border-bg-border"
               />
               <div>
-                <div className="font-medium">Enable Scheduled Imports</div>
-                <div className="text-sm text-content-muted">Automatically run imports on schedule</div>
+                <div className="font-medium">Scheduled imports are unavailable</div>
+                <div className="text-sm text-content-muted">
+                  There is no server-side invitation worker or opt-in consent dispatch job.
+                  Previous schedule settings do not start invitations.
+                </div>
               </div>
             </label>
 
@@ -2672,75 +2673,41 @@ function TGInvitePageInner() {
       {/* Analytics Tab */}
       {activeTab === "analytics" && (
         <div className="space-y-6">
-          {/* Overview Stats */}
+          {/* Only display receipt-backed invitation metrics. */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className={siteDesign.page.panelClassName}>
-              <div className="text-sm text-content-muted">Total Invited</div>
-              <div className="text-3xl font-bold mt-2">{analytics.totalInvited}</div>
-              <div className="flex items-center gap-1 text-xs text-green-400 mt-1">
-                <ArrowUpRight className="h-3 w-3" />
-                <span>+15% this week</span>
-              </div>
+              <div className="text-sm text-content-muted">Verified invites</div>
+              <div className="text-3xl font-bold mt-2">{analytics.totalInvited ?? "—"}</div>
+              <div className="mt-1 text-xs text-content-muted">No confirmed dispatch ledger</div>
             </div>
             <div className={siteDesign.page.panelClassName}>
-              <div className="text-sm text-content-muted">Success Rate</div>
-              <div className="text-3xl font-bold mt-2">{analytics.successRate.toFixed(1)}%</div>
-              <div className="flex items-center gap-1 text-xs text-green-400 mt-1">
-                <ArrowUpRight className="h-3 w-3" />
-                <span>+5% this week</span>
+              <div className="text-sm text-content-muted">Success rate</div>
+              <div className="text-3xl font-bold mt-2">
+                {analytics.successRate == null ? "—" : `${analytics.successRate.toFixed(1)}%`}
               </div>
+              <div className="mt-1 text-xs text-content-muted">Unknown until Telegram receipts exist</div>
             </div>
             <div className={siteDesign.page.panelClassName}>
-              <div className="text-sm text-content-muted">Avg Response Time</div>
-              <div className="text-3xl font-bold mt-2">{analytics.avgResponseTime}s</div>
-              <div className="flex items-center gap-1 text-xs text-yellow-400 mt-1">
-                <Minus className="h-3 w-3" />
-                <span>No change</span>
+              <div className="text-sm text-content-muted">Avg response time</div>
+              <div className="text-3xl font-bold mt-2">
+                {analytics.avgResponseTime == null ? "—" : `${analytics.avgResponseTime}s`}
               </div>
+              <div className="mt-1 text-xs text-content-muted">Not measured</div>
             </div>
             <div className={siteDesign.page.panelClassName}>
-              <div className="text-sm text-content-muted">Active Channels</div>
+              <div className="text-sm text-content-muted">Saved source channels</div>
               <div className="text-3xl font-bold mt-2">{channels.length}</div>
-              <div className="flex items-center gap-1 text-xs text-green-400 mt-1">
-                <ArrowUpRight className="h-3 w-3" />
-                <span>+3 new</span>
-              </div>
+              <div className="mt-1 text-xs text-content-muted">Stored in this workspace</div>
             </div>
           </div>
 
           {/* Daily Chart */}
           <div className={siteDesign.page.panelClassName}>
             <h3 className="text-lg font-semibold mb-4">Daily Activity</h3>
-            <div className="h-64 flex items-end gap-2">
-              {(() => {
-                const maxVal = Math.max(...analytics.dailyStats.map((s) => Math.max(s.invited, s.failed)), 1);
-                return analytics.dailyStats.map((stat, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                  <div className="w-full flex gap-1 items-end justify-center" style={{ height: "200px" }}>
-                    <div
-                      className="w-1/2 bg-green-400 rounded-t"
-                      style={{ height: `${Math.min((stat.invited / maxVal) * 100, 100)}%` }}
-                    />
-                    <div
-                      className="w-1/2 bg-red-400 rounded-t"
-                      style={{ height: `${Math.min((stat.failed / maxVal) * 100, 100)}%` }}
-                    />
-                  </div>
-                  <div className="text-xs text-content-muted">{stat.date}</div>
-                </div>
-                ));
-              })()}
-            </div>
-            <div className="flex items-center justify-center gap-6 mt-4">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-green-400 rounded" />
-                <span className="text-sm text-content-muted">Invited</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-red-400 rounded" />
-                <span className="text-sm text-content-muted">Failed</span>
-              </div>
-            </div>
+            <p className="py-8 text-sm text-content-muted" role="status">
+              No verified daily invitation activity is available. Previously saved browser jobs
+              are not proof of successful invitations, and creating a link does not count as a join.
+            </p>
           </div>
 
           {/* Export Analytics */}
@@ -2753,9 +2720,9 @@ function TGInvitePageInner() {
                     "TGInvite Analytics Report",
                     "========================",
                     "",
-                    `Total Invited: ${analytics.totalInvited}`,
-                    `Success Rate: ${analytics.successRate}%`,
-                    `Avg Response Time: ${analytics.avgResponseTime}s`,
+                    `Verified invites: ${analytics.totalInvited ?? "unknown"}`,
+                    `Success Rate: ${analytics.successRate == null ? "unknown" : `${analytics.successRate}%`}`,
+                    `Avg Response Time: ${analytics.avgResponseTime == null ? "unknown" : `${analytics.avgResponseTime}s`}`,
                     "",
                     "Daily Stats:",
                     ...analytics.dailyStats.map((s) => `  ${s.date}: Invited=${s.invited}, Failed=${s.failed}, Skipped=${s.skipped}`),
@@ -2833,7 +2800,7 @@ function TGInvitePageInner() {
                     <div className="text-xs text-content-muted">ID: {botInfo.id} | {botInfo.firstName}</div>
                   </div>
                   <button
-                    onClick={() => { setBotToken(""); setBotInfo(null); }}
+                    onClick={() => { optInGenerationRef.current++; setBotToken(""); setBotInfo(null); setOptInInviteLink(null); }}
                     className="ml-auto text-xs text-red-400 hover:text-red-300"
                   >
                     Disconnect
@@ -2846,7 +2813,7 @@ function TGInvitePageInner() {
                     <input
                       type="password"
                       value={botToken}
-                      onChange={(e) => setBotToken(e.target.value)}
+                      onChange={(e) => { optInGenerationRef.current++; setBotToken(e.target.value); setBotInfo(null); setOptInInviteLink(null); }}
                       placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
                       className={siteDesign.controls.inputClassName}
                     />
@@ -2893,18 +2860,22 @@ function TGInvitePageInner() {
                   <input
                     type="text"
                     value={targetChannel}
-                    onChange={(e) => setTargetChannel(e.target.value)}
+                    onChange={(e) => { optInGenerationRef.current++; setTargetChannel(e.target.value); setOptInInviteLink(null); }}
                     placeholder="@your_channel or chat ID"
                     className={siteDesign.controls.inputClassName}
                   />
                   <button
                     onClick={async () => {
-                      if (!targetChannel.trim() || !botToken) return;
+                      const chatId = normalizeTGInviteDestination(targetChannel);
+                      if (!botToken.trim() || !chatId) {
+                        warning("Missing or invalid target", "Provide a bot token and a valid Telegram chat name or ID.");
+                        return;
+                      }
                       setChannelVerifying(true);
                       try {
                         const result = await call<{ chat?: { title: string; memberCount?: number }; error?: string }>(
                           "/api/tginvite/channels",
-                          { body: { action: "verify", token: botToken, chatId: targetChannel } }
+                          { body: { action: "verify", token: botToken, chatId } }
                         );
                         if (result?.chat) {
                           success("Channel verified", `${result.chat.title} (${result.chat.memberCount?.toLocaleString() || "?"} members)`);
@@ -3114,14 +3085,70 @@ function MTProtoSettings({
   const [passwordRequired, setPasswordRequired] = useState(false);
   const [codeDelivery, setCodeDelivery] = useState<"app" | "sms" | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    // Rehydrate only the connection indicator, never MTProto secrets.
+    void fetch("/api/tginvite/mtproto", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const state = (await response.json()) as { connected?: boolean };
+        if (!cancelled && state.connected) setConnected(true);
+      })
+      .catch(() => { /* Authentication and vault errors are shown on explicit connection. */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleDisconnect = async () => {
+    setConnecting(true);
+    try {
+      const result = await call<{ status?: string; warning?: string }>("/api/tginvite/mtproto", {
+        body: { action: "disconnect" },
+      });
+      if (result?.status === "disconnected") {
+        setConnected(false);
+        setNeedsPhone(false);
+        setCodeSent(false);
+        setPasswordRequired(false);
+        setApiHash("");
+        setPhoneCode("");
+        setTwoFactorPassword("");
+        success("Telegram disconnected", "The stored TGInvite session was revoked.");
+        if (result.warning) warning("Login reset unavailable", result.warning);
+      }
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleRestartLogin = async () => {
+    setConnecting(true);
+    try {
+      const result = await call<{ status?: string; error?: string }>("/api/tginvite/mtproto", {
+        body: { action: "cancelLogin" },
+      });
+      if (result?.status !== "login_cancelled") {
+        toastError("Unable to restart login", result?.error || "Try again after the current login expires");
+        return;
+      }
+      setCodeSent(false);
+      setPasswordRequired(false);
+      setPhoneCode("");
+      setTwoFactorPassword("");
+      setCodeDelivery(null);
+    } catch {
+      toastError("Unable to restart login", "Shared Telegram login coordination is unavailable");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   const handleConnect = async () => {
     if (!apiId.trim() || !apiHash.trim()) return;
     setConnecting(true);
     try {
-      const savedSession = settingsStorage.get().mtprotoSession || "";
-      const result = await call<{ status?: string; error?: string; sessionString?: string }>(
+      const result = await call<{ status?: string; error?: string }>(
         "/api/tginvite/mtproto",
-        { body: { action: "connect", apiId: apiId.trim(), apiHash: apiHash.trim(), sessionString: savedSession } }
+        { body: { action: "connect", apiId: apiId.trim(), apiHash: apiHash.trim() } }
       );
       if (result?.status === "connected") {
         setConnected(true);
@@ -3175,16 +3202,13 @@ function MTProtoSettings({
           password: passwordRequired ? twoFactorPassword : undefined,
         }),
       });
-      const result = (await response.json()) as { status?: string; error?: string; sessionString?: string };
+      const result = (await response.json()) as { status?: string; error?: string };
       if (result?.status === "authenticated") {
         setConnected(true);
         setNeedsPhone(false);
         setCodeSent(false);
         setPasswordRequired(false);
-        if (result.sessionString) {
-          settingsStorage.set({ ...settingsStorage.get(), mtprotoSession: result.sessionString });
-        }
-        success("MTProto authenticated", "Real member fetching enabled");
+         success("MTProto authenticated", "Real member fetching enabled");
       } else if (result?.status === "password_required") {
         setPasswordRequired(true);
         warning("2FA password required", "Enter your Telegram cloud password");
@@ -3192,6 +3216,11 @@ function MTProtoSettings({
         setPasswordRequired(true);
         setTwoFactorPassword("");
         toastError("Invalid 2FA password", result?.error || "Check your Telegram cloud password and try again");
+      } else if (result?.status === "login_lease_unavailable" && response.status === 409) {
+        setCodeSent(false);
+        setPasswordRequired(false);
+        setNeedsPhone(true);
+        toastError("Login conflict", "Another login attempt replaced this one. Restart your Telegram login.");
       } else if (result?.status === "login_not_started") {
         setCodeSent(false);
         setPasswordRequired(false);
@@ -3211,12 +3240,22 @@ function MTProtoSettings({
 
   if (connected) {
     return (
-      <div className="flex items-center gap-3 p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
-        <CheckCircle2 className="h-5 w-5 text-green-400" />
-        <div>
-          <div className="text-sm font-medium text-green-400">MTProto Connected</div>
-          <div className="text-xs text-content-muted">Real member fetching with activity filtering is available</div>
+      <div className="flex items-center justify-between gap-3 p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
+        <div className="flex items-center gap-3">
+          <CheckCircle2 className="h-5 w-5 text-green-400" />
+          <div>
+            <div className="text-sm font-medium text-green-400">MTProto Connected</div>
+            <div className="text-xs text-content-muted">Your authorized Telegram account is connected.</div>
+          </div>
         </div>
+        <button
+          type="button"
+          disabled={connecting}
+          onClick={handleDisconnect}
+          className="rounded-lg border border-red-400/30 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+        >
+          Disconnect
+        </button>
       </div>
     );
   }
@@ -3300,13 +3339,9 @@ function MTProtoSettings({
         {codeSent && (
           <button
             type="button"
-            onClick={() => {
-              setCodeSent(false);
-              setPasswordRequired(false);
-              setPhoneCode("");
-              setTwoFactorPassword("");
-            }}
-            className="text-xs text-content-muted hover:text-content"
+            onClick={handleRestartLogin}
+            disabled={connecting}
+            className="text-xs text-content-muted hover:text-content disabled:opacity-50"
           >
             Change phone or resend code
           </button>

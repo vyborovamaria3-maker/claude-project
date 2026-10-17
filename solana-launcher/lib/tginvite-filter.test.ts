@@ -194,12 +194,12 @@ describe("filterMembers", () => {
     expect(result.allScores.length).toBe(members.length);
   });
 
-  it("whitelist bypasses filters", () => {
+  it("whitelist cannot override bot exclusion", () => {
     const result = filterMembers(
       [makeMember({ id: 1, isBot: true, username: "mybot", firstName: "Bot" })],
       { ...DEFAULT_FILTER_CONFIG, removeBots: true, whitelistUsernames: ["mybot"] }
     );
-    expect(result.filtered.length).toBe(1);
+    expect(result.filtered.length).toBe(0);
   });
 
   it("blacklist removes users", () => {
@@ -210,11 +210,27 @@ describe("filterMembers", () => {
     expect(result.stats.blacklistRemoved).toBe(1);
   });
 
-  it("whitelist takes priority over blacklist", () => {
+  it("explicit blacklist takes priority over whitelist", () => {
     const result = filterMembers(
       [makeMember({ id: 1, username: "vip", firstName: "VIP" })],
       { ...DEFAULT_FILTER_CONFIG, blacklistUsernames: ["vip"], whitelistUsernames: ["vip"] }
     );
-    expect(result.filtered.length).toBe(1);
+    expect(result.filtered.length).toBe(0);
+  });
+});
+
+describe("privacy-aware filters", () => {
+  it("treats hidden last-seen state as unknown, not automatically inactive", () => {
+    const result = filterMembers(
+      [makeMember({ id: 500, username: "privacy", firstName: "Hidden", photo: { isPersonal: true } })],
+      {
+        ...DEFAULT_FILTER_CONFIG,
+        minActivityScore: 0,
+        minLastSeenDays: 30,
+        requireAvatar: true,
+      }
+    );
+    expect(result.filtered).toHaveLength(1);
+    expect(result.stats.inactiveRemoved).toBe(0);
   });
 });

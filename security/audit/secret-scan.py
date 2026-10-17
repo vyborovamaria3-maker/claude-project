@@ -141,6 +141,20 @@ def scan_history(findings: set[tuple[str, str]]) -> None:
                 else match[0],
                 line,
             )
+        # Exact synthetic Telegram fixture in two PR #62 test files. Current
+        # and diff scans stay strict; all other historical values still fail.
+        if current_path in {
+            "solana-launcher/lib/tginvite-invite-policy.test.ts",
+            "solana-launcher/lib/tginvite-invite-route.test.ts",
+        }:
+            line = re.sub(
+                r"\b\d{6,12}:[A-Za-z0-9_-]{30,}\b",
+                lambda match: "verified-test-fixture"
+                if hashlib.sha256(match[0].encode()).hexdigest()
+                == "79d4ca920b2c1434e46e13d0095542c1a8fc2c4d9cafeb1751cdd2c103eef67a"
+                else match[0],
+                line,
+            )
         scan_line(current_path, line[1:], findings)
     stderr = proc.stderr.read() if proc.stderr is not None else ""
     code = proc.wait()
