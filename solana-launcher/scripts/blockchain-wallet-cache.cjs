@@ -260,6 +260,9 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
       for (const leg of [...(swap?.tokenInputs || []), ...(swap?.tokenOutputs || [])]) {
         if (leg && leg.mint && leg.userAccount === wallet) mints.add(leg.mint);
       }
+      for (const delta of event.tokenBalanceDeltas || []) {
+        if (delta && delta.mint && delta.owner === wallet) mints.add(delta.mint);
+      }
       for (const mint of mints) {
         if (typeof mint === 'string' && mint) tokenMints.add(mint);
         if (typeof mint !== 'string') continue;
