@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { pool, migrate } from "../db.js";
 import { refreshNarrativeAggregates } from "./narratives.js";
-import { refreshChannelScores, refreshSignals, refreshTokenChannelMetrics, refreshTokenVelocity } from "./token-intelligence.js";
+import { refreshChannelScores, refreshSignals, refreshTokenChannelMetrics, refreshTokenFirstMentions, refreshTokenVelocity } from "./token-intelligence.js";
 
 /** Explicit offline rebuild for existing rows, or after manual DB deletions.
  * Stop the live worker first; advisory lock prevents concurrent ingestion. */
@@ -35,6 +35,7 @@ async function main(): Promise<void> {
         FROM tg_messages WHERE posted_at IS NOT NULL AND deleted_at IS NULL
         GROUP BY source_id,(posted_at AT TIME ZONE 'UTC')::date
       `);
+      await refreshTokenFirstMentions(guard);
       const sourceDays = await guard.query<{source_id: string; days: string[]}>(
         "SELECT source_id::text,array_agg(DISTINCT (posted_at AT TIME ZONE 'UTC')::date::text) AS days " +
         "FROM tg_messages WHERE posted_at IS NOT NULL AND deleted_at IS NULL GROUP BY source_id"
