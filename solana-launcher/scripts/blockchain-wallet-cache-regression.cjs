@@ -4,6 +4,8 @@
 const assert = require("node:assert/strict");
 const Database = require("better-sqlite3");
 const cache = require("./blockchain-wallet-cache.cjs");
+require("ts-node").register({ skipProject: true, transpileOnly: true, compilerOptions: { module: "commonjs" } });
+const { computeWalletCostBasisLedger } = require("../lib/trade/chain/quality-v3.ts");
 
 const WALLET = "11111111111111111111111111111111";
 const MINT_A = "So11111111111111111111111111111111111111112";
@@ -80,6 +82,32 @@ try {
     historyComplete: true, decoderCoverage: "swap_only", unknownOperationsRatio: 0,
     costBasisComplete: true, orderingComplete: true, reorgStable: true
   }), 0.25);
+
+  const rawTrades = [
+    { signature: "buy-1", timestamp: 100, slot: 10, trader: WALLET, type: "buy",
+      amountSol: 1, amountTokens: 100, priceSol: 0.01, quoteMint: MINT_A, quoteAmount: 1 },
+    { signature: "sell-1", timestamp: 200, slot: 20, trader: WALLET, type: "sell",
+      amountSol: 0.75, amountTokens: 50, priceSol: 0.015, quoteMint: MINT_A, quoteAmount: 0.75 }
+  ];
+  const noProvenance = computeWalletCostBasisLedger(WALLET, rawTrades, true);
+  assert.equal(noProvenance.costBasisComplete, false,
+    "legacy callers without decoder/finality provenance must fail closed");
+  assert.equal(noProvenance.realizedPnl, null);
+  const verified = computeWalletCostBasisLedger(WALLET, rawTrades, true, null, {
+    decoderCoverage: "full", unknownOperationsRatio: 0.05, reorgStable: true
+  });
+  assert.equal(verified.costBasisComplete, true);
+  assert.equal(verified.realizedPnl, 0.25);
+  const unknownTooHigh = computeWalletCostBasisLedger(WALLET, rawTrades, true, null, {
+    decoderCoverage: "full", unknownOperationsRatio: 0.051, reorgStable: true
+  });
+  assert.equal(unknownTooHigh.costBasisComplete, false);
+  assert.equal(unknownTooHigh.realizedPnl, null);
+  const notFinalized = computeWalletCostBasisLedger(WALLET, rawTrades, true, null, {
+    decoderCoverage: "full", unknownOperationsRatio: 0, reorgStable: false
+  });
+  assert.equal(notFinalized.costBasisComplete, false);
+  assert.equal(notFinalized.realizedPnl, null);
   assert.equal(cache.walletHistoryFresh(db, WALLET, 1_800_000_003_000 + 3 * 3600_000), false,
     "an active wallet history must be refreshed after the freshness window");
   cache.markWalletHistory(db, WALLET, {
