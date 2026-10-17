@@ -235,7 +235,7 @@ function claimOne(db) {
       + " AND (lease_until IS NULL OR lease_until<?)"
       + " AND NOT (kind='wallet' AND EXISTS ("
       + "   SELECT 1 FROM chain_wallet_discovery d WHERE d.wallet=chain_seed_targets.address"
-      + "   AND d.history_status='complete' AND d.last_fetched_at IS NOT NULL"
+      + "   AND d.history_status='complete' AND d.decoder_coverage='full' AND d.last_fetched_at IS NOT NULL"
       + "   AND (? - d.last_fetched_at) < CASE"
       + "     WHEN d.last_trade_at IS NOT NULL AND d.last_trade_at >= CAST((? - 86400000) / 1000 AS INTEGER)"
       + "     THEN 7200000 ELSE 86400000 END))"
