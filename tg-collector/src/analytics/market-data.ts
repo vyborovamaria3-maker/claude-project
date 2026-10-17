@@ -38,7 +38,10 @@ async function fetchPairs(mint: string): Promise<DexPair[]> {
 export async function refreshMarketSnapshots(limit = 100): Promise<{ checked: number; stored: number; unavailable: number; errors: number }> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("limit must be 1..1000");
   const tokens = await pool.query<{ chain_id: string; mint: string }>(
-    "SELECT chain_id,mint FROM tg_tokens WHERE chain_id='solana-mainnet' ORDER BY first_seen_at DESC LIMIT $1",
+    "SELECT t.chain_id,t.mint FROM tg_tokens t LEFT JOIN LATERAL (" +
+    "SELECT max(observed_at) AS last_seen_at FROM tg_token_market_snapshots s " +
+    "WHERE s.chain_id=t.chain_id AND s.mint=t.mint AND s.provider='dexscreener') latest ON TRUE " +
+    "WHERE t.chain_id='solana-mainnet' ORDER BY latest.last_seen_at ASC NULLS FIRST,t.first_seen_at DESC LIMIT $1",
     [limit],
   );
   let stored = 0;
@@ -132,8 +135,8 @@ export async function refreshTokenOutcomes(limit = 500): Promise<{ processed: nu
     "WHERE tm.analysis_version=$1 AND tm.orphaned=FALSE AND m.deleted_at IS NULL AND tm.message_date IS NOT NULL " +
     "AND NOT EXISTS (SELECT 1 FROM tg_token_outcomes o WHERE o.source_id=tm.source_id AND o.message_id=tm.message_id " +
     "AND o.chain_id=tm.chain_id AND o.mint=tm.mint AND o.analysis_version=$1 AND o.model_version=$2 " +
-    "AND o.outcome_status IN ('complete','insufficient_data','risk_confirmed')) " +
-    "GROUP BY tm.source_id,tm.message_id,tm.chain_id,tm.mint ORDER BY min(tm.message_date) DESC LIMIT $3",
+    "AND o.outcome_status IN ('complete','risk_confirmed')) " +
+    "GROUP BY tm.source_id,tm.message_id,tm.chain_id,tm.mint ORDER BY min(tm.message_date) ASC LIMIT $3",
     [ANALYSIS_VERSION, OUTCOME_VERSION, limit],
   );
   let complete = 0;
@@ -161,8 +164,9 @@ export async function refreshTokenOutcomes(limit = 500): Promise<{ processed: nu
     const ageMs = now.getTime() - mentionTime.getTime();
     let status: "pending" | "complete" | "insufficient_data";
     if (!base) status = ageMs < 10 * 60 * 1000 ? "pending" : "insufficient_data";
-    else if (ageMs >= 7 * 24 * 60 * 60 * 1000) status = "complete";
-    else status = "pending";
+    else if (ageMs < 24 * 60 * 60 * 1000) status = "pending";
+    else if (p24h) status = "complete";
+    else status = "insufficient_data";
     const returns = base ? returnsFromSeries(Number(base.price_usd), snapshots.filter((s) => s.observed_at >= mentionTime)) :
       { maxGain: null, maxDrawdown: null };
     await pool.query(
