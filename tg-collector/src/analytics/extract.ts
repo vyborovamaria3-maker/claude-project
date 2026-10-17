@@ -18,6 +18,7 @@ export interface RawTelegramMessage {
   date?: number;
   editDate?: number;
   replyToMsgId?: number;
+  replyTo?: { replyToMsgId?: number | { toString(): string } };
   views?: number;
   forwards?: number;
   replies?: { replies?: number };
