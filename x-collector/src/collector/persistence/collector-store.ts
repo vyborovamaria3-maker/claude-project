@@ -179,7 +179,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         public_metrics:{ like_count:t.likes, impression_count:t.views, retweet_count:t.retweets,reply_count:t.replies },
         ...(fromHttp ? { http_observation: t } : { browser_observation: t }),
       })) });
-      await storePage(client, sourceKey, archive, raw, received, null);
+      await storePage(client, sourceKey, archive, raw, received, null, { responseStatus: chunk.length === 0 ? "empty" : "nonempty" });
 
       if (mint) {
         const linkVals: unknown[] = [];
