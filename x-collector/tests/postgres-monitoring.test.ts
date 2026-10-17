@@ -30,6 +30,8 @@ test("PostgreSQL engine: full migration chain, persistence, retries and atomic r
       await db.query("INSERT INTO tweet_token_links(tweet_id,mint,handle,linked_at) VALUES($1,'mint-a',$1,9750)", [String(i)]);
       await db.query("INSERT INTO author_reputation(handle,reputation_score,updated_at) VALUES($1,100,9750)", [String(i)]);
     }
+    const leadStats = await db.query<{ rebuilt: number }>("SELECT rebuild_author_lead_stats() AS rebuilt");
+    assert.equal(Number(leadStats.rows[0]?.rebuilt), 20, "author lead stats should rebuild for linked tweets");
     await db.exec("BEGIN ISOLATION LEVEL REPEATABLE READ");
     const first = await executeMonitoringCycle(client, 10500, 1000);
     assert.equal(first.signals, 1); assert.equal(first.events, 1);
