@@ -13,7 +13,7 @@ Current wallet cache decoding is **swap-only**. Token transfers are indexed as w
 - `decoder_coverage='swap_only'` is the default;
 - a finished API backfill does not imply complete inventory history;
 - `history_status='complete'` is only allowed when pagination is complete, no gaps exist, and `decoder_coverage='full'`;
-- the current collector passes `swap_only`, so wallet history stays `partial` until a full decoder is implemented and independently validated;
+- the collector still passes `swap_only` for PnL and wallet-history completeness; inventory evidence is recorded separately and does not promote `decoder_coverage` to `full`;
 - PnL remains non-authoritative unless the caller supplies full decoder coverage, unknown-operation ratio <= 5%, stable/finalized evidence, complete inventory provenance, complete ordering, and verified reconciliation of canonical `token_trades` against leg-level raw evidence.
 
 The 5% unknown-operation threshold is a hard gate, not a confidence adjustment. Unknown ratios must be calculated from a defined denominator of relevant wallet/token operations; they must not be guessed. Until that denominator is measured, the gate must fail closed.
@@ -68,6 +68,13 @@ These are evaluation triggers, not automatic guarantees that PostgreSQL will sol
 - The swap decoder remains conservative and marked `swap_only`; balance deltas or a recognized DEX program alone do not establish complete inventory provenance. Authoritative PnL remains blocked until decoder coverage, source reconciliation, ordering, and finality are independently proven.
 - Missing Alchemy configuration fails closed. Helius is not a runtime fallback for the seed collector.
 
+## Offline trade reconciliation and inventory evidence
+
+- `blockchain-inventory-decoder.cjs` extracts parsed SPL transfer/mint/burn instruction evidence into `chain_inventory_movements`. It deliberately leaves unresolved ownership unresolved and does not create BUY/SELL trades.
+- `blockchain-trade-reconciliation.cjs` compares normalized trade signatures against observed raw transaction evidence and reports missing signatures, failed/unknown execution metadata, slot/owner/direction mismatches, and events with mint deltas but no normalized trade. A clean result is diagnostic only; it does not establish history completeness.
+- Run the read-only audit from `solana-launcher` after a local collection has been performed: `node scripts/blockchain-trade-reconcile.cjs <mint> [max-trades=100000]`. It opens `data/trade.db` in read-only mode, makes no API calls, and always marks the report `diagnostic_only`.
+- The inventory decoder and reconciliation tests use local fixtures only. They do not call Alchemy or start collection.
+
 ## Status at this revision
 
 Implemented schema/code scaffolding:
@@ -82,7 +89,7 @@ Implemented schema/code scaffolding:
 - cluster-candidate and versioned score-component tables.
 
 Still not implemented or not independently verified:
-- complete SPL transfer/mint/burn inventory decoder and transfer classification into inventory movements;
+- complete inventory ledger reconstruction from transfer/mint/burn movements, including token-account closure, ownership changes, airdrops, account creation/deletion, and all Token-2022 extensions;
 - finalized/reorg monitoring;
 - complete wiring of provider-specific credit/CU cost data;
 - authoritative population of unknown-operation ratios;
