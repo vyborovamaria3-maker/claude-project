@@ -277,6 +277,21 @@ function persistEvents(db, kind, address, transactions) {
   return saved;
 }
 
+function recordHeliusUsage(db, row, httpRequests, pagesFetched, lastPageEmpty, stage) {
+  if (!(Number(httpRequests) > 0)) return;
+  walletCache.recordBudgetUsage(db, {
+    provider: "helius",
+    endpoint: "enhanced_address_transactions",
+    costUnits: Number(httpRequests),
+    costKind: "http",
+    taskId: row.kind + ":" + row.address,
+    entityKind: row.kind,
+    entityKey: row.address,
+    ts: Date.now(),
+    metadata: { pagesFetched: Number(pagesFetched) || 0, lastPageEmpty: Boolean(lastPageEmpty), stage },
+  });
+}
+
 function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
   const discovered = new Set();
   for (const tx of transactions) {
@@ -326,9 +341,9 @@ async function processOne(db, row, cfg, api) {
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
   ).all(row.kind, row.address).map(r => r.signature));
   const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known);
-  let httpRequests = recent.httpRequests || 0;
   let pagesFetched = recent.pagesFetched || 0;
   let lastPageEmpty = Boolean(recent.lastPageEmpty);
+  recordHeliusUsage(db, row, recent.httpRequests, recent.pagesFetched, recent.lastPageEmpty, "recent");
   const events = [...recent.transactions];
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
@@ -346,9 +361,9 @@ async function processOne(db, row, cfg, api) {
     const bridge = await api.fetchEnrichedTxsForMintWithMeta(
       row.address, cfg.backfillLimit, known, forwardCursor
     );
-    httpRequests += bridge.httpRequests || 0;
     pagesFetched += bridge.pagesFetched || 0;
     lastPageEmpty = Boolean(bridge.lastPageEmpty);
+    recordHeliusUsage(db, row, bridge.httpRequests, bridge.pagesFetched, bridge.lastPageEmpty, "catch_up");
     events.push(...bridge.transactions);
     if (bridge.reachedKnownHistory || bridge.exhausted) {
       forwardCursor = null;
@@ -367,9 +382,9 @@ async function processOne(db, row, cfg, api) {
     const historical = await api.fetchEnrichedTxsForMintWithMeta(
       row.address, cfg.backfillLimit, null, backfillCursor
     );
-    httpRequests += historical.httpRequests || 0;
     pagesFetched += historical.pagesFetched || 0;
     lastPageEmpty = Boolean(historical.lastPageEmpty);
+    recordHeliusUsage(db, row, historical.httpRequests, historical.pagesFetched, historical.lastPageEmpty, "backfill");
     events.push(...historical.transactions);
     if (historical.exhausted) complete = true;
     else {
@@ -432,14 +447,6 @@ async function processOne(db, row, cfg, api) {
         gapReason: gap ? 'pagination_gap' : 'decoder_limit'
       });
     }
-    if (httpRequests > 0) {
-      walletCache.recordBudgetUsage(db, {
-        provider: 'helius', endpoint: 'enhanced_address_transactions',
-        costUnits: httpRequests, costKind: 'http',
-        taskId: row.kind + ':' + row.address, entityKind: row.kind, entityKey: row.address,
-        ts: Date.now(), metadata: { pagesFetched, lastPageEmpty }
-      });
-    }
     return n;
   }).immediate();
   return { kind: row.kind, address: row.address, newEvents: added,
@@ -480,6 +487,14 @@ async function collect(db, args) {
         if (succeeded % 10 === 0) console.log(JSON.stringify({ progress: succeeded, inserted, failed, gaps }));
       } catch (error) {
         failed++;
+        const requestCount = Number(error && error.httpRequests) || 0;
+        if (requestCount > 0) {
+          try {
+            recordHeliusUsage(db, row, requestCount, error.pagesFetched, error.lastPageEmpty, "failed_request");
+          } catch (ledgerError) {
+            console.error("[blockchain-collector] failed to record Helius HTTP usage:", ledgerError);
+          }
+        }
         failTask(db, row, error);
         console.error("[blockchain-collector]", row.kind, row.address,
           error instanceof Error ? error.message : String(error));
