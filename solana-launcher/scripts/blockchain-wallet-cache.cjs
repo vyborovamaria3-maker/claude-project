@@ -23,7 +23,10 @@ function ensureWalletCacheSchema(db) {
       possible_gap INTEGER NOT NULL DEFAULT 0,
       tokens_touched INTEGER NOT NULL DEFAULT 0,
       last_trade_at INTEGER,
-      last_error TEXT
+      last_error TEXT,
+      decoder_coverage TEXT NOT NULL DEFAULT 'swap_only'
+        CHECK(decoder_coverage IN ('swap_only','swap_and_transfers','swap_transfers_mint_burn','full')),
+      last_decoder_version TEXT NOT NULL DEFAULT 'wallet-trades-v1'
     );
     CREATE INDEX IF NOT EXISTS idx_chain_wallet_discovery_freshness
       ON chain_wallet_discovery(history_status, last_fetched_at);
@@ -51,6 +54,13 @@ function ensureWalletCacheSchema(db) {
       source_provider TEXT NOT NULL DEFAULT 'helius',
       raw_event_kind TEXT NOT NULL DEFAULT 'wallet',
       raw_event_address TEXT NOT NULL,
+      raw_event_signature TEXT NOT NULL,
+      raw_event_slot INTEGER,
+      reorg_status TEXT NOT NULL DEFAULT 'pending_confirmation'
+        CHECK(reorg_status IN ('stable','reorged','pending_confirmation')),
+      finalized_at INTEGER,
+      decoder_coverage TEXT NOT NULL DEFAULT 'swap_only'
+        CHECK(decoder_coverage IN ('swap_only','swap_and_transfers','swap_transfers_mint_burn','full')),
       first_seen_at INTEGER NOT NULL,
       last_seen_at INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'ok'
@@ -75,6 +85,10 @@ function ensureWalletCacheSchema(db) {
       sold_amount TEXT NOT NULL DEFAULT '0',
       realized_pnl TEXT,
       unrealized_pnl TEXT,
+      decoder_coverage TEXT NOT NULL DEFAULT 'swap_only'
+        CHECK(decoder_coverage IN ('swap_only','swap_and_transfers','swap_transfers_mint_burn','full')),
+      unknown_operations_count INTEGER NOT NULL DEFAULT 0,
+      unknown_operations_ratio REAL NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'unknown'
         CHECK(status IN ('verified','unknown')),
       data_confidence REAL NOT NULL DEFAULT 0,
@@ -85,8 +99,106 @@ function ensureWalletCacheSchema(db) {
       token_mint TEXT NOT NULL,
       last_trade_at INTEGER,
       trade_count INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'discovered_via_wallet',
       PRIMARY KEY(wallet, token_mint)
     );
+    CREATE TABLE IF NOT EXISTS chain_history_coverage (
+      entity_kind TEXT NOT NULL CHECK(entity_kind IN ('wallet','token')),
+      entity_key TEXT NOT NULL,
+      source TEXT NOT NULL,
+      coverage_start_slot INTEGER,
+      coverage_end_slot INTEGER,
+      events_count INTEGER NOT NULL DEFAULT 0,
+      expected_count INTEGER,
+      coverage_percent REAL CHECK(coverage_percent IS NULL OR (coverage_percent >= 0 AND coverage_percent <= 1)),
+      status TEXT NOT NULL CHECK(status IN ('complete','partial','gap','error')),
+      decoder_coverage TEXT NOT NULL DEFAULT 'swap_only'
+        CHECK(decoder_coverage IN ('swap_only','swap_and_transfers','swap_transfers_mint_burn','full')),
+      gap_reason TEXT,
+      checked_at INTEGER NOT NULL,
+      PRIMARY KEY(entity_kind, entity_key, source)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chain_history_coverage_status
+      ON chain_history_coverage(status, checked_at);
+    CREATE TABLE IF NOT EXISTS chain_budget_ledger (
+      id INTEGER PRIMARY KEY,
+      provider TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      cost_units REAL,
+      cost_kind TEXT NOT NULL CHECK(cost_kind IN ('credit','cu','http')),
+      task_id TEXT,
+      entity_kind TEXT,
+      entity_key TEXT,
+      ts INTEGER NOT NULL,
+      metadata_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_chain_budget_ledger_provider_ts
+      ON chain_budget_ledger(provider, ts);
+    CREATE INDEX IF NOT EXISTS idx_chain_budget_ledger_entity
+      ON chain_budget_ledger(entity_kind, entity_key, ts);
+    CREATE TABLE IF NOT EXISTS chain_wallet_pagination_state (
+      wallet TEXT PRIMARY KEY,
+      pagination_kind TEXT NOT NULL DEFAULT 'before'
+        CHECK(pagination_kind IN ('before','until','page_number')),
+      pagination_token TEXT,
+      pages_fetched INTEGER NOT NULL DEFAULT 0,
+      last_page_empty INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS chain_wallet_cluster_candidates (
+      wallet_a TEXT NOT NULL,
+      wallet_b TEXT NOT NULL,
+      evidence_type TEXT NOT NULL,
+      evidence_ref TEXT,
+      confidence REAL NOT NULL DEFAULT 0,
+      first_seen_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate','rejected','reviewed')),
+      PRIMARY KEY(wallet_a, wallet_b, evidence_type),
+      CHECK(wallet_a < wallet_b)
+    );
+    CREATE TABLE IF NOT EXISTS chain_wallet_smart_money_metrics (
+      wallet TEXT PRIMARY KEY,
+      model_version TEXT NOT NULL,
+      early_entry_ratio REAL,
+      win_rate REAL,
+      median_hold_time_sec REAL,
+      trade_size_median REAL,
+      wallet_age_days REAL,
+      tokens_touched INTEGER,
+      cluster_size INTEGER,
+      confidence_low REAL,
+      confidence_high REAL,
+      calculated_at INTEGER NOT NULL
+    );
+  `);
+}
+
+function ensureColumn(db, table, column, declaration) {
+  if (!db.pragma("table_info(" + table + ")").some(row => row.name === column)) {
+    db.exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + declaration);
+  }
+}
+
+function ensureWalletCacheSchema(db) {
+  db.exec("PRAGMA foreign_keys = ON");
+  // CREATE TABLE above handles new databases; these additive migrations also support
+  // existing local pilot databases without dropping or rebuilding user data.
+  ensureColumn(db, "chain_wallet_discovery", "decoder_coverage", "TEXT NOT NULL DEFAULT 'swap_only'");
+  ensureColumn(db, "chain_wallet_discovery", "last_decoder_version", "TEXT NOT NULL DEFAULT 'wallet-trades-v1'");
+  ensureColumn(db, "chain_wallet_trades", "raw_event_signature", "TEXT");
+  ensureColumn(db, "chain_wallet_trades", "raw_event_slot", "INTEGER");
+  ensureColumn(db, "chain_wallet_trades", "reorg_status", "TEXT NOT NULL DEFAULT 'pending_confirmation'");
+  ensureColumn(db, "chain_wallet_trades", "finalized_at", "INTEGER");
+  ensureColumn(db, "chain_wallet_trades", "decoder_coverage", "TEXT NOT NULL DEFAULT 'swap_only'");
+  ensureColumn(db, "chain_wallet_token_summary", "decoder_coverage", "TEXT NOT NULL DEFAULT 'swap_only'");
+  ensureColumn(db, "chain_wallet_token_summary", "unknown_operations_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "chain_wallet_token_summary", "unknown_operations_ratio", "REAL NOT NULL DEFAULT 1");
+  ensureColumn(db, "chain_wallet_token_touched", "source", "TEXT NOT NULL DEFAULT 'discovered_via_wallet'");
+  db.exec(`
+    UPDATE chain_wallet_trades SET raw_event_signature=signature WHERE raw_event_signature IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_chain_wallet_discovery_freshness
+      ON chain_wallet_discovery(history_status, last_fetched_at);
   `);
 }
 
@@ -107,12 +219,14 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
       wallet, chain, signature, leg_key, instruction_index, slot, block_time,
       commitment_level, token_mint, direction, amount_tokens, amount_sol,
       fee_lamports, dex, pool, counterparty, decoder_version, source_provider,
-      raw_event_kind, raw_event_address, first_seen_at, last_seen_at, status
+      raw_event_kind, raw_event_address, raw_event_signature, raw_event_slot,
+      reorg_status, finalized_at, decoder_coverage, first_seen_at, last_seen_at, status
     ) VALUES (
       @wallet, 'solana', @signature, @leg_key, @instruction_index, @slot, @block_time,
       'confirmed', @token_mint, @direction, @amount_tokens, @amount_sol,
       @fee_lamports, @dex, @pool, @counterparty, @decoder_version, @source_provider,
-      'wallet', @wallet, @now, @now, 'ok'
+      'wallet', @wallet, @signature, @slot, 'pending_confirmation', NULL, 'swap_only',
+      @now, @now, 'ok'
     )
     ON CONFLICT(wallet, chain, signature, leg_key) DO UPDATE SET
       last_seen_at=excluded.last_seen_at,
@@ -188,29 +302,32 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
       }
       db.prepare(`
         INSERT INTO chain_wallet_token_summary
-          (wallet, token_mint, trades_count, first_trade_at, last_trade_at, bought_amount, sold_amount, status, data_confidence)
-        VALUES(?,?,?,?,?,?,?,'unknown',0)
+          (wallet, token_mint, trades_count, first_trade_at, last_trade_at, bought_amount, sold_amount,
+         decoder_coverage, unknown_operations_count, unknown_operations_ratio, status, data_confidence)
+        VALUES(?,?,?,?,?,?,?,'swap_only',0,1,'unknown',0)
         ON CONFLICT(wallet, token_mint) DO UPDATE SET
           trades_count=excluded.trades_count, first_trade_at=excluded.first_trade_at,
           last_trade_at=excluded.last_trade_at, bought_amount=excluded.bought_amount,
           sold_amount=excluded.sold_amount, status='unknown', data_confidence=0
       `).run(wallet, mint, rows.length, first, last, String(bought), String(sold));
       db.prepare(`
-        INSERT INTO chain_wallet_token_touched(wallet, token_mint, last_trade_at, trade_count)
-        VALUES(?,?,?,?)
+        INSERT INTO chain_wallet_token_touched(wallet, token_mint, last_trade_at, trade_count, source)
+        VALUES(?,?,?,?,'discovered_via_wallet')
         ON CONFLICT(wallet, token_mint) DO UPDATE SET
           last_trade_at=excluded.last_trade_at, trade_count=excluded.trade_count
       `).run(wallet, mint, last, rows.length);
     }
     db.prepare(`
       INSERT INTO chain_wallet_discovery
-        (wallet, chain, first_discovered_at, history_status, tokens_touched, last_trade_at)
-      VALUES(?, 'solana', ?, 'partial', ?, ?)
+        (wallet, chain, first_discovered_at, history_status, tokens_touched, last_trade_at,
+         decoder_coverage, last_decoder_version)
+      VALUES(?, 'solana', ?, 'partial', ?, ?, 'swap_only', ?)
       ON CONFLICT(wallet) DO UPDATE SET
         tokens_touched=MAX(chain_wallet_discovery.tokens_touched, excluded.tokens_touched),
-        last_trade_at=MAX(COALESCE(chain_wallet_discovery.last_trade_at,0), COALESCE(excluded.last_trade_at,0))
+        last_trade_at=MAX(COALESCE(chain_wallet_discovery.last_trade_at,0), COALESCE(excluded.last_trade_at,0)),
+        decoder_coverage='swap_only', last_decoder_version=excluded.last_decoder_version
     `).run(wallet, now, db.prepare('SELECT COUNT(*) AS n FROM chain_wallet_token_touched WHERE wallet=?').get(wallet).n,
-      db.prepare('SELECT MAX(block_time) AS t FROM chain_wallet_trades WHERE wallet=?').get(wallet).t);
+      db.prepare('SELECT MAX(block_time) AS t FROM chain_wallet_trades WHERE wallet=?').get(wallet).t, decoderVersion);
   });
   tx();
   return { upserted: insertedOrUpdated, tokenMints: [...tokenMints] };
