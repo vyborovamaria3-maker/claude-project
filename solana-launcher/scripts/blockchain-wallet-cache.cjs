@@ -252,7 +252,7 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
             && transfer.mint) mints.add(transfer.mint);
       }
       for (const leg of [...(swap?.tokenInputs || []), ...(swap?.tokenOutputs || [])]) {
-        if (leg && leg.mint && (!leg.userAccount || leg.userAccount === wallet)) mints.add(leg.mint);
+        if (leg && leg.mint && leg.userAccount === wallet) mints.add(leg.mint);
       }
       for (const mint of mints) {
         if (typeof mint === 'string' && mint) tokenMints.add(mint);
@@ -282,7 +282,7 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
             amount_tokens: trade.amountTokens == null ? null : String(trade.amountTokens),
             amount_sol: trade.amountSol == null ? null : String(trade.amountSol),
             fee_lamports: finiteNumber(trade.feeLamports),
-            dex: trade.dex || (swap.programInfo && swap.programInfo.source) || null,
+            dex: trade.dex || (swap?.programInfo && swap.programInfo.source) || null,
             pool: trade.pool || null,
             counterparty: trade.counterparty || null,
             decoder_version: decoderVersion,
