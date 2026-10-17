@@ -71,7 +71,7 @@ PostgreSQL. Обычный `npm run migrate` выполняет тот же pref
 
 ## 049_raw_retention_author_id.sql
 
-Миграция добавляет к `archive_raw_pages` явные `parser_version`, `parse_status`, `response_status` и `expires_at`. Существующий `hash` уже является SHA-256 ключом raw-ответа, поэтому отдельная дублирующая колонка хеша не нужна.
+Миграция добавляет к `archive_raw_pages` явные `parser_version`, `parse_status`, `response_status` и `expires_at`. Существующий `hash` — SHA-256 полного capture-файла/конверта; `response_hash` отдельно хеширует именно `source_response` (или весь объект, если отдельного поля ответа нет), чтобы находить повторяющиеся ответы без схлопывания разных наблюдений.
 
 - `parse_status`: `captured / parsed / partial / failed`.
 - `response_status`: `unknown / empty / nonempty / error`; пустая выдача отделена от ошибки парсинга.
