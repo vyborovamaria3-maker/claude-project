@@ -193,6 +193,14 @@ assert.equal(fetchCount, 1, "fresh cache should avoid repeated fetch");
 // Alchemy primary-provider contract: mocked JSON-RPC only; no real API requests.
 const { createAlchemyProvider, getAlchemyConfig } = require("./blockchain-alchemy-provider.cjs");
 assert.throws(() => getAlchemyConfig({}), /Alchemy Solana API key|ALCHEMY_SOLANA_RPC_URL/);
+assert.equal(getAlchemyConfig({
+  NEXT_PUBLIC_QUICKNODE_RPC_URL: "https://solana-mainnet.g.alchemy.com/v2/legacy-test-key",
+}).endpoint, "https://solana-mainnet.g.alchemy.com/v2/legacy-test-key",
+"legacy variable name is accepted only when the URL host is Alchemy");
+assert.throws(() => getAlchemyConfig({
+  NEXT_PUBLIC_QUICKNODE_RPC_URL: "https://example.quicknode.com/abc",
+}), /Alchemy Solana API key|ALCHEMY_SOLANA_RPC_URL/,
+"non-Alchemy QuickNode endpoints must not silently become the primary provider");
 const alchemyCalls = [];
 const alchemyPages = [
   {
