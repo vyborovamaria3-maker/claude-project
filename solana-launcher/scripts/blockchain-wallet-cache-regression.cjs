@@ -71,12 +71,12 @@ try {
   assert.equal(cache.authoritativePnlAllowed({
     historyComplete: true, decoderCoverage: "full", costBasisComplete: true,
     completeFromObservedTrades: true, orderingComplete: true, reorgStable: true,
-    unknownOperationsRatio: 0.05
+    sourceReconciled: true, unknownOperationsRatio: 0.05
   }), true);
   assert.equal(cache.authoritativePnlAllowed({
     historyComplete: true, decoderCoverage: "full", costBasisComplete: true,
     completeFromObservedTrades: true, orderingComplete: true, reorgStable: true,
-    unknownOperationsRatio: 0.051
+    sourceReconciled: true, unknownOperationsRatio: 0.051
   }), false, "unknown operation ratio above 5% must block authoritative PnL");
   assert.equal(cache.calculateDataConfidence({
     historyComplete: true, decoderCoverage: "swap_only", unknownOperationsRatio: 0,
@@ -93,8 +93,14 @@ try {
   assert.equal(noProvenance.costBasisComplete, false,
     "legacy callers without decoder/finality provenance must fail closed");
   assert.equal(noProvenance.realizedPnl, null);
+  const unreconciled = computeWalletCostBasisLedger(WALLET, rawTrades, true, null, {
+    decoderCoverage: "full", unknownOperationsRatio: 0, reorgStable: true, sourceReconciled: false
+  });
+  assert.equal(unreconciled.costBasisComplete, false,
+    "PnL must remain non-authoritative until token_trades matches leg-level evidence");
+  assert.equal(unreconciled.realizedPnl, null);
   const verified = computeWalletCostBasisLedger(WALLET, rawTrades, true, null, {
-    decoderCoverage: "full", unknownOperationsRatio: 0.05, reorgStable: true
+    decoderCoverage: "full", unknownOperationsRatio: 0.05, reorgStable: true, sourceReconciled: true
   });
   assert.equal(verified.costBasisComplete, true);
   assert.equal(verified.realizedPnl, 0.25);
