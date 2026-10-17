@@ -33,8 +33,10 @@ test("archive pagination, provenance, graph, snapshots and resumable import use 
     const query = async (sql: string, params: unknown[] = []) => { const r = await db.query(sql, params); return { rows: r.rows, rowCount: r.affectedRows || r.rows.length }; };
     const a = mock.method(Pool.prototype, "query", query), b = mock.method(Pool.prototype, "connect", async () => ({ query, release() { }, on() { } }));
     try {
+        await db.exec(await fs.readFile("migrations/001_init.sql", "utf8"));
         await db.exec(await fs.readFile("migrations/014_archive.sql", "utf8"));
         await db.exec(await fs.readFile("migrations/018_ai_foundation.sql", "utf8"));
+        await db.exec(await fs.readFile("migrations/049_raw_retention_author_id.sql", "utf8"));
         assert.equal(await planArchive("solana", "2024-10-08", "2024-10-09"), 1);
         assert.equal(await planArchive("solana", "2024-10-08", "2024-10-09"), 0);
         let job = (await q1<Job>("SELECT * FROM archive_jobs LIMIT 1"))!;
