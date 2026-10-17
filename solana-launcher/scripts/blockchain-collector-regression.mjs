@@ -251,6 +251,35 @@ const unknownInventory = decodeInventoryMovements({
 assert.equal(unknownInventory.length, 2);
 assert.ok(unknownInventory.every((m) => m.owner === null && m.attributionStatus === "owner_unknown"),
   "unknown transfer ownership must be preserved as unknown, not guessed");
+const { reconcileTradeEvidence } = require("./blockchain-trade-reconciliation.cjs");
+const reconciliation = reconcileTradeEvidence({
+  mint: "mintA",
+  events: [{
+    signature: "trade-1", slot: 10, transactionError: null,
+    tokenBalanceDeltas: [{ owner: "walletA", mint: "mintA", deltaRaw: "100" }],
+  }],
+  trades: [{ signature: "trade-1", slot: 10, trader: "walletA", type: "buy" }],
+});
+assert.equal(reconciliation.status, "observed_matches_no_detected_mismatch");
+assert.equal(reconciliation.authority, "diagnostic_only");
+assert.equal(reconciliation.historyComplete, false);
+const brokenReconciliation = reconcileTradeEvidence({
+  mint: "mintA",
+  events: [{
+    signature: "trade-2", slot: 10, transactionError: null,
+    tokenBalanceDeltas: [{ owner: "walletA", mint: "mintA", deltaRaw: "-100" }],
+  }],
+  trades: [
+    { signature: "missing-trade", slot: 11, trader: "walletA", type: "buy" },
+    { signature: "trade-2", slot: 11, trader: "walletB", type: "buy" },
+  ],
+});
+assert.equal(brokenReconciliation.status, "needs_review");
+assert.equal(brokenReconciliation.tradesWithoutEvent.length, 1);
+assert.equal(brokenReconciliation.slotMismatches.length, 1);
+assert.equal(brokenReconciliation.ownerMismatches.length, 1);
+assert.equal(brokenReconciliation.directionMismatches.length, 1);
+assert.equal(brokenReconciliation.authority, "diagnostic_only");
 assert.throws(() => getAlchemyConfig({}), /Alchemy Solana API key|ALCHEMY_SOLANA_RPC_URL/);
 assert.equal(getAlchemyConfig({
   NEXT_PUBLIC_QUICKNODE_RPC_URL: "https://solana-mainnet.g.alchemy.com/v2/legacy-test-key",
