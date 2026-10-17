@@ -50,8 +50,10 @@ function normalizeFullTransaction(item) {
     transaction?.transaction?.signatures?.[0] ||
     transaction?.signatures?.[0];
   if (typeof signature !== "string" || !signature) return null;
-  const slot = Number(item.slot ?? transaction?.slot);
-  const blockTime = Number(item.blockTime ?? transaction?.blockTime);
+  const slotValue = item.slot ?? transaction?.slot;
+  const timeValue = item.blockTime ?? transaction?.blockTime;
+  const slot = slotValue == null ? NaN : Number(slotValue);
+  const blockTime = timeValue == null ? NaN : Number(timeValue);
   const meta = item.meta || transaction?.meta || null;
   const txObject = transaction?.transaction ? transaction.transaction : transaction;
   const message = txObject?.message || {};
@@ -70,6 +72,7 @@ function normalizeFullTransaction(item) {
     if (typeof parsedType === "string") {
       decodedOperations.push({
         program: String(ix.program || id || "unknown"),
+        programId: id ? String(id) : null,
         type: parsedType,
         info: ix.parsed?.info && typeof ix.parsed.info === "object" ? ix.parsed.info : {},
         decoderCoverage: ["transfer", "transferChecked", "mintTo", "mintToChecked", "burn", "burnChecked"].includes(parsedType)
@@ -119,7 +122,7 @@ function normalizeFullTransaction(item) {
     signature,
     timestamp: Number.isFinite(blockTime) ? blockTime : null,
     slot: Number.isFinite(slot) ? slot : null,
-    transactionError: meta ? (meta.err ?? null) : { unknown: "missing_transaction_meta" },
+    transactionError: meta && Object.hasOwn(meta, "err") ? meta.err : { unknown: "missing_execution_status" },
     fee: Number.isFinite(Number(meta?.fee)) ? Number(meta.fee) / 1e9 : null,
     source: "alchemy",
     provider: "alchemy",
@@ -219,6 +222,7 @@ function createAlchemyProvider(options = {}) {
         limit: pageLimit,
         commitment: "finalized",
         encoding: "jsonParsed",
+        maxSupportedTransactionVersion: 0,
         ...(token ? { paginationToken: token } : {})
       }];
       let response;
@@ -232,7 +236,8 @@ function createAlchemyProvider(options = {}) {
       }
       httpRequests += response.httpRequests;
       pagesFetched++;
-      const page = Array.isArray(response.result?.transactions) ? response.result.transactions :
+      const page = Array.isArray(response.result?.data) ? response.result.data :
+        Array.isArray(response.result?.transactions) ? response.result.transactions :
         Array.isArray(response.result?.items) ? response.result.items :
         Array.isArray(response.result) ? response.result : null;
       if (!page) {
@@ -245,7 +250,7 @@ function createAlchemyProvider(options = {}) {
       try {
         for (const item of page) {
           const normalized = normalizeFullTransaction(item);
-          if (!normalized) continue;
+          if (!normalized) throw new Error("Alchemy full transaction missing signature; refusing to advance cursor");
           if (knownSignatures?.has(normalized.signature)) {
             reachedKnownHistory = true;
             continue;
@@ -258,7 +263,12 @@ function createAlchemyProvider(options = {}) {
         throw error;
       }
       const nextToken = response.result?.paginationToken ?? response.result?.pagination_token ?? null;
-      if (typeof nextToken === "string" && nextToken && nextToken !== token) token = nextToken;
+      if (typeof nextToken === "string" && nextToken && nextToken === token) {
+        const error = new Error("Alchemy pagination cursor did not advance");
+        Object.assign(error, { httpRequests, pagesFetched, lastPageEmpty });
+        throw error;
+      }
+      if (typeof nextToken === "string" && nextToken) token = nextToken;
       else { token = undefined; exhausted = true; break; }
       if (reachedKnownHistory || transactions.length >= limit) break;
     }
@@ -279,7 +289,7 @@ function createAlchemyProvider(options = {}) {
   function txsToTrades(transactions, mint) {
     const trades = [];
     for (const tx of transactions || []) {
-      if (tx.transactionError != null || !tx.instructionProgramIds?.some((id) => DEX_PROGRAMS.has(id))) continue;
+      if (tx.transactionError !== null || !tx.instructionProgramIds?.some((id) => DEX_PROGRAMS.has(id))) continue;
       const deltas = (tx.tokenBalanceDeltas || []).filter((d) => d.mint === mint && d.owner && d.deltaRaw !== "0");
       if (deltas.length !== 1) continue;
       const delta = deltas[0];
@@ -288,7 +298,8 @@ function createAlchemyProvider(options = {}) {
       const nativeDeltaLamports = Number(tx.postBalances[keyIndex] ?? 0) - Number(tx.preBalances[keyIndex] ?? 0);
       const feeLamports = Number(tx.meta?.fee || 0);
       const isBuy = Number(delta.deltaRaw) > 0;
-      const solLamports = isBuy ? -(nativeDeltaLamports + feeLamports) : nativeDeltaLamports + feeLamports;
+      const ownerFeeLamports = keyIndex === 0 ? feeLamports : 0;
+      const solLamports = isBuy ? -(nativeDeltaLamports + ownerFeeLamports) : nativeDeltaLamports + ownerFeeLamports;
       const amountTokens = Math.abs(delta.delta);
       const amountSol = solLamports / 1e9;
       if (!(amountTokens > 0 && amountSol > 0 && Number.isFinite(amountSol))) continue;

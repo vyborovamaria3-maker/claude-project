@@ -5,6 +5,7 @@
 // remains unknown; transfer/mint/burn evidence must not be inferred from a swap.
 const TRANSFER_TYPES = new Set(["transfer", "transferChecked"]);
 const MINT_TYPES = new Set(["mintTo", "mintToChecked"]);
+const TOKEN_PROGRAMS = new Set(["spl-token", "spl-token-2022", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
 const BURN_TYPES = new Set(["burn", "burnChecked"]);
 
 function amountParts(info) {
@@ -24,7 +25,7 @@ function amountParts(info) {
 }
 
 function decodeInventoryMovements(tx) {
-  if (!tx || typeof tx.signature !== "string" || !tx.signature) return [];
+  if (!tx || typeof tx.signature !== "string" || !tx.signature || tx.transactionError !== null) return [];
   const ops = Array.isArray(tx.decodedOperations) ? tx.decodedOperations : [];
   const balances = Array.isArray(tx.tokenBalanceDeltas) ? tx.tokenBalanceDeltas : [];
   const ownerByTokenAccount = new Map();
@@ -36,9 +37,18 @@ function decodeInventoryMovements(tx) {
     // decimals are stable for a token account, so retaining either is safe.
     if (!balanceByTokenAccount.has(b.tokenAccount)) balanceByTokenAccount.set(b.tokenAccount, b);
   }
+  // Owner-level deltas aggregate multiple token accounts. Recover account-level
+  // metadata from the retained pre/post balances before inferring transfer owners.
+  for (const b of [...(tx.preTokenBalances || []), ...(tx.postTokenBalances || [])]) {
+    const account = Number.isInteger(b.accountIndex) ? tx.accountKeys?.[b.accountIndex] : null;
+    if (!account) continue;
+    if (b.owner) ownerByTokenAccount.set(account, b.owner);
+    balanceByTokenAccount.set(account, { mint: b.mint, decimals: b.uiTokenAmount?.decimals });
+  }
   const movements = [];
   for (let operationIndex = 0; operationIndex < ops.length; operationIndex++) {
     const op = ops[operationIndex];
+    if (!TOKEN_PROGRAMS.has(op?.programId || op?.program)) continue;
     const info = op?.info || {};
     const type = String(op?.type || "");
     if (!TRANSFER_TYPES.has(type) && !MINT_TYPES.has(type) && !BURN_TYPES.has(type)) continue;
@@ -52,7 +62,7 @@ function decodeInventoryMovements(tx) {
     // decimals. Resolve them only from the matching transaction token account.
     const mint = typeof info.mint === "string" ? info.mint : accountBalance?.mint || null;
     const decimals = amount.decimals != null ? amount.decimals :
-      (Number.isFinite(Number(accountBalance?.decimals)) ? Number(accountBalance.decimals) : null);
+      (accountBalance?.decimals != null && Number.isFinite(Number(accountBalance.decimals)) ? Number(accountBalance.decimals) : null);
     const sourceOwner = sourceAccount ? ownerByTokenAccount.get(sourceAccount) || null : null;
     const destinationOwner = destinationAccount ? ownerByTokenAccount.get(destinationAccount) || null : null;
     let kind;

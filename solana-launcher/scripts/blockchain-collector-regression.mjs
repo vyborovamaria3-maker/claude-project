@@ -225,12 +225,12 @@ assert.doesNotThrow(() => new vm.Script(read("scripts/blockchain-trade-reconcili
 assert.doesNotThrow(() => new vm.Script(read("scripts/blockchain-trade-reconcile.cjs")));
 const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
 const inventoryEvidence = decodeInventoryMovements({
-  signature: "inventory-evidence", slot: 903, timestamp: 1700000003,
+  signature: "inventory-evidence", transactionError: null, slot: 903, timestamp: 1700000003,
   decodedOperations: [
-    { type: "transferChecked", info: { source: "tokenAccountA", destination: "tokenAccountB",
+    { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", type: "transferChecked", info: { source: "tokenAccountA", destination: "tokenAccountB",
       mint: "mintA", tokenAmount: { amount: "1250", decimals: 2 }, authority: "authorityA" } },
-    { type: "mintTo", info: { account: "tokenAccountB", mint: "mintA", amount: "100" } },
-    { type: "burn", info: { account: "tokenAccountA", mint: "mintA", amount: "50" } },
+    { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", type: "mintTo", info: { account: "tokenAccountB", mint: "mintA", amount: "100" } },
+    { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", type: "burn", info: { account: "tokenAccountA", mint: "mintA", amount: "50" } },
   ],
   tokenBalanceDeltas: [
     { owner: "walletA", tokenAccount: "tokenAccountA", mint: "mintA", deltaRaw: "-1250" },
@@ -247,8 +247,8 @@ assert.equal(inventoryEvidence[2].owner, "walletB");
 assert.equal(inventoryEvidence[3].kind, "burn");
 assert.equal(inventoryEvidence[3].owner, "walletA");
 const uncheckedTransfer = decodeInventoryMovements({
-  signature: "unchecked-transfer",
-  decodedOperations: [{ type: "transfer", info: {
+  signature: "unchecked-transfer", transactionError: null,
+  decodedOperations: [{ programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", type: "transfer", info: {
     source: "tokenAccountA", destination: "tokenAccountB", amount: "250",
   } }],
   tokenBalanceDeltas: [
@@ -260,8 +260,8 @@ assert.equal(uncheckedTransfer.length, 2);
 assert.ok(uncheckedTransfer.every((m) => m.mint === "mintA" && m.decimals === 2),
   "unchecked transfer must resolve mint/decimals only from its token accounts");
 const unknownInventory = decodeInventoryMovements({
-  signature: "unknown-inventory",
-  decodedOperations: [{ type: "transfer", info: { source: "unknownA", destination: "unknownB", amount: "7" } }],
+  signature: "unknown-inventory", transactionError: null,
+  decodedOperations: [{ programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", type: "transfer", info: { source: "unknownA", destination: "unknownB", amount: "7" } }],
   tokenBalanceDeltas: [],
 });
 assert.equal(unknownInventory.length, 2);
@@ -390,3 +390,21 @@ assert.throws(() => noFallbackProvider({ env: {}, fetch: async () => { throw new
   "missing Alchemy configuration must fail closed, never fall back to Helius");
 
 console.log("[blockchain-collector-regression] OK: SQLite contract, PumpPortal, reconnect, legacy Helius helper, Alchemy pagination/retry and incremental cache");
+
+// Actual Alchemy full-history response uses data; v0 must be explicitly enabled.
+const liveAddressPage = JSON.parse(read("scripts/fixtures/alchemy-address-page.json"));
+const livePageProvider = createAlchemyProvider({
+  endpoint: "https://solana-mainnet.g.alchemy.com/v2/offline-fixture",
+  fetch: async (_url, options) => {
+    const request = JSON.parse(options.body);
+    assert.equal(request.params[1].maxSupportedTransactionVersion, 0);
+    return { ok: true, status: 200, json: async () => ({ result: liveAddressPage }) };
+  },
+});
+const liveParsed = await livePageProvider.fetchTransactionsForAddress("fixture-wallet", 1);
+assert.equal(liveParsed.transactions.length, 1);
+assert.equal(liveParsed.transactions[0].signature, liveAddressPage.data[0].transaction.signatures[0]);
+assert.equal(liveParsed.transactions[0].slot, liveAddressPage.data[0].slot);
+assert.equal(liveParsed.nextCursor, "alchemy:v1:" + liveAddressPage.paginationToken);
+assert.equal(liveParsed.exhausted, false);
+console.log("[blockchain-collector-regression] actual Alchemy data response and v0 contract OK");
