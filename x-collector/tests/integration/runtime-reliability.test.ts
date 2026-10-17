@@ -55,7 +55,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       const refreshed = await getPool().query("SELECT refresh_signal_quality_outcomes($1,$2,$3::integer[]) AS refreshed",
         [qualitySignalAt - 1, qualitySignalAt + 5 * 60000 + 1, [1]]);
       assert(Number(refreshed.rows[0]?.refreshed) >= 2, "quality refresh should evaluate both historical signals");
-      const outcomes = await getPool().query("SELECT mint,outcome_status,attention_change_pct::text,signal_version,baseline_window_start::text,baseline_window_end::text,outcome_window_start::text,outcome_window_end::text FROM signal_quality_outcomes WHERE mint = ANY($1::text[]) ORDER BY mint");
+      const outcomes = await getPool().query("SELECT mint,outcome_status,attention_change_pct::text,signal_version,baseline_window_start::text,baseline_window_end::text,outcome_window_start::text,outcome_window_end::text FROM signal_quality_outcomes WHERE mint = ANY($1::text[]) ORDER BY mint", [qualityMints]);
       assert.equal(outcomes.rows.length, 2);
       const ready = outcomes.rows.find(row => row.mint === qualityMints[0]);
       const missing = outcomes.rows.find(row => row.mint === qualityMints[1]);
