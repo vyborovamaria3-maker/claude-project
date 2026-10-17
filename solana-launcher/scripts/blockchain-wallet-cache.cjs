@@ -5,7 +5,7 @@
 // and conservative summaries without asserting that an incomplete wallet history is complete.
 const DECODER_VERSION = "wallet-trades-v1";
 
-function ensureWalletCacheSchema(db) {
+function createWalletCacheTables(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS chain_wallet_discovery (
       wallet TEXT PRIMARY KEY,
@@ -181,6 +181,7 @@ function ensureColumn(db, table, column, declaration) {
 }
 
 function ensureWalletCacheSchema(db) {
+  createWalletCacheTables(db);
   db.exec("PRAGMA foreign_keys = ON");
   // CREATE TABLE above handles new databases; these additive migrations also support
   // existing local pilot databases without dropping or rebuilding user data.
