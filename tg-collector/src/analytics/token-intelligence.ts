@@ -120,6 +120,10 @@ export async function syncMessageTokenCandidates(
     [sourceId, messageId, ANALYSIS_VERSION],
   );
 
+  const previousFingerprint = await tx.query<{cluster_id: string | null}>(
+    "SELECT cluster_id::text FROM tg_message_fingerprints WHERE source_id=$1 AND message_id=$2 AND analysis_version=$3",
+    [sourceId, messageId, ANALYSIS_VERSION],
+  );
   const fingerprint = fingerprintMessage(msg.message ?? "");
   let clusterId: string | null = null;
   if (fingerprint.clusterable) {
@@ -139,12 +143,41 @@ export async function syncMessageTokenCandidates(
     "cluster_id=EXCLUDED.cluster_id,method=EXCLUDED.method,computed_at=now()",
     [sourceId, messageId, fingerprint.fingerprint, fingerprint.normalizedLength, clusterId, ANALYSIS_VERSION],
   );
-  if (clusterId) {
+  const clusterIds = [...new Set([previousFingerprint.rows[0]?.cluster_id ?? null, clusterId].filter((id): id is string => Boolean(id)))];
+  for (const id of clusterIds) {
     await tx.query(
       "UPDATE tg_copy_clusters SET member_count=(SELECT count(*) FROM tg_message_fingerprints " +
       "WHERE cluster_id=$1 AND analysis_version=$2),updated_at=now() WHERE id=$1",
-      [clusterId, ANALYSIS_VERSION],
+      [id, ANALYSIS_VERSION],
     );
+  }
+
+  const similarityMethod = "normalized_exact_v" + ANALYSIS_VERSION;
+  await tx.query(
+    "DELETE FROM tg_message_similarity WHERE method=$3 AND " +
+    "((source_a=$1 AND message_a=$2) OR (source_b=$1 AND message_b=$2))",
+    [sourceId, messageId, similarityMethod],
+  );
+  if (clusterId) {
+    const peers = await tx.query<{source_id: string; message_id: string}>(
+      "SELECT source_id::text,message_id::text FROM tg_message_fingerprints " +
+      "WHERE cluster_id=$1 AND analysis_version=$2 AND NOT(source_id=$3 AND message_id=$4) " +
+      "ORDER BY source_id,message_id LIMIT 100",
+      [clusterId, ANALYSIS_VERSION, sourceId, messageId],
+    );
+    for (const peer of peers.rows) {
+      const peerFirst = BigInt(peer.source_id) < BigInt(sourceId) ||
+        (BigInt(peer.source_id) === BigInt(sourceId) && BigInt(peer.message_id) < BigInt(messageId));
+      const leftSource = peerFirst ? peer.source_id : sourceId;
+      const leftMessage = peerFirst ? peer.message_id : String(messageId);
+      const rightSource = peerFirst ? sourceId : peer.source_id;
+      const rightMessage = peerFirst ? String(messageId) : peer.message_id;
+      await tx.query(
+        "INSERT INTO tg_message_similarity(source_a,message_a,source_b,message_b,similarity,method,model_version) " +
+        "VALUES($1,$2,$3,$4,1,$5,$6) ON CONFLICT DO NOTHING",
+        [leftSource, leftMessage, rightSource, rightMessage, similarityMethod, "copy-v" + ANALYSIS_VERSION],
+      );
+    }
   }
   await tx.query(
     "UPDATE tg_token_mentions SET copy_cluster_id=$3 " +
@@ -291,4 +324,59 @@ export async function refreshChannelScores(tx: PoolClient): Promise<number> {
     );
   }
   return result.rows.length;
+}
+
+
+/** Detect exact-copy propagation across several sources; this is a review signal, not proof of coordination. */
+export async function detectPropagationPatterns(tx: PoolClient, chainId: string, mint: string): Promise<number> {
+  const result = await tx.query(
+    "WITH patterns AS (" +
+    "SELECT tm.chain_id,tm.mint,fp.cluster_id,min(tm.message_date) AS window_start,max(tm.message_date) AS window_end," +
+    "array_agg(DISTINCT tm.source_id ORDER BY tm.source_id) AS source_ids," +
+    "count(DISTINCT tm.source_id)::integer AS source_count,count(DISTINCT (tm.source_id,tm.message_id))::integer AS message_count " +
+    "FROM tg_token_mentions tm JOIN tg_messages m USING(source_id,message_id) " +
+    "JOIN tg_message_fingerprints fp ON fp.source_id=tm.source_id AND fp.message_id=tm.message_id " +
+    "AND fp.analysis_version=tm.analysis_version " +
+    "WHERE tm.chain_id=$1 AND tm.mint=$2 AND tm.analysis_version=$3 AND tm.orphaned=FALSE " +
+    "AND m.deleted_at IS NULL AND tm.message_date>=now()-interval '24 hours' AND fp.cluster_id IS NOT NULL " +
+    "GROUP BY tm.chain_id,tm.mint,fp.cluster_id " +
+    "HAVING count(DISTINCT tm.source_id)>=3 AND max(tm.message_date)-min(tm.message_date)<=interval '10 minutes') " +
+    "INSERT INTO tg_coordination_events(chain_id,mint,cluster_id,source_ids,window_start,window_end," +
+    "similarity_score,confidence,evidence,model_version) " +
+    "SELECT chain_id,mint,cluster_id,source_ids,window_start,window_end,1.0," +
+    "least(0.75,0.45+source_count*0.05),jsonb_build_object(" +
+    "'pattern','normalized_exact_copy','source_count',source_count,'message_count',message_count," +
+    "'interpretation','similarity is observable; coordination is unproven'), 'copy-propagation-v1' FROM patterns " +
+    "ON CONFLICT(chain_id,mint,cluster_id,window_start,model_version) WHERE cluster_id IS NOT NULL " +
+    "DO UPDATE SET source_ids=EXCLUDED.source_ids,window_end=EXCLUDED.window_end," +
+    "confidence=EXCLUDED.confidence,evidence=EXCLUDED.evidence,detected_at=now()",
+    [chainId, mint, ANALYSIS_VERSION],
+  );
+  return result.rowCount ?? 0;
+}
+
+/** Create reproducible observations; these are discovery/risk review items, not trade orders. */
+export async function refreshSignals(tx: PoolClient): Promise<number> {
+  const firstMentions = await tx.query(
+    "INSERT INTO tg_signals(signal_type,chain_id,mint,source_id,message_id,confidence,features,model_version) " +
+    "SELECT 'first_observed_mint_mention',f.chain_id,f.mint,f.source_id,f.message_id," +
+    "CASE WHEN f.coverage_status='partial_source_history' THEN 0.60 ELSE 0.70 END," +
+    "jsonb_build_object('interpretation','earliest mention in collected history','coverage_status',f.coverage_status)," +
+    "'first-mention-v1' FROM tg_token_first_mentions f " +
+    "JOIN tg_messages m ON m.source_id=f.source_id AND m.message_id=f.message_id AND m.deleted_at IS NULL " +
+    "ON CONFLICT DO NOTHING",
+  );
+  const velocitySignals = await tx.query(
+    "INSERT INTO tg_signals(signal_type,chain_id,mint,source_id,message_id,confidence,features,model_version) " +
+    "SELECT 'cross_channel_velocity_spike',v.chain_id,v.mint,NULL,NULL," +
+    "least(0.95,0.50+least(v.unique_sources,10)*0.02+least(v.independent_clusters,10)*0.01)," +
+    "jsonb_build_object('window','5m','mentions',v.mentions,'unique_sources',v.unique_sources," +
+    "'independent_clusters',v.independent_clusters,'interpretation','candidate signal requiring review')," +
+    "'velocity-v1' FROM tg_token_velocity v WHERE v.window_name='5m' AND v.mentions>=5 " +
+    "AND v.unique_sources>=3 AND v.independent_clusters>=3 " +
+    "AND v.window_start=(SELECT max(v2.window_start) FROM tg_token_velocity v2 " +
+    "WHERE v2.chain_id=v.chain_id AND v2.mint=v.mint AND v2.window_name=v.window_name) " +
+    "ON CONFLICT DO NOTHING",
+  );
+  return (firstMentions.rowCount ?? 0) + (velocitySignals.rowCount ?? 0);
 }
