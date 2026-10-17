@@ -37,7 +37,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     process.env.ARCHIVE_RAW_DIR = root; process.env.ARCHIVE_MIN_FREE_GB = "0"; process.env.X_LOGIN_BROWSER = "chromium";
     for (const name of REQUIRED) await getPool().query(await fs.readFile("migrations/"+name,"utf8"));
     // Repeat additive migrations on the same populated schema.
-    for (const name of ["015_collector_observations.sql","016_collector_task_results.sql","017_collector_live.sql"])
+    for (const name of ["015_collector_observations.sql","016_collector_task_results.sql","017_collector_live.sql","048_signal_registry_versions.sql"])
       await getPool().query(await fs.readFile("migrations/"+name,"utf8"));
     const qualityMints = ["quality-ready-" + randomUUID(), "quality-missing-" + randomUUID()];
     const qualitySignalAt = Math.floor(Date.now() / 86400000) * 86400000 - 6 * 3600000;
