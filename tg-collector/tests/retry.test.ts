@@ -12,7 +12,7 @@ test("FloodWait pauses globally, slowmode waits only per task", () => {
 });
 test("account restriction blocks rather than silently rotating", () => {
   assert.deepEqual(classifyTelegramError(new Error("PEER_FLOOD"),1),
-    {action:"halt",code:"TG_ACCOUNT_RESTRICTED",scope:"account"});
+    {action:"halt",code:"TG_PEER_FLOOD",scope:"account"});
 });
 test("revoked sessions stop collection and require login", () => {
   for (const code of ["AUTH_KEY_UNREGISTERED","SESSION_REVOKED","AUTH_KEY_DUPLICATED"]) {
