@@ -24,7 +24,7 @@ try {
       trader: WALLET, type: "buy", amountSol: 0.25, amountTokens: 50, fee: 0.000005 }
   ] : [];
 
-  const first = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 1000 });
+  const first = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 1_800_000_000_000 });
   const rejected = cache.cacheWalletTrades(db, WALLET,
     [{ ...event, signature: "failed-swap", transactionError: { InstructionError: [0, "failed"] } }],
     () => { throw new Error("failed transaction must not reach decoder"); });
@@ -41,7 +41,7 @@ try {
   assert.equal(db.prepare("SELECT bought_amount FROM chain_wallet_token_summary WHERE wallet=? AND token_mint=?")
     .get(WALLET, MINT_A).bought_amount, "150");
 
-  const replay = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 2000 });
+  const replay = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 1_800_000_001_000 });
   assert.equal(replay.upserted, 2, "idempotent upsert must preserve both distinct legs");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 2,
     "replay must not duplicate either leg");
@@ -49,17 +49,17 @@ try {
     .get(WALLET, MINT_A).trades_count, 2);
 
   cache.markWalletHistory(db, WALLET, {
-    complete: true, backfillCursor: null, forwardCursor: null, possibleGap: false, now: 3000
+    complete: true, backfillCursor: null, forwardCursor: null, possibleGap: false, now: 1_800_000_002_000
   });
   assert.equal(db.prepare("SELECT history_status FROM chain_wallet_discovery WHERE wallet=?").get(WALLET).history_status, "partial",
     "swap-only decoder coverage must never promote history to complete");
-  assert.equal(cache.walletHistoryFresh(db, WALLET, 4000), false,
+  assert.equal(cache.walletHistoryFresh(db, WALLET, 1_800_000_002_500), false,
     "swap-only wallet history is not reusable as complete");
   cache.markWalletHistory(db, WALLET, {
     complete: true, decoderCoverage: "full", backfillCursor: null, forwardCursor: null,
-    possibleGap: false, now: 6000, pagesFetched: 2, lastPageEmpty: true
+    possibleGap: false, now: 1_800_000_003_000, pagesFetched: 2, lastPageEmpty: true
   });
-  assert.equal(cache.walletHistoryFresh(db, WALLET, 7000), true,
+  assert.equal(cache.walletHistoryFresh(db, WALLET, 1_800_000_003_500), true,
     "full decoder coverage plus complete history should be reusable without RPC");
   assert.equal(db.prepare("SELECT pages_fetched FROM chain_wallet_pagination_state WHERE wallet=?").get(WALLET).pages_fetched, 2);
   assert.equal(db.prepare("SELECT status, coverage_percent, decoder_coverage FROM chain_history_coverage WHERE entity_key=?").get(WALLET).status, "complete");
@@ -80,12 +80,12 @@ try {
     historyComplete: true, decoderCoverage: "swap_only", unknownOperationsRatio: 0,
     costBasisComplete: true, orderingComplete: true, reorgStable: true
   }), 0.25);
-  assert.equal(cache.walletHistoryFresh(db, WALLET, 3 * 3600_000 + 7000), false,
+  assert.equal(cache.walletHistoryFresh(db, WALLET, 1_800_000_003_000 + 3 * 3600_000), false,
     "an active wallet history must be refreshed after the freshness window");
   cache.markWalletHistory(db, WALLET, {
-    complete: false, backfillCursor: "cursor-1", forwardCursor: null, possibleGap: false, now: 5000
+    complete: false, backfillCursor: "cursor-1", forwardCursor: null, possibleGap: false, now: 1_800_000_004_000
   });
-  assert.equal(cache.walletHistoryFresh(db, WALLET, 6000), false,
+  assert.equal(cache.walletHistoryFresh(db, WALLET, 1_800_000_004_500), false,
     "partial history must never be considered reusable as complete");
 
   const discovery = db.prepare("SELECT history_status, backfill_cursor FROM chain_wallet_discovery WHERE wallet=?").get(WALLET);
