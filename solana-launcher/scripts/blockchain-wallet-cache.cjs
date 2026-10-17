@@ -369,10 +369,15 @@ function markWalletHistory(db, wallet, state) {
   `).run(wallet, now, complete ? 'complete' : 'partial', now, state.backfillCursor || null,
     state.forwardCursor || null, complete ? 1 : 0, state.possibleGap ? 1 : 0, wallet, wallet,
     state.lastError || null, decoderCoverage, state.decoderVersion || DECODER_VERSION);
-  const row = db.prepare(`
-    SELECT MIN(slot) AS start_slot, MAX(slot) AS end_slot, COUNT(*) AS n
-    FROM chain_seed_events WHERE kind='wallet' AND address=?
-  `).get(wallet);
+  const hasSeedEvents = Boolean(db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chain_seed_events'"
+  ).get());
+  const row = hasSeedEvents
+    ? db.prepare(`
+        SELECT MIN(slot) AS start_slot, MAX(slot) AS end_slot, COUNT(*) AS n
+        FROM chain_seed_events WHERE kind='wallet' AND address=?
+      `).get(wallet)
+    : { start_slot: null, end_slot: null, n: 0 };
   db.prepare(`
     INSERT INTO chain_history_coverage
       (entity_kind, entity_key, source, coverage_start_slot, coverage_end_slot, events_count,
