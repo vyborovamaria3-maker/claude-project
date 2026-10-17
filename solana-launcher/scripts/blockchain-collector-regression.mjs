@@ -269,13 +269,16 @@ assert.equal(reconciliation.authority, "diagnostic_only");
 assert.equal(reconciliation.historyComplete, false);
 const brokenReconciliation = reconcileTradeEvidence({
   mint: "mintA",
-  events: [{
-    signature: "trade-2", slot: 10, transactionError: null,
-    tokenBalanceDeltas: [{ owner: "walletA", mint: "mintA", deltaRaw: "-100" }],
-  }],
+  events: [
+    { signature: "trade-2", slot: 10, transactionError: null,
+      tokenBalanceDeltas: [{ owner: "walletA", mint: "mintA", deltaRaw: "100" }] },
+    { signature: "trade-3", slot: 12, transactionError: null,
+      tokenBalanceDeltas: [{ owner: "walletA", mint: "mintA", deltaRaw: "100" }] },
+  ],
   trades: [
     { signature: "missing-trade", slot: 11, trader: "walletA", type: "buy" },
     { signature: "trade-2", slot: 11, trader: "walletB", type: "buy" },
+    { signature: "trade-3", slot: 13, trader: "walletA", type: "sell" },
   ],
 });
 assert.equal(brokenReconciliation.status, "needs_review");
