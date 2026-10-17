@@ -1,5 +1,7 @@
 # X Collector Runtime v2 context
 
+Blockchain Settings V2 (2026-10-15, base main fa0b46f / PR #66): the existing settings tab uses an operator-only API, existing SQLite trade.db and reused seed collector from the unmerged PR #65 work. Server-only RPC environment slots, shared request throttling/leases, validated XLSX uploads and existing Intelligence token_trades integration are documented in solana-launcher/docs/BLOCKCHAIN_SETTINGS_V2.md. X Collector remains local and independent; no additional collector service is introduced.
+
 The laptop may separately opt into X_SEARCH_HTTP_COMPAT=true with COLLECTOR_ENGINE=xactions and an explicit XACTIONS_HOME cache. This additional POST search reader feeds existing batch/history persistence rather than reusing HTTP cursors for numeric archive jobs. max_browser_accounts controls both reservations and historical producer capacity; two workers can process distinct windows concurrently. Disable X_SEARCH_HTTP_COMPAT to return search to the existing browser path.
 
 XActions is an opt-in additional HTTP reader, not a replacement for automatic list/history/discovery collection. See x-collector/XACTIONS_INTEGRATION_RU.md for activation prerequisites and rollback. Compiled runtime packaging and absolute transport deadlines are checked before merge; real X terminal-page compatibility is a separate live activation gate.
