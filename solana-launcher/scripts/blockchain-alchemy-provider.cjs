@@ -117,7 +117,7 @@ function normalizeFullTransaction(item) {
     signature,
     timestamp: Number.isFinite(blockTime) ? blockTime : null,
     slot: Number.isFinite(slot) ? slot : null,
-    transactionError: meta?.err ?? null,
+    transactionError: meta ? (meta.err ?? null) : { unknown: "missing_transaction_meta" },
     fee: Number.isFinite(Number(meta?.fee)) ? Number(meta.fee) / 1e9 : null,
     source: "alchemy",
     provider: "alchemy",
@@ -293,7 +293,7 @@ function createAlchemyProvider(options = {}) {
       trades.push({
         signature: tx.signature, timestamp: tx.timestamp, slot: tx.slot, trader: delta.owner,
         type: isBuy ? "buy" : "sell", amountSol, amountTokens, priceSol: amountSol / amountTokens,
-        fee: feeLamports / 1e9, source: "alchemy", quoteMint: "So11111111111111111111111111111111111111112",
+        fee: feeLamports / 1e9, feeLamports, source: "alchemy", quoteMint: "So11111111111111111111111111111111111111112",
         quoteAmount: amountSol, quoteDecimals: 9, decoderCoverage: "swap_only"
       });
     }
