@@ -363,7 +363,16 @@ function markWalletHistory(db, wallet, state) {
   ensureWalletCacheSchema(db);
   const now = state.now ?? Date.now();
   const decoderCoverage = state.decoderCoverage || 'swap_only';
+  const hasPartialTrades = Boolean(db.prepare(`
+    SELECT 1 FROM chain_wallet_trades
+    WHERE wallet=? AND status='ok' AND decoder_coverage <> 'full' LIMIT 1
+  `).get(wallet));
+  const hasPartialSummaries = Boolean(db.prepare(`
+    SELECT 1 FROM chain_wallet_token_summary
+    WHERE wallet=? AND decoder_coverage <> 'full' LIMIT 1
+  `).get(wallet));
   const complete = Boolean(state.complete && decoderCoverage === 'full'
+    && !hasPartialTrades && !hasPartialSummaries
     && !state.forwardCursor && !state.possibleGap);
   db.prepare(`
     INSERT INTO chain_wallet_discovery
