@@ -173,6 +173,25 @@ SELECT
 FROM signal_quality_outcomes
 GROUP BY source, horizon_hours, score_band;
 
+CREATE OR REPLACE VIEW v_signal_quality_by_mint AS
+SELECT
+  source,
+  mint,
+  horizon_hours,
+  COUNT(*)::BIGINT AS candidate_signals,
+  COUNT(*) FILTER (WHERE outcome_status = 'ready')::BIGINT AS ready_outcomes,
+  ROUND(100.0 * COUNT(*) FILTER (WHERE outcome_status = 'ready') / NULLIF(COUNT(*), 0), 2) AS coverage_pct,
+  MIN(signal_at) AS first_signal_at,
+  MAX(signal_at) AS last_signal_at,
+  ROUND(AVG(score), 4) AS avg_signal_score,
+  ROUND(AVG(attention_change_pct) FILTER (WHERE outcome_status = 'ready'), 4) AS avg_attention_change_pct,
+  ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY attention_change_pct)
+    FILTER (WHERE outcome_status = 'ready'))::NUMERIC, 4) AS median_attention_change_pct,
+  ROUND(100.0 * AVG(CASE WHEN attention_change_pct > 0 THEN 1.0 ELSE 0.0 END)
+    FILTER (WHERE outcome_status = 'ready'), 2) AS positive_attention_rate_pct
+FROM signal_quality_outcomes
+GROUP BY source, mint, horizon_hours;
+
 INSERT INTO retention_policies (table_name, retention_days, archive_to_s3)
 VALUES ('signal_quality_outcomes', 365, FALSE)
 ON CONFLICT (table_name) DO NOTHING;
