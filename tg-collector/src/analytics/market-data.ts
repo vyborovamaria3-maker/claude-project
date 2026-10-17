@@ -135,7 +135,11 @@ export async function refreshTokenOutcomes(limit = 500): Promise<{ processed: nu
     "WHERE tm.analysis_version=$1 AND tm.orphaned=FALSE AND m.deleted_at IS NULL AND tm.message_date IS NOT NULL " +
     "AND NOT EXISTS (SELECT 1 FROM tg_token_outcomes o WHERE o.source_id=tm.source_id AND o.message_id=tm.message_id " +
     "AND o.chain_id=tm.chain_id AND o.mint=tm.mint AND o.analysis_version=$1 AND o.model_version=$2 " +
-    "AND o.outcome_status IN ('complete','risk_confirmed')) " +
+    "AND (o.outcome_status IN ('complete','risk_confirmed') OR " +
+    "(o.outcome_status='insufficient_data' AND NOT EXISTS (" +
+    "SELECT 1 FROM tg_token_market_snapshots newer WHERE newer.chain_id=o.chain_id AND newer.mint=o.mint " +
+    "AND newer.provider='dexscreener' AND newer.observed_at>o.calculated_at " +
+    "AND newer.observed_at BETWEEN o.mention_time-interval '5 minutes' AND o.mention_time+interval '7 days')))) " +
     "GROUP BY tm.source_id,tm.message_id,tm.chain_id,tm.mint ORDER BY min(tm.message_date) ASC LIMIT $3",
     [ANALYSIS_VERSION, OUTCOME_VERSION, limit],
   );
