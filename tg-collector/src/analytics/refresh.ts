@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { pool, migrate } from "../db.js";
+import { refreshChannelScores, refreshTokenChannelMetrics, refreshTokenVelocity } from "./token-intelligence.js";
 
 /** Explicit offline rebuild for existing rows, or after manual DB deletions.
  * Stop the live worker first; advisory lock prevents concurrent ingestion. */
@@ -33,6 +34,13 @@ async function main(): Promise<void> {
         FROM tg_messages WHERE posted_at IS NOT NULL AND deleted_at IS NULL
         GROUP BY source_id,(posted_at AT TIME ZONE 'UTC')::date
       `);
+      const sourceDays = await guard.query<{source_id: string; days: string[]}>(
+        "SELECT source_id::text,array_agg(DISTINCT (posted_at AT TIME ZONE 'UTC')::date::text) AS days " +
+        "FROM tg_messages WHERE posted_at IS NOT NULL AND deleted_at IS NULL GROUP BY source_id"
+      );
+      for (const row of sourceDays.rows) await refreshTokenChannelMetrics(guard, row.source_id, row.days);
+      await refreshTokenVelocity(guard);
+      await refreshChannelScores(guard);
       await guard.query("COMMIT");
     } catch (error) {
       await guard.query("ROLLBACK");
