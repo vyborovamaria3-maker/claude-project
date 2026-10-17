@@ -32,7 +32,8 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   const now = Date.now();
   const fromHttp = options.transport === "http";
   const httpSourceUrl = "https://x.com/i/api/graphql";
-  let rawCapture: { hash: string; path: string } | undefined;
+  let rawCapture: { hash: string; path: string; parserVersion?: string } | undefined;
+  let rawCaptureSourceId: string | undefined;
   if (options.rawResponse !== undefined) {
     const rawSourceKey = await source(
       fromHttp ? "X HTTP collector" : "X browser collector",
@@ -51,7 +52,8 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
       raw_items: tweets,
       source_response: options.rawResponse,
     });
-    await recordRawPage(rawSourceKey, rawCapture, received);
+    rawCaptureSourceId = rawSourceKey;
+    await recordRawPage(rawSourceKey, rawCapture, received, undefined, { parseStatus: "captured", responseStatus: "unknown" });
   }
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
@@ -61,7 +63,21 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     if (parsed.success) { if (!seen.has(parsed.data.id)) { valid.push(parsed.data); seen.add(parsed.data.id); } }
     else rejected++;
   }
-  if (rejected > 0) throw new Error(`collector rejected ${rejected} malformed tweets`);
+  if (rejected > 0) {
+    if (rawCapture && rawCaptureSourceId) {
+      await recordRawPage(rawCaptureSourceId, rawCapture, new Date(now), undefined, {
+        parseStatus: valid.length > 0 ? "partial" : "failed",
+        responseStatus: valid.length > 0 ? "nonempty" : "error",
+      });
+    }
+    throw new Error(`collector rejected ${rejected} malformed tweets`);
+  }
+  if (rawCapture && rawCaptureSourceId) {
+    await recordRawPage(rawCaptureSourceId, rawCapture, new Date(now), undefined, {
+      parseStatus: "parsed",
+      responseStatus: valid.length === 0 ? "empty" : "nonempty",
+    });
+  }
   if (valid.length === 0) return 0;
 
   const BATCH = 200;
@@ -102,20 +118,21 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
       await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
       const values: unknown[] = [];
       const placeholders = chunk.map((t, j) => {
-        const off = j * 13;
+        const off = j * 14;
         values.push(
-          t.id, t.authorHandle.toLowerCase(), t.text, t.url,
+          t.id, t.authorId ?? null, t.authorHandle.toLowerCase(), t.text, t.url,
           t.views, t.likes, t.retweets, t.replies,
           t.isVerified, t.postedAt, now, t.observedAt ?? now, sourceQuery
         );
-        return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13})`;
+        return `(${off + 1},${off + 2},${off + 3},${off + 4},${off + 5},${off + 6},${off + 7},${off + 8},${off + 9},${off + 10},${off + 11},${off + 12},${off + 13},${off + 14})`;
       }).join(",");
 
       await client.query(
         `INSERT INTO twitter_tweets
-           (tweet_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
+           (tweet_id, author_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
          VALUES ${placeholders}
          ON CONFLICT (tweet_id) DO UPDATE SET
+           author_id = COALESCE(EXCLUDED.author_id, twitter_tweets.author_id),
            views    = COALESCE(EXCLUDED.views,    twitter_tweets.views),
            likes    = COALESCE(EXCLUDED.likes,    twitter_tweets.likes),
            retweets = COALESCE(EXCLUDED.retweets, twitter_tweets.retweets),
@@ -157,7 +174,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
        SELECT DISTINCT x.id,x.kind,x.value,$2::timestamptz,$2::timestamptz FROM jsonb_to_recordset($1::jsonb) AS x(id text,kind text,value text)
        ON CONFLICT(tweet_id,kind,value) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at`,[JSON.stringify(entities),received]);
       const archive = Page.parse({ data: chunk.filter(t => t.postedAt !== null).map(t => ({
-        id:t.id,text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
+        id:t.id,author_id:t.authorId ?? null,text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
         metrics_observed_at:new Date(t.observedAt ?? now).toISOString(),
         public_metrics:{ like_count:t.likes, impression_count:t.views, retweet_count:t.retweets,reply_count:t.replies },
         ...(fromHttp ? { http_observation: t } : { browser_observation: t }),
