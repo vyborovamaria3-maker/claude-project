@@ -54,6 +54,7 @@ export function summarizeSignalQuality(rows: SignalQualityOutcome[]): SignalQual
     .filter((row) => row.outcome_status === "ready")
     .map((row) => finiteNumber(row.attention_change_pct))
     .filter((value): value is number => value !== null);
+  const medianValue = median(valid);
 
   return {
     totalSignals: rows.length,
@@ -62,7 +63,7 @@ export function summarizeSignalQuality(rows: SignalQualityOutcome[]): SignalQual
     averageAttentionChangePct: valid.length > 0
       ? round(valid.reduce((sum, value) => sum + value, 0) / valid.length, 4)
       : null,
-    medianAttentionChangePct: median(valid) === null ? null : round(median(valid) as number, 4),
+    medianAttentionChangePct: medianValue === null ? null : round(medianValue, 4),
     positiveAttentionRatePct: valid.length > 0
       ? round((valid.filter((value) => value > 0).length / valid.length) * 100, 2)
       : null,
