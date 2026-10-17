@@ -144,8 +144,8 @@ SELECT
   COUNT(*) FILTER (WHERE outcome_status = 'missing_exit')::BIGINT AS missing_exit,
   COUNT(*) FILTER (WHERE outcome_status = 'low_baseline')::BIGINT AS low_baseline,
   ROUND(AVG(attention_change_pct) FILTER (WHERE outcome_status = 'ready'), 4) AS avg_attention_change_pct,
-  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY attention_change_pct)
-    FILTER (WHERE outcome_status = 'ready')::NUMERIC, 4) AS median_attention_change_pct,
+  ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY attention_change_pct)
+    FILTER (WHERE outcome_status = 'ready'))::NUMERIC, 4) AS median_attention_change_pct,
   ROUND(100.0 * AVG(CASE WHEN attention_change_pct > 0 THEN 1.0 ELSE 0.0 END)
     FILTER (WHERE outcome_status = 'ready'), 2) AS positive_attention_rate_pct
 FROM signal_quality_outcomes
