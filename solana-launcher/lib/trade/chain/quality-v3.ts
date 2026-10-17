@@ -273,6 +273,8 @@ export interface LedgerQualityGate {
   unknownOperationsRatio?: number;
   /** True only when evidence is stable/finalized under the collector's policy. */
   reorgStable?: boolean;
+  /** True only after token_trades is reconciled with leg-level raw evidence for this scope. */
+  sourceReconciled?: boolean;
 }
 
 export interface WalletCostBasisLedger {
@@ -300,6 +302,7 @@ export interface WalletCostBasisLedger {
   decoderCoverage: 'swap_only' | 'swap_and_transfers' | 'swap_transfers_mint_burn' | 'full';
   unknownOperationsRatio: number | null;
   reorgStable: boolean;
+  sourceReconciled: boolean;
   /** True only when history is complete and no sell exceeds observed inventory. */
   costBasisComplete: boolean;
   completeFromObservedTrades: boolean;
@@ -414,6 +417,7 @@ export function computeWalletCostBasisLedger(
     decoderCoverage: qualityGate.decoderCoverage || 'swap_only',
     unknownOperationsRatio: Number.isFinite(qualityGate.unknownOperationsRatio) ? qualityGate.unknownOperationsRatio! : null,
     reorgStable: qualityGate.reorgStable === true,
+    sourceReconciled: qualityGate.sourceReconciled === true,
     costBasisComplete: false,
     completeFromObservedTrades: false,
     orderingComplete: false,
@@ -485,11 +489,12 @@ export function computeWalletCostBasisLedger(
     ? qualityGate.unknownOperationsRatio!
     : null;
   const reorgStable = qualityGate.reorgStable === true;
+  const sourceReconciled = qualityGate.sourceReconciled === true;
   // Missing provenance defaults to non-authoritative. Swap-only decoding cannot
   // prove wallet inventory because transfers, mint/burn and other movements may be absent.
   const qualityGateComplete = decoderCoverage === 'full'
     && unknownOperationsRatio != null && unknownOperationsRatio <= 0.05
-    && reorgStable;
+    && reorgStable && sourceReconciled;
   const costBasisComplete = historyComplete && completeFromObservedTrades
     && orderingComplete && qualityGateComplete;
   const observedRealizedPnl = realizedProceeds - matchedCost;
@@ -524,6 +529,7 @@ export function computeWalletCostBasisLedger(
     decoderCoverage,
     unknownOperationsRatio,
     reorgStable,
+    sourceReconciled,
     costBasisComplete,
     completeFromObservedTrades,
     orderingComplete,
