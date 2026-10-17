@@ -330,6 +330,9 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
     for (const leg of [...(swap?.tokenInputs || []), ...(swap?.tokenOutputs || [])]) {
       if (leg && leg.userAccount === ownerWallet) mints.add(leg.mint);
     }
+    for (const delta of tx.tokenBalanceDeltas || []) {
+      if (delta && delta.owner === ownerWallet) mints.add(delta.mint);
+    }
     for (const mint of mints) {
       if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) continue;
       // Record wallet-observed token relationships even if the current decoder
@@ -468,8 +471,8 @@ async function processOne(db, row, cfg, api) {
         coverageEndSlot: slots.length ? Math.max(...slots) : null,
         eventsCount: db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='token' AND address=?").get(row.address).n,
         expectedCount: null, coveragePercent: null,
-        status: gap ? 'gap' : 'partial', decoderCoverage: 'swap_only',
-        gapReason: gap ? 'pagination_gap' : 'decoder_limit'
+        status: gap ? 'gap' : (complete ? 'complete' : 'partial'), decoderCoverage: 'swap_only',
+        gapReason: gap ? 'pagination_gap' : (complete ? null : 'backfill_incomplete_or_decoder_limited')
       });
     }
     return n;
