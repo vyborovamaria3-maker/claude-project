@@ -19,9 +19,9 @@ try {
   };
   const decoder = (_events, mint) => mint === MINT_A ? [
     { signature: "sig-1", timestamp: event.timestamp, slot: event.slot,
-      type: "buy", amountSol: 1.25, amountTokens: 100, fee: 0.000005 },
+      trader: WALLET, type: "buy", amountSol: 1.25, amountTokens: 100, fee: 0.000005 },
     { signature: "sig-1", timestamp: event.timestamp, slot: event.slot,
-      type: "buy", amountSol: 0.25, amountTokens: 50, fee: 0.000005 }
+      trader: WALLET, type: "buy", amountSol: 0.25, amountTokens: 50, fee: 0.000005 }
   ] : [];
 
   const first = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 1000 });
