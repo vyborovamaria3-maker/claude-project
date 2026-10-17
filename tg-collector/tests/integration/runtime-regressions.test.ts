@@ -59,6 +59,24 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
     assert.ok(ledger.rows.every((row) => /^[a-f0-9]{64}$/.test(row.checksum.trim())));
     assert.equal(await claim(), undefined);
 
+    const linksBeforeBackfill = await pool.query<{count: string}>(
+      "SELECT count(*)::text AS count FROM tg_message_links WHERE source_id=$1 AND message_id=1000", [id]);
+    await pool.query("UPDATE tg_messages SET analysis_version=2 WHERE source_id=$1 AND message_id=1000", [id]);
+    execFileSync(process.execPath, ["--import", "tsx", "src/analytics/backfill.ts", "--batch-size=10"], { cwd: process.cwd(), stdio: "pipe" });
+    const backfilled = await pool.query<{analysis_version: number}>(
+      "SELECT analysis_version FROM tg_messages WHERE source_id=$1 AND message_id=1000", [id]);
+    assert.equal(backfilled.rows[0].analysis_version, 3);
+    const linksAfterBackfill = await pool.query<{count: string}>(
+      "SELECT count(*)::text AS count FROM tg_message_links WHERE source_id=$1 AND message_id=1000", [id]);
+    assert.equal(linksAfterBackfill.rows[0].count, linksBeforeBackfill.rows[0].count);
+    const fingerprintCount = await pool.query<{count: string}>(
+      "SELECT count(*)::text AS count FROM tg_message_fingerprints WHERE source_id=$1 AND message_id=1000 AND analysis_version=3", [id]);
+    assert.equal(fingerprintCount.rows[0].count, "1");
+    execFileSync(process.execPath, ["--import", "tsx", "src/analytics/backfill.ts", "--batch-size=10"], { cwd: process.cwd(), stdio: "pipe" });
+    const fingerprintCountAgain = await pool.query<{count: string}>(
+      "SELECT count(*)::text AS count FROM tg_message_fingerprints WHERE source_id=$1 AND message_id=1000 AND analysis_version=3", [id]);
+    assert.equal(fingerprintCountAgain.rows[0].count, "1", "repeated backfill must be idempotent");
+
     const tx = await pool.connect();
     try {
       await tx.query("BEGIN");
