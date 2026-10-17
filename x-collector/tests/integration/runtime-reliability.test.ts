@@ -110,7 +110,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       assert.equal(Number(mart.rows[0].ready_outcomes), 1);
       assert.equal(Number(mart.rows[0].coverage_pct), 50);
       assert.equal(Number(mart.rows[0].avg_attention_change_pct), 50);
-      const mintMart = await getPool().query("SELECT candidate_signals::text,ready_outcomes::text,coverage_pct::text,avg_attention_change_pct::text FROM v_signal_quality_by_mint WHERE source='entity' AND mint=$1 AND horizon_hours=1", [qualityMints[0]]);
+      const mintMart = await getPool().query("SELECT candidate_signals::text,ready_outcomes::text,coverage_pct::text,avg_attention_change_pct::text FROM v_signal_quality_by_mint WHERE source='entity' AND signal_version=1 AND mint=$1 AND horizon_hours=1", [qualityMints[0]]);
       assert.equal(mintMart.rows.length, 1);
       assert.equal(Number(mintMart.rows[0].candidate_signals), 1);
       assert.equal(Number(mintMart.rows[0].ready_outcomes), 1);
