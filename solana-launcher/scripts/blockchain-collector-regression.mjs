@@ -26,7 +26,7 @@ function loadTs(path, mocks = {}, globals = {}) {
     console, Date, Math, Map, Set, URL, AbortSignal, setTimeout, clearTimeout,
     process: { env: {} }, ...globals,
   });
-  const code = "(function (require, commonJsModule, exports) { " + compiled.outputText + "\n })";
+  const code = "(function (require, module, exports) { " + compiled.outputText + "\n })";
   const wrapper = vm.runInContext(code, context, { filename: path });
   wrapper((id) => id in mocks ? mocks[id] : require(id), sandboxModule, sandboxModule.exports);
   return sandboxModule.exports;
