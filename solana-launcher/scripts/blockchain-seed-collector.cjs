@@ -109,7 +109,7 @@ function initDb(db) {
     "  PRIMARY KEY(target_kind,target_address,signature,leg_index))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_inventory_owner_mint_time",
     "  ON chain_inventory_movements(owner,mint,block_time)",
-  ].join("\\n"));
+  ].join("\n"));
   const targetColumns = db.pragma("table_info(chain_seed_targets)");
   if (!targetColumns.some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
