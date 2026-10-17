@@ -139,6 +139,8 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
         let legIndex = 0;
         for (const trade of trades) {
           if (!trade || !['buy','sell'].includes(String(trade.type).toLowerCase())) continue;
+          // Do not attribute a decoded swap to this wallet if the decoder explicitly names another trader.
+          if (trade.trader && trade.trader !== wallet) continue;
           const direction = String(trade.type).toLowerCase();
           // Stable across replay; legIndex distinguishes multiple same-direction legs for a mint.
           const legKey = mint + ':' + direction + ':' + legIndex++;
