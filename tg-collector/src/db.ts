@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { createHash } from "node:crypto";
+import { assertMigrationChecksum, migrationChecksum } from "./migration-checksum.js";
 import { readdir, readFile } from "node:fs/promises";
 import pg from "pg";
 
@@ -40,15 +40,10 @@ export async function migrate(): Promise<void> {
 
     for (const name of names) {
       const sql = await readFile(new URL(name, directory), "utf8");
-      const checksum = createHash("sha256").update(sql).digest("hex");
+      const checksum = migrationChecksum(sql);
       const existing = checksums.get(name);
       if (existing) {
-        if (existing !== checksum) {
-          throw new Error(
-            "Applied migration checksum mismatch for " + name +
-            ". Do not edit applied migrations; create a new migration."
-          );
-        }
+        assertMigrationChecksum(name, existing, checksum);
         continue;
       }
       await client.query(sql);
