@@ -266,6 +266,15 @@ export function computeWalletTemporalBehavior(
 // 2. Cost-basis / PnL replay ledger
 // ─────────────────────────────────────────────────────────────
 
+export interface LedgerQualityGate {
+  /** Must be full only when swaps, transfers, mint/burn and relevant movements are decoded. */
+  decoderCoverage?: 'swap_only' | 'swap_and_transfers' | 'swap_transfers_mint_burn' | 'full';
+  /** Fraction of relevant wallet/token operations that remain unknown. */
+  unknownOperationsRatio?: number;
+  /** True only when evidence is stable/finalized under the collector's policy. */
+  reorgStable?: boolean;
+}
+
 export interface WalletCostBasisLedger {
   wallet: string;
   available: boolean;
@@ -288,6 +297,9 @@ export interface WalletCostBasisLedger {
   tradeCount: number;
   /** Whether the upstream history proves launch-to-now trade completeness. */
   historyComplete: boolean;
+  decoderCoverage: 'swap_only' | 'swap_and_transfers' | 'swap_transfers_mint_burn' | 'full';
+  unknownOperationsRatio: number | null;
+  reorgStable: boolean;
   /** True only when history is complete and no sell exceeds observed inventory. */
   costBasisComplete: boolean;
   completeFromObservedTrades: boolean;
@@ -348,6 +360,7 @@ export function computeCostBasisLedgers(
   historyComplete = false,
   nowSec: number | null = null,
   maxMarkAgeSec = 900,
+  qualityGate: LedgerQualityGate = {},
 ): WalletCostBasisLedger[] {
   const byWallet = new Map<string, RawTrade[]>();
   const eligibleTrades = nowSec == null
@@ -366,7 +379,7 @@ export function computeCostBasisLedgers(
   return [...byWallet.entries()]
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .slice(0, Math.max(0, walletLimit))
-    .map(([wallet, walletTrades]) => computeWalletCostBasisLedger(wallet, walletTrades, historyComplete, mark));
+    .map(([wallet, walletTrades]) => computeWalletCostBasisLedger(wallet, walletTrades, historyComplete, mark, qualityGate));
 }
 
 export function computeWalletCostBasisLedger(
@@ -374,6 +387,7 @@ export function computeWalletCostBasisLedger(
   walletTrades: RawTrade[],
   historyComplete = false,
   mark: LedgerMarkPrice | null = null,
+  qualityGate: LedgerQualityGate = {},
 ): WalletCostBasisLedger {
   const comparable = comparableLedgerRows(walletTrades);
   const unavailable = (): WalletCostBasisLedger => ({
@@ -397,6 +411,9 @@ export function computeWalletCostBasisLedger(
     unmatchedSellTokens: 0,
     tradeCount: walletTrades.length,
     historyComplete,
+    decoderCoverage: qualityGate.decoderCoverage || 'swap_only',
+    unknownOperationsRatio: Number.isFinite(qualityGate.unknownOperationsRatio) ? qualityGate.unknownOperationsRatio! : null,
+    reorgStable: qualityGate.reorgStable === true,
     costBasisComplete: false,
     completeFromObservedTrades: false,
     orderingComplete: false,
@@ -463,7 +480,18 @@ export function computeWalletCostBasisLedger(
     return row.trade.timestamp === previous.trade.timestamp
       && (row.trade.slot ?? null) === (previous.trade.slot ?? null);
   });
-  const costBasisComplete = historyComplete && completeFromObservedTrades && orderingComplete;
+  const decoderCoverage = qualityGate.decoderCoverage || 'swap_only';
+  const unknownOperationsRatio = Number.isFinite(qualityGate.unknownOperationsRatio)
+    ? qualityGate.unknownOperationsRatio!
+    : null;
+  const reorgStable = qualityGate.reorgStable === true;
+  // Missing provenance defaults to non-authoritative. Swap-only decoding cannot
+  // prove wallet inventory because transfers, mint/burn and other movements may be absent.
+  const qualityGateComplete = decoderCoverage === 'full'
+    && unknownOperationsRatio != null && unknownOperationsRatio <= 0.05
+    && reorgStable;
+  const costBasisComplete = historyComplete && completeFromObservedTrades
+    && orderingComplete && qualityGateComplete;
   const observedRealizedPnl = realizedProceeds - matchedCost;
   const realizedPnl = costBasisComplete ? observedRealizedPnl : null;
   const realizedRoi = costBasisComplete && matchedCost > EPS ? observedRealizedPnl / matchedCost : null;
@@ -493,6 +521,9 @@ export function computeWalletCostBasisLedger(
     unmatchedSellTokens,
     tradeCount: rows.length,
     historyComplete,
+    decoderCoverage,
+    unknownOperationsRatio,
+    reorgStable,
     costBasisComplete,
     completeFromObservedTrades,
     orderingComplete,
