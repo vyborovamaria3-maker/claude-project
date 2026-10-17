@@ -19,13 +19,14 @@ function getAlchemyConfig(env = process.env) {
   const keys = String(env.ALCHEMY_API_KEYS || "")
     .split(/[;,\s]+/).map((v) => v.trim()).filter(Boolean);
   if (env.ALCHEMY_API_KEY && !keys.includes(env.ALCHEMY_API_KEY.trim())) keys.unshift(env.ALCHEMY_API_KEY.trim());
-  let endpoint = explicitUrl || "";
-  if (!endpoint && keys.length) endpoint = DEFAULT_RPC + encodeURIComponent(keys[0]);
-  if (endpoint && !/^https:\/\/solana-mainnet\.g\.alchemy\.com\/v2\//i.test(endpoint)) {
+  const endpoints = explicitUrl
+    ? [explicitUrl]
+    : keys.map((key) => DEFAULT_RPC + encodeURIComponent(key));
+  if (endpoints.some((endpoint) => !/^https:\/\/solana-mainnet\.g\.alchemy\.com\/v2\//i.test(endpoint))) {
     throw new Error("ALCHEMY_SOLANA_RPC_URL must be an Alchemy Solana mainnet RPC URL");
   }
-  if (!endpoint) throw new Error("Alchemy Solana API key or ALCHEMY_SOLANA_RPC_URL required; Helius is not a fallback");
-  return { endpoint, keyCount: keys.length || (explicitUrl ? 1 : 0) };
+  if (!endpoints.length) throw new Error("Alchemy Solana API key or ALCHEMY_SOLANA_RPC_URL required; Helius is not a fallback");
+  return { endpoint: endpoints[0], endpoints, keyCount: endpoints.length };
 }
 
 function decodeCursor(cursor) {
@@ -127,15 +128,16 @@ function createAlchemyProvider(options = {}) {
   const env = options.env || process.env;
   const fetchImpl = options.fetch || globalThis.fetch;
   const sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const config = options.endpoint ? { endpoint: options.endpoint } : getAlchemyConfig(env);
+  const config = options.endpoint ? { endpoint: options.endpoint, endpoints: [options.endpoint] } : getAlchemyConfig(env);
   let requestId = 0;
+  let endpointIndex = 0;
   async function rpc(method, params) {
     let lastError;
     let attempts = 0;
     for (let attempt = 0; attempt < 5; attempt++) {
       attempts++;
       try {
-        const response = await fetchImpl(config.endpoint, {
+        const response = await fetchImpl(config.endpoints[endpointIndex] || config.endpoint, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }),
@@ -148,6 +150,7 @@ function createAlchemyProvider(options = {}) {
             throw error;
           }
           lastError = error;
+          endpointIndex = (endpointIndex + 1) % config.endpoints.length;
           await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
           continue;
         }
@@ -156,6 +159,7 @@ function createAlchemyProvider(options = {}) {
           const error = new Error("Alchemy RPC " + String(body.error.code) + ": " + String(body.error.message || "request failed").slice(0, 180));
           if (attempt < 4 && /rate|limit|temporar|busy/i.test(error.message)) {
             lastError = error;
+            endpointIndex = (endpointIndex + 1) % config.endpoints.length;
             await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
             continue;
           }
