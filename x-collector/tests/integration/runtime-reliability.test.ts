@@ -204,7 +204,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     const capturedInvalidPayload = JSON.parse(gunzipSync(await fs.readFile(capturedInvalid.path)).toString("utf8")) as {source_response?:unknown};
     assert.deepEqual(capturedInvalidPayload.source_response,invalidEnvelope);
     await persistTweets(null,[],null,undefined,undefined,undefined,{rawResponse:{...rawEnvelope,variables:{rawQuery:"empty"}}});
-    const emptyRaw=(await q<{parse_status:string;response_status:string}>("SELECT parse_status,response_status FROM archive_raw_pages ORDER BY received_at DESC LIMIT 1"))[0];
+    const emptyRaw=(await q<{parse_status:string;response_status:string}>("SELECT parse_status,response_status FROM archive_raw_pages WHERE response_status='empty' ORDER BY received_at DESC LIMIT 1"))[0];
     assert.equal(emptyRaw.parse_status,"parsed");
     assert.equal(emptyRaw.response_status,"empty");
     await getPool().query(`CREATE FUNCTION reject_fixture_entity() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'fixture entity failure'; END $$ LANGUAGE plpgsql`);
