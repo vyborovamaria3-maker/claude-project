@@ -3,10 +3,10 @@ export interface XTweet {
   author: string;
   text: string;
   url: string;
-  likes: number;
-  reposts: number;
-  replies: number;
-  views: number;
+  likes: number | null;
+  reposts: number | null;
+  replies: number | null;
+  views: number | null;
   createdAt: number | null;
 }
 
