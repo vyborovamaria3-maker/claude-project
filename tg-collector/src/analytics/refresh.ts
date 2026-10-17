@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { pool, migrate } from "../db.js";
+import { refreshNarrativeAggregates } from "./narratives.js";
 import { refreshChannelScores, refreshSignals, refreshTokenChannelMetrics, refreshTokenVelocity } from "./token-intelligence.js";
 
 /** Explicit offline rebuild for existing rows, or after manual DB deletions.
@@ -41,6 +42,7 @@ async function main(): Promise<void> {
       for (const row of sourceDays.rows) await refreshTokenChannelMetrics(guard, row.source_id, row.days);
       await refreshTokenVelocity(guard);
       await refreshSignals(guard);
+      await refreshNarrativeAggregates(guard);
       await refreshChannelScores(guard);
       await guard.query("COMMIT");
     } catch (error) {
