@@ -64,7 +64,7 @@ export async function recordRawPage(
     client?: PoolClient,
     metadata: RawPageMetadata = {},
 ) {
-    const parserVersion = metadata.parserVersion ?? raw.parserVersion ?? process.env.X_COLLECTOR_PARSER_VERSION?.trim() || "unversioned";
+    const parserVersion = (metadata.parserVersion ?? raw.parserVersion ?? process.env.X_COLLECTOR_PARSER_VERSION?.trim()) || "unversioned";
     const parseStatus = metadata.parseStatus ?? "captured";
     const responseStatus = metadata.responseStatus ?? "unknown";
     const expiresAt = metadata.expiresAt ?? new Date(received.getTime() + rawRetentionDays() * 86400000);
