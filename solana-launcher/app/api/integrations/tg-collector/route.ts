@@ -107,6 +107,84 @@ export async function GET(request: NextRequest) {
   if (forbidden) return forbidden;
   try {
     const p = pool();
+    if (new URL(request.url).searchParams.get("mode") === "memecoin") {
+      const [tokenStats, tokens, channels, unresolvedTickers, signals] = await Promise.all([
+        p.query(`SELECT
+          (SELECT count(*)::integer FROM tg_tokens WHERE chain_id='solana-mainnet') AS tokens_total,
+          (SELECT count(*)::integer FROM tg_token_candidates WHERE chain_id='solana-mainnet'
+            AND candidate_type='address' AND resolution_status='unresolved') AS unresolved_addresses,
+          (SELECT count(*)::integer FROM tg_ticker_mentions WHERE message_date>=now()-interval '24 hours') AS ticker_mentions_24h,
+          (SELECT count(DISTINCT (chain_id,mint))::integer FROM tg_token_mentions
+            WHERE analysis_version=3 AND orphaned=FALSE AND message_date>=now()-interval '24 hours') AS confirmed_tokens_24h,
+          (SELECT count(*)::integer FROM tg_signals WHERE detected_at>=now()-interval '24 hours'
+            AND status<>'dismissed') AS signals_24h,
+          (SELECT count(*)::integer FROM tg_token_market_snapshots
+            WHERE observed_at>=now()-interval '24 hours' AND data_quality IN ('observed','partial')) AS market_snapshots_24h`),
+        p.query(`
+          SELECT t.chain_id,t.mint,t.symbol,t.name,t.first_seen_at,
+            COALESCE(m.mentions_7d,0)::integer AS mentions_7d,
+            COALESCE(m.sources_7d,0)::integer AS sources_7d,
+            v.velocity::float8 AS velocity_5m,
+            market.price_usd::text AS price_usd,
+            market.liquidity_usd::text AS liquidity_usd,
+            market.volume_1h::text AS volume_1h,
+            market.market_cap_estimate::text AS market_cap_estimate,
+            market.observed_at AS market_observed_at,
+            fm.message_date AS first_mention_at,fs.identifier AS first_mention_channel,
+            COALESCE(narrative.names,'{}'::text[]) AS narratives
+          FROM tg_tokens t
+          LEFT JOIN LATERAL (
+            SELECT count(*)::integer AS mentions_7d,count(DISTINCT tm.source_id)::integer AS sources_7d
+            FROM tg_token_mentions tm JOIN tg_messages msg USING(source_id,message_id)
+            WHERE tm.chain_id=t.chain_id AND tm.mint=t.mint AND tm.analysis_version=3
+              AND tm.orphaned=FALSE AND msg.deleted_at IS NULL AND tm.message_date>=now()-interval '7 days'
+          ) m ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT velocity FROM tg_token_velocity v0 WHERE v0.chain_id=t.chain_id AND v0.mint=t.mint
+              AND v0.window_name='5m' ORDER BY v0.computed_at DESC LIMIT 1
+          ) v ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT price_usd,liquidity_usd,volume_1h,market_cap_estimate,observed_at
+            FROM tg_token_market_snapshots snap WHERE snap.chain_id=t.chain_id AND snap.mint=t.mint
+              AND snap.provider='dexscreener' ORDER BY snap.observed_at DESC LIMIT 1
+          ) market ON TRUE
+          LEFT JOIN tg_token_first_mentions fm ON fm.chain_id=t.chain_id AND fm.mint=t.mint
+          LEFT JOIN tg_sources fs ON fs.id=fm.source_id
+          LEFT JOIN LATERAL (
+            SELECT array_agg(n.narrative_name ORDER BY n.narrative_name) AS names
+            FROM tg_token_narratives tn JOIN tg_narratives n ON n.id=tn.narrative_id
+            WHERE tn.chain_id=t.chain_id AND tn.mint=t.mint AND tn.model_version='keyword-v1'
+          ) narrative ON TRUE
+          WHERE t.chain_id='solana-mainnet'
+          ORDER BY COALESCE(m.mentions_7d,0) DESC,v.velocity DESC NULLS LAST,t.first_seen_at DESC LIMIT 30`),
+        p.query(`
+          SELECT s.id::text AS source_id,s.identifier,score.discovery_score::float8,
+            score.outcome_score::float8,score.originality_score::float8,score.risk_score::float8,
+            score.composite_score::float8,score.sample_size,score.confidence_lower::float8,
+            score.confidence_upper::float8,score.computed_at,score.features
+          FROM tg_sources s JOIN LATERAL (
+            SELECT * FROM tg_channel_scores cs WHERE cs.source_id=s.id
+            ORDER BY cs.computed_at DESC LIMIT 1
+          ) score ON TRUE
+          ORDER BY score.composite_score DESC NULLS LAST,score.discovery_score DESC NULLS LAST LIMIT 20`),
+        p.query(`
+          SELECT ticker,evidence_count,last_seen_at FROM tg_ticker_registry
+          WHERE mint IS NULL AND resolution_status='unresolved'
+          ORDER BY evidence_count DESC,last_seen_at DESC LIMIT 20`),
+        p.query(`
+          SELECT sig.id::text,sig.signal_type,sig.chain_id,sig.mint,sig.confidence::float8,
+            sig.detected_at,sig.model_version,sig.status,sig.features,src.identifier AS source_identifier
+          FROM tg_signals sig LEFT JOIN tg_sources src ON src.id=sig.source_id
+          WHERE sig.status<>'dismissed' ORDER BY sig.detected_at DESC LIMIT 20`)
+      ]);
+      return NextResponse.json({
+        tokenStats: tokenStats.rows[0],
+        tokens: tokens.rows,
+        channels: channels.rows,
+        unresolvedTickers: unresolvedTickers.rows,
+        signals: signals.rows,
+      }, { headers: noStore });
+    }
     const params = request.nextUrl.searchParams;
     const selected = params.has("source") ? sourceId(params.get("source")) : null;
     const search = (params.get("q") || "").trim();
