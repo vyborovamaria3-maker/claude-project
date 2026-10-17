@@ -12,7 +12,10 @@ export type RetryDecision =
 export function classifyTelegramError(error: unknown, attempts: number, random: () => number = Math.random): RetryDecision {
   const typed = error as { message?: unknown; errorMessage?: unknown; code?: unknown; seconds?: unknown } | null;
   const text = [typed?.errorMessage, typed?.message, String(error)].map(String).join(" ").toUpperCase();
-  if (/PEER[_ ]?FLOOD|USER_RESTRICTED|USER_BANNED_IN_CHANNEL/.test(text)) {
+  if (/PEER[_ ]?FLOOD/.test(text)) {
+    return { action: "halt", code: "TG_PEER_FLOOD", scope: "account" };
+  }
+  if (/USER_RESTRICTED|USER_BANNED_IN_CHANNEL/.test(text)) {
     return { action: "halt", code: "TG_ACCOUNT_RESTRICTED", scope: "account" };
   }
   if (/AUTH_KEY_UNREGISTERED|AUTH_KEY_DUPLICATED|SESSION_REVOKED|SESSION_EXPIRED|SESSION EXPIRED|NOT AUTHORIZED|USER_DEACTIVATED|USER_DEACTIVATED_BAN/.test(text)) {
