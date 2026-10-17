@@ -10,6 +10,7 @@ export interface NormalizedTweet {
   id: string;
   text: string;
   authorHandle: string;
+  authorId?: string | null;
   authorDisplayName: null;
   url: string;
   views: number | null;
