@@ -33,3 +33,4 @@ jobs:
           node scripts/blockchain-wallet-cache-regression.cjs
           node scripts/blockchain-collector-regression.mjs
           node scripts/blockchain-seed-persistence-test.cjs
+          node scripts/blockchain-seed-integration.cjs
