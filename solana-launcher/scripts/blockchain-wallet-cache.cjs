@@ -336,33 +336,124 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
 function markWalletHistory(db, wallet, state) {
   ensureWalletCacheSchema(db);
   const now = state.now ?? Date.now();
-  const complete = Boolean(state.complete && !state.forwardCursor && !state.possibleGap);
+  const decoderCoverage = state.decoderCoverage || 'swap_only';
+  const complete = Boolean(state.complete && decoderCoverage === 'full'
+    && !state.forwardCursor && !state.possibleGap);
   db.prepare(`
     INSERT INTO chain_wallet_discovery
       (wallet, chain, first_discovered_at, history_status, last_fetched_at, backfill_cursor,
-       forward_cursor, backfill_complete, possible_gap, tokens_touched, last_trade_at, last_error)
-    VALUES(?, 'solana', ?, ?, ?, ?, ?, ?, ?, 
+       forward_cursor, backfill_complete, possible_gap, tokens_touched, last_trade_at, last_error,
+       decoder_coverage, last_decoder_version)
+    VALUES(?, 'solana', ?, ?, ?, ?, ?, ?, ?,
       (SELECT COUNT(*) FROM chain_wallet_token_touched WHERE wallet=?),
-      (SELECT MAX(block_time) FROM chain_wallet_trades WHERE wallet=?), ?)
+      (SELECT MAX(block_time) FROM chain_wallet_trades WHERE wallet=?), ?, ?, ?)
     ON CONFLICT(wallet) DO UPDATE SET
       history_status=excluded.history_status, last_fetched_at=excluded.last_fetched_at,
       backfill_cursor=excluded.backfill_cursor, forward_cursor=excluded.forward_cursor,
       backfill_complete=excluded.backfill_complete, possible_gap=excluded.possible_gap,
       tokens_touched=excluded.tokens_touched, last_trade_at=excluded.last_trade_at,
-      last_error=excluded.last_error
+      last_error=excluded.last_error, decoder_coverage=excluded.decoder_coverage,
+      last_decoder_version=excluded.last_decoder_version
   `).run(wallet, now, complete ? 'complete' : 'partial', now, state.backfillCursor || null,
-    state.forwardCursor || null, complete ? 1 : 0, state.possibleGap ? 1 : 0, wallet, wallet, null);
+    state.forwardCursor || null, complete ? 1 : 0, state.possibleGap ? 1 : 0, wallet, wallet,
+    state.lastError || null, decoderCoverage, state.decoderVersion || DECODER_VERSION);
+  const row = db.prepare(`
+    SELECT MIN(slot) AS start_slot, MAX(slot) AS end_slot, COUNT(*) AS n
+    FROM chain_seed_events WHERE kind='wallet' AND address=?
+  `).get(wallet);
+  db.prepare(`
+    INSERT INTO chain_history_coverage
+      (entity_kind, entity_key, source, coverage_start_slot, coverage_end_slot, events_count,
+       expected_count, coverage_percent, status, decoder_coverage, gap_reason, checked_at)
+    VALUES('wallet', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+    ON CONFLICT(entity_kind, entity_key, source) DO UPDATE SET
+      coverage_start_slot=excluded.coverage_start_slot, coverage_end_slot=excluded.coverage_end_slot,
+      events_count=excluded.events_count, expected_count=NULL, coverage_percent=NULL,
+      status=excluded.status, decoder_coverage=excluded.decoder_coverage,
+      gap_reason=excluded.gap_reason, checked_at=excluded.checked_at
+  `).run(wallet, state.source || 'helius', row.start_slot, row.end_slot, row.n,
+    complete ? 'complete' : (state.possibleGap ? 'gap' : 'partial'), decoderCoverage,
+    state.possibleGap ? 'pagination_gap' : decoderCoverage !== 'full' ? 'decoder_limit' : null, now);
+  const pages = Math.max(0, Number(state.pagesFetched) || 0);
+  db.prepare(`
+    INSERT INTO chain_wallet_pagination_state(wallet, pagination_kind, pagination_token, pages_fetched, last_page_empty, updated_at)
+    VALUES(?, 'before', ?, ?, ?, ?)
+    ON CONFLICT(wallet) DO UPDATE SET pagination_kind=excluded.pagination_kind,
+      pagination_token=excluded.pagination_token, pages_fetched=chain_wallet_pagination_state.pages_fetched+excluded.pages_fetched,
+      last_page_empty=excluded.last_page_empty, updated_at=excluded.updated_at
+  `).run(wallet, state.backfillCursor || null, pages, state.lastPageEmpty ? 1 : 0, now);
 }
 
 function walletHistoryFresh(db, wallet, now = Date.now()) {
   ensureWalletCacheSchema(db);
   const row = db.prepare(`
-    SELECT history_status, last_fetched_at, last_trade_at FROM chain_wallet_discovery WHERE wallet=?
+    SELECT history_status, last_fetched_at, last_trade_at, decoder_coverage
+    FROM chain_wallet_discovery WHERE wallet=?
   `).get(wallet);
-  if (!row || row.history_status !== 'complete' || row.last_fetched_at == null) return false;
+  if (!row || row.history_status !== 'complete' || row.decoder_coverage !== 'full'
+      || row.last_fetched_at == null) return false;
   const active = row.last_trade_at != null && row.last_trade_at >= Math.floor((now - 24 * 3600_000) / 1000);
   const threshold = active ? 2 * 3600_000 : 24 * 3600_000;
   return now - row.last_fetched_at < threshold;
+}
+
+function authoritativePnlAllowed(signals = {}) {
+  return signals.historyComplete === true
+    && signals.decoderCoverage === 'full'
+    && signals.costBasisComplete === true
+    && signals.completeFromObservedTrades === true
+    && signals.orderingComplete === true
+    && signals.reorgStable === true
+    && Number.isFinite(signals.unknownOperationsRatio)
+    && signals.unknownOperationsRatio <= 0.05;
+}
+
+function calculateDataConfidence(signals = {}) {
+  const history = signals.historyComplete === true ? 1 : 0;
+  const coverageMap = { swap_only: 0.25, swap_and_transfers: 0.6, swap_transfers_mint_burn: 0.8, full: 1 };
+  const decoder = coverageMap[signals.decoderCoverage] || 0;
+  const unknown = Number.isFinite(signals.unknownOperationsRatio)
+    ? Math.max(0, Math.min(1, 1 - signals.unknownOperationsRatio)) : 0;
+  const costBasis = signals.costBasisComplete === true ? 1 : 0;
+  const ordering = signals.orderingComplete === true ? 1 : 0;
+  const reorg = signals.reorgStable === true ? 1 : 0;
+  return Number((history * decoder * unknown * costBasis * ordering * reorg).toFixed(6));
+}
+
+function recordBudgetUsage(db, entry) {
+  ensureWalletCacheSchema(db);
+  const costKind = entry.costKind;
+  if (!['credit', 'cu', 'http'].includes(costKind)) throw new Error('invalid costKind');
+  const units = entry.costUnits == null ? null : finiteNumber(entry.costUnits);
+  if (entry.costUnits != null && (units == null || units < 0)) throw new Error('invalid costUnits');
+  db.prepare(`
+    INSERT INTO chain_budget_ledger(provider, endpoint, cost_units, cost_kind, task_id, entity_kind, entity_key, ts, metadata_json)
+    VALUES(?,?,?,?,?,?,?,?,?)
+  `).run(entry.provider, entry.endpoint, units, costKind, entry.taskId || null,
+    entry.entityKind || null, entry.entityKey || null, entry.ts || Date.now(),
+    entry.metadata ? JSON.stringify(entry.metadata) : null);
+}
+
+function recordHistoryCoverage(db, entry) {
+  ensureWalletCacheSchema(db);
+  const percent = entry.coveragePercent == null ? null : Number(entry.coveragePercent);
+  if (percent != null && (!Number.isFinite(percent) || percent < 0 || percent > 1)) {
+    throw new Error('coveragePercent must be in [0,1] or null');
+  }
+  db.prepare(`
+    INSERT INTO chain_history_coverage
+      (entity_kind, entity_key, source, coverage_start_slot, coverage_end_slot, events_count,
+       expected_count, coverage_percent, status, decoder_coverage, gap_reason, checked_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(entity_kind, entity_key, source) DO UPDATE SET
+      coverage_start_slot=excluded.coverage_start_slot, coverage_end_slot=excluded.coverage_end_slot,
+      events_count=excluded.events_count, expected_count=excluded.expected_count,
+      coverage_percent=excluded.coverage_percent, status=excluded.status,
+      decoder_coverage=excluded.decoder_coverage, gap_reason=excluded.gap_reason,
+      checked_at=excluded.checked_at
+  `).run(entry.entityKind, entry.entityKey, entry.source, entry.coverageStartSlot ?? null,
+    entry.coverageEndSlot ?? null, entry.eventsCount ?? 0, entry.expectedCount ?? null,
+    percent, entry.status, entry.decoderCoverage || 'swap_only', entry.gapReason || null, entry.checkedAt || Date.now());
 }
 
 module.exports = {
@@ -370,5 +461,9 @@ module.exports = {
   ensureWalletCacheSchema,
   cacheWalletTrades,
   markWalletHistory,
-  walletHistoryFresh
+  walletHistoryFresh,
+  authoritativePnlAllowed,
+  calculateDataConfidence,
+  recordBudgetUsage,
+  recordHistoryCoverage
 };
