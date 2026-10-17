@@ -220,6 +220,37 @@ const missingMeta = normalizeFullTransaction({
 });
 assert.notEqual(missingMeta.transactionError, null,
   "missing execution metadata must be unknown, not silently successful");
+const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
+const inventoryEvidence = decodeInventoryMovements({
+  signature: "inventory-evidence", slot: 903, timestamp: 1700000003,
+  decodedOperations: [
+    { type: "transferChecked", info: { source: "tokenAccountA", destination: "tokenAccountB",
+      mint: "mintA", tokenAmount: { amount: "1250", decimals: 2 }, authority: "authorityA" } },
+    { type: "mintTo", info: { account: "tokenAccountB", mint: "mintA", amount: "100" } },
+    { type: "burn", info: { account: "tokenAccountA", mint: "mintA", amount: "50" } },
+  ],
+  tokenBalanceDeltas: [
+    { owner: "walletA", tokenAccount: "tokenAccountA", mint: "mintA", deltaRaw: "-1250" },
+    { owner: "walletB", tokenAccount: "tokenAccountB", mint: "mintA", deltaRaw: "1250" },
+  ],
+});
+assert.equal(inventoryEvidence.length, 4, "transfer must produce two evidence legs plus mint and burn");
+assert.deepEqual(inventoryEvidence.slice(0, 2).map((m) => [m.owner, m.direction]),
+  [["walletA", "out"], ["walletB", "in"]]);
+assert.equal(inventoryEvidence[0].amountRaw, "1250");
+assert.equal(inventoryEvidence[0].decimals, 2);
+assert.equal(inventoryEvidence[2].kind, "mint");
+assert.equal(inventoryEvidence[2].owner, "walletB");
+assert.equal(inventoryEvidence[3].kind, "burn");
+assert.equal(inventoryEvidence[3].owner, "walletA");
+const unknownInventory = decodeInventoryMovements({
+  signature: "unknown-inventory",
+  decodedOperations: [{ type: "transfer", info: { source: "unknownA", destination: "unknownB", amount: "7" } }],
+  tokenBalanceDeltas: [],
+});
+assert.equal(unknownInventory.length, 2);
+assert.ok(unknownInventory.every((m) => m.owner === null && m.attributionStatus === "owner_unknown"),
+  "unknown transfer ownership must be preserved as unknown, not guessed");
 assert.throws(() => getAlchemyConfig({}), /Alchemy Solana API key|ALCHEMY_SOLANA_RPC_URL/);
 assert.equal(getAlchemyConfig({
   NEXT_PUBLIC_QUICKNODE_RPC_URL: "https://solana-mainnet.g.alchemy.com/v2/legacy-test-key",
