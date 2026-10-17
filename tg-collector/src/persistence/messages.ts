@@ -8,19 +8,27 @@ export async function persistMessage(
 ): Promise<void> {
   if (!Number.isSafeInteger(msg.id) || msg.id <= 0 || typeof msg.message !== "string") return;
   await tx.query(
-    `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies,analysis_version,deleted_at,edited_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10)
+    `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies,analysis_version,deleted_at,edited_at,reply_to_message_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,$11)
      ON CONFLICT(source_id,message_id) DO UPDATE SET
        sender_id=EXCLUDED.sender_id, posted_at=EXCLUDED.posted_at,
        text=EXCLUDED.text, views=EXCLUDED.views,
-       forwards=EXCLUDED.forwards, replies=EXCLUDED.replies, edited_at=EXCLUDED.edited_at,
+       forwards=EXCLUDED.forwards, replies=EXCLUDED.replies, edited_at=EXCLUDED.edited_at, reply_to_message_id=EXCLUDED.reply_to_message_id,
        collected_at=now(), analysis_version=EXCLUDED.analysis_version, deleted_at=NULL`,
     [sourceId, msg.id, msg.senderId?.toString() ?? null,
       typeof msg.date === "number" ? new Date(msg.date * 1000) : null,
       msg.message, msg.views ?? null, msg.forwards ?? null,
       msg.replies?.replies ?? null, ANALYSIS_VERSION,
-      typeof msg.editDate === "number" ? new Date(msg.editDate * 1000) : null]
+      typeof msg.editDate === "number" ? new Date(msg.editDate * 1000) : null,
+      typeof msg.replyToMsgId === "number" && Number.isSafeInteger(msg.replyToMsgId) && msg.replyToMsgId > 0 ? msg.replyToMsgId : null]
   );
+  if (typeof msg.replyToMsgId === "number" && Number.isSafeInteger(msg.replyToMsgId) && msg.replyToMsgId > 0 && msg.replyToMsgId !== msg.id) {
+    await tx.query("INSERT INTO tg_message_threads(source_id,message_id,reply_to_message_id) VALUES($1,$2,$3) " +
+      "ON CONFLICT(source_id,message_id) DO UPDATE SET reply_to_message_id=EXCLUDED.reply_to_message_id,observed_at=now()",
+      [sourceId, msg.id, msg.replyToMsgId]);
+  } else {
+    await tx.query("DELETE FROM tg_message_threads WHERE source_id=$1 AND message_id=$2", [sourceId, msg.id]);
+  }
   await replaceEvidence(tx, sourceId, msg);
 }
 
