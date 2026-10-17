@@ -276,25 +276,30 @@ function wilsonInterval(wins: number, total: number): { lower: number | null; up
 export async function refreshChannelScores(tx: PoolClient): Promise<number> {
   const result = await tx.query<{
     source_id: string; discoveries: string; confirmed_tokens: string; copy_ratio: string | null;
-    outcome_count: string; wins: string; risk_events: string;
+    outcome_count: string; wins: string; risk_events: string; risk_sample: string;
   }>(
     "SELECT s.id::text AS source_id," +
     "COALESCE((SELECT sum(d.unique_token_discoveries) FROM tg_channel_metrics_daily d WHERE d.source_id=s.id " +
     "AND d.analysis_version=$1 AND d.day>=current_date-29),0)::text AS discoveries," +
-    "COALESCE((SELECT sum(d.unique_confirmed_tokens) FROM tg_channel_metrics_daily d WHERE d.source_id=s.id " +
-    "AND d.analysis_version=$1 AND d.day>=current_date-29),0)::text AS confirmed_tokens," +
+    "COALESCE((SELECT count(DISTINCT (tm.chain_id,tm.mint)) FROM tg_token_mentions tm JOIN tg_messages m USING(source_id,message_id) " +
+    "WHERE tm.source_id=s.id AND tm.analysis_version=$1 AND tm.orphaned=FALSE AND m.deleted_at IS NULL " +
+    "AND tm.message_date>=now()-interval '30 days'),0)::text AS confirmed_tokens," +
     "(SELECT avg(d.copypasta_ratio)::text FROM tg_channel_metrics_daily d WHERE d.source_id=s.id " +
     "AND d.analysis_version=$1 AND d.day>=current_date-29) AS copy_ratio," +
     "(SELECT count(*)::text FROM tg_token_outcomes o JOIN tg_messages m USING(source_id,message_id) " +
     "WHERE o.source_id=s.id AND o.model_version=$2 AND o.outcome_status IN ('complete','risk_confirmed') " +
-    "AND m.deleted_at IS NULL AND o.mention_time>=now()-interval '30 days') AS outcome_count," +
+    "AND o.price_at_mention>0 AND o.price_24h>0 AND m.deleted_at IS NULL " +
+    "AND o.mention_time>=now()-interval '30 days') AS outcome_count," +
     "(SELECT count(*)::text FROM tg_token_outcomes o JOIN tg_messages m USING(source_id,message_id) " +
     "WHERE o.source_id=s.id AND o.model_version=$2 AND o.outcome_status IN ('complete','risk_confirmed') " +
     "AND o.price_at_mention>0 AND o.price_24h>o.price_at_mention AND m.deleted_at IS NULL " +
     "AND o.mention_time>=now()-interval '30 days') AS wins," +
     "(SELECT count(*)::text FROM tg_token_outcomes o JOIN tg_messages m USING(source_id,message_id) " +
-    "WHERE o.source_id=s.id AND o.model_version=$2 AND o.risk_event=TRUE AND m.deleted_at IS NULL " +
-    "AND o.mention_time>=now()-interval '30 days') AS risk_events " +
+    "WHERE o.source_id=s.id AND o.model_version=$2 AND o.risk_event=TRUE AND o.risk_assessed=TRUE AND m.deleted_at IS NULL " +
+    "AND o.mention_time>=now()-interval '30 days') AS risk_events," +
+    "(SELECT count(*)::text FROM tg_token_outcomes o JOIN tg_messages m USING(source_id,message_id) " +
+    "WHERE o.source_id=s.id AND o.model_version=$2 AND o.risk_assessed=TRUE AND m.deleted_at IS NULL " +
+    "AND o.mention_time>=now()-interval '30 days') AS risk_sample " +
     "FROM tg_sources s ORDER BY s.id",
     [ANALYSIS_VERSION, OUTCOME_VERSION],
   );
@@ -305,11 +310,12 @@ export async function refreshChannelScores(tx: PoolClient): Promise<number> {
     const sample = Number(row.outcome_count);
     const wins = Number(row.wins);
     const riskEvents = Number(row.risk_events);
+    const riskSample = Number(row.risk_sample);
     const copyRatio = row.copy_ratio === null ? null : Math.max(0, Math.min(1, Number(row.copy_ratio)));
     const discoveryScore = confirmed > 0 ? Math.min(100, discoveries / confirmed * 100) : null;
     const originalityScore = copyRatio === null ? null : (1 - copyRatio) * 100;
     const outcomeScore = sample > 0 ? (wins + 2.5) / (sample + 5) * 100 : null;
-    const riskScore = sample > 0 ? (riskEvents + 1) / (sample + 2) * 100 : null;
+    const riskScore = riskSample > 0 ? (riskEvents + 1) / (riskSample + 2) * 100 : null;
     const composite = sample >= 5 && discoveryScore !== null && originalityScore !== null && riskScore !== null && outcomeScore !== null
       ? discoveryScore * 0.35 + outcomeScore * 0.35 + originalityScore * 0.2 + (100 - riskScore) * 0.1 : null;
     const interval = wilsonInterval(wins, sample);
@@ -320,7 +326,7 @@ export async function refreshChannelScores(tx: PoolClient): Promise<number> {
       [row.source_id, CHANNEL_SCORE_VERSION, discoveryScore, outcomeScore, originalityScore, riskScore, composite,
        sample, interval.lower, interval.upper, JSON.stringify({ discoveries30d: discoveries,
          confirmedTokens30d: confirmed, copyRatio30d: copyRatio, outcomes30d: sample, wins24h: wins,
-         riskEvents30d: riskEvents, compositeRequiresAtLeastFiveOutcomes: true })],
+         riskEvents30d: riskEvents, riskAssessedOutcomes30d: riskSample, compositeRequiresAtLeastFiveOutcomes: true })],
     );
   }
   return result.rows.length;
