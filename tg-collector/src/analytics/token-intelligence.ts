@@ -374,8 +374,8 @@ export async function detectPropagationPatterns(tx: PoolClient, chainId: string,
 /** Create reproducible observations; these are discovery/risk review items, not trade orders. */
 export async function refreshSignals(tx: PoolClient): Promise<number> {
   const firstMentions = await tx.query(
-    "INSERT INTO tg_signals(signal_type,chain_id,mint,source_id,message_id,confidence,features,model_version) " +
-    "SELECT 'first_observed_mint_mention',f.chain_id,f.mint,f.source_id,f.message_id," +
+    "INSERT INTO tg_signals(signal_type,chain_id,mint,source_id,message_id,detected_at,confidence,features,model_version) " +
+    "SELECT 'first_observed_mint_mention',f.chain_id,f.mint,f.source_id,f.message_id,COALESCE(f.message_date,f.observed_at)," +
     "CASE WHEN f.coverage_status='partial_source_history' THEN 0.60 ELSE 0.70 END," +
     "jsonb_build_object('interpretation','earliest mention in collected history','coverage_status',f.coverage_status)," +
     "'first-mention-v1' FROM tg_token_first_mentions f " +
