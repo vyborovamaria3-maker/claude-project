@@ -39,6 +39,35 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     // Repeat additive migrations on the same populated schema.
     for (const name of ["015_collector_observations.sql","016_collector_task_results.sql","017_collector_live.sql"])
       await getPool().query(await fs.readFile("migrations/"+name,"utf8"));
+    const qualityMints = ["quality-ready-" + randomUUID(), "quality-missing-" + randomUUID()];
+    const qualitySignalAt = Math.floor(Date.now() / 86400000) * 86400000 - 6 * 3600000;
+    try {
+      await getPool().query("INSERT INTO signal_history(source,mint,signal_at,score,details) VALUES ($1,$2,$3,80,'{}'::jsonb),($1,$4,$5,70,'{}'::jsonb)",
+        ["entity", qualityMints[0], qualitySignalAt, qualityMints[1], qualitySignalAt + 5 * 60000]);
+      await getPool().query("INSERT INTO mint_attention_snapshots(mint,observed_at,tweets,authors,views,likes,retweets) VALUES ($1,$2,10,3,1000,50,10),($1,$3,12,4,1500,70,15)",
+        [qualityMints[0], qualitySignalAt - 5 * 60000, qualitySignalAt + 65 * 60000]);
+      const refreshed = await getPool().query("SELECT refresh_signal_quality_outcomes($1,$2,$3::integer[]) AS refreshed",
+        [qualitySignalAt - 1, qualitySignalAt + 5 * 60000 + 1, [1]]);
+      assert(Number(refreshed.rows[0]?.refreshed) >= 2, "quality refresh should evaluate both historical signals");
+      const outcomes = await getPool().query("SELECT mint,outcome_status,attention_change_pct::text FROM signal_quality_outcomes WHERE mint = ANY($1::text[]) ORDER BY mint", [qualityMints]);
+      assert.equal(outcomes.rows.length, 2);
+      const ready = outcomes.rows.find(row => row.mint === qualityMints[0]);
+      const missing = outcomes.rows.find(row => row.mint === qualityMints[1]);
+      assert.equal(ready?.outcome_status, "ready");
+      assert.equal(Number(ready?.attention_change_pct), 50);
+      assert.equal(missing?.outcome_status, "missing_entry");
+      const dayBucket = Math.floor(qualitySignalAt / 86400000) * 86400000;
+      const mart = await getPool().query("SELECT candidate_signals::text,ready_outcomes::text,coverage_pct::text,avg_attention_change_pct::text FROM v_signal_quality_mart WHERE source='entity' AND horizon_hours=1 AND day_start_ms=$1 AND score_band='70-84'", [dayBucket]);
+      assert.equal(mart.rows.length, 1);
+      assert.equal(Number(mart.rows[0].candidate_signals), 2);
+      assert.equal(Number(mart.rows[0].ready_outcomes), 1);
+      assert.equal(Number(mart.rows[0].coverage_pct), 50);
+      assert.equal(Number(mart.rows[0].avg_attention_change_pct), 50);
+    } finally {
+      await getPool().query("DELETE FROM signal_quality_outcomes WHERE mint = ANY($1::text[])", [qualityMints]);
+      await getPool().query("DELETE FROM signal_history WHERE mint = ANY($1::text[])", [qualityMints]);
+      await getPool().query("DELETE FROM mint_attention_snapshots WHERE mint = ANY($1::text[])", [qualityMints]);
+    }
     const ids = await Promise.all(Array.from({length:8},(_,n)=>enqueueTask({kind:"profile",payload:{handle:"user"+n}})));
     const claims = await Promise.all([claimTasks("a",4,60000),claimTasks("b",4,60000)]);
     const flat=claims.flat(); assert.equal(flat.length,8); assert.equal(new Set(flat.map(t=>t.id)).size,8);
