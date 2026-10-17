@@ -213,6 +213,13 @@ assert.equal(ownerlessBalances.tokenBalanceDeltas.length, 2,
   "ownerless token accounts must not be merged into a fabricated wallet delta");
 assert.deepEqual(ownerlessBalances.tokenBalanceDeltas.map((d) => d.accountIndex), [2, 3]);
 assert.ok(ownerlessBalances.tokenBalanceDeltas.every((d) => !d.ownerKnown));
+const missingMeta = normalizeFullTransaction({
+  signature: "missing-meta", slot: 902, blockTime: 1700000002,
+  transaction: { signatures: ["missing-meta"], message: { accountKeys: [], instructions: [] } },
+  meta: null,
+});
+assert.notEqual(missingMeta.transactionError, null,
+  "missing execution metadata must be unknown, not silently successful");
 assert.throws(() => getAlchemyConfig({}), /Alchemy Solana API key|ALCHEMY_SOLANA_RPC_URL/);
 assert.equal(getAlchemyConfig({
   NEXT_PUBLIC_QUICKNODE_RPC_URL: "https://solana-mainnet.g.alchemy.com/v2/legacy-test-key",
