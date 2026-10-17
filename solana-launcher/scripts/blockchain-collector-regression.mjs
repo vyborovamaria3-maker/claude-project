@@ -221,6 +221,9 @@ const missingMeta = normalizeFullTransaction({
 });
 assert.notEqual(missingMeta.transactionError, null,
   "missing execution metadata must be unknown, not silently successful");
+assert.doesNotThrow(() => new vm.Script(read("scripts/blockchain-inventory-decoder.cjs")));
+assert.doesNotThrow(() => new vm.Script(read("scripts/blockchain-trade-reconciliation.cjs")));
+assert.doesNotThrow(() => new vm.Script(read("scripts/blockchain-trade-reconcile.cjs")));
 const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
 const inventoryEvidence = decodeInventoryMovements({
   signature: "inventory-evidence", slot: 903, timestamp: 1700000003,
