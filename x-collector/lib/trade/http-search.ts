@@ -27,7 +27,7 @@ export async function collectHttpSearch(engine: SearchReader, query: string,
       if (tweets.length + batch.length >= opts.limit) break;
     }
     // Persist before moving the cursor. Failure leaves existing watermarks safe.
-    if (batch.length) await opts.onBatch?.(batch);
+    if (batch.length) await opts.onBatch?.(batch, page.rawResponse);
     tweets.push(...batch);
     await opts.onProgress?.({ phase: "collecting", found: tweets.length, limit: opts.limit });
     if (tweets.length >= opts.limit || page.nextCursor === null) return tweets;

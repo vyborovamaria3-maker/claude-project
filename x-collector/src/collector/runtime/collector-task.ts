@@ -160,7 +160,7 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
         authState,
         signal:operationSignal,
         onProgress:publish,
-        onBatch:async(tweets:RawTweet[])=>{
+        onBatch:async(tweets:RawTweet[], rawResponse?:unknown)=>{
           assertLeases();await publish({phase:"saving"});
           const query=kind==="search"?(payload as {query:string}).query:null;
           const listPayload=payload as {list_source_id?:string;discovery_source?:string;list_since_id?:string;list_max_id?:string};
@@ -172,10 +172,10 @@ export async function executeTask(task: Awaited<ReturnType<typeof claimTasks>>[n
             // the SAME transaction; a crash never advances past unsaved IDs.
             await commitBrowserBatch({...browserKey,lease:persistenceLease,ids:selected.map(t=>t.id)},
               client=>persistTweets(kind==="search"?task.mint:null,selected,sourceQuery,
-                task.id,acc.name,persistenceLease,{client,atomicBrowserBatch:true}));
+                task.id,acc.name,persistenceLease,{client,atomicBrowserBatch:true,...(useLegacyHttpSearch?{transport:"http" as const}:{}),rawResponse}));
           } else {
             await persistTweets(kind==="search"?task.mint:null,selected,sourceQuery,task.id,acc.name,persistenceLease,
-              useLegacyHttpSearch ? { transport: "http" } : {});
+              useLegacyHttpSearch ? { transport: "http", rawResponse } : {});
           }
           if(historical.history_run_id)await persistHistory(historical.history_run_id,task.id);
           assertLeases();await publish({phase:"collecting"});
