@@ -105,12 +105,12 @@ try {
   assert.equal(verified.costBasisComplete, true);
   assert.equal(verified.realizedPnl, 0.25);
   const unknownTooHigh = computeWalletCostBasisLedger(WALLET, rawTrades, true, null, {
-    decoderCoverage: "full", unknownOperationsRatio: 0.051, reorgStable: true
+    decoderCoverage: "full", unknownOperationsRatio: 0.051, reorgStable: true, sourceReconciled: true
   });
   assert.equal(unknownTooHigh.costBasisComplete, false);
   assert.equal(unknownTooHigh.realizedPnl, null);
   const notFinalized = computeWalletCostBasisLedger(WALLET, rawTrades, true, null, {
-    decoderCoverage: "full", unknownOperationsRatio: 0, reorgStable: false
+    decoderCoverage: "full", unknownOperationsRatio: 0, reorgStable: false, sourceReconciled: true
   });
   assert.equal(notFinalized.costBasisComplete, false);
   assert.equal(notFinalized.realizedPnl, null);
