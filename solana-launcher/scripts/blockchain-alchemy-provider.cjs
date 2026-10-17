@@ -2,6 +2,7 @@
 
 // Alchemy Solana historical provider. No Helius fallback is permitted here.
 // Uses the documented getTransactionsForAddress RPC extension with opaque paginationToken.
+// Final validation marker: test current provider migration, wallet cache attribution, and mocked Alchemy API behavior.
 const DEFAULT_RPC = "https://solana-mainnet.g.alchemy.com/v2/";
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
 const DEX_PROGRAMS = new Set([
