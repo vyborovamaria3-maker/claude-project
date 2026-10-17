@@ -190,4 +190,78 @@ assert.equal(fetchCount, 1);
 assert.equal((await cache.loadTokenTrades("mintA")).length, 2);
 assert.equal(fetchCount, 1, "fresh cache should avoid repeated fetch");
 
-console.log("[blockchain-collector-regression] OK: SQLite contract, PumpPortal, reconnect, Helius and incremental cache");
+// Alchemy primary-provider contract: mocked JSON-RPC only; no real API requests.
+const { createAlchemyProvider, getAlchemyConfig } = require("./blockchain-alchemy-provider.cjs");
+assert.throws(() => getAlchemyConfig({}), /Alchemy Solana API key|ALCHEMY_SOLANA_RPC_URL/);
+const alchemyCalls = [];
+const alchemyPages = [
+  {
+    transactions: [{
+      signature: "alchemy-sig-1", slot: 900, blockTime: 1700000000,
+      transaction: {
+        signatures: ["alchemy-sig-1"],
+        message: { accountKeys: ["walletA"], instructions: [] },
+      },
+      meta: {
+        err: null, fee: 5000, preBalances: [2000000000], postBalances: [1500000000],
+        preTokenBalances: [],
+        postTokenBalances: [{
+          owner: "walletA", mint: "mintA",
+          uiTokenAmount: { amount: "1000000000", decimals: 6 },
+        }],
+        innerInstructions: [],
+      },
+    }],
+    paginationToken: "cursor-2",
+  },
+  { transactions: [], paginationToken: null },
+];
+const alchemy = createAlchemyProvider({
+  endpoint: "https://solana-mainnet.g.alchemy.com/v2/test-key",
+  sleep: async () => {},
+  fetch: async (_url, options) => {
+    const request = JSON.parse(options.body);
+    alchemyCalls.push(request);
+    const result = alchemyPages.shift();
+    return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: request.id, result }) };
+  },
+});
+const alchemyPage1 = await alchemy.fetchTransactionsForAddress("walletA", 1);
+assert.equal(alchemyPage1.source, "alchemy");
+assert.equal(alchemyPage1.transactions[0].signature, "alchemy-sig-1");
+assert.equal(alchemyPage1.transactions[0].slot, 900);
+assert.equal(alchemyPage1.transactions[0].tokenBalanceDeltas[0].delta, 1000);
+assert.equal(alchemyPage1.transactions[0].decodedOperations.length, 0);
+assert.equal(alchemyPage1.nextCursor, "alchemy:v1:cursor-2");
+assert.equal(alchemyPage1.exhausted, false);
+const alchemyPage2 = await alchemy.fetchTransactionsForAddress("walletA", 1, new Set(), alchemyPage1.nextCursor);
+assert.equal(alchemyPage2.exhausted, true);
+assert.equal(alchemyCalls.length, 2);
+assert.equal(alchemyCalls[0].method, "getTransactionsForAddress");
+assert.equal(alchemyCalls[0].params[1].transactionDetails, "full");
+assert.equal(alchemyCalls[0].params[1].commitment, "finalized");
+assert.equal(alchemyCalls[1].params[1].paginationToken, "cursor-2");
+assert.equal(alchemyCalls[1].params[1].encoding, "jsonParsed");
+
+let alchemyRetryCalls = 0;
+const alchemyRetry = createAlchemyProvider({
+  endpoint: "https://solana-mainnet.g.alchemy.com/v2/test-key",
+  sleep: async () => {},
+  fetch: async (_url, options) => {
+    alchemyRetryCalls++;
+    const request = JSON.parse(options.body);
+    if (alchemyRetryCalls === 1) return { ok: false, status: 429, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({
+      jsonrpc: "2.0", id: request.id, result: { transactions: [], paginationToken: null },
+    }) };
+  },
+});
+const retried = await alchemyRetry.fetchTransactionsForAddress("walletA", 1);
+assert.equal(retried.httpRequests, 2, "Alchemy ledger must count retries");
+assert.equal(alchemyRetryCalls, 2);
+const { createAlchemyProvider: noFallbackProvider } = require("./blockchain-alchemy-provider.cjs");
+assert.throws(() => noFallbackProvider({ env: {}, fetch: async () => { throw new Error("must not call network"); } }),
+  /Alchemy Solana API key|ALCHEMY_SOLANA_RPC_URL/,
+  "missing Alchemy configuration must fail closed, never fall back to Helius");
+
+console.log("[blockchain-collector-regression] OK: SQLite contract, PumpPortal, reconnect, legacy Helius helper, Alchemy pagination/retry and incremental cache");
