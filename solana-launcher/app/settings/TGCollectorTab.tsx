@@ -25,6 +25,16 @@ function pill(state: Source["state"]) {
 export default function TGCollectorTab() {
   const [data, setData] = useState<Snapshot | null>(null);
   const [accessKey, setAccessKey] = useState("");
+  const [localConnected, setLocalConnected] = useState(false);
+  const [connecting, setConnecting] = useState(true);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(endpoint + "/session", { method: "POST", signal: controller.signal })
+      .then(response => { if (!controller.signal.aborted) setLocalConnected(response.ok); })
+      .catch(() => {})
+      .finally(() => { if (!controller.signal.aborted) setConnecting(false); });
+    return () => controller.abort();
+  }, []);
   const [keyInput, setKeyInput] = useState("");
   const [selected, setSelected] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -45,14 +55,14 @@ export default function TGCollectorTab() {
   const [proxyBusy, setProxyBusy] = useState(false);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    if (!accessKey) return;
+    if (!accessKey && !localConnected) return;
     const params = new URLSearchParams({ page: String(page) });
     if (selected) params.set("source", selected);
     if (query) params.set("q", query);
     try {
-      const response = await fetch(`${endpoint}?${params}`, { cache: "no-store", signal, headers: {Authorization: `Bearer ${accessKey}`} });
+      const response = await fetch(`${endpoint}?${params}`, { cache: "no-store", signal, headers: accessKey ? {Authorization: `Bearer ${accessKey}`} : {} });
       const value = await response.json() as Snapshot & { error?: string };
-      if (response.status === 401) { setAccessKey(""); throw new Error("Неверный ключ доступа TG Collector."); }
+      if (response.status === 401) { setAccessKey(""); setLocalConnected(false); throw new Error("Неверный ключ доступа TG Collector."); }
       if (!response.ok) throw new Error(value.error || "Не удалось получить данные");
       if (signal?.aborted) return;
       setData(value);
@@ -62,7 +72,7 @@ export default function TGCollectorTab() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [selected, query, page, accessKey]);
+  }, [selected, query, page, accessKey, localConnected]);
 
   useEffect(() => {
     if (!data?.proxy || proxyDirty) return;
@@ -97,14 +107,14 @@ export default function TGCollectorTab() {
     try {
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessKey}` },
+        headers: { "Content-Type": "application/json", ...(accessKey ? {Authorization: `Bearer ${accessKey}`} : {}) },
         body: JSON.stringify(
           action === "add" ? { action, username: channel.trim() }
             : { action, sourceId: source?.id, confirm: action === "remove" ? source?.identifier : undefined }
         ),
       });
       const result: { error?: string } = await response.json();
-      if (response.status === 401) setAccessKey("");
+      if (response.status === 401) { setAccessKey(""); setLocalConnected(false); }
       if (!response.ok) throw new Error(result.error || "Действие не выполнено");
       if (action === "add") setChannel("");
       if (action === "remove" && source?.id === selected) setSelected("");
@@ -126,7 +136,7 @@ export default function TGCollectorTab() {
   }
 
   async function proxyCommand(action: "save" | "enable" | "disable" | "clear" | "test") {
-    if (!accessKey || proxyBusy) return;
+    if ((!accessKey && !localConnected) || proxyBusy) return;
     setProxyBusy(true);
     setError(null);
     setNotice(null);
@@ -145,11 +155,11 @@ export default function TGCollectorTab() {
           : { action: `proxy-${action}` };
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessKey}` },
+        headers: { "Content-Type": "application/json", ...(accessKey ? {Authorization: `Bearer ${accessKey}`} : {}) },
         body: JSON.stringify(payload),
       });
       const result = await response.json() as { error?: string; proxy?: Snapshot["proxy"]; latencyMs?: number; message?: string };
-      if (response.status === 401) setAccessKey("");
+      if (response.status === 401) { setAccessKey(""); setLocalConnected(false); }
       if (!response.ok) throw new Error(result.error || "Операция с прокси не выполнена");
       if (action === "save") {
         setProxyDirty(false);
@@ -199,7 +209,8 @@ export default function TGCollectorTab() {
   ];
   const globallyPaused = Boolean(data?.pausedUntil && new Date(data.pausedUntil) > new Date());
 
-  if (!accessKey) return (
+  if (connecting) return <section role="status" className="surface-panel p-6 text-content-muted">Подключение к TG Collector…</section>;
+  if (!accessKey && !localConnected) return (
     <section className="surface-panel mx-auto max-w-2xl space-y-4 p-6">
       <h2 className="text-lg font-semibold text-content">Доступ к локальному TG Collector</h2>
       <p className="text-sm text-content-muted">Введите ключ из
@@ -242,7 +253,7 @@ export default function TGCollectorTab() {
           </div>
         </div>
 
-        <button type="button" onClick={() => { setData(null); setAccessKey(""); }}
+        <button type="button" onClick={() => { void fetch(endpoint + "/session", { method: "DELETE", headers: accessKey ? {Authorization: `Bearer ${accessKey}`} : {} }); setData(null); setAccessKey(""); setLocalConnected(false); }}
           className="mt-3 text-xs text-content-muted hover:text-content">Закрыть доступ к TG Collector</button>
         <div className="mt-5 flex flex-wrap gap-3 text-xs">
           <span className={`rounded-lg border px-3 py-2 ${data?.collectionEnabled === false ? "border-amber-500/30 text-amber-300" : "border-emerald-500/30 text-emerald-300"}`}>

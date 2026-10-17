@@ -33,6 +33,6 @@ jobs:
       - name: Lint
         run: npm run lint
       - name: Access guard tests
-        run: node --experimental-strip-types --test tests/tg-collector-access.test.ts tests/tgCollectorProxyStore.test.ts
+        run: node --experimental-strip-types --test tests/tg-collector-access.test.ts tests/tgCollectorProxyStore.test.ts tests/tg-collector-browser-session.test.ts
       - name: Production build
         run: npm run build

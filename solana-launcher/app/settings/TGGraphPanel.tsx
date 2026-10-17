@@ -36,7 +36,7 @@ export default function TGGraphPanel({ sources, authToken }: { sources: SourceOp
     if (source) params.set("source", source);
     setBusy(true);
     try {
-      const response = await fetch(endpoint + "?" + params, { cache: "no-store", signal, headers: {Authorization: "Bearer " + authToken} });
+      const response = await fetch(endpoint + "?" + params, { cache: "no-store", signal, headers: authToken ? {Authorization: "Bearer " + authToken} : {} });
       const body = await response.json() as GraphData & {error?: string};
       if (!response.ok) throw new Error(body.error || "Граф недоступен");
       if (!signal?.aborted) { setData(body); setError(null); }
@@ -71,7 +71,7 @@ export default function TGGraphPanel({ sources, authToken }: { sources: SourceOp
     });
     void (async () => {
       try {
-        const response = await fetch(endpoint + "?" + params, { cache: "no-store", signal: ctrl.signal, headers: {Authorization: "Bearer " + authToken} });
+        const response = await fetch(endpoint + "?" + params, { cache: "no-store", signal: ctrl.signal, headers: authToken ? {Authorization: "Bearer " + authToken} : {} });
         const payload = await response.json() as {evidence?: Evidence[]; error?: string};
         if (!response.ok) throw Error(payload.error || "Основания недоступны");
         if (!ctrl.signal.aborted) setEvidence(payload.evidence || []);

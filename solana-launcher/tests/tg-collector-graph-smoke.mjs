@@ -7,6 +7,7 @@ try {
  const pending=new Promise(resolve=>{release=resolve});
  await page.route('**/api/integrations/tg-collector**',async route=>{
   const url=new URL(route.request().url());
+  if(url.pathname.endsWith('/session')) return route.fulfill({status:404,json:{error:'Manual fixture access'}});
   if(url.searchParams.get('mode')==='evidence'){
    const second=url.searchParams.get('targetKey')==='second';
    if(second){requested=true;await pending;}

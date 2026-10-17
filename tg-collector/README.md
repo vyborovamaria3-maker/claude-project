@@ -409,3 +409,10 @@ This repository is intentionally local-first for Telegram collection:
 - The localhost access check uses the validated browser Host authority, handling Next.js internal normalization of 127.0.0.1 to localhost while retaining same-origin enforcement.
 
 The global history scanner also sees obsolete branches. The two historical tginvite test files are absent from this branch and main. Only the exact SHA-256 of their synthetic alphabet fixture is ignored in history for those paths; current/diff scans and other historical tokens remain strict. No repository history was rewritten.
+
+
+### Trusted local browser session
+
+To connect Settings and Admin without retyping the access key, set `TG_COLLECTOR_LOCAL_AUTO_CONNECT=1` and `TG_COLLECTOR_LOCAL_ORIGIN` to the exact loopback browser origin in the frontend environment. Keep `TG_COLLECTOR_ADMIN_TOKEN` configured on the server. The browser requests an origin-bound, signed HttpOnly cookie; it never receives the server token or Telegram credentials. Bootstrap requires a same-origin browser POST, and the existing host/origin/rate checks apply to API operations. Automatic connection remains disabled in production and by default. Both panels use the worker database configured by `TG_COLLECTOR_DATABASE_URL`, with the matching proxy encryption key.
+
+Optional live UI verification: `TG_COLLECTOR_SMOKE_URL=http://127.0.0.1:3100 node tests/tg-collector-local-smoke.mjs` from solana-launcher. It checks real stored messages, HttpOnly access, cross-origin rejection, and stopping in Settings then starting in Admin; it leaves collection enabled.
