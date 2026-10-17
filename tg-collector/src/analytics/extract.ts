@@ -2,7 +2,7 @@
  * Evidence-only Telegram relationship extraction.
  * Mentions and address co-occurrence do not establish identity, ownership or coordinated behavior.
  */
-export const ANALYSIS_VERSION = 2;
+export const ANALYSIS_VERSION = 3;
 
 import { isSolanaAddress, normalizeTarget } from "./normalize.js";
 export { isSolanaAddress } from "./normalize.js";
@@ -16,6 +16,7 @@ export interface RawTelegramMessage {
   message?: string;
   senderId?: { toString(): string };
   date?: number;
+  editDate?: number;
   views?: number;
   forwards?: number;
   replies?: { replies?: number };
