@@ -7,6 +7,7 @@ on:
       - "solana-launcher/scripts/blockchain-wallet-cache*.cjs"
       - "solana-launcher/scripts/blockchain-collector-regression.mjs"
       - "solana-launcher/lib/trade/helius.ts"
+      - "solana-launcher/lib/trade/chain/quality-v3.ts"
       - ".github/workflows/blockchain-excel-seeds.yml"
   workflow_dispatch:
 
