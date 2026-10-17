@@ -304,17 +304,32 @@ function persistEvents(db, kind, address, transactions) {
 }
 
 function recordAlchemyUsage(db, row, httpRequests, pagesFetched, lastPageEmpty, stage) {
-  if (!(Number(httpRequests) > 0)) return;
-  walletCache.recordBudgetUsage(db, {
-    provider: "alchemy",
-    endpoint: "getTransactionsForAddress",
-    costUnits: Number(httpRequests),
-    costKind: "http",
+  const requests = Math.floor(Number(httpRequests) || 0);
+  if (requests <= 0) return;
+  const common = {
     taskId: row.kind + ":" + row.address,
     entityKind: row.kind,
     entityKey: row.address,
     ts: Date.now(),
     metadata: { pagesFetched: Number(pagesFetched) || 0, lastPageEmpty: Boolean(lastPageEmpty), stage },
+  };
+  walletCache.recordBudgetUsage(db, {
+    ...common,
+    provider: "alchemy",
+    endpoint: "getTransactionsForAddress",
+    costUnits: requests,
+    costKind: "http",
+  });
+  // Alchemy documents getTransactionsForAddress at 100 CUs per RPC request.
+  // Keep CU separate from HTTP counts; this includes retries as real requests.
+  walletCache.recordBudgetUsage(db, {
+    ...common,
+    provider: "alchemy",
+    endpoint: "getTransactionsForAddress",
+    costUnits: requests * 100,
+    costKind: "cu",
+    metadata: { pagesFetched: Number(pagesFetched) || 0, lastPageEmpty: Boolean(lastPageEmpty), stage,
+      cuPerRequest: 100, cuRateSource: "Alchemy Solana getTransactionsForAddress documentation" },
   });
 }
 
