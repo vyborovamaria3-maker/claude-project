@@ -30,6 +30,7 @@
     "analytics:test": "node --import tsx --test tests/analytics.test.ts",
     "signals:test": "node --import tsx --test tests/signals.test.ts",
     "signals:report": "tsx scripts/signals-report.ts",
+    "signal:quality": "tsx scripts/signal-quality.ts",
     "weighted:test": "node --import tsx --test tests/weighted-signals.test.ts",
     "graph:test": "node --import tsx --test tests/graph.test.ts",
     "graph:report": "tsx scripts/graph-report.ts",
