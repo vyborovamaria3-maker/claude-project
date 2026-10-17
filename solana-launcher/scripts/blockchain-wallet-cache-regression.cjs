@@ -10,6 +10,67 @@ const { computeWalletCostBasisLedger } = require("../lib/trade/chain/quality-v3.
 const WALLET = "11111111111111111111111111111111";
 const MINT_A = "So11111111111111111111111111111111111111112";
 const MINT_B = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+// Exercise additive migration against the pre-coverage wallet-cache schema.
+const legacyDb = new Database(":memory:");
+try {
+  legacyDb.exec(`
+    CREATE TABLE chain_wallet_discovery (
+      wallet TEXT PRIMARY KEY, chain TEXT NOT NULL DEFAULT 'solana',
+      discovered_via_token TEXT, discovered_via_wallet TEXT,
+      discovered_via_kind TEXT NOT NULL DEFAULT 'unknown',
+      first_discovered_at INTEGER NOT NULL,
+      history_status TEXT NOT NULL DEFAULT 'not_fetched',
+      last_fetched_at INTEGER, backfill_cursor TEXT, forward_cursor TEXT,
+      backfill_complete INTEGER NOT NULL DEFAULT 0, possible_gap INTEGER NOT NULL DEFAULT 0,
+      tokens_touched INTEGER NOT NULL DEFAULT 0, last_trade_at INTEGER, last_error TEXT
+    );
+    CREATE TABLE chain_wallet_trades (
+      id INTEGER PRIMARY KEY, wallet TEXT NOT NULL, chain TEXT NOT NULL DEFAULT 'solana',
+      signature TEXT NOT NULL, leg_key TEXT NOT NULL, instruction_index INTEGER, slot INTEGER,
+      block_time INTEGER, commitment_level TEXT NOT NULL DEFAULT 'confirmed',
+      token_mint TEXT NOT NULL, direction TEXT NOT NULL, amount_tokens TEXT, amount_sol TEXT,
+      price_usd_at_time TEXT, fee_lamports INTEGER, protocol_fee_lamports INTEGER,
+      dex TEXT, pool TEXT, counterparty TEXT, decoder_version TEXT NOT NULL,
+      source_provider TEXT NOT NULL DEFAULT 'helius', raw_event_kind TEXT NOT NULL DEFAULT 'wallet',
+      raw_event_address TEXT NOT NULL, first_seen_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ok', UNIQUE(wallet,chain,signature,leg_key)
+    );
+    CREATE TABLE chain_wallet_token_summary (
+      wallet TEXT NOT NULL, token_mint TEXT NOT NULL, trades_count INTEGER NOT NULL DEFAULT 0,
+      first_trade_at INTEGER, last_trade_at INTEGER, bought_amount TEXT NOT NULL DEFAULT '0',
+      sold_amount TEXT NOT NULL DEFAULT '0', realized_pnl TEXT, unrealized_pnl TEXT,
+      status TEXT NOT NULL DEFAULT 'unknown', data_confidence REAL NOT NULL DEFAULT 0,
+      PRIMARY KEY(wallet,token_mint)
+    );
+    CREATE TABLE chain_wallet_token_touched (
+      wallet TEXT NOT NULL, token_mint TEXT NOT NULL, last_trade_at INTEGER,
+      trade_count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(wallet,token_mint)
+    );
+    INSERT INTO chain_wallet_discovery(wallet, first_discovered_at, history_status)
+      VALUES('legacy-wallet', 123, 'partial');
+    INSERT INTO chain_wallet_trades(wallet,signature,leg_key,token_mint,direction,decoder_version,
+      raw_event_address,first_seen_at,last_seen_at)
+      VALUES('legacy-wallet','legacy-signature','legacy-leg','legacy-mint','buy','old-decoder',
+      'legacy-wallet',123,124);
+  `);
+  cache.ensureWalletCacheSchema(legacyDb);
+  const migratedDiscovery = legacyDb.prepare(
+    "SELECT decoder_coverage,last_decoder_version FROM chain_wallet_discovery WHERE wallet='legacy-wallet'"
+  ).get();
+  assert.equal(migratedDiscovery.decoder_coverage, "swap_only");
+  assert.equal(migratedDiscovery.last_decoder_version, "wallet-trades-v1");
+  const migratedTrade = legacyDb.prepare(
+    "SELECT raw_event_signature,signature,raw_event_slot,reorg_status FROM chain_wallet_trades WHERE signature='legacy-signature'"
+  ).get();
+  assert.equal(migratedTrade.raw_event_signature, migratedTrade.signature,
+    "migration must backfill raw evidence identity without dropping rows");
+  assert.equal(migratedTrade.raw_event_slot, null);
+  assert.equal(migratedTrade.reorg_status, "pending_confirmation");
+  assert.equal(legacyDb.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 1);
+} finally {
+  legacyDb.close();
+}
+
 const db = new Database(":memory:");
 try {
   cache.ensureWalletCacheSchema(db);
