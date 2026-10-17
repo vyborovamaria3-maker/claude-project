@@ -246,6 +246,19 @@ assert.equal(inventoryEvidence[2].kind, "mint");
 assert.equal(inventoryEvidence[2].owner, "walletB");
 assert.equal(inventoryEvidence[3].kind, "burn");
 assert.equal(inventoryEvidence[3].owner, "walletA");
+const uncheckedTransfer = decodeInventoryMovements({
+  signature: "unchecked-transfer",
+  decodedOperations: [{ type: "transfer", info: {
+    source: "tokenAccountA", destination: "tokenAccountB", amount: "250",
+  } }],
+  tokenBalanceDeltas: [
+    { owner: "walletA", tokenAccount: "tokenAccountA", mint: "mintA", decimals: 2, deltaRaw: "-250" },
+    { owner: "walletB", tokenAccount: "tokenAccountB", mint: "mintA", decimals: 2, deltaRaw: "250" },
+  ],
+});
+assert.equal(uncheckedTransfer.length, 2);
+assert.ok(uncheckedTransfer.every((m) => m.mint === "mintA" && m.decimals === 2),
+  "unchecked transfer must resolve mint/decimals only from its token accounts");
 const unknownInventory = decodeInventoryMovements({
   signature: "unknown-inventory",
   decodedOperations: [{ type: "transfer", info: { source: "unknownA", destination: "unknownB", amount: "7" } }],
