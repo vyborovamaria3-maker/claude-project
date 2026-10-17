@@ -40,6 +40,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     // Repeat additive migrations on the same populated schema.
     for (const name of ["015_collector_observations.sql","016_collector_task_results.sql","017_collector_live.sql","048_signal_registry_versions.sql"])
       await getPool().query(await fs.readFile("migrations/"+name,"utf8"));
+    await getPool().query("SELECT capture_signal_history()");
     const qualityMints = ["quality-ready-" + randomUUID(), "quality-missing-" + randomUUID()];
     const qualitySignalAt = Math.floor(Date.now() / 86400000) * 86400000 - 6 * 3600000;
     const qualityAuthorHandle = "quality-author-" + randomUUID();
