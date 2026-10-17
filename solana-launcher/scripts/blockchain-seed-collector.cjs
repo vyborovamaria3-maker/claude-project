@@ -281,14 +281,20 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
   const discovered = new Set();
   for (const tx of transactions) {
     const swap = tx.events && tx.events.swap;
-    if (!swap) continue;
-    const mints = [...(swap.tokenInputs || []), ...(swap.tokenOutputs || [])];
-    for (const leg of mints) {
-      const mint = leg && leg.mint;
-      if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) continue;
-      if (txsToTrades([tx], mint).some(t => t.type === "buy" || t.type === "sell")) {
-        discovered.add(mint);
+    const mints = new Set();
+    for (const transfer of tx.tokenTransfers || []) {
+      if (transfer && (transfer.fromUserAccount === ownerWallet || transfer.toUserAccount === ownerWallet)) {
+        mints.add(transfer.mint);
       }
+    }
+    for (const leg of [...(swap?.tokenInputs || []), ...(swap?.tokenOutputs || [])]) {
+      if (leg && leg.userAccount === ownerWallet) mints.add(leg.mint);
+    }
+    for (const mint of mints) {
+      if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) continue;
+      // Record wallet-observed token relationships even if the current decoder
+      // cannot classify them as swaps. Low-priority token crawl follows this seed.
+      discovered.add(mint);
     }
     if (discovered.size >= 25) break;
   }
