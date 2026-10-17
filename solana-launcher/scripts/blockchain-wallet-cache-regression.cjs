@@ -33,7 +33,7 @@ try {
     .get(WALLET, MINT_A).bought_amount, "150");
 
   const replay = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 2000 });
-  assert.equal(replay.upserted, 1, "idempotent upsert must preserve a single leg");
+  assert.equal(replay.upserted, 2, "idempotent upsert must preserve both distinct legs");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 2,
     "replay must not duplicate either leg");
   assert.equal(db.prepare("SELECT trades_count FROM chain_wallet_token_summary WHERE wallet=? AND token_mint=?")
