@@ -57,7 +57,7 @@ export async function handleFailure(job: Job, error: unknown): Promise<"halt" | 
     try {
       await tx.query("BEGIN");
       await tx.query(
-        "UPDATE tg_runtime SET block_reason=$1, blocked_at=now() WHERE id=1",
+        "UPDATE tg_runtime SET block_reason=$1, blocked_at=now(),last_error_code=$1 WHERE id=1",
         [decision.code]
       );
       await tx.query(`UPDATE tg_jobs SET state='failed',locked_until=NULL,
@@ -73,8 +73,8 @@ export async function handleFailure(job: Job, error: unknown): Promise<"halt" | 
   if (decision.action === "delay") {
     if (decision.global) {
       await pool.query(`UPDATE tg_runtime SET pause_until=GREATEST(
-        COALESCE(pause_until,now()),now()+($1::int * interval '1 second'))
-        WHERE id=1`, [decision.seconds]);
+        COALESCE(pause_until,now()),now()+($1::int * interval '1 second')),
+        last_error_code=$2 WHERE id=1`, [decision.seconds, decision.code]);
     }
     await pool.query(`UPDATE tg_jobs SET state='delayed',
       run_at=now()+($2::int * interval '1 second'),
