@@ -75,7 +75,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   if (rawCapture && rawCaptureSourceId) {
     await recordRawPage(rawCaptureSourceId, rawCapture, new Date(now), undefined, {
       parseStatus: "parsed",
-      responseStatus: valid.length === 0 ? "empty" : "nonempty",
+      responseStatus: valid.length === 0 ? "unknown" : "nonempty",
     });
   }
   if (valid.length === 0) return 0;
