@@ -65,9 +65,24 @@ async function main(): Promise<void> {
   const source = (arg("source") ?? "early_signal").toLowerCase();
   if (!VALID_SOURCES.has(source)) throw new Error(`--source must be one of: ${[...VALID_SOURCES].join(", ")}`);
 
+  const signalVersion = numericArg("signal-version", 1, 1, 100_000);
+  const thresholdVersion = numericArg("threshold-version", 0, 0, 100_000);
+  const thresholdOverride = arg("threshold");
   const horizonHours = numericArg("horizon-hours", 6, 1, 168);
   const lookbackDays = numericArg("lookback-days", 90, 7, 365);
-  const threshold = Number(arg("threshold") ?? 60);
+  const registeredThreshold = await q1<{ threshold: string; threshold_version: number }>(
+    "SELECT threshold::text, threshold_version FROM signal_thresholds " +
+    "WHERE signal_key = $1 AND signal_version = $2 " +
+    "AND (($3::integer = 0 AND is_default) OR threshold_version = $3) " +
+    "ORDER BY threshold_version DESC LIMIT 1",
+    [source, signalVersion, thresholdVersion],
+  );
+  if (!registeredThreshold) {
+    throw new Error(`no registered threshold for signal ${source} v${signalVersion}${thresholdVersion ? ` threshold v${thresholdVersion}` : " (default)"}`);
+  }
+  const threshold = thresholdOverride === undefined
+    ? Number(registeredThreshold.threshold)
+    : Number(thresholdOverride);
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
     throw new Error("--threshold must be between 0 and 100");
   }
@@ -87,7 +102,7 @@ async function main(): Promise<void> {
   }
 
   console.log("Signal quality validation — observed social attention only (not token price or P&L)");
-  console.log(`source=${source} horizon=${horizonHours}h threshold=${threshold} lookback=${lookbackDays}d minSamples=${minSamples}`);
+  console.log(`source=${source} signal_version=${signalVersion} horizon=${horizonHours}h threshold=${threshold} threshold_version=${thresholdOverride === undefined ? registeredThreshold.threshold_version : "cli-override-not-persisted"} lookback=${lookbackDays}d minSamples=${minSamples}`);
   console.log(`train=[${new Date(from).toISOString()}, ${new Date(splitAt).toISOString()})`);
   console.log(`test =[ ${new Date(splitAt).toISOString()}, ${new Date(matureTo).toISOString()})`);
   console.log("The threshold is fixed before test evaluation. Do not tune it against the test period.");
@@ -100,9 +115,9 @@ async function main(): Promise<void> {
 
   const dbRows = await q<OutcomeRow>(
     "SELECT signal_at::text, score::text, outcome_status, attention_change_pct::text " +
-    "FROM signal_quality_outcomes WHERE source = $1 AND horizon_hours = $2 " +
-    "AND signal_at >= $3 AND signal_at < $4 ORDER BY signal_at ASC",
-    [source, horizonHours, from, matureTo],
+    "FROM signal_quality_outcomes WHERE source = $1 AND horizon_hours = $2 AND signal_version = $3 " +
+    "AND signal_at >= $4 AND signal_at < $5 ORDER BY signal_at ASC",
+    [source, horizonHours, signalVersion, from, matureTo],
   );
   const rows = dbRows.map(toOutcome);
   const { train, test } = splitSignalOutcomes(rows, splitAt);
