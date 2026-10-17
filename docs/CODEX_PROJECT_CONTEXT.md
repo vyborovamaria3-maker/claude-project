@@ -1,5 +1,7 @@
 # X Collector Runtime v2 context
 
+PR #68 local review: forensic FIFO handles sub-1e-10 quantities without treating unmatched sales as known profit; balance reconciliation uses relative token precision and exact lamports. Decoder revisions are wallet v5 / DEX v3. Evidence API requires existing production auth and excludes old decoder results until offline replay. Wallet activities carry their owner; the evidence UI combines and deduplicates DEX/seed observations and cancels obsolete reads. No main merge or new collector infrastructure.
+
 The laptop may separately opt into X_SEARCH_HTTP_COMPAT=true with COLLECTOR_ENGINE=xactions and an explicit XACTIONS_HOME cache. This additional POST search reader feeds existing batch/history persistence rather than reusing HTTP cursors for numeric archive jobs. max_browser_accounts controls both reservations and historical producer capacity; two workers can process distinct windows concurrently. Disable X_SEARCH_HTTP_COMPAT to return search to the existing browser path.
 
 XActions is an opt-in additional HTTP reader, not a replacement for automatic list/history/discovery collection. See x-collector/XACTIONS_INTEGRATION_RU.md for activation prerequisites and rollback. Compiled runtime packaging and absolute transport deadlines are checked before merge; real X terminal-page compatibility is a separate live activation gate.

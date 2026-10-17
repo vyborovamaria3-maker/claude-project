@@ -16,8 +16,8 @@ const HEADERS = {
     "адрескошелька", "кошелек", "кошелёк", "адрестрейдера", "walletid",
   ]),
 };
-const PRIORITIES = { dex_trending: 100, profitable_wallets: 90, migrated: 65, discovered: 40 };
-const SOURCE_BITS = { dex_trending: 2, profitable_wallets: 4, migrated: 1, discovered: 8 };
+const PRIORITIES = { dex_trending: 100, profitable_wallets: 90, migrated: 65, discovered: 40, dex_program: 105 };
+const SOURCE_BITS = { dex_trending: 2, profitable_wallets: 4, migrated: 1, discovered: 8, dex_program: 16 };
 
 function normalizeHeader(value) {
   return String(value ?? "").replace(/^\uFEFF/, "").toLowerCase()

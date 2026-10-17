@@ -5,6 +5,11 @@ on:
     paths:
       - "solana-launcher/scripts/blockchain-seed-*.cjs"
       - "solana-launcher/lib/trade/helius.ts"
+      - "solana-launcher/scripts/blockchain-forensics*.cjs"
+      - "solana-launcher/scripts/blockchain-dex-*.cjs"
+      - "solana-launcher/app/api/blockchain/evidence/route.ts"
+      - "solana-launcher/app/trade/analysis/evidence/page.tsx"
+      - "solana-launcher/package.json"
       - ".github/workflows/blockchain-excel-seeds.yml"
   workflow_dispatch:
 
@@ -22,4 +27,4 @@ jobs:
           node-version: "22"
       - name: Offline XLSX parsing and collector syntax regression
         working-directory: solana-launcher
-        run: node scripts/blockchain-seed-regression.cjs
+        run: node scripts/blockchain-seed-regression.cjs && node --check scripts/blockchain-seed-collector.cjs && node --check scripts/blockchain-forensics.cjs && node scripts/blockchain-forensics-regression.cjs && node --check scripts/blockchain-dex-index.cjs && node --check scripts/blockchain-dex-replay.cjs
