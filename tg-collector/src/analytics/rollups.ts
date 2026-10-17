@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { refreshTokenChannelMetrics } from "./token-intelligence.js";
 
 /** All analytics day buckets are UTC and based on Telegram posted_at, never DB insertion time. */
 export function utcDay(date: Date | null | undefined): string | null {
@@ -37,4 +38,5 @@ export async function refreshGraphDays(tx: PoolClient, sourceId: string, days: s
     WHERE source_id=$1 AND deleted_at IS NULL
       AND (posted_at AT TIME ZONE 'UTC')::date = ANY($2::date[])
     GROUP BY source_id,(posted_at AT TIME ZONE 'UTC')::date`,[sourceId,unique]);
+  await refreshTokenChannelMetrics(tx, sourceId, unique);
 }
