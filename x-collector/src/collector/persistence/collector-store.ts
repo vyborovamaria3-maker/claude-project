@@ -124,7 +124,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
           t.views, t.likes, t.retweets, t.replies,
           t.isVerified, t.postedAt, now, t.observedAt ?? now, sourceQuery
         );
-        return `(${off + 1},${off + 2},${off + 3},${off + 4},${off + 5},${off + 6},${off + 7},${off + 8},${off + 9},${off + 10},${off + 11},${off + 12},${off + 13},${off + 14})`;
+        return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13},$${off + 14})`;
       }).join(",");
 
       await client.query(
