@@ -38,8 +38,93 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     process.env.ARCHIVE_RAW_DIR = root; process.env.ARCHIVE_MIN_FREE_GB = "0"; process.env.X_LOGIN_BROWSER = "chromium";
     for (const name of REQUIRED) await getPool().query(await fs.readFile("migrations/"+name,"utf8"));
     // Repeat additive migrations on the same populated schema.
-    for (const name of ["015_collector_observations.sql","016_collector_task_results.sql","017_collector_live.sql"])
+    for (const name of ["015_collector_observations.sql","016_collector_task_results.sql","017_collector_live.sql","048_signal_registry_versions.sql"])
       await getPool().query(await fs.readFile("migrations/"+name,"utf8"));
+    await getPool().query("SELECT capture_signal_history()");
+    const qualityMints = ["quality-ready-" + randomUUID(), "quality-missing-" + randomUUID()];
+    const qualitySignalAt = Math.floor(Date.now() / 86400000) * 86400000 - 6 * 3600000;
+    const qualityAuthorHandle = "quality-author-" + randomUUID();
+    const qualityAuthorTweetId = "quality-author-tweet-" + randomUUID();
+    try {
+      const registry = await getPool().query("SELECT version FROM signal_registry WHERE signal_key='entity'");
+      assert.deepEqual(registry.rows.map(row => Number(row.version)), [1]);
+      const threshold = await getPool().query("SELECT threshold::text FROM signal_thresholds WHERE signal_key='entity' AND signal_version=1 AND is_default");
+      assert.equal(Number(threshold.rows[0]?.threshold), 60);
+      await getPool().query("INSERT INTO signal_history(source,mint,signal_at,score,details) VALUES ($1,$2,$3,80,'{}'::jsonb),($1,$4,$5,70,'{}'::jsonb)",
+        ["entity", qualityMints[0], qualitySignalAt, qualityMints[1], qualitySignalAt + 5 * 60000]);
+      await getPool().query(
+        "INSERT INTO signal_registry(signal_key,version,display_name,definition) VALUES('entity',2,'Entity signal v2','{}'::jsonb)",
+      );
+      await getPool().query(
+        "INSERT INTO signal_thresholds(signal_key,signal_version,threshold_version,threshold,is_default,effective_from) VALUES('entity',2,1,65,TRUE,0)",
+      );
+      await getPool().query(
+        "INSERT INTO signal_history(source,signal_version,mint,signal_at,score,details) VALUES('entity',2,$1,$2,75,'{}'::jsonb)",
+        [qualityMints[0], qualitySignalAt],
+      );
+      await getPool().query("INSERT INTO mint_attention_snapshots(mint,observed_at,tweets,authors,views,likes,retweets) VALUES ($1,$2,10,3,1000,50,10),($1,$3,12,4,1500,70,15)",
+        [qualityMints[0], qualitySignalAt - 5 * 60000, qualitySignalAt + 65 * 60000]);
+      const refreshed = await getPool().query("SELECT refresh_signal_quality_outcomes($1,$2,$3::integer[]) AS refreshed",
+        [qualitySignalAt - 1, qualitySignalAt + 5 * 60000 + 1, [1]]);
+      assert(Number(refreshed.rows[0]?.refreshed) >= 3, "quality refresh should evaluate all signal versions");
+      const outcomes = await getPool().query("SELECT mint,outcome_status,attention_change_pct::text,signal_version,baseline_window_start::text,baseline_window_end::text,outcome_window_start::text,outcome_window_end::text FROM signal_quality_outcomes WHERE mint = ANY($1::text[]) AND signal_version=1 ORDER BY mint", [qualityMints]);
+      assert.equal(outcomes.rows.length, 2);
+      const ready = outcomes.rows.find(row => row.mint === qualityMints[0]);
+      const missing = outcomes.rows.find(row => row.mint === qualityMints[1]);
+      assert.equal(ready?.outcome_status, "ready");
+      assert.equal(Number(ready?.attention_change_pct), 50);
+      assert.equal(Number(ready?.signal_version), 1);
+      assert.equal(Number(ready?.baseline_window_start), qualitySignalAt - 3600000);
+      assert.equal(Number(ready?.baseline_window_end), qualitySignalAt);
+      assert.equal(Number(ready?.outcome_window_start), qualitySignalAt + 3600000);
+      assert.equal(Number(ready?.outcome_window_end), qualitySignalAt + 7200000);
+      assert.equal(missing?.outcome_status, "missing_entry");
+      const versionTwo = await getPool().query(
+        "SELECT signal_version, outcome_status FROM signal_quality_outcomes WHERE source='entity' AND mint=$1 AND signal_at=$2 AND horizon_hours=1 AND signal_version=2",
+        [qualityMints[0], qualitySignalAt],
+      );
+      assert.equal(versionTwo.rows.length, 1);
+      assert.equal(Number(versionTwo.rows[0].signal_version), 2);
+      assert.equal(versionTwo.rows[0].outcome_status, "ready");
+
+      await getPool().query(
+        "INSERT INTO twitter_tweets(tweet_id,handle,text,posted_at,first_seen_at,updated_at) VALUES($1,$2,'mint mention',$3,$4,$4)",
+        [qualityAuthorTweetId, qualityAuthorHandle, qualitySignalAt - 10 * 60000, Date.now()],
+      );
+      await getPool().query(
+        "INSERT INTO tweet_token_links(tweet_id,mint,handle,linked_at,match_method,match_level,confidence,evidence,linker_version) " +
+        "VALUES($1,$2,$3,$4,'mint_literal','exact',1,$5::jsonb,'v1')",
+        [qualityAuthorTweetId, qualityMints[0], qualityAuthorHandle, Date.now(), JSON.stringify({ kind: "mint_literal", address: qualityMints[0], position: 0 })],
+      );
+      const authorMart = await getPool().query(
+        "SELECT attributed_signals::text,ready_outcomes::text,avg_attention_change_pct::text " +
+        "FROM v_signal_quality_by_author WHERE source='entity' AND signal_version=1 AND handle=$1 AND horizon_hours=1",
+        [qualityAuthorHandle],
+      );
+      assert.equal(authorMart.rows.length, 1);
+      assert.equal(Number(authorMart.rows[0].attributed_signals), 1);
+      assert.equal(Number(authorMart.rows[0].ready_outcomes), 1);
+      assert.equal(Number(authorMart.rows[0].avg_attention_change_pct), 50);
+      const dayBucket = Math.floor(qualitySignalAt / 86400000) * 86400000;
+      const mart = await getPool().query("SELECT candidate_signals::text,ready_outcomes::text,coverage_pct::text,avg_attention_change_pct::text FROM v_signal_quality_mart WHERE source='entity' AND signal_version=1 AND horizon_hours=1 AND day_start_ms=$1 AND score_band='70-84'", [dayBucket]);
+      assert.equal(mart.rows.length, 1);
+      assert.equal(Number(mart.rows[0].candidate_signals), 2);
+      assert.equal(Number(mart.rows[0].ready_outcomes), 1);
+      assert.equal(Number(mart.rows[0].coverage_pct), 50);
+      assert.equal(Number(mart.rows[0].avg_attention_change_pct), 50);
+      const mintMart = await getPool().query("SELECT candidate_signals::text,ready_outcomes::text,coverage_pct::text,avg_attention_change_pct::text FROM v_signal_quality_by_mint WHERE source='entity' AND signal_version=1 AND mint=$1 AND horizon_hours=1", [qualityMints[0]]);
+      assert.equal(mintMart.rows.length, 1);
+      assert.equal(Number(mintMart.rows[0].candidate_signals), 1);
+      assert.equal(Number(mintMart.rows[0].ready_outcomes), 1);
+      assert.equal(Number(mintMart.rows[0].coverage_pct), 100);
+      assert.equal(Number(mintMart.rows[0].avg_attention_change_pct), 50);
+    } finally {
+      await getPool().query("DELETE FROM tweet_token_links WHERE tweet_id = $1", [qualityAuthorTweetId]);
+      await getPool().query("DELETE FROM twitter_tweets WHERE tweet_id = $1", [qualityAuthorTweetId]);
+      await getPool().query("DELETE FROM signal_quality_outcomes WHERE mint = ANY($1::text[])", [qualityMints]);
+      await getPool().query("DELETE FROM signal_history WHERE mint = ANY($1::text[])", [qualityMints]);
+      await getPool().query("DELETE FROM mint_attention_snapshots WHERE mint = ANY($1::text[])", [qualityMints]);
+    }
     const ids = await Promise.all(Array.from({length:8},(_,n)=>enqueueTask({kind:"profile",payload:{handle:"user"+n}})));
     const claims = await Promise.all([claimTasks("a",4,60000),claimTasks("b",4,60000)]);
     const flat=claims.flat(); assert.equal(flat.length,8); assert.equal(new Set(flat.map(t=>t.id)).size,8);
