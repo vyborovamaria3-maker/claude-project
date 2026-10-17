@@ -208,7 +208,14 @@ const alchemyPages = [
       signature: "alchemy-sig-1", slot: 900, blockTime: 1700000000,
       transaction: {
         signatures: ["alchemy-sig-1"],
-        message: { accountKeys: ["walletA"], instructions: [] },
+        message: { accountKeys: ["walletA"], instructions: [
+          { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", program: "spl-token",
+            parsed: { type: "transferChecked", info: { mint: "mintA", amount: "1" } } },
+          { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", program: "spl-token",
+            parsed: { type: "mintTo", info: { mint: "mintA", amount: "2" } } },
+          { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", program: "spl-token",
+            parsed: { type: "burn", info: { mint: "mintA", amount: "1" } } },
+        ] },
       },
       meta: {
         err: null, fee: 5000, preBalances: [2000000000], postBalances: [1500000000],
@@ -239,7 +246,10 @@ assert.equal(alchemyPage1.source, "alchemy");
 assert.equal(alchemyPage1.transactions[0].signature, "alchemy-sig-1");
 assert.equal(alchemyPage1.transactions[0].slot, 900);
 assert.equal(alchemyPage1.transactions[0].tokenBalanceDeltas[0].delta, 1000);
-assert.equal(alchemyPage1.transactions[0].decodedOperations.length, 0);
+assert.deepEqual(alchemyPage1.transactions[0].decodedOperations.map((op) => op.type),
+  ["transferChecked", "mintTo", "burn"]);
+assert.ok(alchemyPage1.transactions[0].decodedOperations.every((op) =>
+  op.decoderCoverage === "swap_and_transfers_mint_burn"));
 assert.equal(alchemyPage1.nextCursor, "alchemy:v1:cursor-2");
 assert.equal(alchemyPage1.exhausted, false);
 const alchemyPage2 = await alchemy.fetchTransactionsForAddress("walletA", 1, new Set(), alchemyPage1.nextCursor);
