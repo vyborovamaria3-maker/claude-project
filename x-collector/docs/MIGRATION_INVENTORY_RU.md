@@ -24,7 +24,7 @@ PostgreSQL. Обычный `npm run migrate` выполняет тот же pref
 
 ## 047_signal_quality_marts.sql
 
-Миграция добавляет `signal_quality_outcomes`, `v_signal_quality_mart` и `v_signal_quality_summary`. Это отдельная витрина результатов исторических сигналов, использующая `signal_history` и `mint_attention_snapshots`; существующий `backtest_runs` не переопределяется.
+Миграция добавляет `signal_quality_outcomes`, `v_signal_quality_mart`, `v_signal_quality_summary` и `v_signal_quality_by_mint`. Последняя витрина позволяет разбирать coverage и качество будущего attention outcome по конкретному mint. Это отдельная витрина результатов исторических сигналов, использующая `signal_history` и `mint_attention_snapshots`; существующий `backtest_runs` не переопределяется.
 
 `refresh_signal_quality_outcomes(from, to, horizons)` связывает сигнал с последним снимком не старше часа до сигнала и снимком в фиксированном будущем окне `[signal + horizon, signal + horizon + 1h)`. Для входного baseline требуется не менее 100 агрегированных просмотров. Статусы `pending`, `missing_entry`, `missing_exit` и `low_baseline` сохраняются явно, а не превращаются в нулевой результат.
 
