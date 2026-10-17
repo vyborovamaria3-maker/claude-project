@@ -1,6 +1,7 @@
 export interface XTweet {
   id: string;
   author: string;
+  authorId?: string | null;
   text: string;
   url: string;
   likes: number | null;
