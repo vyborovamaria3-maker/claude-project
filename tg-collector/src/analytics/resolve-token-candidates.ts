@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { pool, migrate } from "../db.js";
 import { ANALYSIS_VERSION } from "./extract.js";
-import { refreshChannelScores, refreshTokenChannelMetrics, SOLANA_CHAIN_ID } from "./token-intelligence.js";
+import { detectPropagationPatterns, refreshChannelScores, refreshTokenChannelMetrics, SOLANA_CHAIN_ID } from "./token-intelligence.js";
+import { syncTokenNarratives } from "./narratives.js";
 
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
@@ -41,7 +42,7 @@ async function recomputeFirstMention(tx: import("pg").PoolClient, mint: string):
     "SELECT tm.chain_id,tm.mint,tm.source_id,tm.message_id,tm.message_date,tm.observed_at," +
     "tm.analysis_version,s.history_partial FROM tg_token_mentions tm " +
     "JOIN tg_messages m USING(source_id,message_id) JOIN tg_sources s ON s.id=tm.source_id " +
-    "WHERE tm.chain_id=$1 AND tm.mint=$2 AND tm.orphaned=FALSE AND m.deleted_at IS NULL " +
+    "WHERE tm.chain_id=$1 AND tm.mint=$2 AND tm.analysis_version=$3 AND tm.orphaned=FALSE AND m.deleted_at IS NULL " +
     "ORDER BY tm.message_date ASC NULLS LAST,tm.observed_at,tm.source_id,tm.message_id LIMIT 1) " +
     "INSERT INTO tg_token_first_mentions(chain_id,mint,source_id,message_id,message_date,observed_at," +
     "coverage_status,analysis_version,calculated_at) " +
@@ -51,7 +52,7 @@ async function recomputeFirstMention(tx: import("pg").PoolClient, mint: string):
     "ON CONFLICT(chain_id,mint) DO UPDATE SET source_id=EXCLUDED.source_id,message_id=EXCLUDED.message_id," +
     "message_date=EXCLUDED.message_date,observed_at=EXCLUDED.observed_at,coverage_status=EXCLUDED.coverage_status," +
     "analysis_version=EXCLUDED.analysis_version,calculated_at=now()",
-    [SOLANA_CHAIN_ID, mint],
+    [SOLANA_CHAIN_ID, mint, ANALYSIS_VERSION],
   );
 }
 
@@ -117,9 +118,9 @@ async function main(): Promise<void> {
       );
 
       const occurrences = await tx.query<{
-        source_id: string; message_id: string; message_date: Date | null; tickers: string[];
+        source_id: string; message_id: string; message_date: Date | null; tickers: string[]; text: string;
       }>(
-        "SELECT c.source_id::text,c.message_id::text,m.posted_at AS message_date," +
+        "SELECT c.source_id::text,c.message_id::text,m.posted_at AS message_date,m.text," +
         "COALESCE(array_agg(DISTINCT t.ticker) FILTER (WHERE t.ticker IS NOT NULL),'{}') AS tickers " +
         "FROM tg_token_candidates c JOIN tg_messages m USING(source_id,message_id) " +
         "LEFT JOIN tg_ticker_mentions t ON t.source_id=c.source_id AND t.message_id=c.message_id " +
@@ -160,6 +161,16 @@ async function main(): Promise<void> {
               occurrence.message_date, ANALYSIS_VERSION],
           );
         }
+        await tx.query(
+          "UPDATE tg_token_mentions tm SET copy_cluster_id=fp.cluster_id " +
+          "FROM tg_message_fingerprints fp WHERE tm.source_id=$1 AND tm.message_id=$2 " +
+          "AND tm.chain_id=$3 AND tm.mint=$4 AND tm.analysis_version=$5 " +
+          "AND fp.source_id=tm.source_id AND fp.message_id=tm.message_id AND fp.analysis_version=$5",
+          [occurrence.source_id, occurrence.message_id, SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
+        );
+        await syncTokenNarratives(tx, occurrence.source_id, occurrence.message_id,
+          SOLANA_CHAIN_ID, candidate.mint, occurrence.text);
+
         const day = occurrence.message_date?.toISOString().slice(0, 10);
         if (day) {
           const days = affected.get(occurrence.source_id) ?? new Set<string>();
@@ -168,6 +179,7 @@ async function main(): Promise<void> {
         }
       }
       await recomputeFirstMention(tx, candidate.mint);
+      await detectPropagationPatterns(tx, SOLANA_CHAIN_ID, candidate.mint);
       await tx.query("COMMIT");
       verified++;
     } catch (error) {
