@@ -66,6 +66,11 @@ export type EnrichedTxMeta = {
   truncated: boolean;
   /** Incremental mode stopped at an already-persisted signature, not chain exhaustion. */
   reachedKnownHistory?: boolean;
+  /** Actual HTTP attempts made by this call, including retries and failed key attempts. */
+  httpRequests: number;
+  /** Number of successful pages returned by the provider. */
+  pagesFetched: number;
+  lastPageEmpty: boolean;
 };
 
 const HELIUS_TIMEOUT_MS = (() => {
@@ -82,14 +87,16 @@ async function fetchHeliusPage(
   before: string | undefined,
   limit: number,
   keys: string[],
-): Promise<HeliusEnrichedTx[]> {
+): Promise<{ transactions: HeliusEnrichedTx[]; httpRequests: number }> {
   let lastError: Error | null = null;
+  let httpRequests = 0;
   for (let round = 0; round < HELIUS_MAX_ROUNDS; round++) {
     for (const apiKey of keys) {
       const url = new URL(appendHeliusApiKey("https://api.helius.xyz/v0/addresses/" + mint + "/transactions", apiKey));
       url.searchParams.set("limit", String(limit));
       if (before) url.searchParams.set("before", before);
       try {
+        httpRequests++;
         const response = await fetch(url.toString(), {
           headers: { Accept: "application/json" },
           signal: AbortSignal.timeout(HELIUS_TIMEOUT_MS),
@@ -102,7 +109,7 @@ async function fetchHeliusPage(
         }
         const page: unknown = await response.json();
         if (!Array.isArray(page)) throw new Error("Helius page has invalid shape");
-        return page as HeliusEnrichedTx[];
+        return { transactions: page as HeliusEnrichedTx[], httpRequests };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         // Non-retryable 4xx means no API key rotation will help.
@@ -130,6 +137,9 @@ export async function fetchEnrichedTxsForMintWithMeta(
 
   const all: HeliusEnrichedTx[] = [];
   const seen = new Set<string>();
+  let httpRequests = 0;
+  let pagesFetched = 0;
+  let lastPageEmpty = false;
   let before: string | undefined = startBefore;
   let exhausted = false;
   let reachedKnownHistory = false;
@@ -137,8 +147,12 @@ export async function fetchEnrichedTxsForMintWithMeta(
 
   while (all.length < maxTxs) {
     const requested = Math.min(100, maxTxs - all.length);
-    const page = await fetchHeliusPage(mint, before, requested, keys);
+    const fetched = await fetchHeliusPage(mint, before, requested, keys);
+    httpRequests += fetched.httpRequests;
+    pagesFetched++;
+    const page = fetched.transactions;
     if (!page.length) {
+      lastPageEmpty = true;
       exhausted = true;
       break;
     }
@@ -175,7 +189,8 @@ export async function fetchEnrichedTxsForMintWithMeta(
     },
     null,
   );
-  return { transactions: bounded, oldestTimestamp, exhausted, truncated, reachedKnownHistory };
+  return { transactions: bounded, oldestTimestamp, exhausted, truncated, reachedKnownHistory,
+    httpRequests, pagesFetched, lastPageEmpty };
 }
 
 /**
