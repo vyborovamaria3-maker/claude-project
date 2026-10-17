@@ -50,12 +50,22 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       assert.equal(Number(threshold.rows[0]?.threshold), 60);
       await getPool().query("INSERT INTO signal_history(source,mint,signal_at,score,details) VALUES ($1,$2,$3,80,'{}'::jsonb),($1,$4,$5,70,'{}'::jsonb)",
         ["entity", qualityMints[0], qualitySignalAt, qualityMints[1], qualitySignalAt + 5 * 60000]);
+      await getPool().query(
+        "INSERT INTO signal_registry(signal_key,version,display_name,definition) VALUES('entity',2,'Entity signal v2','{}'::jsonb)",
+      );
+      await getPool().query(
+        "INSERT INTO signal_thresholds(signal_key,signal_version,threshold_version,threshold,is_default,effective_from) VALUES('entity',2,1,65,TRUE,0)",
+      );
+      await getPool().query(
+        "INSERT INTO signal_history(source,signal_version,mint,signal_at,score,details) VALUES('entity',2,$1,$2,75,'{}'::jsonb)",
+        [qualityMints[0], qualitySignalAt],
+      );
       await getPool().query("INSERT INTO mint_attention_snapshots(mint,observed_at,tweets,authors,views,likes,retweets) VALUES ($1,$2,10,3,1000,50,10),($1,$3,12,4,1500,70,15)",
         [qualityMints[0], qualitySignalAt - 5 * 60000, qualitySignalAt + 65 * 60000]);
       const refreshed = await getPool().query("SELECT refresh_signal_quality_outcomes($1,$2,$3::integer[]) AS refreshed",
         [qualitySignalAt - 1, qualitySignalAt + 5 * 60000 + 1, [1]]);
-      assert(Number(refreshed.rows[0]?.refreshed) >= 2, "quality refresh should evaluate both historical signals");
-      const outcomes = await getPool().query("SELECT mint,outcome_status,attention_change_pct::text,signal_version,baseline_window_start::text,baseline_window_end::text,outcome_window_start::text,outcome_window_end::text FROM signal_quality_outcomes WHERE mint = ANY($1::text[]) ORDER BY mint", [qualityMints]);
+      assert(Number(refreshed.rows[0]?.refreshed) >= 3, "quality refresh should evaluate all signal versions");
+      const outcomes = await getPool().query("SELECT mint,outcome_status,attention_change_pct::text,signal_version,baseline_window_start::text,baseline_window_end::text,outcome_window_start::text,outcome_window_end::text FROM signal_quality_outcomes WHERE mint = ANY($1::text[]) AND signal_version=1 ORDER BY mint", [qualityMints]);
       assert.equal(outcomes.rows.length, 2);
       const ready = outcomes.rows.find(row => row.mint === qualityMints[0]);
       const missing = outcomes.rows.find(row => row.mint === qualityMints[1]);
@@ -67,6 +77,13 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       assert.equal(Number(ready?.outcome_window_start), qualitySignalAt + 3600000);
       assert.equal(Number(ready?.outcome_window_end), qualitySignalAt + 7200000);
       assert.equal(missing?.outcome_status, "missing_entry");
+      const versionTwo = await getPool().query(
+        "SELECT signal_version, outcome_status FROM signal_quality_outcomes WHERE source='entity' AND mint=$1 AND signal_at=$2 AND horizon_hours=1 AND signal_version=2",
+        [qualityMints[0], qualitySignalAt],
+      );
+      assert.equal(versionTwo.rows.length, 1);
+      assert.equal(Number(versionTwo.rows[0].signal_version), 2);
+      assert.equal(versionTwo.rows[0].outcome_status, "ready");
 
       await getPool().query(
         "INSERT INTO twitter_tweets(tweet_id,handle,text,posted_at,first_seen_at,updated_at) VALUES($1,$2,'mint mention',$3,$4,$4)",
@@ -87,7 +104,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       assert.equal(Number(authorMart.rows[0].ready_outcomes), 1);
       assert.equal(Number(authorMart.rows[0].avg_attention_change_pct), 50);
       const dayBucket = Math.floor(qualitySignalAt / 86400000) * 86400000;
-      const mart = await getPool().query("SELECT candidate_signals::text,ready_outcomes::text,coverage_pct::text,avg_attention_change_pct::text FROM v_signal_quality_mart WHERE source='entity' AND horizon_hours=1 AND day_start_ms=$1 AND score_band='70-84'", [dayBucket]);
+      const mart = await getPool().query("SELECT candidate_signals::text,ready_outcomes::text,coverage_pct::text,avg_attention_change_pct::text FROM v_signal_quality_mart WHERE source='entity' AND signal_version=1 AND horizon_hours=1 AND day_start_ms=$1 AND score_band='70-84'", [dayBucket]);
       assert.equal(mart.rows.length, 1);
       assert.equal(Number(mart.rows[0].candidate_signals), 2);
       assert.equal(Number(mart.rows[0].ready_outcomes), 1);
