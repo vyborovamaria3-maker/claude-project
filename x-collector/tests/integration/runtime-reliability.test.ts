@@ -167,7 +167,7 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     assert.equal(await failTask(fresh.id,"same-name",'schema: invalid payload',fresh.attempts),"dlq");
     assert.equal((await q("SELECT 1 FROM x_tasks_dlq WHERE original_id=$1",[fresh.id])).length,1);
 
-    const tweet={id:"1234567890123456789",text:"$SOL @alice",authorHandle:"alice",authorDisplayName:null,
+    const tweet={id:"1234567890123456789",text:"$SOL @alice",authorHandle:"alice",authorId:"9007199254740993",authorDisplayName:null,
       url:"https://x.com/alice/status/1234567890123456789",views:null,likes:1,retweets:null,replies:0,
       isVerified:false,postedAt:Date.parse("2025-01-01"),observedAt:Date.parse("2025-01-02")};
     // Entity FK must see the outer uncommitted tweet; no nested connection allowed.
@@ -175,22 +175,38 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       variables: { rawQuery: "$SOL", cursor: "fixture-cursor" },
       response: { data: { search_by_raw_query: { meta: { next_cursor: "fixture-cursor" } } }, errors: [] } };
     await persistTweets(null,[tweet],null,undefined,undefined,undefined,{rawResponse:rawEnvelope});
-    const archivedRaw = (await q<{path:string}>("SELECT path FROM archive_raw_pages ORDER BY received_at DESC LIMIT 1"))[0];
+    const archivedRaw = (await q<{path:string;parser_version:string;parse_status:string;response_status:string;expires_at:Date}>("SELECT path,parser_version,parse_status,response_status,expires_at FROM archive_raw_pages ORDER BY received_at DESC LIMIT 1"))[0];
     assert(archivedRaw, "raw archive metadata should be committed with the tweet page");
+    assert(archivedRaw.parser_version.length > 0);
+    assert.equal(archivedRaw.parse_status, "parsed");
+    assert.equal(archivedRaw.response_status, "nonempty");
+    assert(new Date(archivedRaw.expires_at).getTime() > Date.now(), "raw response must have a future retention expiry");
     const archivedPayload = JSON.parse(gunzipSync(await fs.readFile(archivedRaw.path)).toString("utf8")) as {capture_format_version:number;source_response?:unknown};
     assert.equal(archivedPayload.capture_format_version,1);
     assert.deepEqual(archivedPayload.source_response,rawEnvelope);
     await persistTweets(null,[tweet]);
     assert.equal((await q("SELECT 1 FROM twitter_tweets")).length,1);
+    assert.equal((await q<{author_id:string}>("SELECT author_id FROM twitter_tweets WHERE tweet_id=$1",[tweet.id]))[0].author_id,"9007199254740993");
+    const metricHistory = await q<{views:number|null;likes:number|null;captured_at:Date}>(
+      "SELECT views,likes,captured_at FROM v_twitter_tweet_metrics_history WHERE tweet_id=$1 ORDER BY captured_at DESC LIMIT 1",[tweet.id]);
+    assert.equal(metricHistory.length,1);
+    assert.equal(metricHistory[0].views,null,"unknown views must remain NULL in metric history");
+    assert.equal(metricHistory[0].likes,1);
     assert.equal((await q("SELECT 1 FROM tweet_entities WHERE tweet_id=$1",[tweet.id])).length,2);
     assert.equal((await q("SELECT 1 FROM twitter_tweet_observations")).length,1);
     const rawHashesBeforeInvalid = new Set((await q<{hash:string}>("SELECT hash FROM archive_raw_pages")).map(row=>row.hash));
     const invalidEnvelope = { ...rawEnvelope, variables: { rawQuery: "malformed" } };
     await assert.rejects(persistTweets(null,[{...tweet,id:"123"}],null,undefined,undefined,undefined,{rawResponse:invalidEnvelope}),/collector rejected 1 malformed tweets/);
-    const capturedInvalid = (await q<{hash:string;path:string}>("SELECT hash,path FROM archive_raw_pages")).find(row=>!rawHashesBeforeInvalid.has(row.hash));
+    const capturedInvalid = (await q<{hash:string;path:string;parse_status:string;response_status:string}>("SELECT hash,path,parse_status,response_status FROM archive_raw_pages")).find(row=>!rawHashesBeforeInvalid.has(row.hash));
     assert(capturedInvalid, "raw response should survive a schema rejection");
+    assert.equal(capturedInvalid.parse_status,"failed");
+    assert.equal(capturedInvalid.response_status,"error");
     const capturedInvalidPayload = JSON.parse(gunzipSync(await fs.readFile(capturedInvalid.path)).toString("utf8")) as {source_response?:unknown};
     assert.deepEqual(capturedInvalidPayload.source_response,invalidEnvelope);
+    await persistTweets(null,[],null,undefined,undefined,undefined,{rawResponse:{...rawEnvelope,variables:{rawQuery:"empty"}}});
+    const emptyRaw=(await q<{parse_status:string;response_status:string}>("SELECT parse_status,response_status FROM archive_raw_pages ORDER BY received_at DESC LIMIT 1"))[0];
+    assert.equal(emptyRaw.parse_status,"parsed");
+    assert.equal(emptyRaw.response_status,"empty");
     await getPool().query(`CREATE FUNCTION reject_fixture_entity() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'fixture entity failure'; END $$ LANGUAGE plpgsql`);
     await getPool().query(`CREATE TRIGGER reject_fixture BEFORE INSERT ON tweet_entities FOR EACH ROW EXECUTE FUNCTION reject_fixture_entity()`);
     const bad={...tweet,id:"2234567890123456789"};
