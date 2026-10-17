@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, mock } from "node:test";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -175,9 +175,10 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
       variables: { rawQuery: "$SOL", cursor: "fixture-cursor" },
       response: { data: { search_by_raw_query: { meta: { next_cursor: "fixture-cursor" } } }, errors: [] } };
     await persistTweets(null,[tweet],null,undefined,undefined,undefined,{rawResponse:rawEnvelope});
-    const archivedRaw = (await q<{path:string;parser_version:string;parse_status:string;response_status:string;expires_at:Date}>("SELECT path,parser_version,parse_status,response_status,expires_at FROM archive_raw_pages ORDER BY received_at DESC LIMIT 1"))[0];
+    const archivedRaw = (await q<{path:string;response_hash:string;parser_version:string;parse_status:string;response_status:string;expires_at:Date}>("SELECT path,response_hash,parser_version,parse_status,response_status,expires_at FROM archive_raw_pages ORDER BY received_at DESC LIMIT 1"))[0];
     assert(archivedRaw, "raw archive metadata should be committed with the tweet page");
     assert(archivedRaw.parser_version.length > 0);
+    assert.equal(archivedRaw.response_hash,createHash("sha256").update(JSON.stringify(rawEnvelope)).digest("hex"));
     assert.equal(archivedRaw.parse_status, "parsed");
     assert.equal(archivedRaw.response_status, "nonempty");
     assert(new Date(archivedRaw.expires_at).getTime() > Date.now(), "raw response must have a future retention expiry");
