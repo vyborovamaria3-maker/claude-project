@@ -53,7 +53,7 @@ test('collector writes nullable current metrics, decreasing observations, archiv
  const query=async(sql:string,params:unknown[]=[])=>{const r=await db.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};};
  const a=mock.method(Pool.prototype,'query',query),b=mock.method(Pool.prototype,'connect',async()=>({query,release(){},on(){}}));
  try{
-for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
+for(const f of ['001_init.sql','005_nlp.sql','014_archive.sql','018_ai_foundation.sql','015_collector_observations.sql','023_intelligence_platform.sql','024_intelligence_temporal.sql','049_raw_retention_author_id.sql'])await db.exec(await fs.readFile('migrations/'+f,'utf8'));
 
 await db.exec(`
 CREATE TABLE IF NOT EXISTS tweet_entities (
