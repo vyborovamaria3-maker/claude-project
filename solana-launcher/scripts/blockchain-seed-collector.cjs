@@ -462,7 +462,7 @@ async function processOne(db, row, cfg, api) {
     if (row.kind === "token") api.markTokenTradeChecked(row.address);
     if (row.kind === "wallet") {
       // Cache all decoded swap legs from this wallet history, not just the token that discovered it.
-      walletCache.cacheWalletTrades(db, row.address, unique, api.txsToTrades);
+      walletCache.cacheWalletTrades(db, row.address, unique, api.txsToTrades, { sourceProvider: 'alchemy' });
       appendDiscovered(db, row.address, unique, api.txsToTrades);
     }
     db.prepare(
