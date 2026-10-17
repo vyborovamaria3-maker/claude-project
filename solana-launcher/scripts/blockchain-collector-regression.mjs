@@ -132,6 +132,34 @@ fetchImpl = async (url) => {
 assert.equal((await helius.fetchEnrichedTxsForMintWithMeta("mintA", 10)).exhausted, true);
 assert.equal(calls.length, 2, "429 must rotate to next key");
 
+calls = [];
+fetchImpl = async (url) => {
+  calls.push(new URL(url));
+  return { ok: false, status: 503 };
+};
+await assert.rejects(
+  helius.fetchEnrichedTxsForMintWithMeta("mintA", 10),
+  (error) => {
+    assert.equal(error.httpRequests, 4, "exhausted retries must expose every HTTP attempt");
+    return true;
+  },
+);
+assert.equal(calls.length, 4, "two rounds across two keys must count four failed attempts");
+
+calls = [];
+fetchImpl = async (url) => {
+  calls.push(new URL(url));
+  return { ok: false, status: 401 };
+};
+await assert.rejects(
+  helius.fetchEnrichedTxsForMintWithMeta("mintA", 10),
+  (error) => {
+    assert.equal(error.httpRequests, 1, "non-retryable 4xx must still expose the attempted request");
+    return true;
+  },
+);
+assert.equal(calls.length, 1, "non-retryable 4xx must not rotate keys");
+
 let checkedAt = null;
 let fetchCount = 0;
 let savedRows = [{
