@@ -390,7 +390,7 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
   return tx();
 }
 
-async function persistInventoryMovements(db, kind, address, events) {
+function persistInventoryMovements(db, kind, address, events) {
   const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
   const stmt = db.prepare(`
     INSERT INTO chain_inventory_movements
@@ -433,7 +433,7 @@ async function persistInventoryMovements(db, kind, address, events) {
   return saved;
 }
 
-function processOne(db, row, cfg, api) {
+async function processOne(db, row, cfg, api) {
   const known = new Set(db.prepare(
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
