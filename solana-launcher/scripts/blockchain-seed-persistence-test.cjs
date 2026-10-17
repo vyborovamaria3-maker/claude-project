@@ -97,3 +97,5 @@ const { initDb, claimOne, processOne, failTask } = require("./blockchain-seed-co
     console.log("[blockchain-seed-persistence] OK: lease fencing, atomic persistence, decoder coverage scheduler gate");
   } finally { db.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+require("./blockchain-trade-reconcile-test.cjs");

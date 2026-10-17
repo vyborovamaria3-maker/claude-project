@@ -40,11 +40,16 @@ function main() {
         quote_amount AS quoteAmount, quote_decimals AS quoteDecimals, fee, source
       FROM token_trades WHERE mint=?
       ORDER BY timestamp ASC, slot ASC, signature ASC LIMIT ?
-    `).all(mint, limit);
-    const report = reconcileTradeEvidence({ events, trades: allTrades, mint });
+    `).all(mint, limit + 1);
+    const tradeLimitReached = allTrades.length > limit;
+    if (tradeLimitReached) allTrades.pop();
+    // Missing-trade diagnostics must use the entire mint, not only the audited prefix.
+    const knownTradeSignatures = db.prepare("SELECT signature FROM token_trades WHERE mint=?")
+      .all(mint).map((row) => row.signature);
+    const report = reconcileTradeEvidence({ events, trades: allTrades, mint, knownTradeSignatures });
     report.dbPath = dbPath;
     report.tradeLimit = limit;
-    report.tradeLimitReached = allTrades.length >= limit;
+    report.tradeLimitReached = tradeLimitReached;
     report.inventoryMovementRows = tables.has("chain_inventory_movements")
       ? db.prepare("SELECT COUNT(*) AS n FROM chain_inventory_movements WHERE mint=?").get(mint).n
       : null;

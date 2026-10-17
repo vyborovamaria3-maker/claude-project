@@ -1,6 +1,6 @@
 "use strict";
 
-function reconcileTradeEvidence({ events, trades, mint }) {
+function reconcileTradeEvidence({ events, trades, mint, knownTradeSignatures }) {
   const bySignature = new Map();
   for (const event of events || []) {
     if (!event?.signature) continue;
@@ -53,9 +53,10 @@ function reconcileTradeEvidence({ events, trades, mint }) {
     }
     matched.push(signature);
   }
+  const allTradeSignatures = new Set(knownTradeSignatures || tradeSignatures);
   const eventsWithMintDeltaNoTrade = [];
   for (const [signature, rows] of bySignature.entries()) {
-    if (tradeSignatures.has(signature)) continue;
+    if (allTradeSignatures.has(signature)) continue;
     const event = rows[0];
     if (event.transactionError !== null || event.transactionError === undefined) continue;
     if ((event.tokenBalanceDeltas || []).some((d) => d.mint === mint && d.owner && String(d.deltaRaw) !== "0")) {
