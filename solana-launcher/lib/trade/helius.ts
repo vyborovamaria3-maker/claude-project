@@ -67,10 +67,10 @@ export type EnrichedTxMeta = {
   /** Incremental mode stopped at an already-persisted signature, not chain exhaustion. */
   reachedKnownHistory?: boolean;
   /** Actual HTTP attempts made by this call, including retries and failed key attempts. */
-  httpRequests: number;
+  httpRequests?: number;
   /** Number of successful pages returned by the provider. */
-  pagesFetched: number;
-  lastPageEmpty: boolean;
+  pagesFetched?: number;
+  lastPageEmpty?: boolean;
 };
 
 const HELIUS_TIMEOUT_MS = (() => {
