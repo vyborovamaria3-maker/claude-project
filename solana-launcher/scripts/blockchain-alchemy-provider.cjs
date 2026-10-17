@@ -86,21 +86,31 @@ function normalizeFullTransaction(item) {
     for (const inner of ix.instructions || []) collectInstruction(inner);
   }
   const tokens = new Map();
-  for (const entry of preTokenBalances) {
+  const tokenBalanceKey = (entry) => {
     const owner = entry.owner || "";
     const mint = entry.mint || "";
-    const key = owner + "|" + mint;
+    // If owner metadata is missing, retain token-account identity. Aggregating
+    // all ownerless accounts for the same mint can manufacture false deltas.
+    const account = entry.accountIndex == null ? "unknown-account" : String(entry.accountIndex);
+    return { owner, mint, key: (owner || "account:" + account) + "|" + mint };
+  };
+  for (const entry of preTokenBalances) {
+    const { owner, mint, key } = tokenBalanceKey(entry);
     const amount = BigInt(entry.uiTokenAmount?.amount || "0");
-    const prior = tokens.get(key) || { owner, mint, decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n };
+    const prior = tokens.get(key) || {
+      owner, mint, accountIndex: entry.accountIndex ?? null,
+      decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n
+    };
     prior.pre += amount;
     tokens.set(key, prior);
   }
   for (const entry of postTokenBalances) {
-    const owner = entry.owner || "";
-    const mint = entry.mint || "";
-    const key = owner + "|" + mint;
+    const { owner, mint, key } = tokenBalanceKey(entry);
     const amount = BigInt(entry.uiTokenAmount?.amount || "0");
-    const prior = tokens.get(key) || { owner, mint, decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n };
+    const prior = tokens.get(key) || {
+      owner, mint, accountIndex: entry.accountIndex ?? null,
+      decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n
+    };
     prior.post += amount;
     prior.decimals = Number(entry.uiTokenAmount?.decimals ?? prior.decimals);
     tokens.set(key, prior);
@@ -122,7 +132,8 @@ function normalizeFullTransaction(item) {
     instructionProgramIds: [...new Set(instructionProgramIds)],
     decodedOperations,
     tokenBalanceDeltas: [...tokens.values()].map((v) => ({
-      owner: v.owner, mint: v.mint, decimals: v.decimals,
+      owner: v.owner, accountIndex: v.accountIndex, mint: v.mint, decimals: v.decimals,
+      ownerKnown: Boolean(v.owner),
       deltaRaw: (v.post - v.pre).toString(),
       delta: Number(v.post - v.pre) / (10 ** v.decimals)
     })),
