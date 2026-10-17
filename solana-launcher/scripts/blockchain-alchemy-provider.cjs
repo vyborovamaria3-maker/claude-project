@@ -5,13 +5,11 @@
 const DEFAULT_RPC = "https://solana-mainnet.g.alchemy.com/v2/";
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
 const DEX_PROGRAMS = new Set([
-  "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
-  "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB",
-  "675kPX9MHTjS2zt1qfr1NYHuze9WQqVJ5Dq7bqW",
-  "CPMMoo8L3F4NbTegBCKVNqW9pXQwY6c9K7e8w4Z",
-  "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
-  "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
-  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+  // Canonical program IDs used for conservative candidate detection only.
+  // This is not a complete Solana DEX registry and cannot authorize PnL.
+  "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", // Jupiter v6
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", // Pump.fun
+  "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"  // PumpSwap
 ]);
 
 function getAlchemyConfig(env = process.env) {
