@@ -320,6 +320,9 @@ async function processOne(db, row, cfg, api) {
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
   ).all(row.kind, row.address).map(r => r.signature));
   const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known);
+  let httpRequests = recent.httpRequests || 0;
+  let pagesFetched = recent.pagesFetched || 0;
+  let lastPageEmpty = Boolean(recent.lastPageEmpty);
   const events = [...recent.transactions];
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
@@ -337,6 +340,9 @@ async function processOne(db, row, cfg, api) {
     const bridge = await api.fetchEnrichedTxsForMintWithMeta(
       row.address, cfg.backfillLimit, known, forwardCursor
     );
+    httpRequests += bridge.httpRequests || 0;
+    pagesFetched += bridge.pagesFetched || 0;
+    lastPageEmpty = Boolean(bridge.lastPageEmpty);
     events.push(...bridge.transactions);
     if (bridge.reachedKnownHistory || bridge.exhausted) {
       forwardCursor = null;
@@ -355,6 +361,9 @@ async function processOne(db, row, cfg, api) {
     const historical = await api.fetchEnrichedTxsForMintWithMeta(
       row.address, cfg.backfillLimit, null, backfillCursor
     );
+    httpRequests += historical.httpRequests || 0;
+    pagesFetched += historical.pagesFetched || 0;
+    lastPageEmpty = Boolean(historical.lastPageEmpty);
     events.push(...historical.transactions);
     if (historical.exhausted) complete = true;
     else {
@@ -401,7 +410,28 @@ async function processOne(db, row, cfg, api) {
       n, row.kind, row.address, row.lease_until);
     if (row.kind === "wallet") {
       walletCache.markWalletHistory(db, row.address, {
-        complete, backfillCursor, forwardCursor, possibleGap: gap, now: Date.now()
+        complete, backfillCursor, forwardCursor, possibleGap: gap, now: Date.now(),
+        decoderCoverage: 'swap_only', decoderVersion: walletCache.DECODER_VERSION,
+        pagesFetched, lastPageEmpty, source: 'helius'
+      });
+    } else {
+      const slots = unique.map(tx => Number(tx.slot)).filter(Number.isFinite);
+      walletCache.recordHistoryCoverage(db, {
+        entityKind: 'token', entityKey: row.address, source: 'helius',
+        coverageStartSlot: slots.length ? Math.min(...slots) : null,
+        coverageEndSlot: slots.length ? Math.max(...slots) : null,
+        eventsCount: db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='token' AND address=?").get(row.address).n,
+        expectedCount: null, coveragePercent: null,
+        status: gap ? 'gap' : 'partial', decoderCoverage: 'swap_only',
+        gapReason: gap ? 'pagination_gap' : 'decoder_limit'
+      });
+    }
+    if (httpRequests > 0) {
+      walletCache.recordBudgetUsage(db, {
+        provider: 'helius', endpoint: 'enhanced_address_transactions',
+        costUnits: httpRequests, costKind: 'http',
+        taskId: row.kind + ':' + row.address, entityKind: row.kind, entityKey: row.address,
+        ts: Date.now(), metadata: { pagesFetched, lastPageEmpty }
       });
     }
     return n;
