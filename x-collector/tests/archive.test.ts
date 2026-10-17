@@ -115,6 +115,22 @@ test("archive pagination, provenance, graph, snapshots and resumable import use 
         const captured=Page.parse({data:[{id:"7",text:"captured",created_at:"2024-10-08",metrics_observed_at:"2024-10-08T01:00:00Z",public_metrics:{like_count:3}}]});
         await storePage({query} as never,dataset,captured,await rawPage(captured,root),new Date(),null);
         assert.equal((await db.query("SELECT * FROM archive_metrics WHERE post_id='7' AND metrics_observed_at='2024-10-08T01:00:00Z'")).rows.length,1);
+        // A parsed page with no posts is not proof that the upstream response was truly empty.
+        const emptyPage = Page.parse({ data: [] });
+        const emptyRaw = await rawPage(emptyPage, root);
+        await storePage({ query } as never, dataset, emptyPage, emptyRaw, new Date(), null);
+        const emptyStatus = (await db.query<{ response_status: string }>(
+            "SELECT response_status FROM archive_raw_pages WHERE hash=$1 AND source_id=$2",
+            [emptyRaw.hash, dataset],
+        )).rows[0];
+        assert.equal(emptyStatus.response_status, "unknown");
+        const confirmedEmptyRaw = await rawPage({ source_response: { data: [] } }, root);
+        await storePage({ query } as never, dataset, emptyPage, confirmedEmptyRaw, new Date(), null, { responseStatus: "empty" });
+        const confirmedEmptyStatus = (await db.query<{ response_status: string }>(
+            "SELECT response_status FROM archive_raw_pages WHERE hash=$1 AND source_id=$2",
+            [confirmedEmptyRaw.hash, dataset],
+        )).rows[0];
+        assert.equal(confirmedEmptyStatus.response_status, "empty");
         const server = http.createServer((req, res) => { applySecurityHeaders(res); void handleArchiveRequest(req, res).then(handled => { if (!handled) {
             res.statusCode = 404;
             res.end();
