@@ -1,0 +1,248 @@
+"use strict";
+
+// Alchemy Solana historical provider. No Helius fallback is permitted here.
+// Uses the documented getTransactionsForAddress RPC extension with opaque paginationToken.
+const DEFAULT_RPC = "https://solana-mainnet.g.alchemy.com/v2/";
+const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
+const DEX_PROGRAMS = new Set([
+  "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+  "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB",
+  "675kPX9MHTjS2zt1qfr1NYHuze9WQqVJ5Dq7bqW",
+  "CPMMoo8L3F4NbTegBCKVNqW9pXQwY6c9K7e8w4Z",
+  "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+  "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+  "Eo7WjKq67rjJQSZxS6z3YkapzY4xV6wZ7qz2Y6bM"
+]);
+
+function getAlchemyConfig(env = process.env) {
+  const explicitUrl = env.ALCHEMY_SOLANA_RPC_URL || env.NEXT_PUBLIC_ALCHEMY_RPC_URL;
+  const keys = String(env.ALCHEMY_API_KEYS || "")
+    .split(/[;,\s]+/).map((v) => v.trim()).filter(Boolean);
+  if (env.ALCHEMY_API_KEY && !keys.includes(env.ALCHEMY_API_KEY.trim())) keys.unshift(env.ALCHEMY_API_KEY.trim());
+  let endpoint = explicitUrl || "";
+  if (!endpoint && keys.length) endpoint = DEFAULT_RPC + encodeURIComponent(keys[0]);
+  if (endpoint && !/^https:\/\/solana-mainnet\.g\.alchemy\.com\/v2\//i.test(endpoint)) {
+    throw new Error("ALCHEMY_SOLANA_RPC_URL must be an Alchemy Solana mainnet RPC URL");
+  }
+  if (!endpoint) throw new Error("Alchemy Solana API key or ALCHEMY_SOLANA_RPC_URL required; Helius is not a fallback");
+  return { endpoint, keyCount: keys.length || (explicitUrl ? 1 : 0) };
+}
+
+function normalizeFullTransaction(item) {
+  const transaction = item && item.transaction;
+  const signature = item?.signature ||
+    transaction?.transaction?.signatures?.[0] ||
+    transaction?.signatures?.[0];
+  if (typeof signature !== "string" || !signature) return null;
+  const slot = Number(item.slot ?? transaction?.slot);
+  const blockTime = Number(item.blockTime ?? transaction?.blockTime);
+  const meta = item.meta || transaction?.meta || null;
+  const txObject = transaction?.transaction ? transaction.transaction : transaction;
+  const message = txObject?.message || {};
+  const accountKeys = (message.accountKeys || []).map((key) =>
+    typeof key === "string" ? key : (key?.pubkey || key?.toString?.() || ""));
+  const preBalances = meta?.preBalances || [];
+  const postBalances = meta?.postBalances || [];
+  const preTokenBalances = meta?.preTokenBalances || [];
+  const postTokenBalances = meta?.postTokenBalances || [];
+  const instructionProgramIds = [];
+  for (const ix of message.instructions || []) {
+    const id = ix.programId || (Number.isInteger(ix.programIdIndex) ? accountKeys[ix.programIdIndex] : null);
+    if (id) instructionProgramIds.push(String(id));
+  }
+  for (const ix of meta?.innerInstructions || []) {
+    for (const inner of ix.instructions || []) {
+      const id = inner.programId || (Number.isInteger(inner.programIdIndex) ? accountKeys[inner.programIdIndex] : null);
+      if (id) instructionProgramIds.push(String(id));
+    }
+  }
+  const tokens = new Map();
+  for (const entry of preTokenBalances) {
+    const owner = entry.owner || "";
+    const mint = entry.mint || "";
+    const key = owner + "|" + mint;
+    const amount = BigInt(entry.uiTokenAmount?.amount || "0");
+    const prior = tokens.get(key) || { owner, mint, decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n };
+    prior.pre += amount;
+    tokens.set(key, prior);
+  }
+  for (const entry of postTokenBalances) {
+    const owner = entry.owner || "";
+    const mint = entry.mint || "";
+    const key = owner + "|" + mint;
+    const amount = BigInt(entry.uiTokenAmount?.amount || "0");
+    const prior = tokens.get(key) || { owner, mint, decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n };
+    prior.post += amount;
+    prior.decimals = Number(entry.uiTokenAmount?.decimals ?? prior.decimals);
+    tokens.set(key, prior);
+  }
+  return {
+    signature,
+    timestamp: Number.isFinite(blockTime) ? blockTime : null,
+    slot: Number.isFinite(slot) ? slot : null,
+    transactionError: meta?.err ?? null,
+    fee: Number.isFinite(Number(meta?.fee)) ? Number(meta.fee) / 1e9 : null,
+    source: "alchemy",
+    provider: "alchemy",
+    raw: item,
+    accountKeys,
+    preBalances,
+    postBalances,
+    preTokenBalances,
+    postTokenBalances,
+    instructionProgramIds: [...new Set(instructionProgramIds)],
+    tokenBalanceDeltas: [...tokens.values()].map((v) => ({
+      owner: v.owner, mint: v.mint, decimals: v.decimals,
+      deltaRaw: (v.post - v.pre).toString(),
+      delta: Number(v.post - v.pre) / (10 ** v.decimals)
+    })),
+    meta,
+  };
+}
+
+function createAlchemyProvider(options = {}) {
+  const env = options.env || process.env;
+  const fetchImpl = options.fetch || globalThis.fetch;
+  const sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const config = options.endpoint ? { endpoint: options.endpoint } : getAlchemyConfig(env);
+  let requestId = 0;
+  async function rpc(method, params) {
+    let lastError;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const response = await fetchImpl(config.endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }),
+          signal: AbortSignal.timeout(Number(env.ALCHEMY_TIMEOUT_MS) || 30000),
+        });
+        if (!response.ok) {
+          const error = new Error("Alchemy HTTP " + response.status);
+          error.httpRequests = attempt + 1;
+          if (!RETRYABLE.has(response.status) || attempt === 4) throw error;
+          lastError = error;
+          await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
+          continue;
+        }
+        const body = await response.json();
+        if (body?.error) {
+          const error = new Error("Alchemy RPC " + String(body.error.code) + ": " + String(body.error.message || "request failed").slice(0, 180));
+          error.httpRequests = attempt + 1;
+          if (attempt < 4 && /rate|limit|temporar|busy/i.test(error.message)) {
+            lastError = error;
+            await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
+            continue;
+          }
+          throw error;
+        }
+        return { result: body.result, httpRequests: attempt + 1 };
+      } catch (error) {
+        lastError = error;
+        if (error?.httpRequests || attempt === 4) {
+          if (!error.httpRequests) error.httpRequests = attempt + 1;
+          throw error;
+        }
+        await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
+      }
+    }
+    throw lastError || new Error("Alchemy request failed");
+  }
+
+  async function fetchTransactionsForAddress(address, maxTransactions = 100, knownSignatures = new Set(), paginationToken = null) {
+    const limit = Math.min(100, Math.max(1, Number(maxTransactions) || 100));
+    const transactions = [];
+    let token = paginationToken || undefined;
+    let httpRequests = 0;
+    let pagesFetched = 0;
+    let reachedKnownHistory = false;
+    let exhausted = false;
+    let lastPageEmpty = false;
+    let safetyPages = 0;
+    while (transactions.length < limit && safetyPages < 100) {
+      safetyPages++;
+      const remaining = limit - transactions.length;
+      const pageLimit = Math.min(100, remaining);
+      const params = [address, {
+        transactionDetails: "full",
+        sortOrder: "desc",
+        limit: pageLimit,
+        commitment: "finalized",
+        ...(token ? { paginationToken: token } : {})
+      }];
+      let response;
+      try {
+        response = await rpc("getTransactionsForAddress", params);
+      } catch (error) {
+        error.httpRequests = httpRequests + (Number(error.httpRequests) || 1);
+        error.pagesFetched = pagesFetched;
+        error.lastPageEmpty = lastPageEmpty;
+        throw error;
+      }
+      httpRequests += response.httpRequests;
+      pagesFetched++;
+      const page = Array.isArray(response.result?.transactions) ? response.result.transactions :
+        Array.isArray(response.result?.items) ? response.result.items :
+        Array.isArray(response.result) ? response.result : null;
+      if (!page) throw new Error("Unexpected Alchemy getTransactionsForAddress response shape");
+      lastPageEmpty = page.length === 0;
+      if (lastPageEmpty) { exhausted = true; token = undefined; break; }
+      for (const item of page) {
+        const normalized = normalizeFullTransaction(item);
+        if (!normalized) continue;
+        if (knownSignatures?.has(normalized.signature)) {
+          reachedKnownHistory = true;
+          break;
+        }
+        transactions.push(normalized);
+        if (transactions.length >= limit) break;
+      }
+      const nextToken = response.result?.paginationToken ?? response.result?.pagination_token ?? null;
+      if (reachedKnownHistory) { token = undefined; break; }
+      if (typeof nextToken === "string" && nextToken && nextToken !== token) token = nextToken;
+      else { token = undefined; exhausted = true; break; }
+      if (transactions.length >= limit) break;
+    }
+    return {
+      transactions,
+      nextCursor: token || null,
+      exhausted,
+      truncated: !exhausted && !reachedKnownHistory && transactions.length >= limit,
+      reachedKnownHistory,
+      httpRequests,
+      pagesFetched,
+      lastPageEmpty,
+      decoderCoverage: "swap_only",
+      source: "alchemy",
+    };
+  }
+
+  function txsToTrades(transactions, mint) {
+    const trades = [];
+    for (const tx of transactions || []) {
+      if (tx.transactionError != null || !tx.instructionProgramIds?.some((id) => DEX_PROGRAMS.has(id))) continue;
+      const deltas = (tx.tokenBalanceDeltas || []).filter((d) => d.mint === mint && d.owner && d.deltaRaw !== "0");
+      if (deltas.length !== 1) continue;
+      const delta = deltas[0];
+      const keyIndex = tx.accountKeys.indexOf(delta.owner);
+      if (keyIndex < 0) continue;
+      const nativeDeltaLamports = Number(tx.postBalances[keyIndex] ?? 0) - Number(tx.preBalances[keyIndex] ?? 0);
+      const feeLamports = Number(tx.meta?.fee || 0);
+      const isBuy = Number(delta.deltaRaw) > 0;
+      const solLamports = isBuy ? -(nativeDeltaLamports + feeLamports) : nativeDeltaLamports + feeLamports;
+      const amountTokens = Math.abs(delta.delta);
+      const amountSol = solLamports / 1e9;
+      if (!(amountTokens > 0 && amountSol > 0 && Number.isFinite(amountSol))) continue;
+      trades.push({
+        signature: tx.signature, timestamp: tx.timestamp, slot: tx.slot, trader: delta.owner,
+        type: isBuy ? "buy" : "sell", amountSol, amountTokens, priceSol: amountSol / amountTokens,
+        fee: feeLamports / 1e9, source: "alchemy", quoteMint: "So11111111111111111111111111111111111111112",
+        quoteAmount: amountSol, quoteDecimals: 9, decoderCoverage: "swap_only"
+      });
+    }
+    return trades;
+  }
+
+  return { rpc, fetchTransactionsForAddress, txsToTrades, provider: "alchemy" };
+}
+
+module.exports = { createAlchemyProvider, getAlchemyConfig, normalizeFullTransaction };
