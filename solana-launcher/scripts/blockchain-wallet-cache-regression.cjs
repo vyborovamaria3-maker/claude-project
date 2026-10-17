@@ -15,7 +15,7 @@ try {
     signature: "sig-1",
     timestamp: 1_800_000_000,
     slot: 123,
-    events: { swap: { tokenInputs: [{ mint: MINT_A }], tokenOutputs: [{ mint: MINT_B }] } }
+    events: { swap: { tokenInputs: [{ mint: MINT_A, userAccount: WALLET }], tokenOutputs: [{ mint: MINT_B, userAccount: WALLET }] } }
   };
   const decoder = (_events, mint) => mint === MINT_A ? [
     { signature: "sig-1", timestamp: event.timestamp, slot: event.slot,
@@ -32,7 +32,12 @@ try {
   assert.deepEqual(first.tokenMints, [MINT_A]);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 2,
     "distinct swap legs in the same signature must both be retained");
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_token_touched").get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_token_touched").get().n, 2);
+  const evidence = db.prepare("SELECT signature, raw_event_signature, slot, raw_event_slot, reorg_status, decoder_coverage FROM chain_wallet_trades ORDER BY id LIMIT 1").get();
+  assert.equal(evidence.signature, evidence.raw_event_signature);
+  assert.equal(evidence.slot, evidence.raw_event_slot);
+  assert.equal(evidence.reorg_status, "pending_confirmation");
+  assert.equal(evidence.decoder_coverage, "swap_only");
   assert.equal(db.prepare("SELECT bought_amount FROM chain_wallet_token_summary WHERE wallet=? AND token_mint=?")
     .get(WALLET, MINT_A).bought_amount, "150");
 
@@ -46,9 +51,36 @@ try {
   cache.markWalletHistory(db, WALLET, {
     complete: true, backfillCursor: null, forwardCursor: null, possibleGap: false, now: 3000
   });
-  assert.equal(cache.walletHistoryFresh(db, WALLET, 4000), true,
-    "fresh complete wallet history should be reusable without RPC");
-  assert.equal(cache.walletHistoryFresh(db, WALLET, 3 * 3600_000 + 4000), false,
+  assert.equal(db.prepare("SELECT history_status FROM chain_wallet_discovery WHERE wallet=?").get(WALLET).history_status, "partial",
+    "swap-only decoder coverage must never promote history to complete");
+  assert.equal(cache.walletHistoryFresh(db, WALLET, 4000), false,
+    "swap-only wallet history is not reusable as complete");
+  cache.markWalletHistory(db, WALLET, {
+    complete: true, decoderCoverage: "full", backfillCursor: null, forwardCursor: null,
+    possibleGap: false, now: 6000, pagesFetched: 2, lastPageEmpty: true
+  });
+  assert.equal(cache.walletHistoryFresh(db, WALLET, 7000), true,
+    "full decoder coverage plus complete history should be reusable without RPC");
+  assert.equal(db.prepare("SELECT pages_fetched FROM chain_wallet_pagination_state WHERE wallet=?").get(WALLET).pages_fetched, 2);
+  assert.equal(db.prepare("SELECT status, coverage_percent, decoder_coverage FROM chain_history_coverage WHERE entity_key=?").get(WALLET).status, "complete");
+  cache.recordBudgetUsage(db, { provider: "helius", endpoint: "test", costUnits: 3, costKind: "http", entityKind: "wallet", entityKey: WALLET });
+  assert.equal(db.prepare("SELECT cost_kind, cost_units FROM chain_budget_ledger").get().cost_kind, "http");
+  assert.equal(db.prepare("SELECT cost_units FROM chain_budget_ledger").get().cost_units, 3);
+  assert.equal(cache.authoritativePnlAllowed({
+    historyComplete: true, decoderCoverage: "full", costBasisComplete: true,
+    completeFromObservedTrades: true, orderingComplete: true, reorgStable: true,
+    unknownOperationsRatio: 0.05
+  }), true);
+  assert.equal(cache.authoritativePnlAllowed({
+    historyComplete: true, decoderCoverage: "full", costBasisComplete: true,
+    completeFromObservedTrades: true, orderingComplete: true, reorgStable: true,
+    unknownOperationsRatio: 0.051
+  }), false, "unknown operation ratio above 5% must block authoritative PnL");
+  assert.equal(cache.calculateDataConfidence({
+    historyComplete: true, decoderCoverage: "swap_only", unknownOperationsRatio: 0,
+    costBasisComplete: true, orderingComplete: true, reorgStable: true
+  }), 0.25);
+  assert.equal(cache.walletHistoryFresh(db, WALLET, 3 * 3600_000 + 7000), false,
     "an active wallet history must be refreshed after the freshness window");
   cache.markWalletHistory(db, WALLET, {
     complete: false, backfillCursor: "cursor-1", forwardCursor: null, possibleGap: false, now: 5000
