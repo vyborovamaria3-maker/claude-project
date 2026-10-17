@@ -113,7 +113,7 @@ function initDb(db) {
   db.prepare(`
     UPDATE chain_seed_targets
     SET backfill_cursor=NULL, forward_cursor=NULL, backfill_complete=0,
-        possible_gap=1, collection_provider='alchemy', cursor_version=1, next_run_at=0
+        possible_gap=0, collection_provider='alchemy', cursor_version=1, next_run_at=0
     WHERE collection_provider IS NULL OR collection_provider<>'alchemy' OR cursor_version<>1
   `).run();
   walletCache.ensureWalletCacheSchema(db);
