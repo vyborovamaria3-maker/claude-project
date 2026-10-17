@@ -42,4 +42,5 @@ export const REQUIRED = [
   "045_collector_trace.sql",
   "046_tweet_token_linker.sql",
   "047_signal_quality_marts.sql",
+  "048_signal_registry_versions.sql",
 ];
