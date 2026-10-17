@@ -32,7 +32,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
   const now = Date.now();
   const fromHttp = options.transport === "http";
   const httpSourceUrl = "https://x.com/i/api/graphql";
-  let rawCapture: { hash: string; path: string; parserVersion?: string } | undefined;
+  let rawCapture: { hash: string; responseHash?: string; path: string; parserVersion?: string } | undefined;
   let rawCaptureSourceId: string | undefined;
   if (options.rawResponse !== undefined) {
     const rawSourceKey = await source(
