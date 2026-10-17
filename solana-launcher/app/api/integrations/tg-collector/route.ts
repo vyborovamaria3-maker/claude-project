@@ -130,8 +130,8 @@ export async function GET(request: NextRequest) {
           (SELECT count(*)::int FROM tg_jobs WHERE state='failed') AS failed`),
       p.query(`SELECT pause_until, heartbeat_at, worker_started_at, block_reason, blocked_at,
         collection_enabled, messages_total, messages_per_day, links_total, links_per_day, jobs_pending, jobs_failed,
-        flood_wait_active, metrics_updated_at,
-        heartbeat_at > now() - interval '20 seconds' AS worker_online
+        flood_wait_active, metrics_updated_at, worker_version, last_error_code,
+        heartbeat_at > now() - interval '30 seconds' AS worker_online
         FROM tg_runtime WHERE id=1`),
       readTgProxy(p),
       p.query(`SELECT m.source_id::text, s.identifier, m.message_id::text,
@@ -161,6 +161,8 @@ export async function GET(request: NextRequest) {
         jobs_failed: Number(runtimeState.rows[0]?.jobs_failed ?? 0),
         flood_wait_active: runtimeState.rows[0]?.flood_wait_active === true,
         metrics_updated_at: runtimeState.rows[0]?.metrics_updated_at ?? null,
+        worker_version: runtimeState.rows[0]?.worker_version ?? null,
+        last_error_code: runtimeState.rows[0]?.last_error_code ?? null,
       },
       sources: sources.rows,
       messages: messages.rows,
