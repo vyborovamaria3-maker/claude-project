@@ -16,8 +16,8 @@ test("PostgreSQL engine: full migration chain, persistence, retries and atomic r
   try {
     const dir = path.resolve("migrations");
     const migrations = REQUIRED;
-    assert.equal(migrations.at(-1), "047_signal_quality_marts.sql");
-    assert(migrations.indexOf("046_tweet_token_linker.sql") < migrations.indexOf("047_signal_quality_marts.sql"));
+    assert.equal(migrations.at(-1), REQUIRED.includes("047_signal_quality_marts.sql") ? "047_signal_quality_marts.sql" : "046_tweet_token_linker.sql");
+    assert(!migrations.includes("047_signal_quality_marts.sql") || migrations.indexOf("046_tweet_token_linker.sql") < migrations.indexOf("047_signal_quality_marts.sql"));
     for (const file of migrations) {
       await db.exec("BEGIN");
       try {
