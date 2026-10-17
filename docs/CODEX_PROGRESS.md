@@ -4,6 +4,14 @@ Blockchain Settings V2 (2026-10-15): based on main fa0b46f and PR #66, connected
 
 CURRENT PHASE: Runtime reliability and collection efficiency; full master prompt not complete.
 
+2026-10-16 migration/dependency hardening: scoped Solana SDK override to
+jayson 5 removes vulnerable uuid 8 and stream-json without upgrading SDK APIs.
+Migration ledger stores SHA-256; all applied hashes are checked before DDL.
+Legacy hashes require explicit reviewed baseline, status remains read-only,
+and the migration session itself holds the advisory lock. SQL files and
+lib/trade/analytics* remain unchanged. Checksums detect source drift, not manual
+database schema edits.
+
 2026-10-16 PR69 follow-up: standalone history producer handles idle PostgreSQL
 disconnects and startup outages with cancellable reconnect backoff, reacquires
 its session advisory lock and resumes durable progress without replaying SQL
