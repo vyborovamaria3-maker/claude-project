@@ -9,7 +9,7 @@ test("all tracked SQL migrations are classified before database access", async (
   const inventory = assertMigrationCatalog(files);
   assert.equal(inventory.errors.length, 0);
   assert.equal(inventory.appliedOrder.length, REQUIRED.length);
-  assert.equal(REQUIRED.at(-1), REQUIRED.includes("047_signal_quality_marts.sql") ? "047_signal_quality_marts.sql" : "046_tweet_token_linker.sql");
+  assert.equal(REQUIRED.at(-1), REQUIRED.includes("048_signal_registry_versions.sql") ? "048_signal_registry_versions.sql" : REQUIRED.includes("047_signal_quality_marts.sql") ? "047_signal_quality_marts.sql" : "046_tweet_token_linker.sql");
   assert.deepEqual(inventory.collisions.map(item => item.sequence), ["012", "013", "014", "036"]);
   assert.equal(inventory.excluded.length, Object.keys(EXCLUDED_MIGRATIONS).length);
   assert(inventory.appliedOrder.includes("044_browser_checkpoints.sql"));
@@ -17,6 +17,8 @@ test("all tracked SQL migrations are classified before database access", async (
   assert(inventory.appliedOrder.includes("046_tweet_token_linker.sql"));
   assert(!REQUIRED.includes("047_signal_quality_marts.sql") || REQUIRED.indexOf("046_tweet_token_linker.sql") < REQUIRED.indexOf("047_signal_quality_marts.sql"));
   assert(inventory.appliedOrder.includes("047_signal_quality_marts.sql"));
+  assert(inventory.appliedOrder.includes("048_signal_registry_versions.sql"));
+  assert(REQUIRED.indexOf("047_signal_quality_marts.sql") < REQUIRED.indexOf("048_signal_registry_versions.sql"));
 });
 
 test("new or missing SQL cannot silently change the migration graph", async () => {
