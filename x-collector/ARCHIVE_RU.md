@@ -114,7 +114,7 @@ Typecheck/lint/build; 55 тестов, включая Chromium archive UI/error 
 
 ## Retention, parser provenance and metric history
 
-`archive_raw_pages.hash` is the SHA-256 key for the captured response/file; it is not duplicated as a second hash column. The metadata row also stores `parser_version`, `parse_status` (`captured / parsed / partial / failed`), `response_status` (`unknown / empty / nonempty / error`) and `expires_at`.
+`archive_raw_pages.hash` is the SHA-256 key for the full capture envelope/file, while `response_hash` hashes the upstream `source_response` payload separately so repeated response bodies can be identified without collapsing distinct observations. The metadata row also stores `parser_version`, `parse_status` (`captured / parsed / partial / failed`), `response_status` (`unknown / empty / nonempty / error`) and `expires_at`.
 
 New raw captures expire after `ARCHIVE_RAW_RETENTION_DAYS` (default 90; valid range 1–3650 days). This is an operational default, not a substitute for checking the applicable X terms and data-retention obligations. Existing rows are backfilled to 90 days from `received_at`. `npm run xactions:archive-gc` reports expired raw files in dry-run mode; only `npm run xactions:archive-gc -- --delete` removes expired metadata/files. A file is retained while any unexpired metadata row still references it. Deletion is intentionally explicit.
 
