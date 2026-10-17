@@ -218,17 +218,27 @@ function createAlchemyProvider(options = {}) {
       const page = Array.isArray(response.result?.transactions) ? response.result.transactions :
         Array.isArray(response.result?.items) ? response.result.items :
         Array.isArray(response.result) ? response.result : null;
-      if (!page) throw new Error("Unexpected Alchemy getTransactionsForAddress response shape");
+      if (!page) {
+        const error = new Error("Unexpected Alchemy getTransactionsForAddress response shape");
+        Object.assign(error, { httpRequests, pagesFetched, lastPageEmpty: false });
+        throw error;
+      }
       lastPageEmpty = page.length === 0;
       if (lastPageEmpty) { exhausted = true; token = undefined; break; }
-      for (const item of page) {
-        const normalized = normalizeFullTransaction(item);
-        if (!normalized) continue;
-        if (knownSignatures?.has(normalized.signature)) {
-          reachedKnownHistory = true;
-          continue;
+      try {
+        for (const item of page) {
+          const normalized = normalizeFullTransaction(item);
+          if (!normalized) continue;
+          if (knownSignatures?.has(normalized.signature)) {
+            reachedKnownHistory = true;
+            continue;
+          }
+          if (transactions.length < limit) transactions.push(normalized);
         }
-        if (transactions.length < limit) transactions.push(normalized);
+      } catch (cause) {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        Object.assign(error, { httpRequests, pagesFetched, lastPageEmpty });
+        throw error;
       }
       const nextToken = response.result?.paginationToken ?? response.result?.pagination_token ?? null;
       if (typeof nextToken === "string" && nextToken && nextToken !== token) token = nextToken;
