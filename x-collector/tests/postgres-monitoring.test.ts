@@ -16,7 +16,7 @@ test("PostgreSQL engine: full migration chain, persistence, retries and atomic r
   try {
     const dir = path.resolve("migrations");
     const migrations = REQUIRED;
-    assert.equal(migrations.at(-1), "045_collector_trace.sql");
+    assert.equal(migrations.at(-1), "047_signal_quality_marts.sql");
     for (const file of migrations) {
       await db.exec("BEGIN");
       try {
