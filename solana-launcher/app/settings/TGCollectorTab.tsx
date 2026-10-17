@@ -267,6 +267,9 @@ export default function TGCollectorTab() {
           <span className="rounded-lg border border-bg-border px-3 py-2 text-content-muted">
             Worker version: {data?.runtimeMetrics.worker_version ?? "—"}
           </span>
+          {data?.runtimeMetrics.last_error_code && <span className="rounded-lg border border-amber-500/30 px-3 py-2 text-amber-300">
+            Последняя ошибка: {data.runtimeMetrics.last_error_code}
+          </span>}
           <span className="rounded-lg border border-bg-border px-3 py-2 text-content-muted">Последний сигнал: {formatDate(data?.heartbeatAt ?? null)}</span>
           {globallyPaused && <span className="rounded-lg border border-amber-500/30 px-3 py-2 text-amber-300">Telegram FloodWait до {formatDate(data?.pausedUntil ?? null)}</span>}
           {data?.blockReason && <span className="rounded-lg border border-red-500/30 px-3 py-2 text-red-300">Telegram заблокирован для сборщика: {data.blockReason}. Проверьте аккаунт перед повторным запуском.</span>}
