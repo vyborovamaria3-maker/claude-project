@@ -37,6 +37,13 @@ export async function rawPage(value: unknown, root = process.env.ARCHIVE_RAW_DIR
     }
     return { hash, path: destination };
 }
+/** Persist raw-file metadata independently so failed parsing does not lose the response. */
+export async function recordRawPage(sourceId: string, raw: { hash: string; path: string }, received: Date, client?: PoolClient) {
+    const sql = "INSERT INTO archive_raw_pages(hash,source_id,path,received_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING";
+    const args = [raw.hash, sourceId, raw.path, received];
+    if (client) await client.query(sql, args);
+    else await q1(sql, args);
+}
 export async function storePage(c: PoolClient, source: string, page: ArchivePage, raw: {
     hash: string;
     path: string;
@@ -79,7 +86,7 @@ export async function storePage(c: PoolClient, source: string, page: ArchivePage
       SELECT DISTINCT x.id,x.target,x.kind FROM jsonb_to_recordset($1::jsonb) AS x(id text,target text,kind text) ON CONFLICT DO NOTHING`,[JSON.stringify(edges)]);
     if(links.length)await c.query(`INSERT INTO archive_token_links(post_id,mint)
       SELECT DISTINCT x.id,x.mint FROM jsonb_to_recordset($1::jsonb) AS x(id text,mint text) ON CONFLICT DO NOTHING`,[JSON.stringify(links)]);
-    await c.query("INSERT INTO archive_raw_pages(hash,source_id,path,received_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING", [raw.hash, source, raw.path, received]);
+    await recordRawPage(source, raw, received, c);
     return posts.size;
 }
 export async function storeToken(c: PoolClient, source: string, row: Record<string, unknown>) {

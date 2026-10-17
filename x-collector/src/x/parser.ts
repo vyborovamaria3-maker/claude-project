@@ -10,13 +10,13 @@ export async function parseTweets(page: Page, limit = Number.MAX_SAFE_INTEGER): 
   const raw = await page.locator("article").evaluateAll((articles): Array<XTweet | null> =>
     articles.map((article) => {
       try {
-        const parseMetric = (t: string | null | undefined): number => {
-          if (!t) return 0;
+        const parseMetric = (t: string | null | undefined): number | null => {
+          if (!t) return null;
           const m = String(t).replace(/\s+/g, "").match(/([0-9]+(?:[.,][0-9]+)?)([KMBКМБ]?)/i);
-          if (!m) return 0;
+          if (!m) return null;
           const s = (m[2] || "").toUpperCase();
           const v = Number(s ? m[1].replace(",", ".") : m[1].replace(/[.,]/g, ""));
-          if (!isFinite(v)) return 0;
+          if (!isFinite(v)) return null;
           if (s === "K" || s === "К") return Math.round(v * 1e3);
           if (s === "M" || s === "М") return Math.round(v * 1e6);
           if (s === "B" || s === "Б") return Math.round(v * 1e9);

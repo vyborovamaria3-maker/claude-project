@@ -40,7 +40,6 @@
     "kol:test": "node --import tsx --test tests/authors.test.ts",
     "kol:report": "tsx scripts/kol-report.ts",
     "entities:worker": "tsx scripts/entity-worker.ts",
-    "link:tweet-tokens": "tsx scripts/link-tweets-to-tokens.ts",
     "enqueue-search": "tsx scripts/enqueue-search.ts",
     "xactions:members": "tsx scripts/xactions-enqueue-members.ts",
     "xactions:verify": "tsx scripts/xactions-verify.ts",
@@ -72,7 +71,8 @@
     "ai:export": "node --import tsx scripts/ai/export.ts",
     "runtime:check": "node --import tsx --test tests/runtime.test.ts",
     "jobs:dlq": "tsx scripts/dlq.ts",
-    "audit:unused:files": "npm exec --yes --package=knip@6.41.0 -- knip --config knip.jsonc --include files --reporter json --no-progress"
+    "audit:unused:files": "npm exec --yes --package=knip@6.41.0 -- knip --config knip.jsonc --include files --reporter json --no-progress",
+    "link:tweet-tokens": "tsx scripts/link-tweets-to-tokens.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
@@ -102,5 +102,10 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.70.1"
+  },
+  "overrides": {
+    "@solana/web3.js": {
+      "jayson": "5.0.0"
+    }
   }
 }

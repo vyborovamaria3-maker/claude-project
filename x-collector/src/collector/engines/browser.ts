@@ -26,7 +26,7 @@ export interface ScrapeOptions {
   authState: ScrapeAuthState;
   signal?: AbortSignal;
   onProgress?: (progress:Progress)=>Promise<void>;
-  onBatch?: (tweets:RawTweet[])=>Promise<void>;
+  onBatch?: (tweets:RawTweet[], rawResponse?: unknown)=>Promise<void>;
   beforeHttpRequest?: () => Promise<void>;
   proxy?: { server: string; username?: string; password?: string };
   userAgent?: string;
