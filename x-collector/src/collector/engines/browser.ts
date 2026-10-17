@@ -11,6 +11,7 @@ const {launchLoginBrowser}=createRequire(__filename)('../../../scripts/test-publ
 
 export interface RawTweet {
   id: string; text: string; authorHandle: string;
+  authorId?: string | null;
   authorDisplayName: string | null; url: string;
   views: number | null; likes: number | null; retweets: number | null; replies: number | null;
   observedAt: number; links: string[]; mentions: string[]; hashtags: string[];
