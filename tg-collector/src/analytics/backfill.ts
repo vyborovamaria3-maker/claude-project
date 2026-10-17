@@ -11,6 +11,9 @@ import { refreshGraphDays, utcDay } from "./rollups.js";
 async function main(): Promise<void> {
   await migrate();
   const lock = await pool.connect();
+  const batchArg = process.argv.find((arg) => arg.startsWith("--batch-size="))?.slice("--batch-size=".length);
+  const batchSize = batchArg === undefined ? 1000 : Number(batchArg);
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 10000) throw new Error("--batch-size must be an integer from 1 to 10000");
   let processed = 0;
   try {
     const result = await lock.query<{ acquired: boolean }>(
@@ -26,8 +29,8 @@ async function main(): Promise<void> {
           source_id: string; message_id: string; text: string; posted_at: Date | null;
         }>(`SELECT source_id::text, message_id::text, text, posted_at
               FROM tg_messages WHERE analysis_version < $1
-              ORDER BY source_id, message_id FOR UPDATE SKIP LOCKED LIMIT 100`,
-          [ANALYSIS_VERSION]);
+              ORDER BY source_id, message_id FOR UPDATE SKIP LOCKED LIMIT $2`,
+          [ANALYSIS_VERSION, batchSize]);
         const affected = new Map<string, string[]>();
         for (const row of rows) {
           await replaceEvidence(client, row.source_id, {
