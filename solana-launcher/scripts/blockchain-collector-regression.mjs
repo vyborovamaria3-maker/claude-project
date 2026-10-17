@@ -191,7 +191,28 @@ assert.equal((await cache.loadTokenTrades("mintA")).length, 2);
 assert.equal(fetchCount, 1, "fresh cache should avoid repeated fetch");
 
 // Alchemy primary-provider contract: mocked JSON-RPC only; no real API requests.
-const { createAlchemyProvider, getAlchemyConfig } = require("./blockchain-alchemy-provider.cjs");
+const { createAlchemyProvider, getAlchemyConfig, normalizeFullTransaction } = require("./blockchain-alchemy-provider.cjs");
+const ownerlessBalances = normalizeFullTransaction({
+  signature: "ownerless-balances",
+  slot: 901,
+  blockTime: 1700000001,
+  transaction: { signatures: ["ownerless-balances"], message: { accountKeys: [], instructions: [] } },
+  meta: {
+    err: null, fee: 5000, preBalances: [], postBalances: [],
+    preTokenBalances: [
+      { accountIndex: 2, mint: "mintA", uiTokenAmount: { amount: "100", decimals: 2 } },
+      { accountIndex: 3, mint: "mintA", uiTokenAmount: { amount: "200", decimals: 2 } },
+    ],
+    postTokenBalances: [
+      { accountIndex: 2, mint: "mintA", uiTokenAmount: { amount: "100", decimals: 2 } },
+    ],
+    innerInstructions: [],
+  },
+});
+assert.equal(ownerlessBalances.tokenBalanceDeltas.length, 2,
+  "ownerless token accounts must not be merged into a fabricated wallet delta");
+assert.deepEqual(ownerlessBalances.tokenBalanceDeltas.map((d) => d.accountIndex), [2, 3]);
+assert.ok(ownerlessBalances.tokenBalanceDeltas.every((d) => !d.ownerKnown));
 assert.throws(() => getAlchemyConfig({}), /Alchemy Solana API key|ALCHEMY_SOLANA_RPC_URL/);
 assert.equal(getAlchemyConfig({
   NEXT_PUBLIC_QUICKNODE_RPC_URL: "https://solana-mainnet.g.alchemy.com/v2/legacy-test-key",
