@@ -40,5 +40,6 @@ export const REQUIRED = [
   "043_xactions_progress.sql",
   "044_browser_checkpoints.sql",
   "045_collector_trace.sql",
+  "046_tweet_token_linker.sql",
   "047_signal_quality_marts.sql",
 ];
