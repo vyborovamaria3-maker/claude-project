@@ -312,16 +312,25 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
           last = last == null ? row.block_time : Math.max(last, row.block_time);
         }
       }
+      const dataConfidence = calculateDataConfidence({
+        historyComplete: false,
+        decoderCoverage: 'swap_only',
+        unknownOperationsRatio: 1,
+        costBasisComplete: false,
+        orderingComplete: false,
+        reorgStable: false
+      });
       db.prepare(`
         INSERT INTO chain_wallet_token_summary
           (wallet, token_mint, trades_count, first_trade_at, last_trade_at, bought_amount, sold_amount,
-         decoder_coverage, unknown_operations_count, unknown_operations_ratio, status, data_confidence)
-        VALUES(?,?,?,?,?,?,?,'swap_only',0,1,'unknown',0)
+           decoder_coverage, unknown_operations_count, unknown_operations_ratio, status, data_confidence)
+        VALUES(?,?,?,?,?,?,?,'swap_only',0,1,'unknown',?)
         ON CONFLICT(wallet, token_mint) DO UPDATE SET
           trades_count=excluded.trades_count, first_trade_at=excluded.first_trade_at,
           last_trade_at=excluded.last_trade_at, bought_amount=excluded.bought_amount,
-          sold_amount=excluded.sold_amount, status='unknown', data_confidence=0
-      `).run(wallet, mint, rows.length, first, last, String(bought), String(sold));
+          sold_amount=excluded.sold_amount, decoder_coverage='swap_only',
+          unknown_operations_ratio=1, status='unknown', data_confidence=excluded.data_confidence
+      `).run(wallet, mint, rows.length, first, last, String(bought), String(sold), dataConfidence);
       db.prepare(`
         INSERT INTO chain_wallet_token_touched(wallet, token_mint, last_trade_at, trade_count, source)
         VALUES(?,?,?,?,'discovered_via_wallet')
