@@ -363,3 +363,36 @@ SELECT
   signal_version
 FROM attributed
 GROUP BY source, signal_version, handle, horizon_hours;
+
+-- Keep the legacy snapshot producer aligned with the versioned signal-history key.
+CREATE OR REPLACE FUNCTION capture_signal_history() RETURNS INTEGER AS $$
+DECLARE captured BIGINT := (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT; cnt INTEGER;
+BEGIN
+  IF NOT pg_try_advisory_xact_lock(hashtext('capture_signal_history')::BIGINT) THEN RETURN 0; END IF;
+  WITH current_signals AS (
+    SELECT 'hype'::TEXT AS source, h.mint, h.hype_score::NUMERIC AS score,
+           jsonb_build_object('delta_1h', h.delta_1h, 'velocity', h.velocity) AS details
+    FROM mint_hype_scores h
+    UNION ALL
+    SELECT 'ultra'::TEXT, u.mint, u.ultra_score::NUMERIC,
+           COALESCE(u.components, '{}'::JSONB)
+    FROM mint_ultra_scores u
+    UNION ALL
+    SELECT 'early_signal'::TEXT, e.mint, e.signal_strength::NUMERIC,
+           jsonb_build_object('hype_score', e.hype_score, 'last_30m', e.last_30m,
+                              'velocity_x', e.velocity_x)
+    FROM v_early_signals e
+    WHERE e.signal_strength IS NOT NULL
+  ), point_in_time AS (
+    SELECT s.source, s.mint, s.score,
+           s.details || jsonb_build_object('features', to_jsonb(f)) AS details
+    FROM current_signals s
+    CROSS JOIN LATERAL extract_features(s.mint, captured) f
+  )
+  INSERT INTO signal_history (source, signal_version, mint, signal_at, score, details)
+  SELECT source, 1, mint, captured, score, details FROM point_in_time
+  ON CONFLICT (source, signal_version, mint, signal_at) DO UPDATE SET
+    score=EXCLUDED.score, details=EXCLUDED.details;
+  GET DIAGNOSTICS cnt = ROW_COUNT;
+  RETURN cnt;
+END $$ LANGUAGE plpgsql;
