@@ -88,6 +88,7 @@ function initDb(db) {
     "  last_success_at INTEGER, lease_until INTEGER, attempts INTEGER NOT NULL DEFAULT 0,",
     "  last_error TEXT, backfill_cursor TEXT, forward_cursor TEXT, backfill_complete INTEGER NOT NULL DEFAULT 0,",
     "  possible_gap INTEGER NOT NULL DEFAULT 0, events_saved INTEGER NOT NULL DEFAULT 0,",
+    "  collection_provider TEXT NOT NULL DEFAULT 'alchemy', cursor_version INTEGER NOT NULL DEFAULT 1,",
     "  PRIMARY KEY (kind,address))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_targets_queue",
     "  ON chain_seed_targets(next_run_at,priority,lease_until)",
