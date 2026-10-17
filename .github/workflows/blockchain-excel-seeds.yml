@@ -11,6 +11,7 @@ on:
       - "solana-launcher/scripts/blockchain-trade-reconciliation.cjs"
       - "solana-launcher/scripts/blockchain-trade-reconcile.cjs"
       - "solana-launcher/scripts/blockchain-trade-reconcile-test.cjs"
+      - "solana-launcher/scripts/blockchain-signature-events*.cjs"
       - "solana-launcher/lib/trade/helius.ts"
       - "solana-launcher/lib/trade/chain/quality-v3.ts"
       - ".github/workflows/blockchain-excel-seeds.yml"
@@ -38,4 +39,5 @@ jobs:
           node scripts/blockchain-wallet-cache-regression.cjs
           node scripts/blockchain-collector-regression.mjs
           node scripts/blockchain-seed-persistence-test.cjs
+          node scripts/blockchain-signature-events-test.cjs
           node scripts/blockchain-seed-integration.cjs

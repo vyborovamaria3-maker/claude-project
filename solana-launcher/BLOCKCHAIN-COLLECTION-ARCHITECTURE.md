@@ -97,3 +97,18 @@ Still not implemented or not independently verified:
 - live API tests and local pilot DB verification.
 
 Until these gaps close, the cache is swap-only and the wallet history/PnL must remain non-authoritative.
+
+## Targeted signature evidence CLI
+
+`scripts/blockchain-signature-events.cjs` reads existing `token_trades` signatures for one mint. It never starts address history collection, updates trades, or marks coverage complete. Missing evidence is selected deterministically, at most 100 signatures per invocation (default 10). Failed transactions are retained as evidence; null, mismatched, malformed or oversized responses are not stored. Re-running skips stored signatures for that mint. Provider retries may mean multiple HTTP requests per signature.
+
+Run from `solana-launcher`:
+
+```text
+node scripts/blockchain-signature-events.cjs --db <trade.db> --prepare --backup <new-backup.db>
+node scripts/blockchain-signature-events.cjs --db <trade.db> --mint <mint> --limit 10
+```
+
+Preparation uses SQLite online backup (including committed WAL), verifies the backup with quick_check, then transactionally adds nullable slot/quote/fee columns and the compatible chain_seed_events table/index. It refuses existing backup paths. Keep the verified backup if migration fails; no invented values are backfilled. Preparation has no network path. Default planning opens the DB read-only and does not load provider credentials. Do not restore by copying over a running SQLite database; stop writers and preserve its WAL before rollback.
+
+Only an explicit `--execute` on the planning command performs finalized `getTransaction` requests through the existing Alchemy provider. Configure credentials through existing Alchemy environment variables or local dotenv files. Each saved payload is normalized by the existing normalizer and gzip-compressed. Events are written under kind=token/address=mint; no inventory projections are created. Partial failures return nonzero and preserve already saved evidence for resumption. The default plan does not prove that selected rows are valid swaps. Use `blockchain-trade-reconcile.cjs` afterwards from the folder whose data/trade.db was prepared. A targeted signature audit cannot discover transactions absent from token_trades or establish complete history.
