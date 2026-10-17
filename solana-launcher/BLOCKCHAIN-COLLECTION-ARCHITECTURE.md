@@ -1,0 +1,83 @@
+# Blockchain collection and analytics: implementation status
+
+## Source-of-truth decision
+
+- `chain_seed_events` is the retained raw evidence layer for collector-observed transactions.
+- `token_trades` remains the canonical input to the existing `lib/trade/chain/quality-v3.ts` FIFO/PnL pipeline until a separately reviewed migration proves parity.
+- `chain_wallet_trades` is a derived, idempotent wallet-wide cache used for discovery, fast lookups, and reconciliation. It is not yet the source of truth for authoritative PnL.
+- Reconciliation must compare signature, wallet/trader attribution, mint, direction, amount, slot, and decoder version. A mismatch is a quality issue, not a reason to silently overwrite `token_trades`.
+
+## Decoder coverage is separate from pagination coverage
+
+Current wallet cache decoding is **swap-only**. Token transfers are indexed as wallet-token discovery evidence, but transfer-in/out, mint, and burn are not yet fully represented as inventory movements. Therefore:
+- `decoder_coverage='swap_only'` is the default;
+- a finished API backfill does not imply complete inventory history;
+- `history_status='complete'` is only allowed when pagination is complete, no gaps exist, and `decoder_coverage='full'`;
+- the current collector passes `swap_only`, so wallet history stays `partial` until a full decoder is implemented and independently validated;
+- PnL remains non-authoritative unless the caller supplies full decoder coverage, unknown-operation ratio <= 5%, stable/finalized evidence, complete inventory provenance, and complete ordering.
+
+The 5% unknown-operation threshold is a hard gate, not a confidence adjustment. Unknown ratios must be calculated from a defined denominator of relevant wallet/token operations; they must not be guessed. Until that denominator is measured, the gate must fail closed.
+
+## Evidence and finality
+
+Every cached trade stores `raw_event_signature` and `raw_event_slot`. The event signature must equal the trade signature. The cache currently records `reorg_status='pending_confirmation'`; no finalized/reorg watcher has been implemented yet, so cached rows are not eligible for authoritative PnL.
+
+## Coverage and cost accounting
+
+- `chain_history_coverage` records the observed slot range, event count, decoder coverage, and reason for incomplete coverage. `coverage_percent` and `expected_count` remain NULL unless there is an independently measured denominator.
+- `chain_budget_ledger` records observed HTTP request attempts as `cost_kind='http'`. Helius credits and Alchemy CU must be recorded separately only when provider-specific cost data is available; the system must not infer credit/CU costs from HTTP count.
+- Helius Enhanced API response metadata now reports successful page count, empty final page, and actual HTTP attempts, including retries.
+- `chain_wallet_pagination_state` keeps pagination metadata separate from logical backfill/forward cursors.
+
+## Discovery, clusters, and scoring
+
+Token mints seen in a wallet's swap legs or token transfers are written to `chain_wallet_token_touched` and may be queued with low priority. This is discovery evidence, not proof of a trade or ownership identity.
+
+`chain_wallet_cluster_candidates` is candidate-only. Shared funding or co-activity must never automatically merge wallet identities.
+
+`chain_wallet_smart_money_metrics` stores versioned component metrics and confidence bounds. No production smart-money score is considered implemented until its model and calibration are versioned and tested.
+
+## Deterministic data confidence
+
+The wallet cache exposes a deterministic confidence function:
+`history_complete × decoder_coverage × (1 - unknown_operations_ratio) × cost_basis_complete × ordering_complete × reorg_stable`.
+Any missing required signal contributes zero. This score is a quality indicator, not a substitute for the hard AUTHORITATIVE gate.
+
+## API savings baseline
+
+Baseline: every wallet discovery triggers a full history fetch.
+Cache scenario: a complete, fresh wallet history should trigger zero new HTTP requests; a stale or partial history should be refreshed/resumed.
+Measure `rpc_requests_per_wallet_discovery`, `cache_hit_ratio`, and `cost_per_wallet_lifetime` from `chain_budget_ledger`. Do not publish a savings percentage before collecting comparable measurements.
+
+## SQLite migration evaluation thresholds
+
+Evaluate PostgreSQL migration when any of the following is sustained:
+- `trade.db` exceeds 5 GiB;
+- SQLite WAL exceeds 1 GiB;
+- COMMIT exceeds 100 ms for a 10,000-row batch;
+- SQLITE_BUSY / database-locked errors occur more than once per hour.
+
+These are evaluation triggers, not automatic guarantees that PostgreSQL will solve the observed bottleneck.
+
+## Status at this revision
+
+Implemented schema/code scaffolding:
+- wallet discovery and swap-leg cache;
+- decoder coverage gate for wallet history;
+- history coverage and HTTP-attempt ledger tables;
+- evidence signature/slot fields;
+- pagination state;
+- reorg/finality fields, defaulting to pending;
+- token discovery from wallet transfers;
+- deterministic data confidence and PnL quality gate helpers;
+- cluster-candidate and versioned score-component tables.
+
+Still not implemented or not independently verified:
+- complete SPL transfer/mint/burn inventory decoder;
+- finalized/reorg monitoring;
+- complete wiring of provider-specific credit/CU cost data;
+- authoritative population of unknown-operation ratios;
+- end-to-end reconciliation of `chain_wallet_trades` with `token_trades`;
+- live API tests and local pilot DB verification.
+
+Until these gaps close, the cache is swap-only and the wallet history/PnL must remain non-authoritative.
