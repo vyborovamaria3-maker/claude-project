@@ -17,29 +17,35 @@ try {
     slot: 123,
     events: { swap: { tokenInputs: [{ mint: MINT_A }], tokenOutputs: [{ mint: MINT_B }] } }
   };
-  const decoder = (_events, mint) => mint === MINT_A ? [{
-    signature: "sig-1", timestamp: event.timestamp, slot: event.slot,
-    type: "buy", amountSol: 1.25, amountTokens: 100, fee: 0.000005
-  }] : [];
+  const decoder = (_events, mint) => mint === MINT_A ? [
+    { signature: "sig-1", timestamp: event.timestamp, slot: event.slot,
+      type: "buy", amountSol: 1.25, amountTokens: 100, fee: 0.000005 },
+    { signature: "sig-1", timestamp: event.timestamp, slot: event.slot,
+      type: "buy", amountSol: 0.25, amountTokens: 50, fee: 0.000005 }
+  ] : [];
 
   const first = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 1000 });
   assert.deepEqual(first.tokenMints, [MINT_A]);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 2,
+    "distinct swap legs in the same signature must both be retained");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_token_touched").get().n, 1);
   assert.equal(db.prepare("SELECT bought_amount FROM chain_wallet_token_summary WHERE wallet=? AND token_mint=?")
-    .get(WALLET, MINT_A).bought_amount, "100");
+    .get(WALLET, MINT_A).bought_amount, "150");
 
   const replay = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 2000 });
   assert.equal(replay.upserted, 1, "idempotent upsert must preserve a single leg");
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 2,
+    "replay must not duplicate either leg");
   assert.equal(db.prepare("SELECT trades_count FROM chain_wallet_token_summary WHERE wallet=? AND token_mint=?")
-    .get(WALLET, MINT_A).trades_count, 1);
+    .get(WALLET, MINT_A).trades_count, 2);
 
   cache.markWalletHistory(db, WALLET, {
     complete: true, backfillCursor: null, forwardCursor: null, possibleGap: false, now: 3000
   });
   assert.equal(cache.walletHistoryFresh(db, WALLET, 4000), true,
     "fresh complete wallet history should be reusable without RPC");
+  assert.equal(cache.walletHistoryFresh(db, WALLET, 3 * 3600_000 + 4000), false,
+    "an active wallet history must be refreshed after the freshness window");
   cache.markWalletHistory(db, WALLET, {
     complete: false, backfillCursor: "cursor-1", forwardCursor: null, possibleGap: false, now: 5000
   });
