@@ -29,7 +29,7 @@ try {
     [{ ...event, signature: "failed-swap", transactionError: { InstructionError: [0, "failed"] } }],
     () => { throw new Error("failed transaction must not reach decoder"); });
   assert.equal(rejected.upserted, 0);
-  assert.deepEqual(first.tokenMints, [MINT_A]);
+  assert.deepEqual(first.tokenMints, [MINT_A, MINT_B]);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 2,
     "distinct swap legs in the same signature must both be retained");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_token_touched").get().n, 2);
