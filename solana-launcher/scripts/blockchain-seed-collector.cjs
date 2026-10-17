@@ -98,7 +98,18 @@ function initDb(db) {
     "  PRIMARY KEY(kind,address,signature))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
     "  ON chain_seed_events(kind,address,block_time DESC)",
-  ].join("\n"));
+    ";CREATE TABLE IF NOT EXISTS chain_inventory_movements (",
+    "  target_kind TEXT NOT NULL, target_address TEXT NOT NULL, signature TEXT NOT NULL,",
+    "  leg_index INTEGER NOT NULL, slot INTEGER, block_time INTEGER, operation_index INTEGER NOT NULL,",
+    "  operation_type TEXT NOT NULL, movement_kind TEXT NOT NULL, direction TEXT NOT NULL,",
+    "  owner TEXT, token_account TEXT, mint TEXT, amount_raw TEXT, decimals INTEGER,",
+    "  source_account TEXT, destination_account TEXT, source_owner TEXT, destination_owner TEXT,",
+    "  authority TEXT, provider TEXT NOT NULL, decoder_version TEXT NOT NULL,",
+    "  attribution_status TEXT NOT NULL, observed_at INTEGER NOT NULL,",
+    "  PRIMARY KEY(target_kind,target_address,signature,leg_index))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_inventory_owner_mint_time",
+    "  ON chain_inventory_movements(owner,mint,block_time)",
+  ].join("\\n"));
   const targetColumns = db.pragma("table_info(chain_seed_targets)");
   if (!targetColumns.some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
@@ -379,7 +390,50 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
   return tx();
 }
 
-async function processOne(db, row, cfg, api) {
+async function persistInventoryMovements(db, kind, address, events) {
+  const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
+  const stmt = db.prepare(`
+    INSERT INTO chain_inventory_movements
+      (target_kind,target_address,signature,leg_index,slot,block_time,operation_index,
+       operation_type,movement_kind,direction,owner,token_account,mint,amount_raw,decimals,
+       source_account,destination_account,source_owner,destination_owner,authority,
+       provider,decoder_version,attribution_status,observed_at)
+    VALUES(@target_kind,@target_address,@signature,@leg_index,@slot,@block_time,@operation_index,
+       @operation_type,@movement_kind,@direction,@owner,@token_account,@mint,@amount_raw,@decimals,
+       @source_account,@destination_account,@source_owner,@destination_owner,@authority,
+       @provider,@decoder_version,@attribution_status,@observed_at)
+    ON CONFLICT(target_kind,target_address,signature,leg_index) DO UPDATE SET
+      slot=COALESCE(excluded.slot,chain_inventory_movements.slot),
+      block_time=COALESCE(excluded.block_time,chain_inventory_movements.block_time),
+      owner=COALESCE(excluded.owner,chain_inventory_movements.owner),
+      mint=COALESCE(excluded.mint,chain_inventory_movements.mint),
+      amount_raw=COALESCE(excluded.amount_raw,chain_inventory_movements.amount_raw),
+      decimals=COALESCE(excluded.decimals,chain_inventory_movements.decimals),
+      attribution_status=excluded.attribution_status,
+      observed_at=excluded.observed_at
+  `);
+  let saved = 0;
+  for (const tx of events || []) {
+    for (const [legIndex, movement] of decodeInventoryMovements(tx).entries()) {
+      stmt.run({
+        target_kind: kind, target_address: address, signature: movement.signature,
+        leg_index: legIndex, slot: movement.slot, block_time: movement.blockTime,
+        operation_index: movement.operationIndex, operation_type: movement.operationType,
+        movement_kind: movement.kind, direction: movement.direction, owner: movement.owner,
+        token_account: movement.tokenAccount, mint: movement.mint, amount_raw: movement.amountRaw,
+        decimals: movement.decimals, source_account: movement.sourceAccount,
+        destination_account: movement.destinationAccount, source_owner: movement.sourceOwner,
+        destination_owner: movement.destinationOwner, authority: movement.authority,
+        provider: movement.provider, decoder_version: movement.decoderVersion,
+        attribution_status: movement.attributionStatus, observed_at: Date.now()
+      });
+      saved++;
+    }
+  }
+  return saved;
+}
+
+function processOne(db, row, cfg, api) {
   const known = new Set(db.prepare(
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
@@ -449,6 +503,7 @@ async function processOne(db, row, cfg, api) {
       .get(row.kind, row.address, row.lease_until, Date.now());
     if (!owned) throw new Error("Collector lease lost before persistence");
     const n = persistEvents(db, row.kind, row.address, unique);
+    const inventoryMovements = persistInventoryMovements(db, row.kind, row.address, unique);
     if (trades.length) {
       api.persistTokenTrades(row.address, trades.map(t => ({
         signature: t.signature, timestamp: t.timestamp, trader: t.trader,
@@ -494,7 +549,7 @@ async function processOne(db, row, cfg, api) {
     return n;
   }).immediate();
   return { kind: row.kind, address: row.address, newEvents: added,
-    normalizedTrades: trades.length, complete, possibleGap: gap };
+    normalizedTrades: trades.length, inventoryMovements, complete, possibleGap: gap };
 }
 
 function failTask(db, row, error) {
