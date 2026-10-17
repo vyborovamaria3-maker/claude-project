@@ -17,8 +17,30 @@ export async function source(name: string, url: string, license: string, kind: "
     else await q1(sql, args);
     return id;
 }
-export async function rawPage(value: unknown, root = process.env.ARCHIVE_RAW_DIR ?? "data/archive/raw") {
+export interface RawPageRef { hash: string; responseHash: string; path: string; parserVersion: string; }
+export type RawParseStatus = "captured" | "parsed" | "partial" | "failed";
+export type RawResponseStatus = "unknown" | "empty" | "nonempty" | "error";
+export interface RawPageMetadata {
+    parserVersion?: string;
+    parseStatus?: RawParseStatus;
+    responseStatus?: RawResponseStatus;
+    expiresAt?: Date;
+}
+function rawRetentionDays(): number {
+    const days = Number(process.env.ARCHIVE_RAW_RETENTION_DAYS ?? 90);
+    if (!Number.isSafeInteger(days) || days < 1 || days > 3650)
+        throw new Error("ARCHIVE_RAW_RETENTION_DAYS must be an integer between 1 and 3650");
+    return days;
+}
+export async function rawPage(value: unknown, root = process.env.ARCHIVE_RAW_DIR ?? "data/archive/raw"): Promise<RawPageRef> {
+    rawRetentionDays();
     const json = JSON.stringify(value), hash = createHash("sha256").update(json).digest("hex");
+    const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    const responsePayload = Object.prototype.hasOwnProperty.call(record, "source_response") ? record.source_response : value;
+    const responseHash = createHash("sha256").update(JSON.stringify(responsePayload) ?? "null").digest("hex");
+    const parserVersion = typeof record.parser_version === "string" && record.parser_version.trim()
+        ? record.parser_version.trim()
+        : process.env.X_COLLECTOR_PARSER_VERSION?.trim() || "unversioned";
     const dir = path.resolve(root, hash.slice(0, 2));
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     const available = await fs.statfs(dir);
@@ -35,19 +57,41 @@ export async function rawPage(value: unknown, root = process.env.ARCHIVE_RAW_DIR
     finally {
         await fs.rm(temp, { force: true });
     }
-    return { hash, path: destination };
+    return { hash, responseHash, path: destination, parserVersion };
 }
 /** Persist raw-file metadata independently so failed parsing does not lose the response. */
-export async function recordRawPage(sourceId: string, raw: { hash: string; path: string }, received: Date, client?: PoolClient) {
-    const sql = "INSERT INTO archive_raw_pages(hash,source_id,path,received_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING";
-    const args = [raw.hash, sourceId, raw.path, received];
+export async function recordRawPage(
+    sourceId: string,
+    raw: { hash: string; responseHash?: string; path: string; parserVersion?: string },
+    received: Date,
+    client?: PoolClient,
+    metadata: RawPageMetadata = {},
+) {
+    const parserVersion = (metadata.parserVersion ?? raw.parserVersion ?? process.env.X_COLLECTOR_PARSER_VERSION?.trim()) || "unversioned";
+    const parseStatus = metadata.parseStatus ?? "captured";
+    const responseStatus = metadata.responseStatus ?? "unknown";
+    const expiresAt = metadata.expiresAt ?? new Date(received.getTime() + rawRetentionDays() * 86400000);
+    const sql = `INSERT INTO archive_raw_pages
+      (hash,response_hash,source_id,path,received_at,parser_version,parse_status,response_status,expires_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT(hash,source_id) DO UPDATE SET
+        response_hash=COALESCE(EXCLUDED.response_hash,archive_raw_pages.response_hash),
+        path=EXCLUDED.path,
+        parser_version=CASE WHEN EXCLUDED.parser_version='unversioned'
+          THEN archive_raw_pages.parser_version ELSE EXCLUDED.parser_version END,
+        parse_status=EXCLUDED.parse_status,
+        response_status=EXCLUDED.response_status,
+        expires_at=GREATEST(archive_raw_pages.expires_at,EXCLUDED.expires_at)`;
+    const args = [raw.hash, raw.responseHash ?? null, sourceId, raw.path, received, parserVersion, parseStatus, responseStatus, expiresAt];
     if (client) await client.query(sql, args);
     else await q1(sql, args);
 }
 export async function storePage(c: PoolClient, source: string, page: ArchivePage, raw: {
     hash: string;
+    responseHash?: string;
     path: string;
-}, received: Date, observed: Date | null) {
+    parserVersion?: string;
+}, received: Date, observed: Date | null, metadata: RawPageMetadata = {}) {
     const posts = new Map([...page.data, ...(page.includes?.tweets ?? []), ...(page.includes?.posts ?? [])].map(p => [p.id, p]));
     // One query per entity type rather than per post: bounded by the caller's page.
     const users=[...new Map((page.includes?.users??[]).map(u=>[u.id,u])).values()];
@@ -86,7 +130,7 @@ export async function storePage(c: PoolClient, source: string, page: ArchivePage
       SELECT DISTINCT x.id,x.target,x.kind FROM jsonb_to_recordset($1::jsonb) AS x(id text,target text,kind text) ON CONFLICT DO NOTHING`,[JSON.stringify(edges)]);
     if(links.length)await c.query(`INSERT INTO archive_token_links(post_id,mint)
       SELECT DISTINCT x.id,x.mint FROM jsonb_to_recordset($1::jsonb) AS x(id text,mint text) ON CONFLICT DO NOTHING`,[JSON.stringify(links)]);
-    await recordRawPage(source, raw, received, c);
+    await recordRawPage(source, raw, received, c, { ...metadata, parseStatus: metadata.parseStatus ?? "parsed", responseStatus: metadata.responseStatus ?? (posts.size > 0 ? "nonempty" : "unknown") });
     return posts.size;
 }
 export async function storeToken(c: PoolClient, source: string, row: Record<string, unknown>) {

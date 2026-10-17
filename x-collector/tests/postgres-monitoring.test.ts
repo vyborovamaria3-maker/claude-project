@@ -16,9 +16,10 @@ test("PostgreSQL engine: full migration chain, persistence, retries and atomic r
   try {
     const dir = path.resolve("migrations");
     const migrations = REQUIRED;
-    assert.equal(migrations.at(-1), REQUIRED.includes("048_signal_registry_versions.sql") ? "048_signal_registry_versions.sql" : REQUIRED.includes("047_signal_quality_marts.sql") ? "047_signal_quality_marts.sql" : "046_tweet_token_linker.sql");
+    assert.equal(migrations.at(-1), REQUIRED.includes("049_raw_retention_author_id.sql") ? "049_raw_retention_author_id.sql" : REQUIRED.includes("048_signal_registry_versions.sql") ? "048_signal_registry_versions.sql" : REQUIRED.includes("047_signal_quality_marts.sql") ? "047_signal_quality_marts.sql" : "046_tweet_token_linker.sql");
     assert(!migrations.includes("047_signal_quality_marts.sql") || migrations.indexOf("046_tweet_token_linker.sql") < migrations.indexOf("047_signal_quality_marts.sql"));
     assert(!migrations.includes("048_signal_registry_versions.sql") || migrations.indexOf("047_signal_quality_marts.sql") < migrations.indexOf("048_signal_registry_versions.sql"));
+    assert(!migrations.includes("049_raw_retention_author_id.sql") || migrations.indexOf("048_signal_registry_versions.sql") < migrations.indexOf("049_raw_retention_author_id.sql"));
     for (const file of migrations) {
       await db.exec("BEGIN");
       try {
