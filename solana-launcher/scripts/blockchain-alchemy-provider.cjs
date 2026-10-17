@@ -15,7 +15,13 @@ const DEX_PROGRAMS = new Set([
 ]);
 
 function getAlchemyConfig(env = process.env) {
-  const explicitUrl = env.ALCHEMY_SOLANA_RPC_URL || env.NEXT_PUBLIC_ALCHEMY_RPC_URL;
+  const legacyRpcUrl = env.NEXT_PUBLIC_QUICKNODE_RPC_URL || env.QUICKNODE_RPC_URL;
+  // Some existing deployments stored an Alchemy URL under the old QuickNode
+  // variable name. Accept it only when its host is verifiably Alchemy.
+  const legacyAlchemyUrl = typeof legacyRpcUrl === "string"
+    && /^https:\/\/solana-mainnet\.g\.alchemy\.com\/v2\//i.test(legacyRpcUrl)
+    ? legacyRpcUrl : "";
+  const explicitUrl = env.ALCHEMY_SOLANA_RPC_URL || env.NEXT_PUBLIC_ALCHEMY_RPC_URL || legacyAlchemyUrl;
   const keys = String(env.ALCHEMY_API_KEYS || "")
     .split(/[;,\s]+/).map((v) => v.trim()).filter(Boolean);
   if (env.ALCHEMY_API_KEY && !keys.includes(env.ALCHEMY_API_KEY.trim())) keys.unshift(env.ALCHEMY_API_KEY.trim());
