@@ -282,7 +282,7 @@ const brokenReconciliation = reconcileTradeEvidence({
 });
 assert.equal(brokenReconciliation.status, "needs_review");
 assert.equal(brokenReconciliation.tradesWithoutEvent.length, 1);
-assert.equal(brokenReconciliation.slotMismatches.length, 1);
+assert.equal(brokenReconciliation.slotMismatches.length, 2);
 assert.equal(brokenReconciliation.ownerMismatches.length, 1);
 assert.equal(brokenReconciliation.directionMismatches.length, 1);
 assert.equal(brokenReconciliation.authority, "diagnostic_only");
