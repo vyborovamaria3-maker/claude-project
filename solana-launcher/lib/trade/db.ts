@@ -135,6 +135,11 @@ function init(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_token_trades_mint_ts ON token_trades(mint, timestamp);
     CREATE INDEX IF NOT EXISTS idx_token_trades_mint_trader ON token_trades(mint, trader);
+    -- Separates provider freshness from the arrival time of the last trade.
+    CREATE TABLE IF NOT EXISTS token_trade_sync (
+      mint TEXT PRIMARY KEY,
+      last_checked_at INTEGER NOT NULL
+    );
 
     -- ── Dev (creator) wallet profiles ─────────────────────────
     -- One row per creator wallet, refreshed each time we fetch their tokens.
@@ -697,6 +702,20 @@ export interface StoredTokenTrade {
   source?: string;
 }
 
+export function getTokenTradeLastCheckedAt(mint: string): number | null {
+  const row = getDb().prepare(
+    "SELECT last_checked_at AS lastCheckedAt FROM token_trade_sync WHERE mint = ?"
+  ).get(mint) as { lastCheckedAt: number } | undefined;
+  return row?.lastCheckedAt ?? null;
+}
+
+export function markTokenTradeChecked(mint: string, checkedAt = Date.now()): void {
+  getDb().prepare(
+    `INSERT INTO token_trade_sync (mint, last_checked_at) VALUES (?, ?)
+     ON CONFLICT(mint) DO UPDATE SET last_checked_at = MAX(token_trade_sync.last_checked_at, excluded.last_checked_at)`
+  ).run(mint, checkedAt);
+}
+
 export function getTokenTrades(mint: string, limit = 10_000): StoredTokenTrade[] {
   return getDb()
     .prepare(
@@ -732,14 +751,14 @@ export function persistTokenTrades(mint: string, trades: StoredTokenTrade[]) {
        amount_sol = excluded.amount_sol,
        amount_tokens = excluded.amount_tokens,
        price_sol = excluded.price_sol,
-       slot = excluded.slot,
-       quote_mint = excluded.quote_mint,
-       quote_amount = excluded.quote_amount,
-       quote_decimals = excluded.quote_decimals,
-       quote_usd_value = excluded.quote_usd_value,
-       fee = excluded.fee,
-       jito_tip_lamports = excluded.jito_tip_lamports,
-       source = excluded.source`
+       slot = COALESCE(excluded.slot, token_trades.slot),
+       quote_mint = COALESCE(excluded.quote_mint, token_trades.quote_mint),
+       quote_amount = COALESCE(excluded.quote_amount, token_trades.quote_amount),
+       quote_decimals = COALESCE(excluded.quote_decimals, token_trades.quote_decimals),
+       quote_usd_value = COALESCE(excluded.quote_usd_value, token_trades.quote_usd_value),
+       fee = COALESCE(excluded.fee, token_trades.fee),
+       jito_tip_lamports = COALESCE(excluded.jito_tip_lamports, token_trades.jito_tip_lamports),
+       source = COALESCE(excluded.source, token_trades.source)`
   );
 
   const tx = db.transaction((rows: StoredTokenTrade[]) => {

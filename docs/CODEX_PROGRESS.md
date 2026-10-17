@@ -1,6 +1,16 @@
 PROJECT: X Collector Runtime v2
 
+Blockchain Settings V2 (2026-10-15): based on main fa0b46f and PR #66, connected RU/EN controls to persisted SQLite settings, shared CLI/server rate/concurrency leases, bounded RPC retries/fallback and real XLSX import/history. Reused the prior seed engine and existing Intelligence token_trades/analytics rather than introducing a service. Backend superusers control shared settings; loopback development operator mode is explicit. Existing analysis/security regression, seed integration/failure tests and typecheck are checked with the new settings contracts; see solana-launcher/docs/BLOCKCHAIN_SETTINGS_V2.md. No automatic merge or production completeness claim.
+
 CURRENT PHASE: Runtime reliability and collection efficiency; full master prompt not complete.
+
+2026-10-16 migration/dependency hardening: scoped Solana SDK override to
+jayson 5 removes vulnerable uuid 8 and stream-json without upgrading SDK APIs.
+Migration ledger stores SHA-256; all applied hashes are checked before DDL.
+Legacy hashes require explicit reviewed baseline, status remains read-only,
+and the migration session itself holds the advisory lock. SQL files and
+lib/trade/analytics* remain unchanged. Checksums detect source drift, not manual
+database schema edits.
 
 2026-10-16 PR69 follow-up: standalone history producer handles idle PostgreSQL
 disconnects and startup outages with cancellable reconnect backoff, reacquires
@@ -38,3 +48,5 @@ Review fixes: account-specific HTTP 401/403 and login/CAPTCHA failures now retry
 Local runtime fixes: scheduler coalesces pending ticks and bounds concurrency with reserved DB query capacity. Additive migration 038 repairs overflowing day-duration constants in existing analytics function definitions and is idempotent. Real PostgreSQL integration exercises every initial scheduler tick with a five-connection pool and graceful shutdown. Local Celery Beat was recreated with synchronized broker credentials; credentials stay outside Git. Local Qwen is outside the user's provider API workflow.
 
 Staged discovery: migration 040 adds an opt-in plan linking exactly three lists and a history run. Author/list completion gates historical topics and seven continuous discovery searches, including already queued tasks. Shared transactional account selection caps collector browser leases at one for a small VPS. Partial searches keep cursors and require an explicit retry. See architecture/STAGED_DISCOVERY.md. Validation: 191 collector tests, strict typecheck/build and real PostgreSQL runtime integration passed; live X completeness remains unconfirmed.
+
+Blockchain Settings V2 validation: offline settings/import/RPC contracts, seed persistence/analytics tests, analysis/security regressions, strict TypeScript and Next.js production build pass. Full ESLint: exit 0, 345 warnings. Private RPC and deployed operator/browser acceptance remain environment-dependent; no paid provider requests were used for these tests.
