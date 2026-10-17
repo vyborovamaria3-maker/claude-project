@@ -396,3 +396,30 @@ export async function refreshSignals(tx: PoolClient): Promise<number> {
   );
   return (firstMentions.rowCount ?? 0) + (velocitySignals.rowCount ?? 0);
 }
+
+
+/** Recompute earliest observed mention from the active analysis version and collected history. */
+export async function refreshTokenFirstMentions(tx: PoolClient): Promise<number> {
+  await tx.query(
+    "DELETE FROM tg_token_first_mentions f WHERE NOT EXISTS (" +
+    "SELECT 1 FROM tg_token_mentions tm JOIN tg_messages m USING(source_id,message_id) " +
+    "WHERE tm.chain_id=f.chain_id AND tm.mint=f.mint AND tm.analysis_version=$1 " +
+    "AND tm.orphaned=FALSE AND m.deleted_at IS NULL)",
+    [ANALYSIS_VERSION],
+  );
+  const result = await tx.query(
+    "WITH firsts AS (SELECT DISTINCT ON (tm.chain_id,tm.mint) tm.chain_id,tm.mint,tm.source_id,tm.message_id," +
+    "tm.message_date,tm.observed_at,tm.analysis_version,s.history_partial " +
+    "FROM tg_token_mentions tm JOIN tg_messages m USING(source_id,message_id) " +
+    "JOIN tg_sources s ON s.id=tm.source_id WHERE tm.analysis_version=$1 AND tm.orphaned=FALSE AND m.deleted_at IS NULL " +
+    "ORDER BY tm.chain_id,tm.mint,tm.message_date ASC NULLS LAST,tm.observed_at,tm.source_id,tm.message_id) " +
+    "INSERT INTO tg_token_first_mentions(chain_id,mint,source_id,message_id,message_date,observed_at,coverage_status,analysis_version,calculated_at) " +
+    "SELECT chain_id,mint,source_id,message_id,message_date,observed_at," +
+    "CASE WHEN history_partial THEN 'partial_source_history' ELSE 'collected_source_history' END,analysis_version,now() FROM firsts " +
+    "ON CONFLICT(chain_id,mint) DO UPDATE SET source_id=EXCLUDED.source_id,message_id=EXCLUDED.message_id," +
+    "message_date=EXCLUDED.message_date,observed_at=EXCLUDED.observed_at,coverage_status=EXCLUDED.coverage_status," +
+    "analysis_version=EXCLUDED.analysis_version,calculated_at=now()",
+    [ANALYSIS_VERSION],
+  );
+  return result.rowCount ?? 0;
+}
