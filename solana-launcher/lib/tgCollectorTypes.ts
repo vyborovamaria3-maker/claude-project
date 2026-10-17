@@ -46,6 +46,8 @@ export type TgGraphResponse = {
   }[];
   sampled: boolean;
   truncated: boolean;
+  total: number;
+  truncated_by: "nodes" | "edges" | null;
   nodeLimit: number;
   edgeLimit: number;
   edgeOffset: number;
@@ -63,6 +65,8 @@ export type TgRuntimeMetrics = {
   jobs_failed: number;
   flood_wait_active: boolean;
   metrics_updated_at: string | null;
+  worker_version: string | null;
+  last_error_code: string | null;
 };
 
 export type TgCollectorSource = {
