@@ -98,10 +98,35 @@ function initDb(db) {
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
     "  ON chain_seed_events(kind,address,block_time DESC)",
   ].join("\n"));
-  if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "forward_cursor")) {
+  const targetColumns = db.pragma("table_info(chain_seed_targets)");
+  if (!targetColumns.some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
   }
+  if (!targetColumns.some(c => c.name === "collection_provider")) {
+    db.exec("ALTER TABLE chain_seed_targets ADD COLUMN collection_provider TEXT");
+  }
+  if (!targetColumns.some(c => c.name === "cursor_version")) {
+    db.exec("ALTER TABLE chain_seed_targets ADD COLUMN cursor_version INTEGER NOT NULL DEFAULT 0");
+  }
+  // Helius signature cursors are not Alchemy pagination tokens. Keep old raw
+  // events for audit, but invalidate provider-specific progress and completeness.
+  db.prepare(`
+    UPDATE chain_seed_targets
+    SET backfill_cursor=NULL, forward_cursor=NULL, backfill_complete=0,
+        possible_gap=1, collection_provider='alchemy', cursor_version=1, next_run_at=0
+    WHERE collection_provider IS NULL OR collection_provider<>'alchemy' OR cursor_version<>1
+  `).run();
   walletCache.ensureWalletCacheSchema(db);
+  // Previously cached wallet history may have been fetched by Helius. Do not
+  // let its provider-specific completeness authorize an Alchemy/PnL conclusion.
+  if (db.pragma("table_info(chain_wallet_discovery)").some(c => c.name === "history_status")) {
+    db.prepare(`
+      UPDATE chain_wallet_discovery
+      SET history_status='partial', last_fetched_at=NULL,
+          decoder_coverage='swap_only', last_error='provider_changed_to_alchemy_revalidation_required'
+      WHERE history_status='complete'
+    `).run();
+  }
 }
 
 function refreshTargets(db) {
@@ -438,7 +463,7 @@ async function processOne(db, row, cfg, api) {
     } else {
       const slots = unique.map(tx => Number(tx.slot)).filter(Number.isFinite);
       walletCache.recordHistoryCoverage(db, {
-        entityKind: 'token', entityKey: row.address, source: 'helius',
+        entityKind: 'token', entityKey: row.address, source: 'alchemy',
         coverageStartSlot: slots.length ? Math.min(...slots) : null,
         coverageEndSlot: slots.length ? Math.max(...slots) : null,
         eventsCount: db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='token' AND address=?").get(row.address).n,
@@ -491,7 +516,7 @@ async function collect(db, args) {
           try {
             recordAlchemyUsage(db, row, requestCount, error.pagesFetched, error.lastPageEmpty, "failed_request");
           } catch (ledgerError) {
-            console.error("[blockchain-collector] failed to record Helius HTTP usage:", ledgerError);
+            console.error("[blockchain-collector] failed to record Alchemy HTTP usage:", ledgerError);
           }
         }
         failTask(db, row, error);
