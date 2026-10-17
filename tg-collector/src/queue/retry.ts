@@ -9,7 +9,7 @@ export type RetryDecision =
  * Never evade Telegram restrictions: PeerFlood halts the account;
  * revoked credentials require interactive reauthorization.
  */
-export function classifyTelegramError(error: unknown, attempts: number): RetryDecision {
+export function classifyTelegramError(error: unknown, attempts: number, random: () => number = Math.random): RetryDecision {
   const typed = error as { message?: unknown; errorMessage?: unknown; code?: unknown; seconds?: unknown } | null;
   const text = [typed?.errorMessage, typed?.message, String(error)].map(String).join(" ").toUpperCase();
   if (/PEER[_ ]?FLOOD|USER_RESTRICTED|USER_BANNED_IN_CHANNEL/.test(text)) {
@@ -26,7 +26,8 @@ export function classifyTelegramError(error: unknown, attempts: number): RetryDe
   if (/FLOOD_WAIT/i.test(text) || (Number(typed?.code) === 420 && typeof typed?.seconds === "number")) {
     const seconds = telegramWaitSeconds(error);
     if (seconds && seconds > 0) {
-      return { action: "delay", code: "TG_FLOOD_WAIT", seconds: Math.min(seconds+15, 30*86400), global: true };
+      const jitter = 5 + Math.floor(Math.max(0, Math.min(0.999999, random())) * 26);
+      return { action: "delay", code: "TG_FLOOD_WAIT", seconds: Math.min(seconds + jitter, 30*86400), global: true };
     }
     return { action: "halt", code: "TG_RATE_LIMIT_UNKNOWN", scope: "account" };
   }
