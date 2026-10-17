@@ -14,6 +14,7 @@ test("all tracked SQL migrations are classified before database access", async (
   assert.equal(inventory.excluded.length, Object.keys(EXCLUDED_MIGRATIONS).length);
   assert(inventory.appliedOrder.includes("044_browser_checkpoints.sql"));
   assert(inventory.appliedOrder.includes("045_collector_trace.sql"));
+  assert(inventory.appliedOrder.includes("046_tweet_token_linker.sql"));
   assert(inventory.appliedOrder.includes("047_signal_quality_marts.sql"));
 });
 
