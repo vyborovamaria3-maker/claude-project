@@ -120,7 +120,9 @@ async function fetchHeliusPage(
       await new Promise<void>((resolve) => setTimeout(resolve, Math.min(1500, 250 * 2 ** round)));
     }
   }
-  throw lastError ?? new Error("All Helius API keys failed");
+  const error = lastError ?? new Error("All Helius API keys failed");
+  Object.assign(error, { httpRequests });
+  throw error;
 }
 
 export async function fetchEnrichedTxsForMintWithMeta(
@@ -147,7 +149,18 @@ export async function fetchEnrichedTxsForMintWithMeta(
 
   while (all.length < maxTxs) {
     const requested = Math.min(100, maxTxs - all.length);
-    const fetched = await fetchHeliusPage(mint, before, requested, keys);
+    let fetched: { transactions: HeliusEnrichedTx[]; httpRequests: number };
+    try {
+      fetched = await fetchHeliusPage(mint, before, requested, keys);
+    } catch (error) {
+      const requestCount = Number((error as { httpRequests?: unknown })?.httpRequests) || 0;
+      if (error instanceof Error) Object.assign(error, {
+        httpRequests: httpRequests + requestCount,
+        pagesFetched,
+        lastPageEmpty,
+      });
+      throw error;
+    }
     httpRequests += fetched.httpRequests;
     pagesFetched++;
     const page = fetched.transactions;
