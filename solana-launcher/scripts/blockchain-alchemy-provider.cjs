@@ -57,15 +57,26 @@ function normalizeFullTransaction(item) {
   const preTokenBalances = meta?.preTokenBalances || [];
   const postTokenBalances = meta?.postTokenBalances || [];
   const instructionProgramIds = [];
-  for (const ix of message.instructions || []) {
+  const decodedOperations = [];
+  const collectInstruction = (ix) => {
     const id = ix.programId || (Number.isInteger(ix.programIdIndex) ? accountKeys[ix.programIdIndex] : null);
     if (id) instructionProgramIds.push(String(id));
+    const parsedType = ix.parsed?.type;
+    if (typeof parsedType === "string") {
+      decodedOperations.push({
+        program: String(ix.program || id || "unknown"),
+        type: parsedType,
+        info: ix.parsed?.info && typeof ix.parsed.info === "object" ? ix.parsed.info : {},
+        decoderCoverage: ["transfer", "transferChecked", "mintTo", "mintToChecked", "burn", "burnChecked"].includes(parsedType)
+          ? "swap_and_transfers_mint_burn" : "partial",
+      });
+    }
+  };
+  for (const ix of message.instructions || []) {
+    collectInstruction(ix);
   }
   for (const ix of meta?.innerInstructions || []) {
-    for (const inner of ix.instructions || []) {
-      const id = inner.programId || (Number.isInteger(inner.programIdIndex) ? accountKeys[inner.programIdIndex] : null);
-      if (id) instructionProgramIds.push(String(id));
-    }
+    for (const inner of ix.instructions || []) collectInstruction(inner);
   }
   const tokens = new Map();
   for (const entry of preTokenBalances) {
@@ -102,6 +113,7 @@ function normalizeFullTransaction(item) {
     preTokenBalances,
     postTokenBalances,
     instructionProgramIds: [...new Set(instructionProgramIds)],
+    decodedOperations,
     tokenBalanceDeltas: [...tokens.values()].map((v) => ({
       owner: v.owner, mint: v.mint, decimals: v.decimals,
       deltaRaw: (v.post - v.pre).toString(),
@@ -185,6 +197,7 @@ function createAlchemyProvider(options = {}) {
         sortOrder: "desc",
         limit: pageLimit,
         commitment: "finalized",
+        encoding: "jsonParsed",
         ...(token ? { paginationToken: token } : {})
       }];
       let response;
