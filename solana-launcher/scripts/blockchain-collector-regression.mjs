@@ -191,6 +191,7 @@ assert.equal((await cache.loadTokenTrades("mintA")).length, 2);
 assert.equal(fetchCount, 1, "fresh cache should avoid repeated fetch");
 
 // Alchemy primary-provider contract: mocked JSON-RPC only; no real API requests.
+// Includes unchecked SPL transfer mint/decimal inference regression.
 const { createAlchemyProvider, getAlchemyConfig, normalizeFullTransaction } = require("./blockchain-alchemy-provider.cjs");
 const ownerlessBalances = normalizeFullTransaction({
   signature: "ownerless-balances",
