@@ -17,7 +17,7 @@ export async function source(name: string, url: string, license: string, kind: "
     else await q1(sql, args);
     return id;
 }
-export interface RawPageRef { hash: string; path: string; parserVersion: string; }
+export interface RawPageRef { hash: string; responseHash: string; path: string; parserVersion: string; }
 export type RawParseStatus = "captured" | "parsed" | "partial" | "failed";
 export type RawResponseStatus = "unknown" | "empty" | "nonempty" | "error";
 export interface RawPageMetadata {
@@ -36,6 +36,8 @@ export async function rawPage(value: unknown, root = process.env.ARCHIVE_RAW_DIR
     rawRetentionDays();
     const json = JSON.stringify(value), hash = createHash("sha256").update(json).digest("hex");
     const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    const responsePayload = Object.prototype.hasOwnProperty.call(record, "source_response") ? record.source_response : value;
+    const responseHash = createHash("sha256").update(JSON.stringify(responsePayload) ?? "null").digest("hex");
     const parserVersion = typeof record.parser_version === "string" && record.parser_version.trim()
         ? record.parser_version.trim()
         : process.env.X_COLLECTOR_PARSER_VERSION?.trim() || "unversioned";
@@ -55,12 +57,12 @@ export async function rawPage(value: unknown, root = process.env.ARCHIVE_RAW_DIR
     finally {
         await fs.rm(temp, { force: true });
     }
-    return { hash, path: destination, parserVersion };
+    return { hash, responseHash, path: destination, parserVersion };
 }
 /** Persist raw-file metadata independently so failed parsing does not lose the response. */
 export async function recordRawPage(
     sourceId: string,
-    raw: { hash: string; path: string; parserVersion?: string },
+    raw: { hash: string; responseHash?: string; path: string; parserVersion?: string },
     received: Date,
     client?: PoolClient,
     metadata: RawPageMetadata = {},
@@ -70,16 +72,17 @@ export async function recordRawPage(
     const responseStatus = metadata.responseStatus ?? "unknown";
     const expiresAt = metadata.expiresAt ?? new Date(received.getTime() + rawRetentionDays() * 86400000);
     const sql = `INSERT INTO archive_raw_pages
-      (hash,source_id,path,received_at,parser_version,parse_status,response_status,expires_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+      (hash,response_hash,source_id,path,received_at,parser_version,parse_status,response_status,expires_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
       ON CONFLICT(hash,source_id) DO UPDATE SET
+        response_hash=COALESCE(EXCLUDED.response_hash,archive_raw_pages.response_hash),
         path=EXCLUDED.path,
         parser_version=CASE WHEN EXCLUDED.parser_version='unversioned'
           THEN archive_raw_pages.parser_version ELSE EXCLUDED.parser_version END,
         parse_status=EXCLUDED.parse_status,
         response_status=EXCLUDED.response_status,
         expires_at=GREATEST(archive_raw_pages.expires_at,EXCLUDED.expires_at)`;
-    const args = [raw.hash, sourceId, raw.path, received, parserVersion, parseStatus, responseStatus, expiresAt];
+    const args = [raw.hash, raw.responseHash ?? null, sourceId, raw.path, received, parserVersion, parseStatus, responseStatus, expiresAt];
     if (client) await client.query(sql, args);
     else await q1(sql, args);
 }
