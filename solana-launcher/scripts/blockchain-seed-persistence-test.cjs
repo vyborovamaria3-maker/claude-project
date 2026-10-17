@@ -47,6 +47,26 @@ const { initDb, claimOne, processOne, failTask } = require("./blockchain-seed-co
     assert.equal(db.prepare("SELECT COUNT(*) n FROM chain_seed_events WHERE kind='wallet'").get().n, 0);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM chain_wallet_discovery").get().n, 0);
     assert.equal(db.prepare("SELECT last_success_at FROM chain_seed_targets WHERE kind='wallet'").get().last_success_at, null);
-    console.log("[blockchain-seed-persistence] OK: stale success/error fenced; raw/projection/progress atomic");
+
+    // A legacy row marked complete by the old swap-only implementation must still
+    // be eligible for work. Only full decoder coverage may suppress a fresh recrawl.
+    db.prepare("UPDATE chain_seed_targets SET source_mask=0 WHERE kind='token'").run();
+    db.prepare("UPDATE chain_seed_targets SET source_mask=1,next_run_at=0,lease_until=NULL WHERE kind='wallet'").run();
+    db.prepare(`
+      INSERT INTO chain_wallet_discovery(wallet, first_discovered_at, history_status,
+        last_fetched_at, last_trade_at, decoder_coverage)
+      VALUES('wallet', ?, 'complete', ?, ?, 'swap_only')
+      ON CONFLICT(wallet) DO UPDATE SET history_status='complete',
+        last_fetched_at=excluded.last_fetched_at, last_trade_at=excluded.last_trade_at,
+        decoder_coverage='swap_only'
+    `).run(Date.now(), Date.now() - 1000, Math.floor(Date.now() / 1000));
+    assert.equal(claimOne(db).kind, "wallet",
+      "legacy swap-only complete status must not suppress a wallet crawl");
+    db.prepare("UPDATE chain_seed_targets SET lease_until=NULL,next_run_at=0 WHERE kind='wallet'").run();
+    db.prepare("UPDATE chain_wallet_discovery SET decoder_coverage='full',history_status='complete',last_fetched_at=? WHERE wallet='wallet'")
+      .run(Date.now());
+    assert.equal(claimOne(db), null,
+      "fresh complete full-coverage wallet history should avoid another API crawl");
+    console.log("[blockchain-seed-persistence] OK: lease fencing, atomic persistence, decoder coverage scheduler gate");
   } finally { db.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
