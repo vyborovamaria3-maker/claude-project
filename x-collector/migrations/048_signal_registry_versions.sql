@@ -363,14 +363,3 @@ SELECT
   signal_version
 FROM attributed
 GROUP BY source, signal_version, handle, horizon_hours;
-
-CREATE OR REPLACE VIEW v_signal_quality_freshness AS
-SELECT
-  source,
-  signal_version,
-  horizon_hours,
-  MAX(evaluated_at) AS last_evaluated_at,
-  COUNT(*) FILTER (WHERE evaluated_at < now() - INTERVAL '24 hours')::BIGINT AS stale_outcomes,
-  COUNT(*)::BIGINT AS total_outcomes
-FROM signal_quality_outcomes
-GROUP BY source, signal_version, horizon_hours;
