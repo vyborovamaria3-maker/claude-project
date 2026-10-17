@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "solana-launcher/scripts/blockchain-seed-*.cjs"
+      - "solana-launcher/scripts/blockchain-wallet-cache*.cjs"
+      - "solana-launcher/scripts/blockchain-collector-regression.mjs"
       - "solana-launcher/lib/trade/helius.ts"
       - ".github/workflows/blockchain-excel-seeds.yml"
   workflow_dispatch:
@@ -28,3 +30,5 @@ jobs:
         run: |
           node scripts/blockchain-seed-regression.cjs
           node scripts/blockchain-wallet-cache-regression.cjs
+          node scripts/blockchain-collector-regression.mjs
+          node scripts/blockchain-seed-persistence-test.cjs

@@ -128,7 +128,7 @@ function cacheWalletTrades(db, wallet, transactions, txsToTrades, options = {}) 
   let insertedOrUpdated = 0;
   const tx = db.transaction(() => {
     for (const event of transactions || []) {
-      if (!event || typeof event.signature !== 'string' || !event.signature) continue;
+      if (!event || event.transactionError != null || typeof event.signature !== 'string' || !event.signature) continue;
       const swap = event.events && event.events.swap;
       if (!swap) continue;
       const mints = new Set([...(swap.tokenInputs || []), ...(swap.tokenOutputs || [])]

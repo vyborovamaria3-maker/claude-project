@@ -243,11 +243,12 @@ function claimOne(db) {
     ).get(now, now, now, now);
     // A fresh complete wallet is filtered in SQL; partial/stale histories remain eligible.
     if (!row) return null;
+    const leaseUntil = now + 10 * 60_000;
     const updated = db.prepare(
       "UPDATE chain_seed_targets SET lease_until=? WHERE kind=? AND address=?"
       + " AND (lease_until IS NULL OR lease_until<?)"
-    ).run(now + 10 * 60_000, row.kind, row.address, now);
-    return updated.changes === 1 ? row : null;
+    ).run(leaseUntil, row.kind, row.address, now);
+    return updated.changes === 1 ? { ...row, lease_until: leaseUntil } : null;
   })();
 }
 
@@ -319,7 +320,7 @@ async function processOne(db, row, cfg, api) {
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
   ).all(row.kind, row.address).map(r => r.signature));
   const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known);
-  let events = [...recent.transactions];
+  const events = [...recent.transactions];
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
   let complete = Boolean(row.backfill_complete);
@@ -366,8 +367,13 @@ async function processOne(db, row, cfg, api) {
   const unique = [...new Map(events.filter(tx => tx && tx.signature)
     .map(tx => [tx.signature, tx])).values()];
   const trades = row.kind === "token" ? api.txsToTrades(unique, row.address) : [];
+  const cadence = row.priority >= 100 ? 5 * 60_000 :
+    row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
   // SQLite savepoints keep raw events and normalized token trades atomic.
   const added = db.transaction(() => {
+    const owned = db.prepare("SELECT 1 FROM chain_seed_targets WHERE kind=? AND address=? AND lease_until=? AND lease_until>?")
+      .get(row.kind, row.address, row.lease_until, Date.now());
+    if (!owned) throw new Error("Collector lease lost before persistence");
     const n = persistEvents(db, row.kind, row.address, unique);
     if (trades.length) {
       api.persistTokenTrades(row.address, trades.map(t => ({
@@ -385,23 +391,21 @@ async function processOne(db, row, cfg, api) {
       walletCache.cacheWalletTrades(db, row.address, unique, api.txsToTrades);
       appendDiscovered(db, row.address, unique, api.txsToTrades);
     }
+    db.prepare(
+      "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,"
+      + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
+      + "backfill_complete=?,possible_gap=?,events_saved=events_saved+?"
+      + " WHERE kind=? AND address=? AND lease_until=?"
+    ).run(Date.now(), Date.now() + (complete && !forwardCursor ? cadence : 60_000),
+      backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
+      n, row.kind, row.address, row.lease_until);
+    if (row.kind === "wallet") {
+      walletCache.markWalletHistory(db, row.address, {
+        complete, backfillCursor, forwardCursor, possibleGap: gap, now: Date.now()
+      });
+    }
     return n;
-  })();
-  const cadence = row.priority >= 100 ? 5 * 60_000 :
-    row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
-  db.prepare(
-    "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,"
-    + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
-    + "backfill_complete=?,possible_gap=?,events_saved=events_saved+?"
-    + " WHERE kind=? AND address=?"
-  ).run(Date.now(), Date.now() + (complete && !forwardCursor ? cadence : 60_000),
-    backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
-    added, row.kind, row.address);
-  if (row.kind === "wallet") {
-    walletCache.markWalletHistory(db, row.address, {
-      complete, backfillCursor, forwardCursor, possibleGap: gap, now: Date.now()
-    });
-  }
+  }).immediate();
   return { kind: row.kind, address: row.address, newEvents: added,
     normalizedTrades: trades.length, complete, possibleGap: gap };
 }
@@ -412,9 +416,9 @@ function failTask(db, row, error) {
   const delay = Math.min(3_600_000, 10_000 * (2 ** Math.min(8, attempts))) + jitter;
   db.prepare(
     "UPDATE chain_seed_targets SET attempts=?,last_error=?,next_run_at=?,"
-    + "lease_until=NULL WHERE kind=? AND address=?"
+    + "lease_until=NULL WHERE kind=? AND address=? AND lease_until=?"
   ).run(attempts, String(error && error.message || error).slice(0, 400),
-    Date.now() + delay, row.kind, row.address);
+    Date.now() + delay, row.kind, row.address, row.lease_until);
 }
 
 async function collect(db, args) {
@@ -496,4 +500,5 @@ async function main() {
   }
   console.log(JSON.stringify({ status: status(db) }, null, 2));
 }
-main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+module.exports = { initDb, claimOne, processOne, failTask };

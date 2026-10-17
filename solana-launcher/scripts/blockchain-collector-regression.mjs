@@ -110,6 +110,12 @@ fetchImpl = async (url) => {
   };
 };
 const incremental = await helius.fetchEnrichedTxsForMintWithMeta("mintA", 10, new Set(["known"]));
+const successfulSwap = { signature: "swap", timestamp: 100, events: { swap: {
+  nativeInput: { account: "wallet", amount: "1000000000" },
+  tokenOutputs: [{ userAccount: "wallet", mint: "mintA", rawTokenAmount: { tokenAmount: "100", decimals: 0 } }],
+} } };
+assert.equal(helius.txsToTrades([successfulSwap], "mintA").length, 1);
+assert.equal(helius.txsToTrades([{ ...successfulSwap, transactionError: { InstructionError: [0, "failed"] } }], "mintA").length, 0);
 assert.deepEqual(Array.from(incremental.transactions, (tx) => String(tx.signature)), ["new"]);
 assert.equal(incremental.reachedKnownHistory, true);
 assert.equal(incremental.truncated, false);

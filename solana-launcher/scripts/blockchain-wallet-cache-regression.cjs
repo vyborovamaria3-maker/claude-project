@@ -25,6 +25,10 @@ try {
   ] : [];
 
   const first = cache.cacheWalletTrades(db, WALLET, [event], decoder, { now: 1000 });
+  const rejected = cache.cacheWalletTrades(db, WALLET,
+    [{ ...event, signature: "failed-swap", transactionError: { InstructionError: [0, "failed"] } }],
+    () => { throw new Error("failed transaction must not reach decoder"); });
+  assert.equal(rejected.upserted, 0);
   assert.deepEqual(first.tokenMints, [MINT_A]);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_wallet_trades").get().n, 2,
     "distinct swap legs in the same signature must both be retained");

@@ -27,6 +27,7 @@ export interface HeliusEnrichedTx {
   source?: string;
   feePayer?: string;
   fee?: number;
+  transactionError?: unknown;
   tokenTransfers?: Array<{
     fromUserAccount?: string;
     toUserAccount?: string;
@@ -206,6 +207,7 @@ export function txsToTrades(txs: HeliusEnrichedTx[], mint: string): RawTrade[] {
 }
 
 function extractTrade(tx: HeliusEnrichedTx, mint: string): RawTrade | null {
+  if (tx.transactionError != null) return null;
   // 1. Try parsed swap event first (most reliable for AMM swaps)
   const swap = tx.events?.swap;
   if (swap) {

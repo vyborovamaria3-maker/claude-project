@@ -1,5 +1,7 @@
 PROJECT: X Collector Runtime v2
 
+PR #65 review (2026-10-17): fence seed persistence and failure updates by the claimed lease; commit evidence, projections, cursors and wallet history in one SQLite transaction. Failed Helius transactions remain raw evidence but produce no token/wallet trades. Offline regressions cover stale-worker success/error, projection rollback and wallet-status rollback; the fast seed workflow runs these checks.
+
 CURRENT PHASE: Runtime reliability and collection efficiency; full master prompt not complete.
 
 Laptop throughput (2026-10-14): opt-in X_SEARCH_HTTP_COMPAT uses pinned SDK POST SearchTimeline while retaining legacy onBatch/history filters and numeric list/history watermarks. Each page reserves the shared account quota, HTTP provenance is distinct, and proxy-less accounts are excluded. Live replacement cursor instructions are normalized; a strictly validated top/bottom cursor-only SearchTimeline response ends available indexed results (not exhaustive X coverage). History producer capacity follows max_browser_accounts rather than hardcoding one. Explicit bounded xactions:refresh updates metadata through a leased proxy, without background calls. Local laptop policy permits two workers; platform rate limits remain enforced.
