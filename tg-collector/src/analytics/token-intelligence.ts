@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { ANALYSIS_VERSION, type MessageLink, type RawTelegramMessage } from "./extract.js";
+import { syncTokenNarratives } from "./narratives.js";
 
 export const SOLANA_CHAIN_ID = "solana-mainnet";
 export const CHANNEL_SCORE_VERSION = "channel-score-v1";
@@ -184,6 +185,15 @@ export async function syncMessageTokenCandidates(
     "WHERE source_id=$1 AND message_id=$2 AND analysis_version=$4",
     [sourceId, messageId, clusterId, ANALYSIS_VERSION],
   );
+  const resolvedMentions = await tx.query<{chain_id: string; mint: string; orphaned: boolean}>(
+    "SELECT chain_id,mint,bool_and(orphaned) AS orphaned FROM tg_token_mentions " +
+    "WHERE source_id=$1 AND message_id=$2 AND analysis_version=$3 GROUP BY chain_id,mint",
+    [sourceId, messageId, ANALYSIS_VERSION],
+  );
+  for (const mention of resolvedMentions.rows) {
+    await syncTokenNarratives(tx, sourceId, String(messageId), mention.chain_id, mention.mint,
+      mention.orphaned ? "" : (msg.message ?? ""));
+  }
 }
 
 /** Rebuild one source's day-level token/copy metrics after message writes or backfill. */
