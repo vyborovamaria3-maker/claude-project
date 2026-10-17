@@ -32,6 +32,7 @@ export function normalizeTweet(tweet: XTweet): NormalizedTweet | null {
     id: tweet.id,
     text: tweet.text,
     authorHandle: tweet.author,
+    authorId: tweet.authorId ?? null,
     authorDisplayName: null,
     url: tweet.url,
     views: nonNegative(tweet.views),
