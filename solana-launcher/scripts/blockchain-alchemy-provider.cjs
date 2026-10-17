@@ -11,7 +11,7 @@ const DEX_PROGRAMS = new Set([
   "CPMMoo8L3F4NbTegBCKVNqW9pXQwY6c9K7e8w4Z",
   "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
   "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
-  "Eo7WjKq67rjJQSZxS6z3YkapzY4xV6wZ7qz2Y6bM"
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 ]);
 
 function getAlchemyConfig(env = process.env) {
@@ -209,16 +209,14 @@ function createAlchemyProvider(options = {}) {
         if (!normalized) continue;
         if (knownSignatures?.has(normalized.signature)) {
           reachedKnownHistory = true;
-          break;
+          continue;
         }
-        transactions.push(normalized);
-        if (transactions.length >= limit) break;
+        if (transactions.length < limit) transactions.push(normalized);
       }
       const nextToken = response.result?.paginationToken ?? response.result?.pagination_token ?? null;
-      if (reachedKnownHistory) break;
       if (typeof nextToken === "string" && nextToken && nextToken !== token) token = nextToken;
       else { token = undefined; exhausted = true; break; }
-      if (transactions.length >= limit) break;
+      if (reachedKnownHistory || transactions.length >= limit) break;
     }
     return {
       transactions,
