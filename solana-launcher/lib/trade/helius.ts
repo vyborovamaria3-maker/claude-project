@@ -113,7 +113,10 @@ async function fetchHeliusPage(
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         // Non-retryable 4xx means no API key rotation will help.
-        if (/^Helius HTTP 4\d\d$/.test(lastError.message)) throw lastError;
+        if (/^Helius HTTP 4\d\d$/.test(lastError.message)) {
+          Object.assign(lastError, { httpRequests });
+          throw lastError;
+        }
       }
     }
     if (round + 1 < HELIUS_MAX_ROUNDS) {
