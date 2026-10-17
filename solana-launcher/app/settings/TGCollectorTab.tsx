@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2, Pause, Play, Plus, RefreshCw, Search, Trash2, Wifi, Square, Save } from "lucide-react";
 import TGGraphPanel from "./TGGraphPanel";
+import TGMemecoinAnalytics from "./TGMemecoinAnalytics";
 import type { TgCollectorSnapshot as Snapshot, TgCollectorSource as Source } from "@/lib/tgCollectorTypes";
 
 const endpoint = "/api/integrations/tg-collector";
@@ -263,6 +264,9 @@ export default function TGCollectorTab() {
             {data?.workerOnline ? <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" /> : <Clock3 className="mr-1 inline h-3.5 w-3.5" />}
             Worker: {data?.workerOnline ? "работает" : "не обнаружен"}
           </span>
+          <span className="rounded-lg border border-bg-border px-3 py-2 text-content-muted">
+            Worker version: {data?.runtimeMetrics.worker_version ?? "—"}
+          </span>
           <span className="rounded-lg border border-bg-border px-3 py-2 text-content-muted">Последний сигнал: {formatDate(data?.heartbeatAt ?? null)}</span>
           {globallyPaused && <span className="rounded-lg border border-amber-500/30 px-3 py-2 text-amber-300">Telegram FloodWait до {formatDate(data?.pausedUntil ?? null)}</span>}
           {data?.blockReason && <span className="rounded-lg border border-red-500/30 px-3 py-2 text-red-300">Telegram заблокирован для сборщика: {data.blockReason}. Проверьте аккаунт перед повторным запуском.</span>}
@@ -395,6 +399,7 @@ export default function TGCollectorTab() {
       </section>
 
       <TGGraphPanel sources={data?.sources ?? []} authToken={accessKey} />
+      <TGMemecoinAnalytics authToken={accessKey} />
 
       <section className="surface-panel p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
