@@ -12,6 +12,7 @@ const { gzipSync } = require("node:zlib");
 require("dotenv").config({ path: path.join(process.cwd(), ".env.local"), quiet: true });
 require("dotenv").config({ path: path.join(process.cwd(), ".env"), quiet: true });
 const { PRIORITIES, SOURCE_BITS, parseWorkbook, scanFolder, isSolanaAddress } = require("./blockchain-seed-core.cjs");
+const walletCache = require("./blockchain-wallet-cache.cjs");
 const SOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let stopRequested = false;
@@ -100,6 +101,7 @@ function initDb(db) {
   if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
   }
+  walletCache.ensureWalletCacheSchema(db);
 }
 
 function refreshTargets(db) {
@@ -228,11 +230,14 @@ function status(db) {
 function claimOne(db) {
   const now = Date.now();
   return db.transaction(() => {
-    const row = db.prepare(
+    const candidates = db.prepare(
       "SELECT * FROM chain_seed_targets WHERE source_mask<>0 AND next_run_at<=?"
       + " AND (lease_until IS NULL OR lease_until<?)"
-      + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 1"
-    ).get(now, now);
+      + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 100"
+    ).all(now, now);
+    // Reuse a complete, fresh wallet history instead of paying for the same RPC crawl again.
+    const row = candidates.find(candidate =>
+      !(candidate.kind === "wallet" && walletCache.walletHistoryFresh(db, candidate.address, now)));
     if (!row) return null;
     const updated = db.prepare(
       "UPDATE chain_seed_targets SET lease_until=? WHERE kind=? AND address=?"
@@ -371,7 +376,11 @@ async function processOne(db, row, cfg, api) {
       })));
     }
     if (row.kind === "token") api.markTokenTradeChecked(row.address);
-    if (row.kind === "wallet") appendDiscovered(db, row.address, unique, api.txsToTrades);
+    if (row.kind === "wallet") {
+      // Cache all decoded swap legs from this wallet history, not just the token that discovered it.
+      walletCache.cacheWalletTrades(db, row.address, unique, api.txsToTrades);
+      appendDiscovered(db, row.address, unique, api.txsToTrades);
+    }
     return n;
   })();
   const cadence = row.priority >= 100 ? 5 * 60_000 :
@@ -384,6 +393,11 @@ async function processOne(db, row, cfg, api) {
   ).run(Date.now(), Date.now() + (complete && !forwardCursor ? cadence : 60_000),
     backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
     added, row.kind, row.address);
+  if (row.kind === "wallet") {
+    walletCache.markWalletHistory(db, row.address, {
+      complete, backfillCursor, forwardCursor, possibleGap: gap, now: Date.now()
+    });
+  }
   return { kind: row.kind, address: row.address, newEvents: added,
     normalizedTrades: trades.length, complete, possibleGap: gap };
 }
