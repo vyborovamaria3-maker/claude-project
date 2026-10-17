@@ -205,9 +205,11 @@ test("real PostgreSQL: migration replay, parallel leases, restart fencing, trans
     const capturedInvalidPayload = JSON.parse(gunzipSync(await fs.readFile(capturedInvalid.path)).toString("utf8")) as {source_response?:unknown};
     assert.deepEqual(capturedInvalidPayload.source_response,invalidEnvelope);
     await persistTweets(null,[],null,undefined,undefined,undefined,{rawResponse:{...rawEnvelope,variables:{rawQuery:"empty"}}});
-    const emptyRaw=(await q<{parse_status:string;response_status:string}>("SELECT parse_status,response_status FROM archive_raw_pages WHERE response_status='empty' ORDER BY received_at DESC LIMIT 1"))[0];
+    const emptyRaw=(await q<{parse_status:string;response_status:string}>(
+      "SELECT parse_status,response_status FROM archive_raw_pages WHERE response_hash=$1 ORDER BY received_at DESC LIMIT 1",
+      [createHash("sha256").update(JSON.stringify({...rawEnvelope,variables:{rawQuery:"empty"}})).digest("hex")]))[0];
     assert.equal(emptyRaw.parse_status,"parsed");
-    assert.equal(emptyRaw.response_status,"empty");
+    assert.equal(emptyRaw.response_status,"unknown","an empty normalized result is not proof the upstream response was empty");
     await getPool().query(`CREATE FUNCTION reject_fixture_entity() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'fixture entity failure'; END $$ LANGUAGE plpgsql`);
     await getPool().query(`CREATE TRIGGER reject_fixture BEFORE INSERT ON tweet_entities FOR EACH ROW EXECUTE FUNCTION reject_fixture_entity()`);
     const bad={...tweet,id:"2234567890123456789"};
