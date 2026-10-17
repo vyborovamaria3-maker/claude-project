@@ -174,7 +174,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
        SELECT DISTINCT x.id,x.kind,x.value,$2::timestamptz,$2::timestamptz FROM jsonb_to_recordset($1::jsonb) AS x(id text,kind text,value text)
        ON CONFLICT(tweet_id,kind,value) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at`,[JSON.stringify(entities),received]);
       const archive = Page.parse({ data: chunk.filter(t => t.postedAt !== null).map(t => ({
-        id:t.id,author_id:t.authorId ?? null,text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
+        id:t.id,...(t.authorId ? {author_id:t.authorId} : {}),text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
         metrics_observed_at:new Date(t.observedAt ?? now).toISOString(),
         public_metrics:{ like_count:t.likes, impression_count:t.views, retweet_count:t.retweets,reply_count:t.replies },
         ...(fromHttp ? { http_observation: t } : { browser_observation: t }),
