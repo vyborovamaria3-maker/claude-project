@@ -22,7 +22,7 @@ jobs:
           node-version: "22"
       - name: Install project dependencies for SQLite regression
         working-directory: solana-launcher
-        run: npm ci
+        run: npm ci --legacy-peer-deps
       - name: Offline seed and wallet-cache regressions
         working-directory: solana-launcher
         run: |
