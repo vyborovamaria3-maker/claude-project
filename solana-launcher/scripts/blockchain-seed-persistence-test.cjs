@@ -4,6 +4,33 @@ const Database = require("better-sqlite3");
 const { initDb, claimOne, processOne, failTask } = require("./blockchain-seed-collector.cjs");
 
 (async () => {
+  // A database created by the Helius-cursor implementation must be revalidated
+  // before Alchemy collection: signature cursors are not Alchemy pagination tokens.
+  const legacyDb = new Database(":memory:");
+  try {
+    legacyDb.exec(`
+      CREATE TABLE chain_seed_targets (
+        kind TEXT NOT NULL, address TEXT NOT NULL, source_mask INTEGER NOT NULL DEFAULT 0,
+        priority INTEGER NOT NULL DEFAULT 0, next_run_at INTEGER NOT NULL DEFAULT 0,
+        last_success_at INTEGER, lease_until INTEGER, attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT, backfill_cursor TEXT, backfill_complete INTEGER NOT NULL DEFAULT 0,
+        possible_gap INTEGER NOT NULL DEFAULT 0, events_saved INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(kind,address)
+      );
+      INSERT INTO chain_seed_targets(kind,address,source_mask,priority,backfill_cursor,backfill_complete)
+      VALUES('token','legacy-mint',1,100,'old-helius-signature',1);
+    `);
+    initDb(legacyDb);
+    const migrated = legacyDb.prepare("SELECT * FROM chain_seed_targets WHERE address='legacy-mint'").get();
+    assert.equal(migrated.backfill_cursor, null);
+    assert.equal(migrated.forward_cursor, null);
+    assert.equal(migrated.backfill_complete, 0);
+    assert.equal(migrated.collection_provider, "alchemy");
+    assert.equal(migrated.cursor_version, 1);
+  } finally {
+    legacyDb.close();
+  }
+
   const db = new Database(":memory:");
   try {
     initDb(db);
@@ -11,7 +38,7 @@ const { initDb, claimOne, processOne, failTask } = require("./blockchain-seed-co
     const cfg = { recentLimit: 10, backfillLimit: 10 };
     const event = { signature: "sig", timestamp: 100, slot: 1 };
     const api = {
-      fetchEnrichedTxsForMintWithMeta: async () => ({ transactions: [event], exhausted: true }),
+      fetchTransactionsForAddress: async () => ({ transactions: [event], exhausted: true, nextCursor: null, source: 'alchemy' }),
       txsToTrades: () => [], persistTokenTrades: () => {}, markTokenTradeChecked: () => {},
     };
     const stale = claimOne(db);
