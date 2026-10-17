@@ -1,5 +1,5 @@
 import { parseTransactions } from "./dev-helpers";
-import { fetchEnrichedTxsForMint, txsToTrades, type RawTrade } from "./helius";
+import { fetchEnrichedTxsForMintWithMeta, txsToTrades, type RawTrade } from "./helius";
 
 const SOLSCAN_API_TOKEN = process.env.SOLSCAN_API_TOKEN || "";
 const HELIUS_FAST_ENOUGH_TRADES = 100;
@@ -80,6 +80,27 @@ async function solscanApi<T>(endpoint: string, usePro = false): Promise<T | null
   }
 }
 
+const SOLSCAN_CONCURRENCY = (() => {
+  const value = Number(process.env.SOLSCAN_FETCH_CONCURRENCY || 3);
+  return Number.isFinite(value) ? Math.max(1, Math.min(4, Math.floor(value))) : 3;
+})();
+const PARSE_CONCURRENCY = (() => {
+  const value = Number(process.env.SOLSCAN_PARSE_CONCURRENCY || 4);
+  return Number.isFinite(value) ? Math.max(1, Math.min(6, Math.floor(value))) : 4;
+})();
+
+async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await fn(items[index]);
+    }
+  }));
+  return results;
+}
+
 async function fetchSolscanSignaturesForMint(mint: string, maxTrades: number): Promise<string[]> {
   if (!SOLSCAN_API_TOKEN) return [];
 
@@ -89,52 +110,56 @@ async function fetchSolscanSignaturesForMint(mint: string, maxTrades: number): P
   const signatures: string[] = [];
   const seen = new Set<string>();
 
-  for (let pageIndex = 0; pageIndex < maxPages && signatures.length < limit; pageIndex += 1) {
+  const getPage = async (pageIndex: number): Promise<Array<{ signature?: string; status?: string }>> => {
     const offset = pageIndex * pageSize;
-    const page = await solscanApi<{ success?: boolean; data?: SolscanTxListItem[] }>(
-      `/account/transactions?address=${mint}&limit=${pageSize}&offset=${offset}`
-    );
+    const endpoint = `/account/transactions?address=${mint}&limit=${pageSize}&offset=${offset}`;
+    const page = await solscanApi<{ success?: boolean; data?: SolscanTxListItem[] }>(endpoint);
     const proPage = page?.data?.length
       ? null
-      : await solscanApi<{ success?: boolean; data?: SolscanProTxListItem[] }>(
-          `/account/transactions?address=${mint}&limit=${pageSize}&offset=${offset}`,
-          true
-        );
-    const rows = [
+      : await solscanApi<{ success?: boolean; data?: SolscanProTxListItem[] }>(endpoint, true);
+    return [
       ...(page?.data ?? []).map((item) => ({ signature: item.txHash, status: item.status })),
-      ...((proPage?.data ?? []).map((item) => ({ signature: item.trans_id, status: item.status }))),
+      ...(proPage?.data ?? []).map((item) => ({ signature: item.trans_id, status: item.status })),
     ];
+  };
 
-    if (rows.length === 0) break;
-
-    for (const row of rows) {
-      if (!row.signature || row.status === "Fail" || seen.has(row.signature)) continue;
-      seen.add(row.signature);
-      signatures.push(row.signature);
-      if (signatures.length >= limit) break;
+  // Offsets are independent: bounded parallel pages cut high-latency fallback
+  // time without creating an unbounded burst of provider requests.
+  for (let first = 0; first < maxPages && signatures.length < limit; first += SOLSCAN_CONCURRENCY) {
+    const indexes = Array.from(
+      { length: Math.min(SOLSCAN_CONCURRENCY, maxPages - first) },
+      (_, offset) => first + offset,
+    );
+    const pages = await Promise.all(indexes.map(getPage));
+    let endReached = false;
+    for (const rows of pages) {
+      for (const row of rows) {
+        if (!row.signature || row.status === "Fail" || seen.has(row.signature)) continue;
+        seen.add(row.signature);
+        signatures.push(row.signature);
+        if (signatures.length >= limit) break;
+      }
+      if (rows.length < pageSize) endReached = true;
+      if (signatures.length >= limit || endReached) break;
     }
-
-    if (rows.length < pageSize) break;
+    if (endReached) break;
   }
-
   return signatures;
 }
 
 async function fetchParsedTransactions(signatures: string[]): Promise<ParsedHeliusTx[]> {
-  const out: ParsedHeliusTx[] = [];
-  if (signatures.length === 0) return out;
-
-  for (let i = 0; i < signatures.length; i += 100) {
-    const chunk = signatures.slice(i, i + 100);
+  if (signatures.length === 0) return [];
+  const chunks: string[][] = [];
+  for (let i = 0; i < signatures.length; i += 100) chunks.push(signatures.slice(i, i + 100));
+  const responses = await mapConcurrent(chunks, PARSE_CONCURRENCY, async (chunk) => {
     try {
       const parsed = await parseTransactions<ParsedHeliusTx[]>(chunk);
-      if (Array.isArray(parsed)) out.push(...parsed);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      continue;
+      return [];
     }
-  }
-
-  return out;
+  });
+  return responses.flat();
 }
 
 function isUsableTrade(trade: RawTrade): boolean {
@@ -170,15 +195,22 @@ function mergeTrades(...groups: RawTrade[][]): RawTrade[] {
 export async function fetchMergedTradesForMint(
   mint: string,
   maxTrades: number = 1000,
-  onProgress?: (info: { fetched: number; page: number }) => void
+  onProgress?: (info: { fetched: number; page: number }) => void,
+  knownSignatures?: ReadonlySet<string>,
 ): Promise<RawTrade[]> {
   let heliusTxs: EnrichedTxInput = [];
   let solscanTxs: ParsedHeliusTx[] = [];
   let heliusError: Error | null = null;
   let solscanError: Error | null = null;
+  let reachedStoredHistory = false;
 
   try {
-    heliusTxs = await fetchEnrichedTxsForMint(mint, maxTrades);
+    const history = await fetchEnrichedTxsForMintWithMeta(mint, maxTrades, knownSignatures);
+    heliusTxs = history.transactions;
+    reachedStoredHistory = history.reachedKnownHistory === true;
+    if (knownSignatures?.size && history.truncated && !reachedStoredHistory) {
+      console.warn("[fetchMergedTradesForMint] incremental cap reached without overlap; history coverage is incomplete");
+    }
     onProgress?.({
       fetched: Math.min(maxTrades, heliusTxs.length),
       page: Math.max(1, Math.ceil(heliusTxs.length / 100)),
@@ -188,7 +220,9 @@ export async function fetchMergedTradesForMint(
   }
 
   const heliusTrades = txsToTrades(heliusTxs, mint);
-  if (heliusTrades.length >= HELIUS_FAST_ENOUGH_TRADES) {
+  // The historical SQLite tail is already known: no need for Solscan fallback
+  // or parsing historical transactions a second time.
+  if (reachedStoredHistory || heliusTrades.length >= HELIUS_FAST_ENOUGH_TRADES) {
     const fastTrades = mergeTrades(heliusTrades);
     console.log(
       `[fetchMergedTradesForMint] mint=${mint.slice(0, 8)}... helius=${heliusTxs.length} solscan=skipped merged=${fastTrades.length}`

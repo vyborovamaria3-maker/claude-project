@@ -39,3 +39,6 @@ data/subscription-orders.json
 data/x-auth/
 storage-state.json
 *.storage-state.json
+
+# Private local Excel seed datasets (wallets/tokens)
+/data/seed-folders/

@@ -1,5 +1,7 @@
 PROJECT: X Collector Runtime v2
 
+PR #65 review (2026-10-17): fence seed persistence and failure updates by the claimed lease; commit evidence, projections, cursors and wallet history in one SQLite transaction. Failed Helius transactions remain raw evidence but produce no token/wallet trades. Offline regressions cover stale-worker success/error, projection rollback and wallet-status rollback; the fast seed workflow runs these checks.
+
 CURRENT PHASE: Runtime reliability and collection efficiency; full master prompt not complete.
 
 2026-10-16 PR69 follow-up: standalone history producer handles idle PostgreSQL

@@ -1,0 +1,35 @@
+name: Blockchain Excel Seeds (fast)
+
+on:
+  pull_request:
+    paths:
+      - "solana-launcher/scripts/blockchain-seed-*.cjs"
+      - "solana-launcher/scripts/blockchain-wallet-cache*.cjs"
+      - "solana-launcher/scripts/blockchain-collector-regression.mjs"
+      - "solana-launcher/lib/trade/helius.ts"
+      - "solana-launcher/lib/trade/chain/quality-v3.ts"
+      - ".github/workflows/blockchain-excel-seeds.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seed-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - name: Install project dependencies for SQLite regression
+        working-directory: solana-launcher
+        run: npm ci --legacy-peer-deps
+      - name: Offline seed and wallet-cache regressions
+        working-directory: solana-launcher
+        run: |
+          node scripts/blockchain-seed-regression.cjs
+          node scripts/blockchain-wallet-cache-regression.cjs
+          node scripts/blockchain-collector-regression.mjs
+          node scripts/blockchain-seed-persistence-test.cjs

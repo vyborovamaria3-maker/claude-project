@@ -27,6 +27,7 @@ export interface HeliusEnrichedTx {
   source?: string;
   feePayer?: string;
   fee?: number;
+  transactionError?: unknown;
   tokenTransfers?: Array<{
     fromUserAccount?: string;
     toUserAccount?: string;
@@ -63,59 +64,119 @@ export type EnrichedTxMeta = {
   exhausted: boolean;
   /** True when the `maxTxs` bound stopped pagination before history ended. */
   truncated: boolean;
+  /** Incremental mode stopped at an already-persisted signature, not chain exhaustion. */
+  reachedKnownHistory?: boolean;
+  /** Actual HTTP attempts made by this call, including retries and failed key attempts. */
+  httpRequests?: number;
+  /** Number of successful pages returned by the provider. */
+  pagesFetched?: number;
+  lastPageEmpty?: boolean;
 };
+
+const HELIUS_TIMEOUT_MS = (() => {
+  const value = Number(process.env.HELIUS_FETCH_TIMEOUT_MS || 12_000);
+  return Number.isFinite(value) ? Math.max(1000, Math.min(60_000, value)) : 12_000;
+})();
+const HELIUS_MAX_ROUNDS = (() => {
+  const value = Number(process.env.HELIUS_FETCH_MAX_ROUNDS || 2);
+  return Number.isFinite(value) ? Math.max(1, Math.min(4, Math.floor(value))) : 2;
+})();
+
+async function fetchHeliusPage(
+  mint: string,
+  before: string | undefined,
+  limit: number,
+  keys: string[],
+): Promise<{ transactions: HeliusEnrichedTx[]; httpRequests: number }> {
+  let lastError: Error | null = null;
+  let httpRequests = 0;
+  for (let round = 0; round < HELIUS_MAX_ROUNDS; round++) {
+    for (const apiKey of keys) {
+      const url = new URL(appendHeliusApiKey("https://api.helius.xyz/v0/addresses/" + mint + "/transactions", apiKey));
+      url.searchParams.set("limit", String(limit));
+      if (before) url.searchParams.set("before", before);
+      try {
+        httpRequests++;
+        const response = await fetch(url.toString(), {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(HELIUS_TIMEOUT_MS),
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          if (!isHeliusRetryableStatus(response.status)) throw new Error("Helius HTTP " + response.status);
+          lastError = new Error("Helius retryable HTTP " + response.status);
+          continue;
+        }
+        const page: unknown = await response.json();
+        if (!Array.isArray(page)) throw new Error("Helius page has invalid shape");
+        return { transactions: page as HeliusEnrichedTx[], httpRequests };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        // Non-retryable 4xx means no API key rotation will help.
+        if (/^Helius HTTP 4\d\d$/.test(lastError.message)) throw lastError;
+      }
+    }
+    if (round + 1 < HELIUS_MAX_ROUNDS) {
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(1500, 250 * 2 ** round)));
+    }
+  }
+  throw lastError ?? new Error("All Helius API keys failed");
+}
 
 export async function fetchEnrichedTxsForMintWithMeta(
   mint: string,
-  maxTxs: number = 1000
+  maxTxs: number = 1000,
+  stopAtSignatures: ReadonlySet<string> | null = null,
+  startBefore?: string,
 ): Promise<EnrichedTxMeta> {
-  const keys = HELIUS_API_KEYS.length > 0 ? HELIUS_API_KEYS : [];
-  if (keys.length === 0) {
-    throw new Error("Helius API key not configured (set NEXT_PUBLIC_HELIUS_RPC_URL with ?api-key=...)");
+  const keys = HELIUS_API_KEYS;
+  if (!keys.length) {
+    throw new Error("Helius API key not configured (set HELIUS_API_KEY or HELIUS_API_KEYS)");
   }
+  if (!Number.isInteger(maxTxs) || maxTxs < 1) throw new Error("maxTxs must be a positive integer");
 
   const all: HeliusEnrichedTx[] = [];
-  let before: string | undefined;
-  const pageSize = 100; // Helius max
+  const seen = new Set<string>();
+  let httpRequests = 0;
+  let pagesFetched = 0;
+  let lastPageEmpty = false;
+  let before: string | undefined = startBefore;
   let exhausted = false;
+  let reachedKnownHistory = false;
+  const seenCursors = new Set<string>();
 
   while (all.length < maxTxs) {
-    let page: HeliusEnrichedTx[] | null = null;
-    for (let attempt = 0; attempt < keys.length; attempt += 1) {
-      const apiKey = keys[attempt] ?? "";
-      const url = appendHeliusApiKey(`https://api.helius.xyz/v0/addresses/${mint}/transactions`, apiKey);
-      const nextUrl = new URL(url);
-      nextUrl.searchParams.set("limit", String(pageSize));
-      if (before) nextUrl.searchParams.set("before", before);
-
-      let response: Response;
-      try {
-        response = await fetch(nextUrl.toString(), { headers: { Accept: "application/json" } });
-      } catch (error) {
-        if (attempt < keys.length - 1) continue;
-        throw new Error(`Helius fetch failed: ${(error as Error).message}`);
-      }
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        if (isHeliusRetryableStatus(response.status) && attempt < keys.length - 1) continue;
-        throw new Error(`Helius HTTP ${response.status}: ${body.slice(0, 200)}`);
-      }
-
-      page = (await response.json()) as HeliusEnrichedTx[];
-      break;
-    }
-
-    if (!page || !Array.isArray(page) || page.length === 0) {
+    const requested = Math.min(100, maxTxs - all.length);
+    const fetched = await fetchHeliusPage(mint, before, requested, keys);
+    httpRequests += fetched.httpRequests;
+    pagesFetched++;
+    const page = fetched.transactions;
+    if (!page.length) {
+      lastPageEmpty = true;
       exhausted = true;
       break;
     }
-    all.push(...page);
-    if (page.length < pageSize) {
+    for (const tx of page) {
+      if (!tx || typeof tx.signature !== "string" || !tx.signature) continue;
+      if (stopAtSignatures?.has(tx.signature)) {
+        reachedKnownHistory = true;
+        break;
+      }
+      if (seen.has(tx.signature)) continue;
+      seen.add(tx.signature);
+      all.push(tx);
+    }
+    if (reachedKnownHistory) break;
+    if (page.length < requested) {
       exhausted = true;
       break;
     }
-    before = page[page.length - 1]?.signature;
+    const nextBefore = page[page.length - 1]?.signature;
+    if (!nextBefore || nextBefore === before || seenCursors.has(nextBefore)) {
+      throw new Error("Helius pagination stalled: cursor repeated");
+    }
+    seenCursors.add(nextBefore);
+    before = nextBefore;
   }
 
   const truncated = !exhausted && all.length >= maxTxs;
@@ -128,7 +189,8 @@ export async function fetchEnrichedTxsForMintWithMeta(
     },
     null,
   );
-  return { transactions: bounded, oldestTimestamp, exhausted, truncated };
+  return { transactions: bounded, oldestTimestamp, exhausted, truncated, reachedKnownHistory,
+    httpRequests, pagesFetched, lastPageEmpty };
 }
 
 /**
@@ -160,6 +222,7 @@ export function txsToTrades(txs: HeliusEnrichedTx[], mint: string): RawTrade[] {
 }
 
 function extractTrade(tx: HeliusEnrichedTx, mint: string): RawTrade | null {
+  if (tx.transactionError != null) return null;
   // 1. Try parsed swap event first (most reliable for AMM swaps)
   const swap = tx.events?.swap;
   if (swap) {
@@ -253,14 +316,17 @@ export async function getWalletFirstSeen(address: string): Promise<number | null
       url.searchParams.set("limit", "100");
       // Single page is enough for fresh-detection (<1h old wallets have very few txs).
       // If wallet has >100 txs, it's definitely not fresh — return earliest of this page as approximation.
-      const r = await fetch(url.toString());
+      const r = await fetch(url.toString(), { signal: AbortSignal.timeout(HELIUS_TIMEOUT_MS), cache: "no-store" });
       if (!r.ok) {
         if (isHeliusRetryableStatus(r.status) && attempt < keys.length - 1) continue;
         return null;
       }
       const page = (await r.json()) as HeliusEnrichedTx[];
       if (!Array.isArray(page) || page.length === 0) return null;
-      return Math.min(...page.map((t) => t.timestamp || Infinity));
+      // A full newest-first page is not proof of the wallet's first activity.
+      if (page.length >= 100) return null;
+      const earliest = Math.min(...page.map((t) => t.timestamp || Infinity));
+      return Number.isFinite(earliest) ? earliest : null;
     } catch {
       if (attempt === keys.length - 1) return null;
     }
