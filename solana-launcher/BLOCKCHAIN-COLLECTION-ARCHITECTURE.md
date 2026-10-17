@@ -14,7 +14,7 @@ Current wallet cache decoding is **swap-only**. Token transfers are indexed as w
 - a finished API backfill does not imply complete inventory history;
 - `history_status='complete'` is only allowed when pagination is complete, no gaps exist, and `decoder_coverage='full'`;
 - the current collector passes `swap_only`, so wallet history stays `partial` until a full decoder is implemented and independently validated;
-- PnL remains non-authoritative unless the caller supplies full decoder coverage, unknown-operation ratio <= 5%, stable/finalized evidence, complete inventory provenance, and complete ordering.
+- PnL remains non-authoritative unless the caller supplies full decoder coverage, unknown-operation ratio <= 5%, stable/finalized evidence, complete inventory provenance, complete ordering, and verified reconciliation of canonical `token_trades` against leg-level raw evidence.
 
 The 5% unknown-operation threshold is a hard gate, not a confidence adjustment. Unknown ratios must be calculated from a defined denominator of relevant wallet/token operations; they must not be guessed. Until that denominator is measured, the gate must fail closed.
 
