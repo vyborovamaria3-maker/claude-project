@@ -88,6 +88,7 @@ export async function recordRawPage(
 }
 export async function storePage(c: PoolClient, source: string, page: ArchivePage, raw: {
     hash: string;
+    responseHash?: string;
     path: string;
     parserVersion?: string;
 }, received: Date, observed: Date | null, metadata: RawPageMetadata = {}) {
