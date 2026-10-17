@@ -26,7 +26,8 @@ Every cached trade stores `raw_event_signature` and `raw_event_slot`. The event 
 
 - `chain_history_coverage` records the observed slot range, event count, decoder coverage, and reason for incomplete coverage. `coverage_percent` and `expected_count` remain NULL unless there is an independently measured denominator.
 - `chain_budget_ledger` records observed HTTP request attempts as `cost_kind='http'`. Helius credits and Alchemy CU must be recorded separately only when provider-specific cost data is available; the system must not infer credit/CU costs from HTTP count.
-- Helius Enhanced API response metadata now reports successful page count, empty final page, and actual HTTP attempts, including retries.
+- Alchemy `getTransactionsForAddress` is the primary historical provider for the local seed collector. The collector uses its opaque `paginationToken`, requests finalized full transactions, rotates configured Alchemy keys on retryable failures, and never silently falls back to Helius.
+- Alchemy response metadata records successful pages, empty final page, and actual HTTP attempts including retries. HTTP attempts and CU are separate ledger entries; the CU estimate is 100 per `getTransactionsForAddress` request per Alchemy's published endpoint documentation.
 - `chain_wallet_pagination_state` keeps pagination metadata separate from logical backfill/forward cursors.
 
 ## Discovery, clusters, and scoring
@@ -59,6 +60,14 @@ Evaluate PostgreSQL migration when any of the following is sustained:
 
 These are evaluation triggers, not automatic guarantees that PostgreSQL will solve the observed bottleneck.
 
+## Provider contract
+
+- Primary provider: Alchemy Solana RPC `getTransactionsForAddress`, with `transactionDetails: full`, `encoding: jsonParsed`, `commitment: finalized`, and `paginationToken` pagination (up to 100 full transactions per page).
+- Cursor values are versioned as `alchemy:v1:<paginationToken>`. Provider changes invalidate old provider-specific cursors and completeness flags while retaining raw events.
+- Raw normalized events retain slot, timestamp, transaction error, fee, token-balance deltas, instruction program IDs, and parsed SPL transfer/mint/burn instruction evidence where supplied by the RPC response.
+- The swap decoder remains conservative and marked `swap_only`; balance deltas or a recognized DEX program alone do not establish complete inventory provenance. Authoritative PnL remains blocked until decoder coverage, source reconciliation, ordering, and finality are independently proven.
+- Missing Alchemy configuration fails closed. Helius is not a runtime fallback for the seed collector.
+
 ## Status at this revision
 
 Implemented schema/code scaffolding:
@@ -73,7 +82,7 @@ Implemented schema/code scaffolding:
 - cluster-candidate and versioned score-component tables.
 
 Still not implemented or not independently verified:
-- complete SPL transfer/mint/burn inventory decoder;
+- complete SPL transfer/mint/burn inventory decoder and transfer classification into inventory movements;
 - finalized/reorg monitoring;
 - complete wiring of provider-specific credit/CU cost data;
 - authoritative population of unknown-operation ratios;
