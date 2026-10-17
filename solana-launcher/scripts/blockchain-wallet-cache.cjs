@@ -430,6 +430,7 @@ function authoritativePnlAllowed(signals = {}) {
     && signals.completeFromObservedTrades === true
     && signals.orderingComplete === true
     && signals.reorgStable === true
+    && signals.sourceReconciled === true
     && Number.isFinite(signals.unknownOperationsRatio)
     && signals.unknownOperationsRatio <= 0.05;
 }
