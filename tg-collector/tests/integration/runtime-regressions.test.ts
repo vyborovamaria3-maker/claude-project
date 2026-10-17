@@ -78,6 +78,30 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
     assert.equal(edges.rows[0].message_count, 99);
     const metrics = await pool.query("SELECT posts_count FROM tg_source_daily_metrics WHERE source_id=$1", [id]);
     assert.equal(metrics.rows[0].posts_count, 99);
+    const consistency = await pool.query<{mismatches: number}>(`
+      WITH expected AS (
+        SELECT l.source_id,(m.posted_at AT TIME ZONE 'UTC')::date AS day,l.kind,l.target_kind,l.target_key,
+          count(*)::integer AS evidence_count,count(DISTINCT l.message_id)::integer AS message_count
+        FROM tg_message_links l JOIN tg_messages m USING(source_id,message_id)
+        WHERE l.source_id=$1 AND m.deleted_at IS NULL
+        GROUP BY l.source_id,(m.posted_at AT TIME ZONE 'UTC')::date,l.kind,l.target_kind,l.target_key
+      )
+      SELECT count(*)::integer AS mismatches FROM (
+        SELECT 1 FROM expected e FULL OUTER JOIN tg_graph_daily_edges g
+          ON g.source_id=e.source_id AND g.day=e.day AND g.kind=e.kind
+          AND g.target_kind=e.target_kind AND g.target_key=e.target_key
+        WHERE e.evidence_count IS DISTINCT FROM g.evidence_count
+          OR e.message_count IS DISTINCT FROM g.message_count
+      ) mismatched
+    `, [id]);
+    assert.equal(consistency.rows[0].mismatches, 0, "daily graph rollups must match canonical evidence");
+    const invalidSamples = await pool.query<{count: number}>(`
+      SELECT count(*)::integer AS count FROM tg_graph_daily_edges g
+      LEFT JOIN tg_messages m ON m.source_id=g.source_id AND m.message_id=g.sample_message_id
+      WHERE g.source_id=$1 AND (m.message_id IS NULL OR m.deleted_at IS NOT NULL)
+    `, [id]);
+    assert.equal(invalidSamples.rows[0].count, 0, "graph sample messages must remain valid");
+
     await pool.query("DELETE FROM tg_messages WHERE source_id=$1 AND message_id=1000", [id]);
     const count = await pool.query("SELECT message_count FROM tg_source_message_counters WHERE source_id=$1", [id]);
     assert.equal(Number(count.rows[0].message_count), 99);
