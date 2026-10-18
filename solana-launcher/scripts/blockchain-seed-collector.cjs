@@ -39,9 +39,9 @@ function parseArgs(argv) {
   return {
     mode: flags.mode || "import",
     folders: {
-      migrated: path.resolve(flags["migrated-dir"] || path.join(defaultFolder, "migrated")),
-      dex_trending: path.resolve(flags["trending-dir"] || path.join(defaultFolder, "trending")),
-      profitable_wallets: path.resolve(flags["wallets-dir"] || path.join(defaultFolder, "wallets")),
+      migrated: path.resolve(/* turbopackIgnore: true */ flags["migrated-dir"] || path.join(defaultFolder, "migrated")),
+      dex_trending: path.resolve(/* turbopackIgnore: true */ flags["trending-dir"] || path.join(defaultFolder, "trending")),
+      profitable_wallets: path.resolve(/* turbopackIgnore: true */ flags["wallets-dir"] || path.join(defaultFolder, "wallets")),
     },
     limit: intFlag(flags.limit, 30, 1, 10000),
     concurrency: intFlag(flags.concurrency, 2, 1, 4),
@@ -122,16 +122,16 @@ function initDb(db) {
   }
   // Helius signature cursors are not Alchemy pagination tokens. Keep old raw
   // events for audit, but invalidate provider-specific progress and completeness.
-  db.prepare(`
+  const migratedTargets = db.prepare(`
     UPDATE chain_seed_targets
     SET backfill_cursor=NULL, forward_cursor=NULL, backfill_complete=0,
         possible_gap=0, collection_provider='alchemy', cursor_version=1, next_run_at=0
     WHERE collection_provider IS NULL OR collection_provider<>'alchemy' OR cursor_version<>1
-  `).run();
+  `).run().changes;
   walletCache.ensureWalletCacheSchema(db);
   // Previously cached wallet history may have been fetched by Helius. Do not
   // let its provider-specific completeness authorize an Alchemy/PnL conclusion.
-  if (db.pragma("table_info(chain_wallet_discovery)").some(c => c.name === "history_status")) {
+  if (migratedTargets > 0 && db.pragma("table_info(chain_wallet_discovery)").some(c => c.name === "history_status")) {
     db.prepare(`
       UPDATE chain_wallet_discovery
       SET history_status='partial', last_fetched_at=NULL,
@@ -344,7 +344,7 @@ function recordAlchemyUsage(db, row, httpRequests, pagesFetched, lastPageEmpty, 
   });
 }
 
-function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
+function appendDiscovered(db, ownerWallet, transactions) {
   const discovered = new Set();
   for (const tx of transactions) {
     const swap = tx.events && tx.events.swap;
@@ -519,7 +519,7 @@ async function processOne(db, row, cfg, api) {
     if (row.kind === "wallet") {
       // Cache all decoded swap legs from this wallet history, not just the token that discovered it.
       walletCache.cacheWalletTrades(db, row.address, unique, api.txsToTrades, { sourceProvider: 'alchemy' });
-      appendDiscovered(db, row.address, unique, api.txsToTrades);
+      appendDiscovered(db, row.address, unique);
     }
     db.prepare(
       "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,"
@@ -565,16 +565,33 @@ function failTask(db, row, error) {
 }
 
 async function collect(db, args) {
+  const runtime = require('./blockchain-runtime.cjs');
+  const settings = runtime.readSettings();
+  if (!settings.enabled) return { stopped: true, reason: 'paused', claimed: 0, succeeded: 0, failed: 0, newEvents: 0 };
+  args = { ...args, limit: Math.min(args.limit, settings.batchSize), concurrency: settings.concurrency,
+    recentLimit: settings.batchSize, backfillLimit: settings.batchSize };
   // ts-node is registered once in main(); avoid stacking require hooks on each
   // watch cycle. Fail fast before reserving work if API keys are unavailable.
   const { createAlchemyProvider } = require("./blockchain-alchemy-provider.cjs");
-  const alchemy = createAlchemyProvider();
+  const alchemy = createAlchemyProvider({ request: async (urls, body) => {
+    let httpRequests = 0;
+    const result = await runtime.jsonRequest(urls, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, () => { httpRequests++; });
+    return { result: result.result, httpRequests };
+  } });
   const { persistTokenTrades, markTokenTradeChecked } = require("../lib/trade/db");
   const api = { ...alchemy, persistTokenTrades, markTokenTradeChecked };
   const startedAt = Date.now();
+  const runId = require('node:crypto').randomUUID();
+  runtime.db().transaction(() => {
+    const active = runtime.db().prepare("SELECT id FROM blockchain_runs WHERE state='running' AND heartbeat_at>?").get(Date.now()-10*60_000);
+    if (active) throw new Error('collector_already_running');
+    runtime.db().prepare("UPDATE blockchain_runs SET state='stale' WHERE state='running'").run();
+    runtime.db().prepare("INSERT INTO blockchain_runs(id,started_at,heartbeat_at,state) VALUES (?,?,?,'running')").run(runId,startedAt,startedAt);
+  }).immediate();
   let claimed = 0, succeeded = 0, failed = 0, inserted = 0, gaps = 0;
   async function worker() {
-    while (!stopRequested && claimed < args.limit) {
+    while (!stopRequested && claimed < args.limit && runtime.readSettings().enabled) {
       const row = claimOne(db);
       if (!row) break;
       claimed++;
@@ -583,6 +600,7 @@ async function collect(db, args) {
         succeeded++;
         inserted += result.newEvents;
         if (result.possibleGap) gaps++;
+        runtime.db().prepare('UPDATE blockchain_runs SET heartbeat_at=?,targets=?,events=?,errors=? WHERE id=?').run(Date.now(),succeeded,inserted,failed,runId);
         if (succeeded % 10 === 0) console.log(JSON.stringify({ progress: succeeded, inserted, failed, gaps }));
       } catch (error) {
         failed++;
@@ -595,12 +613,14 @@ async function collect(db, args) {
           }
         }
         failTask(db, row, error);
+        runtime.db().prepare('UPDATE blockchain_runs SET heartbeat_at=?,errors=? WHERE id=?').run(Date.now(),failed,runId);
         console.error("[blockchain-collector]", row.kind, row.address,
           error instanceof Error ? error.message : String(error));
       }
     }
   }
   await Promise.all(Array.from({ length: args.concurrency }, worker));
+  runtime.db().prepare("UPDATE blockchain_runs SET finished_at=?,heartbeat_at=?,state='finished',targets=?,events=?,errors=? WHERE id=?").run(Date.now(),Date.now(),succeeded,inserted,failed,runId);
   const durationSec = Math.max(0.001, (Date.now() - startedAt) / 1000);
   return { claimed, succeeded, failed, newEvents: inserted, possibleGaps: gaps,
     durationSec: Number(durationSec.toFixed(2)),
@@ -651,4 +671,4 @@ async function main() {
   console.log(JSON.stringify({ status: status(db) }, null, 2));
 }
 if (require.main === module) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
-module.exports = { initDb, claimOne, processOne, failTask };
+module.exports = { initDb, claimOne, processOne, failTask, appendDiscovered, importFolders, refreshTargets, status, collect };

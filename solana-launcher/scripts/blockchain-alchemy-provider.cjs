@@ -152,6 +152,9 @@ function createAlchemyProvider(options = {}) {
   let requestId = 0;
   let endpointIndex = 0;
   async function rpc(method, params) {
+    if (options.request) {
+      return options.request(config.endpoints, { jsonrpc: '2.0', id: ++requestId, method, params });
+    }
     let lastError;
     let attempts = 0;
     for (let attempt = 0; attempt < 5; attempt++) {

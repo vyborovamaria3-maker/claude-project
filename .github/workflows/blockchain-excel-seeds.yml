@@ -38,11 +38,5 @@ jobs:
       - name: Offline seed and wallet-cache regressions
         working-directory: solana-launcher
         run: |
-          node scripts/blockchain-seed-regression.cjs
-          node scripts/blockchain-wallet-cache-regression.cjs
-          node scripts/blockchain-collector-regression.mjs
-          node scripts/blockchain-seed-persistence-test.cjs
-          node scripts/blockchain-signature-events-test.cjs
-          node scripts/blockchain-buy-attribution-test.cjs
-          node scripts/blockchain-live-contract-regression.cjs
-          node scripts/blockchain-seed-integration.cjs
+          npm run blockchain:test
+          npm run blockchain:integration-test

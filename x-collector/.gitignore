@@ -10,3 +10,6 @@ logs/
 data/
 
 __pycache__/
+
+# Local encrypted-session-bearing PostgreSQL dumps must never be committed.
+backups/

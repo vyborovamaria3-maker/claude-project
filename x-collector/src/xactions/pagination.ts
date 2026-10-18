@@ -6,6 +6,8 @@
 export interface CursorPage<T> {
   items: readonly T[];
   nextCursor: string | null;
+  /** Sanitized GraphQL response envelope and request metadata for replay/audit. */
+  rawResponse?: unknown;
 }
 
 export interface PageCommit<T> extends CursorPage<T> {

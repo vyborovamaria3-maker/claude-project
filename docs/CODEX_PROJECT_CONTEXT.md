@@ -1,6 +1,9 @@
 # X Collector Runtime v2 context
 
+PR #65 merge validation (2026-10-18): preserve Settings V2 exports, imports and monitoring while routing Alchemy history through the shared persisted timeout/retry/rate/concurrency transport. UI checks Alchemy availability; generic RPC choices remain Intelligence-only. Mocked adapter tests exercise pause, batch size, 429 retry, request accounting and finished run status. Provider migration no longer clears validated wallet history on every initialization. Full swap decoding and authoritative PnL remain explicitly incomplete.
+
 PR #65 seed persistence is lease-fenced and transactional, including wallet history status. Failed enhanced transactions are excluded from trade decoding and wallet summaries while original events remain available. See the offline seed persistence regression and fast blockchain workflow.
+Blockchain Settings V2 (2026-10-15, base main fa0b46f / PR #66): the existing settings tab uses an operator-only API, existing SQLite trade.db and reused seed collector from the unmerged PR #65 work. Server-only RPC environment slots, shared request throttling/leases, validated XLSX uploads and existing Intelligence token_trades integration are documented in solana-launcher/docs/BLOCKCHAIN_SETTINGS_V2.md. X Collector remains local and independent; no additional collector service is introduced.
 
 The laptop may separately opt into X_SEARCH_HTTP_COMPAT=true with COLLECTOR_ENGINE=xactions and an explicit XACTIONS_HOME cache. This additional POST search reader feeds existing batch/history persistence rather than reusing HTTP cursors for numeric archive jobs. max_browser_accounts controls both reservations and historical producer capacity; two workers can process distinct windows concurrently. Disable X_SEARCH_HTTP_COMPAT to return search to the existing browser path.
 

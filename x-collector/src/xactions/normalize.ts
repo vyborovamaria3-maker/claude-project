@@ -1,7 +1,7 @@
 import type { AccountProfileData, RawTweet } from "../../lib/trade/twitter-scraper";
 
 type Count = number | null | undefined;
-type HttpAuthor = { username?: string | null; name?: string | null; verified?: boolean | null };
+type HttpAuthor = { id?: string | null; restId?: string | null; username?: string | null; name?: string | null; verified?: boolean | null };
 type HttpMedia = { type?: string | null; url?: string | null; videoUrl?: string | null };
 type HttpUrl = { url?: string | null; expandedUrl?: string | null };
 type HttpMention = { username?: string | null };
@@ -87,6 +87,8 @@ export function normalizeXActionsTweet(input: XActionsHttpTweet, observedAt = Da
   if (!/^\d{15,25}$/.test(id)) throw new Error("XActions: invalid post ID");
   if (typeof input.text !== "string") throw new Error("XActions: missing post text");
   const authorHandle = handle(input.author?.username);
+  const authorIdValue = input.author?.id ?? input.author?.restId;
+  const authorId = typeof authorIdValue === "string" && /^\d{1,25}$/.test(authorIdValue) ? authorIdValue : null;
   const urls = (input.urls ?? []).map(item => validHttpUrl(item.expandedUrl ?? item.url)).filter((s): s is string => Boolean(s));
   const mentions = (input.mentions ?? []).map(item => (item.username ?? "").replace(/^@/, ""))
     .filter(name => /^[A-Za-z0-9_]{1,15}$/.test(name));
@@ -98,7 +100,7 @@ export function normalizeXActionsTweet(input: XActionsHttpTweet, observedAt = Da
   const relatedPostIds = [input.quotedTweet?.id, input.inReplyTo?.tweetId]
     .filter((value): value is string => typeof value === "string" && /^\d+$/.test(value));
   return {
-    id, text: input.text, authorHandle,
+    id, text: input.text, authorHandle, authorId,
     authorDisplayName: input.author?.name ?? null,
     url: `https://x.com/${authorHandle}/status/${id}`,
     views: uncertainCount(input.metrics?.views),

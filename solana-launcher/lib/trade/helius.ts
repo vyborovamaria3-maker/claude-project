@@ -2,8 +2,9 @@
 // Helius integration: fetch enriched parsed transactions for a token mint
 // Docs: https://docs.helius.dev/solana-apis/enhanced-transactions-api
 
-import { appendHeliusApiKey, getHeliusApiKeys, isHeliusRetryableStatus } from "./helius-rotation";
+import { appendHeliusApiKey, getHeliusApiKeys } from "./helius-rotation";
 import type { RawTrade } from "./chain/types";
+import { jsonRequest } from "../../scripts/blockchain-runtime.cjs";
 
 // Re-export the canonical trade model so legacy importers keep working while
 // there is exactly one RawTrade definition (see chain/types.ts).
@@ -73,59 +74,19 @@ export type EnrichedTxMeta = {
   lastPageEmpty?: boolean;
 };
 
-const HELIUS_TIMEOUT_MS = (() => {
-  const value = Number(process.env.HELIUS_FETCH_TIMEOUT_MS || 12_000);
-  return Number.isFinite(value) ? Math.max(1000, Math.min(60_000, value)) : 12_000;
-})();
-const HELIUS_MAX_ROUNDS = (() => {
-  const value = Number(process.env.HELIUS_FETCH_MAX_ROUNDS || 2);
-  return Number.isFinite(value) ? Math.max(1, Math.min(4, Math.floor(value))) : 2;
-})();
-
 async function fetchHeliusPage(
-  mint: string,
-  before: string | undefined,
-  limit: number,
-  keys: string[],
+  mint: string, before: string | undefined, limit: number, keys: string[],
 ): Promise<{ transactions: HeliusEnrichedTx[]; httpRequests: number }> {
-  let lastError: Error | null = null;
+  const urls = keys.map(apiKey => {
+    const url = new URL(appendHeliusApiKey("https://api.helius.xyz/v0/addresses/" + mint + "/transactions", apiKey));
+    url.searchParams.set("limit", String(limit));
+    if (before) url.searchParams.set("before", before);
+    return url.toString();
+  });
   let httpRequests = 0;
-  for (let round = 0; round < HELIUS_MAX_ROUNDS; round++) {
-    for (const apiKey of keys) {
-      const url = new URL(appendHeliusApiKey("https://api.helius.xyz/v0/addresses/" + mint + "/transactions", apiKey));
-      url.searchParams.set("limit", String(limit));
-      if (before) url.searchParams.set("before", before);
-      try {
-        httpRequests++;
-        const response = await fetch(url.toString(), {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(HELIUS_TIMEOUT_MS),
-          cache: "no-store",
-        });
-        if (!response.ok) {
-          if (!isHeliusRetryableStatus(response.status)) throw new Error("Helius HTTP " + response.status);
-          lastError = new Error("Helius retryable HTTP " + response.status);
-          continue;
-        }
-        const page: unknown = await response.json();
-        if (!Array.isArray(page)) throw new Error("Helius page has invalid shape");
-        return { transactions: page as HeliusEnrichedTx[], httpRequests };
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        // Non-retryable 4xx means no API key rotation will help.
-        if (/^Helius HTTP 4\d\d$/.test(lastError.message)) {
-          Object.assign(lastError, { httpRequests });
-          throw lastError;
-        }
-      }
-    }
-    if (round + 1 < HELIUS_MAX_ROUNDS) {
-      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(1500, 250 * 2 ** round)));
-    }
-  }
-  const error = lastError ?? new Error("All Helius API keys failed");
-  Object.assign(error, { httpRequests });
-  throw error;
+  const page: unknown = await jsonRequest(urls, { headers: { Accept: "application/json" } }, () => { httpRequests++; });
+  if (!Array.isArray(page)) throw Object.assign(new Error("Helius page has invalid shape"), { httpRequests });
+  return { transactions: page as HeliusEnrichedTx[], httpRequests };
 }
 
 export async function fetchEnrichedTxsForMintWithMeta(
@@ -325,29 +286,13 @@ function extractTrade(tx: HeliusEnrichedTx, mint: string): RawTrade | null {
 export async function getWalletFirstSeen(address: string): Promise<number | null> {
   const keys = HELIUS_API_KEYS.length > 0 ? HELIUS_API_KEYS : [];
   if (keys.length === 0) return null;
-  for (let attempt = 0; attempt < keys.length; attempt += 1) {
-    try {
-      const apiKey = keys[attempt] ?? "";
-      const url = new URL(appendHeliusApiKey(`https://api.helius.xyz/v0/addresses/${address}/transactions`, apiKey));
-      url.searchParams.set("limit", "100");
-      // Single page is enough for fresh-detection (<1h old wallets have very few txs).
-      // If wallet has >100 txs, it's definitely not fresh — return earliest of this page as approximation.
-      const r = await fetch(url.toString(), { signal: AbortSignal.timeout(HELIUS_TIMEOUT_MS), cache: "no-store" });
-      if (!r.ok) {
-        if (isHeliusRetryableStatus(r.status) && attempt < keys.length - 1) continue;
-        return null;
-      }
-      const page = (await r.json()) as HeliusEnrichedTx[];
-      if (!Array.isArray(page) || page.length === 0) return null;
-      // A full newest-first page is not proof of the wallet's first activity.
-      if (page.length >= 100) return null;
-      const earliest = Math.min(...page.map((t) => t.timestamp || Infinity));
-      return Number.isFinite(earliest) ? earliest : null;
-    } catch {
-      if (attempt === keys.length - 1) return null;
-    }
-  }
-  return null;
+  try {
+    const { transactions: page } = await fetchHeliusPage(address, undefined, 100, keys);
+    // A full newest-first page is not proof of the wallet's first activity.
+    if (!page.length || page.length >= 100) return null;
+    const earliest = Math.min(...page.map(t => t.timestamp || Infinity));
+    return Number.isFinite(earliest) ? earliest : null;
+  } catch { return null; }
 }
 
 /**

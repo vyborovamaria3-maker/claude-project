@@ -1,16 +1,15 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { claimTasks, deferTask } from "../lib/trade/tasks";
-import { WorkerRegistry, reapDeadWorkers } from "../lib/trade/worker-registry";
-import { checkDatabase, closePool } from "../lib/trade/pg";
+import { claimTasks, deferTask, failTask } from "../src/collector/queue";
+import { WorkerRegistry, reapDeadWorkers, waitForDatabaseRecovery, WorkerRuntime, executeTask } from "../src/collector/runtime";
+import { checkDatabase, closePool, AmbiguousCommitError } from "../lib/trade/pg";
+import { isRetryablePgError, pgErrorCode } from "../lib/trade/retry";
 import { log, withContext, closeLogger } from "../lib/trade/logger";
 import { registry as promRegistry, startMetricsCollector, httpRequests, httpRequestDuration } from "../lib/trade/metrics";
 import { getConfig } from "../lib/trade/config";
 import { checkBasicAuth, isLoopbackHost } from "../lib/trade/http-auth";
 import { applySecurityHeaders, clientIp, createRateLimiter } from "../lib/trade/http-security";
-import { WorkerRuntime } from "../src/runtime/worker-runtime";
-import { executeTask } from "../src/runtime/collector-task";
-import { assertXActionsRuntime } from "../src/xactions/runtime";
+import { assertXActionsRuntime } from "../src/collector/engines";
 import { setTimeout as delay } from "node:timers/promises";
 const workerId = `${(process.env.WORKER_ID || "w").slice(0, 100)}-${randomUUID()}`;
 const METRICS_HOST = process.env.METRICS_HOST ?? "127.0.0.1";
@@ -59,11 +58,29 @@ process.on("message", message => {
 });
 
 
+async function recoverDatabase() {
+  // Registration is an idempotent write; never replay a task transaction.
+  await waitForDatabaseRecovery(() => registry.register(), cancellation.signal, {
+    onRetry: ({ attempt, delayMs, error }) => {
+      log.warn("database offline; retrying worker registration", {
+        attempt, delayMs, code: pgErrorCode(error) ?? "CONNECTION_ERROR",
+      });
+    },
+  });
+}
+
 async function loop() {
-  await registry.register();
-  registry.start();
-  runtime.ready();
-  process.send?.({ ready: true });
+  try {
+    await recoverDatabase();
+  } catch (error) {
+    // Graceful shutdown during the initial database outage is not fatal.
+    if (!shuttingDown) throw error;
+  }
+  if (!shuttingDown) {
+    registry.start();
+    runtime.ready();
+    process.send?.({ ready: true });
+  }
   const stopMetrics = startMetricsCollector();
   log.info("worker started", { workerId, pid: process.pid });
 
@@ -80,18 +97,51 @@ async function loop() {
       }
       for (const task of tasks) {
         if (shuttingDown) { await deferTask(task.id, workerId, 0, "worker shutdown", task.attempts); break; }
-        await withContext(
-          { taskId: task.id, workerId, mint: task.mint ?? undefined, handle: task.handle ?? undefined },
-          async () => {
-            const result = await runtime.runJob(task, job => executeTask(job, { workerId, registry, signal: cancellation.signal, isStopping: () => shuttingDown, useSourceCollector: USE_X_COLLECTOR, useXActions: USE_XACTIONS }));
-            log.info("task result", { result });
+        try {
+          await withContext(
+            { taskId: task.id, workerId, mint: task.mint ?? undefined, handle: task.handle ?? undefined },
+            async () => {
+              const result = await runtime.runJob(task, job => executeTask(job, { workerId, registry, signal: cancellation.signal, isStopping: () => shuttingDown, useSourceCollector: USE_X_COLLECTOR, useXActions: USE_XACTIONS }));
+              log.info("task result", { result });
+            },
+          );
+        } catch (error) {
+          runtime.degraded();
+          const databaseFailure = isRetryablePgError(error) || error instanceof AmbiguousCommitError;
+          log.error("task runner crashed", {
+            taskId: task.id, type: databaseFailure ? "database" : "runtime",
+          });
+          if (databaseFailure && !shuttingDown) {
+            // Do not spend an X attempt on DB downtime. If COMMIT actually
+            // completed, this fenced update will change zero rows.
+            await recoverDatabase();
+            const deferred = await deferTask(task.id, workerId, 5_000,
+              "database unavailable; task deferred", task.attempts);
+            if (!deferred) log.warn("task ownership changed before DB recovery", { taskId: task.id });
+          } else if (shuttingDown) {
+            await deferTask(task.id, workerId, 5_000, "worker shutdown", task.attempts).catch(() => {});
+          } else {
+            // Unexpected handler failures should use the bounded retry/DLQ
+            // policy instead of remaining claimed until the lease expires.
+            await failTask(task.id, workerId, new Error("WORKER_RUNTIME_FAILURE"), task.attempts);
           }
-        ).catch((e) => log.error("task runner crashed", { error: String(e) }));
+          if (!shuttingDown) runtime.ready();
+        }
       }
     } catch (e) {
       runtime.degraded();
       log.error("loop error", { error: String(e) });
-      await delay(10000, undefined, { signal: cancellation.signal }).catch(() => {});
+      if (isRetryablePgError(e) || e instanceof AmbiguousCommitError) {
+        // Do not claim READY after a fixed sleep if PostgreSQL is still down.
+        // Re-register only; claimed task leases recover via the existing queue.
+        try {
+          await recoverDatabase();
+        } catch (recoveryError) {
+          if (!shuttingDown) throw recoveryError;
+        }
+      } else {
+        await delay(10000, undefined, { signal: cancellation.signal }).catch(() => {});
+      }
       if (!shuttingDown) runtime.ready();
     }
   }
@@ -158,7 +208,10 @@ const healthServer = http.createServer(async (req, res) => {
   } catch (e) {
     // El detalle de la excepción va al log, no al cliente.
     log.error("health server request failed", { error: String(e) });
-    res.statusCode = 500; res.end("Internal Server Error"); finish(500);
+    const status = pathname === "/health" ? 503 : 500;
+    res.statusCode = status;
+    res.end(status === 503 ? "Service Unavailable" : "Internal Server Error");
+    finish(status);
   }
 });
 healthServer.on("error", (e) => log.error("health server error", { error: String(e) }));

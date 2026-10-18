@@ -57,6 +57,13 @@ const { initDb, claimOne, processOne, failTask } = require("./blockchain-seed-co
     await assert.rejects(processOne(db, row, cfg, { ...api, markTokenTradeChecked() { throw new Error("projection failure"); } }), /projection failure/);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM chain_seed_events").get().n, 0, "raw evidence must roll back with projection failure");
     assert.equal(db.prepare("SELECT backfill_complete FROM chain_seed_targets").get().backfill_complete, 0);
+    db.exec("CREATE TABLE normalized_fixture(signature TEXT); CREATE TRIGGER reject_progress BEFORE UPDATE OF last_success_at ON chain_seed_targets BEGIN SELECT RAISE(ABORT,'progress failed'); END");
+    const normalizedApi = { ...api, txsToTrades: () => [{ signature: 'sig' }],
+      persistTokenTrades: () => db.prepare('INSERT INTO normalized_fixture VALUES (?)').run('sig') };
+    await assert.rejects(processOne(db, row, cfg, normalizedApi), /progress failed/);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM normalized_fixture').get().n, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM chain_seed_events').get().n, 0);
+    db.exec('DROP TRIGGER reject_progress');
     await processOne(db, row, cfg, api);
     const saved = db.prepare("SELECT * FROM chain_seed_targets").get();
     assert.equal(saved.lease_until, null);
@@ -92,6 +99,9 @@ const { initDb, claimOne, processOne, failTask } = require("./blockchain-seed-co
     db.prepare("UPDATE chain_seed_targets SET lease_until=NULL,next_run_at=0 WHERE kind='wallet'").run();
     db.prepare("UPDATE chain_wallet_discovery SET decoder_coverage='full',history_status='complete',last_fetched_at=? WHERE wallet='wallet'")
       .run(Date.now());
+    initDb(db);
+    assert.equal(db.prepare("SELECT history_status FROM chain_wallet_discovery WHERE wallet='wallet'").get().history_status, 'complete',
+      'idempotent initialization must preserve validated history after provider migration');
     assert.equal(claimOne(db), null,
       "fresh complete full-coverage wallet history should avoid another API crawl");
     console.log("[blockchain-seed-persistence] OK: lease fencing, atomic persistence, decoder coverage scheduler gate");

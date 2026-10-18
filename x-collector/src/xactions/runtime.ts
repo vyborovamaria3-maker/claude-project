@@ -39,6 +39,28 @@ export interface HttpRuntimeContext {
 }
 
 /**
+ * Collapse upstream transport details to fixed, credential-free error messages.
+ * In particular, a full request timeout or invalid response is NOT evidence
+ * that the SOCKS5 proxy itself is broken.
+ */
+export function sanitizeXActionsTransportFailure(error: unknown): Error {
+  const message = error instanceof Error ? error.message : "";
+  if (/^XActions: HTTP request timed out/.test(message))
+    return new Error("XACTIONS_TRANSPORT_TIMEOUT: request deadline exceeded");
+  if (/HTTP response exceeds size limit|decoded HTTP response exceeds size limit|unsupported HTTP content encoding/i.test(message))
+    return new Error("XACTIONS_RESPONSE_INVALID: response payload rejected");
+  if (/socks.{0,30}auth|proxy.{0,30}auth|authentication.{0,30}fail|HTTP 407/i.test(message))
+    return new Error("XACTIONS_PROXY_AUTH_FAILED: SOCKS5 credentials rejected");
+  if (/getaddrinfo|ENOTFOUND|EAI_AGAIN|DNS/i.test(message))
+    return new Error("XACTIONS_PROXY_DNS_FAILED: name resolution failed");
+  if (/socks|proxy.{0,30}(refused|rejected|connect)|ECONNREFUSED|ERR_PROXY_CONNECTION_FAILED/i.test(message))
+    return new Error("PROXY_FAILED: XActions SOCKS5 connection failed");
+  // A connection reset may originate from X itself; without evidence do not
+  // accuse the account's proxy or quarantine a healthy route.
+  return new Error("XACTIONS_NETWORK_IO_UNVERIFIED: HTTP request failed");
+}
+
+/**
  * Load the pinned ESM module lazily: the default Playwright path does not
  * evaluate or require XActions. Disable query-ID discovery and transaction
  * signatures to avoid unaccounted background fetches.
@@ -97,10 +119,10 @@ export async function createXActionsRuntime(ctx: HttpRuntimeContext): Promise<XA
     ctx.signal.throwIfAborted();
     try {
       return await networkFetch(input, { ...init, signal: ctx.signal });
-    } catch {
+    } catch (error) {
       ctx.signal.throwIfAborted();
       // Do not forward transport/agent messages that could contain proxy secrets.
-      throw new Error("PROXY_FAILED: XActions SOCKS5 transport request failed");
+      throw sanitizeXActionsTransportFailure(error);
     }
   };
   const client = new module.TwitterHttpClient({

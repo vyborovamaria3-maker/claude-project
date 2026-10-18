@@ -1,0 +1,28 @@
+name: Blockchain Settings V2
+on:
+  pull_request:
+    paths:
+      - 'solana-launcher/**'
+      - '.github/workflows/blockchain-settings.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: solana-launcher
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: solana-launcher/package-lock.json
+      - run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - run: npm run blockchain:test
+      - run: npx tsc --noEmit
+      - run: npx eslint app/settings/BlockchainTab.tsx app/api/blockchain/settings/route.ts app/api/rpc-health/route.ts lib/blockchain-settings.ts scripts/blockchain-runtime.cjs scripts/blockchain-settings-test.cjs
+      - run: npm run build

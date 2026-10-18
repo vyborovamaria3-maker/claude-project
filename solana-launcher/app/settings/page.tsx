@@ -10,8 +10,9 @@ import ActivityTab from "./ActivityTab";
 import DiagnosticsTab from "./DiagnosticsTab";
 import ApifyTab from "./ApifyTab";
 import XCollectorTab from "./XCollectorTab";
+import BlockchainTab from "./BlockchainTab";
 
-type Tab = "account" | "quick-actions" | "activity" | "colors" | "diagnostics" | "apify" | "xcollector";
+type Tab = "account" | "quick-actions" | "activity" | "colors" | "diagnostics" | "apify" | "xcollector" | "blockchain";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "account",       label: "Account" },
@@ -20,16 +21,18 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "diagnostics",   label: "Diagnostics" },
   { id: "apify",         label: "Apify" },
   { id: "xcollector",    label: "X Collector" },
+  { id: "blockchain",    label: "Blockchain" },
   { id: "colors",        label: "Colors" },
 ];
 
-const TAB_LABEL_KEYS: Record<Tab, "settings.tab.account" | "settings.tab.quickActions" | "settings.tab.activity" | "settings.tab.diagnostics" | "settings.tab.apify" | "settings.tab.xCollector" | "settings.tab.colors"> = {
+const TAB_LABEL_KEYS: Record<Tab, "settings.tab.account" | "settings.tab.quickActions" | "settings.tab.activity" | "settings.tab.diagnostics" | "settings.tab.apify" | "settings.tab.xCollector" | "settings.tab.blockchain" | "settings.tab.colors"> = {
   account: "settings.tab.account",
   "quick-actions": "settings.tab.quickActions",
   activity: "settings.tab.activity",
   diagnostics: "settings.tab.diagnostics",
   apify: "settings.tab.apify",
   xcollector: "settings.tab.xCollector",
+  blockchain: "settings.tab.blockchain",
   colors: "settings.tab.colors",
 };
 
@@ -86,6 +89,7 @@ export default function SettingsPage() {
                       {tabItem.id === "diagnostics" && "Health checks and runtime signals."}
                       {tabItem.id === "apify" && "Collector and sync integrations."}
                       {tabItem.id === "xcollector" && "X (Twitter) collection pipeline for Solana memecoins."}
+                      {tabItem.id === "blockchain" && "Solana RPC health, blockchain data sources and analytics."}
                       {tabItem.id === "colors" && "Theme families, gradients, and palette controls."}
                     </div>
                   </div>
@@ -109,6 +113,7 @@ export default function SettingsPage() {
         {tab === "diagnostics" && <DiagnosticsTab />}
         {tab === "apify" && <ApifyTab />}
         {tab === "xcollector" && <XCollectorTab />}
+        {tab === "blockchain" && <BlockchainTab />}
         {tab === "colors" && <ColorsTab />}
       </section>
     </div>

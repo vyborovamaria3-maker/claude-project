@@ -10,19 +10,21 @@ export interface NormalizedTweet {
   id: string;
   text: string;
   authorHandle: string;
+  authorId?: string | null;
   authorDisplayName: null;
   url: string;
-  views: number;
-  likes: number;
-  retweets: number;
-  replies: number;
+  views: number | null;
+  likes: number | null;
+  retweets: number | null;
+  replies: number | null;
   isVerified: boolean;
   postedAt: number | null;
   collectedAt: number;
 }
 
-function nonNegative(n: number): number {
-  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+function nonNegative(n: number | null): number | null {
+  if (n === null || !Number.isFinite(n) || n < 0) return null;
+  return Math.round(n);
 }
 
 export function normalizeTweet(tweet: XTweet): NormalizedTweet | null {
@@ -31,6 +33,7 @@ export function normalizeTweet(tweet: XTweet): NormalizedTweet | null {
     id: tweet.id,
     text: tweet.text,
     authorHandle: tweet.author,
+    authorId: tweet.authorId ?? null,
     authorDisplayName: null,
     url: tweet.url,
     views: nonNegative(tweet.views),

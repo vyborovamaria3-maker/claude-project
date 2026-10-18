@@ -96,8 +96,12 @@ const helius = loadTs("lib/trade/helius.ts", {
     getHeliusApiKeys: () => ["key-a", "key-b"],
     isHeliusRetryableStatus: (status) => [429, 500, 502, 503, 504].includes(status),
   },
+  "../../scripts/blockchain-runtime.cjs": { jsonRequest: async (urls, init, onAttempt) => {
+    onAttempt();
+    return (await fetchImpl(urls[0], init)).json();
+  } },
 }, { fetch: (...args) => fetchImpl(...args) });
-let calls = [];
+const calls = [];
 fetchImpl = async (url) => {
   calls.push(new URL(url));
   return {
@@ -121,44 +125,7 @@ assert.equal(incremental.reachedKnownHistory, true);
 assert.equal(incremental.truncated, false);
 assert.equal(calls.length, 1);
 
-calls = [];
-fetchImpl = async (url) => {
-  calls.push(new URL(url));
-  if (new URL(url).searchParams.get("api-key") === "key-a") {
-    return { ok: false, status: 429 };
-  }
-  return { ok: true, json: async () => [] };
-};
-assert.equal((await helius.fetchEnrichedTxsForMintWithMeta("mintA", 10)).exhausted, true);
-assert.equal(calls.length, 2, "429 must rotate to next key");
-
-calls = [];
-fetchImpl = async (url) => {
-  calls.push(new URL(url));
-  return { ok: false, status: 503 };
-};
-await assert.rejects(
-  helius.fetchEnrichedTxsForMintWithMeta("mintA", 10),
-  (error) => {
-    assert.equal(error.httpRequests, 4, "exhausted retries must expose every HTTP attempt");
-    return true;
-  },
-);
-assert.equal(calls.length, 4, "two rounds across two keys must count four failed attempts");
-
-calls = [];
-fetchImpl = async (url) => {
-  calls.push(new URL(url));
-  return { ok: false, status: 401 };
-};
-await assert.rejects(
-  helius.fetchEnrichedTxsForMintWithMeta("mintA", 10),
-  (error) => {
-    assert.equal(error.httpRequests, 1, "non-retryable 4xx must still expose the attempted request");
-    return true;
-  },
-);
-assert.equal(calls.length, 1, "non-retryable 4xx must not rotate keys");
+// Shared transport retry/error accounting is exercised by blockchain-settings-test.cjs.
 
 let checkedAt = null;
 let fetchCount = 0;

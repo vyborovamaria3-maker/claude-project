@@ -200,5 +200,82 @@ export async function getMintFullReport(mint: string, days = 30): Promise<MintFu
 
 export { toCSV } from "./csv";
 
+export interface SignalQualityMartRow {
+  source: string;
+  horizon_hours: number;
+  day_start_ms: string;
+  score_band: string;
+  candidate_signals: string;
+  ready_outcomes: string;
+  coverage_pct: string | null;
+  pending_outcomes: string;
+  missing_entry: string;
+  missing_exit: string;
+  low_baseline: string;
+  avg_attention_change_pct: string | null;
+  median_attention_change_pct: string | null;
+  positive_attention_rate_pct: string | null;
+}
+
+export interface SignalQualitySummaryRow {
+  source: string;
+  horizon_hours: number;
+  score_band: string;
+  candidate_signals: string;
+  ready_outcomes: string;
+  coverage_pct: string | null;
+  avg_attention_change_pct: string | null;
+  median_attention_change_pct: string | null;
+  positive_attention_rate_pct: string | null;
+}
+
+export interface SignalQualityMintRow {
+  source: string;
+  mint: string;
+  horizon_hours: number;
+  candidate_signals: string;
+  ready_outcomes: string;
+  coverage_pct: string | null;
+  first_signal_at: string;
+  last_signal_at: string;
+  avg_signal_score: string;
+  avg_attention_change_pct: string | null;
+  median_attention_change_pct: string | null;
+  positive_attention_rate_pct: string | null;
+}
+
+function assertSignalQualityQuery(horizonHours: number): void {
+  if (!Number.isInteger(horizonHours) || horizonHours < 1 || horizonHours > 168)
+    throw new Error("horizonHours must be an integer between 1 and 168");
+}
+
+/** Daily signal-quality mart; metrics describe collected-tweet views, not market returns. */
+export async function getSignalQualityMart(days = 30, horizonHours = 6, source?: string): Promise<SignalQualityMartRow[]> {
+  if (!Number.isInteger(days) || days < 1 || days > 365) throw new Error("days must be an integer between 1 and 365");
+  assertSignalQualityQuery(horizonHours);
+  const from = Date.now() - days * 86400000;
+  return q<SignalQualityMartRow>(
+    "SELECT * FROM v_signal_quality_mart WHERE day_start_ms >= $1 AND horizon_hours = $2 AND ($3::text IS NULL OR source = $3) " +
+    "ORDER BY day_start_ms DESC, source, score_band",
+    [from, horizonHours, source ?? null],
+  );
+}
+
+export async function getSignalQualitySummary(horizonHours = 6, source?: string): Promise<SignalQualitySummaryRow[]> {
+  assertSignalQualityQuery(horizonHours);
+  return q<SignalQualitySummaryRow>(
+    "SELECT * FROM v_signal_quality_summary WHERE horizon_hours = $1 AND ($2::text IS NULL OR source = $2) ORDER BY source, score_band",
+    [horizonHours, source ?? null],
+  );
+}
+
+export async function getSignalQualityByMint(mint: string, horizonHours = 6, source?: string): Promise<SignalQualityMintRow[]> {
+  assertSignalQualityQuery(horizonHours);
+  return q<SignalQualityMintRow>(
+    "SELECT * FROM v_signal_quality_by_mint WHERE mint = $1 AND horizon_hours = $2 AND ($3::text IS NULL OR source = $3) ORDER BY source",
+    [mint, horizonHours, source ?? null],
+  );
+}
+
 export function toJSON<T>(rows: T[]): string { return JSON.stringify(rows, null, 2); }
 
