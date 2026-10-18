@@ -17,16 +17,16 @@ function classifyAuditError(error){
 // Never issue BEGIN/COMMIT here and never call an X action from this helper.
 async function recordAttemptFailure(c,jobId,error){
  const failure=classifyAuditError(error);
- const updated=await c.query(\`
+ const updated=await c.query(`
   UPDATE xc_auto_job_attempts AS a
      SET error_category=$2,error_code=$3
    WHERE a.job_id=$1
      AND a.attempt_no=(SELECT max(attempt_no) FROM xc_auto_job_attempts WHERE job_id=$1)
-   RETURNING attempt_id,trace_id\`,[jobId,failure.category,failure.code]);
+   RETURNING attempt_id,trace_id`,[jobId,failure.category,failure.code]);
  const attempt=updated.rows[0];
- if(attempt)await c.query(\`
+ if(attempt)await c.query(`
   INSERT INTO xc_auto_job_events(job_id,attempt_id,trace_id,event_type,occurred_at,payload)
-  VALUES($1,$2,$3,'error_classified',$4,$5::jsonb)\`,
+  VALUES($1,$2,$3,'error_classified',$4,$5::jsonb)`,
   [jobId,attempt.attempt_id,attempt.trace_id,Date.now(),JSON.stringify({category:failure.category,code:failure.code})]);
  return failure;
 }
