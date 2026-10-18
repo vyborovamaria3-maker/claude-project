@@ -94,7 +94,17 @@ Environment for `--once`:
 - `INTELLIGENCE_DATABASE_URL`: isolated Intelligence PostgreSQL DSN.
 
 Only the DSN for selected source is needed. The CLI is a **single bounded
-batch**, not a daemon, scheduler, deployment or traffic generator. It
+batch**, not a daemon, scheduler, deployment or traffic generator.
+
+Read-only `--status` reports `pending`, `ready`, `leased`,
+`retryDelayed`, `deadLetter`, `oldestPendingAt` and `maxAttempts`.
+For SQLite it opens the source database read-only. These counters are not
+a licence to manually reset locked leases or DLQ rows.
+
+Verified CI status as of 18 October 2026: independent TG/X/Blockchain
+producer PRs #121/#122/#123 and local ETL PR #124 pass all latest-head
+checks, including temporary PostgreSQL/SQLite integration fixtures.
+This is **not** evidence that a live producer/consumer was deployed. It
 opens no browser, Telegram session or blockchain provider. No credentials
 belong in repository, program logs, issue comments or PR descriptions.
 
