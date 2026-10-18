@@ -47,5 +47,8 @@ test("delete envelope preserves origin without fabricating timeline publication"
   assert.equal(e.eventKind,"message_deleted");
   assert.equal(payload.registryEvent.evidenceRef.sourceId,"tg:message:123456789:42");
   assert.ok(!Object.hasOwn(e.payload,"timelineEvent"));
+  assert.notEqual(buildTgDeletionOutboxEvent("123456789",42,new Date("2026-10-18T01:30:01Z")).eventKey,e.eventKey);
+  assert.equal(buildTgDeletionOutboxEvent("123456789",42,now,"20261018013000123456").eventKey,
+    buildTgDeletionOutboxEvent("123456789",42,new Date("2026-10-18T01:30:59Z"),"20261018013000123456").eventKey);
   assert.throws(()=>buildTgDeletionOutboxEvent(null,42,now),/PEER_UNRESOLVED/);
 });
