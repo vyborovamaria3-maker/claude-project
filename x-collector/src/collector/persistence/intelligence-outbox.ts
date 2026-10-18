@@ -18,7 +18,7 @@ export function buildXTweetOutboxEvent(
   tweet: ObservedXTweet,
   collectionTimeMs: number,
 ) {
-  if (!/^\d{15,25}$/.test(tweet.id)) throw new TypeError("Invalid tweet ID");
+  if (!/^[1-9]\d{0,24}$/.test(tweet.id)) throw new TypeError("Invalid tweet ID");
   // An X handle is NOT a stable identity. Lack of authorId is explicitly
   // unresolvable until backfill; never identify by authorHandle.
   if (typeof tweet.authorId !== "string" || !/^[1-9]\d{0,24}$/.test(tweet.authorId)) {
