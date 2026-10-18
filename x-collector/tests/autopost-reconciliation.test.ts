@@ -65,6 +65,13 @@ test('short links are expanded before matching and a different source permalink 
   assert.equal(findMatches(job(),[candidate('1234567890123456793',{text:'Read the research first. https://x.com/i/status/999'})],now).length,0);
 });
 
+test('manual confirmation records the correct destination for likes, reposts, and follows',()=>{
+  const {manualConfirmationResult}=load('../scripts/autopost/engine.cjs');
+  assert.deepEqual(manualConfirmationResult({kind:'like',target_handle:'source',target_id:'123'},null),{resultId:null,resultUrl:'https://x.com/source/status/123'});
+  assert.deepEqual(manualConfirmationResult({kind:'repost',target_handle:'source',target_id:'456'},null),{resultId:null,resultUrl:'https://x.com/source/status/456'});
+  assert.deepEqual(manualConfirmationResult({kind:'follow',target_handle:'source',target_id:'456'},null),{resultId:null,resultUrl:'https://x.com/source'});
+});
+
 test('manual confirmation may select an ID outside the candidate list only after explicit operator confirmation',()=>{
   const {selectManualCandidate}=load('../scripts/autopost/engine.cjs');
   const candidates=[{tweet_id:'1234567890123456789'}];
