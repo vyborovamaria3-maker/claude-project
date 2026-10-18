@@ -111,3 +111,14 @@ npm run archive -- mentions --mint SOLANA_MINT --before 2025-04-01T00:00:00Z
 ## Проверки
 
 Typecheck/lint/build; 55 тестов, включая Chromium archive UI/error recovery, миграции 001–014, пагинацию/dedup/checkpoint, partial coverage, неизвестные метрики, string IDs, token graph, разделение labels и CSV conversion. Native PostgreSQL CI дополнительно проверяет multi-snapshot prices и bridge checkpoint. Реальные файлы датасетов отдельно импортированы через storeToken в disposable PGlite. Живой full-archive X доступ и Docker build в этой среде не проверены.
+
+## Retention, parser provenance and metric history
+
+`archive_raw_pages.hash` is the SHA-256 key for the full capture envelope/file, while `response_hash` hashes the upstream `source_response` payload separately so repeated response bodies can be identified without collapsing distinct observations. The metadata row also stores `parser_version`, `parse_status` (`captured / parsed / partial / failed`), `response_status` (`unknown / empty / nonempty / error`) and `expires_at`.
+
+New raw captures expire after `ARCHIVE_RAW_RETENTION_DAYS` (default 90; valid range 1–3650 days). This is an operational default, not a substitute for checking the applicable X terms and data-retention obligations. Existing rows are backfilled to 90 days from `received_at`. `npm run xactions:archive-gc` reports expired raw files in dry-run mode; only `npm run xactions:archive-gc -- --delete` removes expired metadata/files. A file is retained while any unexpired metadata row still references it. Deletion is intentionally explicit.
+
+`archive_metrics` remains the canonical history of metric snapshots: each row preserves `received_at`, nullable `metrics_observed_at`, nullable counts, `raw_hash` and `snapshot_key`. The view `v_twitter_tweet_metrics_history` exposes this history with stable analytics-friendly names; no duplicate metrics-history table is created. Unknown metrics remain SQL `NULL`, not zero.
+
+`twitter_tweets.author_id` is a nullable text field. The migration backfills it from `archive_posts.author_id` where that bridge exists, and new persistence preserves a valid ID supplied by the collector. Handles remain useful display keys, but they are mutable and must not replace the stable ID. DOM-only collection may not expose an author ID; in that case the field correctly remains `NULL`.
+

@@ -14,7 +14,7 @@ const tweetId = "1878727153048777016";
 test("XActions tweet normalization preserves IDs and does not invent missing metrics", () => {
   const item = normalizeXActionsTweet({
     id: tweetId, text: "hello", createdAt: "2026-10-12T12:00:00.000Z",
-    author: { username: "NASA", name: "NASA", verified: true },
+    author: { id: "9007199254740993", username: "NASA", name: "NASA", verified: true },
     metrics: { views: 0, likes: 20, retweets: 0, replies: 3 },
     urls: [{ url: "https://t.co/test", expandedUrl: "https://example.com/" }],
     mentions: [{ username: "NASA" }], hashtags: ["space"],
@@ -22,6 +22,7 @@ test("XActions tweet normalization preserves IDs and does not invent missing met
   }, 1234);
   assert.equal(item.id, tweetId);
   assert.equal(item.authorHandle, "NASA");
+  assert.equal(item.authorId, "9007199254740993", "author IDs above Number.MAX_SAFE_INTEGER stay strings");
   assert.equal(item.views, null);
   assert.equal(item.likes, 20);
   assert.equal(item.retweets, null);
