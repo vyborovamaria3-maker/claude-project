@@ -19,6 +19,8 @@ the outbox library, Intelligence destination and isolated tests exist.
 | 7 | #116 | feat/intelligence-etl-delivery-20261018 | Bounded destination transaction/ACK batch |
 | 8 | #117 | feat/intelligence-token-features-20261018 | Immutable features-v1 PostgreSQL snapshots |
 | 9 | #118 | test/outbox-real-database-contracts-20261018 | Real temporary PG/SQLite source outbox tests |
+| 10 | #119 | docs/codex-intelligence-handoff-20261018 | Codex rollout and event envelope specs |
+| 11 | #120 | fix/intelligence-provenance-collisions-20261018 | Collision rejection and stricter chain evidence checks |
 
 PR bases are stacked in order (PR #110 onto main, each next onto the
 immediately preceding PR head). Verify current GitHub Actions checks and
