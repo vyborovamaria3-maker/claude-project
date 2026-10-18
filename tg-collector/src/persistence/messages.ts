@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { ANALYSIS_VERSION, extractLinks, type RawTelegramMessage } from "../analytics/extract.js";
 import { refreshGraphDays, utcDay } from "../analytics/rollups.js";
 import { syncMessageTokenCandidates } from "../analytics/token-intelligence.js";
+import { emitTgMessageOutbox, emitTgDeletionOutbox } from "./outbox.js";
 
 export async function persistMessage(
   tx: PoolClient, sourceId: string, msg: RawTelegramMessage
@@ -34,6 +35,7 @@ export async function persistMessage(
     await tx.query("DELETE FROM tg_message_threads WHERE source_id=$1 AND message_id=$2", [sourceId, msg.id]);
   }
   await replaceEvidence(tx, sourceId, msg);
+  await emitTgMessageOutbox(tx, sourceId, msg);
 }
 
 export async function replaceEvidence(
@@ -74,5 +76,6 @@ export async function markMessageDeleted(
   if (!result.rowCount) return false;
   const day = utcDay(result.rows[0]?.posted_at);
   if (day) await refreshGraphDays(tx, sourceId, [day]);
+  await emitTgDeletionOutbox(tx, sourceId, messageId);
   return true;
 }
