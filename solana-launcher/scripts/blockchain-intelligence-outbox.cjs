@@ -39,7 +39,8 @@ function ensureSchema(db) {
 }
 function buildWalletRawEvent(input) {
   if(input.kind!=="wallet")return null;
-  if(!isSolanaAddress(input.address))throw new TypeError("Invalid Solana wallet target");
+  if(!isSolanaAddress(input.address)||decodedBytes(input.address)!==32)
+    throw new TypeError("Invalid 32-byte Solana wallet target");
   if(decodedBytes(input.signature)!==64)throw new TypeError("Invalid 64-byte Solana signature");
   if(typeof input.payloadHash!=="string"||!/^[0-9a-f]{64}$/.test(input.payloadHash))
     throw new TypeError("Invalid raw evidence hash");
