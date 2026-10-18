@@ -1,8 +1,61 @@
 const {spawn}=require('node:child_process');const path=require('node:path'),fs=require('node:fs');let sourceCollector,historyCollector;
 const {claim,eligible}=require('./autopost/queue.cjs');
-const {connect}=require('./autopost/runtime.cjs');const {plan,inWindow}=require('./autopost/store.cjs');const {execute,sync,persistPost}=require('./autopost/browser.cjs');
+const {connect}=require('./autopost/runtime.cjs');const {plan,inWindow}=require('./autopost/store.cjs');const {execute,sync,persistPost,reconcilePost}=require('./autopost/browser.cjs');
+const {decideReconciliation,nextCheckAt,RECONCILIATION_WINDOW_MS}=require('./autopost/reconciliation.cjs');
 let stopping=false;process.on('SIGINT',()=>{stopping=true;});process.on('SIGTERM',()=>{stopping=true;});
-async function cycle(c){const now=Date.now(); const missing=(await c.query("SELECT j.* FROM xc_auto_jobs j WHERE j.status='published' AND j.result_id IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM xc_auto_posts p WHERE p.tweet_id=j.result_id) OR NOT EXISTS(SELECT 1 FROM twitter_tweets t WHERE t.tweet_id=j.result_id)) LIMIT 1")).rows[0];if(missing)try{await persistPost(c,missing,missing.result_id);}catch{}await c.query("UPDATE xc_auto_jobs SET status='cancelled',message='Аккаунт удалён' WHERE status='queued' AND NOT EXISTS(SELECT 1 FROM x_accounts a WHERE a.name=account_name)");await c.query("UPDATE xc_auto_sync SET status='cancelled',message='Аккаунт удалён' WHERE status='queued' AND NOT EXISTS(SELECT 1 FROM x_accounts a WHERE a.name=account_name)");await c.query('UPDATE xc_auto_control SET heartbeat=$1 WHERE id=1',[now]);const control=(await c.query('SELECT paused FROM xc_auto_control WHERE id=1')).rows[0];
+async function reconcileOne(c,now){
+ const row=(await c.query("SELECT r.job_id,r.account_name,r.expected_handle,r.kind,r.attempted_at AS reconcile_attempted_at,r.next_check_at,r.deadline_at,r.attempts,r.status AS reconciliation_status,r.candidates,j.id,j.content,j.origin,j.target_id,j.target_handle,j.started_at,j.created_at,j.attempted_at,j.status AS job_status,a.status AS account_status,a.account_busy_until FROM xc_auto_reconcile r JOIN xc_auto_jobs j ON j.id=r.job_id LEFT JOIN x_accounts a ON a.name=r.account_name WHERE r.status='queued' AND r.next_check_at<=$1 AND j.status='uncertain' AND (r.deadline_at<=$1 OR a.name IS NULL OR a.status<>'active' OR COALESCE(a.account_busy_until,0)<=$1) ORDER BY r.next_check_at,r.created_at LIMIT 1",[now])).rows[0];
+ if(!row)return false;
+ const deadlineAt=Number(row.deadline_at),stamp=Date.now();
+ const messageForManual='Автоматическая сверка не может безопасно подтвердить результат. Проверьте X вручную; повторная отправка запрещена.';
+ if(deadlineAt<=stamp){await c.query("UPDATE xc_auto_reconcile SET status='manual_required',last_error='За 24 часа не найдено единственное точное совпадение.',updated_at=$2,finished_at=$2 WHERE job_id=$1 AND status='queued'",[row.job_id,stamp]);await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,messageForManual,stamp]);return true;}
+ if(!row.account_status||row.account_status!=='active'){await c.query("UPDATE xc_auto_reconcile SET status='manual_review',last_error='Аккаунт публикации отсутствует или неактивен.',updated_at=$2,finished_at=$2 WHERE job_id=$1 AND status='queued'",[row.job_id,stamp]);await c.query("UPDATE xc_auto_jobs SET message='Аккаунт публикации отсутствует или неактивен. Проверьте результат в X вручную.',finished_at=$2 WHERE id=$1 AND status='uncertain'",[row.job_id,stamp]);return true;}
+ const busyUntil=stamp+600000;
+ const lock=await c.query("UPDATE x_accounts SET account_busy_until=$2 WHERE name=$1 AND role='publisher' AND status='active' AND COALESCE(account_busy_until,0)<=$3 RETURNING name",[row.account_name,busyUntil,stamp]);
+ if(!lock.rowCount)return false;
+ try{
+  const claim=await c.query("UPDATE xc_auto_reconcile SET status='running',attempts=attempts+1,first_checked_at=COALESCE(first_checked_at,$2),updated_at=$2 WHERE job_id=$1 AND status='queued' AND next_check_at<=$2 RETURNING attempts",[row.job_id,stamp]);
+  if(!claim.rowCount)return false;
+  const attempts=Number(claim.rows[0].attempts);
+  if(!['post','reply'].includes(row.kind)){
+   await c.query("UPDATE xc_auto_reconcile SET status='manual_review',last_error='Автоматическая сверка поддерживает только публикации и ответы.',updated_at=$2,finished_at=$2 WHERE job_id=$1 AND status='running'",[row.job_id,stamp]);
+   await c.query("UPDATE xc_auto_jobs SET message='Автоматическая сверка этого действия не поддерживается. Проверьте X вручную; повтор запрещён.',finished_at=$2 WHERE id=$1 AND status='uncertain'",[row.job_id,stamp]);
+   return true;
+  }
+  try{
+   const matches=await reconcilePost(c,row,Date.now());
+   const checkNow=Date.now();
+   const decision=decideReconciliation({kind:row.kind,matches,now:checkNow,deadlineAt});
+   const candidates=JSON.stringify(matches.map(match=>({...match,url:'https://x.com/'+String(match.handle||row.expected_handle).replace(/^@/,'')+'/status/'+match.tweet_id})));
+   if(decision.status==='resolved'){
+    const match=decision.match;
+    await persistPost(c,row,match.tweet_id,match);
+    await c.query('BEGIN');
+    try{
+     const updated=await c.query("UPDATE xc_auto_jobs SET status='published',result_id=$2,result_url=$3,message=$4,finished_at=$5,lease_until=NULL WHERE id=$1 AND status='uncertain' RETURNING id",[row.job_id,match.tweet_id,'https://x.com/'+row.expected_handle+'/status/'+match.tweet_id,'Публикация подтверждена сверкой X; повторная отправка не выполнялась.',checkNow]);
+     if(!updated.rowCount)throw Error('Job state changed during reconciliation');
+     await c.query("UPDATE xc_auto_reconcile SET status='resolved',matched_tweet_id=$2,candidates=$3::jsonb,last_error=NULL,updated_at=$4,finished_at=$4 WHERE job_id=$1 AND status='running'",[row.job_id,match.tweet_id,candidates,checkNow]);
+     await c.query('COMMIT');
+    }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
+   }else if(decision.status==='manual_review'||decision.status==='manual_required'){
+    const detail=decision.reason==='MULTIPLE_MATCHES'?'Найдено несколько точных совпадений; выберите публикацию вручную.':decision.reason==='UNSUPPORTED_ACTION'?'Автоматическая сверка этого действия не поддерживается.':'За 24 часа не найдено единственное точное совпадение.';
+    await c.query("UPDATE xc_auto_reconcile SET status=$2,candidates=$3::jsonb,last_error=$4,updated_at=$5,finished_at=$5 WHERE job_id=$1 AND status='running'",[row.job_id,decision.status,candidates,detail,checkNow]);
+    await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,detail+' Проверьте X вручную; повторная отправка запрещена.',checkNow]);
+   }else{
+    const nextAt=nextCheckAt(checkNow,attempts,deadlineAt);
+    await c.query("UPDATE xc_auto_reconcile SET status='queued',next_check_at=$2,candidates='[]'::jsonb,last_error='Точное совпадение пока не найдено; автоматический повтор отправки запрещён.',updated_at=$3,finished_at=NULL WHERE job_id=$1 AND status='running'",[row.job_id,nextAt,checkNow]);
+    await c.query("UPDATE xc_auto_jobs SET message=$2 WHERE id=$1 AND status='uncertain'",[row.job_id,'Точное совпадение пока не найдено. Следующая сверка запланирована; повторная отправка запрещена.']);
+   }
+  }catch{
+   const checkNow=Date.now();
+   if(checkNow>=deadlineAt){await c.query("UPDATE xc_auto_reconcile SET status='manual_required',last_error='Не удалось завершить сверку за 24 часа.',updated_at=$2,finished_at=$2 WHERE job_id=$1 AND status='running'",[row.job_id,checkNow]);await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,messageForManual,checkNow]);}
+   else{const nextAt=nextCheckAt(checkNow,attempts,deadlineAt);await c.query("UPDATE xc_auto_reconcile SET status='queued',next_check_at=$2,last_error='Не удалось проверить публикации X; сверка повторится автоматически.',updated_at=$3,finished_at=NULL WHERE job_id=$1 AND status='running'",[row.job_id,nextAt,checkNow]);await c.query("UPDATE xc_auto_jobs SET message='Не удалось проверить публикации X. Сверка повторится автоматически; повторная отправка запрещена.' WHERE id=$1 AND status='uncertain'",[row.job_id]);}
+  }
+  return true;
+ }finally{await c.query('UPDATE x_accounts SET account_busy_until=0 WHERE name=$1 AND account_busy_until=$2',[row.account_name,busyUntil]).catch(()=>{});}
+}
+
+async function cycle(c){const now=Date.now(); const missing=(await c.query("SELECT j.* FROM xc_auto_jobs j WHERE j.status='published' AND j.result_id IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM xc_auto_posts p WHERE p.tweet_id=j.result_id) OR NOT EXISTS(SELECT 1 FROM twitter_tweets t WHERE t.tweet_id=j.result_id)) LIMIT 1")).rows[0];if(missing)try{await persistPost(c,missing,missing.result_id);}catch{}await c.query("UPDATE xc_auto_jobs SET status='cancelled',message='Аккаунт удалён' WHERE status='queued' AND NOT EXISTS(SELECT 1 FROM x_accounts a WHERE a.name=account_name)");await c.query("UPDATE xc_auto_sync SET status='cancelled',message='Аккаунт удалён' WHERE status='queued' AND NOT EXISTS(SELECT 1 FROM x_accounts a WHERE a.name=account_name)");await c.query('UPDATE xc_auto_control SET heartbeat=$1 WHERE id=1',[now]);const control=(await c.query('SELECT paused FROM xc_auto_control WHERE id=1')).rows[0];await reconcileOne(c,now);
  if(!control.paused){const configs=(await c.query("SELECT f.* FROM xc_auto_config f JOIN x_accounts a ON a.name=f.account_name WHERE f.enabled AND a.role='publisher' AND a.status='active' AND f.next_run<=$1",[now])).rows;for(const conf of configs){if(stopping)break;try{await plan(c,conf);}catch{const retryAt=Date.now()+5*60_000;await c.query('UPDATE xc_auto_config SET next_run=$2,last_message=$3 WHERE account_name=$1',[conf.account_name,retryAt,'Ошибка генерации контента. Повтор через 5 минут; проверьте провайдера и API-ключ.']);console.error('Autopost content generation failed; retry scheduled in 5 minutes.');}}}
  if(stopping)return;
  const due=(await c.query(`SELECT j.* FROM xc_auto_jobs j JOIN x_accounts a ON a.name=j.account_name WHERE j.status='queued' AND j.scheduled_at<=$1 AND a.role='publisher' AND a.status='active' AND COALESCE(a.account_busy_until,0)<=$1 AND (j.origin='manual' OR ($2=false AND EXISTS(SELECT 1 FROM xc_auto_config f WHERE f.account_name=j.account_name AND ${eligible}))) ORDER BY j.scheduled_at,j.created_at LIMIT 20`,[now,control.paused,Number(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',hour:'numeric',hourCycle:'h23'}).format(now)),Math.floor((now+10800000)/86400000)*86400000-10800000])).rows;
@@ -25,6 +78,6 @@ async function cycle(c){const now=Date.now(); const missing=(await c.query("SELE
                   WHEN retry_count<3 THEN 'Восстановлено после перезапуска; повтор запланирован'
                   ELSE 'Слишком много перезапусков до отправки; проверьте браузер и состояние задания' END,
      lease_until=NULL
- WHERE status='running'`,[recoveryNow]);await c.query("UPDATE xc_auto_sync SET status='queued' WHERE status='running'");console.log('Autopost worker running. Ctrl+C stops after current action.');
+ WHERE status='running'`,[recoveryNow]);await c.query("UPDATE xc_auto_sync SET status='queued' WHERE status='running'");await c.query("INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,last_error,created_at,updated_at,finished_at) SELECT j.id,j.account_name,j.expected_handle,j.kind,COALESCE(j.attempted_at,j.started_at,j.created_at),$1,COALESCE(j.attempted_at,j.started_at,j.created_at)+$2,CASE WHEN COALESCE(j.attempted_at,j.started_at,j.created_at)+$2<=$1 THEN 'manual_required' WHEN j.kind NOT IN ('post','reply') THEN 'manual_review' ELSE 'queued' END,CASE WHEN COALESCE(j.attempted_at,j.started_at,j.created_at)+$2<=$1 THEN 'Результат старше 24 часов; требуется ручная проверка.' WHEN j.kind NOT IN ('post','reply') THEN 'Автоматическая сверка поддерживает только публикации и ответы.' ELSE NULL END,j.created_at,$1,CASE WHEN COALESCE(j.attempted_at,j.started_at,j.created_at)+$2<=$1 OR j.kind NOT IN ('post','reply') THEN $1 ELSE NULL END FROM xc_auto_jobs j WHERE j.status='uncertain' ON CONFLICT(job_id) DO NOTHING",[recoveryNow,RECONCILIATION_WINDOW_MS]);console.log('Autopost worker running. Ctrl+C stops after current action.');
  while(!stopping){try{await cycle(c);}catch{console.error('Autopost cycle failed. Check database and migrations.');}if(!stopping)await new Promise(r=>setTimeout(r,5000));}
  }finally{if(sourceCollector?.connected)sourceCollector.send({stop:true});if(historyCollector?.connected)historyCollector.send({stop:true});await c.query('SELECT pg_advisory_unlock(742098531)').catch(()=>{});await c.end();}})().catch(()=>{console.error('Unable to start worker. Check migrations/database or an already running worker.');process.exitCode=1;});

@@ -46,3 +46,26 @@ CREATE TABLE IF NOT EXISTS xc_auto_sources (
  next_run bigint NOT NULL DEFAULT 0,
  last_task_id bigint REFERENCES x_tasks(id)
 );
+
+
+CREATE TABLE IF NOT EXISTS xc_auto_reconcile (
+ job_id text PRIMARY KEY REFERENCES xc_auto_jobs(id) ON DELETE CASCADE,
+ account_name text NOT NULL,
+ expected_handle text NOT NULL,
+ kind text NOT NULL CHECK(kind IN ('post','reply','like','repost','follow')),
+ attempted_at bigint NOT NULL,
+ first_checked_at bigint,
+ next_check_at bigint NOT NULL,
+ deadline_at bigint NOT NULL,
+ attempts integer NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+ status text NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','resolved','manual_review','manual_required')),
+ matched_tweet_id text,
+ candidates jsonb NOT NULL DEFAULT '[]'::jsonb CHECK(jsonb_typeof(candidates)='array'),
+ last_error text,
+ created_at bigint NOT NULL,
+ updated_at bigint NOT NULL,
+ finished_at bigint,
+ CHECK(deadline_at >= attempted_at)
+);
+CREATE INDEX IF NOT EXISTS xc_auto_reconcile_due ON xc_auto_reconcile(next_check_at,created_at) WHERE status='queued';
+CREATE INDEX IF NOT EXISTS xc_auto_reconcile_account ON xc_auto_reconcile(account_name,status,updated_at DESC);
