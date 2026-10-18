@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
     const auth = await requireProdAuth(request); if (auth) return auth;
     const action = new URL(request.url).searchParams.get('action');
     if (action === 'autopost-overview' || action === 'autopost-stats') {localLogin(request);return NextResponse.json(await autopostCommand({action:action==='autopost-overview'?'overview':'stats',name:new URL(request.url).searchParams.get('name')}),{headers:{'Cache-Control':'no-store'}});}
+    if (action === 'autopost-audit') {localLogin(request);return NextResponse.json(await autopostCommand({action:'audit',id:new URL(request.url).searchParams.get('id')}),{headers:{'Cache-Control':'no-store'}});}
     if (action === 'publish-status') {localLogin(request);return NextResponse.json(publicPublishJob(await autopostCommand({action:'status',id:new URL(request.url).searchParams.get('id')})), {headers:{'Cache-Control':'no-store'}});}
     if (action === 'account-login-status') {localLogin(request);return NextResponse.json(loginStatus(new URL(request.url).searchParams.get('id')), {headers:{'Cache-Control':'no-store'}});}
     if (action === 'account-errors') return NextResponse.json(await accountErrors(new URL(request.url).searchParams.get('name')),{headers:{'Cache-Control':'no-store'}});
