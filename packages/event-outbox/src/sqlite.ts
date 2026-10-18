@@ -52,15 +52,15 @@ export function claimSqlite(db: SqliteDb, options: ClaimOptions): ClaimedEvent[]
   }
 }
 
-export function ackSqlite(db: SqliteDb, id: string, owner: string, now = new Date()): boolean {
+export function ackSqlite(db: SqliteDb, id: string, owner: string, leaseUntil: string, now = new Date()): boolean {
   const stamp=now.toISOString();
   return db.prepare(`UPDATE outbox_events SET processed_at=?,lease_owner=NULL,lease_until=NULL
-    WHERE id=? AND lease_owner=? AND lease_until>?
+    WHERE id=? AND lease_owner=? AND lease_until=? AND lease_until>?
     AND processed_at IS NULL AND dead_lettered_at IS NULL`)
-    .run(stamp,id,owner,stamp).changes===1;
+    .run(stamp,id,owner,leaseUntil,stamp).changes===1;
 }
 
-export function failSqlite(db: SqliteDb, id: string, owner: string, reason: string,
+export function failSqlite(db: SqliteDb, id: string, owner: string, leaseUntil: string, reason: string,
                            nextAttemptAt: Date, now=new Date(), maxAttempts=12): boolean {
   if(!Number.isInteger(maxAttempts)||maxAttempts<1) throw new RangeError("maxAttempts");
   const stamp=now.toISOString();
@@ -68,7 +68,7 @@ export function failSqlite(db: SqliteDb, id: string, owner: string, reason: stri
     attempts=attempts+1,last_error=?,
     dead_lettered_at=CASE WHEN attempts+1 >= ? THEN ? ELSE NULL END,
     next_attempt_at=?,lease_owner=NULL,lease_until=NULL
-    WHERE id=? AND lease_owner=? AND lease_until>?
+    WHERE id=? AND lease_owner=? AND lease_until=? AND lease_until>?
     AND processed_at IS NULL AND dead_lettered_at IS NULL`)
-    .run(reason.slice(0,1000),maxAttempts,stamp,nextAttemptAt.toISOString(),id,owner,stamp).changes===1;
+    .run(reason.slice(0,1000),maxAttempts,stamp,nextAttemptAt.toISOString(),id,owner,leaseUntil,stamp).changes===1;
 }
