@@ -29,7 +29,10 @@ test("stable decimal author IDs survive and handles are never used as a substitu
   assert.equal(obj.timelineEvent.occurredAt,"2026-10-18T00:45:00.000Z");
   assert.equal(buildXTweetOutboxEvent({...tweet,authorId:null},Date.now()),null);
   assert.equal(buildXTweetOutboxEvent({...tweet,authorId:"@handle"},Date.now()),null);
-  assert.throws(()=>buildXTweetOutboxEvent({...tweet,id:"123"},Date.now()),/Invalid tweet ID/);
+  assert.equal(buildXTweetOutboxEvent({...tweet,id:"123"},Date.now())?.eventKey,
+    "x:tweet:123:observed:"+tweet.observedAt);
+  assert.throws(()=>buildXTweetOutboxEvent({...tweet,id:"0"},Date.now()),/Invalid tweet ID/);
+  assert.throws(()=>buildXTweetOutboxEvent({...tweet,id:"@alice"},Date.now()),/Invalid tweet ID/);
 });
 test("observedAt is the unique revision key; unknown publish time is not invented",()=>{
   const a=buildXTweetOutboxEvent(tweet,123)!;
