@@ -1,30 +1,35 @@
-# Intelligence — source evidence, entities and point-in-time timeline
+# Intelligence — inbox, entity registry, timeline and bounded delivery
 
-Stacked PRs introduce an isolated PostgreSQL destination, not a replacement for
-X/TG PostgreSQL or blockchain SQLite. Source databases are NOT modified here.
+Stacked isolated PostgreSQL destination; no production database is accessed.
 
-Migration order:
+Migrations in order:
 1. migrations/001_entity_registry.sql
 2. migrations/002_timeline.sql
 
-The caller uses ONE destination transaction:
-- ingestRegistryEvent(tx, event) to insert inbox, entity registry, evidence.
-- ingestTimelineEvent(tx, source, eventKind, timeline) to insert linked timeline.
-- COMMIT destination; only THEN ACK source outbox event.
+The provider-neutral delivery adapter accepts an explicitly supplied source
+and destination pool. runDeliveryBatch claims a bounded batch, checks that the
+Outbox envelope matches source event identity, writes destination under BEGIN /
+COMMIT and ACKs the source only AFTER successful commit. A failure rolls back
+and schedules another attempt (bounded source retry/dead-letter policy).
+A stale ACK lease is reported, never counted as a confirmed delivery.
+Delivery remains at-least-once; destination inbox is idempotent.
 
-Both insertions use unique event identity to tolerate at-least-once replay.
-The timeline query filters both event occurrence and source observation cutoff,
-so a backfilled old tweet cannot appear in a past "known at" query.
+Source adapters are implemented in packages/event-outbox for both PostgreSQL
+and SQLite. This destination library does not open source sessions, connect
+to live providers, configure remote workers or automatically install migrations.
 
-Local (Node 22+):
+Point-in-time timeline queries require event occurrence <= as-of AND source
+observation <= known-at, protecting against late-arriving evidence leakage.
+
+Local CI command (Node 22+):
   npm install --prefix packages/contracts --ignore-scripts --no-package-lock
   npm --prefix packages/contracts run build
+  npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock
+  npm --prefix packages/event-outbox run build
   npm install --prefix intelligence --ignore-scripts --no-package-lock
   npm --prefix intelligence run check
 
-CI uses a disposable PostgreSQL 16 database for real transaction, replay,
-foreign-key and point-in-time tests. Does not connect to production databases.
-
-Remaining: actually wiring source outboxes; migrations in production only after
-reviewed backups; durable ETL with lease renewal and ACK; historical backfill
-with reconciled cursors; authorization/read API; features and AI models.
+GitHub CI includes a disposable PostgreSQL 16 service. Production source
+writes, outbox migrations and a supervised ETL process are NOT connected by
+these PRs. A source event must be created in the same transaction as its
+actual source row, and checkpoint backfill requires a separate rollout.

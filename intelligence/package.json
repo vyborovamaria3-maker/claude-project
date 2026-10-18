@@ -7,7 +7,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@claude-project/contracts": "file:../packages/contracts"
+    "@claude-project/contracts": "file:../packages/contracts",
+    "@claude-project/event-outbox": "file:../packages/event-outbox"
   },
   "devDependencies": {
     "typescript": "5.9.3",
