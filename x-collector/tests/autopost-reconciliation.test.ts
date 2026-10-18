@@ -67,6 +67,7 @@ test('short links are expanded before matching and a different source permalink 
 
 test('manual confirmation records the correct destination for likes, reposts, and follows',()=>{
   const {manualConfirmationResult}=load('../scripts/autopost/engine.cjs');
+  assert.throws(()=>manualConfirmationResult({kind:'post',expected_handle:'publisher'},'not-a-tweet-id'),/Некорректный ID твита/);
   assert.deepEqual(manualConfirmationResult({kind:'like',target_handle:'source',target_id:'123'},null),{resultId:null,resultUrl:'https://x.com/source/status/123'});
   assert.deepEqual(manualConfirmationResult({kind:'repost',target_handle:'source',target_id:'456'},null),{resultId:null,resultUrl:'https://x.com/source/status/456'});
   assert.deepEqual(manualConfirmationResult({kind:'follow',target_handle:'source',target_id:'456'},null),{resultId:null,resultUrl:'https://x.com/source'});
