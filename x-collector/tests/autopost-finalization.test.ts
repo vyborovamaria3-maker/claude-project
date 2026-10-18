@@ -74,6 +74,6 @@ test('V2-02 reconciliation finalizes post and the matching reconciliation atomic
   const reconcile=(await db.query<{status:string,matched_tweet_id:string}>('SELECT status,matched_tweet_id FROM xc_auto_reconcile WHERE job_id=$1',[id])).rows[0];
   assert.deepEqual(reconcile,{status:'resolved',matched_tweet_id:tweetId});
   assert.equal((await db.query<{status:string}>('SELECT status FROM xc_auto_jobs WHERE id=$1',[id])).rows[0].status,'published');
-  assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_posts',[id])).rows[0].n,1);
+  assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_posts')).rows[0].n,1);
  }finally{await db.close();}
 });
