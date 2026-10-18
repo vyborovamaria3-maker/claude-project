@@ -75,7 +75,9 @@ async def test_dry_run_never_calls_telegram_or_needs_bot_token(test_app, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_apply_checks_bot_identity_permissions_and_sets_join_only(test_app, monkeypatch):
+async def test_apply_checks_bot_identity_permissions_and_sets_scoped_consent_updates(
+    test_app, monkeypatch,
+):
     settings = configure(test_app)
     fake = StubBotApi()
     monkeypatch.setattr(setup.httpx, "AsyncClient", lambda **_kwargs: fake)
@@ -89,7 +91,7 @@ async def test_apply_checks_bot_identity_permissions_and_sets_join_only(test_app
     assert fake.calls[2][1] == {
         "url": PUBLIC_URL,
         "secret_token": settings.tginvite_consent_webhook_secret,
-        "allowed_updates": ["chat_join_request"],
+        "allowed_updates": ["chat_join_request", "message"],
         "max_connections": 5,
         "drop_pending_updates": False,
     }

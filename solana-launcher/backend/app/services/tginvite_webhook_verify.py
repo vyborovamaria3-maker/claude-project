@@ -142,7 +142,9 @@ def verified_direct_invite_request(
     text = message.get("text")
     if not isinstance(text, str) or len(text) > 128:
         return None
-    command = re.fullmatch(r"/join(?:@[A-Za-z][A-Za-z0-9_]{4,31})?\s+(-[1-9][0-9]{0,19})", text.strip())
+    command = re.fullmatch(
+        r"/join(?:@[A-Za-z][A-Za-z0-9_]{4,31})?\s+(-[1-9][0-9]{0,19})", text.strip(),
+    )
     if command is None:
         return None
     sender = message.get("from")

@@ -1,6 +1,6 @@
-"""Read-only owner-scoped TGInvite job ledger and safe job cancellation.
+"""Owner-scoped ledger, safe cancellation and verified invitation reservations.
 
-No HTTP endpoint accepts consent claims or can create/send invitations.
+Reservations require server-verified consent; these endpoints never call Telegram.
 """
 
 from __future__ import annotations
@@ -20,7 +20,9 @@ from app.api.v1.tginvite_vault import _internal_only, _telegram_limit
 from app.db.session import get_db
 from app.models.telegram_invite_consent import TelegramInviteJob
 from app.services.tginvite_consent_ledger import (
-    ConsentLedgerError, claim_direct_invite, finish_direct_invite,
+    ConsentLedgerError,
+    claim_direct_invite,
+    finish_direct_invite,
 )
 from app.services.tginvite_webhook_verify import TelegramWebhookInvalid, verify_operator_bindings
 
@@ -72,7 +74,9 @@ async def cancel_invite_job(
         raise HTTPException(status_code=404, detail="Invitation job not found")
     # Once an invocation is reserved, the worker may already be calling
     # Telegram. Do not claim cancellation can stop an in-flight API request.
-    if job.status not in {"blocked_transport"}:
+    if job.status == "cancelled":
+        return
+    if job.status != "blocked_transport":
         raise HTTPException(status_code=409, detail="Only non-dispatching jobs may be cancelled")
     job.status = "cancelled"
     await db.commit()
@@ -154,5 +158,7 @@ async def finish_direct_invite_endpoint(
             outcome=payload.outcome,
         )
     except ConsentLedgerError:
-        raise HTTPException(status_code=409, detail="Direct invite job cannot be finalized") from None
+        raise HTTPException(
+            status_code=409, detail="Direct invite job cannot be finalized",
+        ) from None
     return {"jobId": str(job.id), "status": job.status}

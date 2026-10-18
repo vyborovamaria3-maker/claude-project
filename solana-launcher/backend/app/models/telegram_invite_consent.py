@@ -57,7 +57,8 @@ class TelegramInviteJob(Base):
     __tablename__ = "telegram_invite_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('blocked_transport', 'cancelled', 'reserved', 'invited', 'declined', 'unknown')",
+            "status IN ('blocked_transport', 'cancelled', 'reserved', "
+            "'invited', 'declined', 'unknown')",
             name="ck_tginvite_job_status_no_dispatch",
         ),
         UniqueConstraint(

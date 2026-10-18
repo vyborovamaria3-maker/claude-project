@@ -101,3 +101,39 @@ async def test_job_list_limits_and_requires_active_subscription(test_app, client
     assert (await client.get(path + "?limit=101", headers=headers)).status_code == 422
     assert (await client.get(path + "?limit=0", headers=headers)).status_code == 422
     assert (await client.get(path, headers=headers)).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_status", ["reserved", "invited", "declined", "unknown"])
+async def test_cancel_never_claims_to_stop_dispatched_invites(test_app, client, job_status):
+    test_app.state.settings.tginvite_internal_key = SERVICE_KEY
+    owner_id, token = await user_and_token(test_app)
+    headers = {"Authorization": f"Bearer {token}", "X-TGInvite-Service-Key": SERVICE_KEY}
+    async with test_app.state.sessionmaker() as db:
+        proof = await record_verified_opt_in(
+            db,
+            VerifiedTelegramOptIn(
+                owner_id=owner_id,
+                destination_chat_id="-100129876543",
+                recipient_telegram_id="246813579",
+                telegram_bot_id="987654321",
+                telegram_update_id=988,
+                proof_kind="telegram_bot_start",
+            ),
+            hmac_key=KEY,
+        )
+        job = await plan_non_dispatching_job(
+            db, owner_id=owner_id, consent_id=str(proof.id),
+            destination_chat_id=proof.destination_chat_id,
+            idempotency_key="request_non_cancellable_988",
+        )
+        job.status = job_status
+        job.direct_recipient_digest = "d" * 64
+        await db.commit()
+        job_id = str(job.id)
+
+    path = "/api/v1/tginvite/invite-jobs"
+    response = await client.post(f"{path}/{job_id}/cancel", headers=headers)
+    assert response.status_code == 409
+    listed = await client.get(path, headers=headers)
+    assert listed.json()[0]["status"] == job_status
