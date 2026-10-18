@@ -1,35 +1,38 @@
-# Intelligence — inbox, entity registry, timeline and bounded delivery
+# Intelligence — receiving events, timeline and feature snapshots
 
-Stacked isolated PostgreSQL destination; no production database is accessed.
+The Intelligence modules are built independently of collector databases.
+Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migrations in order:
-1. migrations/001_entity_registry.sql
-2. migrations/002_timeline.sql
+Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql.
 
-The provider-neutral delivery adapter accepts an explicitly supplied source
-and destination pool. runDeliveryBatch claims a bounded batch, checks that the
-Outbox envelope matches source event identity, writes destination under BEGIN /
-COMMIT and ACKs the source only AFTER successful commit. A failure rolls back
-and schedules another attempt (bounded source retry/dead-letter policy).
-A stale ACK lease is reported, never counted as a confirmed delivery.
-Delivery remains at-least-once; destination inbox is idempotent.
+- Ingest RegistryEvent after claiming a source outbox event; source ACK only after
+  destination transaction commits. Consumer runDeliveryBatch remains a bounded,
+  explicit library call. It is NOT connected to running collectors.
+- Timeline queries filter both event occurrence and time first observed, so a
+  late-arriving historical tweet cannot leak into an earlier known-at view.
+- The feature registry has immutable version definitions. FEATURES_V1 contains
+  user-specified token-level metrics. Missing sentiment or bot-ratio values are
+  represented as null rather than silently as zero.
+- Feature snapshots record as_of and max_input_observed_at. Later-observed
+  inputs are rejected. Duplicate identical snapshots are accepted as no-op;
+  conflicting revisions require a NEW explicit feature version or new as_of.
+- A historical offline recomputation at an earlier as_of is NOT a proof that a
+  trading signal was actually available at that moment. A future production
+  backtest must separately use feature publication times and observed labels.
 
-Source adapters are implemented in packages/event-outbox for both PostgreSQL
-and SQLite. This destination library does not open source sessions, connect
-to live providers, configure remote workers or automatically install migrations.
+CI builds the shared contract, event-outbox and Intelligence modules and tests
+PostgreSQL transaction/replay, timeline cutoffs and feature schema invariants.
+No X or Telegram account, blockchain provider, local production DB or session
+is accessed by these tests.
 
-Point-in-time timeline queries require event occurrence <= as-of AND source
-observation <= known-at, protecting against late-arriving evidence leakage.
-
-Local CI command (Node 22+):
+Local commands (Node 22+):
   npm install --prefix packages/contracts --ignore-scripts --no-package-lock
-  npm --prefix packages/contracts run build
+  npm --prefix packages/contracts run check
   npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock
-  npm --prefix packages/event-outbox run build
+  npm --prefix packages/event-outbox run check
   npm install --prefix intelligence --ignore-scripts --no-package-lock
   npm --prefix intelligence run check
 
-GitHub CI includes a disposable PostgreSQL 16 service. Production source
-writes, outbox migrations and a supervised ETL process are NOT connected by
-these PRs. A source event must be created in the same transaction as its
-actual source row, and checkpoint backfill requires a separate rollout.
+Remaining: deployment-safe source migrations, explicit source writes and
+backfill, real ETL process with source ports, blockchain reconciliation, AI
+embeddings/training/outcome labels, secured APIs and operational runbooks.
