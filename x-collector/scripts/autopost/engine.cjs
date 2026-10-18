@@ -20,8 +20,7 @@ async function command(c,i){switch(i.action){
   if(!['post','reply'].includes(row.kind))throw Error('Подтверждение поста доступно только для публикаций и ответов; для этого действия используйте ручное решение');
   const candidates=Array.isArray(row.candidates)?row.candidates:(typeof row.candidates==='string'?JSON.parse(row.candidates):[]);
   const candidate=candidates.find(value=>String(value.tweet_id)===i.tweet_id);
-  if(candidates.length&&!candidate)throw Error('Выберите один из найденных кандидатов');
-  if(!candidate&&i.manual_confirm!==true)throw Error('Подтвердите, что проверили публикацию в X вручную');
+  if(!candidate&&i.manual_confirm!==true)throw Error(candidates.length?'Выберите найденного кандидата или подтвердите ID вручную после проверки X':'Подтвердите, что проверили публикацию в X вручную');
   const {persistPost}=require('./browser.cjs');
   await persistPost(c,row,i.tweet_id,candidate||{});
   const now=Date.now();
