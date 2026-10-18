@@ -120,7 +120,7 @@ const successfulSwap = { signature: "swap", timestamp: 100, events: { swap: {
 } } };
 assert.equal(helius.txsToTrades([successfulSwap], "mintA").length, 1);
 assert.equal(helius.txsToTrades([{ ...successfulSwap, transactionError: { InstructionError: [0, "failed"] } }], "mintA").length, 0);
-assert.deepEqual(Array.from(incremental.transactions, (tx) => String(tx.signature)), ["new"]);
+assert.deepEqual(Array.from(incremental.transactions, (tx) => String(tx.signature)), ["new", "known"]);
 assert.equal(incremental.reachedKnownHistory, true);
 assert.equal(incremental.truncated, false);
 assert.equal(calls.length, 1);

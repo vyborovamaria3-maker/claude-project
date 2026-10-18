@@ -22,13 +22,13 @@ const HELIUS_RPC =
 const HELIUS_API_KEYS = getHeliusApiKeys();
 
 export interface HeliusEnrichedTx {
+  transactionError?: unknown;
   signature: string;
   timestamp: number;
   type?: string;
   source?: string;
   feePayer?: string;
   fee?: number;
-  transactionError?: unknown;
   tokenTransfers?: Array<{
     fromUserAccount?: string;
     toUserAccount?: string;
@@ -67,26 +67,60 @@ export type EnrichedTxMeta = {
   truncated: boolean;
   /** Incremental mode stopped at an already-persisted signature, not chain exhaustion. */
   reachedKnownHistory?: boolean;
-  /** Actual HTTP attempts made by this call, including retries and failed key attempts. */
-  httpRequests?: number;
-  /** Number of successful pages returned by the provider. */
-  pagesFetched?: number;
-  lastPageEmpty?: boolean;
+  /** True when local credit guard stopped after a partial page was fetched. */
+  budgetExhausted?: boolean;
 };
 
-async function fetchHeliusPage(
-  mint: string, before: string | undefined, limit: number, keys: string[],
-): Promise<{ transactions: HeliusEnrichedTx[]; httpRequests: number }> {
+export type HeliusRequestContext = {
+  address: string;
+  endpoint: "enhanced-address-transactions";
+  requestedLimit: number;
+  includeTokenAccounts: boolean;
+  beforeSignature?: string;
+  estimatedCredits: number;
+};
+export type HeliusRequestHooks = {
+  beforeRequest?: (context: HeliusRequestContext) => Promise<string> | string;
+  afterResponse?: (reservationId: string | undefined, response: {
+    status: number; actualCredits: number | null;
+  }) => Promise<void> | void;
+  onError?: (reservationId: string | undefined, error: unknown) => Promise<void> | void;
+  /** Local estimate only; provider-reported usage is recorded separately. */
+  estimatedCreditsPerRequest?: number;
+};
+
+function reportedCredits(response: Response): number | null {
+  for (const name of ["x-helius-rpc-units-consumed", "x-rpc-units-consumed", "x-helius-credits-consumed"]) {
+    const raw = response.headers?.get?.(name);
+    if (raw && /^\d+(?:\.\d+)?$/.test(raw)) {
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= 0) return Math.ceil(value);
+    }
+  }
+  return null;
+}
+
+async function fetchHeliusPage(mint: string, before: string | undefined, limit: number, keys: string[],
+  includeTokenAccounts = false, requestHooks?: HeliusRequestHooks): Promise<HeliusEnrichedTx[]> {
   const urls = keys.map(apiKey => {
-    const url = new URL(appendHeliusApiKey("https://api.helius.xyz/v0/addresses/" + mint + "/transactions", apiKey));
-    url.searchParams.set("limit", String(limit));
-    if (before) url.searchParams.set("before", before);
+    const url = new URL(appendHeliusApiKey("https://api-mainnet.helius-rpc.com/v0/addresses/"+mint+"/transactions",apiKey));
+    url.searchParams.set("limit",String(limit));
+    url.searchParams.set("commitment","finalized");
+    if(includeTokenAccounts) url.searchParams.set("token-accounts","balanceChanged");
+    if(before) url.searchParams.set("before-signature",before);
     return url.toString();
   });
-  let httpRequests = 0;
-  const page: unknown = await jsonRequest(urls, { headers: { Accept: "application/json" } }, () => { httpRequests++; });
-  if (!Array.isArray(page)) throw Object.assign(new Error("Helius page has invalid shape"), { httpRequests });
-  return { transactions: page as HeliusEnrichedTx[], httpRequests };
+  const page: unknown = await jsonRequest(urls,{headers:{Accept:"application/json"}},
+    () => requestHooks?.beforeRequest?.({address:mint,endpoint:"enhanced-address-transactions",
+      requestedLimit:limit,includeTokenAccounts,beforeSignature:before,
+      estimatedCredits:requestHooks?.estimatedCreditsPerRequest??110}), {
+      afterResponse: (id: string | undefined,response: Response) => requestHooks?.afterResponse?.(id,
+        {status:response.status,actualCredits:reportedCredits(response)}),
+      onError: (id: string | undefined,error: unknown) => requestHooks?.onError?.(id,error),
+    });
+  if(!Array.isArray(page) || page.some(tx=>!tx || typeof tx.signature!=="string" || !tx.signature))
+    throw new Error("Helius page has invalid shape or missing signature");
+  return page as HeliusEnrichedTx[];
 }
 
 export async function fetchEnrichedTxsForMintWithMeta(
@@ -94,6 +128,8 @@ export async function fetchEnrichedTxsForMintWithMeta(
   maxTxs: number = 1000,
   stopAtSignatures: ReadonlySet<string> | null = null,
   startBefore?: string,
+  includeTokenAccounts: boolean = false,
+  requestHooks?: HeliusRequestHooks,
 ): Promise<EnrichedTxMeta> {
   const keys = HELIUS_API_KEYS;
   if (!keys.length) {
@@ -103,39 +139,33 @@ export async function fetchEnrichedTxsForMintWithMeta(
 
   const all: HeliusEnrichedTx[] = [];
   const seen = new Set<string>();
-  let httpRequests = 0;
-  let pagesFetched = 0;
-  let lastPageEmpty = false;
   let before: string | undefined = startBefore;
   let exhausted = false;
   let reachedKnownHistory = false;
+  let budgetExhausted = false;
   const seenCursors = new Set<string>();
 
   while (all.length < maxTxs) {
     const requested = Math.min(100, maxTxs - all.length);
-    let fetched: { transactions: HeliusEnrichedTx[]; httpRequests: number };
+    let page: HeliusEnrichedTx[];
     try {
-      fetched = await fetchHeliusPage(mint, before, requested, keys);
+      page = await fetchHeliusPage(mint, before, requested, keys, includeTokenAccounts, requestHooks);
     } catch (error) {
-      const requestCount = Number((error as { httpRequests?: unknown })?.httpRequests) || 0;
-      if (error instanceof Error) Object.assign(error, {
-        httpRequests: httpRequests + requestCount,
-        pagesFetched,
-        lastPageEmpty,
-      });
-      throw error;
+      if ((error as { code?: string } | null)?.code !== "HELIUS_BUDGET_EXCEEDED") throw error;
+      if (all.length === 0) throw error;
+      budgetExhausted = true;
+      break;
     }
-    httpRequests += fetched.httpRequests;
-    pagesFetched++;
-    const page = fetched.transactions;
     if (!page.length) {
-      lastPageEmpty = true;
       exhausted = true;
       break;
     }
     for (const tx of page) {
       if (!tx || typeof tx.signature !== "string" || !tx.signature) continue;
       if (stopAtSignatures?.has(tx.signature)) {
+        // Keep the overlap anchor: Helius may have enriched its payload since
+        // the last visit. PersistEvents fingerprints it and updates if changed.
+        if (!seen.has(tx.signature)) { seen.add(tx.signature); all.push(tx); }
         reachedKnownHistory = true;
         break;
       }
@@ -144,10 +174,8 @@ export async function fetchEnrichedTxsForMintWithMeta(
       all.push(tx);
     }
     if (reachedKnownHistory) break;
-    if (page.length < requested) {
-      exhausted = true;
-      break;
-    }
+    // A short filtered page is not proof of archive exhaustion.
+    // Only an empty page is considered exhausted.
     const nextBefore = page[page.length - 1]?.signature;
     if (!nextBefore || nextBefore === before || seenCursors.has(nextBefore)) {
       throw new Error("Helius pagination stalled: cursor repeated");
@@ -156,7 +184,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
     before = nextBefore;
   }
 
-  const truncated = !exhausted && all.length >= maxTxs;
+  const truncated = budgetExhausted || (!exhausted && all.length >= maxTxs);
   const bounded = all.slice(0, maxTxs);
   const oldestTimestamp = bounded.reduce<number | null>(
     (oldest, tx) => {
@@ -166,8 +194,7 @@ export async function fetchEnrichedTxsForMintWithMeta(
     },
     null,
   );
-  return { transactions: bounded, oldestTimestamp, exhausted, truncated, reachedKnownHistory,
-    httpRequests, pagesFetched, lastPageEmpty };
+  return { transactions: bounded, oldestTimestamp, exhausted, truncated, reachedKnownHistory, budgetExhausted };
 }
 
 /**
@@ -245,38 +272,9 @@ function extractTrade(tx: HeliusEnrichedTx, mint: string): RawTrade | null {
     }
   }
 
-  // 2. Fallback: correlate tokenTransfers + nativeTransfers
-  const tokenTransfers = (tx.tokenTransfers || []).filter((t) => t.mint === mint);
-  if (tokenTransfers.length === 0) return null;
-  const nativeTransfers = tx.nativeTransfers || [];
-  if (nativeTransfers.length === 0) return null;
-
-  // Largest native transfer = the swap leg
-  const largestNative = nativeTransfers.reduce((a, b) => (b.amount > a.amount ? b : a));
-  const largestToken = tokenTransfers.reduce((a, b) => (b.tokenAmount > a.tokenAmount ? b : a));
-
-  const amountSol = largestNative.amount / LAMPORTS_PER_SOL;
-  const amountTokens = largestToken.tokenAmount;
-  if (amountSol < 1e-6 || amountTokens < 1e-9) return null;
-
-  // BUY: trader sends SOL out, receives tokens
-  // SELL: trader sends tokens out, receives SOL
-  const trader = tx.feePayer || largestNative.fromUserAccount || largestToken.toUserAccount || "";
-  const isBuy = largestNative.fromUserAccount === trader && largestToken.toUserAccount === trader;
-  const isSell = largestToken.fromUserAccount === trader && largestNative.toUserAccount === trader;
-
-  if (!isBuy && !isSell) return null;
-  return {
-    signature: tx.signature,
-    timestamp: tx.timestamp,
-    trader,
-    type: isBuy ? "buy" : "sell",
-    amountSol,
-    amountTokens,
-    priceSol: amountSol / amountTokens,
-    fee: tx.fee,
-    source: tx.source,
-  };
+  // Do not infer a swap by pairing the largest SOL/token transfers:
+  // unrelated transfers, LP operations and aggregator legs can look identical.
+  return null;
 }
 
 /**
@@ -287,7 +285,7 @@ export async function getWalletFirstSeen(address: string): Promise<number | null
   const keys = HELIUS_API_KEYS.length > 0 ? HELIUS_API_KEYS : [];
   if (keys.length === 0) return null;
   try {
-    const { transactions: page } = await fetchHeliusPage(address, undefined, 100, keys);
+    const page = await fetchHeliusPage(address, undefined, 100, keys);
     // A full newest-first page is not proof of the wallet's first activity.
     if (!page.length || page.length >= 100) return null;
     const earliest = Math.min(...page.map(t => t.timestamp || Infinity));

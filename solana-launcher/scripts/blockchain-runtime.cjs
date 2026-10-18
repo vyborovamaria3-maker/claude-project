@@ -10,8 +10,9 @@ const defaults = { primary: 'default', fallback: '', batchSize: 20, concurrency:
 const slots = ['default', 'HELIUS_RPC_URL', 'RPC_URL', 'SOLANA_RPC_URL', 'PUBLIC_MAINNET'];
 function db() {
   if (!database) {
-    fs.mkdirSync(path.join(process.cwd(),'data'),{recursive:true});
-    database = new Database(path.join(process.cwd(), 'data', 'trade.db'));
+    const filename=path.resolve(/* turbopackIgnore: true */ process.env.SOLANA_TRADE_DB_PATH?.trim() || path.join(process.cwd(),'data','trade.db'));
+    fs.mkdirSync(path.dirname(filename),{recursive:true});
+    database = new Database(filename);
     database.pragma('busy_timeout=5000');
     database.exec(`CREATE TABLE IF NOT EXISTS blockchain_settings(id INTEGER PRIMARY KEY CHECK(id=1), json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS blockchain_http_leases(id TEXT PRIMARY KEY,expires INTEGER NOT NULL);
@@ -64,17 +65,20 @@ async function acquire(c) {
   }
   throw new Error('blockchain_queue_timeout');
 }
-async function jsonRequest(urls, init = {}, onAttempt = () => {}) {
+async function jsonRequest(urls, init = {}, onAttempt = () => {}, observers = {}) {
   if (!Array.isArray(urls)) urls=[urls];
   const c=readSettings();
   let httpRequests=0;
   for (let attempt=0;attempt<=c.retries;attempt++) {
     const lease=await acquire(c), start=Date.now();
+    let context;
     let retryable=true;
     try {
+      context=await onAttempt(urls[attempt%urls.length]);
       db().prepare('UPDATE blockchain_metrics SET requests=requests+1 WHERE id=1').run();
-      httpRequests++; onAttempt();
+      httpRequests++;
       const response=await fetch(urls[attempt%urls.length],{...init,redirect:'error',cache:'no-store',signal:AbortSignal.timeout(c.timeoutMs)});
+      await observers.afterResponse?.(context,response);
       if (!response.ok) { retryable=response.status===429 || response.status>=500;throw new Error('http_'+response.status); }
       const result=await response.json();
       if (result && result.error) {
@@ -84,6 +88,8 @@ async function jsonRequest(urls, init = {}, onAttempt = () => {}) {
       db().prepare('UPDATE blockchain_metrics SET last_success=?,last_error=NULL,latency=? WHERE id=1').run(Date.now(),Date.now()-start);
       return result;
     } catch (error) {
+      await observers.onError?.(context,error);
+      if (error?.code?.includes("BUDGET")) throw error;
       const code=/^http_\d{3}$/.test(error.message) ? error.message : error.message==='rpc_error' ? 'rpc_error' : 'transport_error';
       db().prepare('UPDATE blockchain_metrics SET errors=errors+1,last_error=? WHERE id=1').run(code);
       if (!retryable || attempt===c.retries) throw Object.assign(new Error(code),{httpRequests});

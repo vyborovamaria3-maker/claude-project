@@ -29,6 +29,12 @@ async function main(){
  await Promise.all(Array.from({length:4},()=>runtime.jsonRequest(['https://unused.test'])));
  assert.equal(peak,1);assert(starts.every((v,i)=>i===0||v-starts[i-1]>=90));
  assert.equal(runtime.db().prepare('SELECT COUNT(*) AS n FROM blockchain_http_leases').get().n,0);
+ const beforeDenied=runtime.publicSettings().metrics.requests;
+ await assert.rejects(runtime.jsonRequest(['https://unused.test'],{},()=>{
+   throw Object.assign(new Error('budget exhausted'),{code:'ALCHEMY_RUN_CU_BUDGET_EXCEEDED'});
+ }),error=>error.code==='ALCHEMY_RUN_CU_BUDGET_EXCEEDED');
+ assert.equal(runtime.publicSettings().metrics.requests,beforeDenied,'budget denial is not an HTTP request');
+ assert.equal(runtime.db().prepare('SELECT COUNT(*) AS n FROM blockchain_http_leases').get().n,0);
  runtime.saveSettings({timeoutMs:1000,retries:0});
  global.fetch=async(_url,{signal})=>new Promise((_resolve,reject)=>{
   const keepAlive=setTimeout(()=>reject(new Error('timeout_not_enforced')),5000);

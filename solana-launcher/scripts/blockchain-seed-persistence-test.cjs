@@ -59,7 +59,7 @@ const { initDb, claimOne, processOne, failTask } = require("./blockchain-seed-co
     assert.equal(db.prepare("SELECT backfill_complete FROM chain_seed_targets").get().backfill_complete, 0);
     db.exec("CREATE TABLE normalized_fixture(signature TEXT); CREATE TRIGGER reject_progress BEFORE UPDATE OF last_success_at ON chain_seed_targets BEGIN SELECT RAISE(ABORT,'progress failed'); END");
     const normalizedApi = { ...api, txsToTrades: () => [{ signature: 'sig' }],
-      persistTokenTrades: () => db.prepare('INSERT INTO normalized_fixture VALUES (?)').run('sig') };
+      markTokenTradeChecked: () => db.prepare('INSERT INTO normalized_fixture VALUES (?)').run('sig') };
     await assert.rejects(processOne(db, row, cfg, normalizedApi), /progress failed/);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM normalized_fixture').get().n, 0);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM chain_seed_events').get().n, 0);

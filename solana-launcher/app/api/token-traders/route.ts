@@ -13,7 +13,10 @@ interface TraderRow {
   address: string;
   boughtUsd: number;
   soldUsd: number;
-  pnlUsd: number;
+  /** Unknown without per-trader cost basis / transfers; not net buy/sell cash flow. */
+  pnlUsd: null;
+  netFlowUsd: number;
+  pnlStatus: "unknown";
   txCount: number;
   lastTradeTs: number;
 }
@@ -80,13 +83,15 @@ export async function GET(req: NextRequest) {
         address: row.Trade?.Account?.Owner ?? "",
         boughtUsd: bought,
         soldUsd: sold,
-        pnlUsd: sold - bought,
+        pnlUsd: null,
+        netFlowUsd: sold - bought,
+        pnlStatus: "unknown",
         txCount: Number(row.txCount) || 0,
         lastTradeTs: 0,
       };
     });
 
-    return NextResponse.json({ traders });
+    return NextResponse.json({ traders, coverage: "last_24h_aggregated_dex_trades", pnlVerified: false, note: "Net sell minus buy volume is not realized PnL; costs and transfers are unknown." });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "fetch_failed";
     return NextResponse.json({ error: msg, traders: [] }, { status: 500 });
