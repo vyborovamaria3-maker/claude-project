@@ -1,5 +1,5 @@
 import type { ClaimOptions, ClaimedEvent } from "@claude-project/event-outbox";
-import type { TimelineEvent } from "@claude-project/contracts";
+import { buildTimelineEvent, toUtcIso, type TimelineEvent } from "@claude-project/contracts";
 import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type RegistryEvent } from "./entity-registry.js";
 import { ingestTimelineEvent } from "./timeline.js";
 
@@ -39,10 +39,38 @@ function extractEnvelope(event: ClaimedEvent): RegistryOutboxPayload {
     registry.schemaVersion !== event.schemaVersion) {
     throw new TypeError("Outbox envelope and registry identities differ");
   }
-  if (raw.timelineEvent !== undefined && raw.timelineEvent.eventKey !== event.eventKey) {
+  if (raw.timelineEvent === undefined) return {...raw, registryEvent: registry};
+  const candidate = raw.timelineEvent;
+  if (!candidate || typeof candidate !== "object") {
+    throw new TypeError("Invalid timeline payload");
+  }
+  const timeline=buildTimelineEvent(candidate);
+  if (timeline.eventKey !== event.eventKey) {
     throw new TypeError("Outbox envelope and timeline identities differ");
   }
-  return {...raw, registryEvent: registry};
+  const registryEvidence=registry.evidenceRef, timelineEvidence=timeline.evidenceRef;
+  for (const field of ["sourceKind","sourceId","parserVersion","provider","rawPointer"] as const) {
+    if (registryEvidence[field] !== timelineEvidence[field]) {
+      throw new TypeError("Registry and timeline evidence disagree: "+field);
+    }
+  }
+  const observedAt=toUtcIso(registryEvidence.observedAt);
+  const occurredAt=toUtcIso(registryEvidence.occurredAt ?? registryEvidence.observedAt);
+  if (timeline.observedAt !== observedAt ||
+      toUtcIso(timelineEvidence.observedAt) !== observedAt ||
+      timeline.occurredAt !== occurredAt ||
+      (timelineEvidence.occurredAt !== undefined &&
+        toUtcIso(timelineEvidence.occurredAt) !== occurredAt)) {
+    throw new TypeError("Registry and timeline evidence clocks disagree");
+  }
+  const identities = (refs: typeof registry.entityRefs) =>
+    refs.map(ref=>[ref.kind,ref.canonicalId,ref.firstSeenAt,ref.lastSeenAt].join("|"))
+      .sort();
+  if (JSON.stringify(identities(registry.entityRefs)) !==
+      JSON.stringify(identities(timeline.entityRefs))) {
+    throw new TypeError("Registry and timeline entity references disagree");
+  }
+  return {...raw, registryEvent: registry, timelineEvent: timeline};
 }
 
 /** The only transaction boundary: destination COMMIT BEFORE source ACK. */
