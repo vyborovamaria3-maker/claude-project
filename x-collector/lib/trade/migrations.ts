@@ -44,4 +44,5 @@ export const REQUIRED = [
   "047_signal_quality_marts.sql",
   "048_signal_registry_versions.sql",
   "049_raw_retention_author_id.sql",
+  "050_intelligence_source_outbox.sql",
 ];
