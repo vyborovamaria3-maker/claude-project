@@ -2,6 +2,12 @@ PROJECT: X Collector Runtime v2
 
 CURRENT PHASE: Runtime reliability and collection efficiency; full master prompt not complete.
 
+2026-10-16 PR69 follow-up: standalone history producer handles idle PostgreSQL
+disconnects and startup outages with cancellable reconnect backoff, reacquires
+its session advisory lock and resumes durable progress without replaying SQL
+transactions. Regression tests cover lock competition, shutdown and fatal schema
+errors; native PostgreSQL test terminates only a dedicated test backend.
+
 Laptop throughput (2026-10-14): opt-in X_SEARCH_HTTP_COMPAT uses pinned SDK POST SearchTimeline while retaining legacy onBatch/history filters and numeric list/history watermarks. Each page reserves the shared account quota, HTTP provenance is distinct, and proxy-less accounts are excluded. Live replacement cursor instructions are normalized; a strictly validated top/bottom cursor-only SearchTimeline response ends available indexed results (not exhaustive X coverage). History producer capacity follows max_browser_accounts rather than hardcoding one. Explicit bounded xactions:refresh updates metadata through a leased proxy, without background calls. Local laptop policy permits two workers; platform rate limits remain enforced.
 
 XActions merge preparation (2026-10-14): package the CJS HTTP loader and check compiled collector import in CI; enforce a total HTTP deadline across SOCKS negotiation and streaming. Local verification: 46 targeted tests, typecheck/build/compiled import passed. Live X response compatibility remains an activation gate; automatic three-list/history/discovery routing stays on Playwright, with no automatic engine fallback. Full regression and native PostgreSQL run in latest-head CI.

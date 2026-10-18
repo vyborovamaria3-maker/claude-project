@@ -38,4 +38,6 @@ export const REQUIRED = [
   "041_xactions_checkpoints.sql",
   "042_xactions_list_members.sql",
   "043_xactions_progress.sql",
+  "044_browser_checkpoints.sql",
+  "045_collector_trace.sql",
 ];

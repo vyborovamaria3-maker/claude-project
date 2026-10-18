@@ -1,11 +1,12 @@
 import { CollectorActionError } from "./errors";
-import { subscribeLive } from "./live";
+import { subscribeLive, activeTaskSnapshot } from "../../src/collector/monitoring";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { ZodError } from "zod";
 import { checkOrigin } from "../trade/http-security";
 import { readiness, startCollection, taskDetails, resumeCollection } from "./control";
+import { q } from "../trade/pg";
 export async function handleCollectorRequest(req:IncomingMessage,res:ServerResponse,origin:string,services={readiness,startCollection,taskDetails,resumeCollection}):Promise<boolean> {
  const url=new URL(req.url??"/","http://localhost");
  if(!["/collector","/collector.js"].includes(url.pathname)&&!url.pathname.startsWith("/api/collector/"))return false;
@@ -21,6 +22,15 @@ export async function handleCollectorRequest(req:IncomingMessage,res:ServerRespo
  if(req.method!=="GET"){res.setHeader("Allow","GET");json(405,{error:"GET required"});return true;}
  if(url.pathname==="/api/collector/live"){subscribeLive(res);return true;}
  if(url.pathname==="/api/collector/status"){json(200,await services.readiness());return true;}
+ if(url.pathname==="/api/collector/diagnostics"){
+  const [tasks, queue, accounts] = await Promise.all([
+   activeTaskSnapshot(),
+   q<{status:string;count:number}>("SELECT status,count(*)::int AS count FROM x_tasks GROUP BY status ORDER BY status"),
+   q<{status:string;count:number}>("SELECT status,count(*)::int AS count FROM x_accounts WHERE role='collector' GROUP BY status ORDER BY status"),
+  ]);
+  json(200,{observedAt:new Date().toISOString(),queue,accounts,tasks});
+  return true;
+ }
  const match=url.pathname.match(/^\/api\/collector\/tasks\/(\d+)$/);
  if(match){const data=await services.taskDetails(match[1]);json(data?200:404,data??{error:"Задание не найдено"});return true;}
  if(url.pathname.startsWith("/api/")){json(404,{error:"Маршрут не найден"});return true;}

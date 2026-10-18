@@ -4,13 +4,15 @@ const {playwrightProxy,recordAccountError}=require('./account-health.cjs');
 const {launchLoginBrowser}=require('./test-publish-browser.cjs');
 const {chromium}=require('playwright');
 let stopping=false,browser;
+const cancellation=new AbortController();
+function stop(){stopping=true;cancellation.abort();}
 function configureEnvironment(settings=config()){
  if(!settings.DATABASE_URL)throw Error('Collector database required');
  process.env.DATABASE_URL=settings.DATABASE_URL;
  if(settings.MASTER_KEY)process.env.MASTER_KEY=settings.MASTER_KEY;
 }
-process.on('message',m=>{if(m?.stop)stopping=true;});process.on('disconnect',()=>{stopping=true;});
-for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{stopping=true;});
+process.on('message',m=>{if(m?.stop)stop();});process.on('disconnect',stop);
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,stop);
 async function members(c,run,list,accounts){
  const owner='history-'+run.id;const account=await accounts.pickAccount('search',owner,run.account_name,true);
  if(!account){await c.query('UPDATE xc_history_runs SET message=$2,updated_at=$3 WHERE id=$1',[run.id,'Ожидание доступного collector и его часовой квоты',Date.now()]);return false;}
@@ -66,12 +68,15 @@ async function tick(c,accounts){
 }
 async function main(){
  configureEnvironment();
- const accounts={...require('../dist/lib/trade/account-manager.js'),leaseMs:require('../dist/lib/trade/config.js').getConfig().sessions.leaseMs};const c=await connect();
+ const accounts={...require('../dist/lib/trade/account-manager.js'),leaseMs:require('../dist/lib/trade/config.js').getConfig().sessions.leaseMs};
  try{
-  if(!(await c.query('SELECT pg_try_advisory_lock(742098534) AS locked')).rows[0].locked)return;
-  console.log('Historical collector running; persistent progress and account quotas enabled.');
-  while(!stopping){try{await tick(c,accounts);if((await c.query("SELECT 1 FROM xc_history_windows w JOIN xc_history_runs r ON r.id=w.run_id WHERE w.status='queued' AND r.status='running' LIMIT 1")).rowCount)await require('../dist/lib/collector/runtime.js').ensureWorker();}catch{console.error('Historical cycle failed; progress is preserved. Check database and worker.');await c.query("UPDATE xc_history_runs SET message='Исторический цикл не выполнен. Прогресс сохранён; проверьте worker и базу.',updated_at=$1 WHERE status='running'",[Date.now()]).catch(()=>{});}if(!stopping)await new Promise(r=>setTimeout(r,10000));}
- }finally{await require('../dist/lib/collector/runtime.js').stopManagedWorker();await c.query('SELECT pg_advisory_unlock(742098534)').catch(()=>{});await c.end();await require('../dist/lib/trade/pg.js').closePool();await require('../dist/lib/trade/logger.js').closeLogger();if(process.connected)process.disconnect();}
+  await require('./history-runner.cjs').runHistoryProducer({
+   open:onError=>connect({onError}),signal:cancellation.signal,
+   isTransient:require('../dist/lib/trade/retry.js').isRetryablePgError,
+   report:state=>console.log(state==='ready'?'Historical collector running; durable progress resumed.':'Historical database unavailable; reconnecting with saved progress.'),
+   cycle:async c=>{await tick(c,accounts);if((await c.query("SELECT 1 FROM xc_history_windows w JOIN xc_history_runs r ON r.id=w.run_id WHERE w.status='queued' AND r.status='running' LIMIT 1")).rowCount)await require('../dist/lib/collector/runtime.js').ensureWorker();},
+  });
+ }finally{await require('../dist/lib/collector/runtime.js').stopManagedWorker();await require('../dist/lib/trade/pg.js').closePool();await require('../dist/lib/trade/logger.js').closeLogger();if(process.connected)process.disconnect();}
 }
 if(require.main===module)main().catch(()=>{console.error('Cannot start historical collector. Build X Collector and apply migrations.');process.exitCode=1;if(process.connected)process.disconnect();});
 module.exports={tick,members,configureEnvironment};
