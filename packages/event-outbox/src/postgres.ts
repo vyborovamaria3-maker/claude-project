@@ -53,16 +53,16 @@ export async function claimPostgres(pool: PgPool, options: ClaimOptions): Promis
   } finally {client.release();}
 }
 
-export async function ackPostgres(client: PgQuery, id: string, owner: string): Promise<boolean> {
+export async function ackPostgres(client: PgQuery, id: string, owner: string, leaseUntil: string): Promise<boolean> {
   const result = await client.query(`UPDATE outbox_events SET processed_at=NOW(),
     lease_owner=NULL, lease_until=NULL
-    WHERE id=$1 AND lease_owner=$2 AND lease_until>NOW()
-      AND processed_at IS NULL AND dead_lettered_at IS NULL RETURNING id`,[id,owner]);
+    WHERE id=$1 AND lease_owner=$2 AND lease_until=$3::timestamptz AND lease_until>NOW()
+      AND processed_at IS NULL AND dead_lettered_at IS NULL RETURNING id`,[id,owner,leaseUntil]);
   return result.rows.length === 1;
 }
 
 export async function failPostgres(
-  client: PgQuery, id: string, owner: string, reason: string,
+  client: PgQuery, id: string, owner: string, leaseUntil: string, reason: string,
   nextAttemptAt: Date, maxAttempts = 12,
 ): Promise<boolean> {
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new RangeError("maxAttempts");
@@ -70,8 +70,8 @@ export async function failPostgres(
     attempts=attempts+1, last_error=$3,
     dead_lettered_at=CASE WHEN attempts+1 >= $5 THEN NOW() ELSE NULL END,
     next_attempt_at=$4, lease_owner=NULL, lease_until=NULL
-    WHERE id=$1 AND lease_owner=$2 AND lease_until>NOW()
+    WHERE id=$1 AND lease_owner=$2 AND lease_until=$6::timestamptz AND lease_until>NOW()
       AND processed_at IS NULL AND dead_lettered_at IS NULL RETURNING id`,
-    [id,owner,reason.slice(0,1000),nextAttemptAt.toISOString(),maxAttempts]);
+    [id,owner,reason.slice(0,1000),nextAttemptAt.toISOString(),maxAttempts,leaseUntil]);
   return result.rows.length === 1;
 }
