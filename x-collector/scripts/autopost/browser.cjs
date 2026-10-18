@@ -35,7 +35,7 @@ async function execute(c,job){let browser,attempted=false,article,followArea;try
  const retry=shouldRetryBeforeSend(_e,attempted,retryCount);
  const now=Date.now();
  if(attempted){
-  await recordAccountError(c,job.account_name,_e).catch(()=>{});
+  if(require('./audit-error.cjs').classifyAuditError(_e).category!=='DB_ERROR')await recordAccountError(c,job.account_name,_e).catch(()=>{});
   await c.query('BEGIN');
   try{
    const state=(await c.query('SELECT attempted_at,started_at,created_at FROM xc_auto_jobs WHERE id=$1',[job.id])).rows[0];

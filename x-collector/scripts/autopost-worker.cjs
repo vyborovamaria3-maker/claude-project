@@ -3,6 +3,7 @@ const {claim,eligible}=require('./autopost/queue.cjs');
 const {connect}=require('./autopost/runtime.cjs');const {plan,inWindow}=require('./autopost/store.cjs');const {execute,sync,persistPost,reconcilePost}=require('./autopost/browser.cjs');
 const {decideReconciliation,nextCheckAt,RECONCILIATION_WINDOW_MS}=require('./autopost/reconciliation.cjs');
 const {classifyPreSendError}=require('./autopost/publish-retry.cjs');
+const {classifyAuditError}=require('./autopost/audit-error.cjs');
 let stopping=false;process.on('SIGINT',()=>{stopping=true;});process.on('SIGTERM',()=>{stopping=true;});
 async function reconcileOne(c,now){
  const row=(await c.query("SELECT r.job_id,r.account_name,r.expected_handle,r.kind,r.attempted_at AS reconcile_attempted_at,r.next_check_at,r.deadline_at,r.attempts,r.status AS reconciliation_status,r.candidates,j.id,j.content,j.origin,j.target_id,j.target_handle,j.started_at,j.created_at,j.attempted_at,j.status AS job_status,a.status AS account_status,a.role AS account_role,a.account_busy_until FROM xc_auto_reconcile r JOIN xc_auto_jobs j ON j.id=r.job_id LEFT JOIN x_accounts a ON a.name=r.account_name WHERE r.status='queued' AND r.next_check_at<=$1 AND j.status='uncertain' AND (r.deadline_at<=$1 OR a.name IS NULL OR a.status<>'active' OR a.role<>'publisher' OR COALESCE(a.account_busy_until,0)<=$1) ORDER BY r.next_check_at,r.created_at LIMIT 1",[now])).rows[0];
@@ -42,6 +43,11 @@ async function reconcileOne(c,now){
    }
   }catch(error){
    const checkNow=Date.now();
+   if(classifyAuditError(error).category==='DB_ERROR'){
+    // Never claim an X failure or retry an external action when persistence failed.
+    try{await c.query("UPDATE xc_auto_reconcile SET status='queued',next_check_at=$2,updated_at=$3,last_error='Ошибка базы при сохранении подтверждения; отправка не повторялась.' WHERE job_id=$1 AND status='running' AND EXISTS(SELECT 1 FROM xc_auto_jobs j WHERE j.id=$1 AND j.status='uncertain')",[row.job_id,checkNow+300000,checkNow]);}catch{}
+    throw error;
+   }
    const failure=classifyPreSendError(error);
    if(!failure.retryable){await c.query("UPDATE xc_auto_reconcile SET status='manual_review',last_error=$2,updated_at=$3,finished_at=$3 WHERE job_id=$1 AND status='running'",[row.job_id,failure.message,checkNow]);await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,failure.message,checkNow]);}
    else if(checkNow>=deadlineAt){await c.query("UPDATE xc_auto_reconcile SET status='manual_required',last_error='Не удалось завершить сверку за 24 часа.',updated_at=$2,finished_at=$2 WHERE job_id=$1 AND status='running'",[row.job_id,checkNow]);await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,messageForManual,checkNow]);}

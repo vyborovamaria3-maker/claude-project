@@ -5,6 +5,7 @@ const {classifyPreSendError}=require('./publish-retry.cjs');
 const X_CODES=new Set(['SESSION_EXPIRED','PROXY_FAILED','X_RESTRICTED','TEMPORARY_NETWORK']);
 const VALIDATION_CODES=new Set(['ACCOUNT_MISMATCH','ACCOUNT_INACTIVE','JOB_NOT_ELIGIBLE','TARGET_NOT_FOUND']);
 function classifyAuditError(error){
+ if(error?.auditCategory==='DB_ERROR')return {category:'DB_ERROR',code:typeof error?.code==='string'&&/^[0-9A-Z]{5}$/.test(error.code)?'PG_'+error.code:'DB_PERSIST_UNAVAILABLE'};
  const sqlstate=typeof error?.code==='string'&&/^[0-9A-Z]{5}$/.test(error.code)?error.code:null;
  if(sqlstate)return {category:'DB_ERROR',code:'PG_'+sqlstate};
  const classified=classifyPreSendError(error);

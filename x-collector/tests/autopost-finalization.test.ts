@@ -50,7 +50,7 @@ test('V2-02 failure on status audit rolls back post, timeline, metrics and job',
   const job=await runningJob(db,c,id);
   await db.exec("CREATE FUNCTION reject_finalize() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type='published' THEN RAISE EXCEPTION 'injected finalization failure'; END IF; RETURN NEW; END $$;");
   await db.exec("CREATE TRIGGER reject_finalize BEFORE INSERT ON xc_auto_job_events FOR EACH ROW EXECUTE FUNCTION reject_finalize()");
-  await assert.rejects(finalizePublication(c,job,tweetId,{views:'10'},{expectedStatus:'running'}),/injected finalization failure/);
+  await assert.rejects(finalizePublication(c,job,tweetId,{views:'10'},{expectedStatus:'running'}),e=>Boolean(e&&typeof e==='object'&&'auditCategory' in e&&e.auditCategory==='DB_ERROR'&&/injected finalization failure/.test(String(e))));
   assert.equal((await db.query<{status:string}>('SELECT status FROM xc_auto_jobs WHERE id=$1',[id])).rows[0].status,'running');
   assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_posts')).rows[0].n,0);
   assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM twitter_tweets')).rows[0].n,0);
