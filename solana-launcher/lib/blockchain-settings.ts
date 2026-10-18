@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID,createHash } from 'node:crypto';
 import { getDb } from './trade/db';
+import { getAlchemyConfig } from '../scripts/blockchain-alchemy-provider.cjs';
 import { getHeliusApiKeys } from './trade/helius-rotation';
 import { initDb,importFolders,refreshTargets,status,collect } from '../scripts/blockchain-seed-collector.cjs';
 import { parseWorkbook } from '../scripts/blockchain-seed-core.cjs';
@@ -10,9 +11,11 @@ import { db as settingsDb,publicSettings } from '../scripts/blockchain-runtime.c
 
 export const categories=['migrated','dex_trending','profitable_wallets'] as const;
 export function overview() {
+  let alchemyConfigured=false;
+  try { getAlchemyConfig(); alchemyConfigured=true; } catch { /* No credential details in the response. */ }
   const database=getDb();initDb(database);
   const runs=settingsDb().prepare('SELECT * FROM blockchain_runs ORDER BY started_at DESC LIMIT 10').all();
-  return { ...publicSettings(), heliusConfigured:getHeliusApiKeys().length>0, collection:status(database), runs,
+  return { ...publicSettings(), alchemyConfigured, heliusConfigured:getHeliusApiKeys().length>0, collection:status(database), runs,
     imports:settingsDb().prepare('SELECT id,name,category,status,records,invalid_rows,error,created_at FROM blockchain_imports ORDER BY created_at DESC LIMIT 30').all(),
     analytics:{ tokenTrades:database.prepare('SELECT COUNT(*) AS count FROM token_trades').get(),
       coverage:'provider_address_history_not_complete_chain', profitVerified:null, migrationVerified:null } };

@@ -947,7 +947,11 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
         jitoTipLamports: trade.jitoTipLamports,
         source: trade.source,
       })));
-    } else {
+    }
+    // Preserve locally indexed history even when a new Helius page contains
+    // at least one trade. Otherwise every refresh drops older trades from
+    // analytics while leaving them in SQLite.
+    {
       const stored = getTokenTrades(mint, 10_000).map((row) => ({
         signature: row.signature,
         timestamp: row.timestamp,
@@ -965,7 +969,9 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
         jitoTipLamports: row.jitoTipLamports ?? undefined,
         source: row.source || undefined,
       }));
-      trades = stored;
+      // Fresh provider rows win on duplicate signatures; stale local history
+      // fills the uncovered time range without additional network requests.
+      trades = mergeTrades(stored, trades);
     }
     return { trades, recentEvidence, launchEvidence: launch.evidence };
   }

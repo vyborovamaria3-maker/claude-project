@@ -67,6 +67,31 @@ async function main(){
  assert.equal((await routeModule.exports.POST(request({action:'save',settings:{batchSize:999}}))).status,400);
  const result=await routeModule.exports.GET(new NextRequest('http://localhost:3000/api/blockchain/settings',{headers:{authorization:'Bearer test'}}));
  assert.equal(result.status,200);assert(!JSON.stringify(await result.json()).includes('private-secret'));
+ // Exercise the actual UI/CLI adapter and Alchemy provider with no external requests.
+ runtime.saveSettings({enabled:false});
+ global.fetch=async()=>{throw new Error('paused collector must not fetch')};
+ assert.equal((await adapter.runBatch()).reason,'paused');
+ process.env.ALCHEMY_SOLANA_RPC_URL='https://solana-mainnet.g.alchemy.com/v2/offline-test';
+ runtime.saveSettings({enabled:true,batchSize:1,concurrency:1,retries:1,retryDelayMs:100,requestsPerSecond:10});
+ let historyAttempts=0;
+ global.fetch=async(url,init)=>{
+   assert.equal(url,process.env.ALCHEMY_SOLANA_RPC_URL,'history must not fall back to generic RPC slots');
+   const body=JSON.parse(init.body);
+   assert.equal(body.method,'getTransactionsForAddress');
+   assert.equal(body.params[1].limit,1,'saved batch size reaches the real provider');
+   assert.equal(body.params[1].maxSupportedTransactionVersion,0);
+   historyAttempts++;
+   return historyAttempts===1?Response.json({},{status:429}):Response.json({result:{data:[]}});
+ };
+ const beforeRequests=runtime.publicSettings().metrics.requests;
+ const batch=await adapter.runBatch();
+ assert.equal(batch.claimed,1);assert.equal(batch.succeeded,1);assert.equal(batch.failed,0);
+ assert.equal(historyAttempts,2,'shared configured retry is used exactly once');
+ assert.equal(runtime.publicSettings().metrics.requests-beforeRequests,2);
+ const run=adapter.overview().runs[0];
+ assert.equal(run.state,'finished');assert.equal(run.targets,1);assert.equal(run.errors,0);
+ assert.equal(adapter.overview().alchemyConfigured,true);
+ assert.equal(runtime.db().prepare('SELECT COUNT(*) AS n FROM blockchain_http_leases').get().n,0);
  console.log('Blockchain settings: OK — validation, persistence, operator/CSRF API, real XLSX dedup, fallback, RPC errors, rate/concurrency limits and secret redaction');
 }
 main().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>{global.fetch=oldFetch;runtime.db().close();const db=global.__TRADE_DB__;if(db)db.close();process.chdir(cwd);fs.rmSync(temp,{recursive:true,force:true})});

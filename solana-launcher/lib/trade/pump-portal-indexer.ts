@@ -64,7 +64,7 @@ function saveCreateEvent(mint: string, creator: string, name?: string, symbol?: 
         (mint, creator, symbol, name, image, description, twitter, telegram, website,
          created_at, market_cap_usd, ath_usd, is_migrated, reached_300k, last_updated_at)
        VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, 0, 0, ?)
-       ON CONFLICT(mint) DO UPDATE SET
+       ON CONFLICT(mint, creator) DO UPDATE SET
          creator=excluded.creator,
          symbol=COALESCE(NULLIF(excluded.symbol,''), dev_tokens.symbol),
          name=COALESCE(NULLIF(excluded.name,''), dev_tokens.name),

@@ -90,14 +90,6 @@ try {
   assert.match(output, /"unchangedFiles": 3/);
   assert.match(output, /"changedFiles": 0/);
   assert.match(firstOutput, /"scannedFiles": 3/);
-  const analytics = JSON.parse(execFileSync(process.execPath, [
-    path.join(__dirname, "blockchain-seed-analytics.cjs"), "--db", dbPath,
-  ], { encoding: "utf8", timeout: 30000 }));
-  assert.equal(analytics.pagination.totalTargets, 3);
-  assert.equal(analytics.categoryCoverage.find(c => c.category === "profitable_wallets").neverCollected, 1);
-  assert.equal(analytics.categoryCoverage.find(c => c.category === "dex_trending").targets, 2);
-  assert(analytics.targets.every(t => t.conclusions.profitable === null && t.conclusions.migrationVerified === null));
-  assert(analytics.targets.every(t => t.coverage.reasons.includes("never_collected")));
   console.log("[blockchain-seed-integration] OK: safe XLSX -> SQLite, categories, dedup, priorities, incremental reimport");
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

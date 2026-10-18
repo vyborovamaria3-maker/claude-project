@@ -64,14 +64,16 @@ async function acquire(c) {
   }
   throw new Error('blockchain_queue_timeout');
 }
-async function jsonRequest(urls, init = {}) {
+async function jsonRequest(urls, init = {}, onAttempt = () => {}) {
   if (!Array.isArray(urls)) urls=[urls];
   const c=readSettings();
+  let httpRequests=0;
   for (let attempt=0;attempt<=c.retries;attempt++) {
     const lease=await acquire(c), start=Date.now();
     let retryable=true;
     try {
       db().prepare('UPDATE blockchain_metrics SET requests=requests+1 WHERE id=1').run();
+      httpRequests++; onAttempt();
       const response=await fetch(urls[attempt%urls.length],{...init,redirect:'error',cache:'no-store',signal:AbortSignal.timeout(c.timeoutMs)});
       if (!response.ok) { retryable=response.status===429 || response.status>=500;throw new Error('http_'+response.status); }
       const result=await response.json();
@@ -84,7 +86,7 @@ async function jsonRequest(urls, init = {}) {
     } catch (error) {
       const code=/^http_\d{3}$/.test(error.message) ? error.message : error.message==='rpc_error' ? 'rpc_error' : 'transport_error';
       db().prepare('UPDATE blockchain_metrics SET errors=errors+1,last_error=? WHERE id=1').run(code);
-      if (!retryable || attempt===c.retries) throw new Error(code);
+      if (!retryable || attempt===c.retries) throw Object.assign(new Error(code),{httpRequests});
       db().prepare('UPDATE blockchain_metrics SET retries=retries+1 WHERE id=1').run();
     } finally { db().prepare('DELETE FROM blockchain_http_leases WHERE id=?').run(lease); }
     await sleep(Math.min(10000,c.retryDelayMs*2**attempt));

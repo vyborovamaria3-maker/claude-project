@@ -4,7 +4,7 @@
 // Local-first import/collection. Run from solana-launcher:
 //   node scripts/blockchain-seed-collector.cjs --mode import --migrated-dir ... --trending-dir ... --wallets-dir ...
 //   node scripts/blockchain-seed-collector.cjs --mode collect --limit 50 --concurrency 2
-// Requires Python 3 for the project's bounded XLSX reader and Helius keys for collection.
+// Requires Python 3 for the project's bounded XLSX reader and Alchemy Solana API credentials for collection.
 const fs = require("node:fs");
 const path = require("node:path");
 const { gzipSync } = require("node:zlib");
@@ -12,6 +12,7 @@ const { gzipSync } = require("node:zlib");
 require("dotenv").config({ path: path.join(process.cwd(), ".env.local"), quiet: true });
 require("dotenv").config({ path: path.join(process.cwd(), ".env"), quiet: true });
 const { PRIORITIES, SOURCE_BITS, parseWorkbook, scanFolder, isSolanaAddress } = require("./blockchain-seed-core.cjs");
+const walletCache = require("./blockchain-wallet-cache.cjs");
 const SOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let stopRequested = false;
@@ -38,7 +39,6 @@ function parseArgs(argv) {
   return {
     mode: flags.mode || "import",
     folders: {
-      // CLI-only folder arguments are intentionally resolved at runtime, never bundled.
       migrated: path.resolve(/* turbopackIgnore: true */ flags["migrated-dir"] || path.join(defaultFolder, "migrated")),
       dex_trending: path.resolve(/* turbopackIgnore: true */ flags["trending-dir"] || path.join(defaultFolder, "trending")),
       profitable_wallets: path.resolve(/* turbopackIgnore: true */ flags["wallets-dir"] || path.join(defaultFolder, "wallets")),
@@ -56,7 +56,7 @@ function parseArgs(argv) {
 }
 function usage() {
   console.log([
-    "Blockchain Excel seed collector (local SQLite and Helius)",
+    "Blockchain Excel seed collector (local SQLite and Alchemy Solana API)",
     "  --mode import|collect|all|watch|status  [default: import]",
     "  --migrated-dir <folder> --trending-dir <folder> --wallets-dir <folder>",
     "  --limit 30 --concurrency 2 --recent-limit 200 --backfill-limit 200",
@@ -65,7 +65,7 @@ function usage() {
     "  --prune-missing           Remove mappings for deleted XLSX files",
     "  --max-files 5000",
     "Default folders: data/seed-folders/{migrated,trending,wallets}",
-    "Collection requires HELIUS_API_KEY or HELIUS_API_KEYS. Existing trade.db is reused.",
+    "Collection requires ALCHEMY_API_KEY(S) or ALCHEMY_SOLANA_RPC_URL. Helius is not a fallback. Existing trade.db is reused.",
   ].join("\n"));
 }
 
@@ -88,6 +88,7 @@ function initDb(db) {
     "  last_success_at INTEGER, lease_until INTEGER, attempts INTEGER NOT NULL DEFAULT 0,",
     "  last_error TEXT, backfill_cursor TEXT, forward_cursor TEXT, backfill_complete INTEGER NOT NULL DEFAULT 0,",
     "  possible_gap INTEGER NOT NULL DEFAULT 0, events_saved INTEGER NOT NULL DEFAULT 0,",
+    "  collection_provider TEXT NOT NULL DEFAULT 'alchemy', cursor_version INTEGER NOT NULL DEFAULT 1,",
     "  PRIMARY KEY (kind,address))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_targets_queue",
     "  ON chain_seed_targets(next_run_at,priority,lease_until)",
@@ -97,9 +98,46 @@ function initDb(db) {
     "  PRIMARY KEY(kind,address,signature))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
     "  ON chain_seed_events(kind,address,block_time DESC)",
+    ";CREATE TABLE IF NOT EXISTS chain_inventory_movements (",
+    "  target_kind TEXT NOT NULL, target_address TEXT NOT NULL, signature TEXT NOT NULL,",
+    "  leg_index INTEGER NOT NULL, slot INTEGER, block_time INTEGER, operation_index INTEGER NOT NULL,",
+    "  operation_type TEXT NOT NULL, movement_kind TEXT NOT NULL, direction TEXT NOT NULL,",
+    "  owner TEXT, token_account TEXT, mint TEXT, amount_raw TEXT, decimals INTEGER,",
+    "  source_account TEXT, destination_account TEXT, source_owner TEXT, destination_owner TEXT,",
+    "  authority TEXT, provider TEXT NOT NULL, decoder_version TEXT NOT NULL,",
+    "  attribution_status TEXT NOT NULL, observed_at INTEGER NOT NULL,",
+    "  PRIMARY KEY(target_kind,target_address,signature,leg_index))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_inventory_owner_mint_time",
+    "  ON chain_inventory_movements(owner,mint,block_time)",
   ].join("\n"));
-  if (!db.pragma("table_info(chain_seed_targets)").some(c => c.name === "forward_cursor")) {
+  const targetColumns = db.pragma("table_info(chain_seed_targets)");
+  if (!targetColumns.some(c => c.name === "forward_cursor")) {
     db.exec("ALTER TABLE chain_seed_targets ADD COLUMN forward_cursor TEXT");
+  }
+  if (!targetColumns.some(c => c.name === "collection_provider")) {
+    db.exec("ALTER TABLE chain_seed_targets ADD COLUMN collection_provider TEXT");
+  }
+  if (!targetColumns.some(c => c.name === "cursor_version")) {
+    db.exec("ALTER TABLE chain_seed_targets ADD COLUMN cursor_version INTEGER NOT NULL DEFAULT 0");
+  }
+  // Helius signature cursors are not Alchemy pagination tokens. Keep old raw
+  // events for audit, but invalidate provider-specific progress and completeness.
+  const migratedTargets = db.prepare(`
+    UPDATE chain_seed_targets
+    SET backfill_cursor=NULL, forward_cursor=NULL, backfill_complete=0,
+        possible_gap=0, collection_provider='alchemy', cursor_version=1, next_run_at=0
+    WHERE collection_provider IS NULL OR collection_provider<>'alchemy' OR cursor_version<>1
+  `).run().changes;
+  walletCache.ensureWalletCacheSchema(db);
+  // Previously cached wallet history may have been fetched by Helius. Do not
+  // let its provider-specific completeness authorize an Alchemy/PnL conclusion.
+  if (migratedTargets > 0 && db.pragma("table_info(chain_wallet_discovery)").some(c => c.name === "history_status")) {
+    db.prepare(`
+      UPDATE chain_wallet_discovery
+      SET history_status='partial', last_fetched_at=NULL,
+          decoder_coverage='swap_only', last_error='provider_changed_to_alchemy_revalidation_required'
+      WHERE history_status='complete'
+    `).run();
   }
 }
 
@@ -109,8 +147,8 @@ function refreshTargets(db) {
     "SELECT kind,address,group_concat(DISTINCT category) AS categories FROM chain_seed_file_sources GROUP BY kind,address"
   );
   const upsert = db.prepare([
-    "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at)",
-    "VALUES(?,?,?,?,0) ON CONFLICT(kind,address) DO UPDATE SET",
+    "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at,collection_provider,cursor_version)",
+    "VALUES(?,?,?,?,0,'alchemy',1) ON CONFLICT(kind,address) DO UPDATE SET",
     "source_mask=excluded.source_mask,priority=excluded.priority,",
     "next_run_at=CASE WHEN chain_seed_targets.source_mask<>excluded.source_mask",
     "THEN MIN(chain_seed_targets.next_run_at,?) ELSE chain_seed_targets.next_run_at END",
@@ -232,14 +270,22 @@ function claimOne(db) {
     const row = db.prepare(
       "SELECT * FROM chain_seed_targets WHERE source_mask<>0 AND next_run_at<=?"
       + " AND (lease_until IS NULL OR lease_until<?)"
+      + " AND NOT (kind='wallet' AND EXISTS ("
+      + "   SELECT 1 FROM chain_wallet_discovery d WHERE d.wallet=chain_seed_targets.address"
+      + "   AND d.history_status='complete' AND d.decoder_coverage='full' AND d.last_fetched_at IS NOT NULL"
+      + "   AND (? - d.last_fetched_at) < CASE"
+      + "     WHEN d.last_trade_at IS NOT NULL AND d.last_trade_at >= CAST((? - 86400000) / 1000 AS INTEGER)"
+      + "     THEN 7200000 ELSE 86400000 END))"
       + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 1"
-    ).get(now, now);
+    ).get(now, now, now, now);
+    // A fresh complete wallet is filtered in SQL; partial/stale histories remain eligible.
     if (!row) return null;
+    const leaseUntil = now + 10 * 60_000;
     const updated = db.prepare(
       "UPDATE chain_seed_targets SET lease_until=? WHERE kind=? AND address=?"
       + " AND (lease_until IS NULL OR lease_until<?)"
-    ).run(now + 10 * 60_000, row.kind, row.address, now);
-    return updated.changes === 1 ? { ...row, lease_until: now + 10 * 60_000 } : null;
+    ).run(leaseUntil, row.kind, row.address, now);
+    return updated.changes === 1 ? { ...row, lease_until: leaseUntil } : null;
   })();
 }
 
@@ -256,7 +302,7 @@ function persistEvents(db, kind, address, transactions) {
       const serialized = JSON.stringify(tx);
       const bytes = Buffer.byteLength(serialized);
       if (bytes > 512 * 1024) {
-        throw new Error("Oversized Helius transaction; not silently truncated");
+        throw new Error("Oversized Alchemy transaction; not silently truncated");
       }
       // Fast gzip reduces laptop disk I/O while retaining the original evidence.
       const packed = gzipSync(Buffer.from(serialized), { level: 1 });
@@ -268,18 +314,57 @@ function persistEvents(db, kind, address, transactions) {
   return saved;
 }
 
-function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
+function recordAlchemyUsage(db, row, httpRequests, pagesFetched, lastPageEmpty, stage) {
+  const requests = Math.floor(Number(httpRequests) || 0);
+  if (requests <= 0) return;
+  const common = {
+    taskId: row.kind + ":" + row.address,
+    entityKind: row.kind,
+    entityKey: row.address,
+    ts: Date.now(),
+    metadata: { pagesFetched: Number(pagesFetched) || 0, lastPageEmpty: Boolean(lastPageEmpty), stage },
+  };
+  walletCache.recordBudgetUsage(db, {
+    ...common,
+    provider: "alchemy",
+    endpoint: "getTransactionsForAddress",
+    costUnits: requests,
+    costKind: "http",
+  });
+  // Alchemy documents getTransactionsForAddress at 100 CUs per RPC request.
+  // Keep CU separate from HTTP counts; this includes retries as real requests.
+  walletCache.recordBudgetUsage(db, {
+    ...common,
+    provider: "alchemy",
+    endpoint: "getTransactionsForAddress",
+    costUnits: requests * 100,
+    costKind: "cu",
+    metadata: { pagesFetched: Number(pagesFetched) || 0, lastPageEmpty: Boolean(lastPageEmpty), stage,
+      cuPerRequest: 100, cuRateSource: "Alchemy Solana getTransactionsForAddress documentation" },
+  });
+}
+
+function appendDiscovered(db, ownerWallet, transactions) {
   const discovered = new Set();
   for (const tx of transactions) {
     const swap = tx.events && tx.events.swap;
-    if (!swap) continue;
-    const mints = [...(swap.tokenInputs || []), ...(swap.tokenOutputs || [])];
-    for (const leg of mints) {
-      const mint = leg && leg.mint;
-      if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) continue;
-      if (txsToTrades([tx], mint).some(t => t.trader === ownerWallet && (t.type === "buy" || t.type === "sell"))) {
-        discovered.add(mint);
+    const mints = new Set();
+    for (const transfer of tx.tokenTransfers || []) {
+      if (transfer && (transfer.fromUserAccount === ownerWallet || transfer.toUserAccount === ownerWallet)) {
+        mints.add(transfer.mint);
       }
+    }
+    for (const leg of [...(swap?.tokenInputs || []), ...(swap?.tokenOutputs || [])]) {
+      if (leg && leg.userAccount === ownerWallet) mints.add(leg.mint);
+    }
+    for (const delta of tx.tokenBalanceDeltas || []) {
+      if (delta && delta.owner === ownerWallet) mints.add(delta.mint);
+    }
+    for (const mint of mints) {
+      if (!isSolanaAddress(mint) || mint === SOL || mint === USDC) continue;
+      // Record wallet-observed token relationships even if the current decoder
+      // cannot classify them as swaps. Low-priority token crawl follows this seed.
+      discovered.add(mint);
     }
     if (discovered.size >= 25) break;
   }
@@ -288,8 +373,8 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
     "INSERT OR IGNORE INTO chain_seed_file_sources(file_path,category,kind,address) VALUES(?,?,?,?)"
   );
   const target = db.prepare([
-    "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at)",
-    "VALUES('token',?,8,40,0) ON CONFLICT(kind,address) DO UPDATE SET",
+    "INSERT INTO chain_seed_targets(kind,address,source_mask,priority,next_run_at,collection_provider,cursor_version)",
+    "VALUES('token',?,8,40,0,'alchemy',1) ON CONFLICT(kind,address) DO UPDATE SET",
     "source_mask=(chain_seed_targets.source_mask | 8),",
     "priority=MAX(chain_seed_targets.priority,40)",
   ].join(" "));
@@ -305,12 +390,58 @@ function appendDiscovered(db, ownerWallet, transactions, txsToTrades) {
   return tx();
 }
 
+function persistInventoryMovements(db, kind, address, events) {
+  const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
+  const stmt = db.prepare(`
+    INSERT INTO chain_inventory_movements
+      (target_kind,target_address,signature,leg_index,slot,block_time,operation_index,
+       operation_type,movement_kind,direction,owner,token_account,mint,amount_raw,decimals,
+       source_account,destination_account,source_owner,destination_owner,authority,
+       provider,decoder_version,attribution_status,observed_at)
+    VALUES(@target_kind,@target_address,@signature,@leg_index,@slot,@block_time,@operation_index,
+       @operation_type,@movement_kind,@direction,@owner,@token_account,@mint,@amount_raw,@decimals,
+       @source_account,@destination_account,@source_owner,@destination_owner,@authority,
+       @provider,@decoder_version,@attribution_status,@observed_at)
+    ON CONFLICT(target_kind,target_address,signature,leg_index) DO UPDATE SET
+      slot=COALESCE(excluded.slot,chain_inventory_movements.slot),
+      block_time=COALESCE(excluded.block_time,chain_inventory_movements.block_time),
+      owner=COALESCE(excluded.owner,chain_inventory_movements.owner),
+      mint=COALESCE(excluded.mint,chain_inventory_movements.mint),
+      amount_raw=COALESCE(excluded.amount_raw,chain_inventory_movements.amount_raw),
+      decimals=COALESCE(excluded.decimals,chain_inventory_movements.decimals),
+      attribution_status=excluded.attribution_status,
+      observed_at=excluded.observed_at
+  `);
+  let saved = 0;
+  for (const tx of events || []) {
+    for (const [legIndex, movement] of decodeInventoryMovements(tx).entries()) {
+      stmt.run({
+        target_kind: kind, target_address: address, signature: movement.signature,
+        leg_index: legIndex, slot: movement.slot, block_time: movement.blockTime,
+        operation_index: movement.operationIndex, operation_type: movement.operationType,
+        movement_kind: movement.kind, direction: movement.direction, owner: movement.owner,
+        token_account: movement.tokenAccount, mint: movement.mint, amount_raw: movement.amountRaw,
+        decimals: movement.decimals, source_account: movement.sourceAccount,
+        destination_account: movement.destinationAccount, source_owner: movement.sourceOwner,
+        destination_owner: movement.destinationOwner, authority: movement.authority,
+        provider: movement.provider, decoder_version: movement.decoderVersion,
+        attribution_status: movement.attributionStatus, observed_at: Date.now()
+      });
+      saved++;
+    }
+  }
+  return saved;
+}
+
 async function processOne(db, row, cfg, api) {
   const known = new Set(db.prepare(
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
   ).all(row.kind, row.address).map(r => r.signature));
-  const recent = await api.fetchEnrichedTxsForMintWithMeta(row.address, cfg.recentLimit, known);
+  const recent = await api.fetchTransactionsForAddress(row.address, cfg.recentLimit, known);
+  let pagesFetched = recent.pagesFetched || 0;
+  let lastPageEmpty = Boolean(recent.lastPageEmpty);
+  recordAlchemyUsage(db, row, recent.httpRequests, recent.pagesFetched, recent.lastPageEmpty, "recent");
   const events = [...recent.transactions];
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
@@ -321,36 +452,42 @@ async function processOne(db, row, cfg, api) {
   // downtime. Persist the forward catch-up cursor and drain it across runs.
   // The cold-start cap is not a gap: the historical cursor handles that case.
   if (known.size && recent.truncated && !recent.reachedKnownHistory) {
-    if (!forwardCursor) forwardCursor = recent.transactions.at(-1)?.signature || null;
+    if (!forwardCursor) forwardCursor = recent.nextCursor || null;
     gap = true;
   }
   if (forwardCursor && known.size) {
-    const bridge = await api.fetchEnrichedTxsForMintWithMeta(
+    const bridge = await api.fetchTransactionsForAddress(
       row.address, cfg.backfillLimit, known, forwardCursor
     );
+    pagesFetched += bridge.pagesFetched || 0;
+    lastPageEmpty = Boolean(bridge.lastPageEmpty);
+    recordAlchemyUsage(db, row, bridge.httpRequests, bridge.pagesFetched, bridge.lastPageEmpty, "catch_up");
     events.push(...bridge.transactions);
     if (bridge.reachedKnownHistory || bridge.exhausted) {
       forwardCursor = null;
       gap = false;
     } else {
-      const next = bridge.transactions.at(-1)?.signature;
-      if (!next || next === forwardCursor) throw new Error("Catch-up cursor did not advance");
+      const next = bridge.nextCursor;
+      if (!next || next === forwardCursor) throw new Error("Alchemy catch-up cursor did not advance");
       forwardCursor = next;
     }
   }
 
   if (!complete && !backfillCursor) {
-    backfillCursor = recent.transactions.at(-1)?.signature || null;
+    backfillCursor = recent.nextCursor || null;
     if (recent.exhausted) complete = true;
   } else if (!complete && backfillCursor) {
-    const historical = await api.fetchEnrichedTxsForMintWithMeta(
-      row.address, cfg.backfillLimit, null, backfillCursor
+    const historical = await api.fetchTransactionsForAddress(
+      row.address, cfg.backfillLimit, new Set(), backfillCursor
     );
+    pagesFetched += historical.pagesFetched || 0;
+    lastPageEmpty = Boolean(historical.lastPageEmpty);
+    recordAlchemyUsage(db, row, historical.httpRequests, historical.pagesFetched, historical.lastPageEmpty, "backfill");
     events.push(...historical.transactions);
     if (historical.exhausted) complete = true;
     else {
-      const next = historical.transactions.at(-1)?.signature;
-      if (!next || next === backfillCursor) throw new Error("Backfill made no cursor progress");
+      const next = historical.nextCursor;
+      if (!next || next === backfillCursor) throw new Error("Alchemy backfill cursor did not advance");
       backfillCursor = next;
     }
   }
@@ -361,12 +498,13 @@ async function processOne(db, row, cfg, api) {
   const cadence = row.priority >= 100 ? 5 * 60_000 :
     row.priority >= 90 ? 15 * 60_000 : row.priority >= 65 ? 6 * 3600_000 : 12 * 3600_000;
   // SQLite savepoints keep raw events and normalized token trades atomic.
+  let inventoryMovements = 0;
   const added = db.transaction(() => {
-    const lease = db.prepare("SELECT lease_until FROM chain_seed_targets WHERE kind=? AND address=?").get(row.kind, row.address);
-    if (!lease || lease.lease_until !== row.lease_until || lease.lease_until <= Date.now()) {
-      throw new Error("Collector lease expired or replaced; stale result rejected");
-    }
+    const owned = db.prepare("SELECT 1 FROM chain_seed_targets WHERE kind=? AND address=? AND lease_until=? AND lease_until>?")
+      .get(row.kind, row.address, row.lease_until, Date.now());
+    if (!owned) throw new Error("Collector lease lost before persistence");
     const n = persistEvents(db, row.kind, row.address, unique);
+    inventoryMovements = persistInventoryMovements(db, row.kind, row.address, unique);
     if (trades.length) {
       api.persistTokenTrades(row.address, trades.map(t => ({
         signature: t.signature, timestamp: t.timestamp, trader: t.trader,
@@ -378,7 +516,11 @@ async function processOne(db, row, cfg, api) {
       })));
     }
     if (row.kind === "token") api.markTokenTradeChecked(row.address);
-    if (row.kind === "wallet") appendDiscovered(db, row.address, unique, api.txsToTrades);
+    if (row.kind === "wallet") {
+      // Cache all decoded swap legs from this wallet history, not just the token that discovered it.
+      walletCache.cacheWalletTrades(db, row.address, unique, api.txsToTrades, { sourceProvider: 'alchemy' });
+      appendDiscovered(db, row.address, unique);
+    }
     db.prepare(
       "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,"
       + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
@@ -387,10 +529,28 @@ async function processOne(db, row, cfg, api) {
     ).run(Date.now(), Date.now() + (complete && !forwardCursor ? cadence : 60_000),
       backfillCursor, forwardCursor, complete ? 1 : 0, gap ? 1 : 0,
       n, row.kind, row.address, row.lease_until);
+    if (row.kind === "wallet") {
+      walletCache.markWalletHistory(db, row.address, {
+        complete, backfillCursor, forwardCursor, possibleGap: gap, now: Date.now(),
+        decoderCoverage: 'swap_only', decoderVersion: walletCache.DECODER_VERSION,
+        pagesFetched, lastPageEmpty, source: 'alchemy'
+      });
+    } else {
+      const slots = unique.map(tx => Number(tx.slot)).filter(Number.isFinite);
+      walletCache.recordHistoryCoverage(db, {
+        entityKind: 'token', entityKey: row.address, source: 'alchemy',
+        coverageStartSlot: slots.length ? Math.min(...slots) : null,
+        coverageEndSlot: slots.length ? Math.max(...slots) : null,
+        eventsCount: db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events WHERE kind='token' AND address=?").get(row.address).n,
+        expectedCount: null, coveragePercent: null,
+        status: gap ? 'gap' : (complete ? 'complete' : 'partial'), decoderCoverage: 'swap_only',
+        gapReason: gap ? 'pagination_gap' : (complete ? null : 'backfill_incomplete_or_decoder_limited')
+      });
+    }
     return n;
-  })();
+  }).immediate();
   return { kind: row.kind, address: row.address, newEvents: added,
-    normalizedTrades: trades.length, complete, possibleGap: gap };
+    normalizedTrades: trades.length, inventoryMovements, complete, possibleGap: gap };
 }
 
 function failTask(db, row, error) {
@@ -408,15 +568,19 @@ async function collect(db, args) {
   const runtime = require('./blockchain-runtime.cjs');
   const settings = runtime.readSettings();
   if (!settings.enabled) return { stopped: true, reason: 'paused', claimed: 0, succeeded: 0, failed: 0, newEvents: 0 };
-  args = { ...args, limit: Math.min(args.limit,settings.batchSize), concurrency: settings.concurrency,
+  args = { ...args, limit: Math.min(args.limit, settings.batchSize), concurrency: settings.concurrency,
     recentLimit: settings.batchSize, backfillLimit: settings.batchSize };
   // ts-node is registered once in main(); avoid stacking require hooks on each
   // watch cycle. Fail fast before reserving work if API keys are unavailable.
-  const keys = require("../lib/trade/helius-rotation").getHeliusApiKeys();
-  if (!keys.length) throw new Error("Valid HELIUS_API_KEY(S) required for --mode collect");
-  const helius = require("../lib/trade/helius");
+  const { createAlchemyProvider } = require("./blockchain-alchemy-provider.cjs");
+  const alchemy = createAlchemyProvider({ request: async (urls, body) => {
+    let httpRequests = 0;
+    const result = await runtime.jsonRequest(urls, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, () => { httpRequests++; });
+    return { result: result.result, httpRequests };
+  } });
   const { persistTokenTrades, markTokenTradeChecked } = require("../lib/trade/db");
-  const api = { ...helius, persistTokenTrades, markTokenTradeChecked };
+  const api = { ...alchemy, persistTokenTrades, markTokenTradeChecked };
   const startedAt = Date.now();
   const runId = require('node:crypto').randomUUID();
   runtime.db().transaction(() => {
@@ -440,8 +604,18 @@ async function collect(db, args) {
         if (succeeded % 10 === 0) console.log(JSON.stringify({ progress: succeeded, inserted, failed, gaps }));
       } catch (error) {
         failed++;
+        const requestCount = Number(error && error.httpRequests) || 0;
+        if (requestCount > 0) {
+          try {
+            recordAlchemyUsage(db, row, requestCount, error.pagesFetched, error.lastPageEmpty, "failed_request");
+          } catch (ledgerError) {
+            console.error("[blockchain-collector] failed to record Alchemy HTTP usage:", ledgerError);
+          }
+        }
         failTask(db, row, error);
         runtime.db().prepare('UPDATE blockchain_runs SET heartbeat_at=?,errors=? WHERE id=?').run(Date.now(),failed,runId);
+        console.error("[blockchain-collector]", row.kind, row.address,
+          error instanceof Error ? error.message : String(error));
       }
     }
   }
@@ -496,7 +670,5 @@ async function main() {
   }
   console.log(JSON.stringify({ status: status(db) }, null, 2));
 }
-if (require.main === module) {
-  main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
-}
+if (require.main === module) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
 module.exports = { initDb, claimOne, processOne, failTask, appendDiscovered, importFolders, refreshTargets, status, collect };

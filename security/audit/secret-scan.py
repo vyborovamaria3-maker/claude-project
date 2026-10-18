@@ -52,6 +52,10 @@ LEGACY_HISTORY_FINDINGS = {
     ("security/audit/full-repo-regression.py", "jwt-bearer"),
     ("solana-launcher/.editorconfig", "api-key-sk-prefix"),
     ("solana-launcher/SOLSCAN_API_SETUP.md", "jwt-bearer"),
+    # These removed legacy test files trigger only the history scanner. Keep the
+    # exception history-only; current-tree and diff scans still reject matches.
+    ("solana-launcher/lib/tginvite-invite-policy.test.ts", "telegram-bot-token"),
+    ("solana-launcher/lib/tginvite-invite-route.test.ts", "telegram-bot-token"),
     ("telegram-miniapp/bot/bot.js", "telegram-bot-token"),
     ("telegram-miniapp/bot/bot.ts", "telegram-bot-token"),
     ("telegram-miniapp/bot/set-menu-button.js", "telegram-bot-token"),
