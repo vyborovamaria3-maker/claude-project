@@ -1,5 +1,7 @@
 const RECONCILIATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const INITIAL_CHECK_DELAY_MS = 60 * 1000;
+// A post found much later may be a separate manual publication with identical text.
+const MAX_POST_DELAY_MS = 5 * 60 * 1000;
 const RECHECK_DELAYS_MS = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000, 3 * 60 * 60 * 1000, 6 * 60 * 60 * 1000, 12 * 60 * 60 * 1000, 24 * 60 * 60 * 1000];
 function normalizeBody(text) {
   return String(text || '').normalize('NFKC')
@@ -58,7 +60,7 @@ function findMatches(job, candidates, now = Date.now()) {
   const attemptedAt = Number(job.attempted_at ?? job.started_at ?? job.created_at);
   if (!expectedHandle || !Number.isFinite(attemptedAt) || attemptedAt <= 0) return [];
   const minTime = attemptedAt - 30 * 1000;
-  const maxTime = now + 2 * 60 * 1000;
+  const maxTime = Math.min(now + 2 * 60 * 1000, attemptedAt + MAX_POST_DELAY_MS);
   const matches = new Map();
 
   for (const candidate of candidates) {

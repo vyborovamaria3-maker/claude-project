@@ -43,6 +43,8 @@ test('reconciliation requires an exact author, text, and a timestamp near the se
   ],now);
   assert.equal(matches.length,1);
   assert.equal(matches[0].tweet_id,'1234567890123456789');
+  const lateDuplicate=findMatches(source,[candidate('1234567890123456794',{posted_at:source.attempted_at+6*60*1000})],source.attempted_at+60*60*1000);
+  assert.equal(lateDuplicate.length,0,'a later identical post must not confirm the original send');
 });
 
 test('short links are expanded before matching and a different source permalink is not a match',()=>{
