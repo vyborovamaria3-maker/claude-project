@@ -46,8 +46,8 @@ test("Postgres claim uses locked transaction, then release",async()=>{
 test("Postgres ACK and failure require lease owner",async()=>{
   const calls=[];
   const client={query:async(sql,params)=>{calls.push({sql,params});return{rows:[{id:"7"}]}}};
-  assert.equal(await ackPostgres(client,"7","w"),true);
-  assert.equal(await failPostgres(client,"7","w","network",new Date()),true);
+  assert.equal(await ackPostgres(client,"7","w","2026-10-18T00:10:00Z"),true);
+  assert.equal(await failPostgres(client,"7","w","2026-10-18T00:10:00Z","network",new Date()),true);
   assert.ok(calls.every(x=>x.sql.includes("lease_owner=$2")));
 });
 
@@ -72,7 +72,7 @@ test("SQLite emit is caller-owned, claim locks and ACK fenced to owner",()=>{
   assert.equal(rows[0].id,"1");
   assert.ok(db.sql.includes("BEGIN IMMEDIATE"));
   assert.ok(db.sql.includes("COMMIT"));
-  assert.equal(ackSqlite(db,"1","w"),true);
-  assert.equal(failSqlite(db,"1","w","bad",new Date()),true);
+  assert.equal(ackSqlite(db,"1","w",rows[0].leaseUntil),true);
+  assert.equal(failSqlite(db,"1","w",rows[0].leaseUntil,"bad",new Date()),true);
   assert.ok(db.sql.some(x=>typeof x==="object"&&x.q.includes("lease_owner=?")));
 });
