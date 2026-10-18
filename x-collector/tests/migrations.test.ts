@@ -11,7 +11,8 @@ test('active migration chain executes on disposable PostgreSQL engine', async ()
   const db = new PGlite({ extensions: { pg_trgm } });
   try {
     const files = REQUIRED;
-    assert.equal(files.at(-1), "045_collector_trace.sql");
+    assert.equal(files.at(-1), REQUIRED.includes("047_signal_quality_marts.sql") ? "047_signal_quality_marts.sql" : "046_tweet_token_linker.sql");
+    assert(files.includes("046_tweet_token_linker.sql"));
     for (const file of files) {
       try { await db.exec(await fs.readFile('migrations/' + file, 'utf8')); }
       catch (error) { throw new Error(file + ': ' + String(error), { cause: error }); }
