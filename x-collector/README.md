@@ -4,7 +4,7 @@ This is the PostgreSQL X collector from fixed_project.zip, integrated as an isol
 
 ## Migration chain and provenance
 
-The repository contains the complete numbered 001–018 chain plus the graph-monitoring, intelligence and signals migrations (`012_graph_monitoring.sql`, `013_intelligence.sql`, `014_signals_engine.sql`). `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the chain to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state. The runner validates the chain and prevents concurrent migration runs.
+The active migration manifest currently ends at `045_collector_trace.sql`. Numeric prefixes are not the execution order: the repository intentionally contains duplicate prefixes (`012`, `013`, `014`, and `036`) and explicit gaps. `lib/trade/migrations.ts` is the single ordered manifest; never infer migration order from the numeric prefix alone. `003_performance.sql` is an additive reconstruction, not the recovered original: it indexes `twitter_tweets.first_seen_at`, `tweet_token_links.linked_at`, terminal `x_tasks.created_at`, and terminal `scrape_runs.started_at`. These columns are defined by 001/002. Do not substitute the similarly named memecoin-intelligence migration. Apply the active manifest to a disposable dedicated PostgreSQL database before deployment; a file's presence does not prove it has been applied to your database. `npm run migrate -- --status` reports recorded migration state. The runner validates the chain and prevents concurrent migration runs.
 
 ## Setup
 
@@ -58,9 +58,9 @@ See [DEVELOPMENT_REPORT_RU.md](DEVELOPMENT_REPORT_RU.md) for verified behavior a
 
 ## AI Reply Guy
 
-The integrated reply module is available at `/reply` in the dashboard or via `npm run reply:api`. See [REPLY_GUY_RU.md](REPLY_GUY_RU.md) for the plan mapping, official API credentials, Telegram, workers, deployment and verified limits. Migration 012 is additive and must be applied before enabling the module.
+The integrated reply module is available at `/reply` in the dashboard or via `npm run reply:api`. See [REPLY_GUY_RU.md](REPLY_GUY_RU.md) for the plan mapping, official API credentials, Telegram, workers, deployment and verified limits. Migration `012_reply_guy.sql` is additive and must be applied before enabling the module.
 
-Migration 013 adds Reply Guy queue/tenant/budget/alert indexes. See DATABASE_PERFORMANCE_RU.md for measured fixture plans and deployment guidance.
+Migration `013_reply_performance.sql` adds Reply Guy queue/tenant/budget/alert indexes. See DATABASE_PERFORMANCE_RU.md for measured fixture plans and deployment guidance.
 
 Archive backfill/import and Solana datasets: see ARCHIVE_RU.md. Existing Playwright scraper remains in lib/trade/twitter-scraper.ts.
 
@@ -78,7 +78,7 @@ Migration 018 adds immutable post versions, versioned model/results storage, and
 
 ## Graph signals and autonomous monitoring v1
 
-Apply migration 012 with `npm run migrate` inside x-collector before starting the scheduler.
+Apply `012_graph_monitoring.sql` with `npm run migrate` inside x-collector before starting the scheduler.
 `npm run monitor` runs one cycle; the scheduler runs it every five minutes. No new
 AI, sentiment, embeddings, dashboard or trading features are used by this cycle.
 
@@ -115,8 +115,7 @@ the complete migration chain and verify actual SQL writes, deduplication,
 rollback, and an injected failure during the event INSERT. This runs without an
 external database; it does not verify concurrency between server connections.
 The separate `test:db` check verifies that on PostgreSQL using two connections.
-The admin X Collector explorer automatically lists both graph tables after migration
-012, with Russian labels and explanations of scores and priorities.
+The admin X Collector explorer automatically lists both graph tables after `012_graph_monitoring.sql`, with Russian labels and explanations of scores and priorities.
 
 GitHub Actions `X Collector monitoring` provisions PostgreSQL 17, checks the build, applies the full migration chain twice, runs the two-connection integration test, and executes the one-cycle monitor on an empty database. It uses disposable test credentials and does not access production.
 

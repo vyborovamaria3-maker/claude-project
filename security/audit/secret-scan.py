@@ -52,6 +52,10 @@ LEGACY_HISTORY_FINDINGS = {
     ("security/audit/full-repo-regression.py", "jwt-bearer"),
     ("solana-launcher/.editorconfig", "api-key-sk-prefix"),
     ("solana-launcher/SOLSCAN_API_SETUP.md", "jwt-bearer"),
+    # These removed legacy test files trigger only the history scanner. Keep the
+    # exception history-only; current-tree and diff scans still reject matches.
+    ("solana-launcher/lib/tginvite-invite-policy.test.ts", "telegram-bot-token"),
+    ("solana-launcher/lib/tginvite-invite-route.test.ts", "telegram-bot-token"),
     ("telegram-miniapp/bot/bot.js", "telegram-bot-token"),
     ("telegram-miniapp/bot/bot.ts", "telegram-bot-token"),
     ("telegram-miniapp/bot/set-menu-button.js", "telegram-bot-token"),
@@ -141,16 +145,14 @@ def scan_history(findings: set[tuple[str, str]]) -> None:
                 else match[0],
                 line,
             )
-        # Exact synthetic Telegram fixture in two PR #62 test files. Current
-        # and diff scans stay strict; all other historical values still fail.
+        # Exact synthetic alphabet fixture from obsolete tginvite branches.
+        # History-only, fingerprint-scoped: current/diff and all other values stay strict.
         if current_path in {
             "solana-launcher/lib/tginvite-invite-policy.test.ts",
             "solana-launcher/lib/tginvite-invite-route.test.ts",
         }:
-            line = re.sub(
-                r"\b\d{6,12}:[A-Za-z0-9_-]{30,}\b",
-                lambda match: "verified-test-fixture"
-                if hashlib.sha256(match[0].encode()).hexdigest()
+            line = RULES[4].pattern.sub(
+                lambda match: "fixture" if hashlib.sha256(match[0].encode()).hexdigest()
                 == "79d4ca920b2c1434e46e13d0095542c1a8fc2c4d9cafeb1751cdd2c103eef67a"
                 else match[0],
                 line,

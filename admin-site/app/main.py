@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .tg_collector_admin import build_tg_collector_router
 from .audit import AuditStore
 from .control import ControlStore, inventory, runtime_metrics
 from .auth import LoginLimiter, check_admin_password, issue_session, require_admin
@@ -417,6 +418,7 @@ def create_app() -> FastAPI:
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    app.include_router(build_tg_collector_router())
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
 

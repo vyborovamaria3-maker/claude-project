@@ -1,0 +1,33 @@
+{
+  "fixture_version": 1,
+  "gramjs_version": "2.26.22",
+  "format": "json-message-envelope",
+  "notes": "Stable fixture contract. Values mirror the subset of a GramJS Message used by TG Collector; no live Telegram credentials are required.",
+  "messages": [
+    {
+      "id": 1001,
+      "date": 1792065600,
+      "message": "Hello @alice and https://t.me/bobby",
+      "views": 12,
+      "forwards": 2
+    },
+    {
+      "id": 1002,
+      "date": 1792069200,
+      "message": "Wallet 7xKXtg2CW87d97TXJSDpbD5fK8f4sM7qJ9a3s1b2c4d5 and EVM 0x1111111111111111111111111111111111111111",
+      "views": 20,
+      "forwards": 0
+    },
+    {
+      "id": 1003,
+      "date": 1792072800,
+      "message": "Forwarded public channel post",
+      "fwdFrom": {
+        "fromId": {
+          "className": "PeerChannel",
+          "channelId": "123456789"
+        }
+      }
+    }
+  ]
+}

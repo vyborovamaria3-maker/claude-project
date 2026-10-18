@@ -3,9 +3,27 @@ import {test} from 'node:test';
 import {createRequire} from 'node:module';
 import fs from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
+test('history producer queues two distinct windows when collector policy permits two accounts',async()=>{
+ const db=new PGlite();
+ try{
+  for(const file of REQUIRED)await db.exec(await fs.readFile('migrations/'+file,'utf8'));
+  const c={query:async(sql:string,args:unknown[]=[])=>{const r=await db.query(sql,args);return {rows:r.rows,rowCount:r.rows.length||r.affectedRows};}};
+  await db.exec(`INSERT INTO xc_history_runs(id,since_date,until_date,topics_json,created_at,updated_at) VALUES('parallel-run','2026-01-01','2026-02-01','[]',0,0);
+   UPDATE xc_discovery_plan SET enabled=true,history_run_id='parallel-run',max_browser_accounts=2;
+   INSERT INTO xc_history_windows(run_id,base_query,author_handle,since_date,until_date,status) VALUES
+   ('parallel-run','from:alice','alice','2026-01-01','2026-02-01','pending'),
+   ('parallel-run','from:bob','bob','2026-01-01','2026-02-01','pending');`);
+  await queueWindows(c,{id:'parallel-run',account_name:'collector'});
+  const rows=(await db.query<{id:number}>('SELECT id FROM x_tasks')).rows;
+  assert.equal(rows.length,2);assert.notEqual(rows[0].id,rows[1].id);
+  await queueWindows(c,{id:'parallel-run',account_name:'collector'});
+  assert.equal((await db.query('SELECT id FROM x_tasks')).rows.length,2);
+ }finally{await db.close();}
+});
 import {REQUIRED} from '../lib/trade/migrations';
 const load=createRequire(__filename);
 const {tickDiscovery,readiness}=load('../scripts/discovery-core.cjs');
+const {tickSources}=load('../scripts/list-core.cjs');
 const {queueWindows}=load('../scripts/history-core.cjs');
 test('discovery waits for all three list archives, pages durably, blocks on failed archive and preserves failed cursors',async()=>{
  const db=new PGlite();
@@ -52,5 +70,32 @@ test('discovery waits for all three list archives, pages durably, blocks on fail
   assert.equal((await readiness(c)).ready,false);
   await db.exec("UPDATE xc_history_lists SET status='done'; UPDATE xc_list_checkpoints SET status='partial' WHERE list_id='3'");
   assert.equal((await readiness(c)).ready,false);
+ }finally{await db.close();}
+});
+
+test('short completed browser list page permits the next scheduled collection',async()=>{
+ const db=new PGlite();
+ try {
+  for(const file of REQUIRED)await db.exec(await fs.readFile('migrations/'+file,'utf8'));
+  await db.exec('CREATE TABLE xc_auto_sources(list_id text PRIMARY KEY,enabled boolean DEFAULT true,interval_minutes integer DEFAULT 15,next_run bigint DEFAULT 0,last_task_id bigint)');
+  const c={query:async(sql:string,args:unknown[]=[])=>{const r=await db.query(sql,args);return {rows:r.rows,rowCount:r.rows.length||r.affectedRows};}};
+  await db.query("INSERT INTO xc_auto_sources(list_id) VALUES('98765')");
+  await tickSources(c,1000);
+  const queued=(await db.query<{task_id:string;status:string}>("SELECT task_id,status FROM xc_list_checkpoints WHERE list_id='98765'")).rows[0];
+  assert.equal(queued.status,'queued');
+  await db.query("UPDATE x_tasks SET status='done' WHERE id=$1",[queued.task_id]);
+  await db.exec("INSERT INTO twitter_tweets(tweet_id,handle,text,first_seen_at,updated_at) SELECT (1000000000000000+n)::text,'alice','fixture',0,0 FROM generate_series(1,37)n");
+  await db.query('INSERT INTO x_task_tweets SELECT $1,(1000000000000000+n)::text FROM generate_series(1,37)n',[queued.task_id]);
+  await db.query("INSERT INTO x_task_progress(task_id,worker_id,attempt,phase,found,started_at,updated_at) VALUES($1,'fixture',1,'finishing',37,0,0)",[queued.task_id]);
+  await tickSources(c,2000);
+  const after=(await db.query<{status:string;task_id:string|null;last_seen_id:string;last_completed_at:string}>("SELECT status,task_id,last_seen_id,last_completed_at FROM xc_list_checkpoints WHERE list_id='98765'")).rows[0];
+  assert.equal(after.status,'idle');
+  assert.equal(after.task_id,null);
+  assert.equal(after.last_seen_id,'1000000000000037');
+  assert.equal(Number(after.last_completed_at),2000);
+  const nextRun=(await db.query<{next_run:string}>("SELECT next_run FROM xc_auto_sources WHERE list_id='98765'")).rows[0];
+  await tickSources(c,Number(nextRun.next_run)+1);
+  assert.equal((await db.query<{status:string;task_id:string}>("SELECT status,task_id FROM xc_list_checkpoints WHERE list_id='98765'")).rows[0].status,'queued');
+  assert.equal((await db.query("SELECT id FROM x_tasks WHERE payload_json->>'list_source_id'='98765'")).rows.length,2);
  }finally{await db.close();}
 });

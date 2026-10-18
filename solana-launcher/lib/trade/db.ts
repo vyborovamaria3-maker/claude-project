@@ -11,13 +11,16 @@ import type { RecurringDevWalletInput } from "./dev-history";
 const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const DB_PATH = path.join(DATA_DIR, "trade.db");
+const DB_PATH = path.resolve(process.env.SOLANA_TRADE_DB_PATH?.trim() || path.join(DATA_DIR, "trade.db"));
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 // Singleton — Next.js dev hot-reload friendly
 declare global {
   // eslint-disable-next-line no-var
   var __TRADE_DB__: Database.Database | undefined;
 }
+
+let initializedDb: Database.Database | null = null;
 
 function init(db: Database.Database) {
 
@@ -135,6 +138,25 @@ function init(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_token_trades_mint_ts ON token_trades(mint, timestamp);
     CREATE INDEX IF NOT EXISTS idx_token_trades_mint_trader ON token_trades(mint, trader);
+    -- Additional normalized fills are additive: never rewrite existing
+    -- mint+signature aggregates or discard older on-disk transactions.
+    CREATE TABLE IF NOT EXISTS token_trade_fills (
+      mint TEXT NOT NULL, signature TEXT NOT NULL,
+      leg_index INTEGER NOT NULL CHECK(leg_index >= 0),
+      timestamp INTEGER NOT NULL, trader TEXT NOT NULL, type TEXT NOT NULL,
+      amount_sol REAL NOT NULL, amount_tokens REAL NOT NULL, price_sol REAL NOT NULL,
+      slot INTEGER, quote_mint TEXT, quote_amount REAL, quote_decimals INTEGER,
+      quote_usd_value REAL, fee REAL, jito_tip_lamports INTEGER, source TEXT,
+      inserted_at INTEGER NOT NULL, PRIMARY KEY(mint,signature,leg_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_trade_fills_mint_ts ON token_trade_fills(mint,timestamp DESC,signature,leg_index);
+    CREATE INDEX IF NOT EXISTS idx_trade_fills_mint_trader ON token_trade_fills(mint,trader);
+
+    -- Separates provider freshness from the arrival time of the last trade.
+    CREATE TABLE IF NOT EXISTS token_trade_sync (
+      mint TEXT PRIMARY KEY,
+      last_checked_at INTEGER NOT NULL
+    );
 
     -- ── Dev (creator) wallet profiles ─────────────────────────
     -- One row per creator wallet, refreshed each time we fetch their tokens.
@@ -506,11 +528,29 @@ function init(db: Database.Database) {
     ["fee", "REAL"],
     ["jito_tip_lamports", "INTEGER"],
   ];
+  const currentTradeColumns = new Set(
+    (db.pragma("table_info(token_trades)") as Array<{ name: string }>).map(c => c.name)
+  );
   for (const [name, type] of tokenTradeColumnMigrations) {
-    try {
+    if (!currentTradeColumns.has(name)) {
+      // Duplicate-column errors are avoided without hiding real migration failures.
       db.exec(`ALTER TABLE token_trades ADD COLUMN ${name} ${type}`);
-    } catch {
-      // Column already exists — ignore
+    }
+  }
+  // Durable source revisions invalidate materialized API caches even on UPDATE
+  // or DELETE of an older row (MAX(rowid) cannot detect those operations).
+  db.exec("CREATE TABLE IF NOT EXISTS database_source_revisions(name TEXT PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 0)");
+  for (const table of [
+    "migration_wallet_rows","migration_token_rows","wallet_stats",
+    "wallet_tags","wallet_token_stats","token_trades","token_trade_fills"
+  ]) {
+    db.prepare("INSERT OR IGNORE INTO database_source_revisions(name,revision) VALUES(?,0)").run(table);
+    for (const operation of ["INSERT","UPDATE","DELETE"]) {
+      db.exec(
+        "CREATE TRIGGER IF NOT EXISTS dbrev_" + table + "_" + operation.toLowerCase() +
+        " AFTER " + operation + " ON " + table + " BEGIN " +
+        "UPDATE database_source_revisions SET revision=revision+1 WHERE name='" + table + "'; END"
+      );
     }
   }
 }
@@ -526,8 +566,11 @@ export function getDb(): Database.Database {
     db.pragma("temp_store = MEMORY");
     global.__TRADE_DB__ = db;
   }
-  // Always run init so new tables are created on hot-reload too
-  init(global.__TRADE_DB__);
+  // Schema runs once per module load (including hot-reload), not on every read.
+  if (initializedDb !== global.__TRADE_DB__) {
+    init(global.__TRADE_DB__);
+    initializedDb = global.__TRADE_DB__;
+  }
   return global.__TRADE_DB__;
 }
 
@@ -680,6 +723,8 @@ export function listAnalyzedMints(limit = 100): AnalyzedMintRow[] {
 
 export interface StoredTokenTrade {
   signature: string;
+  /** Stable instruction/leg index: absent = legacy aggregate, not individual fill. */
+  legIndex?: number | null;
   timestamp: number;
   trader: string;
   type: "buy" | "sell" | "transfer" | "unknown";
@@ -697,22 +742,43 @@ export interface StoredTokenTrade {
   source?: string;
 }
 
+export function getTokenTradeLastCheckedAt(mint: string): number | null {
+  const row = getDb().prepare(
+    "SELECT last_checked_at AS lastCheckedAt FROM token_trade_sync WHERE mint = ?"
+  ).get(mint) as { lastCheckedAt: number } | undefined;
+  return row?.lastCheckedAt ?? null;
+}
+
+export function markTokenTradeChecked(mint: string, checkedAt = Date.now()): void {
+  getDb().prepare(
+    `INSERT INTO token_trade_sync (mint, last_checked_at) VALUES (?, ?)
+     ON CONFLICT(mint) DO UPDATE SET last_checked_at = MAX(token_trade_sync.last_checked_at, excluded.last_checked_at)`
+  ).run(mint, checkedAt);
+}
+
 export function getTokenTrades(mint: string, limit = 10_000): StoredTokenTrade[] {
-  return getDb()
-    .prepare(
-      `SELECT signature, timestamp, trader, type,
-              amount_sol AS amountSol, amount_tokens AS amountTokens,
-              price_sol AS priceSol, slot,
-              quote_mint AS quoteMint, quote_amount AS quoteAmount,
-              quote_decimals AS quoteDecimals, quote_usd_value AS quoteUsdValue,
-              fee, jito_tip_lamports AS jitoTipLamports, source
-       FROM token_trades
-       WHERE mint = ?
-       ORDER BY timestamp DESC
-       LIMIT ?`
-    )
-    .all(mint, limit)
-    .reverse() as StoredTokenTrade[];
+  // Explicit fills shadow the corresponding historical one-row-per-signature
+  // record. Other legacy signatures remain visible without migration.
+  return getDb().prepare(
+    `SELECT signature,leg_index AS legIndex,timestamp,trader,type,
+            amount_sol AS amountSol,amount_tokens AS amountTokens,
+            price_sol AS priceSol,slot,quote_mint AS quoteMint,
+            quote_amount AS quoteAmount,quote_decimals AS quoteDecimals,
+            quote_usd_value AS quoteUsdValue,fee,
+            jito_tip_lamports AS jitoTipLamports,source
+     FROM (
+       SELECT * FROM token_trade_fills WHERE mint=?
+       UNION ALL
+       SELECT mint,signature,NULL AS leg_index,timestamp,trader,type,
+              amount_sol,amount_tokens,price_sol,slot,quote_mint,
+              quote_amount,quote_decimals,quote_usd_value,fee,
+              jito_tip_lamports,source,inserted_at
+       FROM token_trades l WHERE l.mint=? AND NOT EXISTS (
+         SELECT 1 FROM token_trade_fills f
+         WHERE f.mint=l.mint AND f.signature=l.signature
+       )
+     ) ORDER BY timestamp DESC,signature DESC,leg_index DESC LIMIT ?`
+  ).all(mint,mint,limit).reverse() as StoredTokenTrade[];
 }
 
 export function persistTokenTrades(mint: string, trades: StoredTokenTrade[]) {
@@ -732,18 +798,51 @@ export function persistTokenTrades(mint: string, trades: StoredTokenTrade[]) {
        amount_sol = excluded.amount_sol,
        amount_tokens = excluded.amount_tokens,
        price_sol = excluded.price_sol,
-       slot = excluded.slot,
-       quote_mint = excluded.quote_mint,
-       quote_amount = excluded.quote_amount,
-       quote_decimals = excluded.quote_decimals,
-       quote_usd_value = excluded.quote_usd_value,
-       fee = excluded.fee,
-       jito_tip_lamports = excluded.jito_tip_lamports,
-       source = excluded.source`
+       slot = COALESCE(excluded.slot, token_trades.slot),
+       quote_mint = COALESCE(excluded.quote_mint, token_trades.quote_mint),
+       quote_amount = COALESCE(excluded.quote_amount, token_trades.quote_amount),
+       quote_decimals = COALESCE(excluded.quote_decimals, token_trades.quote_decimals),
+       quote_usd_value = COALESCE(excluded.quote_usd_value, token_trades.quote_usd_value),
+       fee = COALESCE(excluded.fee, token_trades.fee),
+       jito_tip_lamports = COALESCE(excluded.jito_tip_lamports, token_trades.jito_tip_lamports),
+       source = COALESCE(excluded.source, token_trades.source)`
   );
 
+  const indexedStmt = db.prepare(
+    `INSERT INTO token_trade_fills
+      (mint,signature,leg_index,timestamp,trader,type,amount_sol,amount_tokens,price_sol,
+       slot,quote_mint,quote_amount,quote_decimals,quote_usd_value,fee,jito_tip_lamports,source,inserted_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(mint,signature,leg_index) DO UPDATE SET
+       timestamp=excluded.timestamp,trader=excluded.trader,type=excluded.type,
+       amount_sol=excluded.amount_sol,amount_tokens=excluded.amount_tokens,
+       price_sol=excluded.price_sol,slot=COALESCE(excluded.slot,token_trade_fills.slot),
+       quote_mint=COALESCE(excluded.quote_mint,token_trade_fills.quote_mint),
+       quote_amount=COALESCE(excluded.quote_amount,token_trade_fills.quote_amount),
+       quote_decimals=COALESCE(excluded.quote_decimals,token_trade_fills.quote_decimals),
+       quote_usd_value=COALESCE(excluded.quote_usd_value,token_trade_fills.quote_usd_value),
+       fee=COALESCE(excluded.fee,token_trade_fills.fee),
+       jito_tip_lamports=COALESCE(excluded.jito_tip_lamports,token_trade_fills.jito_tip_lamports),
+       source=COALESCE(excluded.source,token_trade_fills.source)`
+  );
+  const seenLegs = new Set<string>();
+  for (const t of trades) {
+    if (t.legIndex === undefined || t.legIndex === null) continue;
+    if (!Number.isSafeInteger(t.legIndex) || t.legIndex < 0)
+      throw new Error('Token trade legIndex must be a non-negative safe integer');
+    const key = JSON.stringify([mint,t.signature,t.legIndex]);
+    if (seenLegs.has(key)) throw new Error('Duplicate leg index in batch: '+key);
+    seenLegs.add(key);
+  }
   const tx = db.transaction((rows: StoredTokenTrade[]) => {
     for (const t of rows) {
+      if (t.legIndex !== undefined && t.legIndex !== null) {
+        indexedStmt.run(mint,t.signature,t.legIndex,t.timestamp,t.trader,t.type,
+          t.amountSol,t.amountTokens,t.priceSol,t.slot??null,t.quoteMint??null,
+          t.quoteAmount??null,t.quoteDecimals??null,t.quoteUsdValue??null,
+          t.fee??null,t.jitoTipLamports??null,t.source??null,now);
+        continue;
+      }
       stmt.run(
         mint,
         t.signature,
@@ -912,6 +1011,7 @@ export function listRecentMarketEvents(limit = 100): MarketEventRow[] {
 export interface TokenTradeRow {
   mint: string;
   signature: string;
+  legIndex?: number | null;
   timestamp: number;
   trader: string;
   type: string;
@@ -923,16 +1023,23 @@ export interface TokenTradeRow {
 }
 
 export function listRecentTokenTrades(limit = 100): TokenTradeRow[] {
-  return getDb()
-    .prepare(
-      `SELECT mint, signature, timestamp, trader, type,
-              amount_sol AS amountSol, amount_tokens AS amountTokens,
-              price_sol AS priceSol, source, inserted_at AS insertedAt
-       FROM token_trades
-       ORDER BY timestamp DESC, inserted_at DESC
-       LIMIT ?`
-    )
-    .all(limit) as TokenTradeRow[];
+  return getDb().prepare(
+    `SELECT mint,signature,leg_index AS legIndex,timestamp,trader,type,
+            amount_sol AS amountSol,amount_tokens AS amountTokens,
+            price_sol AS priceSol,source,inserted_at AS insertedAt
+     FROM (
+       SELECT mint,signature,leg_index,timestamp,trader,type,amount_sol,
+              amount_tokens,price_sol,source,inserted_at
+       FROM token_trade_fills
+       UNION ALL
+       SELECT l.mint,l.signature,NULL AS leg_index,l.timestamp,l.trader,l.type,
+              l.amount_sol,l.amount_tokens,l.price_sol,l.source,l.inserted_at
+       FROM token_trades l WHERE NOT EXISTS (
+         SELECT 1 FROM token_trade_fills f
+         WHERE f.mint=l.mint AND f.signature=l.signature
+       )
+     ) ORDER BY timestamp DESC,signature DESC,leg_index DESC LIMIT ?`
+  ).all(limit) as TokenTradeRow[];
 }
 
 export function getWalletTokens(address: string): Array<{
@@ -1444,8 +1551,8 @@ export interface MarketOverviewAggregateRow {
   sampledMarketCaps: number;
 }
 
-export function persistMarketEvent(event: MarketEventInsert) {
-  getDb().prepare(
+export function persistMarketEvent(event: MarketEventInsert): boolean {
+  const result = getDb().prepare(
     `INSERT OR IGNORE INTO market_events
        (event_id, kind, mint, trader, tx_type, amount_sol, market_cap_sol, payload_json, source, observed_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1461,6 +1568,7 @@ export function persistMarketEvent(event: MarketEventInsert) {
     event.source ?? "pumpportal",
     event.observedAt,
   );
+  return result.changes > 0;
 }
 
 export function getMarketOverviewAggregate(sinceMs: number): MarketOverviewAggregateRow {

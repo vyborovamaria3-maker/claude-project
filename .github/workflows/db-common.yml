@@ -1,0 +1,27 @@
+name: Shared DB adapters
+
+on:
+  pull_request:
+    paths:
+      - "packages/db-common/**"
+      - ".github/workflows/db-common.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/db-common/**"
+      - ".github/workflows/db-common.yml"
+
+jobs:
+  db-common:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install compiler
+        run: npm install --prefix packages/db-common --ignore-scripts --no-package-lock --no-audit
+      - name: Typecheck and unit tests
+        run: npm --prefix packages/db-common run check

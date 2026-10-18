@@ -1,0 +1,50 @@
+name: TG Collector security
+
+on:
+  pull_request:
+    paths:
+      - "tg-collector/**"
+      - "solana-launcher/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/security.yml"
+  push:
+    branches:
+      - "feature/tg-collector-mvp"
+    paths:
+      - "tg-collector/**"
+      - "solana-launcher/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/security.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # GitHub dependency review requires the repository Dependency graph feature.
+  # This repository does not expose that feature to this connection, so the gate is
+  # intentionally limited to reproducible production-dependency audits below.
+  npm-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: tg-collector
+            directory: tg-collector
+          - name: solana-launcher
+            directory: solana-launcher
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ${{ matrix.directory }}/package-lock.json
+      # Keep the locked dependency graph while tolerating the existing HeroUI/Tailwind peer mismatch.
+      - run: npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high

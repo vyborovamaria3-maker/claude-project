@@ -1,0 +1,33 @@
+name: Blockchain Excel Seeds (fast)
+
+on:
+  pull_request:
+    paths:
+      - "solana-launcher/scripts/blockchain-seed-*.cjs"
+      - "solana-launcher/lib/trade/helius.ts"
+      - "solana-launcher/scripts/blockchain-forensics*.cjs"
+      - "solana-launcher/scripts/blockchain-dex-*.cjs"
+      - "solana-launcher/app/api/blockchain/evidence/route.ts"
+      - "solana-launcher/app/trade/analysis/evidence/page.tsx"
+      - "solana-launcher/package.json"
+      - ".github/workflows/blockchain-excel-seeds.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seed-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: solana-launcher
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - run: npm run blockchain:test
+      - run: npm run blockchain:integration-test

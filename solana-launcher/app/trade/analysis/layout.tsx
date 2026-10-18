@@ -9,9 +9,15 @@ import { siteDesign } from "@/lib/siteDesign";
 const tabs = [
   {
     href: "/trade/analysis",
-    label: "On-chain",
+    label: "On-chain · оценка",
     icon: Activity,
     matches: (pathname: string) => pathname === "/trade/analysis",
+  },
+  {
+    href: "/trade/analysis/evidence",
+    label: "Проверенные данные",
+    icon: Activity,
+    matches: (pathname: string) => pathname.startsWith("/trade/analysis/evidence"),
   },
   {
     href: "/trade/analysis/social",

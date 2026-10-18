@@ -1,0 +1,37 @@
+name: XActions pinned offline contract
+on:
+  pull_request:
+    paths:
+      - 'x-collector/**'
+      - '.github/workflows/xactions-offline-contract.yml'
+permissions:
+  contents: read
+jobs:
+  pinned-esm-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: x-collector
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: x-collector/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Checkout exactly pinned XActions source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/nirholas/XActions.git "$RUNNER_TEMP/XActions"
+          git -C "$RUNNER_TEMP/XActions" checkout b9c4bf7bd680f82d4ede0a1b48bb1c5dbfd7bb78
+          test "$(git -C "$RUNNER_TEMP/XActions" rev-parse HEAD)" = "b9c4bf7bd680f82d4ede0a1b48bb1c5dbfd7bb78"
+          cd "$RUNNER_TEMP/XActions"
+          npm ci --ignore-scripts
+      - name: Exercise pinned XActions real HTTP client with fake fetch only
+        shell: bash
+        run: |
+          npm run build
+          XACTIONS_ROOT="$RUNNER_TEMP/XActions" node dist/scripts/xactions-verify.js

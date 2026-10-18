@@ -14,7 +14,7 @@ test('bulk archive bounds SQL calls and AI exports preserve cutoff, nullable met
  const query=async(sql:string,params:unknown[]=[])=>{queries++;const r=await db.query(sql,params);return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};};
  const a=mock.method(Pool.prototype,'query',query),b=mock.method(Pool.prototype,'connect',async()=>({query,release(){},on(){}}));
  try{
-  for(const name of ['014_archive.sql','018_ai_foundation.sql'])await db.exec(await fs.readFile('migrations/'+name,'utf8'));
+  for(const name of ['001_init.sql','014_archive.sql','018_ai_foundation.sql','049_raw_retention_author_id.sql'])await db.exec(await fs.readFile('migrations/'+name,'utf8'));
   const id=await source('Controlled fixture','https://example.org/fixture','test fixture','tweets');
   const first=Page.parse({data:Array.from({length:200},(_,n)=>({id:String(100000+n),text:'old text',created_at:'2025-01-01T00:00:00Z',metrics_observed_at:'2025-01-02T00:00:00Z',public_metrics:{like_count:0}}))});
   queries=0;const baselineStart=performance.now();

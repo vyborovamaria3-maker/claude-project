@@ -9,6 +9,7 @@
  * - expensive enrichments are bounded, cached and carry provenance/coverage.
  */
 import bs58 from "bs58";
+import { rpcRequest, readSettings } from "../../../scripts/blockchain-runtime.cjs";
 import { PublicKey } from "@solana/web3.js";
 import type { ChainEvent, ClusterInfo, DevBehavior, HolderPoint, SafetyFacts } from "./full";
 import type { TemporalSignalSnapshot } from "./quality-v3";
@@ -72,22 +73,8 @@ const FUNDING_MIN_LAMPORTS = (() => {
   const value = Number(process.env.CHAIN_FUNDING_MIN_LAMPORTS || 100_000);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 100_000;
 })();
-const RPC_BATCH_SIZE = (() => {
-  const value = Number(process.env.CHAIN_RPC_BATCH_SIZE || 20);
-  return Number.isFinite(value) && value >= 1 ? Math.min(50, Math.floor(value)) : 20;
-})();
-const FALLBACK_CONCURRENCY = (() => {
-  const value = Number(process.env.CHAIN_FALLBACK_CONCURRENCY || 6);
-  return Number.isFinite(value) && value >= 1 ? Math.min(12, Math.floor(value)) : 6;
-})();
-const RPC_BATCH_CONCURRENCY = (() => {
-  const value = Number(process.env.CHAIN_RPC_BATCH_CONCURRENCY || 2);
-  return Number.isFinite(value) && value >= 1 ? Math.min(4, Math.floor(value)) : 2;
-})();
-const PARSE_TX_CONCURRENCY = (() => {
-  const value = Number(process.env.CHAIN_PARSE_TX_CONCURRENCY || 3);
-  return Number.isFinite(value) && value >= 1 ? Math.min(6, Math.floor(value)) : 3;
-})();
+const rpcBatchSize = () => Math.min(50,readSettings().batchSize);
+const rpcConcurrency = () => readSettings().concurrency;
 
 export type MintInfo = Pick<SafetyFacts, "mintAuthority" | "freezeAuthority" | "upgradeable"> & {
   supply: number;
@@ -415,15 +402,7 @@ export class RpcChainProvider implements Partial<ChainProvider> {
   constructor(protected readonly url: string, protected readonly timeoutMs = 8_000) {}
 
   protected async rpc<T>(method: string, params: unknown[]): Promise<T> {
-    const response = await fetch(this.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: AbortSignal.timeout(this.timeoutMs),
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`rpc HTTP ${response.status}`);
-    const json = (await response.json()) as { result?: T; error?: { message?: string } };
+    const json = await rpcRequest(this.url, { jsonrpc: "2.0", id: 1, method, params }) as { result?: T; error?: { message?: string } };
     if (json.error) throw new Error(json.error.message ?? "rpc error");
     return json.result as T;
   }
@@ -432,20 +411,12 @@ export class RpcChainProvider implements Partial<ChainProvider> {
   protected async rpcBatchSettled<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<Array<{ ok: true; result: T } | { ok: false; error: string }>> {
     if (!requests.length) return [];
     const body = requests.map((request, index) => ({ jsonrpc: "2.0", id: index + 1, method: request.method, params: request.params }));
-    const response = await fetch(this.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(this.timeoutMs),
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`rpc batch HTTP ${response.status}`);
-    const json = await response.json() as Array<{ id?: number; result?: T; error?: { message?: string } }>;
+    const json = await rpcRequest(this.url, body) as Array<{ id?: number; result?: T; error?: { message?: string } }>;
     if (!Array.isArray(json)) throw new Error("rpc batch response is not an array");
     const byId = new Map(json.map((row) => [Number(row.id), row]));
     return requests.map((_, index) => {
       const row = byId.get(index + 1);
-      if (!row || row.error) return { ok: false as const, error: row?.error?.message || "missing rpc batch response" };
+      if (!row || row.error) return { ok: false as const, error: row?.error ? "rpc_batch_item_error" : "missing rpc batch response" };
       return { ok: true as const, result: row.result as T };
     });
   }
@@ -897,7 +868,7 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
       const signatures = wanted.map((row) => row.signature as string);
       const chunks: string[][] = [];
       for (let i = 0; i < signatures.length; i += 100) chunks.push(signatures.slice(i, i + 100));
-      const parsedChunks = await mapLimit(chunks, PARSE_TX_CONCURRENCY, async (chunk) => {
+      const parsedChunks = await mapLimit(chunks, rpcConcurrency(), async (chunk) => {
         try {
           const out = await parseTransactions<HeliusEnrichedTx[]>(chunk);
           return Array.isArray(out) ? out : [];
@@ -976,7 +947,11 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
         jitoTipLamports: trade.jitoTipLamports,
         source: trade.source,
       })));
-    } else {
+    }
+    // Preserve locally indexed history even when a new Helius page contains
+    // at least one trade. Otherwise every refresh drops older trades from
+    // analytics while leaving them in SQLite.
+    {
       const stored = getTokenTrades(mint, 10_000).map((row) => ({
         signature: row.signature,
         timestamp: row.timestamp,
@@ -994,7 +969,9 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
         jitoTipLamports: row.jitoTipLamports ?? undefined,
         source: row.source || undefined,
       }));
-      trades = stored;
+      // Fresh provider rows win on duplicate signatures; stale local history
+      // fills the uncovered time range without additional network requests.
+      trades = mergeTrades(stored, trades);
     }
     return { trades, recentEvidence, launchEvidence: launch.evidence };
   }
@@ -1015,8 +992,9 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
 
     const fallback: string[] = [];
     const chunks: string[][] = [];
-    for (let i = 0; i < unresolved.length; i += RPC_BATCH_SIZE) chunks.push(unresolved.slice(i, i + RPC_BATCH_SIZE));
-    await mapLimit(chunks, RPC_BATCH_CONCURRENCY, async (chunk) => {
+    const batchSize=rpcBatchSize();
+    for (let i = 0; i < unresolved.length; i += batchSize) chunks.push(unresolved.slice(i, i + batchSize));
+    await mapLimit(chunks, rpcConcurrency(), async (chunk) => {
       try {
         const rows = await this.rpcBatchSettled<HeliusHistoryResult<HeliusSignatureHistoryRow>>(
           chunk.map((address) => ({
@@ -1045,7 +1023,7 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
       return null;
     });
 
-    const fallbackValues = await mapLimit([...new Set(fallback)], FALLBACK_CONCURRENCY, async (address) => {
+    const fallbackValues = await mapLimit([...new Set(fallback)], rpcConcurrency(), async (address) => {
       try { return await getWalletFirstSeen(address); } catch { return null; }
     });
     [...new Set(fallback)].forEach((address, index) => {
@@ -1170,7 +1148,7 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
     }
     if (!historyComplete || !signatures.length) return { edge: null, historyComplete, source: "rpc:fallback" };
     const oldest = [...signatures].reverse().slice(0, 16);
-    const parsedOldest = await mapLimit(oldest, FALLBACK_CONCURRENCY, async (signature) => {
+    const parsedOldest = await mapLimit(oldest, rpcConcurrency(), async (signature) => {
       try {
         const tx = await this.rpc<ParsedRpcTransaction | null>("getTransaction", [signature.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 1 }]);
         return { signature, tx };
@@ -1229,8 +1207,9 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
     }
 
     const fallback: Array<{ address: string; index: number }> = [];
-    for (let i = 0; i < unresolved.length; i += RPC_BATCH_SIZE) {
-      const chunk = unresolved.slice(i, i + RPC_BATCH_SIZE);
+    const batchSize=rpcBatchSize();
+    for (let i = 0; i < unresolved.length; i += batchSize) {
+      const chunk = unresolved.slice(i, i + batchSize);
       try {
         const rows = await this.rpcBatchSettled<HeliusHistoryResult<HeliusTransferRow>>(
           chunk.map(({ address }) => ({
@@ -1278,7 +1257,7 @@ export class HybridChainProvider extends RpcChainProvider implements ChainProvid
     }
 
     const uniqueFallback = [...new Map(fallback.map((item) => [item.address, item])).values()];
-    const fallbackRows = await mapLimit(uniqueFallback, FALLBACK_CONCURRENCY, async ({ address }) => {
+    const fallbackRows = await mapLimit(uniqueFallback, rpcConcurrency(), async ({ address }) => {
       // Batch failure already told us the archival method is unavailable/invalid for this
       // lookup; go straight to the portable fallback instead of retrying the same RPC.
       const lookup = await this.verifyInitialFundingUncached(address, true);

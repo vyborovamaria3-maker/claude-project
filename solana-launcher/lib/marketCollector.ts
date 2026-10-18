@@ -4,6 +4,7 @@
 // Run as: npx ts-node scripts/market-collector.ts (or import startMarketCollector in a worker).
 
 import WebSocket from "ws";
+import { createHash } from "node:crypto";
 import {
   persistMarketEvent,
   getMarketCollectorStatus,
@@ -18,6 +19,9 @@ interface CollectorState {
   reconnectDelay: number;
   eventsSinceStart: number;
   lastEventAt: number | null;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  disconnects: number;
+  needsBackfill: boolean;
 }
 
 const state: CollectorState = {
@@ -26,80 +30,61 @@ const state: CollectorState = {
   reconnectDelay: 1000,
   eventsSinceStart: 0,
   lastEventAt: null,
+  reconnectTimer: null,
+  disconnects: 0,
+  needsBackfill: false,
 };
 
-function makeEventId(kind: string, mint: string, timestamp: number): string {
-  return `${kind}:${mint}:${timestamp}`;
+// Signature-based IDs dedupe a replay. If the stream lacks a signature, hash the
+// original message rather than generating a new ID on every delivery.
+function makeEventId(kind: string, mint: string, msg: Record<string, unknown>): string {
+  const signature = typeof msg.signature === "string" ? msg.signature.trim() : "";
+  const txType = typeof msg.txType === "string" ? msg.txType : "";
+  if (signature) return `${kind}:${mint}:${signature}:${txType}`;
+  const fingerprint = createHash("sha256").update(JSON.stringify(msg)).digest("hex");
+  return `${kind}:${mint}:unverified:${fingerprint}`;
 }
 
 function handleMessage(raw: string) {
   try {
     const msg = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof msg.mint !== "string" || !msg.mint) return;
+    const mint = msg.mint;
     const now = Date.now();
+    const txType = typeof msg.txType === "string" ? msg.txType : "";
+    const isMigration = Boolean(msg.pool || msg.graduation || msg.raydiumPool)
+      || txType === "migrate" || txType === "migration";
+    const isLaunch = txType === "create" || txType === "create_v2";
+    const isTrade = txType === "buy" || txType === "sell";
 
-    // PumpPortal newToken payload:
-    // { signature, mint, traderPublicKey, txType, initialBuy, solAmount, tokenAmount, marketCapSol, name, symbol, uri }
-    if (msg.mint && typeof msg.mint === "string") {
-      const kind: MarketEventKind =
-        msg.txType === "create" || msg.txType === "create_v2"
-          ? "launch"
-          : "trade";
-
-      const mint = msg.mint as string;
-      const signature = (msg.signature as string) || "";
-      const eventId = signature
-        ? `${kind}:${signature}`
-        : makeEventId(kind, mint, now);
-
-      persistMarketEvent({
-        eventId,
-        kind,
-        mint,
-        trader: (msg.traderPublicKey as string) || null,
-        txType: (msg.txType as string) || null,
-        amountSol: typeof msg.solAmount === "number" ? msg.solAmount : null,
-        marketCapSol:
-          typeof msg.marketCapSol === "number" ? msg.marketCapSol : null,
-        payload: msg,
-        source: "pumpportal",
-        observedAt: now,
-      });
-
+    // Event types are mutually exclusive. Previously migrations and arbitrary
+    // messages with a mint could be counted as trades.
+    const kind: MarketEventKind | null = isMigration ? "migration" : isLaunch ? "launch" : isTrade ? "trade" : null;
+    if (!kind) return;
+    const inserted = persistMarketEvent({
+      eventId: makeEventId(kind, mint, msg),
+      kind,
+      mint,
+      trader: kind === "trade" || kind === "launch" ? (typeof msg.traderPublicKey === "string" ? msg.traderPublicKey : null) : null,
+      txType: txType || null,
+      amountSol: kind === "trade" && typeof msg.solAmount === "number" && Number.isFinite(msg.solAmount) ? msg.solAmount : null,
+      marketCapSol: typeof msg.marketCapSol === "number" && Number.isFinite(msg.marketCapSol) ? msg.marketCapSol : null,
+      payload: msg,
+      source: "pumpportal",
+      observedAt: now,
+    });
+    if (inserted) {
       state.eventsSinceStart++;
       state.lastEventAt = now;
     }
-
-    // PumpPortal migration payload shape varies; detect by presence of pool or graduation fields
-    if (
-      (msg.pool || msg.graduation || msg.raydiumPool) &&
-      typeof msg.mint === "string"
-    ) {
-      const mint = msg.mint as string;
-      const eventId = makeEventId("migration", mint, now);
-      persistMarketEvent({
-        eventId,
-        kind: "migration",
-        mint,
-        trader: null,
-        txType: null,
-        amountSol: 0,
-        marketCapSol:
-          typeof msg.marketCapSol === "number" ? msg.marketCapSol : null,
-        payload: msg,
-        source: "pumpportal",
-        observedAt: now,
-      });
-
-      state.eventsSinceStart++;
-      state.lastEventAt = now;
-    }
-  } catch {
-    // ignore malformed
+  } catch (error) {
+    console.error("[market-collector] Invalid event or persistence failed:", error);
   }
 }
 
 function connect() {
   if (!state.isRunning) return;
+  if (state.ws && (state.ws.readyState === WebSocket.OPEN || state.ws.readyState === WebSocket.CONNECTING)) return;
 
   try {
     const ws = new WebSocket(PUMPPORTAL_WS);
@@ -108,6 +93,10 @@ function connect() {
     ws.on("open", () => {
       console.log("[market-collector] Connected to PumpPortal");
       state.reconnectDelay = 1000;
+      if (state.reconnectTimer) {
+        clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = null;
+      }
 
       // Subscribe to free streams
       ws.send(JSON.stringify({ method: "subscribeNewToken" }));
@@ -120,12 +109,12 @@ function connect() {
     });
 
     ws.on("close", () => {
-      console.log(
-        `[market-collector] Disconnected. Reconnecting in ${state.reconnectDelay}ms...`
-      );
+      if (state.ws !== ws) return;
       state.ws = null;
-      setTimeout(connect, state.reconnectDelay);
-      state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
+      if (!state.isRunning) return;
+      state.disconnects++;
+      state.needsBackfill = true; // WebSocket is not a durable event log.
+      scheduleReconnect();
     });
 
     ws.on("error", (err: Error) => {
@@ -133,8 +122,19 @@ function connect() {
     });
   } catch (err) {
     console.error("[market-collector] Failed to connect:", err);
-    setTimeout(connect, state.reconnectDelay);
+    scheduleReconnect();
   }
+}
+
+function scheduleReconnect() {
+  if (!state.isRunning || state.reconnectTimer) return;
+  const delay = state.reconnectDelay;
+  console.warn(`[market-collector] Reconnecting in ${delay}ms; missed events need historical reconciliation`);
+  state.reconnectTimer = setTimeout(() => {
+    state.reconnectTimer = null;
+    connect();
+  }, delay);
+  state.reconnectDelay = Math.min(delay * 2, 30_000);
 }
 
 export function startMarketCollector() {
@@ -144,12 +144,18 @@ export function startMarketCollector() {
   }
   state.isRunning = true;
   state.eventsSinceStart = 0;
+  state.needsBackfill = false;
+  state.disconnects = 0;
   console.log("[market-collector] Starting...");
   connect();
 }
 
 export function stopMarketCollector() {
   state.isRunning = false;
+  if (state.reconnectTimer) {
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
   if (state.ws) {
     try {
       state.ws.close();
@@ -172,5 +178,7 @@ export function getCollectorStatus() {
     launches: dbStatus.launches,
     migrations: dbStatus.migrations,
     trades: dbStatus.trades,
+    disconnects: state.disconnects,
+    needsBackfill: state.needsBackfill,
   };
 }

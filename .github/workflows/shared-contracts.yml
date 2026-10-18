@@ -1,0 +1,27 @@
+name: Shared contracts
+
+on:
+  pull_request:
+    paths:
+      - "packages/contracts/**"
+      - ".github/workflows/shared-contracts.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/contracts/**"
+      - ".github/workflows/shared-contracts.yml"
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned TypeScript compiler
+        run: npm install --prefix packages/contracts --ignore-scripts --no-package-lock --no-audit
+      - name: Strict typecheck, build, and regression tests
+        run: npm --prefix packages/contracts run check

@@ -1,0 +1,62 @@
+import os
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.auth import require_admin
+from app.tg_collector_admin import build_tg_collector_router, upstream
+
+class TGCollectorTests(unittest.TestCase):
+    def setUp(self):
+        self.app = FastAPI()
+        self.app.include_router(build_tg_collector_router())
+        self.app.dependency_overrides[require_admin] = lambda: {"sub": "test-admin"}
+        self.client = TestClient(self.app)
+
+    def test_auth_required(self):
+        def reject(): raise HTTPException(401)
+        self.app.dependency_overrides[require_admin] = reject
+        self.assertEqual(self.client.get("/api/tg-collector").status_code, 401)
+        self.assertEqual(self.client.post("/api/tg-collector", json={"action":"stop"}).status_code, 401)
+
+    def test_snapshot_masks_proxy_and_forwards_filter(self):
+        with patch("app.tg_collector_admin.upstream", new_callable=AsyncMock) as call:
+            call.return_value = {"stats":{"messages":523}, "messages":[{"text":"hello"}], "proxy":{"enabled":True,"type":"socks5","password":"hidden-canary","host":"hidden-host"}, "session":"hidden-session"}
+            r = self.client.get("/api/tg-collector?q=hello&source=12&page=2")
+            self.assertEqual(r.status_code,200)
+            self.assertEqual(r.json()["stats"]["messages"],523)
+            self.assertNotIn("hidden-",r.text)
+            self.assertIn("no-store", r.headers["cache-control"])
+            call.assert_awaited_once_with("GET", params={"q":"hello","source":"12","page":2})
+
+    def test_control_requires_exact_origin(self):
+        with patch("app.tg_collector_admin.upstream", new_callable=AsyncMock) as call:
+            for origin in (None,"https://attacker.invalid"):
+                headers = {"Origin":origin} if origin else {}
+                self.assertEqual(self.client.post("/api/tg-collector",headers=headers,json={"action":"stop"}).status_code,403)
+            call.assert_not_awaited()
+
+    def test_start_stop(self):
+        with patch("app.tg_collector_admin.upstream", new_callable=AsyncMock) as call:
+            for action in ("stop","start"):
+                call.return_value = {"collectionEnabled":action == "start"}
+                r = self.client.post("/api/tg-collector",headers={"Origin":"http://testserver"},json={"action":action})
+                self.assertEqual(r.status_code,200)
+                self.assertEqual(r.json()["collectionEnabled"],action == "start")
+                call.assert_awaited_with("POST", body={"action":action})
+
+    def test_rejects_other_actions_and_invalid_filters(self):
+        self.assertEqual(self.client.post("/api/tg-collector",json={"action":"proxy-save"}).status_code,422)
+        for query in ("page=-1","page=101","source=bad"):
+            self.assertEqual(self.client.get("/api/tg-collector?"+query).status_code,422)
+
+    def test_upstream_errors_do_not_expose_secrets(self):
+        import asyncio, httpx
+        with patch("app.tg_collector_admin.collector_token",return_value="test-only-placeholder-value"), patch("httpx.AsyncClient.request", new_callable=AsyncMock, side_effect=httpx.ConnectError("hidden-canary")):
+            with self.assertRaises(HTTPException) as caught: asyncio.run(upstream("GET"))
+            self.assertNotIn("hidden-canary",caught.exception.detail)
+
+if __name__ == "__main__": unittest.main()

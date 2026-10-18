@@ -45,7 +45,7 @@ async function queueWindows(c,run){
  await c.query("UPDATE x_tasks SET payload_json=payload_json||'{\"account_fallback\":true}'::jsonb,priority=1 WHERE status='pending' AND payload_json->>'history_run_id'=$1",[run.id]);
  const plan=(await c.query("SELECT to_regclass('xc_discovery_plan') AS present")).rows[0];
  const policy=plan?.present?(await c.query('SELECT * FROM xc_discovery_plan WHERE enabled AND history_run_id=$1',[run.id])).rows[0]:null;
- const capacity=policy?1:2;
+ const capacity=policy?Math.max(1,Math.min(4,Number(policy.max_browser_accounts)||1)):2;
  let authorsOnly=false;
  if(policy){
   const gate=(await c.query("SELECT (SELECT count(*) FROM xc_history_lists WHERE run_id=$1 AND status!='done') AS lists,(SELECT count(*) FROM xc_history_authors WHERE run_id=$1) AS authors,(SELECT count(*) FROM xc_history_windows WHERE run_id=$1 AND author_handle IS NOT NULL AND status!='done') AS remaining",[run.id])).rows[0];

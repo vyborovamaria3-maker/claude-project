@@ -1,176 +1,65 @@
-# POTAPoff Intelligence Layer
+# Intelligence — receiving events, timeline and feature snapshots
 
-Isolated off-chain intelligence collection and operational telemetry for POTAPoff.
+The Intelligence modules are built independently of collector databases.
+Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-## Providers
+Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql.
 
-Current:
+- Ingest RegistryEvent after claiming a source outbox event; source ACK only after
+  destination transaction commits. Consumer runDeliveryBatch remains a bounded,
+  explicit library call. It is NOT connected to running collectors.
+- Timeline queries filter both event occurrence and time first observed, so a
+  late-arriving historical tweet cannot leak into an earlier known-at view.
+- The feature registry has immutable version definitions. FEATURES_V1 contains
+  user-specified token-level metrics. Missing sentiment or bot-ratio values are
+  represented as null rather than silently as zero.
+- Feature snapshots record as_of and max_input_observed_at. Later-observed
+  inputs are rejected. Duplicate identical snapshots are accepted as no-op;
+  conflicting revisions require a NEW explicit feature version or new as_of.
+- A historical offline recomputation at an earlier as_of is NOT a proof that a
+  trading signal was actually available at that moment. A future production
+  backtest must separately use feature publication times and observed labels.
 
-- GitHub public repository intelligence;
-- Web via Jina Reader;
-- RSS 2.0 / Atom;
-- YouTube metadata and optional transcripts via `yt-dlp`.
+CI builds the shared contract, event-outbox and Intelligence modules and tests
+PostgreSQL transaction/replay, timeline cutoffs and feature schema invariants.
+No X or Telegram account, blockchain provider, local production DB or session
+is accessed by these tests.
 
-Future providers such as X/Reddit should be added only after the foundation is fully verified.
+Local commands (Node 22+):
+  npm install --prefix packages/contracts --ignore-scripts --no-package-lock
+  npm --prefix packages/contracts run check
+  npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock
+  npm --prefix packages/event-outbox run check
+  npm install --prefix intelligence --ignore-scripts --no-package-lock
+  npm --prefix intelligence run check
 
-## Runtime architecture
+Remaining: deployment-safe source migrations, explicit source writes and
+backfill, real ETL process with source ports, blockchain reconciliation, AI
+embeddings/training/outcome labels, secured APIs and operational runbooks.
 
-```text
-Providers
-   |
-ProviderRegistry
-   |
-Durable JobQueue
-   |-- SQLite WAL (single-host)
-   `-- PostgreSQL SKIP LOCKED (multi-worker)
-   |
-IntelligenceWorker
-   |
-DocumentStore
-   |-- Memory
-   |-- SQLite WAL
-   `-- PostgreSQL JSONB
-   |
-Read-only Control Center telemetry
-```
+## Bounded local ETL CLI (explicit opt-in)
 
-The intelligence layer must never contain trading keys, wallet secrets or unrelated private application credentials.
+There is no cloud collector or implicit background service. After reviewing and
+installing the destination migrations in an isolated PostgreSQL database, and
+source migrations for each local collector, an operator can run:
 
-## CLI
+    npm run build
+    node scripts/run.mjs --source tg --status
+    INTELLIGENCE_ETL_ENABLED=true node scripts/run.mjs --source tg --once --limit 25
 
-```bash
-python -m intelligence --help
-python -m intelligence init-db
-python -m intelligence runtime-health
-python -m intelligence doctor
-python -m intelligence backtest
-python -m intelligence score DOCUMENT_ID --as-of 2026-08-10T00:00:00+00:00
-python -m intelligence enqueue github owner/repository
-python -m intelligence run-once
-python -m intelligence worker --poll-seconds 2
-python -m intelligence job JOB_ID
-python -m intelligence documents --limit 50
-```
+Other sources: `--source x`, `--source blockchain`. Environment variables:
+`X_SOURCE_DATABASE_URL`, `TG_SOURCE_DATABASE_URL`,
+`SOLANA_TRADE_DB_PATH`, and `INTELLIGENCE_DATABASE_URL`.
 
-`runtime-health` performs harmless point reads against both durable queue and document storage. It does not claim jobs or call external providers.
+The status command only reads source outbox counts. The once command is
+explicitly gated and handles one finite claim batch with destination transaction
+commit before source ACK; no Telegram login, browser, provider request, replay
+loop, background scheduling, or trading instruction is performed. Keep all
+credentials in locally secured environment settings (never commit them).
+For SQLite, use the absolute path to a verified local DB; do not open a live
+`trade.db` until WAL-safe backup and restore rehearsal. Follow the staged
+Codex handoff for source and consumer rollout.
 
-## Reproducible verification
-
-Verification logic lives in the repository instead of being duplicated inside GitHub Actions.
-
-Run the network-free core profile from any working directory:
-
-```bash
-python3 scripts/verify_intelligence.py
-```
-
-It runs compilation, intelligence unit tests, deterministic scoring backtests, admin intelligence integration tests, secret-template validation and credential-file checks.
-
-For a disposable test environment with Docker and separate PostgreSQL writer/read-only test roles:
-
-```bash
-export POTAPOFF_TEST_POSTGRES_DSN='postgresql://WRITER_TEST_ROLE:.../intelligence'
-export POTAPOFF_TEST_POSTGRES_READONLY_DSN='postgresql://READONLY_TEST_ROLE:.../intelligence'
-python3 scripts/verify_intelligence.py --full
-```
-
-`--full` additionally executes the live PostgreSQL integration harness, rendered Compose secret-boundary validation and the hardened worker-image smoke tests. It never creates or alters PostgreSQL roles; provisioning disposable test roles remains an explicit external setup step so the verifier cannot accidentally mutate production permissions.
-
-GitHub Actions invokes this same `--full` entrypoint. A GitHub-hosted runner failure therefore does not require a different validation path: the exact application verification contract can be executed locally or on a controlled server.
-
-## Versioned scoring / backtesting
-
-The current GitHub developer score version is `github-developer-v1`.
-
-Scoring is derived from persisted normalized evidence and does not alter evidence content or `raw_hash`. Historical scoring requires an explicit timezone-aware `--as-of` value. The scorer rejects future snapshot timestamps to prevent look-ahead bias.
-
-The golden fixture backtest pins:
-
-- score version;
-- fixed historical `as_of` timestamps;
-- expected score ranges;
-- required stable reason codes.
-
-Evidence carrying a `raw_hash` is re-fingerprinted before persistence and again when loaded from Memory/SQLite/PostgreSQL storage. A mismatched fingerprint is rejected instead of entering a historical backtest.
-
-## SQLite deployment
-
-SQLite is the default single-host backend.
-
-Worker environment (`admin-site/.env.intelligence`):
-
-```text
-POTAPOFF_INTELLIGENCE_BACKEND=sqlite
-POTAPOFF_INTELLIGENCE_POSTGRES_DSN=
-```
-
-The worker owns the writable intelligence volume. The admin container mounts that volume read-only and opens SQLite using read-only/query-only mode.
-
-## PostgreSQL deployment
-
-PostgreSQL is the multi-worker backend.
-
-Before starting workers, initialize the idempotent schema with the **worker** DSN:
-
-```bash
-python -m intelligence \
-  --backend postgres \
-  --postgres-dsn "$POTAPOFF_INTELLIGENCE_POSTGRES_DSN" \
-  init-db
-```
-
-Then configure two different database roles.
-
-Worker-only file `admin-site/.env.intelligence`:
-
-```text
-POTAPOFF_INTELLIGENCE_BACKEND=postgres
-POTAPOFF_INTELLIGENCE_POSTGRES_DSN=postgresql://WORKER_ROLE:.../intelligence
-```
-
-Admin file `admin-site/.env`:
-
-```text
-ADMIN_INTELLIGENCE_BACKEND=postgres
-ADMIN_INTELLIGENCE_POSTGRES_DSN=postgresql://READONLY_ROLE:.../intelligence
-```
-
-The admin role must have only `CONNECT`, schema `USAGE` and `SELECT` on intelligence tables. Do not reuse the worker DSN as the admin DSN.
-
-## Secret boundary
-
-`admin-site/.env` is loaded only by the admin service.
-
-`admin-site/.env.intelligence` is loaded only by the intelligence worker and is gitignored. Copy it from `.env.intelligence.example` on the server.
-
-Do **not** copy the complete admin `.env` into the worker, and do **not** put the worker PostgreSQL DSN into the admin `.env`.
-
-## Operational safety
-
-- worker container runs non-root;
-- root filesystem is read-only;
-- Linux capabilities are dropped;
-- `no-new-privileges` is enabled;
-- no public worker port is exposed;
-- durable runtime failures use bounded retry/backoff;
-- unknown implementation errors are not silently swallowed;
-- CLI and Control Center telemetry omit raw evidence content and sensitive provider/query/error details.
-
-## Verification gates
-
-Unit tests are network-free by default. `test_postgres_integration.py` is automatically skipped unless `POTAPOFF_TEST_POSTGRES_DSN` is supplied.
-
-The full repository verifier covers:
-
-- schema initialization through the live PostgreSQL harness;
-- document round-trip and `raw_hash` deduplication;
-- two concurrent `SKIP LOCKED` queue claims;
-- a separate admin role that can `SELECT` but cannot `INSERT`;
-- deterministic scoring backtest;
-- Docker Compose validation and rendered credential separation;
-- non-root/read-only worker image smoke checks;
-- `yt-dlp` and Deno availability.
-
-CI adds a final Trivy HIGH/CRITICAL image vulnerability scan after the repository verifier succeeds.
-
-The PR must remain draft until the required checks actually execute successfully.
+Temporary PostgreSQL 16 + memory-only SQLite cross-DB tests prove synthetic
+event integrity and replay. They do NOT prove sustained throughput, recovery
+under provider outages, completeness of blockchain history, or live collection.
