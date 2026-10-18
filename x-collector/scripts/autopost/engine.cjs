@@ -1,4 +1,5 @@
 const {connect,name,handle}=require('./runtime.cjs');const {overview,enqueue,saveProvider,saveConfig}=require('./store.cjs');const {generate,choices}=require('./providers.cjs');
+function selectManualCandidate(candidates,tweetId,manualConfirm){const candidate=candidates.find(value=>String(value.tweet_id)===tweetId);if(!candidate&&manualConfirm!==true)throw Error(candidates.length?'Выберите найденного кандидата или подтвердите ID вручную после проверки X':'Подтвердите, что проверили публикацию в X вручную');return candidate||{};}
 async function command(c,i){switch(i.action){
  case 'overview':return overview(c);
  case 'source-retry':{
@@ -19,10 +20,9 @@ async function command(c,i){switch(i.action){
   if(!row||!['manual_review','manual_required'].includes(row.reconciliation_status)||row.job_status!=='uncertain')throw Error('Задание не ожидает ручного подтверждения');
   if(!['post','reply'].includes(row.kind))throw Error('Подтверждение поста доступно только для публикаций и ответов; для этого действия используйте ручное решение');
   const candidates=Array.isArray(row.candidates)?row.candidates:(typeof row.candidates==='string'?JSON.parse(row.candidates):[]);
-  const candidate=candidates.find(value=>String(value.tweet_id)===i.tweet_id);
-  if(!candidate&&i.manual_confirm!==true)throw Error(candidates.length?'Выберите найденного кандидата или подтвердите ID вручную после проверки X':'Подтвердите, что проверили публикацию в X вручную');
+  const candidate=selectManualCandidate(candidates,i.tweet_id,i.manual_confirm);
   const {persistPost}=require('./browser.cjs');
-  await persistPost(c,row,i.tweet_id,candidate||{});
+  await persistPost(c,row,i.tweet_id,candidate);
   const now=Date.now();
   await c.query('BEGIN');
   try{
@@ -52,5 +52,5 @@ async function command(c,i){switch(i.action){
  case 'sync':{if(!name(i.name)||!handle(i.expected)||!/^\d{1,25}$/.test(i.tweet_id||'')||!(await c.query("SELECT name FROM x_accounts WHERE name=$1 AND role='publisher'",[i.name])).rowCount)throw Error('Некорректный аккаунт или ID поста');await c.query("INSERT INTO xc_auto_sync(id,account_name,expected_handle,tweet_id,created_at) VALUES($1,$2,$3,$4,$5)",[require('node:crypto').randomUUID(),i.name,i.expected.replace(/^@/,'').toLowerCase(),i.tweet_id,Date.now()]);return {ok:true,message:'Импорт/обновление поставлены в очередь'};}
  case 'stats':{if(!name(i.name))throw Error('Некорректный аккаунт');const posts=(await c.query('SELECT * FROM xc_auto_posts WHERE account_name=$1 ORDER BY posted_at DESC LIMIT 100',[i.name])).rows;const snapshots=(await c.query(`SELECT * FROM (SELECT DISTINCT ON (m.tweet_id,to_char(to_timestamp(m.measured_at/1000.0) AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD')) to_char(to_timestamp(m.measured_at/1000.0) AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD') day,m.tweet_id,m.measured_at::text,m.views::text,m.likes::text,m.replies::text,m.retweets::text FROM xc_auto_metrics m JOIN xc_auto_posts p USING(tweet_id) WHERE p.account_name=$1 AND m.measured_at>$2 AND p.tweet_id IN (SELECT tweet_id FROM xc_auto_posts WHERE account_name=$1 ORDER BY posted_at DESC LIMIT 100) ORDER BY m.tweet_id,to_char(to_timestamp(m.measured_at/1000.0) AT TIME ZONE 'Europe/Moscow','YYYY-MM-DD'),m.measured_at DESC) daily ORDER BY measured_at LIMIT 10000`,[i.name,Date.now()-30*86400000])).rows;const sync=(await c.query('SELECT * FROM xc_auto_sync WHERE account_name=$1 ORDER BY created_at DESC LIMIT 10',[i.name])).rows;return {posts,snapshots,sync};}
  default:throw Error('Неизвестная команда автопостинга');}}
-module.exports={command};
+module.exports={command,selectManualCandidate};
 if(require.main===module){process.once('message',async i=>{let c;try{c=await connect();const result=await command(c,i);process.send?.({ok:true,result});}catch(e){const safe=['23505','23503','42P01'].includes(e.code)?'Проверьте миграцию, уникальность и связанные записи.':e.code?'Ошибка базы автопостинга.':/ключ|провайдер|endpoint|http|API|ИИ|JSON|текст|аккаунт|формат|настройк|paused|действ|адаптер|ID|HTTPS|Ожидается|Некоррект|Публикация|Профиль|Ответ|Подтверд|публикац|совпад|сверк|повтор|ручн|Задание|отсутствует|проверили/i.test(e.message||'')?e.message:'Не удалось выполнить команду. Проверьте настройки.';process.send?.({ok:false,error:safe});}finally{await c?.end().catch(()=>{});if(process.connected)process.disconnect();}});}

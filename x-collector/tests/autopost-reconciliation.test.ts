@@ -55,6 +55,14 @@ test('short links are expanded before matching and a different source permalink 
   assert.equal(findMatches(job(),[candidate('1234567890123456793',{text:'Read the research first. https://x.com/i/status/999'})],now).length,0);
 });
 
+test('manual confirmation may select an ID outside the candidate list only after explicit operator confirmation',()=>{
+  const {selectManualCandidate}=load('../scripts/autopost/engine.cjs');
+  const candidates=[{tweet_id:'1234567890123456789'}];
+  assert.throws(()=>selectManualCandidate(candidates,'1234567890123456799',false),/Выберите/);
+  assert.deepEqual(selectManualCandidate(candidates,'1234567890123456799',true),{});
+  assert.equal(selectManualCandidate(candidates,'1234567890123456789',false).tweet_id,'1234567890123456789');
+});
+
 test('one exact match resolves, multiple exact matches require manual review',()=>{
   const now=1_800_000_010_000;
   const source=job();
