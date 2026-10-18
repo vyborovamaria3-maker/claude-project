@@ -1,28 +1,30 @@
-# Intelligence — PR-5 destination inbox and entity registry
+# Intelligence — source evidence, entities and point-in-time timeline
 
-This is a **new isolated PostgreSQL destination**. It is not a replacement for
-the existing x-collector and tg-collector databases or blockchain SQLite.
+Stacked PRs introduce an isolated PostgreSQL destination, not a replacement for
+X/TG PostgreSQL or blockchain SQLite. Source databases are NOT modified here.
 
-- Apply migrations/001_entity_registry.sql through a reviewed, checksum-
-  controlled migration runner to the destination database only.
-- An input RegistryEvent must contain a stable sourceSystem/eventKind/eventKey,
-  schemaVersion, canonical entityRefs and a source-specific evidenceRef.
-- ingestRegistryEvent(tx, event) MUST run inside the caller's open PG
-  transaction. Commit destination before acknowledging a source outbox event.
-- Inbox deduplicates at-least-once deliveries by event identity. A crash
-  between destination COMMIT and source ACK results in safe replay.
-- Entity observation boundaries update via LEAST/GREATEST. The evidence table
-  points at exact original tweet, Telegram source+message, or chain transaction.
-- No materialized graph inference or handle-based author merging is performed.
+Migration order:
+1. migrations/001_entity_registry.sql
+2. migrations/002_timeline.sql
 
-Local checks (Node 22+, no credentials):
+The caller uses ONE destination transaction:
+- ingestRegistryEvent(tx, event) to insert inbox, entity registry, evidence.
+- ingestTimelineEvent(tx, source, eventKind, timeline) to insert linked timeline.
+- COMMIT destination; only THEN ACK source outbox event.
+
+Both insertions use unique event identity to tolerate at-least-once replay.
+The timeline query filters both event occurrence and source observation cutoff,
+so a backfilled old tweet cannot appear in a past "known at" query.
+
+Local (Node 22+):
   npm install --prefix packages/contracts --ignore-scripts --no-package-lock
   npm --prefix packages/contracts run build
   npm install --prefix intelligence --ignore-scripts --no-package-lock
   npm --prefix intelligence run check
 
-GitHub CI starts a **temporary PostgreSQL** service and also verifies actual
-migration/transaction/dedup behavior. It never accesses production databases.
+CI uses a disposable PostgreSQL 16 database for real transaction, replay,
+foreign-key and point-in-time tests. Does not connect to production databases.
 
-Not yet included: source outbox wiring, durable ETL consumer/ACK, timeline,
-checkpointed backfill or read API. No live X/TG/Solana credentials are needed.
+Remaining: actually wiring source outboxes; migrations in production only after
+reviewed backups; durable ETL with lease renewal and ACK; historical backfill
+with reconciled cursors; authorization/read API; features and AI models.
