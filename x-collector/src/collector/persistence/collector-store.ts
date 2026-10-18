@@ -2,7 +2,7 @@ import { TweetSchema, ProfileSchema } from "../../../lib/trade/schemas";
 import { processTweetEntities } from "../../intelligence/entities/processor";
 import { tx } from "../../../lib/trade/pg";
 import { log } from "../../../lib/trade/logger";
-import { source, sourceId, rawPage, storePage } from "../../../lib/archive/store";
+import { source, sourceId, rawPage, recordRawPage, storePage } from "../../../lib/archive/store";
 import { Page } from "../../../lib/archive/model";
 import {recordRaw,recordRawBatch} from '../../../lib/trade/intelligence-store';
 import type { PoolClient } from "pg";
@@ -22,11 +22,39 @@ async function assertPersistenceLease(client: PoolClient, taskId: number | undef
 export interface TweetPersistenceOptions {
   client?: PoolClient;
   transport?: "browser" | "http";
+  /** Source response envelope without HTTP auth headers/cookies, when exposed by the engine. */
+  rawResponse?: unknown;
   /** Large browser DOM batches are split into SQL chunks inside ONE transaction. */
   atomicBrowserBatch?: boolean;
 }
 export async function persistTweets(mint: string | null, tweets: unknown[], sourceQuery: string | null = null, taskId?: number, collectorAccount?: string, lease?: PersistenceLease, options: TweetPersistenceOptions = {}): Promise<number> {
   let newTaskLinks = 0;
+  const now = Date.now();
+  const fromHttp = options.transport === "http";
+  const httpSourceUrl = "https://x.com/i/api/graphql";
+  let rawCapture: { hash: string; responseHash?: string; path: string; parserVersion?: string } | undefined;
+  let rawCaptureSourceId: string | undefined;
+  if (options.rawResponse !== undefined) {
+    const rawSourceKey = await source(
+      fromHttp ? "X HTTP collector" : "X browser collector",
+      fromHttp ? httpSourceUrl : "https://x.com",
+      "X platform terms", "x", { transport: fromHttp ? "HTTP GraphQL" : "visible DOM" },
+    );
+    const received = new Date(now);
+    // Capture before TweetSchema parsing so schema drift does not destroy the source evidence.
+    rawCapture = await rawPage({
+      capture_format_version: 1,
+      parser_version: process.env.X_COLLECTOR_PARSER_VERSION ?? "unversioned",
+      transport: fromHttp ? "http" : "browser",
+      collection: { task_id: taskId ?? null, collector_account: collectorAccount ?? null },
+      request: { source_query: sourceQuery, mint },
+      received_at: received.toISOString(),
+      raw_items: tweets,
+      source_response: options.rawResponse,
+    });
+    rawCaptureSourceId = rawSourceKey;
+    await recordRawPage(rawSourceKey, rawCapture, received, undefined, { parseStatus: "captured", responseStatus: "unknown" });
+  }
   const valid: Array<ReturnType<typeof TweetSchema.parse>> = [];
   const seen = new Set<string>();
   let rejected = 0;
@@ -35,19 +63,30 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     if (parsed.success) { if (!seen.has(parsed.data.id)) { valid.push(parsed.data); seen.add(parsed.data.id); } }
     else rejected++;
   }
-  if (rejected > 0) throw new Error(`collector rejected ${rejected} malformed tweets`);
+  if (rejected > 0) {
+    if (rawCapture && rawCaptureSourceId) {
+      await recordRawPage(rawCaptureSourceId, rawCapture, new Date(now), undefined, {
+        parseStatus: valid.length > 0 ? "partial" : "failed",
+        responseStatus: valid.length > 0 ? "nonempty" : "error",
+      });
+    }
+    throw new Error(`collector rejected ${rejected} malformed tweets`);
+  }
+  if (rawCapture && rawCaptureSourceId) {
+    await recordRawPage(rawCaptureSourceId, rawCapture, new Date(now), undefined, {
+      parseStatus: "parsed",
+      responseStatus: valid.length === 0 ? "unknown" : "nonempty",
+    });
+  }
   if (valid.length === 0) return 0;
 
-  const now = Date.now();
   const BATCH = 200;
   // A page checkpoint and all of its posts must share one transaction.
   if (options.client && valid.length > BATCH &&
       !(options.atomicBrowserBatch === true && options.transport !== "http" && valid.length <= 1000))
     throw new Error("Collector: page exceeds transactional batch limit");
-  const fromHttp = options.transport === "http";
   // archive.sourceId hashes URL/license/kind (not name). Distinct URLs keep
   // HTTP observations from inheriting the old browser-only source metadata.
-  const httpSourceUrl = "https://x.com/i/api/graphql";
   const sourceKey = fromHttp
     ? sourceId(httpSourceUrl, "X platform terms", "x")
     : await source("X browser collector", "https://x.com", "X platform terms", "x", { transport: "visible DOM" }, options.client);
@@ -56,7 +95,15 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
     const chunk = valid.slice(i, i + BATCH);
     if (chunk.length === 0) continue;
     const received = new Date(now);
-    const raw = await rawPage({ tweets: chunk, sourceQuery, received_at: received.toISOString() });
+    const raw = rawCapture ?? await rawPage({
+      capture_format_version: 1,
+      parser_version: process.env.X_COLLECTOR_PARSER_VERSION ?? "unversioned",
+      transport: fromHttp ? "http" : "browser",
+      collection: { task_id: taskId ?? null, collector_account: collectorAccount ?? null },
+      request: { source_query: sourceQuery, mint },
+      received_at: received.toISOString(),
+      tweets: chunk,
+    });
     // Tweets y vínculos mint se insertan en una sola transacción: un fallo a mitad
     // no deja tweets sin su link (ni viceversa).
     const writeChunk = async (client: PoolClient): Promise<number> => {
@@ -71,20 +118,21 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
       await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
       const values: unknown[] = [];
       const placeholders = chunk.map((t, j) => {
-        const off = j * 13;
+        const off = j * 14;
         values.push(
-          t.id, t.authorHandle.toLowerCase(), t.text, t.url,
+          t.id, t.authorId ?? null, t.authorHandle.toLowerCase(), t.text, t.url,
           t.views, t.likes, t.retweets, t.replies,
           t.isVerified, t.postedAt, now, t.observedAt ?? now, sourceQuery
         );
-        return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13})`;
+        return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13},$${off + 14})`;
       }).join(",");
 
       await client.query(
         `INSERT INTO twitter_tweets
-           (tweet_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
+           (tweet_id, author_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
          VALUES ${placeholders}
          ON CONFLICT (tweet_id) DO UPDATE SET
+           author_id = COALESCE(EXCLUDED.author_id, twitter_tweets.author_id),
            views    = COALESCE(EXCLUDED.views,    twitter_tweets.views),
            likes    = COALESCE(EXCLUDED.likes,    twitter_tweets.likes),
            retweets = COALESCE(EXCLUDED.retweets, twitter_tweets.retweets),
@@ -126,12 +174,12 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
        SELECT DISTINCT x.id,x.kind,x.value,$2::timestamptz,$2::timestamptz FROM jsonb_to_recordset($1::jsonb) AS x(id text,kind text,value text)
        ON CONFLICT(tweet_id,kind,value) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at`,[JSON.stringify(entities),received]);
       const archive = Page.parse({ data: chunk.filter(t => t.postedAt !== null).map(t => ({
-        id:t.id,text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
+        id:t.id,...(t.authorId ? {author_id:t.authorId} : {}),text:t.text,created_at:new Date(t.postedAt!).toISOString(),author_handle:t.authorHandle,
         metrics_observed_at:new Date(t.observedAt ?? now).toISOString(),
         public_metrics:{ like_count:t.likes, impression_count:t.views, retweet_count:t.retweets,reply_count:t.replies },
         ...(fromHttp ? { http_observation: t } : { browser_observation: t }),
       })) });
-      await storePage(client, sourceKey, archive, raw, received, null);
+      await storePage(client, sourceKey, archive, raw, received, null, { responseStatus: chunk.length === 0 ? "empty" : "nonempty" });
 
       if (mint) {
         const linkVals: unknown[] = [];
