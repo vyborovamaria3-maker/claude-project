@@ -43,7 +43,7 @@ test("redacted structured logging avoids nested credentials", () => {
   assert.equal(lines.length,1);
   assert.ok(!lines[0].includes("secret"));
   assert.ok(!lines[0].includes("Bearer"));
-  assert.equal(JSON.parse(lines[0]).credentials.password,"[REDACTED]");
+  assert.equal(JSON.parse(lines[0]).credentials,"[REDACTED]");
 });
 
 test("local bucket is bounded and never grants over capacity", () => {
