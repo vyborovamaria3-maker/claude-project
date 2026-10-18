@@ -1,0 +1,25 @@
+name: Transactional outbox adapters
+
+on:
+  pull_request:
+    paths:
+      - "packages/event-outbox/**"
+      - ".github/workflows/event-outbox.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/event-outbox/**"
+      - ".github/workflows/event-outbox.yml"
+
+jobs:
+  outbox:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock --no-audit
+      - run: npm --prefix packages/event-outbox run check
