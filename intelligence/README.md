@@ -36,3 +36,30 @@ Local commands (Node 22+):
 Remaining: deployment-safe source migrations, explicit source writes and
 backfill, real ETL process with source ports, blockchain reconciliation, AI
 embeddings/training/outcome labels, secured APIs and operational runbooks.
+
+## Bounded local ETL CLI (explicit opt-in)
+
+There is no cloud collector or implicit background service. After reviewing and
+installing the destination migrations in an isolated PostgreSQL database, and
+source migrations for each local collector, an operator can run:
+
+    npm run build
+    node scripts/run.mjs --source tg --status
+    INTELLIGENCE_ETL_ENABLED=true node scripts/run.mjs --source tg --once --limit 25
+
+Other sources: `--source x`, `--source blockchain`. Environment variables:
+`X_SOURCE_DATABASE_URL`, `TG_SOURCE_DATABASE_URL`,
+`SOLANA_TRADE_DB_PATH`, and `INTELLIGENCE_DATABASE_URL`.
+
+The status command only reads source outbox counts. The once command is
+explicitly gated and handles one finite claim batch with destination transaction
+commit before source ACK; no Telegram login, browser, provider request, replay
+loop, background scheduling, or trading instruction is performed. Keep all
+credentials in locally secured environment settings (never commit them).
+For SQLite, use the absolute path to a verified local DB; do not open a live
+`trade.db` until WAL-safe backup and restore rehearsal. Follow the staged
+Codex handoff for source and consumer rollout.
+
+Temporary PostgreSQL 16 + memory-only SQLite cross-DB tests prove synthetic
+event integrity and replay. They do NOT prove sustained throughput, recovery
+under provider outages, completeness of blockchain history, or live collection.

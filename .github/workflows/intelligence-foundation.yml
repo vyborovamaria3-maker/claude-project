@@ -43,5 +43,5 @@ jobs:
       - run: npm --prefix packages/contracts run check
       - run: npm install --prefix packages/event-outbox --no-package-lock --no-audit
       - run: npm --prefix packages/event-outbox run check
-      - run: npm install --prefix intelligence --ignore-scripts --no-package-lock --no-audit
+      - run: npm install --prefix intelligence --no-package-lock --no-audit
       - run: npm --prefix intelligence run check
