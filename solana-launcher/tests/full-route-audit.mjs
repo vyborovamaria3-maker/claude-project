@@ -30,7 +30,9 @@ function pageFileToRoute(file) {
 
 async function discoverRoutes() {
   const files = await walk(appDir);
-  const routes = files.map(pageFileToRoute).filter(Boolean);
+  // This route intentionally returns a 404 in production; it is a localhost-only tool.
+  // Exercise its UI separately using dev-mode smoke checks rather than treating its 404 as a crash.
+  const routes = files.map(pageFileToRoute).filter((route) => route && route !== "/tg-collector");
   return [...new Set(routes)].sort();
 }
 

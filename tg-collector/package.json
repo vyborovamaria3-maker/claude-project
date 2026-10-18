@@ -1,0 +1,36 @@
+{
+  "name": "tg-collector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "login": "tsx src/cli.ts login",
+    "add": "tsx src/cli.ts add",
+    "list": "tsx src/cli.ts list",
+    "migrate": "tsx src/cli.ts migrate",
+    "worker": "tsx src/worker.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts tests/integration/*.test.ts",
+    "backup": "bash scripts/backup.sh",
+    "backup:verify": "bash scripts/restore-check.sh",
+    "analyze:backfill": "tsx src/analytics/backfill.ts",
+    "analyze:refresh": "tsx src/analytics/refresh.ts",
+    "smoke:mtproto": "tsx src/runtime/smoke.ts",
+    "tokens:resolve": "tsx src/analytics/resolve-token-candidates.ts",
+    "market:refresh": "tsx src/analytics/market-data.ts snapshots",
+    "market:outcomes": "tsx src/analytics/market-data.ts outcomes",
+    "db:metrics": "tsx src/analytics/db-metrics.ts",
+    "backtest:run": "tsx src/analytics/backtest.ts"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.6",
+    "pg": "^8.23.1",
+    "telegram": "^2.26.22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

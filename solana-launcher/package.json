@@ -30,6 +30,7 @@
     "gmgn:exec": "node ../scripts/gmgn-exec.mjs",
     "bot:dev": "ts-node telegram-bot/index.ts",
     "bot:start": "NODE_ENV=production ts-node telegram-bot/index.ts",
+    "dev:local": "next dev --hostname 127.0.0.1",
     "blockchain:seeds": "node scripts/blockchain-seed-collector.cjs --mode import",
     "blockchain:collect": "node scripts/blockchain-seed-collector.cjs --mode collect",
     "blockchain:status": "node scripts/blockchain-seed-collector.cjs --mode status",

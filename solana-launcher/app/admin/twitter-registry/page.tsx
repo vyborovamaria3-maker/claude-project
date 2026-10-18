@@ -5,6 +5,7 @@ import { Twitter, RefreshCw, Play, CheckCircle2, AlertTriangle, ShieldAlert, Dat
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import AdminCollectorTabs from "@/components/AdminCollectorTabs";
 
 interface Overview {
   status: string;
@@ -342,6 +343,8 @@ export default function TwitterRegistryAdminPage() {
           </div>
         )}
       </section>
+
+      <AdminCollectorTabs />
 
       {/* Public Mode Warning Banner if X API not configured */}
       {overview && !overview.x_api_configured && (
