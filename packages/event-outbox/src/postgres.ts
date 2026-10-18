@@ -13,7 +13,7 @@ function mapRow(row: Record<string, unknown>): ClaimedEvent {
     schemaVersion: String(row.schema_version),
     payload: row.payload as Record<string, unknown>,
     attempts: Number(row.attempts), leaseOwner: String(row.lease_owner),
-    leaseUntil: new Date(String(row.lease_until)).toISOString(),
+    leaseUntil: (row.lease_until instanceof Date ? row.lease_until : new Date(String(row.lease_until))).toISOString(),
   };
 }
 
