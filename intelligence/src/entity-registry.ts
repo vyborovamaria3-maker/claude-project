@@ -1,5 +1,5 @@
 import {
-  buildEntityRef, toUtcIso, type EntityRef, type EvidenceRef,
+  buildEntityRef, isSolanaSignature, toUtcIso, type EntityRef, type EvidenceRef,
 } from "@claude-project/contracts";
 
 export type RegistryEvent = {
@@ -34,6 +34,14 @@ function validateEvidence(evidence: EvidenceRef): EvidenceRef {
   };
   if (!patterns[evidence.sourceKind].test(id)) {
     throw new TypeError("Evidence/source identity mismatch");
+  }
+  if (evidence.sourceKind === "chain_tx") {
+    const match = /^chain:tx:(solana|ethereum|base|arbitrum):(.+)$/.exec(id);
+    if (!match ||
+      (match[1] === "solana" && !isSolanaSignature(match[2])) ||
+      (match[1] !== "solana" && !/^0x[0-9a-f]{64}$/.test(match[2]!))) {
+      throw new TypeError("Invalid chain transaction evidence");
+    }
   }
   return {
     ...evidence,
@@ -80,7 +88,18 @@ export async function ingestRegistryEvent(tx: PgTransaction, incoming: RegistryE
     event.sourceSystem, event.eventKind, event.eventKey,
     event.schemaVersion, event.evidenceRef.sourceId,
   ]);
-  if (result.rows.length === 0) return false;
+  if (result.rows.length === 0) {
+    const previous = await tx.query(`SELECT schema_version,evidence_source_id FROM intelligence_inbox
+      WHERE source_system=$1 AND event_kind=$2 AND event_key=$3`,[
+      event.sourceSystem,event.eventKind,event.eventKey,
+    ]);
+    if (previous.rows.length !== 1 ||
+        previous.rows[0]?.schema_version !== event.schemaVersion ||
+        previous.rows[0]?.evidence_source_id !== event.evidenceRef.sourceId) {
+      throw new Error("Outbox event identity collision");
+    }
+    return false;
+  }
 
   for (const entity of event.entityRefs) {
     await tx.query(`INSERT INTO entity_registry

@@ -21,6 +21,11 @@ test("PostgreSQL real transaction: replay, provenance and time bounds", {skip:!u
     const tg={sourceSystem:"tg",eventKind:"message_observed",eventKey:"tg:-100222:37:v1",schemaVersion:"v1",entityRefs:[entity],evidenceRef:tgEvidence};
     assert.equal(await ingestRegistryEvent(client,tg),true);
     assert.equal(await ingestRegistryEvent(client,tg),false);
+    await assert.rejects(ingestRegistryEvent(client,{
+      ...tg,evidenceRef:buildEvidenceRef({
+        sourceKind:"tg_message",sourceAccountId:"-100222",messageId:"38",observedAt:t1
+      })
+    }),/identity collision/);
     const xEntity=buildEntityRef({kind:"token",canonicalId:id,firstSeenAt:t1,lastSeenAt:t2});
     const xEvidence=buildEvidenceRef({sourceKind:"x_tweet",tweetId:"2001",observedAt:t2});
     assert.equal(await ingestRegistryEvent(client,{...tg,sourceSystem:"x",eventKey:"x:2001:v1",entityRefs:[xEntity],evidenceRef:xEvidence}),true);

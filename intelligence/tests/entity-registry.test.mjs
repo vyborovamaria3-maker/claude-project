@@ -37,9 +37,25 @@ test("inbox is written before entity and source evidence",async()=>{
   assert.equal(calls[2].params[5],evidence.sourceId);
 });
 
-test("repeat delivery is detected without graph duplicates",async()=>{
+test("repeat delivery checks stable evidence and rejects identity collision",async()=>{
   const calls=[];
-  const tx={query:async(sql,params)=>{calls.push({sql,params});return {rows:[]};}};
+  const tx={query:async(sql,params)=>{
+    calls.push({sql,params});
+    return {rows:sql.includes("SELECT schema_version")?[{
+      schema_version:event.schemaVersion,evidence_source_id:evidence.sourceId
+    }]:[]};
+  }};
   assert.equal(await ingestRegistryEvent(tx,event),false);
-  assert.equal(calls.length,1);
+  assert.equal(calls.length,2);
+  await assert.rejects(ingestRegistryEvent(tx,{
+    ...event,evidenceRef:{...evidence,sourceId:"tg:message:-100111:18"}
+  }),/identity collision/);
+});
+
+test("on-chain evidence must be a real signature/hash-shaped identifier",()=>{
+  assert.throws(()=>validateRegistryEvent({
+    ...event,sourceSystem:"blockchain",evidenceRef:{
+      ...evidence,sourceKind:"chain_tx",sourceId:"chain:tx:solana:abc"
+    }
+  }),/Invalid chain transaction evidence/);
 });
