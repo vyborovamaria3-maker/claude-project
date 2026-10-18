@@ -190,7 +190,7 @@ FOR EACH ROW EXECUTE FUNCTION xc_auto_job_audit_transition();
 -- Reconciliation observations are auditable without changing the job status.
 -- Store no candidate text, session secrets, raw X errors or private URLs.
 CREATE OR REPLACE FUNCTION xc_auto_reconcile_audit_transition() RETURNS trigger
-LANGUAGE plpgsql AS $
+LANGUAGE plpgsql AS $$
 DECLARE
  active_id text;
  active_trace text;
@@ -212,7 +212,7 @@ BEGIN
    jsonb_build_object('kind',NEW.kind,'status',NEW.status,'checks',NEW.attempts));
  RETURN NEW;
 END;
-$;
+$$;
 DROP TRIGGER IF EXISTS xc_auto_reconcile_audit ON xc_auto_reconcile;
 CREATE TRIGGER xc_auto_reconcile_audit
 AFTER INSERT OR UPDATE OF status,attempts ON xc_auto_reconcile
