@@ -48,3 +48,22 @@ test("actual SQLite: transient failure retries after next_attempt_at",()=>{
     assert.equal(claimSqlite(db,{workerId:"workerB",batchSize:1,leaseMs:60000,now:new Date(future.getTime()+1)}).length,1);
   }finally{db.close()}
 });
+
+test("SQLite renewed lease fences stale ACK/NACK from same worker ID",()=>{
+  const db=new Database(":memory:");
+  try{
+    db.exec(SQLITE_OUTBOX_DDL);
+    const t=new Date("2026-10-18T00:00:00Z");
+    const fresh=new Date(t.getTime()+2000);
+    db.exec("BEGIN");
+    emitSqlite(db,{...event,eventKey:"sqlite-fencing"},t);
+    db.exec("COMMIT");
+    const first=claimSqlite(db,{workerId:"reused-worker",batchSize:1,leaseMs:1000,now:t})[0];
+    const second=claimSqlite(db,{workerId:"reused-worker",batchSize:1,leaseMs:1000,now:fresh})[0];
+    assert.ok(first&&second);
+    assert.notEqual(first.leaseUntil,second.leaseUntil);
+    assert.equal(ackSqlite(db,first.id,first.leaseOwner,first.leaseUntil,fresh),false);
+    assert.equal(failSqlite(db,first.id,first.leaseOwner,first.leaseUntil,"stale",fresh,fresh),false);
+    assert.equal(ackSqlite(db,second.id,second.leaseOwner,second.leaseUntil,fresh),true);
+  }finally{db.close()}
+});
