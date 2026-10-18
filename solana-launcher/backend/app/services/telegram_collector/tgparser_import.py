@@ -1,0 +1,159 @@
+"""Read-only archive normalization and idempotent import of tgparser-cli JSON/CSV.
+
+No Telegram API calls or inferred user identities. Archives are untrusted input.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.social_intelligence import TelegramChannel, TelegramMessage
+
+MAX_BATCH = 500
+MAX_TEXT = 16_384
+
+
+def _reaction_total(raw: Any) -> int:
+    if not raw:
+        return 0
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid archive reaction JSON") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("Archive reactions must be an object")
+    total = 0
+    for count in raw.values():
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("Archive reaction counts must be non-negative integers")
+        total += count
+    return min(total, 2_147_483_647)
+
+
+def _normalize_row(
+    row: dict[str, Any], *, username: str | None, telegram_id: int
+) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        raise ValueError("Each archive entry must be an object")
+    raw_id = row.get("id")
+    if isinstance(raw_id, bool) or not isinstance(raw_id, (int, str)):
+        raise ValueError("Archive message id must be a positive integer")
+    if isinstance(raw_id, str) and not raw_id.isdecimal():
+        raise ValueError("Archive message id must be a positive integer")
+    message_id = int(raw_id)
+    if message_id <= 0 or message_id >= 2**63:
+        raise ValueError("Archive message id is out of range")
+
+    # Channel titles are mutable and non-unique; never use them as identity.
+    source = row.get("channel")
+    if source is not None and not isinstance(source, str):
+        raise ValueError("Archive channel must be a public username")
+    handle = (source or "").strip().removeprefix("@").casefold()
+    if handle and (not username or handle != username.casefold()):
+        raise ValueError("Archive username does not match the selected channel")
+    raw_telegram_id = row.get("telegram_channel_id")
+    if raw_telegram_id is not None:
+        if isinstance(raw_telegram_id, bool) or not str(raw_telegram_id).isdecimal():
+            raise ValueError("Archive Telegram channel ID must be a positive integer")
+        if int(raw_telegram_id) != telegram_id:
+            raise ValueError("Archive Telegram channel ID does not match the selected channel")
+    if not handle and raw_telegram_id is None:
+        raise ValueError("Archive requires a channel username or numeric Telegram channel ID")
+
+    raw_date = row.get("date")
+    if not isinstance(raw_date, str):
+        raise ValueError("Archive message date must be an ISO 8601 string")
+    try:
+        published = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Archive message date is not valid ISO 8601") from exc
+    assumed_utc = published.tzinfo is None
+    if assumed_utc:
+        published = published.replace(tzinfo=UTC)
+    else:
+        published = published.astimezone(UTC)
+
+    text = row.get("text") or ""
+    if not isinstance(text, str) or len(text) > MAX_TEXT:
+        raise ValueError("Archive message text is too large or malformed")
+
+    raw_source = str(row.get("raw_source") or "unknown")
+    return {
+        "telegram_message_id": message_id,
+        "published_at": published,
+        "text": text,
+        "reactions": _reaction_total(row.get("reactions")),
+        # Do not persist authors, private media URLs or arbitrary raw archive metadata.
+        "raw": {
+            "collector": "tgparser_cli_archive",
+            "source": raw_source[:32],
+            "assumed_utc": assumed_utc,
+            "coverage": "archive_only",
+        },
+    }
+
+
+async def import_tgparser_archive(
+    session: AsyncSession, *, channel_id: int, records: list[dict[str, Any]]
+) -> dict[str, int]:
+    """Stage at most 500 archive rows; caller controls transaction commit/rollback.
+
+    The Telegram channel must already exist in the intelligence database, so
+    imported message records cannot create fabricated Telegram sources.
+    """
+    if not isinstance(records, list) or not 1 <= len(records) <= MAX_BATCH:
+        raise ValueError("Archive import requires 1–500 messages per batch")
+    channel = await session.get(TelegramChannel, channel_id)
+    if channel is None:
+        raise LookupError("Selected Telegram channel does not exist")
+    normalized: dict[int, dict[str, Any]] = {}
+    for record in records:
+        parsed = _normalize_row(
+            record, username=channel.username, telegram_id=channel.telegram_id
+        )
+        message_id = parsed["telegram_message_id"]
+        previous = normalized.get(message_id)
+        if previous is not None and previous != parsed:
+            raise ValueError("Conflicting entries for the same Telegram message ID")
+        normalized[message_id] = parsed
+
+    # An archive must never overwrite MTProto messages. The DB unique constraint
+    # also protects against a second worker importing the same batch concurrently.
+    # Only SQLite (tests) and PostgreSQL (production) are supported.
+    dialect = session.get_bind().dialect.name
+    rows = [{"channel_id": channel_id, **record} for record in normalized.values()]
+    if dialect == "postgresql":
+        stmt = (
+            postgresql_insert(TelegramMessage)
+            .values(rows)
+            .on_conflict_do_nothing(
+                index_elements=["channel_id", "telegram_message_id"]
+            )
+            .returning(TelegramMessage.id)
+        )
+        inserted = len((await session.execute(stmt)).scalars().all())
+    elif dialect == "sqlite":
+        stmt = (
+            sqlite_insert(TelegramMessage)
+            .values(rows)
+            .on_conflict_do_nothing(
+                index_elements=["channel_id", "telegram_message_id"]
+            )
+            .returning(TelegramMessage.id)
+        )
+        inserted = len((await session.execute(stmt)).scalars().all())
+    else:
+        raise RuntimeError("Archive importer requires PostgreSQL or SQLite")
+    return {
+        "channel_id": channel_id,
+        "received": len(records),
+        "inserted": inserted,
+        "duplicates": len(records) - inserted,
+    }

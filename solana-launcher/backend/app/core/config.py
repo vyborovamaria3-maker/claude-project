@@ -61,6 +61,27 @@ class Settings(BaseSettings):
     frontend_internal_url: str = Field(
         default="http://frontend:3000", alias="FRONTEND_INTERNAL_URL"
     )
+    tginvite_internal_key: str = Field(default="", alias="TG_INVITE_INTERNAL_KEY")
+    tginvite_session_encryption_key: str = Field(
+        default="", alias="TG_INVITE_SESSION_ENCRYPTION_KEY"
+    )
+    tginvite_session_previous_keys: str = Field(
+        default="", alias="TG_INVITE_SESSION_PREVIOUS_KEYS"
+    )
+    # Separate opt-in bot webhook identity, secret and operator-vetted bindings.
+    # All unset by default: verified consent ingestion must fail closed.
+    tginvite_consent_webhook_secret: str = Field(
+        default="", alias="TG_INVITE_CONSENT_WEBHOOK_SECRET"
+    )
+    tginvite_consent_bot_id: str = Field(
+        default="", alias="TG_INVITE_CONSENT_BOT_ID"
+    )
+    tginvite_consent_chat_bindings: str = Field(
+        default="", alias="TG_INVITE_CONSENT_CHAT_BINDINGS"
+    )
+    tginvite_consent_hmac_key: str = Field(
+        default="", alias="TG_INVITE_CONSENT_HMAC_KEY"
+    )
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_api_id: int | None = Field(default=None, alias="TG_API_ID")
     telegram_api_hash: str = Field(default="", alias="TG_API_HASH")

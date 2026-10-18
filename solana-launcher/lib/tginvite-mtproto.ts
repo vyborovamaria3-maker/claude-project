@@ -1,4 +1,5 @@
 import { RawMember } from "./tginvite-filter";
+import { reconcileInviteToChannelResult } from "./tginvite-invite-policy";
 
 const SOLANA_CANDIDATE_RE = /(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])/g;
 const EVM_CONTRACT_RE = /(?<![0-9a-fA-F])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
@@ -8,17 +9,32 @@ const CALL_CONTEXT_RE = /\b(?:call|calling|caller|gem|alpha|entry|buy|send(?:ing
 const PUMPFUN_RE = /(?:pump\.fun|pumpfun)/i;
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-let client: Record<string, unknown> | null = null;
-let pendingAuth:
-  | {
-      apiId: number;
-      apiHash: string;
-      phoneNumber: string;
-      phoneCodeHash: string;
-      isCodeViaApp: boolean;
-      client: Record<string, unknown>;
-    }
-  | null = null;
+export const PENDING_LOGIN_TTL_MS = 10 * 60 * 1000;
+
+/** Reject stale code/password flows; Telegram codes themselves may expire sooner. */
+export function isPendingLoginExpired(
+  createdAt: number,
+  now = Date.now(),
+): boolean {
+  return !Number.isFinite(createdAt) ||
+    now < createdAt ||
+    now - createdAt >= PENDING_LOGIN_TTL_MS;
+}
+
+interface PendingAuth {
+  createdAt: number;
+  leaseToken: string;
+  generation: number;
+  apiId: number;
+  apiHash: string;
+  phoneNumber: string;
+  phoneCodeHash: string;
+  isCodeViaApp: boolean;
+  client: Record<string, unknown>;
+}
+const clients = new Map<string, Record<string, unknown>>();
+const pendingAuthByOwner = new Map<string, PendingAuth>();
+const inFlightLoginCodes = new Set<string>();
 
 export interface MTProtoConfig {
   apiId: number;
@@ -174,7 +190,7 @@ function scoreRecentAnalysis(analysis: Omit<RecentChannelAnalysis, "essenceScore
   };
 }
 
-function toRawMember(user: Record<string, unknown>): RawMember | null {
+export function toRawMember(user: Record<string, unknown>): RawMember | null {
   const type = String(user._ || user.className || "");
   if (type && !/^(user|User)$/i.test(type)) return null;
 
@@ -187,7 +203,7 @@ function toRawMember(user: Record<string, unknown>): RawMember | null {
     username: getString(user, "username", "username"),
     firstName: getString(user, "first_name", "firstName"),
     lastName: getString(user, "last_name", "lastName"),
-    phone: getString(user, "phone", "phone"),
+    // Do not expose contact information to the browser or analytics exports.
     isBot: getBoolean(user, "bot", "bot"),
     isPremium: getBoolean(user, "premium", "premium"),
     isScam: getBoolean(user, "scam", "scam"),
@@ -196,7 +212,7 @@ function toRawMember(user: Record<string, unknown>): RawMember | null {
     photo: photo ? { isPersonal: Boolean(photo.personal) } : undefined,
     langCode: getString(user, "lang_code", "langCode"),
     restrictionReason: undefined,
-    accessHash: getString(user, "access_hash", "accessHash"),
+    // MTProto access hashes are credentials for user operations, not profile metadata.
     lastSeen: undefined,
     createdAt: undefined,
   };
@@ -209,20 +225,12 @@ function toRawMember(user: Record<string, unknown>): RawMember | null {
     } else if (/userStatusOffline/i.test(statusType)) {
       const wasOnline = getNumber(status, "was_online", "wasOnline");
       if (wasOnline) member.lastSeen = new Date(wasOnline * 1000);
-    } else if (/userStatusRecently/i.test(statusType)) {
-      member.lastSeen = new Date(Date.now() - 3 * 86400000);
-    } else if (/userStatusLastWeek/i.test(statusType)) {
-      member.lastSeen = new Date(Date.now() - 7 * 86400000);
-    } else if (/userStatusLastMonth/i.test(statusType)) {
-      member.lastSeen = new Date(Date.now() - 30 * 86400000);
     }
+    // Telegram approximate statuses deliberately remain unknown, not fabricated dates.
   }
 
-  const createdAt = getNumber(user, "date", "date");
-  if (createdAt) {
-    member.createdAt = new Date(createdAt * 1000);
-  }
-
+  // User.date is not a verified account-registration timestamp.
+  // Keep createdAt unset unless trustworthy provenance is added.
   return member;
 }
 
@@ -262,17 +270,11 @@ async function resolveChannelEntity(
     return checkedObj.chat;
   }
 
-  const imported = await tgClient.invoke(new Api.messages.ImportChatInvite({ hash: parsed.hash }));
-  const importedObj = imported as { chats?: unknown[] };
-  const [chat] = importedObj.chats || [];
-  if (chat) {
-    return chat;
-  }
-
-  throw new Error("Invite link does not expose a channel. Join it in Telegram first or use a public @username.");
+  // Resolving a link must not join a private chat as a side effect.
+  throw new Error("This chat requires membership. Join it manually in Telegram before parsing.");
 }
 
-export async function createClient(config: MTProtoConfig): Promise<Record<string, unknown>> {
+export async function createClient(config: MTProtoConfig, ownerId: string): Promise<Record<string, unknown>> {
   const { TelegramClient } = await import("telegram");
   const { StringSession } = await import("telegram/sessions");
 
@@ -284,7 +286,7 @@ export async function createClient(config: MTProtoConfig): Promise<Record<string
   });
 
   const clientInstance = tgClient as unknown as Record<string, unknown>;
-  setClient(clientInstance);
+  setClient(clientInstance, ownerId);
   return clientInstance;
 }
 
@@ -304,40 +306,81 @@ export async function startClient(
   return client.session.save();
 }
 
-export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }): Promise<{ isCodeViaApp: boolean }> {
-  const tgClient = await createClient(config);
-  const typedClient = tgClient as TelegramClientLike & {
-    sendCode: (
-      credentials: { apiId: number; apiHash: string },
-      phoneNumber: string
-    ) => Promise<{ phoneCodeHash: string; isCodeViaApp: boolean }>;
-  };
+export async function sendLoginCode(config: MTProtoConfig & { phoneNumber: string }, ownerId: string, leaseToken: string, generation: number): Promise<{ isCodeViaApp: boolean }> {
+  if (!Number.isSafeInteger(generation) || generation < 0) throw new Error("Invalid Telegram session generation");
+  if (!leaseToken || leaseToken.length < 32) throw new Error("Shared Telegram login lease required");
+  // Block read-only status/resolution requests from tearing down a socket
+  // while sendCode is still awaiting Telegram's code-delivery response.
+  inFlightLoginCodes.add(ownerId);
+  // A new challenge invalidates any existing pending login for this owner.
+  // Disconnect the old Telegram client before replacing it to avoid orphaned sockets.
+  try {
+    await clearClient(ownerId);
+    const tgClient = await createClient(config, ownerId);
+    const typedClient = tgClient as TelegramClientLike & {
+      sendCode: (
+        credentials: { apiId: number; apiHash: string },
+        phoneNumber: string
+      ) => Promise<{ phoneCodeHash: string; isCodeViaApp: boolean }>;
+    };
+    await ensureConnected(typedClient);
+    const result = await typedClient.sendCode(
+      { apiId: config.apiId, apiHash: config.apiHash },
+      config.phoneNumber
+    );
 
-  await ensureConnected(typedClient);
-  const result = await typedClient.sendCode(
-    { apiId: config.apiId, apiHash: config.apiHash },
-    config.phoneNumber
-  );
+    const challenge: PendingAuth = {
+      createdAt: Date.now(),
+      leaseToken,
+      generation,
+      apiId: config.apiId,
+      apiHash: config.apiHash,
+      phoneNumber: config.phoneNumber,
+      phoneCodeHash: result.phoneCodeHash,
+      isCodeViaApp: result.isCodeViaApp,
+      client: tgClient,
+    };
+    pendingAuthByOwner.set(ownerId, challenge);
 
-  pendingAuth = {
-    apiId: config.apiId,
-    apiHash: config.apiHash,
-    phoneNumber: config.phoneNumber,
-    phoneCodeHash: result.phoneCodeHash,
-    isCodeViaApp: result.isCodeViaApp,
-    client: tgClient,
-  };
-  setClient(tgClient);
+    const cleanup = setTimeout(() => {
+      if (pendingAuthByOwner.get(ownerId) === challenge) {
+        void clearClient(ownerId);
+      }
+    }, PENDING_LOGIN_TTL_MS);
+    cleanup.unref?.();
 
-  return { isCodeViaApp: result.isCodeViaApp };
+    return { isCodeViaApp: result.isCodeViaApp };
+  } catch (error) {
+    // Failed sendCode/connect must not retain a live socket or a stale challenge.
+    await clearClient(ownerId);
+    throw error;
+  } finally {
+    inFlightLoginCodes.delete(ownerId);
+  }
+}
+
+export function getPendingLoginLease(ownerId: string): { token: string; generation: number } | null {
+  const challenge = pendingAuthByOwner.get(ownerId);
+  return challenge && !isPendingLoginExpired(challenge.createdAt)
+    ? { token: challenge.leaseToken, generation: challenge.generation }
+    : null;
+}
+
+export function hasTGInviteLoginInProgress(ownerId: string): boolean {
+  return inFlightLoginCodes.has(ownerId) || getPendingLoginLease(ownerId) !== null;
 }
 
 export async function completeLogin(params: {
   phoneCode?: string;
   password?: string;
-}): Promise<string> {
+}, ownerId: string): Promise<{ sessionString: string; apiId: number; apiHash: string }> {
+  const pendingAuth = pendingAuthByOwner.get(ownerId);
   if (!pendingAuth) {
     throw new Error("No pending Telegram login. Send code first.");
+  }
+  if (isPendingLoginExpired(pendingAuth.createdAt)) {
+    await clearClient(ownerId);
+    throw new Error("Telegram login expired. Send a new code.");
   }
 
   const { Api } = await import("telegram");
@@ -376,9 +419,9 @@ export async function completeLogin(params: {
     }
 
     const sessionString = typedClient.session.save();
-    pendingAuth = null;
-    setClient(typedClient);
-    return sessionString;
+    pendingAuthByOwner.delete(ownerId);
+    setClient(typedClient, ownerId);
+    return { sessionString, apiId: pendingAuth.apiId, apiHash: pendingAuth.apiHash };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("SESSION_PASSWORD_NEEDED")) {
@@ -587,15 +630,35 @@ export async function analyzeChannelRecentMessages(
   }
 }
 
+/**
+ * Low-level MTProto transport only. No TGInvite API route exposes this function:
+ * a server-owned recipient consent ledger and durable job must be built first.
+ * Do not use it for unsolicited bulk invitations.
+ */
 export async function inviteUsers(
   tgClient: Record<string, unknown>,
   channelUsername: string,
   users: { id: number; accessHash: string }[]
-): Promise<{ invited: number; failed: number; errors: string[] }> {
+): Promise<{
+  invited: number;
+  failed: number;
+  unknown: number;
+  unattempted: number;
+  errors: string[];
+}> {
   let invited = 0;
   let failed = 0;
+  let unknown = 0;
+  let attempted = 0;
   const errors: string[] = [];
-
+  // Never hand rounded, non-positive or duplicate JavaScript IDs to Telegram.
+  if (users.some((u) => !Number.isSafeInteger(u.id) || u.id < 1) ||
+      new Set(users.map((u) => u.id)).size !== users.length) {
+    return {
+      invited: 0, failed: 0, unknown: 0, unattempted: users.length,
+      errors: ["Invalid or duplicate Telegram recipient IDs"],
+    };
+  }
   const client = tgClient as {
     connected?: boolean;
     connect?: () => Promise<void>;
@@ -608,63 +671,166 @@ export async function inviteUsers(
     const entity = await resolveChannelEntity(client, channelUsername);
     const { Api } = await import("telegram");
 
-    // Invite in batches of 10 (Telegram limit)
     for (let i = 0; i < users.length; i += 10) {
       const batch = users.slice(i, i + 10);
+      const inputUsers = batch.map((u) => new Api.InputUser({
+        userId: u.id as never, accessHash: u.accessHash as never,
+      }));
       try {
-        const inputUsers = batch.map((u) => new Api.InputUser({ userId: u.id as never, accessHash: u.accessHash as never }));
-        await client.invoke(
-          new Api.channels.InviteToChannel({
-            channel: entity as never,
-            users: inputUsers as never,
-          })
-        );
-        invited += batch.length;
-        await new Promise((r) => setTimeout(r, 2000 + Math.random() * 3000));
-      } catch (err: unknown) {
-        const error = err as { message?: string };
-        failed += batch.length;
-        errors.push(error.message || "Batch invite failed");
-
-        if (error.message?.includes("FLOOD_WAIT")) {
-          const waitMatch = error.message.match(/FLOOD_WAIT_(\d+)/);
-          const waitSec = waitMatch ? parseInt(waitMatch[1]) : 60;
-          await new Promise((r) => setTimeout(r, waitSec * 1000));
+        attempted += batch.length;
+        const response = await client.invoke(new Api.channels.InviteToChannel({
+          channel: entity as never,
+          users: inputUsers as never,
+        }));
+        const result = reconcileInviteToChannelResult(batch.map((u) => u.id), response);
+        invited += result.invited;
+        failed += result.declined;
+        unknown += result.unknown;
+        if (result.unknown > 0) {
+          errors.push("Telegram invite response could not be verified; halted.");
+          break;
         }
+      } catch (err: unknown) {
+        unknown += batch.length;
+        const reason = err instanceof Error ? err.message : "Telegram invite error";
+        errors.push(reason);
+        // Especially on FLOOD_WAIT, never sleep and retry automatically:
+        // the outcome might be uncertain and Telegram limits must be respected.
+        break;
       }
     }
   } catch (err: unknown) {
-    const error = err as { message?: string };
-    failed = users.length;
-    errors.push(error.message || "Channel entity not found");
+    const reason = err instanceof Error ? err.message : "Channel lookup failed";
+    errors.push(reason);
   }
 
-  return { invited, failed, errors };
+  return {
+    invited, failed, unknown,
+    unattempted: Math.max(0, users.length - attempted),
+    errors,
+  };
 }
 
-export function isConnected(): boolean {
-  return Boolean(client && (client as TelegramClientLike).connected);
+/**
+ * One consent-gated direct invitation. Only the server route may call this,
+ * after the backend has atomically reserved an authenticated /join request.
+ * Neither access hashes nor Telegram entities are sent to the browser.
+ *
+ * The destination must match the exact Telegram chat verified by the opt-in
+ * webhook. The caller cannot substitute a different channel's username.
+ */
+export async function inviteOneConsentingUser(
+  tgClient: Record<string, unknown>,
+  input: {
+    destinationChatId: string;
+    targetChannel: string;
+    recipientId: number;
+    sourceChannel?: string;
+  },
+): Promise<"invited" | "declined" | "unknown"> {
+  if (!/^-100[1-9][0-9]{4,16}$/.test(input.destinationChatId) ||
+      !Number.isSafeInteger(input.recipientId) || input.recipientId <= 0) {
+    return "unknown";
+  }
+  const client = tgClient as {
+    connected?: boolean;
+    connect?: () => Promise<void>;
+    getEntity: (id: string) => Promise<unknown>;
+    getInputEntity?: (id: number) => Promise<unknown>;
+    invoke: (query: unknown) => Promise<unknown>;
+  };
+  try {
+    await ensureConnected(client);
+    const channel = await resolveChannelEntity(client, input.targetChannel);
+    const channelId = (channel as { id?: unknown }).id;
+    if (!channelId || !/^[1-9][0-9]{4,16}$/.test(String(channelId)) ||
+        `-100${String(channelId)}` !== input.destinationChatId) {
+      return "unknown";
+    }
+    const { Api } = await import("telegram");
+    let accessHash: string | null = null;
+    // A client cache entry from the authenticated account may already have
+    // a valid InputPeerUser. It is not sourced from browser-supplied metadata.
+    if (client.getInputEntity) {
+      try {
+        const entity = await client.getInputEntity(input.recipientId);
+        const peer = entity as { userId?: unknown; accessHash?: unknown };
+        if (String(peer.userId) === String(input.recipientId) &&
+            /^-?[0-9]{1,20}$/.test(String(peer.accessHash ?? ""))) {
+          accessHash = String(peer.accessHash);
+        }
+      } catch {
+        // Fall back to a small bounded source-channel read below.
+      }
+    }
+    if (!accessHash && input.sourceChannel) {
+      const source = await resolveChannelEntity(client, input.sourceChannel);
+      let offset = 0;
+      while (!accessHash && offset < 500) {
+        const result = await client.invoke(new Api.channels.GetParticipants({
+          channel: source as never,
+          filter: new Api.ChannelParticipantsSearch({ q: "" }) as never,
+          offset,
+          limit: Math.min(100, 500 - offset),
+          hash: 0 as never,
+        }));
+        const users = (result as { users?: Array<Record<string, unknown>> }).users;
+        if (!Array.isArray(users) || users.length === 0) break;
+        for (const user of users) {
+          if (String(user.id) !== String(input.recipientId)) continue;
+          const hash = String(user.accessHash ?? user.access_hash ?? "");
+          if (/^-?[0-9]{1,20}$/.test(hash)) accessHash = hash;
+          break;
+        }
+        offset += users.length;
+      }
+    }
+    if (!accessHash) return "unknown";
+    const response = await client.invoke(new Api.channels.InviteToChannel({
+      channel: channel as never,
+      users: [new Api.InputUser({
+        userId: input.recipientId as never,
+        accessHash: accessHash as never,
+      })] as never,
+    }));
+    const result = reconcileInviteToChannelResult([input.recipientId], response);
+    if (result.invited === 1 && result.declined === 0 && result.unknown === 0) {
+      return "invited";
+    }
+    if (result.declined === 1 && result.unknown === 0) return "declined";
+    // Unknown results are NEVER automatically retried.
+    return "unknown";
+  } catch {
+    // Includes flood waits, missing access hashes, insufficient rights,
+    // unknown Telegram responses and privacy restrictions. No retries.
+    return "unknown";
+  }
+}
+
+export function isConnected(ownerId: string): boolean {
+  const client = clients.get(ownerId) as TelegramClientLike | undefined;
+  return Boolean(client?.connected);
 }
 
 export async function isAuthorized(tgClient: Record<string, unknown>): Promise<boolean> {
   const typedClient = tgClient as TelegramClientLike;
   await ensureConnected(typedClient);
-  if (typeof typedClient.checkAuthorization !== "function") return true;
+  if (typeof typedClient.checkAuthorization !== "function") return false;
   return typedClient.checkAuthorization();
 }
 
-export function getClient(): Record<string, unknown> | null {
-  return client;
+export function getClient(ownerId: string): Record<string, unknown> | null {
+  return clients.get(ownerId) ?? null;
 }
 
-export function setClient(c: Record<string, unknown>): void {
-  client = c;
+export function setClient(c: Record<string, unknown>, ownerId: string): void {
+  clients.set(ownerId, c);
 }
 
-export async function clearClient(): Promise<void> {
-  const existingClient = client as TelegramClientLike | null;
-  client = null;
-  pendingAuth = null;
+export async function clearClient(ownerId: string): Promise<void> {
+  const existingClient = clients.get(ownerId) as TelegramClientLike | undefined;
+  clients.delete(ownerId);
+  pendingAuthByOwner.delete(ownerId);
   if (existingClient && typeof existingClient.disconnect === "function") {
     try {
       await existingClient.disconnect();

@@ -281,7 +281,7 @@ async def internal_live_trades(
                 .order_by(KOLTradeEvent.occurred_at.desc(), KOLTradeEvent.id.desc())
                 .limit(min(limit * 4, 800))
             )
-        ).all()
+        ).tuples().all()
     )
 
     best_by_event: dict[int, tuple[KOLTradeEvent, Wallet, KOLWalletAttribution, KOLProfile]] = {}

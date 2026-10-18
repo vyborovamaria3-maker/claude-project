@@ -1,20 +1,23 @@
 import { Telegraf } from "telegraf";
 
-let bot: Telegraf | null = null;
-let currentToken: string | null = null;
+/** Extract bounded retry metadata without exposing any upstream Telegram URL or secret. */
+function telegramRetryAfter(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("response" in error)) return undefined;
+  const response = (error as { response?: { error_code?: unknown; parameters?: { retry_after?: unknown } } }).response;
+  if (response?.error_code !== 429) return undefined;
+  const seconds = response.parameters?.retry_after;
+  return typeof seconds === "number" && Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= 86400
+    ? seconds : 60;
+}
 
+/**
+ * Do not share a mutable Bot singleton between authenticated operators.
+ * A request may use its own token without replacing another user's bot.
+ */
 export function getBot(token?: string): Telegraf | null {
-  const botToken = token || process.env.TELEGRAM_BOT_TOKEN;
-  if (!botToken) return null;
-
-  if (!bot || botToken !== currentToken) {
-    if (bot) {
-      try { bot.stop(); } catch {}
-    }
-    bot = new Telegraf(botToken);
-    currentToken = botToken;
-  }
-  return bot;
+  // An explicitly empty token must not silently select the process-wide bot.
+  const botToken = token ?? process.env.TELEGRAM_BOT_TOKEN;
+  return botToken ? new Telegraf(botToken) : null;
 }
 
 export async function verifyBotToken(token: string): Promise<{
@@ -22,9 +25,17 @@ export async function verifyBotToken(token: string): Promise<{
   botInfo?: { id: number; username: string; firstName: string };
   error?: string;
 }> {
-  // verifyBotToken tests an arbitrary token, so we can't reuse the singleton
-  const testBot = new Telegraf(token);
+  // Reject malformed credentials before constructing a Bot API client.
+  // Never put upstream exception text into a response: Telegraf errors can
+  // contain URLs with the secret bot token embedded in their path.
+  if (typeof token !== "string" ||
+      token.length > 256 ||
+      !/^\d{5,20}:[A-Za-z0-9_-]{30,}$/.test(token)) {
+    return { valid: false, error: "Invalid Telegram bot token format" };
+  }
+  let testBot: Telegraf | null = null;
   try {
+    testBot = new Telegraf(token);
     const info = await testBot.telegram.getMe();
     try { await testBot.stop(); } catch {}
     return {
@@ -35,13 +46,34 @@ export async function verifyBotToken(token: string): Promise<{
         firstName: info.first_name,
       },
     };
-  } catch (err: unknown) {
-    try { await testBot.stop(); } catch {}
-    const error = err as { response?: { description?: string }; message?: string };
-    return {
-      valid: false,
-      error: error.response?.description || error.message || "Invalid token",
-    };
+  } catch {
+    try { await testBot?.stop(); } catch {}
+    return { valid: false, error: "Invalid or inaccessible Telegram bot token" };
+  }
+}
+
+/**
+ * Fail-closed check of the bot's own membership and invite-link permissions.
+ * Telegram remains the final authority on whether it creates the link.
+ */
+export async function checkBotInviteRights(
+  token: string,
+  chatId: string,
+): Promise<{ allowed: boolean; reason?: string; retryAfter?: number }> {
+  try {
+    const client = getBot(token);
+    if (!client) return { allowed: false, reason: "Bot token is not configured" };
+    const self = await client.telegram.getMe();
+    const member = await client.telegram.getChatMember(chatId, self.id);
+    if (member.status === "creator") return { allowed: true };
+    if (member.status !== "administrator" || member.can_invite_users !== true) {
+      return { allowed: false, reason: "Bot needs administrator rights to invite users" };
+    }
+    return { allowed: true };
+  } catch (error) {
+    const retryAfter = telegramRetryAfter(error);
+    if (retryAfter) return { allowed: false, reason: "TELEGRAM_RATE_LIMITED", retryAfter };
+    return { allowed: false, reason: "Unable to verify bot invite permissions" };
   }
 }
 
@@ -59,6 +91,7 @@ export async function getChatInfo(
     description?: string;
   };
   error?: string;
+  retryAfter?: number;
 }> {
   const botInstance = getBot(token);
   if (!botInstance) return { success: false, error: "No bot token" };
@@ -82,9 +115,11 @@ export async function getChatInfo(
     };
   } catch (err: unknown) {
     const error = err as { response?: { description?: string }; message?: string };
+    const retryAfter = telegramRetryAfter(err);
     return {
       success: false,
-      error: error.response?.description || error.message || "Failed to get chat",
+      error: retryAfter ? "TELEGRAM_RATE_LIMITED" : error.response?.description || error.message || "Failed to get chat",
+      retryAfter,
     };
   }
 }
@@ -92,12 +127,13 @@ export async function getChatInfo(
 export async function createInviteLink(
   token: string,
   chatId: string,
-  options?: { name?: string; expireDate?: number; memberLimit?: number }
+  options?: { name?: string; expireDate?: number; memberLimit?: number; createsJoinRequest?: boolean }
 ): Promise<{
   success: boolean;
   link?: string;
-  inviteLink?: { name?: string; inviteLink: string; expireDate?: number; memberLimit?: number };
+  inviteLink?: { name?: string; inviteLink: string; expireDate?: number; memberLimit?: number; createsJoinRequest: boolean };
   error?: string;
+  retryAfter?: number;
 }> {
   const botInstance = getBot(token);
   if (!botInstance) return { success: false, error: "No bot token" };
@@ -105,8 +141,25 @@ export async function createInviteLink(
     const linkResult = await botInstance.telegram.createChatInviteLink(chatId, {
       name: options?.name,
       expire_date: options?.expireDate,
-      member_limit: options?.memberLimit,
+      member_limit: options?.createsJoinRequest ? undefined : options?.memberLimit,
+      creates_join_request: options?.createsJoinRequest,
     });
+    // Do not misrepresent a regular membership link as a moderated opt-in link.
+    // An unexpected Bot API result must fail closed. Best-effort revoke any
+    // newly created link that does not enforce the requested approval policy.
+    if (options?.createsJoinRequest && linkResult.creates_join_request !== true) {
+      if (linkResult.invite_link) {
+        try {
+          await botInstance.telegram.revokeChatInviteLink(chatId, linkResult.invite_link);
+        } catch {
+          // Do not leak the bot token, chat ID, or unapproved link to clients.
+        }
+      }
+      return { success: false, error: "JOIN_REQUEST_NOT_ENFORCED" };
+    }
+    if (typeof linkResult.invite_link !== "string" || !linkResult.invite_link) {
+      return { success: false, error: "INVITE_LINK_MISSING" };
+    }
     return {
       success: true,
       link: linkResult.invite_link,
@@ -115,13 +168,16 @@ export async function createInviteLink(
         inviteLink: linkResult.invite_link,
         expireDate: linkResult.expire_date,
         memberLimit: linkResult.member_limit,
+        createsJoinRequest: linkResult.creates_join_request === true,
       },
     };
   } catch (err: unknown) {
     const error = err as { response?: { description?: string }; message?: string };
+    const retryAfter = telegramRetryAfter(err);
     return {
       success: false,
-      error: error.response?.description || error.message || "Failed to create invite link",
+      error: retryAfter ? "TELEGRAM_RATE_LIMITED" : error.response?.description || error.message || "Failed to create invite link",
+      retryAfter,
     };
   }
 }

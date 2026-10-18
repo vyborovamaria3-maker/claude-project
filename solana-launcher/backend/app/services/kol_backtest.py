@@ -223,7 +223,7 @@ async def backtest_kol_signals(
                     )
                     .order_by(TokenMetric.token_id.asc(), TokenMetric.timestamp.asc())
                 )
-            ).all()
+            ).tuples().all()
         )
 
     price_points: dict[int, list[tuple[datetime, float]]] = defaultdict(list)

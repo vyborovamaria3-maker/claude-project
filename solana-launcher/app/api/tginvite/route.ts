@@ -1,6 +1,9 @@
+import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   return NextResponse.json({
     channels: [],
     stats: { total: 0, imported: 0, pending: 0, failed: 0 },
@@ -9,30 +12,14 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
   try {
     const body = await request.json();
-    const { action, channels, filters } = body;
+    const { action } = body;
 
     if (action === "analyze") {
-      return NextResponse.json({
-        status: "analyzed",
-        channels: channels?.map((ch: string) => ({
-          username: ch,
-          members: Math.floor(Math.random() * 10000),
-          activity: Math.random(),
-          quality: Math.random(),
-        })),
-      });
-    }
-
-    if (action === "import") {
-      return NextResponse.json({
-        status: "started",
-        jobId: Date.now().toString(),
-        target: body.target,
-        sources: channels,
-        filters,
-      });
+      return NextResponse.json({ error: "Use the authenticated MTProto analysis API" }, { status: 501 });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

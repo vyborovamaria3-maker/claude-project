@@ -1,5 +1,7 @@
+import { acquireTGInviteLoginLease, verifyTGInviteLoginLease, releaseTGInviteLoginLease, resetTGInviteLoginLease, TGInviteLoginLeaseError, consumeTGInviteLoginAttempt, consumeTGInviteReadPermit, persistVaultSession, resolveTGInviteClient, revokeVaultSession, TGInviteVaultConflict } from "@/lib/tginvite-vault-client";
+import { requireTGInviteUser } from "@/lib/tginvite-auth";
 import { NextResponse } from "next/server";
-import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, isAuthorized, isConnected, sendLoginCode, setClient, startClient } from "@/lib/tginvite-mtproto";
+import { analyzeChannelRecentMessages, clearClient, completeLogin, createClient, fetchChannelMembers, fetchVisibleMembersFromHistory, getClient, getPendingLoginLease, isAuthorized, isConnected, sendLoginCode } from "@/lib/tginvite-mtproto";
 import { DEFAULT_FILTER_CONFIG, filterMembers, getFilterSummary, type FilterConfig } from "@/lib/tginvite-filter";
 
 function parserError(message: string): { status: number; body: { error: string; status: string } } {
@@ -22,59 +24,103 @@ function parserError(message: string): { status: number; body: { error: string; 
     const wait = message.match(/FLOOD_WAIT_?(\d+)/)?.[1];
     return { status: 429, body: { error: `Telegram flood wait${wait ? `: wait ${wait}s` : ""}. Try later.`, status: "flood_wait" } };
   }
+  if (message.includes("Telegram login expired")) {
+    return { status: 400, body: { error: "Telegram login code has expired. Request a new code.", status: "login_expired" } };
+  }
   if (message.includes("No pending Telegram login")) {
     return { status: 400, body: { error: "No pending Telegram login. Send code first.", status: "login_not_started" } };
   }
-  return { status: 500, body: { error: message || "Internal error", status: "unknown" } };
+  return { status: 500, body: { error: "Telegram service error", status: "unknown" } };
+}
+
+function loginPermitError(
+  permit: { allowed: boolean; retryAfter?: string; status: number },
+): NextResponse | null {
+  if (permit.allowed) return null;
+  const rateLimited = permit.status === 429;
+  return NextResponse.json(
+    {
+      error: rateLimited
+        ? "Too many Telegram login attempts. Try again after the cooldown."
+        : "Telegram login protection service is unavailable.",
+      status: rateLimited ? "rate_limited" : "service_unavailable",
+    },
+    {
+      status: rateLimited ? 429 : 503,
+      headers: permit.retryAfter ? { "Retry-After": permit.retryAfter } : undefined,
+    },
+  );
+}
+
+function readPermitError(permit: { allowed: boolean; retryAfter?: string; status: number }): NextResponse | null {
+  if (permit.allowed) return null;
+  const blocked = permit.status === 429;
+  return NextResponse.json(
+    { error: blocked ? "Telegram read limit reached. Try later." : "Telegram read protection unavailable.", status: blocked ? "rate_limited" : "service_unavailable" },
+    { status: blocked ? 429 : 503, headers: permit.retryAfter ? { "Retry-After": permit.retryAfter } : undefined },
+  );
 }
 
 export async function POST(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
+  const ownerId = user.ownerId!;
+  const authorization = user.authorization!;
   try {
     const body = await request.json();
     const { action, apiId, apiHash, phoneNumber, sessionString, channelUsername, limit, filterConfig, activityMode, phoneCode, password } = body;
+    const readKinds = {
+      fetchMembers: "fetch_members",
+      analyzeRecentMessages: "analyze_recent",
+      validateCandidates: "validate_candidates",
+    } as const;
+    if (typeof action === "string" && Object.prototype.hasOwnProperty.call(readKinds, action)) {
+      const kind = readKinds[action as keyof typeof readKinds];
+      const denied = readPermitError(await consumeTGInviteReadPermit(authorization, kind));
+      if (denied) return denied;
+    }
 
     if (action === "connect") {
-      if (!apiId || !apiHash) {
-        return NextResponse.json({ error: "apiId and apiHash required" }, { status: 400 });
-      }
-
-      const tgClient = await createClient({
-        apiId: Number(apiId),
-        apiHash,
-        sessionString,
-        phoneNumber,
-      });
-
       if (sessionString) {
-        const client = tgClient as { connect: () => Promise<void> };
-        try {
-          await client.connect();
-          const authorized = await isAuthorized(tgClient);
-          if (!authorized) {
-            await clearClient();
-            return NextResponse.json(
-              { error: "MTProto session expired. Clear saved session and authenticate again.", status: "session_expired" },
-              { status: 401 }
-            );
-          }
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          await clearClient();
-          if (message.includes("AUTH_KEY_UNREGISTERED")) {
-            return NextResponse.json(
-              { error: "MTProto session expired. Clear saved session and authenticate again.", status: "session_expired" },
-              { status: 401 }
-            );
-          }
-          throw err;
-        }
-        setClient(tgClient);
+        return NextResponse.json({ error: "Browser-provided session strings are not accepted" }, { status: 400 });
+      }
+      const active = await resolveTGInviteClient(ownerId, authorization);
+      if (active) {
         return NextResponse.json({ status: "connected", hasSession: true });
       }
+      if (!apiId || !apiHash) {
+        return NextResponse.json({ error: "apiId and apiHash required for a new login" }, { status: 400 });
+      }
+      // Do not create an unmanaged socket outside the shared login lease.
+      return NextResponse.json({ status: "needs_phone", message: "Use sendCode to authenticate" });
+    }
 
-      // Need phone verification
-      setClient(tgClient);
-      return NextResponse.json({ status: "needs_phone", message: "Call start with phoneNumber" });
+    if (action === "cancelLogin") {
+      await resetTGInviteLoginLease(authorization);
+      await clearClient(ownerId);
+      return NextResponse.json({ status: "login_cancelled" });
+    }
+
+    if (action === "disconnect") {
+      let leaseCleanupFailed = false;
+      try {
+        // SQL revocation is the authoritative safety fence. Do not block an
+        // explicit user disconnect just because Redis is temporarily offline.
+        await revokeVaultSession(authorization);
+        try {
+          await resetTGInviteLoginLease(authorization);
+        } catch {
+          // A stale lease may delay another login, but cannot revive the
+          // tombstoned session because the SQL generation has advanced.
+          leaseCleanupFailed = true;
+        }
+      } finally {
+        await clearClient(ownerId);
+      }
+      return NextResponse.json({
+        status: "disconnected",
+        ...(leaseCleanupFailed ? { warning: "Telegram login reset unavailable; retry login later" } : {}),
+      });
     }
 
     if (action === "sendCode") {
@@ -82,24 +128,86 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "apiId, apiHash, and phoneNumber required" }, { status: 400 });
       }
 
-      const result = await sendLoginCode({
-        apiId: Number(apiId),
-        apiHash,
-        phoneNumber,
-      });
+      const permit = await consumeTGInviteLoginAttempt(authorization, "send_code");
+      const denied = loginPermitError(permit);
+      if (denied) return denied;
 
-      return NextResponse.json({
-        status: "code_sent",
-        isCodeViaApp: result.isCodeViaApp,
-        message: result.isCodeViaApp ? "Code sent to Telegram app" : "Code sent by SMS",
-      });
+      const lease = await acquireTGInviteLoginLease(authorization);
+      try {
+        const result = await sendLoginCode({
+          apiId: Number(apiId),
+          apiHash,
+          phoneNumber,
+        }, ownerId, lease.token, lease.generation);
+
+        return NextResponse.json({
+          status: "code_sent",
+          isCodeViaApp: result.isCodeViaApp,
+          message: result.isCodeViaApp ? "Code sent to Telegram app" : "Code sent by SMS",
+        });
+      } catch (error) {
+        await clearClient(ownerId);
+        try { await releaseTGInviteLoginLease(authorization, lease.token); } catch {}
+        throw error;
+      }
     }
 
     if (action === "completeLogin") {
       try {
-        const completedSessionString = await completeLogin({ phoneCode, password });
-        return NextResponse.json({ status: "authenticated", sessionString: completedSessionString });
+        const permit = await consumeTGInviteLoginAttempt(authorization, "complete_login");
+        const denied = loginPermitError(permit);
+        if (denied) return denied;
+
+        const lease = getPendingLoginLease(ownerId);
+        if (!lease) {
+          return NextResponse.json(
+            { error: "No active login challenge on this worker. Start login again.", status: "login_not_started" },
+            { status: 409 },
+          );
+        }
+        await verifyTGInviteLoginLease(authorization, lease.token);
+        const completed = await completeLogin({ phoneCode, password }, ownerId);
+        try {
+          // Re-check after the Telegram RPC: a concurrent disconnect may have
+          // invalidated our lease while Telegram was verifying the code.
+          await verifyTGInviteLoginLease(authorization, lease.token);
+          await persistVaultSession(authorization, {
+            api_id: completed.apiId,
+            api_hash: completed.apiHash,
+            session_string: completed.sessionString,
+          }, lease.generation);
+        } catch (vaultError: unknown) {
+          // Never report a non-persisted Telegram session as a successful login.
+          await clearClient(ownerId);
+          if (vaultError instanceof TGInviteVaultConflict) {
+            return NextResponse.json(
+              { error: "Telegram session changed concurrently. Start a new login.", status: "session_conflict" },
+              { status: 409 },
+            );
+          }
+          if (vaultError instanceof TGInviteLoginLeaseError) {
+            return NextResponse.json(
+              { error: vaultError.message, status: "login_lease_unavailable" },
+              { status: vaultError.status },
+            );
+          }
+          return NextResponse.json(
+            { error: "Telegram session could not be saved securely; reconnect and retry" },
+            { status: 503 },
+          );
+        }
+        // Authenticated credentials are already stored. A failed release
+        // must not cause a second Telegram code verification attempt.
+        try { await releaseTGInviteLoginLease(authorization, lease.token); } catch {}
+        return NextResponse.json({ status: "authenticated" });
       } catch (err: unknown) {
+        if (err instanceof TGInviteLoginLeaseError) {
+          if (err.status === 409) await clearClient(ownerId);
+          return NextResponse.json(
+            { error: err.message, status: "login_lease_unavailable" },
+            { status: err.status },
+          );
+        }
         const message = err instanceof Error ? err.message : String(err);
         if (message === "TWO_FACTOR_PASSWORD_REQUIRED") {
           return NextResponse.json({ error: "Two-factor password required", status: "password_required" }, { status: 401 });
@@ -119,17 +227,7 @@ export async function POST(request: Request) {
     }
 
     if (action === "start") {
-      if (!phoneNumber) {
-        return NextResponse.json({ error: "phoneNumber required" }, { status: 400 });
-      }
-
-      const existingClient = getClient();
-      if (!existingClient) {
-        return NextResponse.json({ error: "No client — call connect first" }, { status: 400 });
-      }
-
-      const sessionString = await startClient(existingClient, phoneNumber);
-      return NextResponse.json({ status: "authenticated", sessionString });
+      return NextResponse.json({ error: "Use sendCode and completeLogin instead" }, { status: 400 });
     }
 
     if (action === "fetchMembers") {
@@ -137,7 +235,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "channelUsername required" }, { status: 400 });
       }
 
-      const existingClient = getClient();
+      const existingClient = await resolveTGInviteClient(ownerId, authorization);
       if (!existingClient) {
         return NextResponse.json(
           { error: "MTProto is not connected. Connect your Telegram account in TGInvite Settings first.", status: "not_connected" },
@@ -145,6 +243,9 @@ export async function POST(request: Request) {
         );
       }
 
+      if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 5000)) {
+        return NextResponse.json({ error: "Member limit must be between 1 and 5000" }, { status: 422 });
+      }
       let members;
       let partial = false;
       let source = "participants";
@@ -155,7 +256,7 @@ export async function POST(request: Request) {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("AUTH_KEY_UNREGISTERED")) {
-          await clearClient();
+          await clearClient(ownerId);
           const mapped = parserError(message);
           return NextResponse.json(mapped.body, { status: mapped.status });
         }
@@ -218,7 +319,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "channelUsername required" }, { status: 400 });
       }
 
-      const existingClient = getClient();
+      const existingClient = await resolveTGInviteClient(ownerId, authorization);
       if (!existingClient) {
         return NextResponse.json(
           { error: "MTProto is not connected. Connect your Telegram account in TGInvite Settings first.", status: "not_connected" },
@@ -232,7 +333,7 @@ export async function POST(request: Request) {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("AUTH_KEY_UNREGISTERED")) {
-          await clearClient();
+          await clearClient(ownerId);
         }
         const mapped = parserError(message);
         return NextResponse.json(mapped.body, { status: mapped.status });
@@ -240,7 +341,7 @@ export async function POST(request: Request) {
     }
 
     if (action === "validateCandidates") {
-      const existingClient = getClient();
+      const existingClient = await resolveTGInviteClient(ownerId, authorization);
 
       if (!existingClient) {
         return NextResponse.json(
@@ -406,16 +507,25 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
+    if (err instanceof TGInviteLoginLeaseError) {
+      return NextResponse.json(
+        { error: err.message, status: "login_lease_unavailable" },
+        { status: err.status },
+      );
+    }
     const error = err as { message?: string };
     const mapped = parserError(error.message || "Internal error");
     return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }
 
-export async function GET() {
-  const existingClient = getClient();
+export async function GET(request: Request) {
+  const user = await requireTGInviteUser(request);
+  if (user.error) return user.error;
+  const ownerId = user.ownerId!;
+  const existingClient = await resolveTGInviteClient(ownerId, user.authorization!);
   return NextResponse.json({
-    connected: isConnected(),
+    connected: isConnected(ownerId),
     clientReady: existingClient !== null,
     hasSession: existingClient?.connected || false,
   });

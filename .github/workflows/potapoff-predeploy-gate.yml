@@ -67,7 +67,10 @@ jobs:
           heads="$(alembic heads)"
           printf '%s\n' "$heads"
           test "$(printf '%s\n' "$heads" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
-          alembic current | grep -Fq '0024_kol_trade_events'
+          expected_head="$(alembic heads | awk '{print $1}')"
+          current_head="$(alembic current | awk '/^[0-9][0-9]/ {print $1}')"
+          test -n "$expected_head"
+          test "$current_head" = "$expected_head"
       - name: Run Twitter, KOL and migration regression tests
         working-directory: solana-launcher/backend
         run: pytest -q tests/test_twitter*.py tests/test_kol*.py tests/test_alembic_revision_ids.py

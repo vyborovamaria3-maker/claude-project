@@ -44,6 +44,8 @@ from app.models.social_intelligence import (
 )
 from app.models.subscription_order import SubscriptionOrder
 from app.models.subscription_settings import SubscriptionSettings
+from app.models.telegram_invite_consent import TelegramInviteConsent, TelegramInviteJob
+from app.models.telegram_invite_session import TelegramInviteSession
 from app.models.twitter_crawler_run import TwitterCrawlerRun
 from app.models.twitter_crawler_settings import TwitterCrawlerSettings
 from app.models.twitter_discovery_admin import TwitterDiscoveryConfig, TwitterDiscoveryRun
@@ -72,6 +74,9 @@ __all__ = [
     "User",
     "SubscriptionOrder",
     "SubscriptionSettings",
+    "TelegramInviteSession",
+    "TelegramInviteConsent",
+    "TelegramInviteJob",
     "TelegramChannel",
     "TelegramUser",
     "TelegramMessage",

@@ -40,6 +40,25 @@ def aware(value: datetime | None) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
+def incremental_min_id(latest_id: int | None, *, lookback_ids: int = 250) -> int:
+    """Re-read recent message IDs to refresh edits/reactions without scanning all history."""
+    if latest_id is None or latest_id < 1:
+        return 0
+    return max(0, int(latest_id) - max(0, lookback_ids))
+
+
+def backfill_max_id(oldest_id: int | None) -> int:
+    """Resume older history strictly before the oldest stored Telegram message."""
+    return max(0, int(oldest_id or 0))
+
+
+def is_first_trusted_observation(stored: TelegramMessage | None) -> bool:
+    """An archive-only record has not yet been observed and linked via MTProto."""
+    if stored is None:
+        return True
+    return (stored.raw or {}).get("collector") == "tgparser_cli_archive"
+
+
 def message_replies(message: Any) -> int:
     return int(getattr(getattr(message, "replies", None), "replies", 0) or 0)
 
@@ -224,7 +243,7 @@ class TelegramIntelligenceService:
                 )
             )
         ).scalar_one_or_none()
-        is_new_message = stored is None
+        is_new_message = is_first_trusted_observation(stored)
         values = {
             "sender_id": sender.id if sender else None,
             "sender_telegram_id": int(sender_telegram_id) if sender_telegram_id else None,
@@ -400,15 +419,52 @@ class TelegramIntelligenceService:
             await upsert_channel_score(session, channel.id)
         return parsed, created
 
-    async def scan_channel(self, username: str, *, post_limit: int = 200) -> dict[str, Any]:
+    async def scan_channel(
+        self,
+        username: str,
+        *,
+        post_limit: int = 200,
+        incremental: bool = True,
+        backfill: bool = False,
+    ) -> dict[str, Any]:
         entity = await self.client.get_entity(username)
         if not isinstance(entity, Channel):
             raise ValueError("Entity is not a Telegram channel or group")
         discovered_tg: set[str] = set()
         discovered_x: set[str] = set()
         saved = mentions = 0
+        cursor_before = 0
+        cursor_after = 0
+        oldest_before = 0
+        oldest_after = 0
+        # Imported archives are lower-trust and may contain fabricated message IDs.
+        # They must not determine the MTProto incremental/backfill position.
+        trusted_cursor = or_(
+            TelegramMessage.raw.is_(None),  # Pre-provenance legacy MTProto rows.
+            TelegramMessage.raw["collector"].as_string() == "mtproto",
+        )
         async with self.sessionmaker() as session:
             channel = await self.upsert_channel(session, entity)
+            if incremental:
+                latest_id = (
+                    await session.execute(
+                        select(func.max(TelegramMessage.telegram_message_id)).where(
+                            TelegramMessage.channel_id == channel.id, trusted_cursor
+                        )
+                    )
+                ).scalar_one_or_none()
+                cursor_before = int(latest_id or 0)
+            cursor_after = cursor_before
+            if backfill:
+                oldest_id = (
+                    await session.execute(
+                        select(func.min(TelegramMessage.telegram_message_id)).where(
+                            TelegramMessage.channel_id == channel.id, trusted_cursor
+                        )
+                    )
+                ).scalar_one_or_none()
+                oldest_before = backfill_max_id(oldest_id)
+                oldest_after = oldest_before
             source_handle = (channel.username or str(channel.telegram_id)).lower()
             profile = parse_telegram_message(channel.about)
             discovered_tg.update(profile.telegram_links)
@@ -425,16 +481,63 @@ class TelegramIntelligenceService:
                     relation_type="discussion",
                     evidence="linked discussion chat",
                 )
-            async for message in self.client.iter_messages(
-                entity, limit=max(1, min(post_limit, 5000))
-            ):
-                parsed, created = await self.save_message(
-                    session, channel, message, update_score=False
+            batch_limit = max(1, min(post_limit, 5000))
+            new_messages = 0
+
+            async def record_messages(messages: Any, *, count_new: bool) -> None:
+                nonlocal saved, mentions, cursor_after, new_messages, oldest_after
+                async for message in messages:
+                    message_id = int(message.id)
+                    cursor_after = max(cursor_after, message_id)
+                    if backfill:
+                        oldest_after = min(oldest_after, message_id) if oldest_after else message_id
+                    parsed, created = await self.save_message(
+                        session, channel, message, update_score=False
+                    )
+                    discovered_tg.update(parsed.telegram_links)
+                    discovered_x.update(parsed.x_usernames)
+                    saved += 1
+                    mentions += created
+                    if count_new:
+                        new_messages += 1
+
+            if backfill:
+                # Use the oldest row as a durable checkpoint. Repeated backfill
+                # calls walk backwards without duplicates or restarting at newest.
+                await record_messages(
+                    self.client.iter_messages(
+                        entity, max_id=backfill_max_id(oldest_before), limit=batch_limit
+                    ),
+                    count_new=True,
                 )
-                discovered_tg.update(parsed.telegram_links)
-                discovered_x.update(parsed.x_usernames)
-                saved += 1
-                mentions += created
+            elif incremental and cursor_before:
+                # Oldest unseen messages first: large backlogs are processed
+                # across runs without skipping the middle of the history.
+                await record_messages(
+                    self.client.iter_messages(
+                        entity, min_id=cursor_before, reverse=True, limit=batch_limit
+                    ),
+                    count_new=True,
+                )
+                # Re-read recent existing posts for edited text/reactions.
+                # Keep this bounded independently of the new-message budget.
+                lookback_limit = min(batch_limit, 50)
+                await record_messages(
+                    self.client.iter_messages(
+                        entity,
+                        min_id=incremental_min_id(
+                            cursor_before, lookback_ids=lookback_limit
+                        ),
+                        max_id=cursor_before + 1,
+                        limit=lookback_limit,
+                    ),
+                    count_new=False,
+                )
+            else:
+                await record_messages(
+                    self.client.iter_messages(entity, limit=batch_limit),
+                    count_new=True,
+                )
             if mentions:
                 await upsert_channel_score(session, channel.id)
             channel.last_scanned_at = utcnow()
@@ -446,6 +549,17 @@ class TelegramIntelligenceService:
             "telegram_id": channel.telegram_id,
             "entity_type": channel.entity_type,
             "posts_saved": saved,
+            "new_messages": new_messages,
+            "mode": "backfill" if backfill else ("incremental" if incremental else "latest"),
+            "oldest_before": oldest_before,
+            "oldest_after": oldest_after,
+            "backfill_may_remain": backfill and new_messages >= batch_limit,
+            "backlog_may_remain": (
+                not backfill and incremental and cursor_before > 0 and new_messages >= batch_limit
+            ),
+            "cursor_before": cursor_before,
+            "cursor_after": cursor_after,
+            "incremental": incremental,
             "token_mentions_created": mentions,
             "discovered_telegram": sorted(discovered_tg),
             "discovered_x": sorted(discovered_x),
