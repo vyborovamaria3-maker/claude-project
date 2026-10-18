@@ -66,16 +66,17 @@ export async function replaceEvidence(
 export async function markMessageDeleted(
   tx: PoolClient, sourceId: string, messageId: number,
 ): Promise<boolean> {
-  const result = await tx.query<{ posted_at: Date | null }>(
+  const result = await tx.query<{ posted_at: Date | null; deleted_at: Date; deletion_revision: string }>(
     `UPDATE tg_messages
-     SET deleted_at = COALESCE(deleted_at, now())
+     SET deleted_at = COALESCE(deleted_at, clock_timestamp())
      WHERE source_id=$1 AND message_id=$2 AND deleted_at IS NULL
-     RETURNING posted_at`,
+     RETURNING posted_at, deleted_at, to_char(deleted_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS') AS deletion_revision`,
     [sourceId, messageId],
   );
   if (!result.rowCount) return false;
   const day = utcDay(result.rows[0]?.posted_at);
   if (day) await refreshGraphDays(tx, sourceId, [day]);
-  await emitTgDeletionOutbox(tx, sourceId, messageId);
+  await emitTgDeletionOutbox(tx, sourceId, messageId,
+    result.rows[0]!.deleted_at, result.rows[0]!.deletion_revision);
   return true;
 }
