@@ -125,3 +125,8 @@ hosts, so no internet access is required. HTTP rate limits use the socket peer
 address and ignore untrusted forwarded headers. Behind a reverse proxy, the
 application limit is shared by requests from that proxy; configure per-client
 limits at the proxy too.
+
+
+## X autopost reconciliation
+
+After updating the autopost schema, run **node scripts/setup-autopost.cjs** from the **x-collector** directory. See [the reconciliation runbook](docs/AUTOPOST_RECONCILIATION_RU.md) for statuses, timing, and manual-resolution rules.
