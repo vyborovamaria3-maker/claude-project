@@ -306,13 +306,15 @@ export async function detectSignals(options: DetectOptions = {}): Promise<Detect
 
 export interface SaveSignalsOptions {
   source?: string;
+  /** Registry version for this signal definition. Defaults to v1 for legacy callers. */
+  signalVersion?: number;
   signalAt?: number;
 }
 
 /**
  * Пишет сигналы в существующую таблицу signal_history (011/014):
  * entity → mint, created_at → signal_at, metadata → details, level → колонка level.
- * Идемпотентно: повтор той же секунды обновляет строку (PK source+mint+signal_at).
+ * Идемпотентно внутри версии: PK source+signal_version+mint+signal_at.
  */
 export async function saveSignals(
   signals: DetectedSignal[],
@@ -320,20 +322,24 @@ export async function saveSignals(
 ): Promise<number> {
   if (signals.length === 0) return 0;
   const source = options.source ?? SIGNAL_SOURCE;
+  const signalVersion = options.signalVersion ?? 1;
+  if (!Number.isInteger(signalVersion) || signalVersion < 1) {
+    throw new Error("signalVersion must be a positive integer");
+  }
   const signalAt = options.signalAt ?? Date.now();
 
   const values: unknown[] = [];
   const placeholders = signals.map((s, i) => {
-    const off = i * 6;
-    values.push(source, s.entity, signalAt, s.score, s.level, JSON.stringify(s.metadata));
-    return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6}::jsonb)`;
+    const off = i * 7;
+    values.push(source, signalVersion, s.entity, signalAt, s.score, s.level, JSON.stringify(s.metadata));
+    return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7}::jsonb)`;
   }).join(",");
 
   try {
     const saved = await exec(
-      `INSERT INTO signal_history (source, mint, signal_at, score, level, details)
+      `INSERT INTO signal_history (source, signal_version, mint, signal_at, score, level, details)
        VALUES ${placeholders}
-       ON CONFLICT (source, mint, signal_at)
+       ON CONFLICT (source, signal_version, mint, signal_at)
        DO UPDATE SET score = EXCLUDED.score,
                      level = EXCLUDED.level,
                      details = EXCLUDED.details`,
