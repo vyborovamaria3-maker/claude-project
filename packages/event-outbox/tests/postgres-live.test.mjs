@@ -65,3 +65,25 @@ test("actual PostgreSQL: failure postpones claim, retries with durable error",{s
     assert.equal(saved.rows[0].last_error,"fixture_transient");
   }finally{await pool.end()}
 });
+
+test("PostgreSQL renewed lease fences stale ACK/NACK from same worker ID",{skip:!url},async()=>{
+  const pool=new pg.Pool({connectionString:url});
+  try {
+    await pool.query(POSTGRES_OUTBOX_DDL);
+    const client=await pool.connect();
+    try{
+      await client.query("BEGIN");
+      await emitPostgres(client,{...event,eventKey:"pg-reused-worker-fencing"});
+      await client.query("COMMIT");
+    }finally{client.release()}
+    const first=(await claimPostgres(pool,{workerId:"reused-worker",batchSize:1,leaseMs:10000,now:new Date()}))[0];
+    assert.ok(first);
+    await pool.query("UPDATE outbox_events SET lease_until=NOW() - interval '1 second' WHERE id=$1",[first.id]);
+    const second=(await claimPostgres(pool,{workerId:"reused-worker",batchSize:1,leaseMs:10000,now:new Date()}))[0];
+    assert.ok(second);
+    assert.notEqual(first.leaseUntil,second.leaseUntil);
+    assert.equal(await ackPostgres(pool,first.id,first.leaseOwner,first.leaseUntil),false);
+    assert.equal(await failPostgres(pool,first.id,first.leaseOwner,first.leaseUntil,"stale",new Date()),false);
+    assert.equal(await ackPostgres(pool,second.id,second.leaseOwner,second.leaseUntil),true);
+  }finally{await pool.end()}
+});
