@@ -37,9 +37,14 @@ test("TG PostgreSQL: page transaction commits message, revision and delete outbo
     const deleted=await client.query<{n:string}>(
       "SELECT count(*)::text AS n FROM outbox_events WHERE source_system='tg' AND event_kind='message_deleted'");
     assert.equal(deleted.rows[0]?.n,"1");
+    await persistMessage(client,id,{...base,message:"restored"});
+    assert.equal(await markMessageDeleted(client,id,52),true);
+    const deletedTwice=await client.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE source_system='tg' AND event_kind='message_deleted'");
+    assert.equal(deletedTwice.rows[0]?.n,"2","a second deletion after restoring must have its own evidence revision");
     const payloads=await client.query<{payload:{registryEvent:{entityRefs:{kind:string}[]}}}>(
       "SELECT payload FROM outbox_events WHERE source_system='tg' ORDER BY id");
-    assert.equal(payloads.rows.length,3);
+    assert.equal(payloads.rows.length,5);
     assert.ok(payloads.rows.every(row=>
       row.payload.registryEvent.entityRefs.every(entity=>entity.kind==="source")));
     await client.query("ROLLBACK");rolledBack=true;
