@@ -30,6 +30,9 @@ jobs:
           cache-dependency-path: solana-launcher/package-lock.json
       # The existing HeroUI 2.x peer range requires Tailwind 4 while this app intentionally pins Tailwind 3.x.
       - run: npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
+      # Build the required SQLite binding explicitly while keeping other lifecycle scripts disabled.
+      - name: Build SQLite native binding
+        run: npm rebuild better-sqlite3
       - name: Lint
         run: npm run lint
       - name: Access guard tests
