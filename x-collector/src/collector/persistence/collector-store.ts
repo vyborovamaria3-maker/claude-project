@@ -6,6 +6,7 @@ import { source, sourceId, rawPage, recordRawPage, storePage } from "../../../li
 import { Page } from "../../../lib/archive/model";
 import {recordRaw,recordRawBatch} from '../../../lib/trade/intelligence-store';
 import type { PoolClient } from "pg";
+import { emitXTweetOutbox } from "./intelligence-outbox";
 export interface PersistenceLease { workerId: string; attempt: number; accountName: string; accountOwner: string; }
 async function assertPersistenceLease(client: PoolClient, taskId: number | undefined, lease?: PersistenceLease) {
   if (!lease) return;
@@ -194,6 +195,9 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
           linkVals
         );
       }
+      // Source tweet/archive writes and Intelligence Outbox share this transaction.
+      // Unresolved author IDs are intentionally not re-identified from handles.
+      for (const t of chunk) await emitXTweetOutbox(client,t,now);
       return newlyLinked;
     };
     // Only count successful transaction results; tx() may retry rollbacks.
