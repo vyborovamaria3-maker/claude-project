@@ -15,7 +15,7 @@ async function cycle(c){const now=Date.now(); const missing=(await c.query("SELE
 (async()=>{const c=await connect();try{const locked=(await c.query('SELECT pg_try_advisory_lock(742098531) AS locked')).rows[0].locked;if(!locked)throw Error('busy');
  if((await c.query("SELECT to_regclass('xc_history_runs') AS present")).rows[0].present&&(await c.query("SELECT 1 FROM xc_history_runs WHERE status='running' LIMIT 1")).rowCount){historyCollector=spawn(process.execPath,[path.join(__dirname,'history-collector.cjs')],{cwd:process.cwd(),env:process.env,stdio:['ignore','inherit','inherit','ipc'],windowsHide:true});historyCollector.on('error',()=>console.error('Historical collector could not start.'));}
  if((await c.query("SELECT to_regclass('xc_auto_sources') AS present")).rows[0].present&&(await c.query('SELECT 1 FROM xc_auto_sources WHERE enabled LIMIT 1')).rowCount){const compiled=path.join(__dirname,'../dist/scripts/collect-lists.js');sourceCollector=spawn(process.execPath,fs.existsSync(compiled)?[compiled]:['--import','tsx',path.join(__dirname,'collect-lists.ts')],{cwd:process.cwd(),env:process.env,stdio:['ignore','inherit','inherit','ipc'],windowsHide:true});sourceCollector.on('error',()=>console.error('List collector could not start.'));}
- const recoveryNow=Date.now();await c.query(\`UPDATE xc_auto_jobs
+ const recoveryNow=Date.now();await c.query(`UPDATE xc_auto_jobs
  SET status=CASE WHEN attempted THEN 'uncertain' WHEN retry_count<3 THEN 'queued' ELSE 'failed' END,
      retry_count=CASE WHEN attempted THEN retry_count ELSE LEAST(retry_count+1,3) END,
      scheduled_at=CASE WHEN NOT attempted AND retry_count<3 THEN GREATEST(scheduled_at,$1+30000) ELSE scheduled_at END,
@@ -25,6 +25,6 @@ async function cycle(c){const now=Date.now(); const missing=(await c.query("SELE
                   WHEN retry_count<3 THEN 'Восстановлено после перезапуска; повтор запланирован'
                   ELSE 'Слишком много перезапусков до отправки; проверьте браузер и состояние задания' END,
      lease_until=NULL
- WHERE status='running'\`,[recoveryNow]);await c.query("UPDATE xc_auto_sync SET status='queued' WHERE status='running'");console.log('Autopost worker running. Ctrl+C stops after current action.');
+ WHERE status='running'`,[recoveryNow]);await c.query("UPDATE xc_auto_sync SET status='queued' WHERE status='running'");console.log('Autopost worker running. Ctrl+C stops after current action.');
  while(!stopping){try{await cycle(c);}catch{console.error('Autopost cycle failed. Check database and migrations.');}if(!stopping)await new Promise(r=>setTimeout(r,5000));}
  }finally{if(sourceCollector?.connected)sourceCollector.send({stop:true});if(historyCollector?.connected)historyCollector.send({stop:true});await c.query('SELECT pg_advisory_unlock(742098531)').catch(()=>{});await c.end();}})().catch(()=>{console.error('Unable to start worker. Check migrations/database or an already running worker.');process.exitCode=1;});
