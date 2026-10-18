@@ -332,7 +332,7 @@ export async function saveSignals(
   const placeholders = signals.map((s, i) => {
     const off = i * 7;
     values.push(source, signalVersion, s.entity, signalAt, s.score, s.level, JSON.stringify(s.metadata));
-    return `(${off + 1},${off + 2},${off + 3},${off + 4},${off + 5},${off + 6},${off + 7}::jsonb)`;
+    return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7}::jsonb)`;
   }).join(",");
 
   try {
