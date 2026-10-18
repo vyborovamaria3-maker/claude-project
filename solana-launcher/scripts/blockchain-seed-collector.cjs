@@ -287,6 +287,9 @@ function initDb(db) {
     "SELECT scope_id,discovered_from_kind,discovered_from_address,kind,address,discovered_at "+
     "FROM chain_collection_scope_members WHERE discovered_from_kind IS NOT NULL AND discovered_from_address IS NOT NULL"
   );
+  // Only an explicitly opted-in local collector creates this additive SQLite table.
+  if (process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED === "true")
+    require("./blockchain-intelligence-outbox.cjs").ensureSchema(db);
 }
 
 
@@ -887,9 +890,19 @@ function persistEvents(db, kind, address, transactions) {
       // Fast gzip reduces laptop disk I/O while retaining the original evidence.
       const packed = gzipSync(Buffer.from(serialized), { level: 1 });
       const hash = createHash("sha256").update(serialized).digest("hex");
-      saved += insert.run(kind, address, tx.signature,
+      const observedAt = Date.now();
+      const inserted = insert.run(kind, address, tx.signature,
         Number.isFinite(tx.timestamp) ? tx.timestamp : null,
-        Number.isFinite(tx.slot) ? tx.slot : null, packed, bytes, Date.now(), hash).changes;
+        Number.isFinite(tx.slot) ? tx.slot : null, packed, bytes, observedAt, hash).changes;
+      saved += inserted;
+      // The collector is inside a better-sqlite3 transaction. Its enclosing
+      // processOne() transaction is lease-fenced; both raw row and event roll back.
+      if (inserted > 0 && process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED === "true") {
+        require("./blockchain-intelligence-outbox.cjs").emitRawChainOutbox(db, {
+          kind,address,signature:tx.signature,payloadHash:hash,
+          blockTime:tx.timestamp,observedAt,
+        });
+      }
     }
   })();
   return saved;
