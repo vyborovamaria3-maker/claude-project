@@ -136,3 +136,5 @@ After updating the autopost schema, run **node scripts/setup-autopost.cjs** from
 - [Архитектура v2 (AS-IS/TO-BE, инварианты, PostgreSQL, decisions)](docs/AUTOPOST_TARGET_ARCHITECTURE_V2_RU.md).
 - [План внедрения v2 (этапы P0/P1/P2, отдельные PR, критерии приёмки)](docs/AUTOPOST_IMPLEMENTATION_PLAN_V2_RU.md).
 - Документы задают целевую версию; реализация v2 в текущем runtime ещё не выполнена.
+
+- [Политика хранения, защиты и резервного копирования журнала X Autopost](docs/AUTOPOST_AUDIT_RETENTION_RU.md).
