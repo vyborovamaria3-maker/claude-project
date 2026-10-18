@@ -2,6 +2,7 @@ const {spawn}=require('node:child_process');const path=require('node:path'),fs=r
 const {claim,eligible}=require('./autopost/queue.cjs');
 const {connect}=require('./autopost/runtime.cjs');const {plan,inWindow}=require('./autopost/store.cjs');const {execute,sync,persistPost,reconcilePost}=require('./autopost/browser.cjs');
 const {decideReconciliation,nextCheckAt,RECONCILIATION_WINDOW_MS}=require('./autopost/reconciliation.cjs');
+const {classifyPreSendError}=require('./autopost/publish-retry.cjs');
 let stopping=false;process.on('SIGINT',()=>{stopping=true;});process.on('SIGTERM',()=>{stopping=true;});
 async function reconcileOne(c,now){
  const row=(await c.query("SELECT r.job_id,r.account_name,r.expected_handle,r.kind,r.attempted_at AS reconcile_attempted_at,r.next_check_at,r.deadline_at,r.attempts,r.status AS reconciliation_status,r.candidates,j.id,j.content,j.origin,j.target_id,j.target_handle,j.started_at,j.created_at,j.attempted_at,j.status AS job_status,a.status AS account_status,a.account_busy_until FROM xc_auto_reconcile r JOIN xc_auto_jobs j ON j.id=r.job_id LEFT JOIN x_accounts a ON a.name=r.account_name WHERE r.status='queued' AND r.next_check_at<=$1 AND j.status='uncertain' AND (r.deadline_at<=$1 OR a.name IS NULL OR a.status<>'active' OR COALESCE(a.account_busy_until,0)<=$1) ORDER BY r.next_check_at,r.created_at LIMIT 1",[now])).rows[0];
