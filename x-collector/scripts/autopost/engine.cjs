@@ -33,8 +33,8 @@ async function command(c,i){switch(i.action){
   if(isPublication){
    const candidates=Array.isArray(row.candidates)?row.candidates:(typeof row.candidates==='string'?JSON.parse(row.candidates):[]);
    const candidate=selectManualCandidate(candidates,i.tweet_id,i.manual_confirm);
-   const {persistPost}=require('./browser.cjs');
-   await persistPost(c,row,i.tweet_id,candidate);
+   await require('./finalize.cjs').finalizePublication(c,row,i.tweet_id,candidate,{expectedStatus:'uncertain',reconciliationStates:['manual_review','manual_required'],message:'Публикация подтверждена оператором; автоматическая повторная отправка не выполнялась.',lastError:'Результат подтверждён оператором.'});
+   return {ok:true,message:'Публикация подтверждена; повторная отправка отключена'};
   }else if(i.manual_confirm!==true){throw Error('Подтвердите, что проверили X и действие действительно выполнено');}
   const now=Date.now();
   await c.query('BEGIN');

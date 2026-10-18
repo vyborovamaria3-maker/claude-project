@@ -30,14 +30,7 @@ async function reconcileOne(c,now){
    const candidates=JSON.stringify(matches.map(match=>({...match,url:'https://x.com/'+String(match.handle||row.expected_handle).replace(/^@/,'')+'/status/'+match.tweet_id})));
    if(decision.status==='resolved'){
     const match=decision.match;
-    await persistPost(c,row,match.tweet_id,match);
-    await c.query('BEGIN');
-    try{
-     const updated=await c.query("UPDATE xc_auto_jobs SET status='published',result_id=$2,result_url=$3,message=$4,finished_at=$5,lease_until=NULL WHERE id=$1 AND status='uncertain' RETURNING id",[row.job_id,match.tweet_id,'https://x.com/'+row.expected_handle+'/status/'+match.tweet_id,'Публикация подтверждена сверкой X; повторная отправка не выполнялась.',checkNow]);
-     if(!updated.rowCount)throw Error('Job state changed during reconciliation');
-     await c.query("UPDATE xc_auto_reconcile SET status='resolved',matched_tweet_id=$2,candidates=$3::jsonb,last_error=NULL,updated_at=$4,finished_at=$4 WHERE job_id=$1 AND status='running'",[row.job_id,match.tweet_id,candidates,checkNow]);
-     await c.query('COMMIT');
-    }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
+    await require('./autopost/finalize.cjs').finalizePublication(c,row,match.tweet_id,match,{expectedStatus:'uncertain',reconciliationStates:['running'],candidates,message:'Публикация подтверждена сверкой X; повторная отправка не выполнялась.'});
    }else if(decision.status==='manual_review'||decision.status==='manual_required'){
     const detail=decision.reason==='MULTIPLE_MATCHES'?'Найдено несколько точных совпадений; выберите публикацию вручную.':decision.reason==='UNSUPPORTED_ACTION'?'Автоматическая сверка этого действия не поддерживается.':'За 24 часа не найдено единственное точное совпадение.';
     await c.query("UPDATE xc_auto_reconcile SET status=$2,candidates=$3::jsonb,last_error=$4,updated_at=$5,finished_at=$5 WHERE job_id=$1 AND status='running'",[row.job_id,decision.status,candidates,detail,checkNow]);
