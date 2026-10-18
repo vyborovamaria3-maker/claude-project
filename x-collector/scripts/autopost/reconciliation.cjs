@@ -57,7 +57,7 @@ function findMatches(job, candidates, now = Date.now()) {
   const expectedHandle = String(job.expected_handle || '').replace(/^@/, '').toLowerCase();
   const attemptedAt = Number(job.attempted_at ?? job.started_at ?? job.created_at);
   if (!expectedHandle || !Number.isFinite(attemptedAt) || attemptedAt <= 0) return [];
-  const minTime = attemptedAt - 2 * 60 * 1000;
+  const minTime = attemptedAt - 30 * 1000;
   const maxTime = now + 2 * 60 * 1000;
   const matches = new Map();
 

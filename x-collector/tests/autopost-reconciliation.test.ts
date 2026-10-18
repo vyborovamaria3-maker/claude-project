@@ -37,7 +37,7 @@ test('reconciliation requires an exact author, text, and a timestamp near the se
   const matches=findMatches(source,[
     candidate('1234567890123456789'),
     candidate('1234567890123456790',{handle:'someone_else'}),
-    candidate('1234567890123456791',{posted_at:source.attempted_at-5*60*1000}),
+    candidate('1234567890123456791',{posted_at:source.attempted_at-60*1000}),
     candidate('1234567890123456792',{text:'Different post'}),
     candidate('1234567890123456793',{text:'Read the research first. https://x.com/i/status/999'}),
   ],now);
