@@ -1,27 +1,33 @@
 const RECONCILIATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 const INITIAL_CHECK_DELAY_MS = 60 * 1000;
 const RECHECK_DELAYS_MS = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000, 3 * 60 * 60 * 1000, 6 * 60 * 60 * 1000, 12 * 60 * 60 * 1000, 24 * 60 * 60 * 1000];
-const URL_PATTERN = /https?:\/\/[^\s]+/gi;
-const SOURCE_STATUS_PATTERN = /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/(?:i\/status\/\d+|[A-Za-z0-9_]{1,15}\/status\/\d+)/i;
-
-function urls(text) {
-  return String(text || '').match(URL_PATTERN) || [];
-}
-
 function normalizeBody(text) {
-  return String(text || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US');
+  return String(text || '').normalize('NFKC')
+    .replace(/https?:\/\/(?:www\.)?twitter\.com\//gi, 'https://x.com/')
+    .replace(/https?:\/\/(?:www\.)?x\.com\//gi, 'https://x.com/')
+    .replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US');
 }
 
 function comparableText(job, candidateText) {
-  const jobText = String(job.content || '');
-  const expectedUrls = urls(jobText);
-  const candidateUrls = urls(candidateText);
-  const stripSourceLink = job.origin === 'agent' && expectedUrls.length === 1 && SOURCE_STATUS_PATTERN.test(jobText);
-  if (stripSourceLink) {
-    if (candidateUrls.length !== 1) return false;
-    return normalizeBody(jobText.replace(URL_PATTERN, ' ')) === normalizeBody(String(candidateText || '').replace(URL_PATTERN, ' '));
+  return normalizeBody(job.content) === normalizeBody(candidateText);
+}
+
+function expandTweetUrls(legacy) {
+  let text = String(legacy?.full_text || '');
+  const entries = Array.isArray(legacy?.entities?.urls) ? legacy.entities.urls.slice() : [];
+  entries.sort((a, b) => Number(b.indices?.[0] || 0) - Number(a.indices?.[0] || 0));
+  for (const entry of entries) {
+    const shortUrl = String(entry.url || '');
+    const expandedUrl = String(entry.expanded_url || entry.expandedUrl || '');
+    if (!shortUrl || !/^https?:\/\//i.test(expandedUrl)) continue;
+    const start = entry.indices?.[0], end = entry.indices?.[1];
+    if (Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start && text.slice(start, end) === shortUrl) {
+      text = text.slice(0, start) + expandedUrl + text.slice(end);
+    } else if (text.includes(shortUrl)) {
+      text = text.replace(shortUrl, expandedUrl);
+    }
   }
-  return normalizeBody(jobText) === normalizeBody(candidateText);
+  return text;
 }
 
 function timestampFromId(id) {
@@ -91,6 +97,7 @@ module.exports = {
   RECHECK_DELAYS_MS,
   findMatches,
   decideReconciliation,
+  expandTweetUrls,
   nextCheckDelayMs,
   nextCheckAt,
   timestampFromId,

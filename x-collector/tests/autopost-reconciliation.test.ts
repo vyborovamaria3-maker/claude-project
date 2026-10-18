@@ -5,7 +5,7 @@ import {test} from 'node:test';
 
 const load=createRequire(__filename);
 const reconciliation=load('../scripts/autopost/reconciliation.cjs');
-const {findMatches,decideReconciliation,nextCheckDelayMs,nextCheckAt,RECONCILIATION_WINDOW_MS}=reconciliation;
+const {findMatches,decideReconciliation,expandTweetUrls,nextCheckDelayMs,nextCheckAt,RECONCILIATION_WINDOW_MS}=reconciliation;
 
 function job(overrides:Record<string,unknown>={}) {
   return {
@@ -25,7 +25,7 @@ function candidate(id:string,overrides:Record<string,unknown>={}) {
   return {
     tweet_id:id,
     handle:'publisher',
-    text:'Read the research first. https://t.co/short',
+    text:'Read the research first. https://x.com/i/status/123',
     posted_at:1_800_000_005_000,
     ...overrides,
   };
@@ -39,9 +39,18 @@ test('reconciliation requires an exact author, text, and a timestamp near the se
     candidate('1234567890123456790',{handle:'someone_else'}),
     candidate('1234567890123456791',{posted_at:source.attempted_at-5*60*1000}),
     candidate('1234567890123456792',{text:'Different post'}),
+    candidate('1234567890123456793',{text:'Read the research first. https://x.com/i/status/999'}),
   ],now);
   assert.equal(matches.length,1);
   assert.equal(matches[0].tweet_id,'1234567890123456789');
+});
+
+test('short links are expanded before matching and a different source permalink is not a match',()=>{
+  const expanded=expandTweetUrls({full_text:'Read the research first. https://t.co/short',entities:{urls:[{url:'https://t.co/short',expanded_url:'https://twitter.com/i/status/123'}]}});
+  assert.equal(expanded,'Read the research first. https://twitter.com/i/status/123');
+  const now=1_800_000_010_000;
+  assert.equal(findMatches(job(),[candidate('1234567890123456789',{text:expanded})],now).length,1);
+  assert.equal(findMatches(job(),[candidate('1234567890123456793',{text:'Read the research first. https://x.com/i/status/999'})],now).length,0);
 });
 
 test('one exact match resolves, multiple exact matches require manual review',()=>{
