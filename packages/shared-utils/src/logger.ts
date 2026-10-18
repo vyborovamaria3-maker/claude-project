@@ -24,7 +24,7 @@ export function sanitizeForLog(input: unknown, depth = 0, visited = new WeakSet<
 export function createLogger(subsystem: string, sink: LogSink = console.log) {
   if (!subsystem.trim()) throw new Error("subsystem is required");
   const log = (level: LogLevel, message: string, fields: Record<string, unknown> = {}) => {
-    const payload = { timestamp: new Date().toISOString(), level, subsystem, message: message.slice(0, 2048), ...sanitizeForLog(fields) as Record<string, unknown> };
+    const payload = { ...sanitizeForLog(fields) as Record<string, unknown>, timestamp: new Date().toISOString(), level, subsystem, message: message.slice(0, 2048) };
     sink(JSON.stringify(payload));
   };
   return {
