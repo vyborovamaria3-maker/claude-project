@@ -62,8 +62,8 @@ function sourceConnection(source,once) {
         close:async()=>db.close(),
         port:{
           claim:async options=>claimSqlite(db,options),
-          ack:async event=>ackSqlite(db,event.id,event.leaseOwner),
-          fail:async(event,code,next)=>failSqlite(db,event.id,event.leaseOwner,code,next)
+          ack:async event=>ackSqlite(db,event.id,event.leaseOwner,event.leaseUntil),
+          fail:async(event,code,next)=>failSqlite(db,event.id,event.leaseOwner,event.leaseUntil,code,next)
         },
       };
     }catch(error){db.close();throw error;}
@@ -75,8 +75,8 @@ function sourceConnection(source,once) {
     close:async()=>pool.end(),
     port:{
       claim:options=>claimPostgres(pool,options),
-      ack:event=>ackPostgres(pool,event.id,event.leaseOwner),
-      fail:(event,code,next)=>failPostgres(pool,event.id,event.leaseOwner,code,next),
+      ack:event=>ackPostgres(pool,event.id,event.leaseOwner,event.leaseUntil),
+      fail:(event,code,next)=>failPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,code,next),
     }
   };
 }
