@@ -1,4 +1,5 @@
 "use strict";
+const { decodePumpSwap } = require("./blockchain-pump-swap-decoder.cjs");
 
 // Alchemy Solana historical provider. No Helius fallback is permitted here.
 // Uses the documented getTransactionsForAddress RPC extension with opaque paginationToken.
@@ -294,7 +295,11 @@ function createAlchemyProvider(options = {}) {
     for (const tx of transactions || []) {
       if (tx.transactionError !== null || !tx.instructionProgramIds?.some((id) => DEX_PROGRAMS.has(id))) continue;
       const deltas = (tx.tokenBalanceDeltas || []).filter((d) => d.mint === mint && d.owner && d.deltaRaw !== "0");
-      if (deltas.length !== 1) continue;
+      if (deltas.length !== 1) {
+        const routed = decodePumpSwap(tx, mint);
+        if (routed) trades.push(routed);
+        continue;
+      }
       const delta = deltas[0];
       const keyIndex = tx.accountKeys.indexOf(delta.owner);
       if (keyIndex < 0) continue;

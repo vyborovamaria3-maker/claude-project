@@ -5,6 +5,7 @@ on:
     paths:
       - "solana-launcher/scripts/blockchain-seed-*.cjs"
       - "solana-launcher/scripts/blockchain-alchemy-provider.cjs"
+      - "solana-launcher/scripts/blockchain-pump-swap*.cjs"
       - "solana-launcher/scripts/blockchain-wallet-cache*.cjs"
       - "solana-launcher/scripts/blockchain-collector-regression.mjs"
       - "solana-launcher/scripts/blockchain-inventory-decoder.cjs"

@@ -11,7 +11,7 @@
     "landing:test": "node scripts/landing-regression.mjs",
     "kols:test": "node scripts/kols-regression.mjs",
     "analysis:test": "node scripts/analysis-regression.mjs && node scripts/live-intelligence-regression.mjs && node scripts/kols-regression.mjs && node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-wallet-cache-regression.cjs && node scripts/blockchain-seed-integration.cjs",
-    "blockchain:test": "node scripts/blockchain-settings-test.cjs && node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-wallet-cache-regression.cjs && node scripts/blockchain-seed-persistence-test.cjs && node scripts/blockchain-signature-events-test.cjs && node scripts/blockchain-buy-attribution-test.cjs && node scripts/blockchain-live-contract-regression.cjs && node scripts/blockchain-seed-analytics-test.cjs",
+    "blockchain:test": "node scripts/blockchain-settings-test.cjs && node scripts/blockchain-collector-regression.mjs && node scripts/blockchain-seed-regression.cjs && node scripts/blockchain-wallet-cache-regression.cjs && node scripts/blockchain-seed-persistence-test.cjs && node scripts/blockchain-signature-events-test.cjs && node scripts/blockchain-buy-attribution-test.cjs && node scripts/blockchain-live-contract-regression.cjs && node scripts/blockchain-pump-swap-regression.cjs && node scripts/blockchain-seed-analytics-test.cjs",
     "backend:dev": "python -m uvicorn app.main:app --reload --app-dir backend --port 8000",
     "backend:test": "cd backend && pytest",
     "compose:up": "docker compose up --build",
