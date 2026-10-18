@@ -59,8 +59,8 @@ test("real PostgreSQL + SQLite to Intelligence: atomic delivery and replay",{ski
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:4});
     const sourcePg={
       claim:opts=>claimPostgres(pool,opts),
-      ack:ev=>ackPostgres(pool,ev.id,ev.leaseOwner),
-      fail:(ev,reason,next)=>failPostgres(pool,ev.id,ev.leaseOwner,reason,next),
+      ack:ev=>ackPostgres(pool,ev.id,ev.leaseOwner,ev.leaseUntil),
+      fail:(ev,reason,next)=>failPostgres(pool,ev.id,ev.leaseOwner,ev.leaseUntil,reason,next),
     };
     const tx=await pool.connect();
     try{
@@ -86,8 +86,8 @@ test("real PostgreSQL + SQLite to Intelligence: atomic delivery and replay",{ski
     sqlite.exec("COMMIT");
     const sourceSqlite={
       claim:async opts=>claimSqlite(sqlite,opts),
-      ack:async ev=>ackSqlite(sqlite,ev.id,ev.leaseOwner),
-      fail:async(ev,reason,next)=>failSqlite(sqlite,ev.id,ev.leaseOwner,reason,next),
+      ack:async ev=>ackSqlite(sqlite,ev.id,ev.leaseOwner,ev.leaseUntil),
+      fail:async(ev,reason,next)=>failSqlite(sqlite,ev.id,ev.leaseOwner,ev.leaseUntil,reason,next),
     };
     const raw=await runDeliveryBatch(sourceSqlite,pool,{
       workerId:"source-sqlite",batchSize:5,leaseMs:120000
