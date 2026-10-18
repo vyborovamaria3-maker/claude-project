@@ -59,6 +59,8 @@ function extractEnvelope(event: ClaimedEvent): RegistryOutboxPayload {
   if (timeline.observedAt !== observedAt ||
       toUtcIso(timelineEvidence.observedAt) !== observedAt ||
       timeline.occurredAt !== occurredAt ||
+      (timelineEvidence.occurredAt === undefined) !==
+        (registryEvidence.occurredAt === undefined) ||
       (timelineEvidence.occurredAt !== undefined &&
         toUtcIso(timelineEvidence.occurredAt) !== occurredAt)) {
     throw new TypeError("Registry and timeline evidence clocks disagree");
