@@ -37,5 +37,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock --no-audit
+      - run: npm install --prefix packages/event-outbox --no-package-lock --no-audit
       - run: npm --prefix packages/event-outbox run check
