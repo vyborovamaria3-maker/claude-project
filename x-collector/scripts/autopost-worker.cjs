@@ -24,7 +24,7 @@ async function reconcileOne(c,now){
    return true;
   }
   try{
-   const matches=await reconcilePost(c,row,Date.now());
+   const matches=await reconcilePost(c,row);
    const checkNow=Date.now();
    const decision=decideReconciliation({kind:row.kind,matches,now:checkNow,deadlineAt});
    const candidates=JSON.stringify(matches.map(match=>({...match,url:'https://x.com/'+String(match.handle||row.expected_handle).replace(/^@/,'')+'/status/'+match.tweet_id})));

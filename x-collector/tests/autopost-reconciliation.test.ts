@@ -56,7 +56,6 @@ test('one exact match resolves, multiple exact matches require manual review',()
 
 test('no match retries only within the 24-hour window and never schedules beyond the deadline',()=>{
   const now=1_800_000_010_000;
-  const source=job();
   assert.equal(decideReconciliation({kind:'reply',matches:[],now,deadlineAt:now+RECONCILIATION_WINDOW_MS}).status,'retry');
   assert.equal(decideReconciliation({kind:'reply',matches:[],now:now+RECONCILIATION_WINDOW_MS,deadlineAt:now+RECONCILIATION_WINDOW_MS}).status,'manual_required');
   assert.equal(nextCheckDelayMs(1),5*60*1000);
