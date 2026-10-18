@@ -140,8 +140,10 @@ async function main(){
 main().catch(error=>{
   // Error strings/URLs can carry source account/database credentials.
   // Only a bounded, nonsecret error classification is printed.
-  console.error("intelligence ETL failed:",error instanceof Error && /required|schema|select|limit|option|configuration|enabled/.test(error.message)
-    ? error.message.replace(/postgres(?:ql)?:\/\/[^\s]+/g,"[REDACTED_URL]")
-    : "source_or_destination_operation_failed");
+  const allowlisted = error instanceof Error && (
+    error.message === "set INTELLIGENCE_ETL_ENABLED=true for explicit delivery" ||
+    /^(select exactly one|select --source|limit must|unknown CLI option)/.test(error.message)
+  );
+  console.error("intelligence ETL failed:", allowlisted ? error.message : "source_or_destination_operation_failed");
   process.exitCode=1;
 });
