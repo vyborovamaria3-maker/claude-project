@@ -34,9 +34,9 @@ test("actual PostgreSQL: transaction rollback, dedup and fenced ACK",{skip:!url}
     assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:5,leaseMs:60000,now})).length,0);
     const client=await pool.connect();
     try{
-      assert.equal(await ackPostgres(client,rows[0].id,"workerB"),false);
-      assert.equal(await ackPostgres(client,rows[0].id,"workerA"),true);
-      assert.equal(await ackPostgres(client,rows[0].id,"workerA"),false);
+      assert.equal(await ackPostgres(client,rows[0].id,"workerB",rows[0].leaseUntil),false);
+      assert.equal(await ackPostgres(client,rows[0].id,"workerA",rows[0].leaseUntil),true);
+      assert.equal(await ackPostgres(client,rows[0].id,"workerA",rows[0].leaseUntil),false);
     }finally{client.release()}
   }finally{await pool.end()}
 });
@@ -56,7 +56,7 @@ test("actual PostgreSQL: failure postpones claim, retries with durable error",{s
     assert.equal(claimed.length,1);
     const client=await pool.connect();
     try {
-      assert.equal(await failPostgres(client,claimed[0].id,"workerA","fixture_transient",
+      assert.equal(await failPostgres(client,claimed[0].id,"workerA",claimed[0].leaseUntil,"fixture_transient",
         new Date(now.getTime()+120000)),true);
     }finally{client.release()}
     assert.equal((await claimPostgres(pool,{workerId:"workerB",batchSize:10,leaseMs:60000,now})).length,0);
