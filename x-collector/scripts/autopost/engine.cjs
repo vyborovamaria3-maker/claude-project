@@ -19,7 +19,7 @@ async function command(c,i){switch(i.action){
   const job=(await c.query('SELECT id,account_name,kind,status,attempted,attempted_at,created_at,started_at,finished_at,result_id,result_url,retry_count,origin FROM xc_auto_jobs WHERE id=$1',[i.id])).rows[0];
   if(!job)throw Error('Задание не найдено');
   const attempts=(await c.query('SELECT attempt_id,attempt_no,started_at,boundary_at,finished_at,status,error_category,error_code,trace_id FROM xc_auto_job_attempts WHERE job_id=$1 ORDER BY attempt_no DESC LIMIT 100',[i.id])).rows;
-  const events=(await c.query('SELECT event_id::text,attempt_id,event_type,occurred_at::text,payload FROM xc_auto_job_events WHERE job_id=$1 ORDER BY event_id DESC LIMIT 200',[i.id])).rows;
+  const events=(await c.query('SELECT event_id::text,attempt_id,trace_id,event_type,occurred_at::text,payload FROM xc_auto_job_events WHERE job_id=$1 ORDER BY event_id DESC LIMIT 200',[i.id])).rows;
   return {job,attempts,events};
  }
 

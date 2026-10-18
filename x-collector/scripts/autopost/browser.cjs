@@ -1,3 +1,4 @@
+const {recordAttemptFailure}=require('./audit-error.cjs');
 const {recordAccountError}=require('../account-health.cjs');
 const {MAX_PRE_SEND_RETRIES,classifyPreSendError,shouldRetryBeforeSend,retryDelayMs}=require('./publish-retry.cjs');
 const {findMatches,expandTweetUrls,INITIAL_CHECK_DELAY_MS,RECONCILIATION_WINDOW_MS}=require('./reconciliation.cjs');
@@ -44,15 +45,26 @@ async function execute(c,job){let browser,attempted=false,article,followArea;try
    const message=!supported?'Результат действия не подтверждён. Проверьте X вручную; повтор запрещён.':deadlineAt<=now?'Результат старше 24 часов и не подтверждён. Проверьте X вручную; повтор запрещён.':'Результат отправки неизвестен; сверка X запланирована. Повторная отправка запрещена.';
    await c.query("UPDATE xc_auto_jobs SET status='uncertain',message=$2,finished_at=$3,lease_until=NULL WHERE id=$1 AND status='running'",[job.id,message,now]);
    await c.query("INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,last_error,created_at,updated_at,finished_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11) ON CONFLICT(job_id) DO UPDATE SET account_name=excluded.account_name,expected_handle=excluded.expected_handle,kind=excluded.kind,attempted_at=excluded.attempted_at,next_check_at=excluded.next_check_at,deadline_at=excluded.deadline_at,attempts=0,status=excluded.status,matched_tweet_id=NULL,candidates='[]'::jsonb,last_error=excluded.last_error,updated_at=excluded.updated_at,finished_at=excluded.finished_at WHERE xc_auto_reconcile.status='resolved'",[job.id,job.account_name,job.expected_handle,job.kind,attemptedAt,reconcileStatus==='queued'?now+INITIAL_CHECK_DELAY_MS:now,deadlineAt,reconcileStatus,!supported?'Автоматическая сверка поддерживает только публикации и ответы.':deadlineAt<=now?'Срок автоматической сверки истёк.':null,now,reconcileStatus==='queued'?null:now]);
+   await recordAttemptFailure(c,job.id,_e);
    await c.query('COMMIT');
   }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
  }else if(retry){
   const delayMs=retryDelayMs(retryCount);
   const message='Временная ошибка ('+failure.code+'). Повтор '+(retryCount+1)+'/'+MAX_PRE_SEND_RETRIES+' через '+Math.round(delayMs/1000)+' с.';
+  await c.query('BEGIN');
+  try{
   await c.query("UPDATE xc_auto_jobs SET status='queued',retry_count=LEAST(retry_count+1,$4),scheduled_at=$2,started_at=NULL,finished_at=NULL,lease_until=NULL,attempted_at=NULL,message=$3 WHERE id=$1 AND status='running' AND attempted=false",[job.id,now+delayMs,message,MAX_PRE_SEND_RETRIES]);
+   await recordAttemptFailure(c,job.id,_e);
+   await c.query('COMMIT');
+  }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
  }else{
   if(failure.code!=='JOB_NOT_ELIGIBLE'&&(!failure.retryable||retryCount>=MAX_PRE_SEND_RETRIES))await recordAccountError(c,job.account_name,_e).catch(()=>{});
+  await c.query('BEGIN');
+  try{
   await c.query("UPDATE xc_auto_jobs SET status='failed',message=$2,finished_at=$3,lease_until=NULL WHERE id=$1 AND status='running'",[job.id,failure.message,now]);
+   await recordAttemptFailure(c,job.id,_e);
+   await c.query('COMMIT');
+  }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
  }
 }finally{await browser?.close().catch(()=>{});}}
 async function done(c,job,id,message){await c.query("UPDATE xc_auto_jobs SET status='published',result_id=$2,result_url=$3,message=$4,finished_at=$5,lease_until=NULL WHERE id=$1 AND status='running'",[job.id,id,id?`https://x.com/${job.expected_handle}/status/${id}`:job.kind==='follow'?`https://x.com/${job.target_handle}`:job.target_id?`https://x.com/${job.target_handle}/status/${job.target_id}`:null,message,Date.now()]);}

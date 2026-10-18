@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS xc_auto_job_events (
  occurred_at bigint NOT NULL,
  payload jsonb NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(payload)='object')
 );
+ALTER TABLE xc_auto_job_events ADD COLUMN IF NOT EXISTS trace_id text;
 CREATE INDEX IF NOT EXISTS xc_auto_job_events_by_job ON xc_auto_job_events(job_id,event_id);
 CREATE INDEX IF NOT EXISTS xc_auto_job_events_by_attempt ON xc_auto_job_events(attempt_id,event_id) WHERE attempt_id IS NOT NULL;
 
@@ -121,13 +122,11 @@ DECLARE
  active_id text;
  next_attempt integer;
  event_kind text;
- category text;
- code text;
 BEGIN
  ts := floor(extract(epoch from clock_timestamp())*1000)::bigint;
  IF TG_OP='INSERT' THEN
-   INSERT INTO xc_auto_job_events(job_id,event_type,occurred_at,payload)
-   VALUES(NEW.id,'created',COALESCE(NEW.created_at,ts),
+   INSERT INTO xc_auto_job_events(job_id,trace_id,event_type,occurred_at,payload)
+   VALUES(NEW.id,NEW.id,'created',COALESCE(NEW.created_at,ts),
           jsonb_build_object('status',NEW.status,'origin',NEW.origin));
    RETURN NEW;
  END IF;
@@ -149,8 +148,8 @@ BEGIN
    UPDATE xc_auto_job_attempts
    SET boundary_at=COALESCE(NEW.attempted_at,ts),status='boundary_recorded'
    WHERE attempt_id=active_id AND status='claimed';
-   INSERT INTO xc_auto_job_events(job_id,attempt_id,event_type,occurred_at,payload)
-   VALUES(NEW.id,active_id,'boundary_recorded',COALESCE(NEW.attempted_at,ts),
+   INSERT INTO xc_auto_job_events(job_id,attempt_id,trace_id,event_type,occurred_at,payload)
+   VALUES(NEW.id,active_id,(SELECT trace_id FROM xc_auto_job_attempts WHERE attempt_id=active_id),'boundary_recorded',COALESCE(NEW.attempted_at,ts),
           jsonb_build_object('attempted',true));
  END IF;
 
@@ -174,8 +173,8 @@ BEGIN
      SET status='published',finished_at=COALESCE(NEW.finished_at,ts)
      WHERE attempt_id=active_id AND status='uncertain';
    END IF;
-   INSERT INTO xc_auto_job_events(job_id,attempt_id,event_type,occurred_at,payload)
-   VALUES(NEW.id,active_id,event_kind,ts,
+   INSERT INTO xc_auto_job_events(job_id,attempt_id,trace_id,event_type,occurred_at,payload)
+   VALUES(NEW.id,active_id,COALESCE((SELECT trace_id FROM xc_auto_job_attempts WHERE attempt_id=active_id),NEW.id),event_kind,ts,
           jsonb_build_object('from',OLD.status,'to',NEW.status,
                              'retry_count',NEW.retry_count,
                              'attempted',NEW.attempted));

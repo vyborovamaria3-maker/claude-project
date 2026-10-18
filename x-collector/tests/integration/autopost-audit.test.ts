@@ -50,6 +50,8 @@ test('real PostgreSQL: v2 attempt audit is atomic across two concurrent clients'
     assert.equal(Number(nextA)+Number(nextB),1,'Manual retry can only be claimed once');
     attempts=await admin.query<{attempt_no:number}>("SELECT attempt_no FROM xc_auto_job_attempts WHERE job_id=$1 ORDER BY attempt_no",[id]);
     assert.deepEqual(attempts.rows.map(r=>r.attempt_no),[1,2]);
+    const correlation=await admin.query<{attempt_no:number,attempt_trace:string,event_trace:string}>("SELECT a.attempt_no,a.trace_id attempt_trace,e.trace_id event_trace FROM xc_auto_job_attempts a JOIN xc_auto_job_events e ON e.attempt_id=a.attempt_id AND e.event_type='claimed' WHERE a.job_id=$1 ORDER BY a.attempt_no",[id]);
+    assert.deepEqual(correlation.rows.map(r=>r.event_trace===r.attempt_trace),[true,true]);
     // Forced audit error must roll back the job status change AND the attempt update.
     await admin.query("CREATE FUNCTION reject_published_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type='published' THEN RAISE EXCEPTION 'injected event failure'; END IF; RETURN NEW; END $$");
     await admin.query("CREATE TRIGGER reject_published_event BEFORE INSERT ON xc_auto_job_events FOR EACH ROW EXECUTE FUNCTION reject_published_event()");

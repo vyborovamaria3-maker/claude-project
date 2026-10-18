@@ -49,6 +49,46 @@ test('v2 audit schema is replayable, append-only and tracks attempts across manu
  }finally{await db.close();}
 });
 
+test('v2 error classifications are structured and do not leak messages',()=>{
+ const {classifyAuditError}=load('../scripts/autopost/audit-error.cjs');
+ assert.deepEqual(classifyAuditError(Object.assign(new Error('connection error'),{code:'23505'})),{category:'DB_ERROR',code:'PG_23505'});
+ assert.deepEqual(classifyAuditError(new Error('HTTP 429 rate limit')), {category:'X_ERROR',code:'X_RESTRICTED'});
+ assert.deepEqual(classifyAuditError(new Error('Задание остановлено до отправки')), {category:'VALIDATION_ERROR',code:'JOB_NOT_ELIGIBLE'});
+ assert.deepEqual(classifyAuditError(new Error('Unknown error: private-api-key')), {category:'PROCESS_ERROR',code:'PRE_SEND_FAILED'});
+});
+
+test('v2 DB error audit keeps the same trace ID in error events',async()=>{
+ const db=new PGlite();
+ const sql=readFileSync('scripts/autopost/schema.sql','utf8');
+ const {recordAttemptFailure}=load('../scripts/autopost/audit-error.cjs');
+ const c={query:async(q:string,params:unknown[]=[] )=>{
+   const r=await db.query(q,params);
+   return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};
+ }};
+ const id='00000000-0000-4000-8000-000000000003';
+ try{
+  await db.exec("CREATE TABLE x_accounts(name text PRIMARY KEY,role text,status text,account_busy_until bigint);CREATE TABLE x_tasks(id bigint PRIMARY KEY)");
+  await db.exec(sql);
+  await db.query("INSERT INTO x_accounts(name,role,status,account_busy_until) VALUES('publisher','publisher','active',0)");
+  await db.query(insertSql(),job(id,now));
+  assert.equal(await claim(c,{id,account_name:'publisher'},now),true);
+  await db.exec('BEGIN');
+  await db.query("UPDATE xc_auto_jobs SET status='failed' WHERE id=$1",[id]);
+  await recordAttemptFailure(c,id,Object.assign(new Error('private-api-secret'),{code:'23505'}));
+  await db.exec('COMMIT');
+  const attempts=await db.query<{attempt_id:string,trace_id:string,error_category:string,error_code:string}>("SELECT attempt_id,trace_id,error_category,error_code FROM xc_auto_job_attempts WHERE job_id=$1",[id]);
+  const events=await db.query<{event_type:string,attempt_id:string|null,trace_id:string|null,payload:unknown}>("SELECT event_type,attempt_id,trace_id,payload FROM xc_auto_job_events WHERE job_id=$1 ORDER BY event_id",[id]);
+  assert.equal(attempts.rows[0].error_category,'DB_ERROR');
+  assert.equal(attempts.rows[0].error_code,'PG_23505');
+  assert.equal(events.rows.find(e=>e.event_type==='claimed')?.trace_id,attempts.rows[0].trace_id);
+  const failure=events.rows.find(e=>e.event_type==='error_classified');
+  assert.equal(failure?.trace_id,attempts.rows[0].trace_id);
+  assert.equal(failure?.attempt_id,attempts.rows[0].attempt_id);
+  assert.deepEqual(failure?.payload,{category:'DB_ERROR',code:'PG_23505'});
+  assert.ok(!JSON.stringify(events.rows).includes('private-api-secret'));
+ }finally{await db.close();}
+});
+
 test('v2 audit rolls back job transitions when event persistence fails',async()=>{
  const db=new PGlite();
  const sql=readFileSync('scripts/autopost/schema.sql','utf8');
