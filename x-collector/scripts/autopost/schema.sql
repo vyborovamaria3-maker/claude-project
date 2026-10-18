@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS xc_auto_jobs (
  id text PRIMARY KEY,account_name text NOT NULL,expected_handle text NOT NULL,kind text NOT NULL CHECK(kind IN ('post','reply','like','repost','follow')),
  content text, target_id text,target_handle text,evidence jsonb NOT NULL DEFAULT '[]',reason text NOT NULL DEFAULT '',provider_id text,
  dedup text NOT NULL UNIQUE,status text NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','published','failed','uncertain','cancelled')),
- attempted boolean NOT NULL DEFAULT false,scheduled_at bigint NOT NULL,created_at bigint NOT NULL,started_at bigint,finished_at bigint,
+ attempted boolean NOT NULL DEFAULT false,retry_count integer NOT NULL DEFAULT 0,scheduled_at bigint NOT NULL,created_at bigint NOT NULL,started_at bigint,finished_at bigint,
  lease_until bigint,result_id text,result_url text,message text,origin text NOT NULL DEFAULT 'manual'
 );
 CREATE INDEX IF NOT EXISTS xc_auto_jobs_due ON xc_auto_jobs(status,scheduled_at);
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS xc_auto_sync (
 );
 
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS attempted_at bigint;
+ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS retry_count integer NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS xc_auto_sources (
  list_id text PRIMARY KEY CHECK(list_id ~ '^[0-9]{1,25}$'),
