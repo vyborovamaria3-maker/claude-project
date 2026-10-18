@@ -46,6 +46,21 @@ test("redacted structured logging avoids nested credentials", () => {
   assert.equal(JSON.parse(lines[0]).credentials,"[REDACTED]");
 });
 
+test("structured log metadata cannot be forged by supplied fields", () => {
+  const lines=[];
+  const log=createLogger("tg-collector",line=>lines.push(line));
+  log.warn("actual warning",{
+    timestamp:"2000-01-01T00:00:00Z",level:"info",
+    subsystem:"forged-module",message:"forged success",credentials:{password:"secret"}
+  });
+  const row=JSON.parse(lines[0]);
+  assert.equal(row.level,"warn");
+  assert.equal(row.subsystem,"tg-collector");
+  assert.equal(row.message,"actual warning");
+  assert.notEqual(row.timestamp,"2000-01-01T00:00:00Z");
+  assert.equal(row.credentials,"[REDACTED]");
+});
+
 test("local bucket is bounded and never grants over capacity", () => {
   const bucket=new TokenBucket(1,2,0);
   assert.equal(bucket.tryAcquire(2,0),true);
