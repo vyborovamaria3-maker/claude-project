@@ -52,7 +52,7 @@ test('V2-02 failure on status audit rolls back post, timeline, metrics and job',
   await db.exec("CREATE TRIGGER reject_finalize BEFORE INSERT ON xc_auto_job_events FOR EACH ROW EXECUTE FUNCTION reject_finalize()");
   await assert.rejects(finalizePublication(c,job,tweetId,{views:'10'},{expectedStatus:'running'}),/injected finalization failure/);
   assert.equal((await db.query<{status:string}>('SELECT status FROM xc_auto_jobs WHERE id=$1',[id])).rows[0].status,'running');
-  assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_posts',[id])).rows[0].n,0);
+  assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_posts')).rows[0].n,0);
   assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM twitter_tweets')).rows[0].n,0);
   assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_metrics')).rows[0].n,0);
   await db.exec('DROP TRIGGER reject_finalize ON xc_auto_job_events');
