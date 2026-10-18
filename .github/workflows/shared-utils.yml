@@ -1,0 +1,25 @@
+name: Shared utilities
+
+on:
+  pull_request:
+    paths:
+      - "packages/shared-utils/**"
+      - ".github/workflows/shared-utils.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/shared-utils/**"
+      - ".github/workflows/shared-utils.yml"
+
+jobs:
+  utils:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --prefix packages/shared-utils --ignore-scripts --no-package-lock --no-audit
+      - run: npm --prefix packages/shared-utils run check
