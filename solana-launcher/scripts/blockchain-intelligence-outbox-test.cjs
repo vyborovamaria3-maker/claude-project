@@ -50,6 +50,10 @@ try{
   assert.equal(db.prepare("SELECT count(*) AS n FROM outbox_events").get().n,2,
     "a mere token-target address is not proof of an actual mint");
   assert.throws(()=>buildWalletRawEvent({
+    kind:"wallet",address:"1".repeat(33),signature,payloadHash:"a".repeat(64),
+    observedAt:Date.now(),
+  }),/32-byte Solana wallet/);
+  assert.throws(()=>buildWalletRawEvent({
     kind:"wallet",address:wallet,signature:"abc",payloadHash:"a".repeat(64),
     observedAt:Date.now(),
   }),/signature/);
