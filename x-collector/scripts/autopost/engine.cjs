@@ -21,10 +21,9 @@ async function command(c,i){switch(i.action){
   if(!row||!['manual_review','manual_required'].includes(row.reconciliation_status)||row.job_status!=='uncertain')throw Error('Задание не ожидает ручного подтверждения');
   const isPublication=['post','reply'].includes(row.kind);
   const result=manualConfirmationResult(row,isPublication?i.tweet_id:null);
-  let candidate={};
   if(isPublication){
    const candidates=Array.isArray(row.candidates)?row.candidates:(typeof row.candidates==='string'?JSON.parse(row.candidates):[]);
-   candidate=selectManualCandidate(candidates,i.tweet_id,i.manual_confirm);
+   const candidate=selectManualCandidate(candidates,i.tweet_id,i.manual_confirm);
    const {persistPost}=require('./browser.cjs');
    await persistPost(c,row,i.tweet_id,candidate);
   }else if(i.manual_confirm!==true){throw Error('Подтвердите, что проверили X и действие действительно выполнено');}
