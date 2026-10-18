@@ -51,7 +51,7 @@ async function execute(c,job){let browser,attempted=false,article,followArea;try
   const message='Временная ошибка ('+failure.code+'). Повтор '+(retryCount+1)+'/'+MAX_PRE_SEND_RETRIES+' через '+Math.round(delayMs/1000)+' с.';
   await c.query("UPDATE xc_auto_jobs SET status='queued',retry_count=LEAST(retry_count+1,$4),scheduled_at=$2,started_at=NULL,finished_at=NULL,lease_until=NULL,attempted_at=NULL,message=$3 WHERE id=$1 AND status='running' AND attempted=false",[job.id,now+delayMs,message,MAX_PRE_SEND_RETRIES]);
  }else{
-  if(!failure.retryable||retryCount>=MAX_PRE_SEND_RETRIES)await recordAccountError(c,job.account_name,_e).catch(()=>{});
+  if(failure.code!=='JOB_NOT_ELIGIBLE'&&(!failure.retryable||retryCount>=MAX_PRE_SEND_RETRIES))await recordAccountError(c,job.account_name,_e).catch(()=>{});
   await c.query("UPDATE xc_auto_jobs SET status='failed',message=$2,finished_at=$3,lease_until=NULL WHERE id=$1 AND status='running'",[job.id,failure.message,now]);
  }
 }finally{await browser?.close().catch(()=>{});}}
