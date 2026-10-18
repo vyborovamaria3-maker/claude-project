@@ -25,9 +25,9 @@ test("actual SQLite: rollback, dedup, claim, lease expiration and ACK",()=>{
     const first=claimSqlite(db,{workerId:"workerA",batchSize:10,leaseMs:60000,now});
     assert.equal(first.length,1);
     assert.equal(claimSqlite(db,{workerId:"workerB",batchSize:10,leaseMs:60000,now}).length,0);
-    assert.equal(ackSqlite(db,first[0].id,"workerB",now),false);
-    assert.equal(ackSqlite(db,first[0].id,"workerA",now),true);
-    assert.equal(ackSqlite(db,first[0].id,"workerA",now),false);
+    assert.equal(ackSqlite(db,first[0].id,"workerB",first[0].leaseUntil,now),false);
+    assert.equal(ackSqlite(db,first[0].id,"workerA",first[0].leaseUntil,now),true);
+    assert.equal(ackSqlite(db,first[0].id,"workerA",first[0].leaseUntil,now),false);
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events WHERE processed_at IS NOT NULL").get().n,1);
   }finally{db.close()}
 });
@@ -43,7 +43,7 @@ test("actual SQLite: transient failure retries after next_attempt_at",()=>{
     db.exec("COMMIT");
     const claimed=claimSqlite(db,{workerId:"workerA",batchSize:1,leaseMs:60000,now});
     assert.equal(claimed.length,1);
-    assert.equal(failSqlite(db,claimed[0].id,"workerA","transient",future,now,3),true);
+    assert.equal(failSqlite(db,claimed[0].id,"workerA",claimed[0].leaseUntil,"transient",future,now,3),true);
     assert.equal(claimSqlite(db,{workerId:"workerB",batchSize:1,leaseMs:60000,now}).length,0);
     assert.equal(claimSqlite(db,{workerId:"workerB",batchSize:1,leaseMs:60000,now:new Date(future.getTime()+1)}).length,1);
   }finally{db.close()}
