@@ -1,3 +1,4 @@
+import { ANALYSIS_VERSION } from "../src/analytics/extract.js";
 import "dotenv/config";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -52,7 +53,7 @@ test("PostgreSQL: migrations, evidence replacement, and cascading removal", {
       "SELECT count(*) OVER()::integer AS count,text,analysis_version FROM tg_messages WHERE source_id=$1", [id]);
     assert.equal(actual.rows.length,1);
     assert.equal(actual.rows[0].count,1);
-    assert.equal(actual.rows[0].analysis_version,2);
+    assert.equal(actual.rows[0].analysis_version,ANALYSIS_VERSION);
     assert.equal(actual.rows[0].text,"Post edited without links");
     // One deleted publication must not remove other independent evidence.
     const day = new Date(msg.date * 1000).toISOString().slice(0,10);

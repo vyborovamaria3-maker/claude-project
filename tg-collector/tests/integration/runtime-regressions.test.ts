@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import "dotenv/config";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -86,9 +87,11 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
         "SELECT bool_and(orphaned) AS all_orphaned FROM tg_message_links WHERE source_id=$1 AND message_id=1000", [id]);
       assert.equal(orphaned.rows[0].all_orphaned, true, "soft delete must preserve links as orphaned evidence");
     } finally { tx.release(); }
-    // Simulate a legacy counter inconsistency and verify the additive repair.
+    // Exercise the upgrade repair explicitly: the migration ledger correctly prevents
+    // already-applied SQL from running again during ordinary startup.
     await pool.query("UPDATE tg_source_message_counters SET message_count=100 WHERE source_id=$1", [id]);
     await pool.query("UPDATE tg_runtime SET active_counters_initialized=FALSE WHERE id=1");
+    await pool.query(await readFile(new URL("../../sql/010_active_message_counters.sql", import.meta.url), "utf8"));
     await migrate();
     execFileSync(process.execPath, ["--import", "tsx", "src/analytics/refresh.ts"], { cwd: process.cwd(), stdio: "pipe" });
     const edges = await pool.query("SELECT evidence_count,message_count FROM tg_graph_daily_edges WHERE source_id=$1", [id]);

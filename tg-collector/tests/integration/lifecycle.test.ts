@@ -1,3 +1,4 @@
+import { ANALYSIS_VERSION } from "../../src/analytics/extract.js";
 import "dotenv/config";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -31,7 +32,7 @@ test("PostgreSQL: evidence versioning and soft-delete preserve canonical links",
       [sourceId],
     );
     assert.ok(links.rows.length >= 2);
-    assert.ok(links.rows.every(row => row.analysis_version === 2));
+    assert.ok(links.rows.every(row => row.analysis_version === ANALYSIS_VERSION));
 
     const day = utcDay(postedAt)!;
     await refreshGraphDays(client, sourceId, [day]);
