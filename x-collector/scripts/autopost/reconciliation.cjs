@@ -70,6 +70,7 @@ function findMatches(job, candidates, now = Date.now()) {
     const postedAt = candidateTimestamp(candidate);
     if (!Number.isFinite(postedAt) || postedAt < minTime || postedAt > maxTime) continue;
     if (!comparableText(job, candidate.text)) continue;
+    if (job.kind === 'reply' && String(candidate.in_reply_to_tweet_id || candidate.in_reply_to_status_id_str || '') !== String(job.target_id || '')) continue;
     matches.set(tweetId, { ...candidate, tweet_id: tweetId, posted_at: postedAt });
   }
   return [...matches.values()].sort((a, b) => a.posted_at - b.posted_at);

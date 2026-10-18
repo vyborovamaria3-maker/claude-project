@@ -47,6 +47,16 @@ test('reconciliation requires an exact author, text, and a timestamp near the se
   assert.equal(lateDuplicate.length,0,'a later identical post must not confirm the original send');
 });
 
+test('reply reconciliation requires the same parent tweet ID',()=>{
+  const source=job({kind:'reply',target_id:'555'});
+  const {extractTimelineTweets}=load('../scripts/autopost/browser.cjs');
+  const timeline={data:{tweet:{rest_id:'1234567890123456789',legacy:{full_text:source.content,created_at:new Date(source.attempted_at+5000).toISOString(),in_reply_to_status_id_str:'555'},core:{user_results:{result:{legacy:{screen_name:'publisher'}}}}}}};
+  const extracted=extractTimelineTweets(timeline);
+  assert.equal(extracted[0].in_reply_to_tweet_id,'555');
+  assert.equal(findMatches(source,extracted,source.attempted_at+10000).length,1);
+  assert.equal(findMatches(source,[{...extracted[0],tweet_id:'1234567890123456790',in_reply_to_tweet_id:'999'}],source.attempted_at+10000).length,0);
+});
+
 test('short links are expanded before matching and a different source permalink is not a match',()=>{
   const expanded=expandTweetUrls({full_text:'Read the research first. https://t.co/short',entities:{urls:[{url:'https://t.co/short',expanded_url:'https://twitter.com/i/status/123'}]}});
   assert.equal(expanded,'Read the research first. https://twitter.com/i/status/123');
