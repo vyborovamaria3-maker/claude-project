@@ -186,3 +186,35 @@ DROP TRIGGER IF EXISTS xc_auto_jobs_audit ON xc_auto_jobs;
 CREATE TRIGGER xc_auto_jobs_audit
 AFTER INSERT OR UPDATE OF status,attempted,attempted_at ON xc_auto_jobs
 FOR EACH ROW EXECUTE FUNCTION xc_auto_job_audit_transition();
+
+-- Reconciliation observations are auditable without changing the job status.
+-- Store no candidate text, session secrets, raw X errors or private URLs.
+CREATE OR REPLACE FUNCTION xc_auto_reconcile_audit_transition() RETURNS trigger
+LANGUAGE plpgsql AS $
+DECLARE
+ active_id text;
+ active_trace text;
+ event_kind text;
+ ts bigint;
+BEGIN
+ IF TG_OP='UPDATE' AND NEW.status=OLD.status AND NEW.attempts=OLD.attempts THEN
+   RETURN NEW;
+ END IF;
+ SELECT attempt_id,trace_id INTO active_id,active_trace
+ FROM xc_auto_job_attempts WHERE job_id=NEW.job_id ORDER BY attempt_no DESC LIMIT 1;
+ ts := floor(extract(epoch from clock_timestamp())*1000)::bigint;
+ event_kind := CASE
+   WHEN TG_OP='INSERT' THEN 'reconcile_created'
+   WHEN NEW.status IS DISTINCT FROM OLD.status THEN 'reconcile_status_changed'
+   ELSE 'reconcile_observed' END;
+ INSERT INTO xc_auto_job_events(job_id,attempt_id,trace_id,event_type,occurred_at,payload)
+ VALUES(NEW.job_id,active_id,COALESCE(active_trace,NEW.job_id),event_kind,ts,
+   jsonb_build_object('kind',NEW.kind,'status',NEW.status,'checks',NEW.attempts));
+ RETURN NEW;
+END;
+$;
+DROP TRIGGER IF EXISTS xc_auto_reconcile_audit ON xc_auto_reconcile;
+CREATE TRIGGER xc_auto_reconcile_audit
+AFTER INSERT OR UPDATE OF status,attempts ON xc_auto_reconcile
+FOR EACH ROW EXECUTE FUNCTION xc_auto_reconcile_audit_transition();
+

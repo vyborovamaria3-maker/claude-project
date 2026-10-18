@@ -89,6 +89,33 @@ test('v2 DB error audit keeps the same trace ID in error events',async()=>{
  }finally{await db.close();}
 });
 
+test('v2 reconciliation checks keep the trace without recording raw X evidence',async()=>{
+ const db=new PGlite();
+ const sql=readFileSync('scripts/autopost/schema.sql','utf8');
+ const id='00000000-0000-4000-8000-000000000004';
+ const c={query:async(q:string,params:unknown[]=[] )=>{
+  const r=await db.query(q,params);
+  return {rows:r.rows,rowCount:r.affectedRows??r.rows.length};
+ }};
+ try{
+  await db.exec("CREATE TABLE x_accounts(name text PRIMARY KEY,role text,status text,account_busy_until bigint);CREATE TABLE x_tasks(id bigint PRIMARY KEY)");
+  await db.exec(sql);
+  await db.query("INSERT INTO x_accounts(name,role,status,account_busy_until) VALUES('publisher','publisher','active',0)");
+  await db.query(insertSql(),job(id,now));
+  assert.equal(await claim(c,{id,account_name:'publisher'},now),true);
+  await db.query("UPDATE xc_auto_jobs SET attempted=true,attempted_at=$2 WHERE id=$1",[id,now+10]);
+  await db.query("UPDATE xc_auto_jobs SET status='uncertain' WHERE id=$1",[id]);
+  await db.query("INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,created_at,updated_at) VALUES($1,'publisher','publisher','post',$2,$2,$3,'queued',$2,$2)",[id,now+10,now+100000]);
+  await db.query("UPDATE xc_auto_reconcile SET status='running',attempts=1,last_error='sensitive cookie secret' WHERE job_id=$1",[id]);
+  await db.query("UPDATE xc_auto_reconcile SET status='queued',next_check_at=$2 WHERE job_id=$1",[id,now+2000]);
+  const result=await db.query<{event_type:string,trace_id:string,attempt_id:string,payload:unknown}>("SELECT event_type,trace_id,attempt_id,payload FROM xc_auto_job_events WHERE job_id=$1 AND event_type LIKE 'reconcile_%' ORDER BY event_id",[id]);
+  assert.deepEqual(result.rows.map(x=>x.event_type),['reconcile_created','reconcile_status_changed','reconcile_status_changed']);
+  const attempt=(await db.query<{trace_id:string,attempt_id:string}>("SELECT trace_id,attempt_id FROM xc_auto_job_attempts WHERE job_id=$1",[id])).rows[0];
+  assert.ok(result.rows.every(x=>x.trace_id===attempt.trace_id&&x.attempt_id===attempt.attempt_id));
+  assert.ok(!JSON.stringify(result.rows).includes('sensitive cookie secret'));
+ }finally{await db.close();}
+});
+
 test('v2 audit rolls back job transitions when event persistence fails',async()=>{
  const db=new PGlite();
  const sql=readFileSync('scripts/autopost/schema.sql','utf8');
