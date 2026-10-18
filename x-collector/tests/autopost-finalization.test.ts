@@ -23,7 +23,7 @@ async function fixture(){
  await db.query("INSERT INTO x_accounts(name,role,status,account_busy_until) VALUES('publisher','publisher','active',0)");
  return {db,c};
 }
-async function runningJob(db:PGlite,c:ReturnType<typeof fixture> extends Promise<infer R> ? R['c'] : never,id:string){
+async function runningJob(db:PGlite,c:Awaited<ReturnType<typeof fixture>>['c'],id:string){
  await db.query("INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,dedup,scheduled_at,created_at,origin) VALUES($1,'publisher','publisher','post','test publication',$2,$3,$3,'manual')",[id,'final-'+id,now]);
  assert.equal(await claim(c,{id,account_name:'publisher'},now),true);
  await db.query('UPDATE xc_auto_jobs SET attempted=true,attempted_at=$2 WHERE id=$1',[id,now+10]);
