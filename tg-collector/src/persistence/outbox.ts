@@ -82,14 +82,20 @@ export async function emitTgMessageOutbox(
 }
 
 export function buildTgDeletionOutboxEvent(
-  peerId: string|null, messageId: number, now = new Date(),
+  peerId: string|null, messageId: number, now = new Date(), deletionRevision = now.toISOString(),
 ) {
   const peer=stablePeer(peerId);
   if (!Number.isSafeInteger(messageId) || messageId <= 0) {
     throw new TypeError("Invalid Telegram message ID");
   }
   const observedAt=utcObserved(now);
-  const eventKey=`tg:${peer}:${messageId}:deleted:v1`;
+  // A message can be restored/re-observed and deleted more than once.
+  // Use the exact PostgreSQL deletion revision, not a constant message key.
+  if (typeof deletionRevision !== "string" || !deletionRevision.trim() || deletionRevision.length > 128) {
+    throw new TypeError("Invalid deletion revision");
+  }
+  const revisionHash=createHash("sha256").update(deletionRevision).digest("hex");
+  const eventKey=`tg:${peer}:${messageId}:deleted:rev:${revisionHash}`;
   const entityRefs=[{kind:"source",canonicalId:`tg:source:${peer}`,
     firstSeenAt:observedAt,lastSeenAt:observedAt}];
   return {
@@ -106,12 +112,12 @@ export function buildTgDeletionOutboxEvent(
 
 /** Retain original message evidence even after a soft delete. */
 export async function emitTgDeletionOutbox(
-  tx:PoolClient,sourceId:string,messageId:number,now=new Date(),
+  tx:PoolClient,sourceId:string,messageId:number,now=new Date(),deletionRevision=now.toISOString(),
 ):Promise<void> {
   if (!telegramOutboxEnabled()) return;
   const {rows}=await tx.query<{peer_id:string|null}>(
     "SELECT peer_id FROM tg_sources WHERE id=$1 FOR KEY SHARE",[sourceId]);
-  await insertOutbox(tx,buildTgDeletionOutboxEvent(rows[0]?.peer_id??null,messageId,now));
+  await insertOutbox(tx,buildTgDeletionOutboxEvent(rows[0]?.peer_id??null,messageId,now,deletionRevision));
 }
 
 async function insertOutbox(
