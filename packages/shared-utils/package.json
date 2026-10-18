@@ -1,0 +1,15 @@
+{
+  "name": "@claude-project/shared-utils",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "exports": {".": {"types": "./dist/index.d.ts", "default": "./dist/index.js"}},
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm run test"
+  },
+  "devDependencies": {"typescript": "5.9.3", "@types/node": "22.15.30"}
+}
