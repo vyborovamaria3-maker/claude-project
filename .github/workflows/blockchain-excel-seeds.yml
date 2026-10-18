@@ -19,12 +19,15 @@ permissions:
 jobs:
   seed-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: solana-launcher
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"
-      - name: Offline XLSX parsing and collector syntax regression
-        working-directory: solana-launcher
-        run: node scripts/blockchain-seed-regression.cjs && node --check scripts/blockchain-seed-collector.cjs && node --check scripts/blockchain-forensics.cjs && node scripts/blockchain-forensics-regression.cjs && node --check scripts/blockchain-dex-index.cjs && node --check scripts/blockchain-dex-replay.cjs
+      - run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - run: npm run blockchain:test
+      - run: npm run blockchain:integration-test

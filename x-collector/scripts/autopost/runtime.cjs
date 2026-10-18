@@ -3,7 +3,7 @@ function config(){const p=process.env.X_COLLECTOR_ENV?path.resolve(process.env.X
 function key(){const raw=config().MASTER_KEY||'';const k=/^[a-f0-9]{64}$/i.test(raw)?Buffer.from(raw,'hex'):Buffer.from(raw,'base64');if(k.length!==32)throw Error('MASTER_KEY должен содержать 32 байта');return k;}
 function seal(value){const k=key();try{const iv=nodeCrypto.randomBytes(12),c=nodeCrypto.createCipheriv('aes-256-gcm',k,iv);const b=Buffer.concat([c.update(value,'utf8'),c.final()]);return Buffer.concat([iv,c.getAuthTag(),b]);}finally{k.fill(0);}}
 function unseal(value){const k=key();try{const d=nodeCrypto.createDecipheriv('aes-256-gcm',k,value.subarray(0,12));d.setAuthTag(value.subarray(12,28));return Buffer.concat([d.update(value.subarray(28)),d.final()]).toString('utf8');}finally{k.fill(0);}}
-async function connect(){const c=new Client({connectionString:config().DATABASE_URL,connectionTimeoutMillis:5000});await c.connect();return c;}
+async function connect({onError}={}){const c=new Client({connectionString:config().DATABASE_URL,connectionTimeoutMillis:5000});if(onError)c.on('error',onError);try{await c.connect();return c;}catch(error){await c.end().catch(()=>{});throw error;}}
 const name=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(v);
 const handle=v=>typeof v==='string'&&/^@?[A-Za-z0-9_]{1,15}$/.test(v);
 const digest=s=>nodeCrypto.createHash('sha256').update(s).digest('hex');

@@ -14,16 +14,16 @@ const db = new Database(":memory:");
   // Provider-specific request logs feed one idempotent ledger without mixing CU and credits.
   db.prepare("INSERT INTO chain_collection_runs(run_id,started_at,run_budget_credits,monthly_budget_credits,page_credit_estimate,max_objects) VALUES('run-ledger',1,1000,1000,100,1)").run();
   db.prepare("INSERT INTO chain_helius_usage_requests(request_id,run_id,month_key,task_kind,task_address,endpoint,estimated_credits,status,created_at) VALUES('h-ledger','run-ledger','2026-10','wallet',?,'history',110,'reserved',2)").run(wallet);
-  assert.equal(db.prepare("SELECT provider,cost_kind,estimated_units FROM chain_budget_ledger WHERE request_id='h-ledger'").get().provider,"helius");
+  assert.equal(db.prepare("SELECT provider,cost_kind,estimated_units FROM chain_collection_budget_ledger WHERE request_id='h-ledger'").get().provider,"helius");
   db.prepare("UPDATE chain_helius_usage_requests SET actual_credits=95,status='completed',http_status=200,finished_at=3 WHERE request_id='h-ledger'").run();
-  assert.equal(db.prepare("SELECT actual_units,status FROM chain_budget_ledger WHERE request_id='h-ledger'").get().actual_units,95);
+  assert.equal(db.prepare("SELECT actual_units,status FROM chain_collection_budget_ledger WHERE request_id='h-ledger'").get().actual_units,95);
   db.prepare("INSERT INTO chain_alchemy_usage_requests(request_id,run_id,scope_id,account_id,month_key,task_kind,task_address,method,estimated_cu,status,created_at) VALUES('a-ledger','run-ledger',NULL,'alchemy-1','2026-10','wallet',?,'getTransactionsForAddress',100,'reserved',4)").run(wallet);
-  const alchemyLedger=db.prepare("SELECT provider,cost_kind,estimated_units FROM chain_budget_ledger WHERE request_id='a-ledger'").get();
+  const alchemyLedger=db.prepare("SELECT provider,cost_kind,estimated_units FROM chain_collection_budget_ledger WHERE request_id='a-ledger'").get();
   assert.equal(alchemyLedger.provider,"alchemy");
   assert.equal(alchemyLedger.cost_kind,"cu");
   assert.equal(alchemyLedger.estimated_units,100);
   initDb(db);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_budget_ledger").get().n,2,
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_collection_budget_ledger").get().n,2,
     "reinitialization must not duplicate or repeatedly backfill ledger entries");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_schema_migrations WHERE migration_key='budget-ledger-backfill-v1'").get().n,1);
   db.prepare("INSERT INTO chain_seed_targets(kind,address,source_mask,priority) VALUES('wallet',?,4,90)").run(wallet);
@@ -56,7 +56,7 @@ const db = new Database(":memory:");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_forensic_processed_signatures").get().n,31);
   assert.equal(db.prepare("SELECT DISTINCT decoder_version AS v FROM chain_forensic_processed_signatures").get().v,"5");
   assert.equal(db.prepare("SELECT decoder_version AS v FROM chain_forensic_wallet_sync WHERE wallet=?").get(wallet).v,"5");
-  const coverage=db.prepare("SELECT coverage_status,source_provider,observed_transactions,oldest_slot,newest_slot FROM chain_history_coverage WHERE kind='wallet' AND address=?").get(wallet);
+  const coverage=db.prepare("SELECT coverage_status,source_provider,observed_transactions,oldest_slot,newest_slot FROM chain_forensic_history_coverage WHERE kind='wallet' AND address=?").get(wallet);
   assert.deepEqual(coverage,{coverage_status:"provider_exhausted",source_provider:"helius",observed_transactions:31,oldest_slot:100,newest_slot:130});
   // Decoder version mismatch must rebuild normalized analytics from SQLite raw payloads.
   db.prepare("UPDATE chain_forensic_wallet_sync SET decoder_version='old' WHERE wallet=?").run(wallet);
@@ -78,7 +78,7 @@ const db = new Database(":memory:");
   assert.equal(revised.raw_revision,2);
   assert.equal(typeof revised.payload_hash,"string");
   assert.equal(persistEvents(db,"wallet",wallet,[improved]),0);
-  const invalidatedCoverage=db.prepare("SELECT coverage_status,gap_reason FROM chain_history_coverage WHERE kind='wallet' AND address=?").get(wallet);
+  const invalidatedCoverage=db.prepare("SELECT coverage_status,gap_reason FROM chain_forensic_history_coverage WHERE kind='wallet' AND address=?").get(wallet);
   assert.equal(invalidatedCoverage.coverage_status,"partial","raw evidence revisions invalidate prior coverage");
   assert.equal(invalidatedCoverage.gap_reason,"raw_evidence_changed_requires_coverage_refresh");
 

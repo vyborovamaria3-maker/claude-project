@@ -46,9 +46,9 @@ function parseArgs(argv) {
   const parsed = {
     mode: flags.mode || (flags["seed-token"] ? "pilot" : "import"),
     folders: {
-      migrated: path.resolve(flags["migrated-dir"] || path.join(defaultFolder, "migrated")),
-      dex_trending: path.resolve(flags["trending-dir"] || path.join(defaultFolder, "trending")),
-      profitable_wallets: path.resolve(flags["wallets-dir"] || path.join(defaultFolder, "wallets")),
+      migrated: path.resolve(/* turbopackIgnore: true */ flags["migrated-dir"] || path.join(defaultFolder, "migrated")),
+      dex_trending: path.resolve(/* turbopackIgnore: true */ flags["trending-dir"] || path.join(defaultFolder, "trending")),
+      profitable_wallets: path.resolve(/* turbopackIgnore: true */ flags["wallets-dir"] || path.join(defaultFolder, "wallets")),
     },
     seedToken: flags["seed-token"] || null,
     limit: intFlag(flags.limit, flags["seed-token"] ? 10000 : 30, 1, 10000),
@@ -139,6 +139,17 @@ function initDb(db) {
     "  PRIMARY KEY(kind,address,signature))",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
     "  ON chain_seed_events(kind,address,block_time DESC)",
+    ";CREATE TABLE IF NOT EXISTS chain_inventory_movements (",
+    "  target_kind TEXT NOT NULL, target_address TEXT NOT NULL, signature TEXT NOT NULL,",
+    "  leg_index INTEGER NOT NULL, slot INTEGER, block_time INTEGER, operation_index INTEGER NOT NULL,",
+    "  operation_type TEXT NOT NULL, movement_kind TEXT NOT NULL, direction TEXT NOT NULL,",
+    "  owner TEXT, token_account TEXT, mint TEXT, amount_raw TEXT, decimals INTEGER,",
+    "  source_account TEXT, destination_account TEXT, source_owner TEXT, destination_owner TEXT,",
+    "  authority TEXT, provider TEXT NOT NULL, decoder_version TEXT NOT NULL,",
+    "  attribution_status TEXT NOT NULL, observed_at INTEGER NOT NULL,",
+    "  PRIMARY KEY(target_kind,target_address,signature,leg_index))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_inventory_owner_mint_time",
+    "  ON chain_inventory_movements(owner,mint,block_time)",
     ";CREATE TABLE IF NOT EXISTS chain_collection_scopes (",
     "  scope_id TEXT PRIMARY KEY, seed_token TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',",
     "  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_run_id TEXT, pilot_budget_credits INTEGER NOT NULL DEFAULT 1000000, alchemy_pilot_cu_budget INTEGER NOT NULL DEFAULT 3000000)",
@@ -188,40 +199,40 @@ function initDb(db) {
     ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_month ON chain_alchemy_usage_requests(account_id,month_key,created_at)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_scope ON chain_alchemy_usage_requests(scope_id,created_at)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_alchemy_usage_run ON chain_alchemy_usage_requests(run_id,created_at)",
-    ";CREATE TABLE IF NOT EXISTS chain_budget_ledger (",
+    ";CREATE TABLE IF NOT EXISTS chain_collection_budget_ledger (",
     " ledger_id INTEGER PRIMARY KEY, provider TEXT NOT NULL, request_id TEXT NOT NULL, run_id TEXT NOT NULL, scope_id TEXT, account_id TEXT,",
     " task_kind TEXT NOT NULL, task_address TEXT NOT NULL, endpoint TEXT NOT NULL, cost_kind TEXT NOT NULL CHECK(cost_kind IN ('credit','cu')),",
     " estimated_units INTEGER NOT NULL, actual_units INTEGER, status TEXT NOT NULL, http_status INTEGER, error TEXT, created_at INTEGER NOT NULL, finished_at INTEGER,",
     " UNIQUE(provider,request_id))",
-    ";CREATE INDEX IF NOT EXISTS idx_chain_budget_ledger_time ON chain_budget_ledger(created_at,provider,cost_kind)",
-    ";CREATE INDEX IF NOT EXISTS idx_chain_budget_ledger_run ON chain_budget_ledger(run_id,created_at)",
-    ";CREATE INDEX IF NOT EXISTS idx_chain_budget_ledger_scope ON chain_budget_ledger(scope_id,created_at)",
-    ";CREATE TABLE IF NOT EXISTS chain_history_coverage (",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_collection_budget_ledger_time ON chain_collection_budget_ledger(created_at,provider,cost_kind)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_collection_budget_ledger_run ON chain_collection_budget_ledger(run_id,created_at)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_collection_budget_ledger_scope ON chain_collection_budget_ledger(scope_id,created_at)",
+    ";CREATE TABLE IF NOT EXISTS chain_forensic_history_coverage (",
     " kind TEXT NOT NULL, address TEXT NOT NULL, coverage_status TEXT NOT NULL, source_provider TEXT NOT NULL,",
     " observed_transactions INTEGER NOT NULL DEFAULT 0, oldest_slot INTEGER, newest_slot INTEGER, backfill_complete INTEGER NOT NULL DEFAULT 0,",
     " possible_gap INTEGER NOT NULL DEFAULT 1, forward_cursor_pending INTEGER NOT NULL DEFAULT 0, gap_reason TEXT, updated_at INTEGER NOT NULL,",
     " PRIMARY KEY(kind,address))",
-    ";CREATE INDEX IF NOT EXISTS idx_chain_history_coverage_status ON chain_history_coverage(coverage_status,kind,updated_at)",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_forensic_history_coverage_status ON chain_forensic_history_coverage(coverage_status,kind,updated_at)",
     ";CREATE TRIGGER IF NOT EXISTS chain_coverage_raw_insert AFTER INSERT ON chain_seed_events BEGIN",
-    " UPDATE chain_history_coverage SET coverage_status='partial',possible_gap=1,gap_reason='raw_evidence_changed_requires_coverage_refresh',updated_at=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE kind=NEW.kind AND address=NEW.address; END",
+    " UPDATE chain_forensic_history_coverage SET coverage_status='partial',possible_gap=1,gap_reason='raw_evidence_changed_requires_coverage_refresh',updated_at=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE kind=NEW.kind AND address=NEW.address; END",
     ";CREATE TRIGGER IF NOT EXISTS chain_coverage_raw_update AFTER UPDATE OF payload_hash,raw_revision ON chain_seed_events WHEN OLD.payload_hash IS NOT NEW.payload_hash OR OLD.raw_revision<>NEW.raw_revision BEGIN",
-    " UPDATE chain_history_coverage SET coverage_status='partial',possible_gap=1,gap_reason='raw_evidence_changed_requires_coverage_refresh',updated_at=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE kind=NEW.kind AND address=NEW.address; END",
+    " UPDATE chain_forensic_history_coverage SET coverage_status='partial',possible_gap=1,gap_reason='raw_evidence_changed_requires_coverage_refresh',updated_at=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE kind=NEW.kind AND address=NEW.address; END",
     ";CREATE TRIGGER IF NOT EXISTS chain_coverage_raw_delete AFTER DELETE ON chain_seed_events BEGIN",
-    " UPDATE chain_history_coverage SET coverage_status='partial',possible_gap=1,gap_reason='raw_evidence_changed_requires_coverage_refresh',updated_at=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE kind=OLD.kind AND address=OLD.address; END",
+    " UPDATE chain_forensic_history_coverage SET coverage_status='partial',possible_gap=1,gap_reason='raw_evidence_changed_requires_coverage_refresh',updated_at=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE kind=OLD.kind AND address=OLD.address; END",
     ";CREATE TRIGGER IF NOT EXISTS chain_budget_helius_insert AFTER INSERT ON chain_helius_usage_requests BEGIN",
-    " INSERT INTO chain_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
+    " INSERT INTO chain_collection_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
     " VALUES('helius',NEW.request_id,NEW.run_id,(SELECT scope_id FROM chain_collection_runs WHERE run_id=NEW.run_id),NEW.task_kind,NEW.task_address,NEW.endpoint,'credit',NEW.estimated_credits,NEW.actual_credits,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
     " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
     ";CREATE TRIGGER IF NOT EXISTS chain_budget_helius_update AFTER UPDATE ON chain_helius_usage_requests BEGIN",
-    " INSERT INTO chain_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
+    " INSERT INTO chain_collection_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
     " VALUES('helius',NEW.request_id,NEW.run_id,(SELECT scope_id FROM chain_collection_runs WHERE run_id=NEW.run_id),NEW.task_kind,NEW.task_address,NEW.endpoint,'credit',NEW.estimated_credits,NEW.actual_credits,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
     " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
     ";CREATE TRIGGER IF NOT EXISTS chain_budget_alchemy_insert AFTER INSERT ON chain_alchemy_usage_requests BEGIN",
-    " INSERT INTO chain_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
+    " INSERT INTO chain_collection_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
     " VALUES('alchemy',NEW.request_id,NEW.run_id,NEW.scope_id,NEW.account_id,NEW.task_kind,NEW.task_address,NEW.method,'cu',NEW.estimated_cu,NEW.actual_cu,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
     " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
     ";CREATE TRIGGER IF NOT EXISTS chain_budget_alchemy_update AFTER UPDATE ON chain_alchemy_usage_requests BEGIN",
-    " INSERT INTO chain_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
+    " INSERT INTO chain_collection_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at)",
     " VALUES('alchemy',NEW.request_id,NEW.run_id,NEW.scope_id,NEW.account_id,NEW.task_kind,NEW.task_address,NEW.method,'cu',NEW.estimated_cu,NEW.actual_cu,NEW.status,NEW.http_status,NEW.error,NEW.created_at,NEW.finished_at)",
     " ON CONFLICT(provider,request_id) DO UPDATE SET actual_units=excluded.actual_units,status=excluded.status,http_status=excluded.http_status,error=excluded.error,finished_at=excluded.finished_at; END",
   ].join("\n"));
@@ -261,10 +272,14 @@ function initDb(db) {
   db.exec("CREATE TABLE IF NOT EXISTS chain_schema_migrations(migration_key TEXT PRIMARY KEY,applied_at INTEGER NOT NULL)");
   db.transaction(() => {
     if (db.prepare("SELECT 1 FROM chain_schema_migrations WHERE migration_key=?").get("budget-ledger-backfill-v1")) return;
-    db.exec("INSERT OR IGNORE INTO chain_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'helius',u.request_id,u.run_id,r.scope_id,u.task_kind,u.task_address,u.endpoint,'credit',u.estimated_credits,u.actual_credits,u.status,u.http_status,u.error,u.created_at,u.finished_at FROM chain_helius_usage_requests u LEFT JOIN chain_collection_runs r ON r.run_id=u.run_id");
-    db.exec("INSERT OR IGNORE INTO chain_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'alchemy',request_id,run_id,scope_id,account_id,task_kind,task_address,method,'cu',estimated_cu,actual_cu,status,http_status,error,created_at,finished_at FROM chain_alchemy_usage_requests");
+    db.exec("INSERT OR IGNORE INTO chain_collection_budget_ledger(provider,request_id,run_id,scope_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'helius',u.request_id,u.run_id,r.scope_id,u.task_kind,u.task_address,u.endpoint,'credit',u.estimated_credits,u.actual_credits,u.status,u.http_status,u.error,u.created_at,u.finished_at FROM chain_helius_usage_requests u LEFT JOIN chain_collection_runs r ON r.run_id=u.run_id");
+    db.exec("INSERT OR IGNORE INTO chain_collection_budget_ledger(provider,request_id,run_id,scope_id,account_id,task_kind,task_address,endpoint,cost_kind,estimated_units,actual_units,status,http_status,error,created_at,finished_at) SELECT 'alchemy',request_id,run_id,scope_id,account_id,task_kind,task_address,method,'cu',estimated_cu,actual_cu,status,http_status,error,created_at,finished_at FROM chain_alchemy_usage_requests");
     db.prepare("INSERT OR IGNORE INTO chain_schema_migrations(migration_key,applied_at) VALUES(?,?)").run("budget-ledger-backfill-v1",Date.now());
   }).immediate();
+  require('./blockchain-wallet-cache.cjs').ensureWalletCacheSchema(db);
+  const targetColumns=db.pragma('table_info(chain_seed_targets)');
+  if(!targetColumns.some(c=>c.name==='collection_provider')) db.exec("ALTER TABLE chain_seed_targets ADD COLUMN collection_provider TEXT");
+  db.prepare("UPDATE chain_seed_targets SET collection_provider='alchemy',backfill_cursor=NULL,forward_cursor=NULL,backfill_complete=0 WHERE collection_provider IS NULL").run();
   // Preserve active-wave accounting when resuming an older pilot scope created
   // before deferred candidates were introduced.
   db.exec(
@@ -491,8 +506,8 @@ function recordHeliusError(db, requestId, error) {
 function releaseTaskForBudget(db, row) {
   db.prepare(
     "UPDATE chain_seed_targets SET lease_until=NULL,lease_token=NULL,next_run_at=?,last_error=NULL " +
-    "WHERE kind=? AND address=? AND lease_token IS ?"
-  ).run(Date.now(),row.kind,row.address,row.lease_token??null);
+    "WHERE kind=? AND address=? AND lease_token IS ? AND lease_until IS ?"
+  ).run(Date.now(),row.kind,row.address,row.lease_token??null,row.lease_until??null);
 }
 function finishCollectionRun(db, runId, status, reason = null) {
   db.prepare("UPDATE chain_collection_runs SET status=?,stopped_reason=?,finished_at=? WHERE run_id=?")
@@ -813,8 +828,8 @@ function status(db, args = {}) {
     ?db.prepare("SELECT COUNT(*) AS count FROM chain_pumpfun_creator_launches").get().count:0;
   return {
     files,categories,targets,collectedEvents:db.prepare("SELECT COUNT(*) AS count FROM chain_seed_events").get().count,
-    coverage:hasTable("chain_history_coverage") ? db.prepare("SELECT coverage_status AS status,kind,COUNT(*) AS count FROM chain_history_coverage GROUP BY coverage_status,kind ORDER BY coverage_status,kind").all() : [],
-    budgetLedger:hasTable("chain_budget_ledger") ? db.prepare("SELECT provider,cost_kind,COUNT(*) AS requests,SUM(COALESCE(actual_units,estimated_units)) AS units FROM chain_budget_ledger GROUP BY provider,cost_kind ORDER BY provider,cost_kind").all() : [],
+    coverage:hasTable("chain_forensic_history_coverage") ? db.prepare("SELECT coverage_status AS status,kind,COUNT(*) AS count FROM chain_forensic_history_coverage GROUP BY coverage_status,kind ORDER BY coverage_status,kind").all() : [],
+    budgetLedger:hasTable("chain_collection_budget_ledger") ? db.prepare("SELECT provider,cost_kind,COUNT(*) AS requests,SUM(COALESCE(actual_units,estimated_units)) AS units FROM chain_collection_budget_ledger GROUP BY provider,cost_kind ORDER BY provider,cost_kind").all() : [],
     forensic:verified,budget:usageStatus(db,args),alchemy:alchemyUsageStatus(db),scopes,deferred,pumpfunCreatorLaunches:launchCount,
     queue:db.prepare(
       "SELECT kind,COUNT(*) AS total,SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS errors,"+
@@ -837,6 +852,7 @@ function claimOne(db, includeMintAddresses = true, scopeId = null) {
       : db.prepare(
         "SELECT * FROM chain_seed_targets WHERE source_mask<>0 AND (?=1 OR kind<>'token') AND next_run_at<=?"
         + " AND (lease_until IS NULL OR lease_until<?)"
+        + " AND NOT EXISTS (SELECT 1 FROM chain_wallet_discovery w WHERE chain_seed_targets.kind='wallet' AND w.wallet=chain_seed_targets.address AND w.history_status='complete' AND w.decoder_coverage='full' AND w.last_fetched_at>"+(now-60000)+")"
         + " ORDER BY priority DESC, next_run_at ASC, last_success_at ASC LIMIT 1"
       ).get(includeMintAddresses ? 1 : 0, now, now);
     if (!row) return null;
@@ -845,7 +861,7 @@ function claimOne(db, includeMintAddresses = true, scopeId = null) {
       "UPDATE chain_seed_targets SET lease_until=?,lease_token=? WHERE kind=? AND address=?"
       + " AND (lease_until IS NULL OR lease_until<?)"
     ).run(now + 30 * 60_000, leaseToken, row.kind, row.address, now);
-    return updated.changes === 1 ? { ...row, lease_token: leaseToken } : null;
+    return updated.changes === 1 ? { ...row, lease_until:now+30*60_000, lease_token: leaseToken } : null;
   }).immediate();
 }
 function persistEvents(db, kind, address, transactions) {
@@ -1033,7 +1049,52 @@ function appendDiscoveredCreatorTokens(db,scopeId,creatorAddress,transactions){
   }
   return launches.length;
 }
+function persistInventoryMovements(db, kind, address, events) {
+  const { decodeInventoryMovements } = require("./blockchain-inventory-decoder.cjs");
+  const stmt = db.prepare(`
+    INSERT INTO chain_inventory_movements
+      (target_kind,target_address,signature,leg_index,slot,block_time,operation_index,
+       operation_type,movement_kind,direction,owner,token_account,mint,amount_raw,decimals,
+       source_account,destination_account,source_owner,destination_owner,authority,
+       provider,decoder_version,attribution_status,observed_at)
+    VALUES(@target_kind,@target_address,@signature,@leg_index,@slot,@block_time,@operation_index,
+       @operation_type,@movement_kind,@direction,@owner,@token_account,@mint,@amount_raw,@decimals,
+       @source_account,@destination_account,@source_owner,@destination_owner,@authority,
+       @provider,@decoder_version,@attribution_status,@observed_at)
+    ON CONFLICT(target_kind,target_address,signature,leg_index) DO UPDATE SET
+      slot=COALESCE(excluded.slot,chain_inventory_movements.slot),
+      block_time=COALESCE(excluded.block_time,chain_inventory_movements.block_time),
+      owner=COALESCE(excluded.owner,chain_inventory_movements.owner),
+      mint=COALESCE(excluded.mint,chain_inventory_movements.mint),
+      amount_raw=COALESCE(excluded.amount_raw,chain_inventory_movements.amount_raw),
+      decimals=COALESCE(excluded.decimals,chain_inventory_movements.decimals),
+      attribution_status=excluded.attribution_status,
+      observed_at=excluded.observed_at
+  `);
+  let saved = 0;
+  for (const tx of events || []) {
+    for (const [legIndex, movement] of decodeInventoryMovements(tx).entries()) {
+      stmt.run({
+        target_kind: kind, target_address: address, signature: movement.signature,
+        leg_index: legIndex, slot: movement.slot, block_time: movement.blockTime,
+        operation_index: movement.operationIndex, operation_type: movement.operationType,
+        movement_kind: movement.kind, direction: movement.direction, owner: movement.owner,
+        token_account: movement.tokenAccount, mint: movement.mint, amount_raw: movement.amountRaw,
+        decimals: movement.decimals, source_account: movement.sourceAccount,
+        destination_account: movement.destinationAccount, source_owner: movement.sourceOwner,
+        destination_owner: movement.destinationOwner, authority: movement.authority,
+        provider: movement.provider, decoder_version: movement.decoderVersion,
+        attribution_status: movement.attributionStatus, observed_at: Date.now()
+      });
+      saved++;
+    }
+  }
+  return saved;
+}
+
 async function processOne(db, row, cfg, api) {
+  if(!api.fetchEnrichedTxsForMintWithMeta && api.fetchTransactionsForAddress) api={...api,
+    fetchEnrichedTxsForMintWithMeta:(address,limit,known,cursor)=>api.fetchTransactionsForAddress(address,limit,known,cursor)};
   const known = row.last_success_at ? new Set(db.prepare(
     "SELECT signature FROM chain_seed_events WHERE kind=? AND address=?"
     + " ORDER BY block_time DESC, observed_at DESC LIMIT 150"
@@ -1042,7 +1103,7 @@ async function processOne(db, row, cfg, api) {
   const recent = await api.fetchEnrichedTxsForMintWithMeta(
     row.address,cfg.recentLimit,known,undefined,row.kind==="wallet",requestOptions
   );
-  let events = [...recent.transactions];
+  const events = [...recent.transactions];
   let rawProviderUsed = recent.provider === "alchemy";
   let backfillCursor = row.backfill_cursor;
   let forwardCursor = row.forward_cursor;
@@ -1150,10 +1211,14 @@ async function processOne(db, row, cfg, api) {
 
   const added = db.transaction(() => {
     const now = Date.now();
-    const owned = db.prepare("SELECT 1 FROM chain_seed_targets WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)")
-      .get(row.kind,row.address,row.lease_token??null,now);
+    const owned = db.prepare("SELECT 1 FROM chain_seed_targets WHERE kind=? AND address=? AND lease_token IS ? AND lease_until IS ? AND (lease_until IS NULL OR lease_until>?)")
+      .get(row.kind,row.address,row.lease_token??null,row.lease_until??null,now);
     if (!owned) throw new Error("Collector lease lost before commit: "+row.kind+":"+row.address);
     const n = persistEvents(db,row.kind,row.address,unique);
+    persistInventoryMovements(db,row.kind,row.address,unique);
+    if(row.kind==='token') api.markTokenTradeChecked?.(row.address);
+    if(row.kind==='wallet') require('./blockchain-wallet-cache.cjs').markWalletHistory(db,row.address,{
+      complete:false,backfillCursor,forwardCursor,possibleGap:true,now:Date.now(),decoderCoverage:'swap_only',source:'alchemy'});
     if (row.kind === "wallet") {
       appendDiscovered(db,row.address,unique,cfg.scopeId||null);
       if (cfg.scopeId) appendDiscoveredWallets(db,"wallet",row.address,unique,cfg.scopeId);
@@ -1167,17 +1232,17 @@ async function processOne(db, row, cfg, api) {
     const update=db.prepare(
       "UPDATE chain_seed_targets SET last_success_at=?,next_run_at=?,lease_until=NULL,lease_token=NULL,"
       + "attempts=0,last_error=NULL,backfill_cursor=?,forward_cursor=?,"
-      + "backfill_complete=?,possible_gap=?,raw_history_seen=?,cursor_version=?,events_saved=events_saved+?"
-      + " WHERE kind=? AND address=? AND lease_token IS ? AND (lease_until IS NULL OR lease_until>?)"
+      + "backfill_complete=?,possible_gap=?,raw_history_seen=?,cursor_version=?,collection_provider='alchemy',events_saved=events_saved+?"
+      + " WHERE kind=? AND address=? AND lease_token IS ? AND lease_until IS ? AND (lease_until IS NULL OR lease_until>?)"
     ).run(now,now+(budgetPaused?0:(complete&&!forwardCursor?cadence:60_000)),
       backfillCursor,forwardCursor,complete?1:0,gap?1:0,rawHistorySeen?1:0,CURSOR_VERSION,n,
-      row.kind,row.address,row.lease_token??null,now);
+      row.kind,row.address,row.lease_token??null,row.lease_until??null,now);
     if (update.changes!==1) throw new Error("Collector lease changed during commit");
     const coverageStats=db.prepare("SELECT COUNT(*) AS n,MIN(slot) AS oldestSlot,MAX(slot) AS newestSlot FROM chain_seed_events WHERE kind=? AND address=?").get(row.kind,row.address);
     const coverageStatus=budgetPaused || !complete || forwardCursor || gap ? "partial" : "provider_exhausted";
     const gapReason=budgetPaused ? "budget_paused" : forwardCursor ? "forward_catchup_pending" : rawHistorySeen ? "alchemy_raw_history_not_fully_decoded" : (row.kind==="token" || row.kind==="creator") ? "address_history_is_not_a_complete_token_trade_tape" : !complete ? "historical_backfill_in_progress" : gap ? "possible_history_gap" : null;
     const sourceProvider=providersUsed.size===0 ? "unknown" : providersUsed.size>1 ? "mixed" : [...providersUsed][0];
-    db.prepare("INSERT INTO chain_history_coverage(kind,address,coverage_status,source_provider,observed_transactions,oldest_slot,newest_slot,backfill_complete,possible_gap,forward_cursor_pending,gap_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(kind,address) DO UPDATE SET coverage_status=excluded.coverage_status,source_provider=excluded.source_provider,observed_transactions=excluded.observed_transactions,oldest_slot=excluded.oldest_slot,newest_slot=excluded.newest_slot,backfill_complete=excluded.backfill_complete,possible_gap=excluded.possible_gap,forward_cursor_pending=excluded.forward_cursor_pending,gap_reason=excluded.gap_reason,updated_at=excluded.updated_at").run(row.kind,row.address,coverageStatus,sourceProvider,coverageStats.n,coverageStats.oldestSlot,coverageStats.newestSlot,complete?1:0,gap?1:0,forwardCursor?1:0,gapReason,now);
+    db.prepare("INSERT INTO chain_forensic_history_coverage(kind,address,coverage_status,source_provider,observed_transactions,oldest_slot,newest_slot,backfill_complete,possible_gap,forward_cursor_pending,gap_reason,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(kind,address) DO UPDATE SET coverage_status=excluded.coverage_status,source_provider=excluded.source_provider,observed_transactions=excluded.observed_transactions,oldest_slot=excluded.oldest_slot,newest_slot=excluded.newest_slot,backfill_complete=excluded.backfill_complete,possible_gap=excluded.possible_gap,forward_cursor_pending=excluded.forward_cursor_pending,gap_reason=excluded.gap_reason,updated_at=excluded.updated_at").run(row.kind,row.address,coverageStatus,sourceProvider,coverageStats.n,coverageStats.oldestSlot,coverageStats.newestSlot,complete?1:0,gap?1:0,forwardCursor?1:0,gapReason,now);
     if (row.kind === "wallet") require("./blockchain-forensics.cjs").rebuildWallet(db,row.address);
     return n;
   })();
@@ -1190,51 +1255,42 @@ function failTask(db, row, error) {
   const delay = Math.min(3_600_000, 10_000 * (2 ** Math.min(8, attempts))) + jitter;
   db.prepare(
     "UPDATE chain_seed_targets SET attempts=?,last_error=?,next_run_at=?,"
-    + "lease_until=NULL,lease_token=NULL WHERE kind=? AND address=? AND lease_token IS ?"
+    + "lease_until=NULL,lease_token=NULL WHERE kind=? AND address=? AND lease_token IS ? AND lease_until IS ?"
   ).run(attempts, String(error && error.message || error).slice(0, 400),
-    Date.now() + delay, row.kind, row.address, row.lease_token??null);
+    Date.now() + delay, row.kind, row.address, row.lease_token??null,row.lease_until??null);
 }
 
 async function collect(db, args, scopeId = null) {
-  const keys = require("../lib/trade/helius-rotation").getHeliusApiKeys();
+  const runtime=require('./blockchain-runtime.cjs');
+  const settings=runtime.readSettings();
+  if(!settings.enabled)return {stopped:true,reason:'paused',claimed:0,succeeded:0,failed:0,newEvents:0};
+  args={...parseArgs([]),...args};
+  args={...args,limit:Math.min(args.limit,settings.batchSize),concurrency:settings.concurrency,recentLimit:settings.batchSize,backfillLimit:settings.batchSize,scanMintAddresses:true};
   const helius = require("../lib/trade/helius");
   const alchemyModule = require("./blockchain-alchemy-provider.cjs");
   const alchemyProvider = alchemyModule.createProvider();
-  if (!keys.length && !alchemyProvider.accounts.length) {
+  if (!alchemyProvider.accounts.length) {
     throw new Error("Configure HELIUS_API_KEY(S) or ALCHEMY_SOLANA_API_KEY_1..4 before --mode collect/pilot");
   }
   const { persistTokenTrades, markTokenTradeChecked } = require("../lib/trade/db");
   const api = { ...helius, persistTokenTrades, markTokenTradeChecked };
-  const heliusFetch = helius.fetchEnrichedTxsForMintWithMeta;
-  api.fetchEnrichedTxsForMintWithMeta = async (address,limit,known,startBefore,includeTokenAccounts,requestHooks) => {
-    if (startBefore && startBefore.startsWith("alchemy:")) {
-      return alchemyProvider.fetchHistoryWithMeta(address,limit,known,startBefore,includeTokenAccounts,requestHooks?.alchemy);
-    }
-    if (keys.length) {
-      try {
-        const result=await heliusFetch(address,limit,known,startBefore,includeTokenAccounts,requestHooks);
-        return {...result,provider:result.provider||"helius"};
-      } catch (error) {
-        // Alchemy can resume its own opaque cursors directly and can locate a
-        // saved Helius signature by walking pages. That scan is expensive but
-        // preserves history instead of silently restarting at the newest page.
-        if (!alchemyProvider.accounts.length) throw error;
-        if (error && error.code !== "HELIUS_BUDGET_EXCEEDED" && !/Helius|fetch failed|timeout|network|ECONN|429|5\d\d/i.test(String(error.message||error))) throw error;
-        console.warn("[blockchain-collector] Helius recent history unavailable; falling back to Alchemy raw transaction evidence");
-        return alchemyProvider.fetchHistoryWithMeta(address,limit,known,startBefore,includeTokenAccounts,requestHooks?.alchemy);
-      }
-    }
-    return alchemyProvider.fetchHistoryWithMeta(address,limit,known,startBefore,includeTokenAccounts,requestHooks?.alchemy);
-  };
+  api.fetchEnrichedTxsForMintWithMeta = (address,limit,known,cursor,include,hooks) =>
+    alchemyProvider.fetchHistoryWithMeta(address,limit,known,cursor,include,hooks?.alchemy);
   const startedAt = Date.now();
   const maxObjects = Math.min(args.limit,args.maxObjects);
   const maxRuntimeMs=args.maxRuntimeMs??6*60*60*1000;
   const runId = startCollectionRun(db,{...args,limit:maxObjects,maxRuntimeMs},scopeId);
+  runtime.db().transaction(()=>{
+    if(runtime.db().prepare("SELECT id FROM blockchain_runs WHERE state='running' AND heartbeat_at>?").get(Date.now()-10*60_000)) throw new Error('collector_already_running');
+    runtime.db().prepare("UPDATE blockchain_runs SET state='stale' WHERE state='running'").run();
+  runtime.db().prepare("INSERT INTO blockchain_runs(id,started_at,heartbeat_at,state) VALUES(?,?,?,'running')").run(runId,startedAt,startedAt);
+  }).immediate();
+
   let claimed=0,succeeded=0,failed=0,inserted=0,gaps=0;
   let budgetPaused=false,runtimePaused=false,stopReason=null;
   if(scopeId)promoteDeferredWaves(db,scopeId,args);
   async function worker() {
-    while (!stopRequested && !budgetPaused && !runtimePaused && claimed<maxObjects) {
+    while (!stopRequested && !budgetPaused && !runtimePaused && claimed<maxObjects && runtime.readSettings().enabled) {
       if(shouldStopForRuntime(startedAt,maxRuntimeMs)){
         runtimePaused=true;stopReason="Six-hour runtime limit reached; active tasks were allowed to checkpoint";break;
       }
@@ -1255,6 +1311,7 @@ async function collect(db, args, scopeId = null) {
           runtimePaused=true;
           stopReason="Six-hour runtime limit reached; active tasks were allowed to checkpoint";
         }
+        runtime.db().prepare('UPDATE blockchain_runs SET heartbeat_at=?,targets=?,events=?,errors=? WHERE id=?').run(Date.now(),succeeded,inserted,failed,runId);
         if(succeeded%10===0) console.log(JSON.stringify({runId,progress:succeeded,inserted,failed,gaps,budgetPaused,runtimePaused}));
       } catch(error) {
         if (isCollectionBudgetError(error)) {
@@ -1274,12 +1331,14 @@ async function collect(db, args, scopeId = null) {
     await Promise.all(Array.from({length:args.concurrency},worker));
   } catch(error) {
     finishCollectionRun(db,runId,"failed",String(error&&error.message||error));
+    runtime.db().prepare("UPDATE blockchain_runs SET state='failed',finished_at=?,heartbeat_at=? WHERE id=?").run(Date.now(),Date.now(),runId);
     throw error;
   }
   const durationSec=Math.max(0.001,(Date.now()-startedAt)/1000);
   if(scopeId)promoteDeferredWaves(db,scopeId,args);
   const runStatus=budgetPaused?"budget_paused":runtimePaused?"time_paused":stopRequested?"stopped":failed>0&&succeeded===0?"failed":"completed";
   finishCollectionRun(db,runId,runStatus,stopReason);
+  runtime.db().prepare("UPDATE blockchain_runs SET state='finished',finished_at=?,heartbeat_at=?,targets=?,events=?,errors=? WHERE id=?").run(Date.now(),Date.now(),succeeded,inserted,failed,runId);
   const runUsage=db.prepare(
     "SELECT COALESCE(SUM(COALESCE(actual_credits,estimated_credits)),0) AS used,COUNT(*) AS requests,"+
     "SUM(CASE WHEN actual_credits IS NOT NULL THEN 1 ELSE 0 END) AS reported "+
@@ -1314,7 +1373,7 @@ async function main() {
   // Status is strictly read-only. Opening through getDb() would initialize
   // schemas and sync configured programs, unexpectedly mutating the database.
   if (args.mode === "status") {
-    const file=path.resolve(process.env.SOLANA_TRADE_DB_PATH?.trim() || path.join(process.cwd(),"data","trade.db"));
+    const file=path.resolve(/* turbopackIgnore: true */ process.env.SOLANA_TRADE_DB_PATH?.trim() || path.join(process.cwd(),"data","trade.db"));
     if (!fs.existsSync(file)) return console.log(JSON.stringify({status:"not_initialized"},null,2));
     const Database=require("better-sqlite3");
     const readonly=new Database(file,{readonly:true,fileMustExist:true});
@@ -1329,8 +1388,7 @@ async function main() {
   });
   const db = require("../lib/trade/db").getDb();
   initDb(db);
-  const heliusConfigured=require("../lib/trade/helius-rotation").getHeliusApiKeys().length>0;
-  resolveBudgetSettings(db,args,heliusConfigured && ["collect","pilot","watch","all"].includes(args.mode));
+  resolveBudgetSettings(db,args,false);
   const scopeId = args.seedToken ? ensurePilotScope(db,args.seedToken,args.pilotBudgetCredits,args.pilotBudgetConfigured,args.alchemyPilotCuBudget,args.alchemyPilotCuBudgetConfigured) : null;
   if (!scopeId) syncDexProgramSources(db);
   if (args.mode === "watch") {
@@ -1363,7 +1421,7 @@ if (require.main === module) main().catch(error => {
   console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1;
 });
 module.exports = {
-  parseArgs,resolveBudgetSettings,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
+  collect,importFolders,refreshTargets,failTask,parseArgs,resolveBudgetSettings,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
   syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
   appendDiscoveredCreators,appendDiscoveredCreatorTokens,savePumpFunLaunches,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,status,

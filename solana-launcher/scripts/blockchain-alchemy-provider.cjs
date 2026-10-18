@@ -103,6 +103,26 @@ function decodeCursor(cursor) {
 }
 function createProvider(options = {}) {
   const env=options.env || process.env;
+  if (!options.fetch && !options.accounts && (env.ALCHEMY_API_KEY || env.ALCHEMY_API_KEYS || env.ALCHEMY_SOLANA_RPC_URL || env.NEXT_PUBLIC_ALCHEMY_RPC_URL || /^https:\/\/solana-mainnet\.g\.alchemy\.com\/v2\//i.test(env.QUICKNODE_RPC_URL||env.NEXT_PUBLIC_QUICKNODE_RPC_URL||''))) {
+    const config=getAlchemyConfig(env);
+    const accounts=config.endpoints.map((endpoint,index)=>({id:'alchemy-'+(index+1),index:index+1,monthlyBudgetCu:1000000,baselineCu:0,billingResetDay:1}));
+    return {accounts,pilotBudgetCu:DEFAULT_PILOT_CU,health:()=>accounts,fetchHistoryWithMeta:async(address,limit,known,cursor,_include,hooks={})=>{
+      const runtime=require('./blockchain-runtime.cjs');
+      const provider=createAlchemyProvider({env,request:async(urls,body)=>{
+        let httpRequests=0;
+        const result=await runtime.jsonRequest(urls,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)},async(url)=>{
+          const accountId='alchemy-'+(config.endpoints.indexOf(url)+1);
+          const reservation=await hooks.beforeRequest?.({provider:'alchemy',accountId,address,method:body.method,
+            estimatedCu:getMethodCost(body.method,env),monthlyBudgetCu:1000000,baselineCu:0,billingResetDay:1});
+          httpRequests++; return reservation;
+        },{afterResponse:(id,response)=>hooks.afterResponse?.(id,{status:response.status,actualCu:null}),onError:(id,error)=>hooks.onError?.(id,error)});
+        return {result:result.result,httpRequests};
+      }});
+      const page=await provider.fetchTransactionsForAddress(address,limit,known||new Set(),cursor);
+      return {...page,provider:'alchemy',transactions:page.transactions.map(tx=>({...tx,...normalizeRawTransaction(tx.raw),
+        sourceProvider:'alchemy',sourceDetailLevel:'raw',transactionError:tx.transactionError}))};
+    }};
+  }
   const fetchImpl=options.fetch || globalThis.fetch;
   const accounts=options.accounts || parseAccounts(env);
   const timeoutMs=positiveInt(env.ALCHEMY_SOLANA_TIMEOUT_MS,12000,"ALCHEMY_SOLANA_TIMEOUT_MS");
@@ -145,7 +165,7 @@ function createProvider(options = {}) {
           method:"POST",headers:{"content-type":"application/json","accept":"application/json"},
           signal:AbortSignal.timeout(timeoutMs),
           body:JSON.stringify({jsonrpc:"2.0",id:1,method,params:[address,{
-            transactionDetails:"full",sortOrder:"desc",limit:Math.max(1,Math.min(100,limit)),
+            maxSupportedTransactionVersion:0,commitment:"finalized",encoding:"jsonParsed",transactionDetails:"full",sortOrder:"desc",limit:Math.max(1,Math.min(100,limit)),
             ...(paginationToken?{paginationToken}:{}),
             filters:{status:"any",tokenAccounts:"balanceChanged"}
           }]})
@@ -160,7 +180,7 @@ function createProvider(options = {}) {
         }
         failureCounts.delete(account.id);cooldownUntil.delete(account.id);lastErrors.delete(account.id);
         const result=payload.result;
-        const rows=Array.isArray(result)?result:Array.isArray(result && result.transactions)?result.transactions:null;
+        const rows=Array.isArray(result)?result:Array.isArray(result?.data)?result.data:Array.isArray(result && result.transactions)?result.transactions:null;
         if (!rows) throw new Error("Alchemy getTransactionsForAddress returned unexpected response shape");
         nextAccount=(account.index)%accounts.length;
         return {transactions:rows.map(normalizeRawTransaction),paginationToken:result.paginationToken||null,exhausted:!result.paginationToken,provider:"alchemy",accountId:account.id};
@@ -245,4 +265,326 @@ function createProvider(options = {}) {
     health:()=>accounts.map(({key,...account})=>({...account,cooldownUntil:cooldownUntil.get(account.id)||0,
       failures:failureCounts.get(account.id)||0,lastError:lastErrors.get(account.id)||null}))};
 }
-module.exports={DEFAULT_MONTHLY_CU,DEFAULT_PILOT_CU,METHOD_COSTS,parseAccounts,getMethodCost,currentBillingMonthKey,normalizeRawTransaction,encodeCursor,decodeCursor,createProvider};
+
+
+// Alchemy Solana historical provider. No Helius fallback is permitted here.
+// Uses the documented getTransactionsForAddress RPC extension with opaque paginationToken.
+const DEFAULT_RPC = "https://solana-mainnet.g.alchemy.com/v2/";
+const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
+const DEX_PROGRAMS = new Set([
+  // Canonical program IDs used for conservative candidate detection only.
+  // This is not a complete Solana DEX registry and cannot authorize PnL.
+  "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", // Jupiter v6
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", // Pump.fun
+  "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"  // PumpSwap
+]);
+
+function getAlchemyConfig(env = process.env) {
+  const legacyRpcUrl = env.NEXT_PUBLIC_QUICKNODE_RPC_URL || env.QUICKNODE_RPC_URL;
+  // Some existing deployments stored an Alchemy URL under the old QuickNode
+  // variable name. Accept it only when its host is verifiably Alchemy.
+  const legacyAlchemyUrl = typeof legacyRpcUrl === "string"
+    && /^https:\/\/solana-mainnet\.g\.alchemy\.com\/v2\//i.test(legacyRpcUrl)
+    ? legacyRpcUrl : "";
+  const explicitUrl = env.ALCHEMY_SOLANA_RPC_URL || env.NEXT_PUBLIC_ALCHEMY_RPC_URL || legacyAlchemyUrl;
+  const keys = String(env.ALCHEMY_API_KEYS || "")
+    .split(/[;,\s]+/).map((v) => v.trim()).filter(Boolean);
+  if (env.ALCHEMY_API_KEY && !keys.includes(env.ALCHEMY_API_KEY.trim())) keys.unshift(env.ALCHEMY_API_KEY.trim());
+  const endpoints = explicitUrl
+    ? [explicitUrl]
+    : keys.map((key) => DEFAULT_RPC + encodeURIComponent(key));
+  if (endpoints.some((endpoint) => !/^https:\/\/solana-mainnet\.g\.alchemy\.com\/v2\//i.test(endpoint))) {
+    throw new Error("ALCHEMY_SOLANA_RPC_URL must be an Alchemy Solana mainnet RPC URL");
+  }
+  if (!endpoints.length) throw new Error("Alchemy Solana API key or ALCHEMY_SOLANA_RPC_URL required; Helius is not a fallback");
+  return { endpoint: endpoints[0], endpoints, keyCount: endpoints.length };
+}
+
+function decodeCanonicalCursor(cursor) {
+  if (!cursor) return null;
+  if (typeof cursor !== "string" || !cursor.startsWith("alchemy:v1:")) {
+    throw new Error("Incompatible history cursor; reset provider cursor and backfill from Alchemy");
+  }
+  return cursor.slice("alchemy:v1:".length) || null;
+}
+function encodeCanonicalCursor(token) {
+  return token ? "alchemy:v1:" + token : null;
+}
+
+function normalizeFullTransaction(item) {
+  const transaction = item && item.transaction;
+  const signature = item?.signature ||
+    transaction?.transaction?.signatures?.[0] ||
+    transaction?.signatures?.[0];
+  if (typeof signature !== "string" || !signature) return null;
+  const slotValue = item.slot ?? transaction?.slot;
+  const timeValue = item.blockTime ?? transaction?.blockTime;
+  const slot = slotValue == null ? NaN : Number(slotValue);
+  const blockTime = timeValue == null ? NaN : Number(timeValue);
+  const meta = item.meta || transaction?.meta || null;
+  const txObject = transaction?.transaction ? transaction.transaction : transaction;
+  const message = txObject?.message || {};
+  const accountKeys = (message.accountKeys || []).map((key) =>
+    typeof key === "string" ? key : (key?.pubkey || key?.toString?.() || ""));
+  const preBalances = meta?.preBalances || [];
+  const postBalances = meta?.postBalances || [];
+  const preTokenBalances = meta?.preTokenBalances || [];
+  const postTokenBalances = meta?.postTokenBalances || [];
+  const instructionProgramIds = [];
+  const decodedOperations = [];
+  const collectInstruction = (ix) => {
+    const id = ix.programId || (Number.isInteger(ix.programIdIndex) ? accountKeys[ix.programIdIndex] : null);
+    if (id) instructionProgramIds.push(String(id));
+    const parsedType = ix.parsed?.type;
+    if (typeof parsedType === "string") {
+      decodedOperations.push({
+        program: String(ix.program || id || "unknown"),
+        programId: id ? String(id) : null,
+        type: parsedType,
+        info: ix.parsed?.info && typeof ix.parsed.info === "object" ? ix.parsed.info : {},
+        decoderCoverage: ["transfer", "transferChecked", "mintTo", "mintToChecked", "burn", "burnChecked"].includes(parsedType)
+          ? "swap_and_transfers_mint_burn" : "partial",
+      });
+    }
+  };
+  for (const ix of message.instructions || []) {
+    collectInstruction(ix);
+  }
+  for (const ix of meta?.innerInstructions || []) {
+    for (const inner of ix.instructions || []) collectInstruction(inner);
+  }
+  const tokens = new Map();
+  const tokenBalanceKey = (entry) => {
+    const owner = entry.owner || "";
+    const mint = entry.mint || "";
+    // If owner metadata is missing, retain token-account identity. Aggregating
+    // all ownerless accounts for the same mint can manufacture false deltas.
+    const account = entry.accountIndex == null ? "unknown-account" : String(entry.accountIndex);
+    return { owner, mint, key: (owner || "account:" + account) + "|" + mint };
+  };
+  for (const entry of preTokenBalances) {
+    const { owner, mint, key } = tokenBalanceKey(entry);
+    const amount = BigInt(entry.uiTokenAmount?.amount || "0");
+    const prior = tokens.get(key) || {
+      owner, mint, accountIndex: entry.accountIndex ?? null,
+      tokenAccount: Number.isInteger(entry.accountIndex) ? accountKeys[entry.accountIndex] || null : null,
+      decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n
+    };
+    prior.pre += amount;
+    tokens.set(key, prior);
+  }
+  for (const entry of postTokenBalances) {
+    const { owner, mint, key } = tokenBalanceKey(entry);
+    const amount = BigInt(entry.uiTokenAmount?.amount || "0");
+    const prior = tokens.get(key) || {
+      owner, mint, accountIndex: entry.accountIndex ?? null,
+      tokenAccount: Number.isInteger(entry.accountIndex) ? accountKeys[entry.accountIndex] || null : null,
+      decimals: Number(entry.uiTokenAmount?.decimals || 0), pre: 0n, post: 0n
+    };
+    prior.post += amount;
+    prior.decimals = Number(entry.uiTokenAmount?.decimals ?? prior.decimals);
+    tokens.set(key, prior);
+  }
+  return {
+    signature,
+    timestamp: Number.isFinite(blockTime) ? blockTime : null,
+    slot: Number.isFinite(slot) ? slot : null,
+    transactionError: meta && Object.hasOwn(meta, "err") ? meta.err : { unknown: "missing_execution_status" },
+    fee: Number.isFinite(Number(meta?.fee)) ? Number(meta.fee) / 1e9 : null,
+    source: "alchemy",
+    provider: "alchemy",
+    raw: item,
+    accountKeys,
+    preBalances,
+    postBalances,
+    preTokenBalances,
+    postTokenBalances,
+    instructionProgramIds: [...new Set(instructionProgramIds)],
+    decodedOperations,
+    tokenBalanceDeltas: [...tokens.values()].map((v) => ({
+      owner: v.owner, accountIndex: v.accountIndex, tokenAccount: v.tokenAccount || null, mint: v.mint, decimals: v.decimals,
+      ownerKnown: Boolean(v.owner),
+      deltaRaw: (v.post - v.pre).toString(),
+      delta: Number(v.post - v.pre) / (10 ** v.decimals)
+    })),
+    meta,
+  };
+}
+
+function createAlchemyProvider(options = {}) {
+  const env = options.env || process.env;
+  const fetchImpl = options.fetch || globalThis.fetch;
+  const sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const config = options.endpoint ? { endpoint: options.endpoint, endpoints: [options.endpoint] } : getAlchemyConfig(env);
+  let requestId = 0;
+  let endpointIndex = 0;
+  async function rpc(method, params) {
+    if (options.request) {
+      return options.request(config.endpoints, { jsonrpc: '2.0', id: ++requestId, method, params });
+    }
+    let lastError;
+    let attempts = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      attempts++;
+      try {
+        const response = await fetchImpl(config.endpoints[endpointIndex] || config.endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }),
+          signal: AbortSignal.timeout(Number(env.ALCHEMY_TIMEOUT_MS) || 30000),
+        });
+        if (!response.ok) {
+          const error = new Error("Alchemy HTTP " + response.status);
+          if (!RETRYABLE.has(response.status) || attempt === 4) {
+            error.httpRequests = attempts;
+            throw error;
+          }
+          lastError = error;
+          endpointIndex = (endpointIndex + 1) % config.endpoints.length;
+          await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
+          continue;
+        }
+        const body = await response.json();
+        if (body?.error) {
+          const error = new Error("Alchemy RPC " + String(body.error.code) + ": " + String(body.error.message || "request failed").slice(0, 180));
+          if (attempt < 4 && /rate|limit|temporar|busy/i.test(error.message)) {
+            lastError = error;
+            endpointIndex = (endpointIndex + 1) % config.endpoints.length;
+            await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
+            continue;
+          }
+          error.httpRequests = attempts;
+          throw error;
+        }
+        return { result: body.result, httpRequests: attempts };
+      } catch (error) {
+        lastError = error;
+        if (error?.httpRequests) throw error;
+        if (attempt === 4) {
+          error.httpRequests = attempts;
+          throw error;
+        }
+        await sleep(Math.min(8000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 150));
+      }
+    }
+    lastError = lastError || new Error("Alchemy request failed");
+    lastError.httpRequests = attempts;
+    throw lastError;
+  }
+
+  async function fetchTransactionsForAddress(address, maxTransactions = 100, knownSignatures = new Set(), paginationToken = null) {
+    const limit = Math.min(100, Math.max(1, Number(maxTransactions) || 100));
+    const transactions = [];
+    let token = decodeCanonicalCursor(paginationToken) || undefined;
+    let httpRequests = 0;
+    let pagesFetched = 0;
+    let reachedKnownHistory = false;
+    let exhausted = false;
+    let lastPageEmpty = false;
+    let safetyPages = 0;
+    while (transactions.length < limit && safetyPages < 100) {
+      safetyPages++;
+      const remaining = limit - transactions.length;
+      const pageLimit = Math.min(100, remaining);
+      const params = [address, {
+        transactionDetails: "full",
+        sortOrder: "desc",
+        limit: pageLimit,
+        commitment: "finalized",
+        encoding: "jsonParsed",
+        maxSupportedTransactionVersion: 0,
+        ...(token ? { paginationToken: token } : {})
+      }];
+      let response;
+      try {
+        response = await rpc("getTransactionsForAddress", params);
+      } catch (error) {
+        error.httpRequests = httpRequests + (Number(error.httpRequests) || 1);
+        error.pagesFetched = pagesFetched;
+        error.lastPageEmpty = lastPageEmpty;
+        throw error;
+      }
+      httpRequests += response.httpRequests;
+      pagesFetched++;
+      const page = Array.isArray(response.result?.data) ? response.result.data :
+        Array.isArray(response.result?.transactions) ? response.result.transactions :
+        Array.isArray(response.result?.items) ? response.result.items :
+        Array.isArray(response.result) ? response.result : null;
+      if (!page) {
+        const error = new Error("Unexpected Alchemy getTransactionsForAddress response shape");
+        Object.assign(error, { httpRequests, pagesFetched, lastPageEmpty: false });
+        throw error;
+      }
+      lastPageEmpty = page.length === 0;
+      if (lastPageEmpty) { exhausted = true; token = undefined; break; }
+      try {
+        for (const item of page) {
+          const normalized = normalizeFullTransaction(item);
+          if (!normalized) throw new Error("Alchemy full transaction missing signature; refusing to advance cursor");
+          if (knownSignatures?.has(normalized.signature)) {
+            reachedKnownHistory = true;
+            continue;
+          }
+          if (transactions.length < limit) transactions.push(normalized);
+        }
+      } catch (cause) {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        Object.assign(error, { httpRequests, pagesFetched, lastPageEmpty });
+        throw error;
+      }
+      const nextToken = response.result?.paginationToken ?? response.result?.pagination_token ?? null;
+      if (typeof nextToken === "string" && nextToken && nextToken === token) {
+        const error = new Error("Alchemy pagination cursor did not advance");
+        Object.assign(error, { httpRequests, pagesFetched, lastPageEmpty });
+        throw error;
+      }
+      if (typeof nextToken === "string" && nextToken) token = nextToken;
+      else { token = undefined; exhausted = true; break; }
+      if (reachedKnownHistory || transactions.length >= limit) break;
+    }
+    return {
+      transactions,
+      nextCursor: token ? encodeCanonicalCursor(token) : null,
+      exhausted,
+      truncated: !exhausted && !reachedKnownHistory && transactions.length >= limit,
+      reachedKnownHistory,
+      httpRequests,
+      pagesFetched,
+      lastPageEmpty,
+      decoderCoverage: "swap_only",
+      source: "alchemy",
+    };
+  }
+
+  function txsToTrades(transactions, mint) {
+    const trades = [];
+    for (const tx of transactions || []) {
+      if (tx.transactionError !== null || !tx.instructionProgramIds?.some((id) => DEX_PROGRAMS.has(id))) continue;
+      const deltas = (tx.tokenBalanceDeltas || []).filter((d) => d.mint === mint && d.owner && d.deltaRaw !== "0");
+      if (deltas.length !== 1) continue;
+      const delta = deltas[0];
+      const keyIndex = tx.accountKeys.indexOf(delta.owner);
+      if (keyIndex < 0) continue;
+      const nativeDeltaLamports = Number(tx.postBalances[keyIndex] ?? 0) - Number(tx.preBalances[keyIndex] ?? 0);
+      const feeLamports = Number(tx.meta?.fee || 0);
+      const isBuy = Number(delta.deltaRaw) > 0;
+      const ownerFeeLamports = keyIndex === 0 ? feeLamports : 0;
+      const solLamports = isBuy ? -(nativeDeltaLamports + ownerFeeLamports) : nativeDeltaLamports + ownerFeeLamports;
+      const amountTokens = Math.abs(delta.delta);
+      const amountSol = solLamports / 1e9;
+      if (!(amountTokens > 0 && amountSol > 0 && Number.isFinite(amountSol))) continue;
+      trades.push({
+        signature: tx.signature, timestamp: tx.timestamp, slot: tx.slot, trader: delta.owner,
+        type: isBuy ? "buy" : "sell", amountSol, amountTokens, priceSol: amountSol / amountTokens,
+        fee: feeLamports / 1e9, feeLamports, source: "alchemy", quoteMint: "So11111111111111111111111111111111111111112",
+        quoteAmount: amountSol, quoteDecimals: 9, decoderCoverage: "swap_only"
+      });
+    }
+    return trades;
+  }
+
+  return { rpc, fetchTransactionsForAddress, txsToTrades, provider: "alchemy" };
+}
+
+
+module.exports={DEFAULT_MONTHLY_CU,DEFAULT_PILOT_CU,METHOD_COSTS,parseAccounts,getMethodCost,currentBillingMonthKey,normalizeRawTransaction,encodeCursor,decodeCursor,createProvider,createAlchemyProvider,getAlchemyConfig,normalizeFullTransaction};

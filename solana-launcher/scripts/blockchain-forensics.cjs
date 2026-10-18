@@ -155,7 +155,7 @@ function rebuildWallet(db, wallet, force = false) {
       if (!rows.length) break;
       for (const row of rows) {
         let tx;
-        try { tx=JSON.parse(gunzipSync(row.payload_gzip).toString("utf8")); }
+        try { tx=JSON.parse(gunzipSync(row.payload_gzip,{maxOutputLength:512*1024}).toString("utf8")); }
         catch (error) { throw new Error("Invalid cached transaction "+row.signature+": "+String(error)); }
         if (tx.signature!==row.signature) throw new Error("Cached signature mismatch: "+row.signature);
         const decoded=parseEvidence(tx,wallet);

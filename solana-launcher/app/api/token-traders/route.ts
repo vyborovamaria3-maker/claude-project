@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
         soldUsd: sold,
         pnlUsd: null,
         netFlowUsd: sold - bought,
-        pnlStatus: "unknown", 
+        pnlStatus: "unknown",
         txCount: Number(row.txCount) || 0,
         lastTradeTs: 0,
       };

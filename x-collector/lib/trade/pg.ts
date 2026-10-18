@@ -2,7 +2,7 @@ import "dotenv/config";
 import { Pool, PoolClient, QueryResultRow } from "pg";
 import { log } from "./logger";
 import { getConfig } from "./config";
-import { isRetryablePgError, retry } from "./retry";
+import { isRetryablePgError, pgErrorCode, retry } from "./retry";
 
 let pool: Pool | null = null;
 
@@ -34,9 +34,16 @@ export class AmbiguousCommitError extends Error {
   }
 }
 
-function isCommitRelated(error: unknown): boolean {
-  const message = String((error as Error | undefined)?.message ?? error);
-  return /commit|connection (reset|lost|closed)|terminated|ECONNRESET|socket hang up/i.test(message);
+/**
+ * A server-side serialization/deadlock error at COMMIT guarantees abort;
+ * all connection failures and errors without a PostgreSQL SQLSTATE leave
+ * the COMMIT outcome uncertain. Never replay such a transaction.
+ */
+export function isAmbiguousPgCommit(error: unknown): boolean {
+  const code = pgErrorCode(error);
+  if (code === "40001" || code === "40P01") return false;
+  if (!code) return true;
+  return isRetryablePgError(error);
 }
 
 async function withPgRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
@@ -45,7 +52,9 @@ async function withPgRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
     attempts: cfg.db.retryAttempts,
     baseDelayMs: cfg.db.retryBaseMs,
     maxDelayMs: cfg.db.retryMaxMs,
-    shouldRetry: isRetryablePgError,
+    // The AmbiguousCommitError message mentions a lost connection, but the
+    // transaction might already be committed: never replay that wrapper.
+    shouldRetry: (error) => !(error instanceof AmbiguousCommitError) && isRetryablePgError(error),
     onRetry: ({ attempt, delayMs, error }) => {
       log.warn("query retrying after transient error", {
         label, attempt, delay: delayMs, error: String(error instanceof Error ? error.message : error),
@@ -82,13 +91,32 @@ export async function exec(sql: string, params: unknown[] = []): Promise<number>
   return r.rowCount ?? 0;
 }
 
-/** Bound the HTTP probe including time spent waiting for a pooled connection. */
+/** A single shared DB probe avoids piling up abandoned pool queries during outages. */
+let healthProbe: Promise<void> | null = null;
+
+/**
+ * Bound the HTTP response even while a pool connection is unavailable.
+ * Promise.race does not cancel a pg query: reuse one in-flight probe rather
+ * than starting another on every dashboard/worker health request.
+ */
 export async function checkDatabase(timeoutMs = 3000): Promise<void> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000)
+    throw new Error("Invalid database health timeout");
+  if (!healthProbe) {
+    const started: Promise<void> = getPool().query("SELECT 1").then(() => {});
+    healthProbe = started;
+    void started.then(
+      () => { if (healthProbe === started) healthProbe = null; },
+      () => { if (healthProbe === started) healthProbe = null; },
+    );
+  }
   let timer: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
-      getPool().query("SELECT 1"),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("database health timeout")), timeoutMs); }),
+      healthProbe,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("database health timeout")), timeoutMs);
+      }),
     ]);
   } finally { if (timer) clearTimeout(timer); }
 }
@@ -101,22 +129,28 @@ export async function checkDatabase(timeoutMs = 3000): Promise<void> {
 export async function tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
   return withPgRetry(async () => {
     const client = await getPool().connect();
+    let discardClient = false;
     try {
       await client.query("BEGIN");
       const result = await fn(client);
       try {
         await client.query("COMMIT");
       } catch (commitError) {
-        if (isCommitRelated(commitError)) throw new AmbiguousCommitError(commitError);
+        if (isAmbiguousPgCommit(commitError)) {
+          discardClient = true;
+          throw new AmbiguousCommitError(commitError);
+        }
         throw commitError;
       }
       return result;
     } catch (e) {
       if (e instanceof AmbiguousCommitError) throw e;
-      await client.query("ROLLBACK").catch(() => {});
+      if (isRetryablePgError(e)) discardClient = true;
+      await client.query("ROLLBACK").catch(() => { discardClient = true; });
       throw e;
     } finally {
-      client.release();
+      // Broken/uncertain connections must never go back to the pool.
+      client.release(discardClient);
     }
   }, "tx");
 }
@@ -124,6 +158,7 @@ export async function tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
 export async function closePool(): Promise<void> {
   const p = pool;
   pool = null;
+  healthProbe = null;
   if (!p) return;
   try {
     await p.end();

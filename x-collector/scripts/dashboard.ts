@@ -1,4 +1,4 @@
-import { closeLive } from "../lib/collector/live";
+import { closeLive } from "../src/collector/monitoring";
 import { handleCollectorRequest } from "../lib/collector/http";
 import { stopManagedWorker } from "../lib/collector/runtime";
 import http from "node:http";
@@ -21,7 +21,7 @@ import {
   getWorkerEfficiency, getAccountHealth, getMintSummary, getMintDailyFunnel,
   getMintBursts, getTopTweetsForMint, getMintTimeseries, getMintFullReport,
 } from "../lib/trade/analytics";
-import { queueStats, dlqStats, listDeadLetters } from "../lib/trade/tasks";
+import { queueStats, dlqStats, listDeadLetters } from "../src/collector/queue";
 import { getSentimentByMint, getSentimentByAuthor, getMintSentimentDaily } from "../lib/trade/analytics-nlp";
 import {
   listMintEvents, listMintMilestones, getFirstMovers, getMintTimeline, getMintFirstVerified,

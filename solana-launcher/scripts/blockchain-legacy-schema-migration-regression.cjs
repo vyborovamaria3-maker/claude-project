@@ -25,7 +25,15 @@ try {
   const packed=require("node:zlib").gzipSync(Buffer.from(raw));
   db.prepare("INSERT INTO chain_seed_events(kind,address,signature,slot,block_time,payload_gzip,payload_bytes,observed_at) VALUES('wallet',?,?,?,?,?,?,?)")
     .run(wallet,"old-sig",tx.slot,tx.timestamp,packed,Buffer.byteLength(raw),123);
+  // The merged #65 cache has different coverage/ledger contracts. Preserve its rows.
+  require('./blockchain-wallet-cache.cjs').ensureWalletCacheSchema(db);
+  db.prepare("INSERT INTO chain_history_coverage(entity_kind,entity_key,source,status,checked_at) VALUES('wallet',?,'alchemy','partial',123)").run(wallet);
+  db.exec("INSERT INTO chain_budget_ledger(provider,endpoint,cost_units,cost_kind,ts) VALUES('alchemy','history',100,'cu',123)");
+  const originalCoverage=JSON.stringify(db.prepare('SELECT * FROM chain_history_coverage').all());
+  const originalLedger=JSON.stringify(db.prepare('SELECT * FROM chain_budget_ledger').all());
   initDb(db);
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM chain_history_coverage').all()),originalCoverage);
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM chain_budget_ledger').all()),originalLedger);
   for(const column of ["lease_token","wallet_history_mode","forward_cursor"])
     assert(db.pragma("table_info(chain_seed_targets)").some(c=>c.name===column));
   for(const column of ["payload_hash","raw_revision"])

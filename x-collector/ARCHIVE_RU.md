@@ -23,6 +23,12 @@ Full archive требует `X_ARCHIVE_BEARER_TOKEN` с соответствую
 
 На таком компьютере выбирается одна архивная сессия и pool 3. Архив отдельно от automation/publication Reply Guy. PostgreSQL вместо дополнительной графовой базы сохраняет текущую архитектуру. Большие Parquet можно анализировать вне транзакционной БД; ClickHouse/Neo4j здесь не нужны для первого этапа.
 
+## Raw-ответы live XActions
+
+Для пагинируемых XActions-страниц твитов, которые проходят через `persistXActionsTweetPage`, raw-архив дополнительно сохраняет `source_response`: успешный GraphQL envelope, имя операции, query ID и параметры запроса, включая cursor. Захват выполняется до проверки `TweetSchema`, поэтому исходная страница остаётся доступной даже при ошибке нормализации. Формат архива отмечен `capture_format_version: 1`; `parser_version` берётся из `X_COLLECTOR_PARSER_VERSION` (если переменная не задана, записывается `unversioned`); `archive_raw_pages` хранит SHA-256 и путь к gzip-файлу. Это позволяет повторно разобрать страницу без повторного запроса к X.
+
+Это не побайтовая запись HTTP-трафика: cookies, заголовки авторизации и другие секреты не сохраняются. GraphQL-ответы с ошибками сейчас отклоняются до передачи в этот архивный путь; их захват остаётся отдельной задачей. Legacy SearchTimeline bridge сохраняет только страницы, для которых сформирован непустой batch. У браузерного сборщика нет гарантированного доступа к исходному GraphQL envelope, поэтому он сохраняет структурированное наблюдение DOM, а не выдуманный полный ответ сервера.
+
 ## Публичные данные и временная достоверность
 
 Сохраняются доступные текст/дата/ID/язык, public_metrics, профили из expansions, сущности, media metadata/ссылки и связи. Медиафайлы не скачиваются. Likes — счётчик, **не полный список всех лайкнувших**; views — доступный impression_count, не история просмотров по людям. Не полученные значения — NULL, не ноль. Private/удалённые/ограниченные данные нельзя объявлять собранными.
@@ -105,3 +111,14 @@ npm run archive -- mentions --mint SOLANA_MINT --before 2025-04-01T00:00:00Z
 ## Проверки
 
 Typecheck/lint/build; 55 тестов, включая Chromium archive UI/error recovery, миграции 001–014, пагинацию/dedup/checkpoint, partial coverage, неизвестные метрики, string IDs, token graph, разделение labels и CSV conversion. Native PostgreSQL CI дополнительно проверяет multi-snapshot prices и bridge checkpoint. Реальные файлы датасетов отдельно импортированы через storeToken в disposable PGlite. Живой full-archive X доступ и Docker build в этой среде не проверены.
+
+## Retention, parser provenance and metric history
+
+`archive_raw_pages.hash` is the SHA-256 key for the full capture envelope/file, while `response_hash` hashes the upstream `source_response` payload separately so repeated response bodies can be identified without collapsing distinct observations. The metadata row also stores `parser_version`, `parse_status` (`captured / parsed / partial / failed`), `response_status` (`unknown / empty / nonempty / error`) and `expires_at`.
+
+New raw captures expire after `ARCHIVE_RAW_RETENTION_DAYS` (default 90; valid range 1–3650 days). This is an operational default, not a substitute for checking the applicable X terms and data-retention obligations. Existing rows are backfilled to 90 days from `received_at`. `npm run xactions:archive-gc` reports expired raw files in dry-run mode; only `npm run xactions:archive-gc -- --delete` removes expired metadata/files. A file is retained while any unexpired metadata row still references it. Deletion is intentionally explicit.
+
+`archive_metrics` remains the canonical history of metric snapshots: each row preserves `received_at`, nullable `metrics_observed_at`, nullable counts, `raw_hash` and `snapshot_key`. The view `v_twitter_tweet_metrics_history` exposes this history with stable analytics-friendly names; no duplicate metrics-history table is created. Unknown metrics remain SQL `NULL`, not zero.
+
+`twitter_tweets.author_id` is a nullable text field. The migration backfills it from `archive_posts.author_id` where that bridge exists, and new persistence preserves a valid ID supplied by the collector. Handles remain useful display keys, but they are mutable and must not replace the stable ID. DOM-only collection may not expose an author ID; in that case the field correctly remains `NULL`.
+
