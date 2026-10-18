@@ -47,9 +47,11 @@ async function reconcileOne(c,now){
     await c.query("UPDATE xc_auto_reconcile SET status='queued',next_check_at=$2,candidates='[]'::jsonb,last_error='Точное совпадение пока не найдено; автоматический повтор отправки запрещён.',updated_at=$3,finished_at=NULL WHERE job_id=$1 AND status='running'",[row.job_id,nextAt,checkNow]);
     await c.query("UPDATE xc_auto_jobs SET message=$2 WHERE id=$1 AND status='uncertain'",[row.job_id,'Точное совпадение пока не найдено. Следующая сверка запланирована; повторная отправка запрещена.']);
    }
-  }catch{
+  }catch(error){
    const checkNow=Date.now();
-   if(checkNow>=deadlineAt){await c.query("UPDATE xc_auto_reconcile SET status='manual_required',last_error='Не удалось завершить сверку за 24 часа.',updated_at=$2,finished_at=$2 WHERE job_id=$1 AND status='running'",[row.job_id,checkNow]);await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,messageForManual,checkNow]);}
+   const failure=classifyPreSendError(error);
+   if(!failure.retryable){await c.query("UPDATE xc_auto_reconcile SET status='manual_review',last_error=$2,updated_at=$3,finished_at=$3 WHERE job_id=$1 AND status='running'",[row.job_id,failure.message,checkNow]);await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,failure.message,checkNow]);}
+   else if(checkNow>=deadlineAt){await c.query("UPDATE xc_auto_reconcile SET status='manual_required',last_error='Не удалось завершить сверку за 24 часа.',updated_at=$2,finished_at=$2 WHERE job_id=$1 AND status='running'",[row.job_id,checkNow]);await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,messageForManual,checkNow]);}
    else{const nextAt=nextCheckAt(checkNow,attempts,deadlineAt);await c.query("UPDATE xc_auto_reconcile SET status='queued',next_check_at=$2,last_error='Не удалось проверить публикации X; сверка повторится автоматически.',updated_at=$3,finished_at=NULL WHERE job_id=$1 AND status='running'",[row.job_id,nextAt,checkNow]);await c.query("UPDATE xc_auto_jobs SET message='Не удалось проверить публикации X. Сверка повторится автоматически; повторная отправка запрещена.' WHERE id=$1 AND status='uncertain'",[row.job_id]);}
   }
   return true;
