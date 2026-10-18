@@ -85,17 +85,45 @@ async function checkPgOutbox(pool){
   if(!rows[0]?.present)throw new Error("source outbox schema is not installed");
 }
 async function status(source){
+  const at=new Date().toISOString();
+  let row;
   if(source.kind==="sqlite"){
-    const row=source.connection.prepare(`SELECT
-      (SELECT count(*) FROM outbox_events WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS pending,
-      (SELECT count(*) FROM outbox_events WHERE dead_lettered_at IS NOT NULL) AS dead_letter`).get();
-    return {pending:Number(row.pending),deadLetter:Number(row.dead_letter)};
+    row=source.connection.prepare(`SELECT
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS pending,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND next_attempt_at<=? AND (lease_until IS NULL OR lease_until<=?)) AS ready,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND lease_until>?) AS leased,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND attempts>0 AND next_attempt_at>?) AS retry_delayed,
+      count(*) FILTER (WHERE dead_lettered_at IS NOT NULL) AS dead_letter,
+      min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
+      max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS max_attempts
+    FROM outbox_events`).get(at,at,at,at);
+  }else{
+    await checkPgOutbox(source.connection);
+    const result=await source.connection.query(`SELECT
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL)::text AS pending,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND next_attempt_at<=$1::timestamptz
+        AND (lease_until IS NULL OR lease_until<=$1::timestamptz))::text AS ready,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND lease_until>$1::timestamptz)::text AS leased,
+      count(*) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+        AND attempts>0 AND next_attempt_at>$1::timestamptz)::text AS retry_delayed,
+      count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_letter,
+      min(created_at) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS oldest_pending_at,
+      max(attempts) FILTER (WHERE processed_at IS NULL AND dead_lettered_at IS NULL)::text AS max_attempts
+    FROM outbox_events`,[at]);
+    row=result.rows[0];
   }
-  await checkPgOutbox(source.connection);
-  const {rows}=await source.connection.query(`SELECT
-    (SELECT count(*)::text FROM outbox_events WHERE processed_at IS NULL AND dead_lettered_at IS NULL) AS pending,
-    (SELECT count(*)::text FROM outbox_events WHERE dead_lettered_at IS NOT NULL) AS dead_letter`);
-  return {pending:Number(rows[0].pending),deadLetter:Number(rows[0].dead_letter)};
+  return {
+    pending:Number(row.pending),ready:Number(row.ready),
+    leased:Number(row.leased),retryDelayed:Number(row.retry_delayed),
+    deadLetter:Number(row.dead_letter),
+    oldestPendingAt:row.oldest_pending_at===null?null:new Date(row.oldest_pending_at).toISOString(),
+    maxAttempts:row.max_attempts===null?0:Number(row.max_attempts),
+  };
 }
 async function checkDestination(pool){
   const result=await pool.query(`SELECT
