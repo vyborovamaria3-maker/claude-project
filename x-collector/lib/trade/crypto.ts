@@ -61,7 +61,7 @@ export function decryptBufferWithKeys(blob:Buffer|Uint8Array,legacyKey:Buffer,ke
  if(!bytes||bytes.length<IV_BYTES+TAG_BYTES+1)throw Error("INVALID_ENVELOPE");
  let key=legacyKey,header:Buffer|undefined,offset=0;
  if(bytes.subarray(0,MAGIC.length).equals(MAGIC)){
-  const len=blob[MAGIC.length];
+  const len=bytes[MAGIC.length];
   if(!Number.isInteger(len)||len<1||len>48)throw Error("INVALID_KEY_ID");
   offset=MAGIC.length+1+len;
   if(bytes.length<offset+IV_BYTES+TAG_BYTES+1)throw Error("INVALID_ENVELOPE");

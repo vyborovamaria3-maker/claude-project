@@ -36,8 +36,10 @@ function sealBytes(plain,env){
  }finally{clearKeyring(ring);}
 }
 function unsealBytes(blob,env){
+ const bytes=Buffer.isBuffer(blob)?blob:blob instanceof Uint8Array?Buffer.from(blob):null;
+ if(!bytes)throw Error('INVALID_ENVELOPE');
  const ring=loadKeyring(env);
- try{return unpack(blob,{legacyKey:ring.legacyKey,keys:ring.keys}).plaintext;}
+ try{return unpack(bytes,{legacyKey:ring.legacyKey,keys:ring.keys}).plaintext;}
  finally{clearKeyring(ring);}
 }
 module.exports={loadKeyring,clearKeyring,sealBytes,unsealBytes};

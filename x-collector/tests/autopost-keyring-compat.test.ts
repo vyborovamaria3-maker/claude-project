@@ -49,6 +49,7 @@ test('V2-07: CJS readers handle TypeScript legacy and v2 ciphertext',async()=>{
   const modern=encryptBuffer(plain);
   assert.equal(core.kind(modern),'v2');
   assert.deepEqual(cjs.unsealBytes(modern,vars),plain);
+  assert.deepEqual(cjs.unsealBytes(new Uint8Array(modern),vars),plain);
   delete process.env.X_COLLECTOR_ACTIVE_KEY_ID;
   const previous=encryptBuffer(plain);
   assert.equal(core.kind(previous),'legacy','Default writes must remain legacy');
