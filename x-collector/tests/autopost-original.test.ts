@@ -36,6 +36,6 @@ test('original post generation rejects fabricated reaction targets',async()=>{
  delete load.cache[modulePath];const {planOriginal}=load(modulePath);
  try{
   const c={query:async(sql:string)=>({rows:sql.includes('xc_ai_providers')?[{}]:[]})};
-  await assert.rejects(planOriginal(c,{account_name:'publisher',kinds:['post'],language:'en',style:''},Date.now()),/Неизвестное действие или источник/);
+  await assert.rejects(planOriginal(c,{account_name:'publisher',provider_id:'provider',kinds:['post'],language:'en',style:''},Date.now()),/Неизвестное действие или источник/);
  }finally{generate.mock.restore();delete load.cache[modulePath];}
 });
