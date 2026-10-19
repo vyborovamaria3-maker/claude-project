@@ -1,7 +1,7 @@
 const {spawn}=require('node:child_process');const path=require('node:path'),fs=require('node:fs');let sourceCollector,historyCollector;
 const {claim,eligible}=require('./autopost/queue.cjs');
 const {connect}=require('./autopost/runtime.cjs');const {plan,inWindow}=require('./autopost/store.cjs');const {execute,sync,persistPost,reconcilePost}=require('./autopost/browser.cjs');
-const {decideReconciliation,nextCheckAt,RECONCILIATION_WINDOW_MS}=require('./autopost/reconciliation.cjs');
+const {decideReconciliation,nextCheckAt}=require('./autopost/reconciliation.cjs');
 const {classifyPreSendError}=require('./autopost/publish-retry.cjs');
 const {classifyAuditError}=require('./autopost/audit-error.cjs');
 const {recoverInterruptedJobs}=require('./autopost/recovery.cjs');
