@@ -18,15 +18,45 @@ async function persistPostTx(c,job,id,data={}){const timestamp=Number((BigInt(id
 async function persistPost(c,job,id,data={}){await c.query('BEGIN');try{await persistPostTx(c,job,id,data);await c.query('COMMIT');}catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}}
 
 function extractUser(body,handle){const stack=[body];let n=0;while(stack.length&&n++<30000){const v=stack.pop();if(!v||typeof v!=='object')continue;const username=v.legacy?.screen_name||v.core?.screen_name;if(username?.toLowerCase()===handle.toLowerCase()&&/^\d+$/.test(v.rest_id||''))return v.rest_id;for(const value of Object.values(v))if(value&&typeof value==='object')stack.push(value);}return null;}
+// Reject redirected or mismatched authors before any click that may cause an X write.
+function verifiedTargetLink(permalink,expectedHandle,targetId){
+ if(typeof permalink!=='string'||!/^[A-Za-z0-9_]{1,15}$/.test(expectedHandle||'')||!/^[0-9]{1,25}$/.test(String(targetId||'')))throw Error('TARGET_NOT_FOUND');
+ let url;try{url=new URL(permalink,'https://x.com');}catch{throw Error('TARGET_NOT_FOUND');}
+ const parts=url.pathname.split('/').filter(Boolean);
+ if(!['x.com','www.x.com','twitter.com','www.twitter.com'].includes(url.hostname.toLowerCase())||
+   !['https:'].includes(url.protocol)||parts.length!==3||parts[1].toLowerCase()!=='status'||
+   parts[0].toLowerCase()!==expectedHandle.toLowerCase()||parts[2]!==String(targetId))
+  throw Error('TARGET_NOT_FOUND');
+ return true;
+}
+function verifiedProfileLink(profileHref,expectedHandle){
+ if(typeof profileHref!=='string'||!/^[A-Za-z0-9_]{1,15}$/.test(expectedHandle||''))throw Error('TARGET_NOT_FOUND');
+ let url;try{url=new URL(profileHref,'https://x.com');}catch{throw Error('TARGET_NOT_FOUND');}
+ const parts=url.pathname.split('/').filter(Boolean);
+ if(url.protocol!=='https:'||!['x.com','www.x.com','twitter.com','www.twitter.com'].includes(url.hostname.toLowerCase())||
+ parts.length!==1||parts[0].toLowerCase()!==expectedHandle.toLowerCase())throw Error('TARGET_NOT_FOUND');
+ return true;
+}
+function confirmedCreateTweetResponse(response){
+ if(response?.status===401)throw Error('SESSION_EXPIRED HTTP 401 CreateTweet');
+ if(response?.status===403||response?.status===429)throw Error('X_RESTRICTED HTTP '+response.status+' CreateTweet');
+ if(!response?.ok)throw Error('HTTP '+String(response?.status??'unknown')+' CreateTweet: result uncertain');
+ let result=response.body?.data?.create_tweet?.tweet_results?.result;
+ if(result?.tweet)result=result.tweet;
+ if(!/^[0-9]{1,25}$/.test(String(result?.rest_id||'')))throw Error('Нет подтверждения X');
+ return String(result.rest_id);
+}
 async function execute(c,job){let browser,attempted=false,article,followArea,confirmedTweetId=null;try{const opened=await open(c,job.account_name,job.expected_handle);browser=opened.browser;const page=opened.page;let button,responsePromise;
  if(job.kind==='post'){await page.goto('https://x.com/compose/post',{waitUntil:'domcontentloaded',timeout:45000});await page.locator('[data-testid="tweetTextarea_0"]').first().fill(job.content);button=page.locator('[data-testid="tweetButton"]').first();}
- else {await page.goto(`https://x.com/${job.target_handle}/status/${job.target_id}`,{waitUntil:'domcontentloaded',timeout:45000});article=page.locator('article').filter({has:page.locator(`a[href$="/status/${job.target_id}"]`)}).first();await article.waitFor({timeout:25000});const permalink=await article.locator('a').filter({has:page.locator('time')}).first().getAttribute('href');if(!permalink||new URL(permalink,'https://x.com').pathname.split('/').at(-1)!==job.target_id)throw Error('Целевой пост не подтверждён');if(job.kind==='reply'){await article.locator('[data-testid="reply"]').click();await page.locator('[data-testid="tweetTextarea_0"]').first().fill(job.content);button=page.locator('[data-testid="tweetButton"]').first();}
+ else {await page.goto(`https://x.com/${job.target_handle}/status/${job.target_id}`,{waitUntil:'domcontentloaded',timeout:45000});article=page.locator('article').filter({has:page.locator(`a[href$="/status/${job.target_id}"]`)}).first();await article.waitFor({timeout:25000});const permalink=await article.locator('a').filter({has:page.locator('time')}).first().getAttribute('href');verifiedTargetLink(permalink,job.target_handle,job.target_id);
+ const authorHref=await article.locator('[data-testid="User-Name"] a[href^="/"]').first().getAttribute('href');
+ verifiedProfileLink(authorHref,job.target_handle);if(job.kind==='reply'){await article.locator('[data-testid="reply"]').click();await page.locator('[data-testid="tweetTextarea_0"]').first().fill(job.content);button=page.locator('[data-testid="tweetButton"]').first();}
  else if(job.kind==='like'){if(await article.locator('[data-testid="unlike"]').count()){await done(c,job,null,'Уже отмечено лайком');return;}button=article.locator('[data-testid="like"]');}
  else if(job.kind==='repost'){if(await article.locator('[data-testid="unretweet"]').count()){await done(c,job,null,'Уже репостнуто');return;}await article.locator('[data-testid="retweet"]').click();button=page.locator('[data-testid="retweetConfirm"]');}
- else if(job.kind==='follow'){let userId=null;const listener=async r=>{try{if(r.status()===200&&r.url().includes('/graphql/'))userId=extractUser(await r.json(),job.target_handle)||userId;}catch{}};page.on('response',listener);await page.goto('https://x.com/'+job.target_handle,{waitUntil:'domcontentloaded',timeout:45000});const deadline=Date.now()+15000;while(!userId&&Date.now()<deadline)await page.waitForTimeout(250);page.off('response',listener);if(!userId)throw Error('Не удалось подтвердить ID целевого профиля');followArea=page.locator('[data-testid="primaryColumn"]');if(await followArea.locator(`[data-testid="${userId}-unfollow"]`).count()){await done(c,job,null,'Уже подписан');return;}button=followArea.locator(`[data-testid="${userId}-follow"]`).first();followArea=followArea.locator(`[data-testid="${userId}-unfollow"]`);}}
+ else if(job.kind==='follow'){let userId=null;const listener=async r=>{try{if(r.status()===200&&r.url().includes('/graphql/'))userId=extractUser(await r.json(),job.target_handle)||userId;}catch{}};page.on('response',listener);await page.goto('https://x.com/'+job.target_handle,{waitUntil:'domcontentloaded',timeout:45000});const deadline=Date.now()+15000;while(!userId&&Date.now()<deadline)await page.waitForTimeout(250);page.off('response',listener);if(!userId)throw Error('Не удалось подтвердить ID целевого профиля');verifiedProfileLink(page.url(),job.target_handle);followArea=page.locator('[data-testid="primaryColumn"]');if(await followArea.locator(`[data-testid="${userId}-unfollow"]`).count()){await done(c,job,null,'Уже подписан');return;}button=followArea.locator(`[data-testid="${userId}-follow"]`).first();followArea=followArea.locator(`[data-testid="${userId}-unfollow"]`);}}
 
  await button.waitFor({timeout:20000});const enabledDeadline=Date.now()+15000;while(!await button.isEnabled()){if(Date.now()>enabledDeadline)throw Error('Кнопка действия недоступна');await page.waitForTimeout(250);}
- if(['post','reply'].includes(job.kind))responsePromise=page.waitForResponse(r=>r.request().method()==='POST'&&/\/CreateTweet$/.test(new URL(r.url()).pathname),{timeout:45000}).then(async r=>({ok:r.ok(),body:await r.json()})).catch(()=>null);
+ if(['post','reply'].includes(job.kind))responsePromise=page.waitForResponse(r=>r.request().method()==='POST'&&/\/CreateTweet$/.test(new URL(r.url()).pathname),{timeout:45000}).then(async r=>({ok:r.ok(),status:r.status(),body:await r.json().catch(()=>null)})).catch(()=>null);
  // Persist the irreversible boundary before the click, including cancellation/pause checks.
  const {contentHash:boundaryHash,legacyDedup:boundaryLegacy}=fingerprints(job);
  const attemptNow=Date.now();const updated=await c.query(`UPDATE xc_auto_jobs SET attempted=true,attempted_at=$3 WHERE id=$1 AND status='running' AND EXISTS(SELECT 1 FROM x_accounts a WHERE a.name=$2 AND a.role='publisher' AND a.status='active' AND COALESCE(a.account_busy_until,0)>$3) AND NOT EXISTS(SELECT 1 FROM xc_auto_jobs other JOIN xc_auto_jobs current ON current.id=$1
@@ -34,7 +64,7 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
  AND (other.content_hash IN ($5,$6) OR other.dedup=$6)
  AND other.attempted AND other.status IN ('running','uncertain'))
  AND (origin='manual' OR (NOT (SELECT paused FROM xc_auto_control WHERE id=1) AND EXISTS(SELECT 1 FROM xc_auto_config f WHERE f.account_name=$2 AND f.enabled AND (f.start_hour=f.end_hour OR (f.start_hour<f.end_hour AND extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')>=f.start_hour AND extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')<f.end_hour) OR (f.start_hour>f.end_hour AND (extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')>=f.start_hour OR extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')<f.end_hour))) AND (SELECT count(*) FROM xc_auto_jobs j WHERE j.account_name=$2 AND j.attempted AND COALESCE(j.attempted_at,j.started_at)>=$4)<f.daily_limit))) RETURNING id`,[job.id,job.account_name,attemptNow,Math.floor((attemptNow+10800000)/86400000)*86400000-10800000,boundaryHash,boundaryLegacy]);if(!updated.rowCount)throw Error('Задание остановлено до отправки');attempted=true;await button.click({timeout:15000});
- if(responsePromise){const r=await responsePromise;let result=r?.body?.data?.create_tweet?.tweet_results?.result;if(result?.tweet)result=result.tweet;const id=result?.rest_id;if(!r?.ok||!/^\d+$/.test(id||''))throw Error('Нет подтверждения X');confirmedTweetId=id;await require('./finalize.cjs').finalizePublication(c,job,id,extract(r.body,id)||{},{expectedStatus:'running',message:'Опубликовано в X'});await breakerSuccess(c,'account',job.account_name).catch(()=>{});}
+ if(responsePromise){const r=await responsePromise;const id=confirmedCreateTweetResponse(r);confirmedTweetId=id;await require('./finalize.cjs').finalizePublication(c,job,id,extract(r.body,id)||{},{expectedStatus:'running',message:'Опубликовано в X'});await breakerSuccess(c,'account',job.account_name).catch(()=>{});}
  else{const selector=job.kind==='like'?'[data-testid="unlike"]':job.kind==='repost'?'[data-testid="unretweet"]':'[data-testid$="-unfollow"]';await (job.kind==='follow'?followArea:article.locator(selector).first()).waitFor({timeout:20000});await done(c,job,null,'Действие подтверждено интерфейсом X');}
  }catch(_e){
  const failure=classifyPreSendError(_e);
@@ -166,4 +196,4 @@ async function reconcileAction(c,job,opener=open){
   }finally{page.off('response',listener);}
  }finally{await opened.browser.close().catch(()=>{});}
 }
-module.exports={open,extract,extractUser,persistPost,persistPostTx,execute,sync,extractTimelineTweets,reconcilePost,reconcileAction};
+module.exports={open,extract,extractUser,persistPost,persistPostTx,execute,sync,extractTimelineTweets,reconcilePost,reconcileAction,verifiedTargetLink,verifiedProfileLink,confirmedCreateTweetResponse};

@@ -50,3 +50,16 @@ test('post deduplication ignores source tweet ids and their permalinks',async()=
   assert.equal(inserts[0][10],inserts[1][10]);
  }finally{delete load.cache[storePath];}
 });
+
+test('CreateTweet 403/429 is classified as account restriction, without retrying uncertain sends',()=>{
+ const {confirmedCreateTweetResponse}=load('../scripts/autopost/browser.cjs');
+ for(const status of [403,429]){
+  let caught:unknown;
+  try{confirmedCreateTweetResponse({ok:false,status,body:{errors:[{message:'private response'}]}});}catch(error){caught=error;}
+  assert.equal(retry.classifyPreSendError(caught).code,'X_RESTRICTED');
+  assert.equal(retry.shouldRetryBeforeSend(caught,true,0),false);
+ }
+ assert.throws(()=>confirmedCreateTweetResponse({ok:false,status:401,body:null}),/SESSION_EXPIRED/);
+ const id=confirmedCreateTweetResponse({ok:true,status:200,body:{data:{create_tweet:{tweet_results:{result:{rest_id:'123456'}}}}}});
+ assert.equal(id,'123456');
+});

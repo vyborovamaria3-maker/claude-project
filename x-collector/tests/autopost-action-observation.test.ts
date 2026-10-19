@@ -99,3 +99,15 @@ test('invalid target identity never starts a browser',async()=>{
  assert.deepEqual(await reconcileAction({}, {kind:'follow',account_name:'test-account',expected_handle:'publisher',target_handle:'invalid/name'},async()=>{opened=true;}),{status:'unknown'});
  assert.equal(opened,false);
 });
+
+test('pre-send target guard rejects renamed authors, redirect paths and wrong tweet IDs',()=>{
+ const {verifiedTargetLink,verifiedProfileLink}=load('../scripts/autopost/browser.cjs');
+ assert.equal(verifiedTargetLink('/Alice/status/12345','alice','12345'),true);
+ assert.equal(verifiedProfileLink('/Alice','alice'),true);
+ for(const href of ['/bob/status/12345','/alice/status/999','https://evil.example/alice/status/12345','/alice/status/12345/extra']){
+  assert.throws(()=>verifiedTargetLink(href,'alice','12345'),/TARGET_NOT_FOUND/);
+ }
+ for(const href of ['/bob','https://evil.example/alice','/alice/status/12345']){
+  assert.throws(()=>verifiedProfileLink(href,'alice'),/TARGET_NOT_FOUND/);
+ }
+});
