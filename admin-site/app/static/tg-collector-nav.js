@@ -13,7 +13,9 @@
       ['maxQueriesPerDay','Запросов за сутки','max_queries_per_day',1,200],
       ['maxNewPerDay','Новых источников за сутки','max_new_per_day',1,100],
       ['maxSources','Максимум источников всего','max_sources',1,1000],
-      ['autoKeywordsLimit','Автослов в подборке','auto_keywords_limit',1,30],
+      ['pumpMinAthUsd','Минимальный ATH капитализации, USD','pump_min_ath_usd',1000,1000000000],
+        ['pumpMaxTokens','Запросов Pump.fun за цикл','pump_max_tokens',1,10],
+        ['autoKeywordsLimit','Автослов в подборке','auto_keywords_limit',1,30],
       ['twitterLookbackHours','Посты Twitter за часы','twitter_lookback_hours',1,168],
       ['twitterTweetLimit','Максимум постов для анализа','twitter_tweet_limit',100,5000],
       ['minKeywordPosts','Минимум разных постов на слово','min_keyword_posts',2,20],
@@ -25,6 +27,9 @@
       <p>Последний поиск: ${esc(formatDate(d.last_completed_at))} · Следующий: ${esc(formatDate(d.next_run_at))}${d.last_error_code ? ' · Код: '+esc(d.last_error_code) : ''}</p>
       <form id="tgDiscoveryForm" style="display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
         <label style="grid-column:1/-1"><input id="tgDiscoveryEnabled" type="checkbox" ${d.enabled?'checked':''}> Включить автопоиск и подключение найденных источников</label>
+        <label style="grid-column:1/-1"><input id="tgPumpEnabled" type="checkbox" ${d.pump_enabled?'checked':''}> Искать минты и тикеры Pump.fun с подтверждённым ATH капитализации</label>
+        <label style="grid-column:1/-1">Минты / тикеры Pump.fun (до 10, через запятую; пусто — брать из Twitter)<input id="tgPumpQueries" value="${esc((d.pump_queries||[]).join(', '))}" maxlength="500" style="display:block;width:100%"></label>
+        <p style="grid-column:1/-1">ATH — историческая капитализация в USD по данным Pump.fun, не текущая цена. ${esc(d.pump_error_code||'')} ${(d.pump_results||[]).map(t=>esc(t.symbol+' · '+t.mint+' · ATH $'+t.athUsd)).join('; ')}</p>
         <label style="grid-column:1/-1"><input id="tgAutoKeywordsEnabled" type="checkbox" ${d.auto_keywords_enabled?'checked':''}> Самостоятельно подбирать слова из сохранённых Twitter-постов</label>
         <p style="grid-column:1/-1">Разбор локальный: тикеры, хештеги и криптотемы. Одинаковые тексты и повторения одного автора не раздувают рейтинг. Последний анализ: ${esc(formatDate(d.keyword_refreshed_at))}; просмотрено постов: ${esc(d.keyword_post_count || 0)}${d.keyword_error_code ? ' · '+esc(d.keyword_error_code) : ''}. Автослов: ${esc((d.generated_keywords || []).join(', ') || 'пока нет — используются резервные слова')}.</p>
         <label style="grid-column:1/-1">Дополнительные/резервные слова — по одному на строку (до 30, необязательно при автоподборе)<textarea id="tgDiscoveryKeywords" rows="5" maxlength="2000" style="display:block;width:100%">${esc(d.keywords.join('\n'))}</textarea></label>
@@ -59,9 +64,9 @@
       if (discoveryForm) discoveryForm.onsubmit = async e => {
         e.preventDefault(); clearTimeout(timer); busy = true;
         const button = document.getElementById('tgDiscoverySave'); button.disabled = true;
-        const body = {enabled: document.getElementById('tgDiscoveryEnabled').checked, autoKeywordsEnabled: document.getElementById('tgAutoKeywordsEnabled').checked,
+        const body = {pumpEnabled:document.getElementById('tgPumpEnabled').checked,pumpQueries:document.getElementById('tgPumpQueries').value.split(',').map(v=>v.trim().replace(/^\$/,'')).filter(Boolean),enabled: document.getElementById('tgDiscoveryEnabled').checked, autoKeywordsEnabled: document.getElementById('tgAutoKeywordsEnabled').checked,
           keywords: document.getElementById('tgDiscoveryKeywords').value.split(/\r?\n/).map(k=>k.trim()).filter(Boolean)};
-        for (const key of ['intervalMinutes','resultsPerQuery','queriesPerCycle','maxQueriesPerDay','maxNewPerDay','maxSources','autoKeywordsLimit','twitterLookbackHours','twitterTweetLimit','minKeywordPosts','minKeywordAuthors']) body[key] = Number(document.getElementById(key).value);
+        for (const key of ['pumpMinAthUsd','pumpMaxTokens','intervalMinutes','resultsPerQuery','queriesPerCycle','maxQueriesPerDay','maxNewPerDay','maxSources','autoKeywordsLimit','twitterLookbackHours','twitterTweetLimit','minKeywordPosts','minKeywordAuthors']) body[key] = Number(document.getElementById(key).value);
         try { await api('/api/tg-collector/discovery', {method:'POST',body:JSON.stringify(body)}); busy = false; if (active()) void render(); }
         catch (error) { busy = false; button.disabled = false; if(active()) document.getElementById('tgDiscoveryStatus').textContent = error.message; }
       };
