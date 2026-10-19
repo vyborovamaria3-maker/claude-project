@@ -35,7 +35,7 @@ node scripts/autopost/rotate-keys.cjs --dry-run
 node scripts/autopost/rotate-keys.cjs --apply-test-only --confirm-backup --confirm-worker-stopped
 ```
 
-Только после действительного бэкапа и остановки тестового Worker. Код проверяет суффикс имени БД `_test`, блокирует таблицы, последовательно расшифровывает, валидирует и заново шифрует записи. Ошибка в любом шаге вызывает **ROLLBACK всей операции**.
+Только после действительного бэкапа и остановки тестового Worker. Код проверяет суффикс имени БД `_test`, проверяет отсутствие свежего heartbeat живого Worker, блокирует таблицы, последовательно расшифровывает, валидирует и заново шифрует записи. Ошибка в любом шаге вызывает **ROLLBACK всей операции**.
 
 Важно: существующие производственные читатели `x-collector/lib/trade/crypto.ts`, `src/x/session.ts`, `scripts/autopost/runtime.cjs` и `scripts/x-login-web.cjs` **пока не понимают V2-envelope**. Поэтому **никогда** не запускать test-only ротацию на рабочей БД и не заменять прежний `MASTER_KEY`, даже если dry-run успешен.
 

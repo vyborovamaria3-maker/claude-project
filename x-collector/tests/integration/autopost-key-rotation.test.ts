@@ -30,10 +30,14 @@ test('real PostgreSQL: disposable key rehearsal re-encrypts both tables and roll
   const ai=legacy(Buffer.from('test-api-credential-no-value'),oldKey);
   await client.query("INSERT INTO x_accounts(name,session_encrypted) VALUES('test_account',$1)",[session]);
   await client.query("INSERT INTO xc_ai_providers(id,secret) VALUES('mock_ai',$1)",[ai]);
+  await client.query('CREATE TABLE xc_auto_worker_health(id int PRIMARY KEY,heartbeat_at bigint)');
+  await client.query('INSERT INTO xc_auto_worker_health(id,heartbeat_at) VALUES(1,$1)',[Date.now()]);
   const oldScan=await r.audit(client,{legacyKey:oldKey});
   assert.deepEqual(oldScan.counts,{x_accounts:{legacy:1,v2:0},xc_ai_providers:{legacy:1,v2:0}});
   const opts={legacyKey:oldKey,nextKey:newKey,nextId:'new_2026',keys:{new_2026:newKey},confirmedBackup:true,confirmedStopped:true};
   await assert.rejects(r.rotateDisposableTestDatabase(client,{...opts,confirmedStopped:false}),/REHEARSAL_PRECONDITIONS_REQUIRED/);
+  await assert.rejects(r.rotateDisposableTestDatabase(client,opts),/WORKER_STILL_ACTIVE/);
+  await client.query('UPDATE xc_auto_worker_health SET heartbeat_at=0 WHERE id=1');
   const rotated=await r.rotateDisposableTestDatabase(client,opts);
   assert.equal(rotated.mode,'test-only-rotation');
   assert.equal(rotated.counts.x_accounts.legacy,1);
