@@ -5,6 +5,14 @@ import {createCipheriv,createDecipheriv,randomBytes} from "node:crypto";
 const MAGIC=Buffer.from("XCKEYV2!","ascii");
 const ID=/^[A-Za-z0-9_-]{1,48}$/;
 const KEY_BYTES=32,IV_BYTES=12,TAG_BYTES=16;
+let legacyCache:Buffer|null=null;
+function cachedLegacyKey():Buffer {
+ if(legacyCache)return Buffer.from(legacyCache);
+ const parsed=parseKey(process.env.MASTER_KEY||process.env.X_COLLECTOR_MASTER_KEY||"");
+ legacyCache=Buffer.from(parsed);
+ return parsed;
+}
+
 function parseKey(raw:string):Buffer {
  if(!raw)throw Error("KEY_UNAVAILABLE");
  if(!/^[0-9a-fA-F]{64}$/.test(raw)&&!/^[A-Za-z0-9+/]{42}[A-Za-z0-9+/=]{2}$/.test(raw))
@@ -14,7 +22,7 @@ function parseKey(raw:string):Buffer {
  return k;
 }
 function configuredKeys():{legacyKey:Buffer;keys:Record<string,Buffer>;active:string|null}{
- const legacyKey=parseKey(process.env.MASTER_KEY||process.env.X_COLLECTOR_MASTER_KEY||"");
+ const legacyKey=cachedLegacyKey();
  const keys:Record<string,Buffer>=Object.create(null);
  try{
   const raw=process.env.X_COLLECTOR_ENCRYPTION_KEYS;
@@ -69,7 +77,7 @@ export function decryptBufferWithKeys(blob:Buffer,legacyKey:Buffer,keys:Record<s
  }catch{throw Error("DECRYPTION_FAILED");}
 }
 // Historical export, but keys are intentionally loaded fresh per operation.
-export function clearKeyCache():void {}
+export function clearKeyCache():void {legacyCache?.fill(0);legacyCache=null;}
 export function encryptBuffer(plain:Buffer):Buffer{
  const ring=configuredKeys();
  try{return ring.active?versionedEncrypt(plain,ring.active,ring.keys[ring.active]):legacyEncrypt(plain,ring.legacyKey);}
