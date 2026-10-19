@@ -1,5 +1,12 @@
 PROJECT: X Collector Runtime v2
 
+## PR #127 — локальная приёмка и производительность V2
+
+V2 plan/queue EXPLAIN (2026-10-20): statuses reconciled with Windows acceptance and CI f0627c6. SQL-only disposable *_test benchmark: 200004 synthetic jobs / 100 accounts; mixed 35–42 ms with manual_due index, manual-first before LIMIT verified. All-accounts-busy and all-agent-quotas-exhausted exceeded 15 s. A 10004-job diagnostic shows 4000 repeated quota aggregates before eligibility rejection. V2-05 performance gate remains open; runtime SQL unchanged. See x-collector/docs/QUEUE_EXPLAIN_V205_20261020_RU.md. No working DB/keys, Worker, X or merge used.
+
+V2-05 quota optimization (2026-10-20): materialized per-account eligibility plus additive attempted-time partial index; hashed membership retains manual-first/config exemption and all account/breaker guards. Same 200004-job fixture: mixed 2–19 ms, busy 53.449 ms, exhausted quota 54.555 ms (both previously >15 s); 100 quota aggregates / 100 accounts, pause/busy zero. Targeted regression catches old 250 aggregates / 12 accounts; full 368 unit + 13 PG tests, typecheck/lint/build/native PostgreSQL pass. claim/leases/send-boundary/dedup unchanged. Only disposable *_test DB; no working keys/DB, live X or merge. See QUEUE_EXPLAIN_V205_20261020_RU.md.
+
+
 PR #68 merge integration (2026-10-18): preserve canonical Alchemy history and Settings V2 transport/monitoring; forensic coverage and per-request collection ledger use separate explicit schemas so #65 cache rows survive unchanged. No automatic Helius fallback. Fence success/failure/budget-release by lease token and expiry; retain raw inventory evidence and unknown execution. Offline settings/forensic/FIFO/API/legacy-database regressions cover integration; authoritative PnL remains unavailable for incompletely decoded raw history.
 
 PR #65 merge validation (2026-10-18): preserve Settings V2 exports, imports and monitoring while routing Alchemy history through the shared persisted timeout/retry/rate/concurrency transport. UI checks Alchemy availability; generic RPC choices remain Intelligence-only. Mocked adapter tests exercise pause, batch size, 429 retry, request accounting and finished run status. Provider migration no longer clears validated wallet history on every initialization. Full swap decoding and authoritative PnL remain explicitly incomplete.
@@ -114,7 +121,3 @@ Live collection exceeded 89000 canonical messages with 217 unique PNUT term matc
 across 12 public sources; more than 9000 posts had observed reactions. No public linked
 discussion was found among the inspected channels (one private/unavailable); real
 discussion ingestion remains unverified, while public linking/queue tests pass.
-
-V2 plan/queue EXPLAIN (2026-10-20): statuses reconciled with Windows acceptance and CI f0627c6. SQL-only disposable *_test benchmark: 200004 synthetic jobs / 100 accounts; mixed 35–42 ms with manual_due index, manual-first before LIMIT verified. All-accounts-busy and all-agent-quotas-exhausted exceeded 15 s. A 10004-job diagnostic shows 4000 repeated quota aggregates before eligibility rejection. V2-05 performance gate remains open; runtime SQL unchanged. See x-collector/docs/QUEUE_EXPLAIN_V205_20261020_RU.md. No working DB/keys, Worker, X or merge used.
-
-V2-05 quota optimization (2026-10-20): materialized per-account eligibility plus additive attempted-time partial index; hashed membership retains manual-first/config exemption and all account/breaker guards. Same 200004-job fixture: mixed 2–19 ms, busy 53.449 ms, exhausted quota 54.555 ms (both previously >15 s); 100 quota aggregates / 100 accounts, pause/busy zero. Targeted regression catches old 250 aggregates / 12 accounts; full 368 unit + 13 PG tests, typecheck/lint/build/native PostgreSQL pass. claim/leases/send-boundary/dedup unchanged. Only disposable *_test DB; no working keys/DB, live X or merge. See QUEUE_EXPLAIN_V205_20261020_RU.md.
