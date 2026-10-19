@@ -127,7 +127,8 @@ async function reconcileAction(c,job){
     if(!userId)return {status:'unknown'};
     const done=area.locator('[data-testid="'+userId+'-unfollow"]');
     const available=area.locator('[data-testid="'+userId+'-follow"]');
-    return {status:classifyActionState('follow',(await done.count())>0,(await available.count())>0)};
+    const doneCount=await done.count(),availableCount=await available.count();
+    return {status:classifyActionState('follow',doneCount>0,availableCount>0)};
    }finally{page.off('response',listener);}
   }
   if(!['like','repost'].includes(job.kind))return {status:'unknown'};
@@ -144,7 +145,8 @@ async function reconcileAction(c,job){
    if(!permalink||new URL(permalink,'https://x.com').pathname.split('/').at(-1)!==targetId)return {status:'unknown'};
    const done=article.locator(job.kind==='like'?'[data-testid="unlike"]':'[data-testid="unretweet"]');
    const available=article.locator(job.kind==='like'?'[data-testid="like"]':'[data-testid="retweet"]');
-   return {status:classifyActionState(job.kind,(await done.count())>0,(await available.count())>0)};
+   const doneCount=await done.count(),availableCount=await available.count();
+   return {status:classifyActionState(job.kind,doneCount>0,availableCount>0)};
   }finally{page.off('response',listener);}
  }finally{await opened.browser.close().catch(()=>{});}
 }
