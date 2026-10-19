@@ -17,9 +17,10 @@ test('real PostgreSQL: disposable key rehearsal re-encrypts both tables and roll
  assert(new URL(url).pathname.endsWith('_test'),'Dedicated *_test database required');
  const schema='autopost_rotation_'+randomUUID().replaceAll('-','');
  const client=new Client({connectionString:url,connectionTimeoutMillis:5000});
+ const lockClient=new Client({connectionString:url,connectionTimeoutMillis:5000});
  const oldKey=randomBytes(32),newKey=randomBytes(32);
  let created=false;
- await client.connect();
+ await Promise.all([client.connect(),lockClient.connect()]);
  try{
   await client.query('CREATE SCHEMA "'+schema+'"');created=true;
   await client.query('SET search_path TO "'+schema+'",public');
@@ -37,6 +38,10 @@ test('real PostgreSQL: disposable key rehearsal re-encrypts both tables and roll
   await assert.rejects(r.rotateDisposableTestDatabase(client,{...opts,confirmedStopped:false}),/REHEARSAL_PRECONDITIONS_REQUIRED/);
   await assert.rejects(r.rotateDisposableTestDatabase(client,opts),/WORKER_STILL_ACTIVE/);
   await client.query('UPDATE xc_auto_worker_health SET heartbeat_at=0 WHERE id=1');
+  // Simulate Worker alive without any fresh heartbeat: advisory lock still protects keys.
+  assert.equal((await lockClient.query('SELECT pg_try_advisory_lock(742098531) AS acquired')).rows[0].acquired,true);
+  await assert.rejects(r.rotateDisposableTestDatabase(client,opts),/WORKER_LOCK_HELD/);
+  assert.equal((await lockClient.query('SELECT pg_advisory_unlock(742098531) AS released')).rows[0].released,true);
   const rotated=await r.rotateDisposableTestDatabase(client,opts);
   assert.equal(rotated.mode,'test-only-rotation');
   assert.equal(rotated.counts.x_accounts.legacy,1);
@@ -56,6 +61,6 @@ test('real PostgreSQL: disposable key rehearsal re-encrypts both tables and roll
   assert.equal((await client.query<{n:number}>('SELECT count(*)::int n FROM xc_ai_providers')).rows[0].n,2);
  }finally{
   oldKey.fill(0);newKey.fill(0);
-  try{if(created){await client.query('RESET search_path');await client.query('DROP SCHEMA "'+schema+'" CASCADE');}}finally{await client.end().catch(()=>{});}
+  try{if(created){await client.query('RESET search_path');await client.query('DROP SCHEMA "'+schema+'" CASCADE');}}finally{await Promise.all([client.end().catch(()=>{}),lockClient.end().catch(()=>{})]);}
  }
 });

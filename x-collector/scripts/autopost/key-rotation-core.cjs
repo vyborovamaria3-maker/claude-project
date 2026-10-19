@@ -116,20 +116,26 @@ async function rotateDisposableTestDatabase(c,options){
  if(options?.confirmedBackup!==true||options?.confirmedStopped!==true)throw Error('REHEARSAL_PRECONDITIONS_REQUIRED');
  const name=(await c.query('SELECT current_database() AS name')).rows[0]?.name;
  if(typeof name!=='string'||!name.endsWith('_test'))throw Error('DISPOSABLE_TEST_DATABASE_REQUIRED');
- // A signed operator checkbox does not replace a live-worker safety check.
- const present=(await c.query("SELECT to_regclass('xc_auto_worker_health') AS present")).rows[0]?.present;
- if(present){
-  const current=(await c.query('SELECT heartbeat_at FROM xc_auto_worker_health WHERE id=1')).rows[0];
-  const last=Number(current?.heartbeat_at);
-  if(Number.isFinite(last)&&last>0&&Date.now()-last<120_000)throw Error('WORKER_STILL_ACTIVE');
- }
+ // The Worker holds session-level lock 742098531 throughout its lifetime.
+ // Transaction-scoped try-lock uses exactly that ID: no TOCTOU after heartbeat.
  await c.query('BEGIN');
  try{
-  await c.query('SELECT pg_advisory_xact_lock(742098537)');
+  const {rows} = await c.query('SELECT pg_try_advisory_xact_lock(742098531) AS acquired');
+  if(rows[0]?.acquired!==true)throw Error('WORKER_LOCK_HELD');
+  const present=(await c.query("SELECT to_regclass('xc_auto_worker_health') AS present")).rows[0]?.present;
+  if(present){
+   const current=(await c.query('SELECT heartbeat_at FROM xc_auto_worker_health WHERE id=1')).rows[0];
+   const last=Number(current?.heartbeat_at);
+   if(Number.isFinite(last)&&last>0&&Date.now()-last<120_000)throw Error('WORKER_STILL_ACTIVE');
+  }
   await c.query('LOCK TABLE x_accounts,xc_ai_providers IN ACCESS EXCLUSIVE MODE');
   const report=await scan(c,{...options,apply:true});
   await c.query('COMMIT');
   return report;
- }catch{await c.query('ROLLBACK').catch(()=>{});throw Error('TEST_ROTATION_ROLLED_BACK');}
+ }catch(error){
+  await c.query('ROLLBACK').catch(()=>{});
+  if(error?.message==='WORKER_STILL_ACTIVE'||error?.message==='WORKER_LOCK_HELD')throw error;
+  throw Error('TEST_ROTATION_ROLLED_BACK');
+ }
 }
 module.exports={MAGIC,parseKey,kind,packV2,unpack,validatePlaintext,scan,audit,rotateDisposableTestDatabase};
