@@ -7,6 +7,7 @@ import {createRequire} from 'node:module';
 const load=createRequire(__filename);
 const {claim}=load('../scripts/autopost/queue.cjs');
 const {finalizePublication}=load('../scripts/autopost/finalize.cjs');
+const {inspectPublicationState}=load('../scripts/autopost/finalize.cjs');
 const schema=readFileSync('scripts/autopost/schema.sql','utf8');
 const tweetId='1891234567890123456';
 const now=1_800_000_000_000;
@@ -61,8 +62,8 @@ test('V2-02 lost COMMIT acknowledgement is recoverable and idempotent',async()=>
   };
   await assert.rejects(finalizePublication(c,job,tweetId,{views:'11'},{expectedStatus:'running'}),e=>Boolean(e&&typeof e==='object'&&'auditCategory' in e&&e.auditCategory==='DB_ERROR'&&/after durable COMMIT/.test(String(e))));
   // The server committed even though the caller never received its acknowledgement.
-  assert.deepEqual(await require('../scripts/autopost/finalize.cjs').inspectPublicationState(c,id,tweetId),{status:'published',matches:true});
-  assert.deepEqual(await require('../scripts/autopost/finalize.cjs').inspectPublicationState(c,id,'1999999999999999999'),{status:'published',matches:false});
+  assert.deepEqual(await inspectPublicationState(c,id,tweetId),{status:'published',matches:true});
+  assert.deepEqual(await inspectPublicationState(c,id,'1999999999999999999'),{status:'published',matches:false});
   assert.equal((await db.query<{status:string,result_id:string}>('SELECT status,result_id FROM xc_auto_jobs WHERE id=$1',[id])).rows[0].status,'published');
   assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_posts WHERE tweet_id=$1',[tweetId])).rows[0].n,1);
   assert.equal((await db.query<{n:number}>("SELECT count(*)::int n FROM xc_auto_job_events WHERE job_id=$1 AND event_type='published'",[id])).rows[0].n,1);

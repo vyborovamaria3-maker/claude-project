@@ -7,6 +7,7 @@ import {Client} from 'pg';
 
 const load=createRequire(__filename);
 const {finalizePublication}=load('../../scripts/autopost/finalize.cjs');
+const {inspectPublicationState}=load('../../scripts/autopost/finalize.cjs');
 
 test('real PostgreSQL: concurrent reconciliation finalization has one consistent result', {
  skip:!process.env.RUNTIME_TEST_DATABASE_URL,timeout:60000,
@@ -52,7 +53,7 @@ test('real PostgreSQL: concurrent reconciliation finalization has one consistent
   await admin.query("UPDATE xc_auto_jobs SET status='running',attempted=true,attempted_at=$2 WHERE id=$1",[ambiguousJob,now]);
   let loseCommitAck=true;
   const ambiguousClient={query:async(q:string,params:unknown[]=[] )=>{
-   const result=params.length?await first.query(q,params as any[]):await first.query(q);
+   const result=params.length?await first.query(q,params as never[]):await first.query(q);
    if(loseCommitAck&&q.trim().toUpperCase()==='COMMIT'){
     loseCommitAck=false;
     throw Object.assign(new Error('simulated lost PostgreSQL COMMIT acknowledgement'),{code:'08006'});
@@ -60,7 +61,7 @@ test('real PostgreSQL: concurrent reconciliation finalization has one consistent
    return result;
   }};
   await assert.rejects(finalizePublication(ambiguousClient,ambiguousData,ambiguousTweet,{}, {expectedStatus:'running'}),/lost PostgreSQL COMMIT acknowledgement/);
-  assert.deepEqual(await require('../../scripts/autopost/finalize.cjs').inspectPublicationState(first,ambiguousJob,ambiguousTweet),{status:'published',matches:true});
+  assert.deepEqual(await inspectPublicationState(first,ambiguousJob,ambiguousTweet),{status:'published',matches:true});
   assert.deepEqual(await finalizePublication(first,ambiguousData,ambiguousTweet,{}, {expectedStatus:'running'}),{ok:true,alreadyConfirmed:true});
   assert.equal((await admin.query<{n:number}>("SELECT count(*)::int n FROM xc_auto_job_events WHERE job_id=$1 AND event_type='published'",[ambiguousJob])).rows[0].n,1);
   const failingJob=randomUUID(),failingTweet='1891234567890123457';

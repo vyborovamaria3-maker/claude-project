@@ -39,7 +39,7 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
   // If the durable job is already published, do not open a spurious reconciliation.
   const observedState=await require('./finalize.cjs').inspectPublicationState(c,job.id,confirmedTweetId);
   if(observedState.status==='published'){
-   if(confirmedTweetId&&!observedState.matches)throw Error('Сохранённый ID публикации не совпадает с подтверждённым X; повтор запрещён');
+   if(confirmedTweetId&&!observedState.matches)throw new Error('Сохранённый ID публикации не совпадает с подтверждённым X; повтор запрещён',{cause:_e});
    return;
   }
   if(require('./audit-error.cjs').classifyAuditError(_e).category!=='DB_ERROR')await recordAccountError(c,job.account_name,_e).catch(()=>{});
