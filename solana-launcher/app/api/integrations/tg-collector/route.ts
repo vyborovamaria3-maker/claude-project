@@ -194,9 +194,11 @@ export async function GET(request: NextRequest) {
 
     const [sources, stats, runtimeState, proxy, messages] = await Promise.all([
       p.query(`SELECT s.id::text, s.identifier, s.peer_id, s.title, s.enabled,
-        s.history_partial, s.last_message_id::text, s.last_success_at,
+        s.history_partial,s.full_history,s.history_complete, s.last_message_id::text, s.last_success_at,
         COALESCE(mc.message_count,0)::int AS message_count,
-        j.state, j.run_at, j.attempts, j.scanned_count, j.last_error
+        j.state, j.run_at, j.attempts, j.scanned_count, j.last_error,
+        (SELECT parent.identifier FROM tg_source_discussions ds JOIN tg_sources parent ON parent.id=ds.channel_source_id WHERE ds.discussion_source_id=s.id LIMIT 1) AS discussion_for,
+        (SELECT status FROM tg_source_discussions ds WHERE ds.channel_source_id=s.id) AS discussion_status
         FROM tg_sources s
         LEFT JOIN tg_source_message_counters mc ON mc.source_id=s.id
         LEFT JOIN tg_jobs j ON j.source_id=s.id
@@ -213,7 +215,7 @@ export async function GET(request: NextRequest) {
         FROM tg_runtime WHERE id=1`),
       readTgProxy(p),
       p.query(`SELECT m.source_id::text, s.identifier, m.message_id::text,
-        m.sender_id, m.posted_at, m.text, m.views, m.forwards, m.replies
+        m.sender_id, m.posted_at, m.text, m.views, m.forwards, m.replies,m.reactions,m.engagement_observed_at
         FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id
         WHERE ($1::bigint IS NULL OR m.source_id=$1)
           AND m.deleted_at IS NULL

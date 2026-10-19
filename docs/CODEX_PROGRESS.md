@@ -99,3 +99,17 @@ strict Pump category validation, durable cache, primary backoff and bounded dead
 Live PNUT mint and ticker both verified a $57.84M historical cap; bounded history is
 labeled as a lower bound on lifetime ATH. Regression tests cover fake/wrong contracts,
 other-chain/partial ticker matches, current versus historical data and 403 fallback.
+
+
+Public message discovery now distinguishes actual unique posts from public sources.
+Adds bounded pagination, exact term matching/dedup, canonical evidence/rollups and
+reaction snapshots. Matched channels and public linked discussion groups opt into
+complete available history through the existing resumable queue, removing the
+initial-500 cutoff for those sources. Private discussions and source limits remain
+visible. Live account rejected full-text search with PREMIUM_ACCOUNT_REQUIRED;
+explicitly labeled free public-search/history modes continue without Stars payment.
+
+Live collection exceeded 89000 canonical messages with 217 unique PNUT term matches
+across 12 public sources; more than 9000 posts had observed reactions. No public linked
+discussion was found among the inspected channels (one private/unavailable); real
+discussion ingestion remains unverified, while public linking/queue tests pass.

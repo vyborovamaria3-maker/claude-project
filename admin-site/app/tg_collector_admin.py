@@ -51,6 +51,8 @@ class DiscoveryBody(BaseModel):
     maxQueriesPerDay: int = Field(ge=1, le=200, strict=True)
     maxNewPerDay: int = Field(ge=1, le=100, strict=True)
     maxSources: int = Field(ge=1, le=1000, strict=True)
+    messageSearchEnabled: bool = Field(default=False, strict=True)
+    messageTerms: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=64)]] = Field(default_factory=lambda: ['PNUT','Peanut the Squirrel','2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump'], min_length=1, max_length=30)
     pumpEnabled: bool = Field(default=False, strict=True)
     pumpMinAthUsd: int = Field(default=100000, ge=1000, le=1000000000, strict=True)
     pumpMaxTokens: int = Field(default=3, ge=1, le=10, strict=True)
