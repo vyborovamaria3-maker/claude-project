@@ -1,8 +1,44 @@
 const nodeCrypto=require('node:crypto');const {readWorkerHealth}=require('./worker-health.cjs');const {name,handle,seal,digest}=require('./runtime.cjs');const {endpoint,generate,choices}=require('./providers.cjs');
 const safeProvider=p=>({...p,secret:undefined,hasKey:Boolean(p.secret)});
 function int(v,min,max){if(!Number.isInteger(v)||v<min||v>max)throw Error('Некорректное числовое значение');return v;}
-async function enqueue(c,input){if(!name(input.name)||!handle(input.expected)||!['post','reply','like','repost','follow'].includes(input.kind||'post'))throw Error('Некорректный аккаунт или действие');const kind=input.kind||'post';if(['post','reply'].includes(kind)&&(typeof input.text!=='string'||!input.text.trim()||Array.from(input.text).length>280))throw Error('Текст: 1–280 символов');if(kind!=='post'&&(!/^\d{1,25}$/.test(input.target_id||'')||!handle(input.target_handle)))throw Error('Нужен целевой твит и username');if(!/^[a-f0-9-]{36}$/i.test(input.id||''))throw Error('Некорректный ID');const account=(await c.query("SELECT name FROM x_accounts WHERE name=$1 AND role='publisher' AND status='active'",[input.name])).rows[0];if(!account)throw Error('Активный аккаунт публикации не найден');const now=Date.now(),at=input.scheduled_at===undefined?now:int(input.scheduled_at,now-60000,now+365*86400000);const rawNormalized=(input.text||'').trim().normalize('NFKC').toLowerCase().replace(/\s+/g,' ');const withoutSourceLinks=rawNormalized.replace(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/(?:i\/status\/\d+|[A-Za-z0-9_]{1,15}\/status\/\d+)(?:\?[^\s]*)?/gi,' ').replace(/\s+/g,' ').trim();const normalized=withoutSourceLinks||rawNormalized;const dedup=digest(kind==='post'?[input.name,kind,normalized].join('|'):[input.name,kind,input.target_id||''].join('|'));
- await c.query(`INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,target_id,target_handle,evidence,reason,provider_id,dedup,scheduled_at,created_at,origin) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING`,[input.id,input.name,input.expected.replace(/^@/,'').toLowerCase(),kind,input.text||null,input.target_id||null,input.target_handle||null,JSON.stringify(input.evidence||[]),input.reason||'',input.provider_id||null,dedup,at,now,input.origin||'manual']);const row=(await c.query('SELECT * FROM xc_auto_jobs WHERE id=$1 OR dedup=$2 ORDER BY created_at LIMIT 1',[input.id,dedup])).rows[0];return row;}
+// Bucket by scheduled local calendar date, not UTC or the mutable retry time.
+function scheduledDedupDay(timestamp){
+ const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(timestamp);
+ const item=part=>parts.find(p=>p.type===part)?.value;
+ return item('year')+'-'+item('month')+'-'+item('day');
+}
+async function enqueue(c,input){
+ if(!name(input.name)||!handle(input.expected)||!['post','reply','like','repost','follow'].includes(input.kind||'post'))throw Error('Некорректный аккаунт или действие');
+ const kind=input.kind||'post';
+ if(['post','reply'].includes(kind)&&(typeof input.text!=='string'||!input.text.trim()||Array.from(input.text).length>280))throw Error('Текст: 1–280 символов');
+ if(kind!=='post'&&(!/^\\d{1,25}$/.test(input.target_id||'')||!handle(input.target_handle)))throw Error('Нужен целевой твит и username');
+ if(!/^[a-f0-9-]{36}$/i.test(input.id||''))throw Error('Некорректный ID');
+ const now=Date.now(),at=input.scheduled_at===undefined?now:int(input.scheduled_at,now-60000,now+365*86400000);
+ const rawNormalized=(input.text||'').trim().normalize('NFKC').toLowerCase().replace(/\\s+/g,' ');
+ const withoutSourceLinks=rawNormalized.replace(/https?:\\/\\/(?:www\\.)?(?:x\\.com|twitter\\.com)\\/(?:i\\/status\\/\\d+|[A-Za-z0-9_]{1,15}\\/status\\/\\d+)(?:\\?[^\\s]*)?/gi,' ').replace(/\\s+/g,' ').trim();
+ const normalized=withoutSourceLinks||rawNormalized;
+ const contentHash=digest(kind==='post'?[input.name,kind,normalized].join('|'):[input.name,kind,input.target_id||''].join('|'));
+ const dedupDay=scheduledDedupDay(at);
+ const dedup=digest(contentHash+'|'+dedupDay);
+ await c.query('BEGIN');
+ try{
+  // Serialize enqueues per account, including different target days and clients.
+  const account=(await c.query("SELECT name FROM x_accounts WHERE name=$1 AND role='publisher' AND status='active' FOR UPDATE",[input.name])).rows[0];
+  if(!account)throw Error('Активный аккаунт публикации не найден');
+  // A possibly sent action blocks new same-content jobs even on future days.
+  const unresolved=(await c.query("SELECT * FROM xc_auto_jobs WHERE account_name=$1 AND kind=$2 AND content_hash=$3 AND attempted AND status IN ('running','uncertain') ORDER BY created_at LIMIT 1",[input.name,kind,contentHash])).rows[0];
+  if(unresolved){await c.query('COMMIT');return unresolved;}
+  await c.query(`INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,target_id,target_handle,evidence,reason,provider_id,dedup,scheduled_at,created_at,origin,content_hash,dedup_day)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16::date)
+   ON CONFLICT DO NOTHING`,[
+    input.id,input.name,input.expected.replace(/^@/,'').toLowerCase(),kind,input.text||null,input.target_id||null,input.target_handle||null,
+    JSON.stringify(input.evidence||[]),input.reason||'',input.provider_id||null,dedup,at,now,input.origin||'manual',contentHash,dedupDay
+   ]);
+  const row=(await c.query('SELECT * FROM xc_auto_jobs WHERE id=$1 OR dedup=$2 OR (account_name=$3 AND kind=$4 AND content_hash=$5 AND dedup_day=$6::date) ORDER BY created_at LIMIT 1',[input.id,dedup,input.name,kind,contentHash,dedupDay])).rows[0];
+  await c.query('COMMIT');
+  return row;
+ }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
+}
 async function overview(c){const providers=(await c.query('SELECT * FROM xc_ai_providers ORDER BY label')).rows.map(safeProvider);const configs=(await c.query('SELECT * FROM xc_auto_config ORDER BY account_name')).rows;const control=(await c.query('SELECT * FROM xc_auto_control WHERE id=1')).rows[0];const jobs=(await c.query('SELECT id,account_name,expected_handle,kind,content,target_id,target_handle,reason,provider_id,status,scheduled_at,created_at,result_id,result_url,message,origin FROM xc_auto_jobs ORDER BY created_at DESC LIMIT 100')).rows;const accounts=(await c.query("SELECT name,status FROM x_accounts WHERE role='publisher' ORDER BY name")).rows;const sources=(await c.query('SELECT count(*)::int count,max(posted_at)::text latest FROM twitter_tweets WHERE posted_at>$1',[Date.now()-86400000])).rows[0];const lists=(await c.query("SELECT to_regclass('xc_auto_sources') AS present")).rows[0].present?(await c.query("SELECT s.list_id,s.enabled,s.interval_minutes,s.next_run::text,t.status AS task_status,t.updated_at::text AS task_updated_at FROM xc_auto_sources s LEFT JOIN x_tasks t ON t.id=s.last_task_id ORDER BY s.list_id")).rows:[];const checkpoints=(await c.query("SELECT to_regclass('xc_list_checkpoints') AS present")).rows[0].present?(await c.query('SELECT list_id,status,last_completed_at,message FROM xc_list_checkpoints')).rows:[];const reconciliation=(await c.query("SELECT r.job_id,r.account_name,r.expected_handle,r.kind,r.status,r.attempted_at::text,r.next_check_at::text,r.deadline_at::text,r.attempts,r.matched_tweet_id,r.candidates,r.last_error,r.created_at::text,r.updated_at::text,r.finished_at::text,j.status AS job_status,j.content,j.message AS job_message,j.target_id,j.target_handle FROM xc_auto_reconcile r JOIN xc_auto_jobs j ON j.id=r.job_id WHERE r.status IN ('queued','running','manual_review','manual_required') ORDER BY CASE r.status WHEN 'manual_review' THEN 0 WHEN 'manual_required' THEN 1 ELSE 2 END,r.updated_at DESC LIMIT 100")).rows;const workerHealth=await readWorkerHealth(c);return {providers,configs,control,workerHealth,jobs,accounts,sources,lists:lists.map(list=>({...list,coverage:checkpoints.find(p=>p.list_id===list.list_id)||null})),reconciliation};}
 async function saveProvider(c,i){if(!name(i.id)||typeof i.label!=='string'||!i.label.trim()||i.label.length>100||typeof i.model!=='string'||!i.model.trim()||i.model.length>150||!['openai','anthropic','gemini','ollama','custom'].includes(i.protocol))throw Error('Заполните ID, название, протокол и модель');const url=endpoint(i.endpoint);if(i.protocol==='custom'&&!/^[A-Za-z0-9_-]+\.cjs$/.test(i.adapter||''))throw Error('Укажите имя файла адаптера .cjs');if(i.apiKey!==undefined&&(typeof i.apiKey!=='string'||i.apiKey.length>10000))throw Error('Некорректный API key');const old=(await c.query('SELECT secret,endpoint FROM xc_ai_providers WHERE id=$1',[i.id])).rows[0];if(old?.secret&&old.endpoint!==url&&!i.apiKey&&!i.clearKey)throw Error('При смене адреса API задайте новый ключ или удалите сохранённый');const secret=i.clearKey?null:i.apiKey?seal(i.apiKey):old?.secret||null;
  await c.query(`INSERT INTO xc_ai_providers(id,label,protocol,endpoint,model,secret,adapter,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET label=excluded.label,protocol=excluded.protocol,endpoint=excluded.endpoint,model=excluded.model,secret=excluded.secret,adapter=excluded.adapter`,[i.id,i.label,i.protocol,url,i.model,secret,i.adapter||null,Date.now()]);return {ok:true};}
@@ -26,4 +62,4 @@ async function plan(c,conf){const now=Date.now();await c.query('UPDATE xc_auto_c
  for(const [index,a] of output.entries()){const text=a.kind==='post'?a.text+' https://x.com/i/status/'+a.source.tweet_id:a.text;await enqueue(c,{id:nodeCrypto.randomUUID(),name:conf.account_name,expected:conf.expected_handle,kind:a.kind,text,target_id:a.source.tweet_id,target_handle:a.source.handle.replace(/^@/,''),evidence:[a.source],reason:a.reason,provider_id:conf.provider_id,origin:'agent',scheduled_at:now+index*60000});}
  await c.query('UPDATE xc_auto_config SET last_message=$2 WHERE account_name=$1',[conf.account_name,output.length?'Запланировано действий: '+output.length:'ИИ пропустил цикл']);
 }
-module.exports={enqueue,overview,saveProvider,saveConfig,plan,inWindow,planOriginal};
+module.exports={enqueue,overview,saveProvider,saveConfig,plan,inWindow,planOriginal,scheduledDedupDay};

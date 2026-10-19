@@ -79,7 +79,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 | V2-02 | Atomic finalization + typed errors | V2-01 | Не начато |
 | V2-03 | Engagement reconciliation | V2-02 | **В работе** — read-only наблюдения и регрессионные mocks; live X не проверен |
 | V2-04 | Heartbeat/health UI | V2-01 | Не начато |
-| V2-05 | Priority + dedup | V2-01 | **В работе** — manual-first в SQL, дедупликация ещё не обновлена |
+| V2-05 | Priority + dedup | V2-01 | **В работе** — manual-first, additive дневная дедупликация и guard uncertain; CI/PG подтверждение ещё требуется |
 | V2-06 | Circuit breaker | V2-02 | Не начато |
 | V2-07 | Secret rotation/runbook | Baseline | Не начато |
 | V2-08 | Controlled live smoke | После P0 и CI | Не начато |
@@ -145,3 +145,11 @@ Jitter для transient pre-send retry; разделение Worker на planner
 - UI показывает `offline/idle/busy/stalled`, реальное количество очереди, количество uncertain и задач ручного разбора, возраст старейшего ожидающего задания и прогресс компонентов. `stalled` — выполнение компонента более 10 минут при свежем heartbeat; это наблюдение, не команда повторной отправки.
 - Новые таблицы аддитивные, повторное применение миграций безопасно. Старое `xc_auto_control.heartbeat` оставлено для совместимости существующих клиентов, но больше не используется как индикатор жизни Worker в AutopostPanel.
 - **Live X: NOT TESTED**; миграцию и эксплуатацию на реальной локальной PostgreSQL нужно отдельно проверить перед включением агента. Никаких обходов X, live-публикаций или merge.
+
+### V2-05: дневная дедупликация (инкремент 2)
+
+- Стабильный `content_hash` сохраняет прежнюю нормализацию содержимого, `dedup_day DATE` рассчитывается по **scheduled_at BIGINT** в `Europe/Moscow` в момент создания; переназначение pre-send retry не двигает день старого задания.
+- Прежний `UNIQUE(dedup)` не удалён. Для новых строк `dedup` получает безопасный `sha256(content_hash|dedup_day)`, а индекс `xc_auto_jobs_content_day` гарантирует однократную постановку за день. Старые строки заполнены из `dedup`, день вычислен из `scheduled_at`; повторный прогон миграции ничего не меняет.
+- `enqueue` сериализует конкурирующие постановки на уровне строки аккаунта и возвращает старый `attempted/running/uncertain` job при совпадении `content_hash`, даже если календарный день сменился. Дополнительно `browser.execute` проверяет отсутствие других attempted uncertain/running **непосредственно перед send-boundary**. Операции X не повторяются.
+- Два допустимых `published` задания на разные календарные дни разрешены политикой; повтор текущего дня (включая legacy) запрещён. Не делать destructive migration старых ключей или событий.
+- Рекомендуется повторить X Collector CI, реальные PostgreSQL конкурентные тесты и согласовать UI-текст перед включением агента. Live X: **NOT TESTED**.

@@ -12,6 +12,8 @@ test('empty source cycles enqueue only an original post without fabricated targe
  const c={query:async(sql:string,values:unknown[])=>{
   if(sql.startsWith('SELECT * FROM xc_ai_providers'))return {rows:[{id:'provider'}]};
   if(sql.startsWith('SELECT content'))return {rows:[]};
+  if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return {rows:[]};
+  if(sql.includes('AND content_hash=$3 AND attempted'))return {rows:[]};
   if(sql.startsWith('SELECT name'))return {rows:[{name:'publisher'}]};
   if(sql.startsWith('INSERT INTO xc_auto_jobs')){inserted=values;return {rows:[]};}
   if(sql.startsWith('SELECT * FROM xc_auto_jobs'))return {rows:[{created_at:now}]};
