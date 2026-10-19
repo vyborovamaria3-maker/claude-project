@@ -508,3 +508,36 @@ Pump 403 also backs off the primary for six hours in the running worker. A cycle
 a 20-second lookup deadline. CoinGecko availability/rate limits still apply.
 Live mint and ticker PNUT both resolved the same verified Pump.fun contract and a
 historical capitalization of approximately $57.84M (2026-09-23), exceeding $100k.
+
+
+### Public post discovery and complete channel/discussion history
+
+Enable message search in the native admin and configure separate ticker, name and
+case-sensitive mint terms. `channels.searchPosts` full text requires Premium/free
+quota on Telegram; Stars payment is never authorized. Access failures are explicit.
+When unavailable, the worker uses public hashtag search and broadcast-only
+`messages.searchGlobal` for accessible public results, plus exact term matching in
+collected history. These modes have different coverage and are not an all-Telegram
+census. RPC pages share persistent request budgets and term-specific offsets.
+
+The admin separates unique observed public messages (peer/message ID deduplication)
+from distinct sources and connected-source mentions. Repeated query variants merge
+matched terms. Message previews include public post links; response counts for
+individual Telegram queries are not summed into a fabricated global count.
+
+A matching source opts into full available history rather than the initial 500-post
+cutoff. Existing page checkpoints continue across jobs/restarts, with bounded pages
+per job and the shared queue. Public linked discussion groups are resolved without
+joining chats and queued within the same source budgets; private/unavailable groups
+remain explicit. The last source-budget slot is reserved for discussion groups when
+there is capacity. Existing source pauses/deletion tombstones and global Stop remain
+in force. History completion means all history accessible to this account was read,
+not private/deleted posts. Reactions (emoji/custom ID and counts), views and replies
+are stored as observed; the latest 20 messages refresh engagement on each source poll.
+
+The available-index fallback uses broadcast-only searches and rejects private/user
+results before storage. If the hashtag response is unavailable, it also falls back
+to that index; this is explicitly labeled limited coverage, not a Premium bypass.
+Complete-history sources yield after at most two pages per queue turn so discovery,
+other sources and Stop remain responsive. Engagement observations are timestamped;
+legacy reaction snapshots remain unknown until fetched rather than displayed as zero.
