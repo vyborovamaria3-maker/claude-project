@@ -29,22 +29,18 @@ async function command(c,i){switch(i.action){
   const row=(await c.query("SELECT r.job_id,r.account_name,r.expected_handle,r.kind,r.status AS reconciliation_status,r.candidates,j.content,j.origin,j.created_at,j.started_at,j.attempted_at,j.target_id,j.target_handle,j.status AS job_status FROM xc_auto_reconcile r JOIN xc_auto_jobs j ON j.id=r.job_id WHERE r.job_id=$1",[i.id])).rows[0];
   if(!row||!['manual_review','manual_required'].includes(row.reconciliation_status)||row.job_status!=='uncertain')throw Error('Задание не ожидает ручного подтверждения');
   const isPublication=['post','reply'].includes(row.kind);
-  const result=manualConfirmationResult(row,isPublication?i.tweet_id:null);
+  manualConfirmationResult(row,isPublication?i.tweet_id:null);
   if(isPublication){
    const candidates=Array.isArray(row.candidates)?row.candidates:(typeof row.candidates==='string'?JSON.parse(row.candidates):[]);
    const candidate=selectManualCandidate(candidates,i.tweet_id,i.manual_confirm);
    await require('./finalize.cjs').finalizePublication(c,row,i.tweet_id,candidate,{expectedStatus:'uncertain',reconciliationStates:['manual_review','manual_required'],message:'Публикация подтверждена оператором; автоматическая повторная отправка не выполнялась.',lastError:'Результат подтверждён оператором.'});
    return {ok:true,message:'Публикация подтверждена; повторная отправка отключена'};
-  }else if(i.manual_confirm!==true){throw Error('Подтвердите, что проверили X и действие действительно выполнено');}
-  const now=Date.now();
-  await c.query('BEGIN');
-  try{
-   const updated=await c.query("UPDATE xc_auto_jobs SET status='published',result_id=$2,result_url=$3,message=$4,finished_at=$5,lease_until=NULL WHERE id=$1 AND status='uncertain' RETURNING id",[row.job_id,result.resultId,result.resultUrl,isPublication?'Публикация подтверждена оператором; автоматическая повторная отправка не выполнялась.':'Действие подтверждено оператором; автоматическая повторная отправка не выполнялась.',now]);
-   if(!updated.rowCount)throw Error('Задание уже изменено');
-   await c.query("UPDATE xc_auto_reconcile SET status='resolved',matched_tweet_id=$2,last_error='Результат подтверждён оператором.',updated_at=$3,finished_at=$3 WHERE job_id=$1 AND status IN ('manual_review','manual_required')",[row.job_id,result.resultId,now]);
-   await c.query('COMMIT');
-  }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
-  return {ok:true,message:isPublication?'Публикация подтверждена; повторная отправка отключена':'Действие подтверждено; повторная отправка отключена'};
+  }else{
+   if(i.manual_confirm!==true)throw Error('Подтвердите, что проверили X и действие действительно выполнено');
+   await require('./finalize.cjs').finalizeAction(c,row,{expectedStatus:'uncertain',reconciliationStates:['manual_review','manual_required'],message:'Действие подтверждено оператором; автоматическая повторная отправка не выполнялась.',lastError:'Результат подтверждён оператором.'});
+   return {ok:true,message:'Действие подтверждено; повторная отправка отключена'};
+  }
+  return {ok:true,message:'Публикация подтверждена; повторная отправка отключена'};
  }
  case 'reconcile-retry':{
   if(!/^[a-f0-9-]{36}$/i.test(i.id||'')||i.confirmed_not_performed!==true)throw Error('Подтвердите, что проверили X и действие не было выполнено');

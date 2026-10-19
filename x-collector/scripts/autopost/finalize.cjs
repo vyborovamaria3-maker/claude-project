@@ -40,6 +40,38 @@ async function finalizePublication(c,job,tweetId,data={},options={}){
   return {ok:true,alreadyConfirmed:false};
  }catch(error){await db.query('ROLLBACK').catch(()=>{});throw error;}
 }
+async function finalizeAction(c,job,options={}){
+ const jobId=job?.job_id||job?.id;
+ if(typeof jobId!=='string'||!/^[a-f0-9-]{36}$/i.test(jobId))throw Error('Invalid action job ID');
+ const expected=options.expectedStatus||'uncertain';
+ if(expected!=='uncertain')throw Error('Invalid expected action state');
+ const reconStates=options.reconciliationStates;
+ if(!Array.isArray(reconStates)||!reconStates.length||reconStates.some(s=>!VALID_RECON_STATUSES.has(s)))throw Error('Invalid action reconciliation states');
+ const db={query:async(...args)=>{try{return await c.query(...args);}catch(error){if(error&&typeof error==='object')error.auditCategory='DB_ERROR';throw error;}}};
+ await db.query('BEGIN');
+ try{
+  const active=(await db.query('SELECT id,account_name,expected_handle,kind,target_id,target_handle,status,result_url FROM xc_auto_jobs WHERE id=$1 FOR UPDATE',[jobId])).rows[0];
+  if(!active)throw Error('Action job missing');
+  if(!['like','repost','follow'].includes(active.kind))throw Error('Only like, repost and follow actions use action finalization');
+  if(String(active.account_name)!==String(job.account_name)||String(active.expected_handle).toLowerCase()!==String(job.expected_handle).toLowerCase())throw Error('Action account identity mismatch');
+  if(String(active.target_id||'')!==String(job.target_id||'')||String(active.target_handle||'').replace(/^@/,'').toLowerCase()!==String(job.target_handle||'').replace(/^@/,'').toLowerCase())throw Error('Action target identity mismatch');
+  const targetHandle=String(active.target_handle||'').replace(/^@/,'');
+  if(!/^[A-Za-z0-9_]{1,15}$/.test(targetHandle))throw Error('Invalid action target handle');
+  let resultUrl='https://x.com/'+targetHandle;
+  if(active.kind!=='follow'){if(!/^[0-9]{1,25}$/.test(String(active.target_id||'')))throw Error('Invalid action target tweet ID');resultUrl+='/status/'+active.target_id;}
+  if(active.status==='published'&&String(active.result_url||'')===resultUrl){await db.query('COMMIT');return {ok:true,alreadyConfirmed:true};}
+  if(active.status!==expected)throw Error('Action job state changed before finalization');
+  const reconciliation=(await db.query('SELECT status FROM xc_auto_reconcile WHERE job_id=$1 FOR UPDATE',[jobId])).rows[0];
+  if(!reconciliation||!reconStates.includes(reconciliation.status))throw Error('Action reconciliation state changed before finalization');
+  const now=Date.now();
+  const changed=await db.query("UPDATE xc_auto_jobs SET status='published',result_id=NULL,result_url=$2,message=$3,finished_at=$4,lease_until=NULL WHERE id=$1 AND status=$5 RETURNING id",[jobId,resultUrl,options.message||'Действие подтверждено в X; повторная отправка не выполнялась.',now,expected]);
+  if(changed.rowCount!==1)throw Error('Action publication status update failed');
+  const reconciled=await db.query("UPDATE xc_auto_reconcile SET status='resolved',matched_tweet_id=NULL,candidates='[]'::jsonb,last_error=$2,updated_at=$3,finished_at=$3 WHERE job_id=$1 AND status=ANY($4::text[]) RETURNING job_id",[jobId,options.lastError??null,now,reconStates]);
+  if(reconciled.rowCount!==1)throw Error('Action reconciliation update failed');
+  await db.query('COMMIT');
+  return {ok:true,alreadyConfirmed:false,resultUrl};
+ }catch(error){await db.query('ROLLBACK').catch(()=>{});throw error;}
+}
 async function inspectPublicationState(c,jobId,tweetId){
  let row;
  try{row=(await c.query('SELECT status,result_id FROM xc_auto_jobs WHERE id=$1',[jobId])).rows[0];}
@@ -48,4 +80,4 @@ async function inspectPublicationState(c,jobId,tweetId){
  const published=row.status==='published';
  return {status:row.status,matches:published&&typeof tweetId==='string'&&tweetId.length>0&&String(row.result_id||'')===tweetId};
 }
-module.exports={finalizePublication,inspectPublicationState};
+module.exports={finalizePublication,finalizeAction,inspectPublicationState};

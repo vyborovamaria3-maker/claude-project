@@ -81,6 +81,12 @@ test('manual confirmation may select an ID outside the candidate list only after
   assert.equal(selectManualCandidate(candidates,'1234567890123456789',false).tweet_id,'1234567890123456789');
 });
 
+test('action reconciliation only confirms positive UI evidence',()=>{
+  assert.equal(reconciliation.classifyActionState('like',true,false),'performed');
+  assert.equal(reconciliation.classifyActionState('repost',false,true),'not_performed');
+  assert.equal(reconciliation.classifyActionState('follow',false,false),'unknown');
+  assert.equal(reconciliation.classifyActionState('post',true,false),'unsupported');
+});
 test('one exact match resolves, multiple exact matches require manual review',()=>{
   const now=1_800_000_010_000;
   const source=job();

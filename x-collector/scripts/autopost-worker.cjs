@@ -1,6 +1,6 @@
 const {spawn}=require('node:child_process');const path=require('node:path'),fs=require('node:fs');let sourceCollector,historyCollector;
 const {claim,eligible}=require('./autopost/queue.cjs');
-const {connect}=require('./autopost/runtime.cjs');const {plan,inWindow}=require('./autopost/store.cjs');const {execute,sync,persistPost,reconcilePost}=require('./autopost/browser.cjs');
+const {connect}=require('./autopost/runtime.cjs');const {plan,inWindow}=require('./autopost/store.cjs');const {execute,sync,persistPost,reconcilePost,reconcileAction}=require('./autopost/browser.cjs');
 const {decideReconciliation,nextCheckAt}=require('./autopost/reconciliation.cjs');
 const {classifyPreSendError}=require('./autopost/publish-retry.cjs');
 const {classifyAuditError}=require('./autopost/audit-error.cjs');
@@ -21,8 +21,20 @@ async function reconcileOne(c,now){
   if(!claim.rowCount)return false;
   const attempts=Number(claim.rows[0].attempts);
   if(!['post','reply'].includes(row.kind)){
-   await c.query("UPDATE xc_auto_reconcile SET status='manual_review',last_error='Автоматическая сверка поддерживает только публикации и ответы.',updated_at=$2,finished_at=$2 WHERE job_id=$1 AND status='running'",[row.job_id,stamp]);
-   await c.query("UPDATE xc_auto_jobs SET message='Автоматическая сверка этого действия не поддерживается. Проверьте X вручную; повтор запрещён.',finished_at=$2 WHERE id=$1 AND status='uncertain'",[row.job_id,stamp]);
+   const action=await reconcileAction(c,row);
+   const checkNow=Date.now();
+   if(action.status==='performed'){
+    await require('./autopost/finalize.cjs').finalizeAction(c,row,{expectedStatus:'uncertain',reconciliationStates:['running'],message:'Действие подтверждено сверкой X; повторная отправка не выполнялась.'});
+   }else if(checkNow>=deadlineAt){
+    const detail=action.status==='not_performed'?'Действие не обнаружено в X за период сверки.':'Не удалось однозначно определить состояние действия в X.';
+    await c.query("UPDATE xc_auto_reconcile SET status='manual_required',last_error=$2,updated_at=$3,finished_at=$3 WHERE job_id=$1 AND status='running'",[row.job_id,detail,checkNow]);
+    await c.query("UPDATE xc_auto_jobs SET message=$2,finished_at=$3 WHERE id=$1 AND status='uncertain'",[row.job_id,detail+' Проверьте X вручную; повторная отправка запрещена.',checkNow]);
+   }else{
+    const nextAt=nextCheckAt(checkNow,attempts,deadlineAt);
+    const detail=action.status==='not_performed'?'Действие пока не обнаружено; повторная отправка запрещена.':'Состояние действия пока не подтверждено; повторная отправка запрещена.';
+    await c.query("UPDATE xc_auto_reconcile SET status='queued',next_check_at=$2,candidates='[]'::jsonb,last_error=$3,updated_at=$4,finished_at=NULL WHERE job_id=$1 AND status='running'",[row.job_id,nextAt,detail,checkNow]);
+    await c.query("UPDATE xc_auto_jobs SET message=$2 WHERE id=$1 AND status='uncertain'",[row.job_id,detail+' Следующая сверка запланирована.']);
+   }
    return true;
   }
   try{

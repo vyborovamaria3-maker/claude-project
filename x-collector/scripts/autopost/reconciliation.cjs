@@ -76,6 +76,12 @@ function findMatches(job, candidates, now = Date.now()) {
   return [...matches.values()].sort((a, b) => a.posted_at - b.posted_at);
 }
 
+function classifyActionState(kind,done,available){
+ if(!['like','repost','follow'].includes(kind))return 'unsupported';
+ if(done===true)return 'performed';
+ if(available===true)return 'not_performed';
+ return 'unknown';
+}
 function decideReconciliation({ kind, matches, now, deadlineAt }) {
   if (!['post', 'reply'].includes(kind)) return { status: 'manual_review', reason: 'UNSUPPORTED_ACTION' };
   if (matches.length === 1) return { status: 'resolved', reason: 'EXACT_MATCH', match: matches[0] };
@@ -99,6 +105,7 @@ module.exports = {
   INITIAL_CHECK_DELAY_MS,
   RECHECK_DELAYS_MS,
   findMatches,
+  classifyActionState,
   decideReconciliation,
   expandTweetUrls,
   nextCheckDelayMs,

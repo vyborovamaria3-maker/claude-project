@@ -6,7 +6,7 @@ import {createRequire} from 'node:module';
 
 const load=createRequire(__filename);
 const {claim}=load('../scripts/autopost/queue.cjs');
-const {finalizePublication}=load('../scripts/autopost/finalize.cjs');
+const {finalizePublication,finalizeAction}=load('../scripts/autopost/finalize.cjs');
 const {inspectPublicationState}=load('../scripts/autopost/finalize.cjs');
 const schema=readFileSync('scripts/autopost/schema.sql','utf8');
 const tweetId='1891234567890123456';
@@ -74,6 +74,37 @@ test('V2-02 lost COMMIT acknowledgement is recoverable and idempotent',async()=>
  }finally{await db.close();}
 });
 
+test('V2-03 action finalization is atomic and idempotent for likes, reposts and follows',async()=>{
+ const {db,c}=await fixture();const id='00000000-0000-4000-8000-000000000065';
+ try{
+  await db.query("INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,target_id,target_handle,dedup,status,attempted,scheduled_at,created_at,attempted_at,origin) VALUES($1,'publisher','publisher','like','1234567890123456789','source',$2,'uncertain',true,$3,$3,$3,'manual')",[id,'action-'+id,now]);
+  await db.query("INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,created_at,updated_at) VALUES($1,'publisher','publisher','like',$2,$2,$3,'running',$2,$2)",[id,now,now+60_000]);
+  const job={id,account_name:'publisher',expected_handle:'publisher',kind:'like',target_id:'1234567890123456789',target_handle:'source'};
+  assert.deepEqual(await finalizeAction(c,job,{expectedStatus:'uncertain',reconciliationStates:['running'],message:'Confirmed'}),{ok:true,alreadyConfirmed:false,resultUrl:'https://x.com/source/status/1234567890123456789'});
+  assert.deepEqual(await finalizeAction(c,job,{expectedStatus:'uncertain',reconciliationStates:['running']}),{ok:true,alreadyConfirmed:true});
+  const saved=(await db.query<{status:string,result_id:string|null,result_url:string}>('SELECT status,result_id,result_url FROM xc_auto_jobs WHERE id=$1',[id])).rows[0];
+  assert.deepEqual(saved,{status:'published',result_id:null,result_url:'https://x.com/source/status/1234567890123456789'});
+  const reconcile=(await db.query<{status:string,matched_tweet_id:string|null}>('SELECT status,matched_tweet_id FROM xc_auto_reconcile WHERE job_id=$1',[id])).rows[0];
+  assert.deepEqual(reconcile,{status:'resolved',matched_tweet_id:null});
+  assert.equal((await db.query<{n:number}>("SELECT count(*)::int n FROM xc_auto_job_events WHERE job_id=$1 AND event_type='published'",[id])).rows[0].n,1);
+ }finally{await db.close();}
+});
+
+test('V2-03 action finalization rolls back job and reconciliation together',async()=>{
+ const {db,c}=await fixture();const id='00000000-0000-4000-8000-000000000066';
+ try{
+  await db.query("INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,target_id,target_handle,dedup,status,attempted,scheduled_at,created_at,attempted_at,origin) VALUES($1,'publisher','publisher','follow',NULL,'source',$2,'uncertain',true,$3,$3,$3,'manual')",[id,'action-'+id,now]);
+  await db.query("INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,created_at,updated_at) VALUES($1,'publisher','publisher','follow',$2,$2,$3,'running',$2,$2)",[id,now,now+60_000]);
+  await db.exec("CREATE FUNCTION reject_action_finalize() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN IF NEW.event_type='published' THEN RAISE EXCEPTION 'injected action finalization failure'; END IF; RETURN NEW; END $; CREATE TRIGGER reject_action_finalize BEFORE INSERT ON xc_auto_job_events FOR EACH ROW EXECUTE FUNCTION reject_action_finalize()");
+  const job={id,account_name:'publisher',expected_handle:'publisher',kind:'follow',target_id:null,target_handle:'source'};
+  await assert.rejects(finalizeAction(c,job,{expectedStatus:'uncertain',reconciliationStates:['running']}),/injected action finalization failure/);
+  assert.equal((await db.query<{status:string}>('SELECT status FROM xc_auto_jobs WHERE id=$1',[id])).rows[0].status,'uncertain');
+  assert.equal((await db.query<{status:string}>('SELECT status FROM xc_auto_reconcile WHERE job_id=$1',[id])).rows[0].status,'running');
+  await db.exec('DROP TRIGGER reject_action_finalize ON xc_auto_job_events');
+  await finalizeAction(c,job,{expectedStatus:'uncertain',reconciliationStates:['running']});
+  assert.equal((await db.query<{status:string}>('SELECT status FROM xc_auto_jobs WHERE id=$1',[id])).rows[0].status,'published');
+ }finally{await db.close();}
+});
 test('V2-02 failure on status audit rolls back post, timeline, metrics and job',async()=>{
  const {db,c}=await fixture();const id='00000000-0000-4000-8000-000000000062';
  try{

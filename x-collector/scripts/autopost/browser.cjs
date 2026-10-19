@@ -1,7 +1,7 @@
 const {recordAttemptFailure}=require('./audit-error.cjs');
 const {recordAccountError}=require('../account-health.cjs');
 const {MAX_PRE_SEND_RETRIES,classifyPreSendError,shouldRetryBeforeSend,retryDelayMs}=require('./publish-retry.cjs');
-const {findMatches,expandTweetUrls,INITIAL_CHECK_DELAY_MS,RECONCILIATION_WINDOW_MS}=require('./reconciliation.cjs');
+const {findMatches,expandTweetUrls,INITIAL_CHECK_DELAY_MS,RECONCILIATION_WINDOW_MS,classifyActionState}=require('./reconciliation.cjs');
 const {chromium}=require('playwright');const {launchLoginBrowser}=require('../test-publish-browser.cjs');const {parseProxy}=require('../x-proxy.cjs');const {unseal,config}=require('./runtime.cjs');
 async function open(c,name,expected){const a=(await c.query("SELECT session_encrypted,proxy_json,last_check_json,last_check_at,user_agent,timezone,language FROM x_accounts WHERE name=$1 AND role='publisher' AND status='active'",[name])).rows[0];if(!a)throw Error('Аккаунт неактивен или удалён');if((a.last_check_json?.steps?.session?.status==='failed'||a.last_check_json?.errorType==='SESSION_EXPIRED'))throw Error('SESSION_EXPIRED');let metadata;try{metadata=JSON.parse(a.proxy_json||'null');}catch{metadata=null;}if(metadata?.status==='failed'&&Date.now()-Number(metadata.last_check)<300000)throw Error('PROXY_FAILED');const parsedProxy=parseProxy(a.proxy_json);if(a.proxy_json&&!parsedProxy)throw Error('PROXY_FAILED');const b=await launchLoginBrowser(chromium,{...process.env,...config()},{proxy:parsedProxy});try{const context=await b.browser.newContext({storageState:JSON.parse(unseal(a.session_encrypted)),userAgent:a.user_agent||undefined,timezoneId:a.timezone||undefined,locale:a.language||undefined});const page=await context.newPage();await page.goto('https://x.com/home',{waitUntil:'domcontentloaded',timeout:45000});const profile=page.locator('[data-testid="AppTabBar_Profile_Link"]').first();await profile.waitFor({timeout:30000});if((await profile.getAttribute('href'))?.replace(/^\//,'').toLowerCase()!==expected)throw Error('Профиль сессии не совпал с username');return {browser:b.browser,page};}catch(e){await b.browser.close();throw e;}}
 function extract(body,id){const stack=[body];let n=0;while(stack.length&&n++<30000){const v=stack.pop();if(!v||typeof v!=='object')continue;if(v.rest_id===id&&v.legacy?.full_text){const l=v.legacy;const metric=x=>/^\d{1,19}$/.test(String(x??''))&&BigInt(x)<=9223372036854775807n?String(x):null;return {text:l.full_text,handle:v.core?.user_results?.result?.legacy?.screen_name||v.core?.user_results?.result?.core?.screen_name,posted_at:Date.parse(l.created_at),views:metric(v.views?.count),likes:metric(l.favorite_count),replies:metric(l.reply_count),retweets:metric(l.retweet_count)};}for(const x of Object.values(v))if(typeof x==='object')stack.push(x);}return null;}
@@ -108,4 +108,44 @@ async function reconcilePost(c,job){
  }finally{await opened.browser.close().catch(()=>{});}
 }
 
-module.exports={open,extract,extractUser,persistPost,persistPostTx,execute,sync,extractTimelineTweets,reconcilePost};
+async function reconcileAction(c,job){
+ const targetHandle=String(job.target_handle||'').replace(/^@/,'');
+ if(!/^[A-Za-z0-9_]{1,15}$/.test(targetHandle))return {status:'unknown'};
+ if(job.kind!=='follow'&&!/^[0-9]{1,25}$/.test(String(job.target_id||'')))return {status:'unknown'};
+ const opened=await open(c,job.account_name,job.expected_handle);
+ try{
+  const page=opened.page;
+  if(job.kind==='follow'){
+   let userId=null;const pending=new Set();
+   const listener=response=>{const task=(async()=>{try{if(response.status()===200&&response.url().includes('/graphql/'))userId=extractUser(await response.json(),targetHandle)||userId;}catch{}})();pending.add(task);void task.finally(()=>pending.delete(task));};
+   page.on('response',listener);
+   try{
+    await page.goto('https://x.com/'+targetHandle,{waitUntil:'domcontentloaded',timeout:45000});
+    const area=page.locator('[data-testid="primaryColumn"]');await area.waitFor({timeout:20000});
+    const deadline=Date.now()+15000;while(!userId&&Date.now()<deadline)await page.waitForTimeout(250);
+    while(pending.size)await Promise.all([...pending]);
+    if(!userId)return {status:'unknown'};
+    const done=area.locator('[data-testid="'+userId+'-unfollow"]');
+    const available=area.locator('[data-testid="'+userId+'-follow"]');
+    return {status:classifyActionState('follow',(await done.count())>0,(await available.count())>0};
+   }finally{page.off('response',listener);}
+  }
+  if(!['like','repost'].includes(job.kind))return {status:'unknown'};
+  const targetId=String(job.target_id),found=new Map(),pending=new Set();
+  const listener=response=>{const task=(async()=>{try{if(response.status()!==200||!response.url().includes('/graphql/'))return;for(const tweet of extractTimelineTweets(await response.json()))if(tweet.tweet_id===targetId)found.set(tweet.tweet_id,tweet);}catch{}})();pending.add(task);void task.finally(()=>pending.delete(task));};
+  page.on('response',listener);
+  try{
+   await page.goto('https://x.com/'+targetHandle+'/status/'+targetId,{waitUntil:'domcontentloaded',timeout:45000});
+   const article=page.locator('article').filter({has:page.locator('a[href$="/status/'+targetId+'"]')}).first();
+   await article.waitFor({timeout:25000});await page.waitForTimeout(1000);while(pending.size)await Promise.all([...pending]);
+   const tweet=found.get(targetId);
+   if(!tweet||String(tweet.handle||'').replace(/^@/,'').toLowerCase()!==targetHandle.toLowerCase())return {status:'unknown'};
+   const permalink=await article.locator('a').filter({has:page.locator('time')}).first().getAttribute('href');
+   if(!permalink||new URL(permalink,'https://x.com').pathname.split('/').at(-1)!==targetId)return {status:'unknown'};
+   const done=article.locator(job.kind==='like'?'[data-testid="unlike"]':'[data-testid="unretweet"]');
+   const available=article.locator(job.kind==='like'?'[data-testid="like"]':'[data-testid="retweet"]');
+   return {status:classifyActionState(job.kind,(await done.count())>0,(await available.count())>0};
+  }finally{page.off('response',listener);}
+ }finally{await opened.browser.close().catch(()=>{});}
+}
+module.exports={open,extract,extractUser,persistPost,persistPostTx,execute,sync,extractTimelineTweets,reconcilePost,reconcileAction};
