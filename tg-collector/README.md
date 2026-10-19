@@ -444,3 +444,37 @@ npm run analyze:refresh
 - `tg_signals`, narrative/propagation tables and backtest tables preserve versioned, reviewable results. Similar messages are evidence of similarity, not proof of coordinated behavior.
 
 Migration files are immutable after being applied: `schema_migrations` stores SHA-256 checksums and startup refuses edited applied SQL. Retention policies are registered but disabled by default; no data is deleted automatically until an explicit retention schedule is configured. Monthly partitioning is deferred until the composite keys and foreign-key design are migrated and rehearsed safely.
+
+
+### Public crypto source discovery
+
+Control Center → TG Collector → Автопоиск configures keywords, enable/disable,
+interval (15–1440 minutes), results/query (1–50), queries/cycle (1–10), requests/day
+(1–200), new sources/day (1–100), and maximum total stored sources (1–1000).
+Defaults: hourly, one query, 10 results, 24 requests/day, 3 new sources/day, 30 total.
+Migration `016_source_discovery.sql` leaves discovery disabled until the operator enables it.
+The local rollout explicitly enables crypto/memecoin defaults in the admin UI.
+
+The singleton worker calls Telegram contacts.Search sequentially using its existing
+collector session and proxy. Telegram search is relevance-ranked and not an exhaustive
+Telegram directory. Only public Channel entities (broadcast or megagroup) with a valid
+username are eligible. No joining chats, private chat scanning or messages to users occur.
+A discovered source and its initial collection job are committed together. The normal
+collection settings (initial 500 messages, incremental polling) apply to added sources.
+
+Request and source budgets persist across restarts and reset at UTC midnight.
+Global Stop, FloodWait and account/session blocks also stop discovery. Keyword rotation
+is durable. Paused sources remain paused; source deletion leaves a discovery tombstone
+so the worker cannot silently recreate it. Changes to configuration invalidate in-flight
+results before new sources are connected. Disabling discovery preserves existing sources
+and their history; they remain subject to the ordinary collection controls.
+
+Automatic keywords (migration `017`) are enabled by default when discovery is enabled.
+Set `TG_DISCOVERY_TWITTER_DATABASE_URL` privately to the existing Twitter PostgreSQL
+source. The worker reads up to 2000 posts from the last 72 hours in a read-only
+transaction, then ranks crypto topics, cashtags and hashtags. Defaults require three
+unique posts and two authors, with up to 12 keywords. Duplicate posts, generic promo
+terms and addresses are excluded. Limits and thresholds are editable in the admin.
+Only keyword/count summaries are stored; no Twitter credentials or post copies are
+exposed. Manual keywords remain an optional fallback if the source is unavailable.
+The existing Telegram daily budgets and global Start/Stop still apply.
