@@ -13,6 +13,16 @@ CREATE TABLE IF NOT EXISTS xc_auto_config (
 );
 CREATE TABLE IF NOT EXISTS xc_auto_control (id int PRIMARY KEY CHECK(id=1),paused boolean NOT NULL DEFAULT true,heartbeat bigint);
 INSERT INTO xc_auto_control(id) VALUES(1) ON CONFLICT DO NOTHING;
+-- V2-04: health is operational state, separate from audit and job transactions.
+CREATE TABLE IF NOT EXISTS xc_auto_worker_health(
+ id int PRIMARY KEY CHECK(id=1),
+ worker_id text NOT NULL, started_at bigint NOT NULL, heartbeat_at bigint NOT NULL
+);
+CREATE TABLE IF NOT EXISTS xc_auto_component_health(
+ component text PRIMARY KEY CHECK(component IN ('planner','publisher','reconcile','sync')),
+ worker_id text NOT NULL, state text NOT NULL CHECK(state IN ('busy','idle','error')),
+ last_started_at bigint,last_completed_at bigint,last_error_code text,updated_at bigint NOT NULL
+);
 CREATE TABLE IF NOT EXISTS xc_auto_jobs (
  id text PRIMARY KEY,account_name text NOT NULL,expected_handle text NOT NULL,kind text NOT NULL CHECK(kind IN ('post','reply','like','repost','follow')),
  content text, target_id text,target_handle text,evidence jsonb NOT NULL DEFAULT '[]',reason text NOT NULL DEFAULT '',provider_id text,
