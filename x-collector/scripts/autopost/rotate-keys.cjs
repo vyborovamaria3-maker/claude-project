@@ -28,7 +28,7 @@ if(flags.size!==args.length||args.some(x=>!['--dry-run','--apply-test-only','--c
     confirmedBackup:flags.has('--confirm-backup'),confirmedStopped:flags.has('--confirm-worker-stopped')};
    const result=rehearsal?await rotateDisposableTestDatabase(c,options):await audit(c,options);
    console.log(JSON.stringify({ok:true,...result}));
-  }catch(error){
+  }catch{
    // Never log the exception message: it may contain a connection string.
    console.error('Key inventory / rehearsal failed; no secrets were printed. Review prerequisites and database logs.');
    process.exitCode=1;

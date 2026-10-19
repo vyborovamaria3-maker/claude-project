@@ -1,7 +1,7 @@
 'use strict';
 // Versioned test-only envelope for the X Collector rotation rehearsal.
 // Production readers still require a coordinated upgrade before activation.
-const crypto=require('node:crypto');
+const nodeCrypto=require('node:crypto');
 const MAGIC=Buffer.from('XCKEYV2!','ascii');
 const ID_PATTERN=/^[A-Za-z0-9_-]{1,48}$/;
 const KEY_BYTES=32, IV_BYTES=12, TAG_BYTES=16;
@@ -21,8 +21,8 @@ function kind(blob){
 function packV2(plaintext,keyId,key){
  if(!Buffer.isBuffer(plaintext)||!ID_PATTERN.test(keyId)||!Buffer.isBuffer(key)||key.length!==KEY_BYTES)throw Error('INVALID_ENCRYPTION_ARGUMENT');
  const id=Buffer.from(keyId,'ascii'),header=Buffer.concat([MAGIC,Buffer.from([id.length]),id]);
- const iv=crypto.randomBytes(IV_BYTES);
- const cipher=crypto.createCipheriv('aes-256-gcm',key,iv);
+ const iv=nodeCrypto.randomBytes(IV_BYTES);
+ const cipher=nodeCrypto.createCipheriv('aes-256-gcm',key,iv);
  cipher.setAAD(header);
  const body=Buffer.concat([cipher.update(plaintext),cipher.final()]);
  return Buffer.concat([header,iv,cipher.getAuthTag(),body]);
@@ -48,7 +48,7 @@ function unpack(blob,{legacyKey,keys={}}){
  }
  if(!Buffer.isBuffer(key)||key.length!==KEY_BYTES)throw Error('KEY_UNAVAILABLE');
  try{
-  const decipher=crypto.createDecipheriv('aes-256-gcm',key,iv);
+  const decipher=nodeCrypto.createDecipheriv('aes-256-gcm',key,iv);
   if(header)decipher.setAAD(header);
   decipher.setAuthTag(tag);
   return {format,plaintext:Buffer.concat([decipher.update(body),decipher.final()])};
