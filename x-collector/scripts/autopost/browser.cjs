@@ -1,7 +1,7 @@
 const {recordAttemptFailure}=require('./audit-error.cjs');
 const {fingerprints}=require('./fingerprint.cjs');
 const {recordAccountError}=require('../account-health.cjs');
-const {failure:breakerFailure,success:breakerSuccess}=require('./breaker.cjs');
+const {failure:breakerFailure,success:breakerSuccess,releaseProbe,qualifyAccountCode}=require('./breaker.cjs');
 const {MAX_PRE_SEND_RETRIES,classifyPreSendError,shouldRetryBeforeSend,retryDelayMs}=require('./publish-retry.cjs');
 const {findMatches,expandTweetUrls,INITIAL_CHECK_DELAY_MS,RECONCILIATION_WINDOW_MS,classifyActionState}=require('./reconciliation.cjs');
 const {chromium}=require('playwright');const {launchLoginBrowser}=require('../test-publish-browser.cjs');const {parseProxy}=require('../x-proxy.cjs');const {unseal,config}=require('./runtime.cjs');
@@ -38,6 +38,7 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
  else{const selector=job.kind==='like'?'[data-testid="unlike"]':job.kind==='repost'?'[data-testid="unretweet"]':'[data-testid$="-unfollow"]';await (job.kind==='follow'?followArea:article.locator(selector).first()).waitFor({timeout:20000});await done(c,job,null,'Действие подтверждено интерфейсом X');}
  }catch(_e){
  const failure=classifyPreSendError(_e);
+ if(!qualifyAccountCode(failure.code))await releaseProbe(c,'account',job.account_name).catch(()=>{});
  const retryCount=Number.isInteger(Number(job.retry_count))?Number(job.retry_count):0;
  const retry=shouldRetryBeforeSend(_e,attempted,retryCount);
  const now=Date.now();

@@ -3,6 +3,7 @@ const POLICY={
  account:{threshold:3,cooldownMs:60*60_000},
  ai:{threshold:5,cooldownMs:30*60_000},
 };
+const PROBE_TIMEOUT_MS=15*60_000;
 const ACCOUNT_CODES=new Set(['SESSION_EXPIRED','PROXY_FAILED','X_RESTRICTED','ACCOUNT_MISMATCH']);
 function valid(kind,subject){
  if(!Object.hasOwn(POLICY,kind)||typeof subject!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(subject))throw Error('Invalid breaker identity');
@@ -10,12 +11,31 @@ function valid(kind,subject){
 function qualifyAccountCode(code){return ACCOUNT_CODES.has(code);}
 async function permit(c,kind,subject,now=Date.now()){
  valid(kind,subject);
- const row=(await c.query('SELECT state,resume_at FROM xc_auto_breakers WHERE kind=$1 AND subject=$2',[kind,subject])).rows[0];
+ const row=(await c.query('SELECT state,resume_at,updated_at FROM xc_auto_breakers WHERE kind=$1 AND subject=$2',[kind,subject])).rows[0];
  if(!row||row.state==='closed')return true;
- if(row.state==='half_open')return false; // Only the claimed probe may continue.
+ if(row.state==='half_open'){
+  // An abandoned probe is cooled down rather than blocking this account forever.
+  if(row.resume_at===null?Number(row.updated_at)+PROBE_TIMEOUT_MS<=now:Number(row.resume_at)<=now)
+   await c.query("UPDATE xc_auto_breakers SET state='open',resume_at=$3,updated_at=$4 WHERE kind=$1 AND subject=$2 AND state='half_open' AND (resume_at<=$4 OR (resume_at IS NULL AND updated_at<=$5))",[kind,subject,now+POLICY[kind].cooldownMs,now,now-PROBE_TIMEOUT_MS]);
+  return false;
+ }
  if(row.state!=='open'||Number(row.resume_at)>now)return false;
- const changed=await c.query("UPDATE xc_auto_breakers SET state='half_open',resume_at=NULL,updated_at=$3 WHERE kind=$1 AND subject=$2 AND state='open' AND resume_at<=$3 RETURNING subject",[kind,subject,now]);
+ const changed=await c.query("UPDATE xc_auto_breakers SET state='half_open',resume_at=$4,updated_at=$3 WHERE kind=$1 AND subject=$2 AND state='open' AND resume_at<=$3 RETURNING subject",[kind,subject,now,now+PROBE_TIMEOUT_MS]);
  return changed.rowCount===1;
+}
+
+async function releaseProbe(c,kind,subject,now=Date.now()){
+ valid(kind,subject);
+ // Pre-send retries, cancellations and non-breaker errors must not orphan the probe.
+ return (await c.query("UPDATE xc_auto_breakers SET state='open',resume_at=$3,updated_at=$4 WHERE kind=$1 AND subject=$2 AND state='half_open' RETURNING subject",[kind,subject,now+POLICY[kind].cooldownMs,now])).rowCount===1;
+}
+async function expireProbes(c,now=Date.now()){
+ const changed=await c.query(`UPDATE xc_auto_breakers SET state='open',
+  resume_at=$1+CASE kind WHEN 'account' THEN $2::bigint ELSE $3::bigint END,
+  updated_at=$1
+  WHERE state='half_open' AND (resume_at<=$1 OR (resume_at IS NULL AND updated_at<=$1-$4::bigint))
+  RETURNING subject`,[now,POLICY.account.cooldownMs,POLICY.ai.cooldownMs,PROBE_TIMEOUT_MS]);
+ return changed.rowCount||0;
 }
 async function failure(c,kind,subject,reasonCode,now=Date.now()){
  valid(kind,subject);
@@ -65,4 +85,4 @@ async function runAi(c,providerId,operation){
 async function readBreakers(c){
  return (await c.query("SELECT kind,subject,state,consecutive_failures,reason_code,resume_at::text,updated_at::text FROM xc_auto_breakers WHERE state<>'closed' ORDER BY kind,subject")).rows;
 }
-module.exports={POLICY,qualifyAccountCode,permit,failure,success,operatorReset,runAi,readBreakers};
+module.exports={POLICY,PROBE_TIMEOUT_MS,qualifyAccountCode,permit,releaseProbe,expireProbes,failure,success,operatorReset,runAi,readBreakers};

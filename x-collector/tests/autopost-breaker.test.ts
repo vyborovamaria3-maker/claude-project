@@ -70,3 +70,21 @@ test('V2-06: fail-safe rollback on SQL persistence errors',async()=>{
   assert.equal((await b.failure(c,'ai','provider','AI_PROVIDER_FAILURE',now)).failures,1);
  }finally{await db.close();}
 });
+
+test('V2-06: unfinished half-open probe is released on pre-send retry and eventually expires after crashes',async()=>{
+ const {db,c}=await fixture();
+ try{
+  for(let n=0;n<3;n++)await b.failure(c,'account','publisher','SESSION_EXPIRED',now+n);
+  const resume=now+2+b.POLICY.account.cooldownMs;
+  assert.equal(await b.permit(c,'account','publisher',resume),true);
+  assert.equal(await b.releaseProbe(c,'account','publisher',resume+500),true);
+  assert.equal((await db.query<{state:string}>("SELECT state FROM xc_auto_breakers WHERE subject='publisher'")).rows[0].state,'open');
+  assert.equal(await b.permit(c,'account','publisher',resume+500),false);
+  const second=resume+500+b.POLICY.account.cooldownMs;
+  assert.equal(await b.permit(c,'account','publisher',second),true);
+  assert.equal(await b.expireProbes(c,second+b.PROBE_TIMEOUT_MS-1),0);
+  assert.equal(await b.expireProbes(c,second+b.PROBE_TIMEOUT_MS),1);
+  assert.equal((await db.query<{state:string}>("SELECT state FROM xc_auto_breakers WHERE subject='publisher'")).rows[0].state,'open');
+  assert.equal(await b.permit(c,'account','publisher',second+b.PROBE_TIMEOUT_MS+b.POLICY.account.cooldownMs),true);
+ }finally{await db.close();}
+});
