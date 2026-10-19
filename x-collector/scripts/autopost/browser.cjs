@@ -1,5 +1,5 @@
 const {recordAttemptFailure}=require('./audit-error.cjs');
-const {fingerprints}=require('./fingerprint.cjs');
+const {fingerprints,findHistoricalPostCollision}=require('./fingerprint.cjs');
 const {recordAccountError}=require('../account-health.cjs');
 const {failure:breakerFailure,success:breakerSuccess,releaseProbe,qualifyAccountCode}=require('./breaker.cjs');
 const {MAX_PRE_SEND_RETRIES,classifyPreSendError,shouldRetryBeforeSend,retryDelayMs}=require('./publish-retry.cjs');
@@ -58,6 +58,8 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
  await button.waitFor({timeout:20000});const enabledDeadline=Date.now()+15000;while(!await button.isEnabled()){if(Date.now()>enabledDeadline)throw Error('Кнопка действия недоступна');await page.waitForTimeout(250);}
  if(['post','reply'].includes(job.kind))responsePromise=page.waitForResponse(r=>r.request().method()==='POST'&&/\/CreateTweet$/.test(new URL(r.url()).pathname),{timeout:45000}).then(async r=>({ok:r.ok(),status:r.status(),body:await r.json().catch(()=>null)})).catch(()=>null);
  // Persist the irreversible boundary before the click, including cancellation/pause checks.
+ // Close the gap for pre-V2 uncertain posts whose source URLs changed.
+ if(await findHistoricalPostCollision(c,job,{excludeId:job.id}))throw Error('Задание остановлено до отправки');
  const {contentHash:boundaryHash,legacyDedup:boundaryLegacy}=fingerprints(job);
  const attemptNow=Date.now();const updated=await c.query(`UPDATE xc_auto_jobs SET attempted=true,attempted_at=$3 WHERE id=$1 AND status='running' AND EXISTS(SELECT 1 FROM x_accounts a WHERE a.name=$2 AND a.role='publisher' AND a.status='active' AND COALESCE(a.account_busy_until,0)>$3) AND NOT EXISTS(SELECT 1 FROM xc_auto_jobs other JOIN xc_auto_jobs current ON current.id=$1
  WHERE other.id<>current.id AND other.account_name=current.account_name AND other.kind=current.kind

@@ -77,6 +77,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS xc_auto_jobs_content_day
 CREATE INDEX IF NOT EXISTS xc_auto_jobs_unresolved_hash
  ON xc_auto_jobs(account_name,kind,content_hash)
  WHERE attempted AND status IN ('uncertain','running');
+-- Efficiently inspect only pre-V2 backfilled posts when their source URL differs.
+CREATE INDEX IF NOT EXISTS xc_auto_jobs_historical_post
+ ON xc_auto_jobs(account_name,kind,created_at)
+ WHERE content_hash=dedup;
 
 CREATE TABLE IF NOT EXISTS xc_auto_sources (
  list_id text PRIMARY KEY CHECK(list_id ~ '^[0-9]{1,25}$'),

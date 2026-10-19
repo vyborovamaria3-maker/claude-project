@@ -1,4 +1,4 @@
-const {fingerprints}=require('./fingerprint.cjs');
+const {fingerprints,findHistoricalPostCollision}=require('./fingerprint.cjs');
 const nodeCrypto=require('node:crypto');const {runAi,readBreakers}=require('./breaker.cjs');const {readWorkerHealth}=require('./worker-health.cjs');const {name,handle,seal,digest}=require('./runtime.cjs');const {endpoint,generate,choices}=require('./providers.cjs');
 const safeProvider=p=>({...p,secret:undefined,hasKey:Boolean(p.secret)});
 function int(v,min,max){if(!Number.isInteger(v)||v<min||v>max)throw Error('Некорректное числовое значение');return v;}
@@ -26,6 +26,8 @@ async function enqueue(c,input){
   // A possibly sent action blocks new same-content jobs even on future days.
   const unresolved=(await c.query("SELECT * FROM xc_auto_jobs WHERE account_name=$1 AND kind=$2 AND (content_hash=$3 OR dedup=$4) AND attempted AND status IN ('running','uncertain') ORDER BY created_at LIMIT 1",[input.name,kind,contentHash,legacyDedup])).rows[0];
   if(unresolved){await c.query('COMMIT');return unresolved;}
+  const historical=await findHistoricalPostCollision(c,{...input,kind},{day:dedupDay});
+  if(historical){await c.query('COMMIT');return historical;}
   await c.query(`INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,target_id,target_handle,evidence,reason,provider_id,dedup,scheduled_at,created_at,origin,content_hash,dedup_day)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16::date)
    ON CONFLICT DO NOTHING`,[
