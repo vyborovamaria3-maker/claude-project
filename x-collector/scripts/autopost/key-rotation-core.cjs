@@ -1,6 +1,5 @@
 'use strict';
-// Versioned test-only envelope for the X Collector rotation rehearsal.
-// Production readers still require a coordinated upgrade before activation.
+// Versioned envelope; production key rotation still requires separate approval.
 const nodeCrypto=require('node:crypto');
 const MAGIC=Buffer.from('XCKEYV2!','ascii');
 const ID_PATTERN=/^[A-Za-z0-9_-]{1,48}$/;
