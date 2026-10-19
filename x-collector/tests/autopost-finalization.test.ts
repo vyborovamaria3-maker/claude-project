@@ -44,6 +44,33 @@ test('V2-02 confirmed X post is persisted and published together, idempotently',
  }finally{await db.close();}
 });
 
+test('V2-02 lost COMMIT acknowledgement is recoverable and idempotent',async()=>{
+ const {db,c}=await fixture();const id='00000000-0000-4000-8000-000000000064';
+ try{
+  const job=await runningJob(db,c,id);
+  const query=c.query;
+  let loseAck=true;
+  c.query=async(q:string,params:unknown[]=[] )=>{
+   const result=await query(q,params);
+   if(loseAck&&q.trim().toUpperCase()==='COMMIT'){
+    loseAck=false;
+    const error=Object.assign(new Error('simulated connection loss after durable COMMIT'),{code:'08006'});
+    throw error;
+   }
+   return result;
+  };
+  await assert.rejects(finalizePublication(c,job,tweetId,{views:'11'},{expectedStatus:'running'}),e=>Boolean(e&&typeof e==='object'&&'auditCategory' in e&&e.auditCategory==='DB_ERROR'&&/after durable COMMIT/.test(String(e))));
+  // The server committed even though the caller never received its acknowledgement.
+  assert.equal((await db.query<{status:string,result_id:string}>('SELECT status,result_id FROM xc_auto_jobs WHERE id=$1',[id])).rows[0].status,'published');
+  assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_posts WHERE tweet_id=$1',[tweetId])).rows[0].n,1);
+  assert.equal((await db.query<{n:number}>("SELECT count(*)::int n FROM xc_auto_job_events WHERE job_id=$1 AND event_type='published'",[id])).rows[0].n,1);
+  c.query=query;
+  assert.deepEqual(await finalizePublication(c,job,tweetId,{views:'11'},{expectedStatus:'running'}),{ok:true,alreadyConfirmed:true});
+  assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_posts WHERE tweet_id=$1',[tweetId])).rows[0].n,1);
+  assert.equal((await db.query<{n:number}>("SELECT count(*)::int n FROM xc_auto_job_events WHERE job_id=$1 AND event_type='published'",[id])).rows[0].n,1);
+ }finally{await db.close();}
+});
+
 test('V2-02 failure on status audit rolls back post, timeline, metrics and job',async()=>{
  const {db,c}=await fixture();const id='00000000-0000-4000-8000-000000000062';
  try{
