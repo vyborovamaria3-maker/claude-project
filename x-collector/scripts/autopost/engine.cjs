@@ -40,7 +40,6 @@ async function command(c,i){switch(i.action){
    await require('./finalize.cjs').finalizeAction(c,row,{expectedStatus:'uncertain',reconciliationStates:['manual_review','manual_required'],message:'Действие подтверждено оператором; автоматическая повторная отправка не выполнялась.',lastError:'Результат подтверждён оператором.'});
    return {ok:true,message:'Действие подтверждено; повторная отправка отключена'};
   }
-  return {ok:true,message:'Публикация подтверждена; повторная отправка отключена'};
  }
  case 'reconcile-retry':{
   if(!/^[a-f0-9-]{36}$/i.test(i.id||'')||i.confirmed_not_performed!==true)throw Error('Подтвердите, что проверили X и действие не было выполнено');
