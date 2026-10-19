@@ -77,7 +77,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 |---|---|---|---|
 | V2-01 | Attempts + events + additive schema | Baseline | **В работе** — DB audit, trace correlation, typed publisher errors, tests/UI |
 | V2-02 | Atomic finalization + typed errors | V2-01 | Не начато |
-| V2-03 | Engagement reconciliation | V2-02 | Не начато |
+| V2-03 | Engagement reconciliation | V2-02 | **В работе** — read-only наблюдения и регрессионные mocks; live X не проверен |
 | V2-04 | Heartbeat/health UI | V2-01 | Не начато |
 | V2-05 | Priority + dedup | V2-01 | Не начато |
 | V2-06 | Circuit breaker | V2-02 | Не начато |
@@ -121,3 +121,12 @@ Jitter для transient pre-send retry; разделение Worker на planner
 - [Принята политика хранения аудита](AUTOPOST_AUDIT_RETENTION_RU.md): автоматического удаления нет; рекомендуемая проверка объёма каждые 90 дней, минимальный горизонт расследования 180 дней; ручное архивирование возможно только после проверки восстановления и отдельного согласования.
 - Таблицы защищены append-only trigger и `ON DELETE RESTRICT`; отказ SQL-аудита отменяет изменение статуса в той же транзакции.
 - Это решение закрывает документирование retention, **не добавляет destructive GC**.
+
+### V2-03: безопасное включение сверки engagement (инкремент)
+
+- После неоднозначного исхода like/repost/follow задания переходят в `uncertain` с очередью `xc_auto_reconcile` вместо немедленного `manual_review` (это **не** повтор внешнего действия).
+- Startup recovery тоже ставит допустимые и ещё не просроченные engagement jobs на read-only сверку. Неизвестные виды действий и истёкшие окна остаются на ручном решении.
+- Проверка follow отвергает редирект на чужой профиль; состояние `performed` требует подтверждённого ID цели и отсутствия противоречивых кнопок.
+- `tests/autopost-action-observation.test.ts` проверяет Playwright-compatible mock-профили, положительные/отрицательные/неоднозначные наблюдения, чужой профиль, недоступный target и отсутствие отправки.
+- Прежние `manual_review` не массово переоткрываются: оператору нужно закончить их вручную. Никаких live X действий, слияния в main или обхода ограничений.
+- **Статус:** изменение кода; проверять CI на SHA этого коммита. Live X: **NOT TESTED**.

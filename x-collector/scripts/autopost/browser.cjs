@@ -48,11 +48,11 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
    const state=(await c.query('SELECT attempted_at,started_at,created_at FROM xc_auto_jobs WHERE id=$1',[job.id])).rows[0];
    const attemptedAt=Number(state?.attempted_at||state?.started_at||state?.created_at||now);
    const deadlineAt=attemptedAt+RECONCILIATION_WINDOW_MS;
-   const supported=['post','reply'].includes(job.kind);
+   const supported=['post','reply','like','repost','follow'].includes(job.kind);
    const reconcileStatus=!supported?'manual_review':deadlineAt<=now?'manual_required':'queued';
    const message=!supported?'Результат действия не подтверждён. Проверьте X вручную; повтор запрещён.':deadlineAt<=now?'Результат старше 24 часов и не подтверждён. Проверьте X вручную; повтор запрещён.':'Результат отправки неизвестен; сверка X запланирована. Повторная отправка запрещена.';
    await c.query("UPDATE xc_auto_jobs SET status='uncertain',message=$2,finished_at=$3,lease_until=NULL WHERE id=$1 AND status='running'",[job.id,message,now]);
-   await c.query("INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,last_error,created_at,updated_at,finished_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11) ON CONFLICT(job_id) DO UPDATE SET account_name=excluded.account_name,expected_handle=excluded.expected_handle,kind=excluded.kind,attempted_at=excluded.attempted_at,next_check_at=excluded.next_check_at,deadline_at=excluded.deadline_at,attempts=0,status=excluded.status,matched_tweet_id=NULL,candidates='[]'::jsonb,last_error=excluded.last_error,updated_at=excluded.updated_at,finished_at=excluded.finished_at WHERE xc_auto_reconcile.status='resolved'",[job.id,job.account_name,job.expected_handle,job.kind,attemptedAt,reconcileStatus==='queued'?now+INITIAL_CHECK_DELAY_MS:now,deadlineAt,reconcileStatus,!supported?'Автоматическая сверка поддерживает только публикации и ответы.':deadlineAt<=now?'Срок автоматической сверки истёк.':null,now,reconcileStatus==='queued'?null:now]);
+   await c.query("INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,last_error,created_at,updated_at,finished_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11) ON CONFLICT(job_id) DO UPDATE SET account_name=excluded.account_name,expected_handle=excluded.expected_handle,kind=excluded.kind,attempted_at=excluded.attempted_at,next_check_at=excluded.next_check_at,deadline_at=excluded.deadline_at,attempts=0,status=excluded.status,matched_tweet_id=NULL,candidates='[]'::jsonb,last_error=excluded.last_error,updated_at=excluded.updated_at,finished_at=excluded.finished_at WHERE xc_auto_reconcile.status='resolved'",[job.id,job.account_name,job.expected_handle,job.kind,attemptedAt,reconcileStatus==='queued'?now+INITIAL_CHECK_DELAY_MS:now,deadlineAt,reconcileStatus,!supported?'Автоматическая сверка этого типа действия не поддерживается.':deadlineAt<=now?'Срок автоматической сверки истёк.':null,now,reconcileStatus==='queued'?null:now]);
    await recordAttemptFailure(c,job.id,_e);
    await c.query('COMMIT');
   }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
@@ -108,11 +108,11 @@ async function reconcilePost(c,job){
  }finally{await opened.browser.close().catch(()=>{});}
 }
 
-async function reconcileAction(c,job){
+async function reconcileAction(c,job,opener=open){
  const targetHandle=String(job.target_handle||'').replace(/^@/,'');
  if(!/^[A-Za-z0-9_]{1,15}$/.test(targetHandle))return {status:'unknown'};
  if(job.kind!=='follow'&&!/^[0-9]{1,25}$/.test(String(job.target_id||'')))return {status:'unknown'};
- const opened=await open(c,job.account_name,job.expected_handle);
+ const opened=await opener(c,job.account_name,job.expected_handle);
  try{
   const page=opened.page;
   if(job.kind==='follow'){
@@ -124,7 +124,9 @@ async function reconcileAction(c,job){
     const area=page.locator('[data-testid="primaryColumn"]');await area.waitFor({timeout:20000});
     const deadline=Date.now()+15000;while(!userId&&Date.now()<deadline)await page.waitForTimeout(250);
     while(pending.size)await Promise.all([...pending]);
-    if(!userId)return {status:'unknown'};
+    // A renamed, redirected or inaccessible profile is not evidence of a follow.
+    const resolvedPath=new URL(page.url()).pathname.replace(/\/$/,'').toLowerCase();
+    if(resolvedPath!=='/'+targetHandle.toLowerCase()||!userId)return {status:'unknown'};
     const done=area.locator('[data-testid="'+userId+'-unfollow"]');
     const available=area.locator('[data-testid="'+userId+'-follow"]');
     const doneCount=await done.count(),availableCount=await available.count();

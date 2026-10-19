@@ -53,7 +53,7 @@ test('restart recovery moves attempted jobs to uncertain and never resets commit
  }finally{await db.close();}
 });
 
-test('restart recovery sends expired and unsupported uncertain jobs to manual review',async()=>{
+test('restart recovery queues fresh engagement actions for read-only observation and sends expired jobs to manual review',async()=>{
  const {db,c}=await fixture();
  try{
   await insertJob(db,{id:'00000000-0000-4000-8000-000000000081',status:'uncertain',kind:'post',attempted:true,attemptedAt:now-RECONCILIATION_WINDOW_MS-1});
@@ -63,9 +63,14 @@ test('restart recovery sends expired and unsupported uncertain jobs to manual re
   assert.equal(expired.status,'manual_required');
   assert.match(expired.last_error,/старше 24 часов/);
   assert.equal(expired.finished_at,now+1000);
-  const unsupported=(await db.query<{status:string,last_error:string}>('SELECT status,last_error FROM xc_auto_reconcile WHERE job_id=$1',['00000000-0000-4000-8000-000000000082'])).rows[0];
-  assert.equal(unsupported.status,'manual_review');
-  assert.match(unsupported.last_error,/поддерживает только публикации и ответы/);
+  const engagement=(await db.query<{status:string,last_error:string|null,finished_at:number|null}>('SELECT status,last_error,finished_at FROM xc_auto_reconcile WHERE job_id=$1',['00000000-0000-4000-8000-000000000082'])).rows[0];
+  assert.deepEqual(engagement,{status:'queued',last_error:null,finished_at:null});
+  for(const kind of ['repost','follow']){
+   const id=kind==='repost'?'00000000-0000-4000-8000-000000000083':'00000000-0000-4000-8000-000000000084';
+   await insertJob(db,{id,status:'uncertain',kind,attempted:true,attemptedAt:now});
+   await recoverInterruptedJobs(c,now+2000);
+   assert.equal((await db.query<{status:string}>('SELECT status FROM xc_auto_reconcile WHERE job_id=$1',[id])).rows[0].status,'queued');
+  }
  }finally{await db.close();}
 });
 

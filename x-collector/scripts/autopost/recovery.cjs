@@ -21,10 +21,10 @@ async function recoverInterruptedJobs(c,now=Date.now()){
   const queued=await c.query([
    "INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,last_error,created_at,updated_at,finished_at)",
    "SELECT j.id,j.account_name,j.expected_handle,j.kind,COALESCE(j.attempted_at,j.started_at,j.created_at),$1::bigint,COALESCE(j.attempted_at,j.started_at,j.created_at)+$2::bigint,",
-   "CASE WHEN COALESCE(j.attempted_at,j.started_at,j.created_at)+$2::bigint<=$1::bigint THEN 'manual_required' WHEN j.kind NOT IN ('post','reply') THEN 'manual_review' ELSE 'queued' END,",
+   "CASE WHEN COALESCE(j.attempted_at,j.started_at,j.created_at)+$2::bigint<=$1::bigint THEN 'manual_required' WHEN j.kind NOT IN ('post','reply','like','repost','follow') THEN 'manual_review' ELSE 'queued' END,",
    "CASE WHEN COALESCE(j.attempted_at,j.started_at,j.created_at)+$2::bigint<=$1::bigint THEN 'Результат старше 24 часов; требуется ручная проверка.'",
-   "WHEN j.kind NOT IN ('post','reply') THEN 'Автоматическая сверка поддерживает только публикации и ответы.' ELSE NULL END,",
-   "j.created_at,$1::bigint,CASE WHEN COALESCE(j.attempted_at,j.started_at,j.created_at)+$2::bigint<=$1::bigint OR j.kind NOT IN ('post','reply') THEN $1::bigint ELSE NULL END",
+   "WHEN j.kind NOT IN ('post','reply','like','repost','follow') THEN 'Автоматическая сверка этого типа действия не поддерживается.' ELSE NULL END,",
+   "j.created_at,$1::bigint,CASE WHEN COALESCE(j.attempted_at,j.started_at,j.created_at)+$2::bigint<=$1::bigint OR j.kind NOT IN ('post','reply','like','repost','follow') THEN $1::bigint ELSE NULL END",
    "FROM xc_auto_jobs j WHERE j.status='uncertain'",
    "ON CONFLICT(job_id) DO UPDATE SET account_name=excluded.account_name,expected_handle=excluded.expected_handle,kind=excluded.kind,",
    "attempted_at=excluded.attempted_at,next_check_at=excluded.next_check_at,deadline_at=excluded.deadline_at,attempts=0,status=excluded.status,",
