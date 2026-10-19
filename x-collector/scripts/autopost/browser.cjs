@@ -35,6 +35,10 @@ async function execute(c,job){let browser,attempted=false,article,followArea;try
  const retry=shouldRetryBeforeSend(_e,attempted,retryCount);
  const now=Date.now();
  if(attempted){
+  // The X reply may have been committed before the DB client lost its COMMIT acknowledgement.
+  // If the durable job is already published, do not open a spurious reconciliation.
+  const observedState=(await c.query('SELECT status FROM xc_auto_jobs WHERE id=$1',[job.id])).rows[0];
+  if(observedState?.status==='published')return;
   if(require('./audit-error.cjs').classifyAuditError(_e).category!=='DB_ERROR')await recordAccountError(c,job.account_name,_e).catch(()=>{});
   await c.query('BEGIN');
   try{
