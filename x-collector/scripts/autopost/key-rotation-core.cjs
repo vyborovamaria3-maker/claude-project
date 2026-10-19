@@ -135,7 +135,7 @@ async function rotateDisposableTestDatabase(c,options){
  }catch(error){
   await c.query('ROLLBACK').catch(()=>{});
   if(error?.message==='WORKER_STILL_ACTIVE'||error?.message==='WORKER_LOCK_HELD')throw error;
-  throw Error('TEST_ROTATION_ROLLED_BACK');
+  throw Error('TEST_ROTATION_ROLLED_BACK',{cause:error});
  }
 }
 module.exports={MAGIC,parseKey,kind,packV2,unpack,validatePlaintext,scan,audit,rotateDisposableTestDatabase};
