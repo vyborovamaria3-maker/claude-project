@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto";
 import pg from "pg";
-import {refreshPumpKeywords,tweetPumpMints,type PumpSettings} from "./pump-keywords.js";
+import {refreshPumpKeywords,tweetPumpMints,tweetPumpTickers,type PumpSettings} from "./pump-keywords.js";
 export type TweetKeywordSettings={auto_keywords_enabled:boolean;auto_keywords_limit:number;
  twitter_lookback_hours:number;twitter_tweet_limit:number;min_keyword_posts:number;min_keyword_authors:number;revision:number};
 type Tweet={tweet_id:string;text:string;handle:string};
@@ -55,7 +55,7 @@ export async function refreshTwitterKeywords(settings:TweetKeywordSettings & Par
   await pool.query(`UPDATE tg_discovery_settings SET generated_keywords=$2,keyword_stats=$3::jsonb,
    keyword_refreshed_at=now(),keyword_post_count=$4,keyword_error_code=NULL WHERE id=1 AND revision=$1`,
    [settings.revision,words.map(w=>w.keyword),JSON.stringify(words),rows.length]);
-  const pump=settings.pump_enabled?await refreshPumpKeywords(settings as PumpSettings,words.map(w=>w.keyword),tweetPumpMints(rows.map(r=>r.text),settings.pump_max_tokens??3)):[];
+  const pump=settings.pump_enabled?await refreshPumpKeywords(settings as PumpSettings,tweetPumpTickers(rows.map(r=>r.text),settings.pump_max_tokens??3),tweetPumpMints(rows.map(r=>r.text),settings.pump_max_tokens??3)):[];
   return [...pump,...words.map(w=>w.keyword)];
  }catch{await pool.query("UPDATE tg_discovery_settings SET keyword_error_code='TWITTER_READ_UNAVAILABLE' WHERE id=1");return [];}
 }

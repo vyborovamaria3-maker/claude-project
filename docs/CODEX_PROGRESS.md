@@ -91,3 +91,11 @@ is visible without blocking Twitter discovery. Live main refresh verified a fres
 Twitter-derived `solana` query found new sources and collected 98 messages from one
 new channel. Pump.fun returned HTTP 403 locally, so successful live ATH retrieval
 remains unverified. Original TGInvite session/proxy hashes remained unchanged.
+
+
+Pump 403 diagnosis: all tested Pump API hosts return Cloudflare's blocked page.
+Added independent exact-ticker/contract lookup and CoinGecko historical-cap evidence,
+strict Pump category validation, durable cache, primary backoff and bounded deadlines.
+Live PNUT mint and ticker both verified a $57.84M historical cap; bounded history is
+labeled as a lower bound on lifetime ATH. Regression tests cover fake/wrong contracts,
+other-chain/partial ticker matches, current versus historical data and 403 fallback.

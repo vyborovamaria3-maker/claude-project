@@ -493,3 +493,18 @@ recommendation. Telegram contacts.Search searches public source names; finding e
 channel that mentioned a mint is not guaranteed. The existing message search accepts
 mint addresses/tickers for messages already collected. Pump.fun access can return 403;
 in that case Pump candidates remain empty and normal Twitter discovery continues.
+
+
+Pump.fun HTTP 403 now triggers an independent fallback: DexScreener resolves an exact
+Solana ticker, CoinGecko verifies the exact Solana contract and Pump.fun category,
+then provides 90-day historical USD `market_caps`. Only completed historical days
+count. A recorded capitalization above the configured threshold proves that the
+all-time high was at least that high; this bounded maximum is explicitly labeled
+as a historical lower bound, not an exact lifetime ATH. Current market cap, FDV and
+ATH price multiplied by today's supply are never substituted. Unlisted assets or
+missing history cannot qualify. Results retain provider, date and coverage metadata.
+Positive lookups cache for six hours, no-data for one hour and failures for 15 minutes;
+Pump 403 also backs off the primary for six hours in the running worker. A cycle has
+a 20-second lookup deadline. CoinGecko availability/rate limits still apply.
+Live mint and ticker PNUT both resolved the same verified Pump.fun contract and a
+historical capitalization of approximately $57.84M (2026-09-23), exceeding $100k.
