@@ -78,7 +78,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 | V2-01 | Attempts + events + additive schema | Baseline | **В работе** — DB audit, trace correlation, typed publisher errors, tests/UI |
 | V2-02 | Atomic finalization + typed errors | V2-01 | Не начато |
 | V2-03 | Engagement reconciliation | V2-02 | **В работе** — read-only наблюдения и регрессионные mocks; live X не проверен |
-| V2-04 | Heartbeat/health UI | V2-01 | Не начато |
+| V2-04 | Heartbeat/health UI | V2-01 | **Реализован offline-инкремент** — независимый heartbeat, UI и PostgreSQL-тесты; live X не проверен |
 | V2-05 | Priority + dedup | V2-01 | **В работе** — manual-first, additive дневная дедупликация и guard uncertain; CI/PG подтверждение ещё требуется |
 | V2-06 | Circuit breaker | V2-02 | Не начато |
 | V2-07 | Secret rotation/runbook | Baseline | Не начато |
