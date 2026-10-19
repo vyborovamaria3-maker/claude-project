@@ -76,3 +76,20 @@ test('V2-05: a failed enqueue rolls back and account remains usable',async()=>{
   assert.ok((await enqueue(c,make(randomUUID(),Date.now()))).id);
  }finally{await db.close();}
 });
+
+test('V2-05: legacy source URL variant must block next-day uncertain resend',async()=>{
+ const {db,c}=await fixture();
+ try{
+  const now=Date.now(),oldId=randomUUID();
+  const text='Review this checklist https://x.com/i/status/111111';
+  const legacy=digest(['publisher','post','','review this checklist https://x.com/i/status/111111'].join('|'));
+  await db.query("INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,dedup,scheduled_at,created_at,status,attempted) VALUES($1,'publisher','publisher','post',$2,$3,$4,$4,'uncertain',true)",[oldId,text,legacy,now]);
+  await db.exec(schema);
+  const input=make(randomUUID(),now+DAY_MS,'Review this checklist https://x.com/i/status/999999');
+  assert.equal((await enqueue(c,input)).id,oldId,'Changed permalink does not bypass uncertain dedup');
+  assert.equal((await db.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_jobs')).rows[0].n,1);
+  await db.query("UPDATE xc_auto_jobs SET status='published' WHERE id=$1",[oldId]);
+  assert.equal((await enqueue(c,make(randomUUID(),now,'Review this checklist https://x.com/i/status/999999'))).id,oldId);
+  assert.notEqual((await enqueue(c,input)).id,oldId,'Confirmed next-day repeat remains permitted');
+ }finally{await db.close();}
+});

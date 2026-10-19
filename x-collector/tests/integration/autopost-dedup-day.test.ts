@@ -54,3 +54,33 @@ test('real PostgreSQL: same-day concurrent enqueues serialize; uncertain blocks 
   try{if(created)await admin.query('DROP SCHEMA "'+schema+'" CASCADE');}finally{await admin.end().catch(()=>{});}
  }
 });
+
+test('real PostgreSQL: legacy uncertain source URL variant survives V2 migration and is not resent', {
+ skip:!process.env.RUNTIME_TEST_DATABASE_URL,timeout:60000,
+},async()=>{
+ const connectionString=process.env.RUNTIME_TEST_DATABASE_URL!;
+ assert(new URL(connectionString).pathname.endsWith('_test'));
+ const schema='autopost_legacy_'+randomUUID().replaceAll('-','');
+ const c=new Client({connectionString});
+ let created=false;
+ await c.connect();
+ try{
+  await c.query('CREATE SCHEMA "'+schema+'"');created=true;
+  await c.query('SET search_path TO "'+schema+'",public');
+  await c.query("CREATE TABLE x_accounts(name text PRIMARY KEY,role text,status text)");
+  await c.query('CREATE TABLE x_tasks(id bigint PRIMARY KEY)');
+  const sql=readFileSync('scripts/autopost/schema.sql','utf8');
+  await c.query(sql);
+  await c.query("INSERT INTO x_accounts VALUES('publisher','publisher','active')");
+  const oldText='Read my checklist https://x.com/i/status/111111';
+  const oldHash=digest(['publisher','post','','read my checklist https://x.com/i/status/111111'].join('|'));
+  const oldId=randomUUID(),now=Date.now();
+  await c.query("INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,dedup,scheduled_at,created_at,status,attempted) VALUES($1,'publisher','publisher','post',$2,$3,$4,$4,'uncertain',true)",[oldId,oldText,oldHash,now]);
+  await c.query(sql);
+  const newer={id:randomUUID(),name:'publisher',expected:'publisher',kind:'post',text:'Read my checklist https://x.com/i/status/222222',scheduled_at:now+86_400_000};
+  assert.equal((await enqueue(c,newer)).id,oldId);
+  assert.equal((await c.query<{n:number}>('SELECT count(*)::int n FROM xc_auto_jobs')).rows[0].n,1);
+ }finally{
+  try{if(created){await c.query('RESET search_path');await c.query('DROP SCHEMA "'+schema+'" CASCADE');}}finally{await c.end().catch(()=>{});}
+ }
+});

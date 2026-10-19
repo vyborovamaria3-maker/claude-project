@@ -38,6 +38,7 @@ test('post deduplication ignores source tweet ids and their permalinks',async()=
  const c={query:async(sql:string,values:unknown[]=[] )=>{
   if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return {rows:[]};
   if(sql.includes('AND (content_hash=$3 OR dedup=$4) AND attempted'))return {rows:[]};
+  if(sql.includes('AND (content_hash=dedup OR content_hash IS NULL)'))return {rows:[]};
   if(sql.startsWith('SELECT name FROM x_accounts'))return {rows:[{name:'publisher'}]};
   if(sql.startsWith('INSERT INTO xc_auto_jobs')){inserts.push(values);return {rows:[]};}
   if(sql.startsWith('SELECT * FROM xc_auto_jobs WHERE id=$1 OR dedup=$2'))return {rows:[{id:values[0],dedup:values[1],created_at:Date.now()}]};
