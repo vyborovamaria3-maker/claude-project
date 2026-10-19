@@ -19,6 +19,7 @@ test('expired sessions, proxy errors and platform restrictions require intervent
  assert.equal(retry.classifyPreSendError(new Error('HTTP 429 rate limit')).code,'X_RESTRICTED');
  assert.equal(retry.classifyPreSendError(new Error('Профиль сессии не совпал с username')).code,'ACCOUNT_MISMATCH');
  assert.equal(retry.classifyPreSendError(new Error('Задание остановлено до отправки')).code,'JOB_NOT_ELIGIBLE');
+ assert.equal(retry.classifyPreSendError(new Error('TARGET_NOT_FOUND')).code,'TARGET_NOT_FOUND');
  assert.equal(retry.shouldRetryBeforeSend(new Error('SESSION_EXPIRED'),false,0),false);
 });
 

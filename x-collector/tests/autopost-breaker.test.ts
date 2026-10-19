@@ -88,3 +88,17 @@ test('V2-06: unfinished half-open probe is released on pre-send retry and eventu
   assert.equal(await b.permit(c,'account','publisher',second+b.PROBE_TIMEOUT_MS+b.POLICY.account.cooldownMs),true);
  }finally{await db.close();}
 });
+
+test('V2-06: a database error while clearing an AI breaker is not a provider failure',async()=>{
+ const {db,c}=await fixture();
+ try{
+  await b.failure(c,'ai','provider','AI_PROVIDER_FAILURE',now);
+  await db.exec("CREATE FUNCTION reject_ai_reset() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.consecutive_failures=0 AND OLD.consecutive_failures>0 THEN RAISE EXCEPTION 'injected breaker reset failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_ai_reset BEFORE UPDATE ON xc_auto_breakers FOR EACH ROW EXECUTE FUNCTION reject_ai_reset()");
+  let calls=0;
+  await assert.rejects(b.runAi(c,'provider',async()=>{calls++;return 'valid result';}),/injected breaker reset failure/);
+  assert.equal(calls,1,'AI generation itself succeeded');
+  const row=(await db.query<{consecutive_failures:number,state:string}>("SELECT consecutive_failures,state FROM xc_auto_breakers WHERE kind='ai' AND subject='provider'")).rows[0];
+  assert.equal(row.consecutive_failures,1,'Successful AI call with DB write failure must not increment model failures');
+  assert.equal(row.state,'closed');
+ }finally{await db.close();}
+});

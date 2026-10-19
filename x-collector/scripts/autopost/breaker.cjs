@@ -73,14 +73,16 @@ async function operatorReset(c,kind,subject,confirmed,now=Date.now()){
 }
 async function runAi(c,providerId,operation){
  if(!await permit(c,'ai',providerId))throw Object.assign(Error('AI_PROVIDER_PAUSED'),{code:'AI_PROVIDER_PAUSED'});
- try{
-  const result=await operation();
-  await success(c,'ai',providerId);
-  return result;
- }catch(error){
+ let result;
+ try{result=await operation();}
+ catch(error){
+  // Only AI/generation errors count against the provider. Database errors in
+  // success() must not be misclassified as failed model responses.
   await failure(c,'ai',providerId,'AI_PROVIDER_FAILURE').catch(()=>{});
   throw error;
  }
+ await success(c,'ai',providerId);
+ return result;
 }
 async function readBreakers(c){
  return (await c.query("SELECT kind,subject,state,consecutive_failures,reason_code,resume_at::text,updated_at::text FROM xc_auto_breakers WHERE state<>'closed' ORDER BY kind,subject")).rows;
