@@ -50,9 +50,10 @@ test('V2-04: component errors are sanitized and never change the operation resul
  }finally{await db.close();}
 });
 test('V2-04: dedicated client beats while publisher client is blocked, without overlapping queries',async()=>{
- let ticks=0,connections=0,closed=0;
+ let ticks=0,connections=0,closed=0,legacyTicks=0;
  const connect=async()=>{connections++;return {query:async(q:unknown)=>{
   if(typeof q==='object'&&q!==null&&'text' in q&&String((q as {text:string}).text).includes('INSERT INTO xc_auto_worker_health'))ticks++;
+  if(typeof q==='object'&&q!==null&&'text' in q&&String((q as {text:string}).text).includes('UPDATE xc_auto_control SET heartbeat'))legacyTicks++;
   return {rows:[],rowCount:1};
  },end:async()=>{closed++;}};};
  const heartbeat=await startHeartbeat(connect,{workerId:'test-worker',intervalMs:3600000,now:()=>now});
@@ -60,8 +61,9 @@ test('V2-04: dedicated client beats while publisher client is blocked, without o
   const blocked=new Promise<void>(()=>{});
   void blocked;
   await Promise.all([heartbeat.beat(),heartbeat.beat()]);
-  assert.equal(ticks,3);
+  assert.equal(ticks,2,'Concurrent beat calls coalesce into one DB heartbeat');
   assert.equal(connections,1,'A single dedicated connection is reused');
+  assert.equal(legacyTicks,2,'Legacy control heartbeat remains updated');
  }finally{await heartbeat.stop();}
  assert.equal(closed,1);
 });

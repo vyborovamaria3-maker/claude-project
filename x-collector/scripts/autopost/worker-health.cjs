@@ -85,6 +85,8 @@ async function startHeartbeat(connect,{workerId=randomUUID(),intervalMs=HEARTBEA
  worker_id=excluded.worker_id,
  started_at=CASE WHEN xc_auto_worker_health.worker_id=excluded.worker_id THEN xc_auto_worker_health.started_at ELSE excluded.started_at END,
  heartbeat_at=excluded.heartbeat_at`,values:[workerId,stamp],query_timeout:3000});
+    // Backward compatible signal for older local dashboards, on the SAME dedicated client.
+    await db.query({text:'UPDATE xc_auto_control SET heartbeat=$1 WHERE id=1',values:[stamp],query_timeout:3000});
    }catch{
     const previous=db;db=null;
     if(previous)await previous.end().catch(()=>{});
