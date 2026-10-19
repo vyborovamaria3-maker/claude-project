@@ -95,7 +95,8 @@ test('V2-03 action finalization rolls back job and reconciliation together',asyn
  try{
   await db.query("INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,target_id,target_handle,dedup,status,attempted,scheduled_at,created_at,attempted_at,origin) VALUES($1,'publisher','publisher','follow',NULL,'source',$2,'uncertain',true,$3,$3,$3,'manual')",[id,'action-'+id,now]);
   await db.query("INSERT INTO xc_auto_reconcile(job_id,account_name,expected_handle,kind,attempted_at,next_check_at,deadline_at,status,created_at,updated_at) VALUES($1,'publisher','publisher','follow',$2,$2,$3,'running',$2,$2)",[id,now,now+60_000]);
-  await db.exec("CREATE FUNCTION reject_action_finalize() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN IF NEW.event_type='published' THEN RAISE EXCEPTION 'injected action finalization failure'; END IF; RETURN NEW; END $; CREATE TRIGGER reject_action_finalize BEFORE INSERT ON xc_auto_job_events FOR EACH ROW EXECUTE FUNCTION reject_action_finalize()");
+  await db.exec("CREATE FUNCTION reject_action_finalize() RETURNS trigger LANGUAGE plpgsql AS $ BEGIN IF NEW.event_type='published' THEN RAISE EXCEPTION 'injected action finalization failure'; END IF; RETURN NEW; END $;");
+  await db.exec("CREATE TRIGGER reject_action_finalize BEFORE INSERT ON xc_auto_job_events FOR EACH ROW EXECUTE FUNCTION reject_action_finalize()");
   const job={id,account_name:'publisher',expected_handle:'publisher',kind:'follow',target_id:null,target_handle:'source'};
   await assert.rejects(finalizeAction(c,job,{expectedStatus:'uncertain',reconciliationStates:['running']}),/injected action finalization failure/);
   assert.equal((await db.query<{status:string}>('SELECT status FROM xc_auto_jobs WHERE id=$1',[id])).rows[0].status,'uncertain');
