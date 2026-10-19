@@ -14,6 +14,20 @@ CREATE TABLE IF NOT EXISTS xc_auto_config (
 CREATE TABLE IF NOT EXISTS xc_auto_control (id int PRIMARY KEY CHECK(id=1),paused boolean NOT NULL DEFAULT true,heartbeat bigint);
 INSERT INTO xc_auto_control(id) VALUES(1) ON CONFLICT DO NOTHING;
 -- V2-04: health is operational state, separate from audit and job transactions.
+-- V2-06: independent account/AI circuit breakers; never store raw errors/secrets.
+CREATE TABLE IF NOT EXISTS xc_auto_breakers(
+ kind text NOT NULL CHECK(kind IN ('account','ai')),
+ subject text NOT NULL,
+ state text NOT NULL DEFAULT 'closed' CHECK(state IN ('closed','open','half_open')),
+ consecutive_failures integer NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),
+ reason_code text,
+ opened_at bigint,
+ resume_at bigint,
+ updated_at bigint NOT NULL,
+ PRIMARY KEY(kind,subject)
+);
+CREATE INDEX IF NOT EXISTS xc_auto_breakers_active
+ ON xc_auto_breakers(kind,state,resume_at) WHERE state<>'closed';
 CREATE TABLE IF NOT EXISTS xc_auto_worker_health(
  id int PRIMARY KEY CHECK(id=1),
  worker_id text NOT NULL, started_at bigint NOT NULL, heartbeat_at bigint NOT NULL

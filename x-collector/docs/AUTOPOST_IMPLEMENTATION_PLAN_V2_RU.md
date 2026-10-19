@@ -80,7 +80,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 | V2-03 | Engagement reconciliation | V2-02 | **В работе** — read-only наблюдения и регрессионные mocks; live X не проверен |
 | V2-04 | Heartbeat/health UI | V2-01 | **Реализован offline-инкремент** — независимый heartbeat, UI и PostgreSQL-тесты; live X не проверен |
 | V2-05 | Priority + dedup | V2-01 | **В работе** — manual-first, additive дневная дедупликация и guard uncertain; CI/PG подтверждение ещё требуется |
-| V2-06 | Circuit breaker | V2-02 | Не начато |
+| V2-06 | Circuit breaker | V2-02 | **В работе** — DB breaker policy и тесты; рабочие точки интеграции отдельно |
 | V2-07 | Secret rotation/runbook | Baseline | Не начато |
 | V2-08 | Controlled live smoke | После P0 и CI | Не начато |
 
@@ -153,3 +153,9 @@ Jitter для transient pre-send retry; разделение Worker на planner
 - `enqueue` сериализует конкурирующие постановки на уровне строки аккаунта и возвращает старый `attempted/running/uncertain` job при совпадении `content_hash`, даже если календарный день сменился. Дополнительно `browser.execute` проверяет отсутствие других attempted uncertain/running **непосредственно перед send-boundary**. Операции X не повторяются.
 - Два допустимых `published` задания на разные календарные дни разрешены политикой; повтор текущего дня (включая legacy) запрещён. Не делать destructive migration старых ключей или событий.
 - Рекомендуется повторить X Collector CI, реальные PostgreSQL конкурентные тесты и согласовать UI-текст перед включением агента. Live X: **NOT TESTED**.
+
+### V2-06: первая аддитивная схема breaker
+
+- `xc_auto_breakers` отдельно хранит состояние аккаунта X и AI-провайдера без ошибок, cookie, prompt или ключей. Состояния `closed/open/half_open`, счётчик последовательных ошибок, `reason_code`, `resume_at`; тестовые пороги 3/1 час для аккаунта, 5/30 минут для AI. SQL миграция идемпотентна.
+- `breaker.cjs` содержит атомарное увеличение счётчика и одиночную half-open пробу, read-only overview и операторский reset с явным подтверждением. Несоответствующие типизированные ошибки не повышают счётчик аккаунта, raw error не сохраняется.
+- Начальный коммит **не включает блокировку Worker/AI**. До интеграции в планировщик и publisher это только проверенная модель хранения — не заявлять, что защитный механизм включён.
