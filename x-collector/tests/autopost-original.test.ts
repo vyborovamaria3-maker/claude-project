@@ -14,6 +14,8 @@ test('empty source cycles enqueue only an original post without fabricated targe
   if(sql.startsWith('SELECT content'))return {rows:[]};
   if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return {rows:[]};
   if(sql.includes('AND content_hash=$3 AND attempted'))return {rows:[]};
+  if(sql.startsWith('SELECT state,resume_at FROM xc_auto_breakers'))return {rows:[]};
+  if(sql.startsWith("UPDATE xc_auto_breakers SET state='closed'"))return {rows:[]};
   if(sql.startsWith('SELECT name'))return {rows:[{name:'publisher'}]};
   if(sql.startsWith('INSERT INTO xc_auto_jobs')){inserted=values;return {rows:[]};}
   if(sql.startsWith('SELECT * FROM xc_auto_jobs'))return {rows:[{created_at:now}]};

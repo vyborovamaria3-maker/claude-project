@@ -12,6 +12,16 @@ async function command(c,i){switch(i.action){
  case 'provider-test':{const p=(await c.query('SELECT * FROM xc_ai_providers WHERE id=$1',[i.id])).rows[0];if(!p)throw Error('Провайдер не найден');const text=await generate(p,'Return JSON only: {"actions":[]}.','Connection test.');choices(text,[],['post']);return {ok:true,message:'Подключение и формат ответа проверены'};}
  case 'config-save':return saveConfig(c,i);
  case 'pause':if(typeof i.paused!=='boolean')throw Error('paused обязателен');await c.query('UPDATE xc_auto_control SET paused=$1 WHERE id=1',[i.paused]);return {ok:true};
+ case 'breaker-reset':{
+  const {operatorReset}=require('./breaker.cjs');
+  if(i.confirmed!==true)throw Error('Подтвердите, что проверили причину паузы и ограничения X или провайдера сняты');
+  if(i.kind==='account'){
+   if(!(await c.query("SELECT 1 FROM x_accounts WHERE name=$1 AND role='publisher'",[i.subject])).rowCount)throw Error('Аккаунт публикации не найден');
+  }else if(i.kind==='ai'){
+   if(!(await c.query('SELECT 1 FROM xc_ai_providers WHERE id=$1',[i.subject])).rowCount)throw Error('Провайдер не найден');
+  }else throw Error('Некорректный тип паузы');
+  return operatorReset(c,i.kind,i.subject,true);
+ }
  case 'enqueue':return enqueue(c,i);
  case 'status':{const j=(await c.query('SELECT * FROM xc_auto_jobs WHERE id=$1',[i.id])).rows[0];if(!j)throw Error('Публикация не найдена');return j;}
  case 'audit':{

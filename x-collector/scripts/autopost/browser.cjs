@@ -1,5 +1,6 @@
 const {recordAttemptFailure}=require('./audit-error.cjs');
 const {recordAccountError}=require('../account-health.cjs');
+const {failure:breakerFailure,success:breakerSuccess}=require('./breaker.cjs');
 const {MAX_PRE_SEND_RETRIES,classifyPreSendError,shouldRetryBeforeSend,retryDelayMs}=require('./publish-retry.cjs');
 const {findMatches,expandTweetUrls,INITIAL_CHECK_DELAY_MS,RECONCILIATION_WINDOW_MS,classifyActionState}=require('./reconciliation.cjs');
 const {chromium}=require('playwright');const {launchLoginBrowser}=require('../test-publish-browser.cjs');const {parseProxy}=require('../x-proxy.cjs');const {unseal,config}=require('./runtime.cjs');
@@ -31,7 +32,7 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
  AND other.content_hash IS NOT NULL AND other.content_hash=current.content_hash
  AND other.attempted AND other.status IN ('running','uncertain'))
  AND (origin='manual' OR (NOT (SELECT paused FROM xc_auto_control WHERE id=1) AND EXISTS(SELECT 1 FROM xc_auto_config f WHERE f.account_name=$2 AND f.enabled AND (f.start_hour=f.end_hour OR (f.start_hour<f.end_hour AND extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')>=f.start_hour AND extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')<f.end_hour) OR (f.start_hour>f.end_hour AND (extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')>=f.start_hour OR extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')<f.end_hour))) AND (SELECT count(*) FROM xc_auto_jobs j WHERE j.account_name=$2 AND j.attempted AND COALESCE(j.attempted_at,j.started_at)>=$4)<f.daily_limit))) RETURNING id`,[job.id,job.account_name,attemptNow,Math.floor((attemptNow+10800000)/86400000)*86400000-10800000]);if(!updated.rowCount)throw Error('Задание остановлено до отправки');attempted=true;await button.click({timeout:15000});
- if(responsePromise){const r=await responsePromise;let result=r?.body?.data?.create_tweet?.tweet_results?.result;if(result?.tweet)result=result.tweet;const id=result?.rest_id;if(!r?.ok||!/^\d+$/.test(id||''))throw Error('Нет подтверждения X');confirmedTweetId=id;await require('./finalize.cjs').finalizePublication(c,job,id,extract(r.body,id)||{},{expectedStatus:'running',message:'Опубликовано в X'});}
+ if(responsePromise){const r=await responsePromise;let result=r?.body?.data?.create_tweet?.tweet_results?.result;if(result?.tweet)result=result.tweet;const id=result?.rest_id;if(!r?.ok||!/^\d+$/.test(id||''))throw Error('Нет подтверждения X');confirmedTweetId=id;await require('./finalize.cjs').finalizePublication(c,job,id,extract(r.body,id)||{},{expectedStatus:'running',message:'Опубликовано в X'});await breakerSuccess(c,'account',job.account_name).catch(()=>{});}
  else{const selector=job.kind==='like'?'[data-testid="unlike"]':job.kind==='repost'?'[data-testid="unretweet"]':'[data-testid$="-unfollow"]';await (job.kind==='follow'?followArea:article.locator(selector).first()).waitFor({timeout:20000});await done(c,job,null,'Действие подтверждено интерфейсом X');}
  }catch(_e){
  const failure=classifyPreSendError(_e);
@@ -46,7 +47,10 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
    if(confirmedTweetId&&!observedState.matches)throw new Error('Сохранённый ID публикации не совпадает с подтверждённым X; повтор запрещён',{cause:_e});
    return;
   }
-  if(require('./audit-error.cjs').classifyAuditError(_e).category!=='DB_ERROR')await recordAccountError(c,job.account_name,_e).catch(()=>{});
+  if(require('./audit-error.cjs').classifyAuditError(_e).category!=='DB_ERROR'){
+   await recordAccountError(c,job.account_name,_e).catch(()=>{});
+   await breakerFailure(c,'account',job.account_name,failure.code).catch(()=>{});
+  }
   await c.query('BEGIN');
   try{
    const state=(await c.query('SELECT attempted_at,started_at,created_at FROM xc_auto_jobs WHERE id=$1',[job.id])).rows[0];
@@ -70,7 +74,10 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
    await c.query('COMMIT');
   }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
  }else{
-  if(failure.code!=='JOB_NOT_ELIGIBLE'&&(!failure.retryable||retryCount>=MAX_PRE_SEND_RETRIES))await recordAccountError(c,job.account_name,_e).catch(()=>{});
+  if(failure.code!=='JOB_NOT_ELIGIBLE'&&(!failure.retryable||retryCount>=MAX_PRE_SEND_RETRIES)){
+   await recordAccountError(c,job.account_name,_e).catch(()=>{});
+   await breakerFailure(c,'account',job.account_name,failure.code).catch(()=>{});
+  }
   await c.query('BEGIN');
   try{
   await c.query("UPDATE xc_auto_jobs SET status='failed',message=$2,finished_at=$3,lease_until=NULL WHERE id=$1 AND status='running'",[job.id,failure.message,now]);
@@ -79,7 +86,7 @@ async function execute(c,job){let browser,attempted=false,article,followArea,con
   }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
  }
 }finally{await browser?.close().catch(()=>{});}}
-async function done(c,job,id,message){await c.query("UPDATE xc_auto_jobs SET status='published',result_id=$2,result_url=$3,message=$4,finished_at=$5,lease_until=NULL WHERE id=$1 AND status='running'",[job.id,id,id?`https://x.com/${job.expected_handle}/status/${id}`:job.kind==='follow'?`https://x.com/${job.target_handle}`:job.target_id?`https://x.com/${job.target_handle}/status/${job.target_id}`:null,message,Date.now()]);}
+async function done(c,job,id,message){const saved=await c.query("UPDATE xc_auto_jobs SET status='published',result_id=$2,result_url=$3,message=$4,finished_at=$5,lease_until=NULL WHERE id=$1 AND status='running' RETURNING id",[job.id,id,id?`https://x.com/${job.expected_handle}/status/${id}`:job.kind==='follow'?`https://x.com/${job.target_handle}`:job.target_id?`https://x.com/${job.target_handle}/status/${job.target_id}`:null,message,Date.now()]);if(saved.rowCount===1)await breakerSuccess(c,'account',job.account_name).catch(()=>{});}
 async function sync(c,name,expected,id){const opened=await open(c,name,expected);try{const page=opened.page;let found=null;const listener=async r=>{try{if(!r.url().includes('/graphql/')||r.status()!==200)return;const data=extract(await r.json(),id);if(data&&data.handle?.toLowerCase()===expected)found=data;}catch{}};page.on('response',listener);await page.goto(`https://x.com/${expected}/status/${id}`,{waitUntil:'domcontentloaded',timeout:45000});await page.locator(`article a[href$="/status/${id}"]`).first().waitFor({timeout:25000});const deadline=Date.now()+10000;while(!found&&Date.now()<deadline)await page.waitForTimeout(250);if(!found)throw Error('X не вернул метрики поста; существующие данные сохранены');await persistPost(c,{account_name:name,expected_handle:expected,content:found.text},id,found);return {ok:true};}finally{await opened.browser.close();}}
 
 async function reconcilePost(c,job){
