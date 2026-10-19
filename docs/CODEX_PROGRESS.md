@@ -83,3 +83,11 @@ Automatic discovery keywords now come from the existing Twitter database through
 bounded read-only query. Live verification read 2000 posts and extracted seven crypto
 topics; the first Telegram search found eight eligible sources and connected three
 within the daily budget. Original TGInvite session files were unchanged.
+
+
+Pump.fun discovery adds explicit mint/ticker inputs, a provider-reported historical
+market-cap threshold and bounded queries. Missing ATH is excluded; upstream failure
+is visible without blocking Twitter discovery. Live main refresh verified a fresh
+Twitter-derived `solana` query found new sources and collected 98 messages from one
+new channel. Pump.fun returned HTTP 403 locally, so successful live ATH retrieval
+remains unverified. Original TGInvite session/proxy hashes remained unchanged.

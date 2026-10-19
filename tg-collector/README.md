@@ -478,3 +478,18 @@ terms and addresses are excluded. Limits and thresholds are editable in the admi
 Only keyword/count summaries are stored; no Twitter credentials or post copies are
 exposed. Manual keywords remain an optional fallback if the source is unavailable.
 The existing Telegram daily budgets and global Start/Stop still apply.
+
+### Pump.fun mint/ticker discovery
+
+Admin discovery settings optionally enable Pump.fun candidates, with up to ten explicit
+mint addresses or tickers (case-sensitive mints preserved). Empty inputs use Pump.fun
+mint mentions and ranked words from the Twitter sample. Each cycle performs at most
+1–10 bounded metadata queries (default 3). Only tokens with provider-reported historical
+`ath_market_cap` at or above the configured USD threshold (default 100000) generate
+Telegram queries; current capitalization is never substituted for missing ATH.
+The UI exposes eligible mint/symbol/ATH summaries and a sanitized provider error.
+This is bounded candidate discovery, not a complete historical token universe or a
+recommendation. Telegram contacts.Search searches public source names; finding every
+channel that mentioned a mint is not guaranteed. The existing message search accepts
+mint addresses/tickers for messages already collected. Pump.fun access can return 403;
+in that case Pump candidates remain empty and normal Twitter discovery continues.

@@ -1,5 +1,6 @@
 import {createHash} from "node:crypto";
 import pg from "pg";
+import {refreshPumpKeywords,tweetPumpMints,type PumpSettings} from "./pump-keywords.js";
 export type TweetKeywordSettings={auto_keywords_enabled:boolean;auto_keywords_limit:number;
  twitter_lookback_hours:number;twitter_tweet_limit:number;min_keyword_posts:number;min_keyword_authors:number;revision:number};
 type Tweet={tweet_id:string;text:string;handle:string};
@@ -43,17 +44,18 @@ export async function readTwitterKeywordPosts(url:string,hours:number,limit:numb
   await tx.query('COMMIT');return rows.rows;
  }catch(error){if(tx)await tx.query('ROLLBACK');throw error;}finally{tx?.release();await source.end();}
 }
-export async function refreshTwitterKeywords(settings:TweetKeywordSettings):Promise<string[]> {
- if(!settings.auto_keywords_enabled)return [];
+export async function refreshTwitterKeywords(settings:TweetKeywordSettings & Partial<PumpSettings>):Promise<string[]> {
+ if(!settings.auto_keywords_enabled){return settings.pump_enabled?refreshPumpKeywords(settings as PumpSettings,[],[]):[];}
  const {pool}=await import("../db.js");
  const url=process.env.TG_DISCOVERY_TWITTER_DATABASE_URL;
- if(!url){await pool.query("UPDATE tg_discovery_settings SET keyword_error_code='TWITTER_NOT_CONFIGURED' WHERE id=1");return [];}
+ if(!url){await pool.query("UPDATE tg_discovery_settings SET keyword_error_code='TWITTER_NOT_CONFIGURED' WHERE id=1");return settings.pump_enabled?refreshPumpKeywords(settings as PumpSettings,[],[]):[];}
  try{
   const rows=await readTwitterKeywordPosts(url,settings.twitter_lookback_hours,settings.twitter_tweet_limit);
   const words=extractTwitterKeywords(rows,{limit:settings.auto_keywords_limit,minPosts:settings.min_keyword_posts,minAuthors:settings.min_keyword_authors});
   await pool.query(`UPDATE tg_discovery_settings SET generated_keywords=$2,keyword_stats=$3::jsonb,
    keyword_refreshed_at=now(),keyword_post_count=$4,keyword_error_code=NULL WHERE id=1 AND revision=$1`,
    [settings.revision,words.map(w=>w.keyword),JSON.stringify(words),rows.length]);
-  return words.map(w=>w.keyword);
+  const pump=settings.pump_enabled?await refreshPumpKeywords(settings as PumpSettings,words.map(w=>w.keyword),tweetPumpMints(rows.map(r=>r.text),settings.pump_max_tokens??3)):[];
+  return [...pump,...words.map(w=>w.keyword)];
  }catch{await pool.query("UPDATE tg_discovery_settings SET keyword_error_code='TWITTER_READ_UNAVAILABLE' WHERE id=1");return [];}
 }
