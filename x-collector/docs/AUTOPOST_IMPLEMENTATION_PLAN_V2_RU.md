@@ -81,7 +81,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 | V2-04 | Heartbeat/health UI | V2-01 | **Реализован offline-инкремент** — независимый heartbeat, UI и PostgreSQL-тесты; live X не проверен |
 | V2-05 | Priority + dedup | V2-01 | **В работе** — manual-first, additive дневная дедупликация и guard uncertain; CI/PG подтверждение ещё требуется |
 | V2-06 | Circuit breaker | V2-02 | **В работе** — DB breaker policy и тесты; рабочие точки интеграции отдельно |
-| V2-07 | Secret rotation/runbook | Baseline | Не начато |
+| V2-07 | Secret rotation/runbook | Baseline | **В работе** — инвентаризация, dry-run, новый формат и тестовая ротация; production migration запрещена до обновления читателей |
 | V2-08 | Controlled live smoke | После P0 и CI | Не начато |
 
 Каждый PR: миграция backward-compatible; rollback понятен; unit/PG/Next.js тесты; защита attempted; отсутствие секретов; актуальные README/ADR; нет автоматического merge в main. Этап V2-01 — первый кодовый шаг. Этот план **не является заявлением о выполненных изменениях v2**.
@@ -167,3 +167,10 @@ Jitter для transient pre-send retry; разделение Worker на planner
 - `store.cjs` охватывает ИИ-вызов и валидацию результата раздельным breaker AI. Нельзя переключать провайдера или аккаунт для обхода ограничений. Ошибочный JSON тоже считается неуспехом ИИ.
 - В UI выводятся причины, пороги и `resume_at`; ручной reset требует checkbox и локально авторизованное действие через existing Origin-protected API.
 - Статус: offline-код реализован; полный CI и контролируемые локальные испытания обязательны. Live X: NOT TESTED.
+
+### V2-07: инвентаризация шифротекстов и изолированная репетиция (инкремент 1)
+
+- Добавлены `key-rotation-core.cjs`, `rotate-keys.cjs`, `AUTOPOST_KEY_ROTATION_RU.md` и регрессионные тесты.
+- Рабочая БД: **строго read-only** инвентаризация и AES-GCM tag validation без вывода plaintext. Test-only ротация разрешена лишь в БД с суффиксом `_test`, при явном подтверждении бэкапа/остановки Worker.
+- Смешанный V2/legacy формат и AAD/key-id проходят offline тесты; в prod-пути старый формат **не меняется**. План миграции всех читателей и откат до смены ключей описаны в runbook.
+- **V2-07 не закрыт:** действующая runtime-интеграция старого/нового keyring, полный PG restore drill и production switch остаются отдельными gated шагами. Никогда не менять production MASTER_KEY по одному только dry-run.
