@@ -16,7 +16,7 @@ async function persistPostTx(c,job,id,data={}){const timestamp=Number((BigInt(id
 async function persistPost(c,job,id,data={}){await c.query('BEGIN');try{await persistPostTx(c,job,id,data);await c.query('COMMIT');}catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}}
 
 function extractUser(body,handle){const stack=[body];let n=0;while(stack.length&&n++<30000){const v=stack.pop();if(!v||typeof v!=='object')continue;const username=v.legacy?.screen_name||v.core?.screen_name;if(username?.toLowerCase()===handle.toLowerCase()&&/^\d+$/.test(v.rest_id||''))return v.rest_id;for(const value of Object.values(v))if(value&&typeof value==='object')stack.push(value);}return null;}
-async function execute(c,job){let browser,attempted=false,article,followArea;try{const opened=await open(c,job.account_name,job.expected_handle);browser=opened.browser;const page=opened.page;let button,responsePromise;
+async function execute(c,job){let browser,attempted=false,article,followArea,confirmedTweetId=null;try{const opened=await open(c,job.account_name,job.expected_handle);browser=opened.browser;const page=opened.page;let button,responsePromise;
  if(job.kind==='post'){await page.goto('https://x.com/compose/post',{waitUntil:'domcontentloaded',timeout:45000});await page.locator('[data-testid="tweetTextarea_0"]').first().fill(job.content);button=page.locator('[data-testid="tweetButton"]').first();}
  else {await page.goto(`https://x.com/${job.target_handle}/status/${job.target_id}`,{waitUntil:'domcontentloaded',timeout:45000});article=page.locator('article').filter({has:page.locator(`a[href$="/status/${job.target_id}"]`)}).first();await article.waitFor({timeout:25000});const permalink=await article.locator('a').filter({has:page.locator('time')}).first().getAttribute('href');if(!permalink||new URL(permalink,'https://x.com').pathname.split('/').at(-1)!==job.target_id)throw Error('Целевой пост не подтверждён');if(job.kind==='reply'){await article.locator('[data-testid="reply"]').click();await page.locator('[data-testid="tweetTextarea_0"]').first().fill(job.content);button=page.locator('[data-testid="tweetButton"]').first();}
  else if(job.kind==='like'){if(await article.locator('[data-testid="unlike"]').count()){await done(c,job,null,'Уже отмечено лайком');return;}button=article.locator('[data-testid="like"]');}
@@ -27,7 +27,7 @@ async function execute(c,job){let browser,attempted=false,article,followArea;try
  if(['post','reply'].includes(job.kind))responsePromise=page.waitForResponse(r=>r.request().method()==='POST'&&/\/CreateTweet$/.test(new URL(r.url()).pathname),{timeout:45000}).then(async r=>({ok:r.ok(),body:await r.json()})).catch(()=>null);
  // Persist the irreversible boundary before the click, including cancellation/pause checks.
  const attemptNow=Date.now();const updated=await c.query(`UPDATE xc_auto_jobs SET attempted=true,attempted_at=$3 WHERE id=$1 AND status='running' AND EXISTS(SELECT 1 FROM x_accounts a WHERE a.name=$2 AND a.role='publisher' AND a.status='active' AND COALESCE(a.account_busy_until,0)>$3) AND (origin='manual' OR (NOT (SELECT paused FROM xc_auto_control WHERE id=1) AND EXISTS(SELECT 1 FROM xc_auto_config f WHERE f.account_name=$2 AND f.enabled AND (f.start_hour=f.end_hour OR (f.start_hour<f.end_hour AND extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')>=f.start_hour AND extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')<f.end_hour) OR (f.start_hour>f.end_hour AND (extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')>=f.start_hour OR extract(hour FROM to_timestamp($3/1000.0) AT TIME ZONE 'Europe/Moscow')<f.end_hour))) AND (SELECT count(*) FROM xc_auto_jobs j WHERE j.account_name=$2 AND j.attempted AND COALESCE(j.attempted_at,j.started_at)>=$4)<f.daily_limit))) RETURNING id`,[job.id,job.account_name,attemptNow,Math.floor((attemptNow+10800000)/86400000)*86400000-10800000]);if(!updated.rowCount)throw Error('Задание остановлено до отправки');attempted=true;await button.click({timeout:15000});
- if(responsePromise){const r=await responsePromise;let result=r?.body?.data?.create_tweet?.tweet_results?.result;if(result?.tweet)result=result.tweet;const id=result?.rest_id;if(!r?.ok||!/^\d+$/.test(id||''))throw Error('Нет подтверждения X');await require('./finalize.cjs').finalizePublication(c,job,id,extract(r.body,id)||{},{expectedStatus:'running',message:'Опубликовано в X'});}
+ if(responsePromise){const r=await responsePromise;let result=r?.body?.data?.create_tweet?.tweet_results?.result;if(result?.tweet)result=result.tweet;const id=result?.rest_id;if(!r?.ok||!/^\d+$/.test(id||''))throw Error('Нет подтверждения X');confirmedTweetId=id;await require('./finalize.cjs').finalizePublication(c,job,id,extract(r.body,id)||{},{expectedStatus:'running',message:'Опубликовано в X'});}
  else{const selector=job.kind==='like'?'[data-testid="unlike"]':job.kind==='repost'?'[data-testid="unretweet"]':'[data-testid$="-unfollow"]';await (job.kind==='follow'?followArea:article.locator(selector).first()).waitFor({timeout:20000});await done(c,job,null,'Действие подтверждено интерфейсом X');}
  }catch(_e){
  const failure=classifyPreSendError(_e);
@@ -37,8 +37,11 @@ async function execute(c,job){let browser,attempted=false,article,followArea;try
  if(attempted){
   // The X reply may have been committed before the DB client lost its COMMIT acknowledgement.
   // If the durable job is already published, do not open a spurious reconciliation.
-  const observedState=(await c.query('SELECT status FROM xc_auto_jobs WHERE id=$1',[job.id])).rows[0];
-  if(observedState?.status==='published')return;
+  const observedState=await require('./finalize.cjs').inspectPublicationState(c,job.id,confirmedTweetId);
+  if(observedState.status==='published'){
+   if(confirmedTweetId&&!observedState.matches)throw Error('Сохранённый ID публикации не совпадает с подтверждённым X; повтор запрещён');
+   return;
+  }
   if(require('./audit-error.cjs').classifyAuditError(_e).category!=='DB_ERROR')await recordAccountError(c,job.account_name,_e).catch(()=>{});
   await c.query('BEGIN');
   try{

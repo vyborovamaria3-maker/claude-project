@@ -18,12 +18,12 @@ async function finalizePublication(c,job,tweetId,data={},options={}){
   const active=(await db.query("SELECT id,account_name,expected_handle,kind,content,status,result_id FROM xc_auto_jobs WHERE id=$1 FOR UPDATE",[jobId])).rows[0];
   if(!active)throw Error('Publication job missing');
   if(!['post','reply'].includes(active.kind))throw Error('Only posts and replies have tweet IDs');
+  if(String(active.account_name)!==String(job.account_name)||String(active.expected_handle).toLowerCase()!==String(job.expected_handle).toLowerCase())throw Error('Publication account identity mismatch');
   if(active.status==='published'&&String(active.result_id||'')===tweetId){
    await db.query('COMMIT');
    return {ok:true,alreadyConfirmed:true};
   }
   if(active.status!==expected)throw Error('Publication state changed before finalization');
-  if(String(active.account_name)!==String(job.account_name)||String(active.expected_handle).toLowerCase()!==String(job.expected_handle).toLowerCase())throw Error('Publication account identity mismatch');
   if(reconStates){
    const reconciliation=(await db.query('SELECT status FROM xc_auto_reconcile WHERE job_id=$1 FOR UPDATE',[jobId])).rows[0];
    if(!reconciliation||!reconStates.includes(reconciliation.status))throw Error('Reconciliation status changed before finalization');
@@ -40,4 +40,12 @@ async function finalizePublication(c,job,tweetId,data={},options={}){
   return {ok:true,alreadyConfirmed:false};
  }catch(error){await db.query('ROLLBACK').catch(()=>{});throw error;}
 }
-module.exports={finalizePublication};
+async function inspectPublicationState(c,jobId,tweetId){
+ let row;
+ try{row=(await c.query('SELECT status,result_id FROM xc_auto_jobs WHERE id=$1',[jobId])).rows[0];}
+ catch(error){if(error&&typeof error==='object')error.auditCategory='DB_ERROR';throw error;}
+ if(!row)return {status:'missing',matches:false};
+ const published=row.status==='published';
+ return {status:row.status,matches:published&&typeof tweetId==='string'&&tweetId.length>0&&String(row.result_id||'')===tweetId};
+}
+module.exports={finalizePublication,inspectPublicationState};
