@@ -56,24 +56,25 @@ function versionedEncrypt(plain:Buffer,id:string,key:Buffer):Buffer{
  const data=Buffer.concat([c.update(plain),c.final()]);
  return Buffer.concat([header,iv,c.getAuthTag(),data]);
 }
-export function decryptBufferWithKeys(blob:Buffer,legacyKey:Buffer,keys:Record<string,Buffer>={}):Buffer{
- if(!Buffer.isBuffer(blob)||blob.length<IV_BYTES+TAG_BYTES+1)throw Error("INVALID_ENVELOPE");
+export function decryptBufferWithKeys(blob:Buffer|Uint8Array,legacyKey:Buffer,keys:Record<string,Buffer>={}):Buffer{
+ const bytes=Buffer.isBuffer(blob)?blob:blob instanceof Uint8Array?Buffer.from(blob):null;
+ if(!bytes||bytes.length<IV_BYTES+TAG_BYTES+1)throw Error("INVALID_ENVELOPE");
  let key=legacyKey,header:Buffer|undefined,offset=0;
- if(blob.subarray(0,MAGIC.length).equals(MAGIC)){
+ if(bytes.subarray(0,MAGIC.length).equals(MAGIC)){
   const len=blob[MAGIC.length];
   if(!Number.isInteger(len)||len<1||len>48)throw Error("INVALID_KEY_ID");
   offset=MAGIC.length+1+len;
-  if(blob.length<offset+IV_BYTES+TAG_BYTES+1)throw Error("INVALID_ENVELOPE");
-  const id=blob.subarray(MAGIC.length+1,offset).toString("ascii");
+  if(bytes.length<offset+IV_BYTES+TAG_BYTES+1)throw Error("INVALID_ENVELOPE");
+  const id=bytes.subarray(MAGIC.length+1,offset).toString("ascii");
   if(!ID.test(id))throw Error("INVALID_KEY_ID");
-  key=keys[id];header=blob.subarray(0,offset);
+  key=keys[id];header=bytes.subarray(0,offset);
  }
  if(!Buffer.isBuffer(key)||key.length!==KEY_BYTES)throw Error("KEY_UNAVAILABLE");
  try{
-  const d=createDecipheriv("aes-256-gcm",key,blob.subarray(offset,offset+IV_BYTES));
+  const d=createDecipheriv("aes-256-gcm",key,bytes.subarray(offset,offset+IV_BYTES));
   if(header)d.setAAD(header);
-  d.setAuthTag(blob.subarray(offset+IV_BYTES,offset+IV_BYTES+TAG_BYTES));
-  return Buffer.concat([d.update(blob.subarray(offset+IV_BYTES+TAG_BYTES)),d.final()]);
+  d.setAuthTag(bytes.subarray(offset+IV_BYTES,offset+IV_BYTES+TAG_BYTES));
+  return Buffer.concat([d.update(bytes.subarray(offset+IV_BYTES+TAG_BYTES)),d.final()]);
  }catch{throw Error("DECRYPTION_FAILED");}
 }
 // Historical export, but keys are intentionally loaded fresh per operation.
@@ -83,7 +84,7 @@ export function encryptBuffer(plain:Buffer):Buffer{
  try{return ring.active?versionedEncrypt(plain,ring.active,ring.keys[ring.active]):legacyEncrypt(plain,ring.legacyKey);}
  finally{erase(ring);}
 }
-export function decryptBuffer(blob:Buffer):Buffer{
+export function decryptBuffer(blob:Buffer|Uint8Array):Buffer{
  const ring=configuredKeys();
  try{return decryptBufferWithKeys(blob,ring.legacyKey,ring.keys);}
  finally{erase(ring);}

@@ -30,10 +30,12 @@ test('V2-07: TypeScript readers handle CJS legacy and v2 ciphertext',async()=>{
   const modern=cjs.sealBytes(plain,vars);
   assert.equal(core.kind(modern),'v2');
   assert.deepEqual(decryptBuffer(modern),plain);
+  assert.deepEqual(decryptBuffer(new Uint8Array(modern)),plain,'PG-backed Uint8Array must remain supported');
   assert.equal(decryptSession(modern,old,{future}),plain.toString('utf8'));
   const previous=cjs.sealBytes(plain,{MASTER_KEY:old.toString('hex')});
   assert.equal(core.kind(previous),'legacy');
   assert.deepEqual(decryptBuffer(previous),plain);
+  assert.deepEqual(decryptBuffer(new Uint8Array(previous)),plain,'Legacy Uint8Array must remain supported');
   assert.equal(decryptSession(previous,old),plain.toString('utf8'));
   assert.throws(()=>decryptBufferWithKeys(modern,old),/KEY_UNAVAILABLE/);
   assert.throws(()=>decryptBufferWithKeys(previous,future),/DECRYPTION_FAILED/);
