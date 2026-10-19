@@ -541,3 +541,30 @@ to that index; this is explicitly labeled limited coverage, not a Premium bypass
 Complete-history sources yield after at most two pages per queue turn so discovery,
 other sources and Stop remain responsive. Engagement observations are timestamped;
 legacy reaction snapshots remain unknown until fetched rather than displayed as zero.
+
+
+### Expanded discovery without Premium
+
+The optional external search reads bounded public `t.me/s/<channel>?q=<term>` pages,
+links in matching Twitter database posts and links inside verified Telegram posts.
+Editable initial public channel/group seeds bootstrap a durable candidate queue;
+external links and snippets never count as mentions. Each candidate is resolved via
+Telegram, must be a public Channel/supergroup, and its actual posts must match the
+configured ticker/name/mint terms. Public preview post IDs are fetched in one batch;
+public groups without previews use ordinary per-channel message search, not paid
+global search. Invite links, bots and private/user results are excluded. No joining,
+verification-bot interaction or Stars payment occurs.
+
+Defaults are one candidate page per cycle, 24 pages/day (two Telegram RPC slots
+reserved per page), up to 20 posts/page and a 500-candidate queue. Page/term offsets,
+verification provenance and daily budgets persist across restarts. Existing source
+budgets, pauses, deletion tombstones, Stop and FloodWait remain effective. Verified
+public groups may use the final reserved source slot. Verified sources feed the same
+full-history queue. Admin separately reports externally verified unique posts and
+sources; these are a subset of overall mentions and never an all-Telegram total.
+
+Public groups linked inside a verified matching post may also be connected after
+Telegram confirms public identity and readable history. Their unrelated messages
+are never counted as token mentions. The candidate retains the originating public
+post URL, and the admin marks these as related public groups rather than matched
+posts. No join or verification-bot step is attempted.

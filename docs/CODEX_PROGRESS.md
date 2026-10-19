@@ -113,3 +113,18 @@ Live collection exceeded 89000 canonical messages with 217 unique PNUT term matc
 across 12 public sources; more than 9000 posts had observed reactions. No public linked
 discussion was found among the inspected channels (one private/unavailable); real
 discussion ingestion remains unverified, while public linking/queue tests pass.
+
+
+Expanded no-Premium discovery adds public preview pages and candidate links from
+Twitter/verified posts. Only real Telegram-verified matching posts enter mention
+counts; public channels/groups share existing source budgets and full-history jobs.
+Persistent page/RPC reservations, per-source term cursors and provenance are exposed
+in native admin controls. Tests cover misleading snippets, public-group fallback,
+deduplication, request budgets and Stop after resolution.
+
+Live no-Premium verification confirmed 13 real Telegram posts from new AscendEX
+announcement and Coinkolik channels through public previews, with full-history jobs
+queued. A referenced public-chat lookup returned no matching/readable ordinary posts
+in the initial check; no private joins or unverified mention counts were introduced.
+Existing scheduled supervisor and local admin/frontend were restarted after they
+were found stopped; original TGInvite files were preserved.

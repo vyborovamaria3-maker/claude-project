@@ -1,5 +1,6 @@
 import { Api, type TelegramClient } from "telegram";
 import {publicDiscoveryChannel} from "../validation.js";
+import {discoverExternalPosts,type ExternalSettings}from "./external-discovery.js";
 import {indexKnownMentions}from "./message-index.js";
 import {publicPostRequest,matchesSearchTerm} from "./message-search.js";
 import {persistMessage} from "../persistence/messages.js";
@@ -9,19 +10,19 @@ import { pool } from "../db.js";
 import { refreshTwitterKeywords, type TweetKeywordSettings } from "./twitter-keywords.js";
 import { classifyTelegramError } from "../queue/retry.js";
 
-type Settings = TweetKeywordSettings & { message_search_enabled:boolean;message_terms:string[]; enabled: boolean; keywords: string[]; interval_minutes: number;
+type Settings = TweetKeywordSettings & ExternalSettings & { message_search_enabled:boolean;message_terms:string[]; enabled: boolean; keywords: string[]; interval_minutes: number;
  results_per_query: number; queries_per_cycle: number; max_queries_per_day: number;
  max_new_per_day: number; max_sources: number; keyword_cursor: number; revision: number };
 
 
-export async function addCandidate(candidate: NonNullable<ReturnType<typeof publicDiscoveryChannel>>, keyword: string, revision: number,msg?:RawTelegramMessage,fullCollection=false): Promise<void> {
+export async function addCandidate(candidate: NonNullable<ReturnType<typeof publicDiscoveryChannel>>, keyword: string, revision: number,msg?:RawTelegramMessage,fullCollection=false,external?:{provider:string;origin:string;url:string}): Promise<void> {
  const tx=await pool.connect();
  try {
   await tx.query("BEGIN");
   const settings=(await tx.query<Settings>("SELECT * FROM tg_discovery_settings WHERE id=1 FOR UPDATE")).rows[0];
   const runtime=(await tx.query<{active:boolean}>(`SELECT collection_enabled AND block_reason IS NULL AND
    (pause_until IS NULL OR pause_until<=now()) AS active FROM tg_runtime WHERE id=1 FOR SHARE`)).rows[0];
-  if (!settings.enabled || settings.revision!==revision || !runtime?.active) { await tx.query("ROLLBACK"); return; }
+  if (!settings.enabled || (external&&(!settings.external_search_enabled||!settings.message_search_enabled)) || settings.revision!==revision || !runtime?.active) { await tx.query("ROLLBACK"); return; }
   await tx.query(`INSERT INTO tg_discovered_sources(peer_id,username,title,keyword) VALUES($1,$2,$3,$4)
    ON CONFLICT(peer_id) DO UPDATE SET username=EXCLUDED.username,title=EXCLUDED.title,
    keyword=EXCLUDED.keyword,last_seen_at=now()`,[candidate.peer,candidate.username,candidate.title,keyword]);
@@ -32,7 +33,7 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
    connected_at=COALESCE(connected_at,now()) WHERE peer_id=$1`,[candidate.peer,existing.rows[0].id]);
   const budget=(await tx.query<{added:number;total:number}>(`SELECT COALESCE((SELECT added FROM tg_discovery_daily
    WHERE day=(now() AT TIME ZONE 'UTC')::date),0)::int AS added,(SELECT count(*)::int FROM tg_sources) AS total`)).rows[0];
-  if (!found.connected_at && !existing.rowCount && budget.added<settings.max_new_per_day && budget.total<settings.max_sources && (!msg || settings.max_new_per_day===1 || settings.max_new_per_day-budget.added>1)) {
+  if (!found.connected_at && !existing.rowCount && budget.added<settings.max_new_per_day && budget.total<settings.max_sources && (!msg || fullCollection || settings.max_new_per_day===1 || settings.max_new_per_day-budget.added>1)) {
    const source=await tx.query<{id:string}>(`INSERT INTO tg_sources(identifier,peer_id,title) VALUES($1,$2,$3)
     ON CONFLICT(identifier) DO NOTHING RETURNING id::text`,[candidate.username,candidate.peer,candidate.title]);
    if(source.rowCount) {
@@ -52,6 +53,9 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
     [candidate.peer,msg.id,candidate.username,candidate.title,msg.message.slice(0,8192),typeof msg.date==='number'?new Date(msg.date*1000):null,keyword,linked?.id??null]);
    if(linked?.enabled){await persistMessage(tx,linked.id,msg);if(typeof msg.date==='number'){const day=utcDay(new Date(msg.date*1000));if(day)await refreshGraphDays(tx,linked.id,[day]);};}
   }
+  if(external&&msg)await tx.query(`INSERT INTO tg_external_verified_posts(peer_id,message_id,provider,origin,reference_url)
+   SELECT $1,$2,$3,$4,$5 FROM tg_discovery_mentions WHERE peer_id=$1 AND message_id=$2
+   ON CONFLICT(peer_id,message_id,provider)DO UPDATE SET verified_at=now()`,[candidate.peer,msg.id,external.provider,external.origin,external.url]);
   await tx.query("COMMIT");
  } catch(error) { await tx.query("ROLLBACK");throw error; } finally {tx.release();}
 }
@@ -66,7 +70,7 @@ export async function discoverPublicSources(client: Pick<TelegramClient,"invoke"
  if (!settings || stopping()) return "continue";
  let searched=false;let attemptedScope="full";
  try {
-  if(settings.message_search_enabled)await indexKnownMentions();
+  if(settings.message_search_enabled){await indexKnownMentions();await discoverExternalPosts(client,settings,stopping); }
   const generated=await refreshTwitterKeywords(settings);
   settings.keywords=settings.message_search_enabled?[...new Set(settings.message_terms)]:[...new Set([...generated,...settings.keywords])];
   if(!settings.keywords.length)return "continue";

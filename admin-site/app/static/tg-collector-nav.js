@@ -7,7 +7,9 @@
     if (!data?.settings) return '<section class="domain-card"><h3>Автопоиск</h3><p>Настройки пока недоступны. Проверьте worker и миграции.</p></section>';
     const d = data.settings;
     const inputs = [
-      ['intervalMinutes','Интервал, минут','interval_minutes',15,1440],
+      ['externalPagesPerCycle','Внешних страниц за цикл','external_pages_per_cycle',1,3],
+        ['externalMaxPagesPerDay','Внешних страниц за сутки','external_max_pages_per_day',1,48],
+        ['intervalMinutes','Интервал, минут','interval_minutes',15,1440],
       ['resultsPerQuery','Результатов на запрос','results_per_query',1,50],
       ['queriesPerCycle','Запросов за проход','queries_per_cycle',1,10],
       ['maxQueriesPerDay','Запросов за сутки','max_queries_per_day',1,200],
@@ -29,6 +31,10 @@
       <p>Это реально полученные уникальные публичные посты, а не все упоминания в Telegram. Результат ограничен квотой Telegram, страницами и вашими лимитами. Платный поиск Stars не включается.</p>
       <form id="tgDiscoveryForm" style="display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
         <label style="grid-column:1/-1"><input id="tgDiscoveryEnabled" type="checkbox" ${d.enabled?'checked':''}> Включить автопоиск и подключение найденных источников</label>
+        <label style="grid-column:1/-1"><input id="tgExternalEnabled" type="checkbox" ${d.external_search_enabled?'checked':''}> Расширять поиск без Premium: публичные страницы, ссылки из Twitter и найденных постов</label>
+        <label style="grid-column:1/-1">Начальные публичные каналы / чаты — до 50, по одному на строку<textarea id="tgExternalSources" rows="3" style="display:block;width:100%">${esc((d.external_sources||[]).join('\n'))}</textarea></label>
+        <p style="grid-column:1/-1">Внешними источниками подтверждено сообщений: ${esc(data.externalStats?.mentions||0)}, источников: ${esc(data.externalStats?.sources||0)}. Страниц сегодня: ${esc(data.externalStats?.pages_today||0)}. Последняя проверка: ${esc(formatDate(d.external_last_run_at))}. Ссылки и фрагменты поисковиков не считаются упоминаниями до проверки Telegram. ${esc(d.external_error_code||'')}</p>
+        <details style="grid-column:1/-1"><summary>Источники внешнего поиска</summary>${(data.externalQueue||[]).map(c=>`<p>@${esc(c.username)} · ${esc(({verified:'Посты подтверждены',related_public_group_connected:'Связанный публичный чат подключён',no_matching_posts:'На проверенной странице нет совпадений',unavailable:'Недоступен',not_public_channel:'Не публичный канал или чат',checking:'Проверяется',pending:'В очереди'})[c.status]||c.status)}</p>`).join('')}</details>
         <label style="grid-column:1/-1"><input id="tgMessageSearchEnabled" type="checkbox" ${d.message_search_enabled?'checked':''}> Искать в тексте публичных сообщений; собирать полную доступную историю найденных каналов и публичных чатов обсуждений</label>
         <label style="grid-column:1/-1">Тикер, название и минт — по одному на строку (до 30)<textarea id="tgMessageTerms" rows="3" style="display:block;width:100%">${esc((d.message_terms||[]).join('\n'))}</textarea></label>
         <label style="grid-column:1/-1"><input id="tgPumpEnabled" type="checkbox" ${d.pump_enabled?'checked':''}> Искать минты и тикеры Pump.fun с подтверждённым ATH капитализации</label>
@@ -41,7 +47,7 @@
         <button id="tgDiscoverySave" class="primary" type="submit">Сохранить настройки поиска</button><p id="tgDiscoveryStatus" role="status"></p>
       </form>
       <h4>Найденные публичные упоминания</h4>
-      ${(data.mentions||[]).map(m=>`<article class="domain-card"><p>@${esc(m.username)} · ${esc(formatDate(m.posted_at))} · <a href="https://t.me/${esc(m.username)}/${esc(m.message_id)}" target="_blank" rel="noopener noreferrer">Открыть пост</a> · ${esc((m.matched_terms||[]).join(', '))}</p><div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(m.text)}</div></article>`).join('')||'<p>Поиск сообщений ещё не получил публичных результатов.</p>'}
+      ${(data.mentions||[]).map(m=>`<article class="domain-card"><p>@${esc(m.username)} · ${esc(formatDate(m.posted_at))} · <a href="https://t.me/${esc(m.username)}/${esc(m.message_id)}" target="_blank" rel="noopener noreferrer">Открыть пост</a> · ${esc((m.matched_terms||[]).join(', '))}${m.external_providers?.length?' · Подтверждено из внешнего поиска':''}</p><div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(m.text)}</div></article>`).join('')||'<p>Поиск сообщений ещё не получил публичных результатов.</p>'}
       <h4>Найденные источники по названию или постам</h4><div class="table-wrap"><table><thead><tr><th>Источник</th><th>Ключевое слово</th><th>Состояние</th></tr></thead><tbody>
       ${(data.candidates || []).map(c=>`<tr><td>${esc(c.title)} (@${esc(c.username)})</td><td>${esc(c.keyword)}</td><td>${c.connected ? (c.enabled ? 'Подключён' : 'На паузе') : c.connected_at ? 'Удалён оператором' : 'Найден, не подключён'}</td></tr>`).join('') || '<tr><td colspan="3">Источники появятся после первого поиска.</td></tr>'}</tbody></table></div>
     </section>`;
@@ -70,9 +76,9 @@
       if (discoveryForm) discoveryForm.onsubmit = async e => {
         e.preventDefault(); clearTimeout(timer); busy = true;
         const button = document.getElementById('tgDiscoverySave'); button.disabled = true;
-        const body = {messageSearchEnabled:document.getElementById('tgMessageSearchEnabled').checked,messageTerms:document.getElementById('tgMessageTerms').value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),pumpEnabled:document.getElementById('tgPumpEnabled').checked,pumpQueries:document.getElementById('tgPumpQueries').value.split(',').map(v=>v.trim().replace(/^\$/,'')).filter(Boolean),enabled: document.getElementById('tgDiscoveryEnabled').checked, autoKeywordsEnabled: document.getElementById('tgAutoKeywordsEnabled').checked,
+        const body = {externalSearchEnabled:document.getElementById('tgExternalEnabled').checked,externalSources:document.getElementById('tgExternalSources').value.split(/\r?\n/).map(v=>v.trim().replace(/^@/,'')).filter(Boolean),messageSearchEnabled:document.getElementById('tgMessageSearchEnabled').checked,messageTerms:document.getElementById('tgMessageTerms').value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),pumpEnabled:document.getElementById('tgPumpEnabled').checked,pumpQueries:document.getElementById('tgPumpQueries').value.split(',').map(v=>v.trim().replace(/^\$/,'')).filter(Boolean),enabled: document.getElementById('tgDiscoveryEnabled').checked, autoKeywordsEnabled: document.getElementById('tgAutoKeywordsEnabled').checked,
           keywords: document.getElementById('tgDiscoveryKeywords').value.split(/\r?\n/).map(k=>k.trim()).filter(Boolean)};
-        for (const key of ['pumpMinAthUsd','pumpMaxTokens','intervalMinutes','resultsPerQuery','queriesPerCycle','maxQueriesPerDay','maxNewPerDay','maxSources','autoKeywordsLimit','twitterLookbackHours','twitterTweetLimit','minKeywordPosts','minKeywordAuthors']) body[key] = Number(document.getElementById(key).value);
+        for (const key of ['externalPagesPerCycle','externalMaxPagesPerDay','pumpMinAthUsd','pumpMaxTokens','intervalMinutes','resultsPerQuery','queriesPerCycle','maxQueriesPerDay','maxNewPerDay','maxSources','autoKeywordsLimit','twitterLookbackHours','twitterTweetLimit','minKeywordPosts','minKeywordAuthors']) body[key] = Number(document.getElementById(key).value);
         try { await api('/api/tg-collector/discovery', {method:'POST',body:JSON.stringify(body)}); busy = false; if (active()) void render(); }
         catch (error) { busy = false; button.disabled = false; if(active()) document.getElementById('tgDiscoveryStatus').textContent = error.message; }
       };

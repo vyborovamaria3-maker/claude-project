@@ -54,7 +54,7 @@ class TGCollectorTests(unittest.TestCase):
             self.assertEqual(self.client.get("/api/tg-collector?"+query).status_code,422)
 
     def test_discovery_settings_limits_and_origin(self):
-        body = {"messageSearchEnabled":False,"messageTerms":["PNUT","Peanut the Squirrel","2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump"],"pumpEnabled":False,"pumpMinAthUsd":100000,"pumpMaxTokens":3,"pumpQueries":[],"enabled":True,"keywords":["memecoin","solana"],"intervalMinutes":60,
+        body = {"externalSearchEnabled":False,"externalSources":["AscendEXEnglish", "AscendEXAnnoucement", "coinkolik", "cg_listingalert", "Dex_Trade", "OKX_Ukraine", "cryptonarratives1", "indodax", "Coin_Signals"],"externalPagesPerCycle":1,"externalMaxPagesPerDay":24,"messageSearchEnabled":False,"messageTerms":["PNUT","Peanut the Squirrel","2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump"],"pumpEnabled":False,"pumpMinAthUsd":100000,"pumpMaxTokens":3,"pumpQueries":[],"enabled":True,"keywords":["memecoin","solana"],"intervalMinutes":60,
                 "resultsPerQuery":10,"queriesPerCycle":1,"maxQueriesPerDay":24,
                 "maxNewPerDay":3,"maxSources":30,"autoKeywordsEnabled":True,"autoKeywordsLimit":12,
                 "twitterLookbackHours":72,"twitterTweetLimit":2000,"minKeywordPosts":3,"minKeywordAuthors":2}
