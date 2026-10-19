@@ -444,3 +444,100 @@ npm run analyze:refresh
 - `tg_signals`, narrative/propagation tables and backtest tables preserve versioned, reviewable results. Similar messages are evidence of similarity, not proof of coordinated behavior.
 
 Migration files are immutable after being applied: `schema_migrations` stores SHA-256 checksums and startup refuses edited applied SQL. Retention policies are registered but disabled by default; no data is deleted automatically until an explicit retention schedule is configured. Monthly partitioning is deferred until the composite keys and foreign-key design are migrated and rehearsed safely.
+
+
+### Public crypto source discovery
+
+Control Center → TG Collector → Автопоиск configures keywords, enable/disable,
+interval (15–1440 minutes), results/query (1–50), queries/cycle (1–10), requests/day
+(1–200), new sources/day (1–100), and maximum total stored sources (1–1000).
+Defaults: hourly, one query, 10 results, 24 requests/day, 3 new sources/day, 30 total.
+Migration `016_source_discovery.sql` leaves discovery disabled until the operator enables it.
+The local rollout explicitly enables crypto/memecoin defaults in the admin UI.
+
+The singleton worker calls Telegram contacts.Search sequentially using its existing
+collector session and proxy. Telegram search is relevance-ranked and not an exhaustive
+Telegram directory. Only public Channel entities (broadcast or megagroup) with a valid
+username are eligible. No joining chats, private chat scanning or messages to users occur.
+A discovered source and its initial collection job are committed together. The normal
+collection settings (initial 500 messages, incremental polling) apply to added sources.
+
+Request and source budgets persist across restarts and reset at UTC midnight.
+Global Stop, FloodWait and account/session blocks also stop discovery. Keyword rotation
+is durable. Paused sources remain paused; source deletion leaves a discovery tombstone
+so the worker cannot silently recreate it. Changes to configuration invalidate in-flight
+results before new sources are connected. Disabling discovery preserves existing sources
+and their history; they remain subject to the ordinary collection controls.
+
+Automatic keywords (migration `017`) are enabled by default when discovery is enabled.
+Set `TG_DISCOVERY_TWITTER_DATABASE_URL` privately to the existing Twitter PostgreSQL
+source. The worker reads up to 2000 posts from the last 72 hours in a read-only
+transaction, then ranks crypto topics, cashtags and hashtags. Defaults require three
+unique posts and two authors, with up to 12 keywords. Duplicate posts, generic promo
+terms and addresses are excluded. Limits and thresholds are editable in the admin.
+Only keyword/count summaries are stored; no Twitter credentials or post copies are
+exposed. Manual keywords remain an optional fallback if the source is unavailable.
+The existing Telegram daily budgets and global Start/Stop still apply.
+
+### Pump.fun mint/ticker discovery
+
+Admin discovery settings optionally enable Pump.fun candidates, with up to ten explicit
+mint addresses or tickers (case-sensitive mints preserved). Empty inputs use Pump.fun
+mint mentions and ranked words from the Twitter sample. Each cycle performs at most
+1–10 bounded metadata queries (default 3). Only tokens with provider-reported historical
+`ath_market_cap` at or above the configured USD threshold (default 100000) generate
+Telegram queries; current capitalization is never substituted for missing ATH.
+The UI exposes eligible mint/symbol/ATH summaries and a sanitized provider error.
+This is bounded candidate discovery, not a complete historical token universe or a
+recommendation. Telegram contacts.Search searches public source names; finding every
+channel that mentioned a mint is not guaranteed. The existing message search accepts
+mint addresses/tickers for messages already collected. Pump.fun access can return 403;
+in that case Pump candidates remain empty and normal Twitter discovery continues.
+
+
+Pump.fun HTTP 403 now triggers an independent fallback: DexScreener resolves an exact
+Solana ticker, CoinGecko verifies the exact Solana contract and Pump.fun category,
+then provides 90-day historical USD `market_caps`. Only completed historical days
+count. A recorded capitalization above the configured threshold proves that the
+all-time high was at least that high; this bounded maximum is explicitly labeled
+as a historical lower bound, not an exact lifetime ATH. Current market cap, FDV and
+ATH price multiplied by today's supply are never substituted. Unlisted assets or
+missing history cannot qualify. Results retain provider, date and coverage metadata.
+Positive lookups cache for six hours, no-data for one hour and failures for 15 minutes;
+Pump 403 also backs off the primary for six hours in the running worker. A cycle has
+a 20-second lookup deadline. CoinGecko availability/rate limits still apply.
+Live mint and ticker PNUT both resolved the same verified Pump.fun contract and a
+historical capitalization of approximately $57.84M (2026-09-23), exceeding $100k.
+
+
+### Public post discovery and complete channel/discussion history
+
+Enable message search in the native admin and configure separate ticker, name and
+case-sensitive mint terms. `channels.searchPosts` full text requires Premium/free
+quota on Telegram; Stars payment is never authorized. Access failures are explicit.
+When unavailable, the worker uses public hashtag search and broadcast-only
+`messages.searchGlobal` for accessible public results, plus exact term matching in
+collected history. These modes have different coverage and are not an all-Telegram
+census. RPC pages share persistent request budgets and term-specific offsets.
+
+The admin separates unique observed public messages (peer/message ID deduplication)
+from distinct sources and connected-source mentions. Repeated query variants merge
+matched terms. Message previews include public post links; response counts for
+individual Telegram queries are not summed into a fabricated global count.
+
+A matching source opts into full available history rather than the initial 500-post
+cutoff. Existing page checkpoints continue across jobs/restarts, with bounded pages
+per job and the shared queue. Public linked discussion groups are resolved without
+joining chats and queued within the same source budgets; private/unavailable groups
+remain explicit. The last source-budget slot is reserved for discussion groups when
+there is capacity. Existing source pauses/deletion tombstones and global Stop remain
+in force. History completion means all history accessible to this account was read,
+not private/deleted posts. Reactions (emoji/custom ID and counts), views and replies
+are stored as observed; the latest 20 messages refresh engagement on each source poll.
+
+The available-index fallback uses broadcast-only searches and rejects private/user
+results before storage. If the hashtag response is unavailable, it also falls back
+to that index; this is explicitly labeled limited coverage, not a Premium bypass.
+Complete-history sources yield after at most two pages per queue turn so discovery,
+other sources and Stop remain responsive. Engagement observations are timestamped;
+legacy reaction snapshots remain unknown until fetched rather than displayed as zero.

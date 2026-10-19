@@ -26,14 +26,15 @@ export async function claim(): Promise<Job | undefined> {
 }
 
 
-export async function finishJob(job: Job, highId: number, partial: boolean): Promise<void> {
+export async function finishJob(job: Job, highId: number, partial: boolean,baseId=Number(job.base_message_id??0)): Promise<void> {
   const tx = await pool.connect();
   try {
     await tx.query("BEGIN");
     await tx.query(
       `UPDATE tg_sources SET last_message_id=GREATEST(last_message_id,$2),
-        history_partial=history_partial OR $3, last_success_at=now()
-        WHERE id=$1`, [job.source_id, highId, partial]
+        history_partial=CASE WHEN full_history AND $4::boolean AND NOT $3 THEN FALSE ELSE history_partial OR $3 END,
+        history_complete=history_complete OR (full_history AND $4::boolean AND NOT $3), last_success_at=now()
+        WHERE id=$1`, [job.source_id, highId, partial,baseId===0]
     );
     await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,
       base_message_id=NULL, high_message_id=NULL, cursor_before_id=NULL,

@@ -78,3 +78,39 @@ PR #62 CI repair (2026-10-18): reconciled with current main, retaining the stric
 
 
 V2-08 Windows offline acceptance (2026-10-19, PR #127): dedicated loopback PostgreSQL *_test cluster, mocked X, real Worker heartbeat/restart and Next UI/API checks. Fixed autopost statistics SQL day alias, unknown-state UI, stale metric errors, and migration ledger lookup leaking through search_path. Added native/PGlite and Playwright regressions. Test-only key rotation/rollback and pg_dump/restore verified; no live X, real credentials, working DB changes or main merge. See x-collector/docs/V2_08_LOCAL_ACCEPTANCE_20261019_RU.md.
+TG crypto discovery (2026-10-19): added opt-in migration 016, persistent keyword/query/addition/source budgets, sequential public contacts.Search on the existing singleton worker, atomic source + job creation, global Stop/FloodWait handling and operator deletion tombstones. Control Center now edits keywords/limits and shows public discovery results via its authenticated server bridge. Tests include real disposable PostgreSQL budgets, Stop during RPC, paused/deleted source protection and account/session errors; no original TGInvite session is used.
+
+Automatic discovery keywords now come from the existing Twitter database through a
+bounded read-only query. Live verification read 2000 posts and extracted seven crypto
+topics; the first Telegram search found eight eligible sources and connected three
+within the daily budget. Original TGInvite session files were unchanged.
+
+
+Pump.fun discovery adds explicit mint/ticker inputs, a provider-reported historical
+market-cap threshold and bounded queries. Missing ATH is excluded; upstream failure
+is visible without blocking Twitter discovery. Live main refresh verified a fresh
+Twitter-derived `solana` query found new sources and collected 98 messages from one
+new channel. Pump.fun returned HTTP 403 locally, so successful live ATH retrieval
+remains unverified. Original TGInvite session/proxy hashes remained unchanged.
+
+
+Pump 403 diagnosis: all tested Pump API hosts return Cloudflare's blocked page.
+Added independent exact-ticker/contract lookup and CoinGecko historical-cap evidence,
+strict Pump category validation, durable cache, primary backoff and bounded deadlines.
+Live PNUT mint and ticker both verified a $57.84M historical cap; bounded history is
+labeled as a lower bound on lifetime ATH. Regression tests cover fake/wrong contracts,
+other-chain/partial ticker matches, current versus historical data and 403 fallback.
+
+
+Public message discovery now distinguishes actual unique posts from public sources.
+Adds bounded pagination, exact term matching/dedup, canonical evidence/rollups and
+reaction snapshots. Matched channels and public linked discussion groups opt into
+complete available history through the existing resumable queue, removing the
+initial-500 cutoff for those sources. Private discussions and source limits remain
+visible. Live account rejected full-text search with PREMIUM_ACCOUNT_REQUIRED;
+explicitly labeled free public-search/history modes continue without Stars payment.
+
+Live collection exceeded 89000 canonical messages with 217 unique PNUT term matches
+across 12 public sources; more than 9000 posts had observed reactions. No public linked
+discussion was found among the inspected channels (one private/unavailable); real
+discussion ingestion remains unverified, while public linking/queue tests pass.

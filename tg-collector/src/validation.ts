@@ -19,3 +19,13 @@ export function telegramWaitSeconds(error: unknown): number | null {
   const parsed = Number(matched[1]);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
+
+
+export function publicDiscoveryChannel(input: unknown): {peer: string; username: string; title: string} | null {
+ const c = input as {className?: string; username?: string;usernames?:{username:string;active?:boolean}[]; title?: string; id?: {toString(): string}; broadcast?: boolean; megagroup?: boolean; forbidden?: boolean} | null;
+ const username=c?.username??c?.usernames?.find(u=>u.active)?.username;
+ if (!c || c.className !== "Channel" || (!c.broadcast && !c.megagroup) || c.forbidden ||
+     !username || !/^[a-z][a-z0-9_]{4,31}$/i.test(username)) return null;
+ const peer=c.id?.toString(); if (!peer || !/^[1-9][0-9]{0,18}$/.test(peer)) return null;
+ return {peer,username:username.toLowerCase(),title:(c.title || username).slice(0,255)};
+}

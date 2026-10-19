@@ -53,6 +53,23 @@ class TGCollectorTests(unittest.TestCase):
         for query in ("page=-1","page=101","source=bad"):
             self.assertEqual(self.client.get("/api/tg-collector?"+query).status_code,422)
 
+    def test_discovery_settings_limits_and_origin(self):
+        body = {"messageSearchEnabled":False,"messageTerms":["PNUT","Peanut the Squirrel","2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump"],"pumpEnabled":False,"pumpMinAthUsd":100000,"pumpMaxTokens":3,"pumpQueries":[],"enabled":True,"keywords":["memecoin","solana"],"intervalMinutes":60,
+                "resultsPerQuery":10,"queriesPerCycle":1,"maxQueriesPerDay":24,
+                "maxNewPerDay":3,"maxSources":30,"autoKeywordsEnabled":True,"autoKeywordsLimit":12,
+                "twitterLookbackHours":72,"twitterTweetLimit":2000,"minKeywordPosts":3,"minKeywordAuthors":2}
+        with patch("app.tg_collector_admin.upstream", new_callable=AsyncMock) as call:
+            call.return_value = {"ok":True}
+            self.assertEqual(self.client.post("/api/tg-collector/discovery",json=body).status_code,403)
+            for changes in ({"maxNewPerDay":101},{"maxSources":0},{"keywords":["x"]},{"queriesPerCycle":True},{"autoKeywordsEnabled":False,"keywords":[]}):
+                self.assertEqual(self.client.post("/api/tg-collector/discovery",headers={"Origin":"http://testserver"},json=body|changes).status_code,422)
+            self.assertEqual(self.client.post("/api/tg-collector/discovery",headers={"Origin":"http://testserver"},json=body).status_code,200)
+            call.assert_awaited_once_with("POST",suffix="/discovery",body=body)
+
+    def test_discovery_requires_admin(self):
+        self.app.dependency_overrides[require_admin] = lambda: (_ for _ in ()).throw(HTTPException(401))
+        self.assertEqual(self.client.get("/api/tg-collector/discovery").status_code,401)
+
     def test_upstream_errors_do_not_expose_secrets(self):
         import asyncio, httpx
         with patch("app.tg_collector_admin.collector_token",return_value="test-only-placeholder-value"), patch("httpx.AsyncClient.request", new_callable=AsyncMock, side_effect=httpx.ConnectError("hidden-canary")):

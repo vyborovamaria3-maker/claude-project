@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
-from typing import Literal
+from pydantic import BaseModel, Field, StringConstraints, model_validator
+from typing import Annotated, Literal
 from .auth import require_admin
 
 UPSTREAM = "http://127.0.0.1:3100"
@@ -26,11 +26,13 @@ def collector_token() -> str:
         raise HTTPException(503, "Не настроено серверное подключение TG Collector")
     return token
 
-async def upstream(method: str, *, params=None, body=None) -> dict:
+async def upstream(method: str, *, params=None, body=None, suffix="") -> dict:
+    if suffix not in ("", "/discovery"):
+        raise HTTPException(400, "Недопустимый маршрут")
     headers = {"Authorization": "Bearer " + collector_token(), "Origin": UPSTREAM}
     try:
         async with httpx.AsyncClient(timeout=15, trust_env=False, follow_redirects=False) as client:
-            response = await client.request(method, API, headers=headers, params=params, json=body)
+            response = await client.request(method, API + suffix, headers=headers, params=params, json=body)
         if response.status_code != 200:
             raise HTTPException(503, "TG Collector временно недоступен")
         return response.json()
@@ -39,6 +41,35 @@ async def upstream(method: str, *, params=None, body=None) -> dict:
 
 class ControlBody(BaseModel):
     action: Literal["start", "stop"]
+
+class DiscoveryBody(BaseModel):
+    enabled: bool = Field(strict=True)
+    keywords: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=64)]] = Field(min_length=0, max_length=30)
+    intervalMinutes: int = Field(ge=15, le=1440, strict=True)
+    resultsPerQuery: int = Field(ge=1, le=50, strict=True)
+    queriesPerCycle: int = Field(ge=1, le=10, strict=True)
+    maxQueriesPerDay: int = Field(ge=1, le=200, strict=True)
+    maxNewPerDay: int = Field(ge=1, le=100, strict=True)
+    maxSources: int = Field(ge=1, le=1000, strict=True)
+    messageSearchEnabled: bool = Field(default=False, strict=True)
+    messageTerms: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=64)]] = Field(default_factory=lambda: ['PNUT','Peanut the Squirrel','2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump'], min_length=1, max_length=30)
+    pumpEnabled: bool = Field(default=False, strict=True)
+    pumpMinAthUsd: int = Field(default=100000, ge=1000, le=1000000000, strict=True)
+    pumpMaxTokens: int = Field(default=3, ge=1, le=10, strict=True)
+    pumpQueries: list[Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9_\w]{2,44}$")]] = Field(default_factory=list, max_length=10)
+    autoKeywordsEnabled: bool = Field(default=True, strict=True)
+    autoKeywordsLimit: int = Field(default=12, ge=1, le=30, strict=True)
+    twitterLookbackHours: int = Field(default=72, ge=1, le=168, strict=True)
+    twitterTweetLimit: int = Field(default=2000, ge=100, le=5000, strict=True)
+    minKeywordPosts: int = Field(default=3, ge=2, le=20, strict=True)
+    minKeywordAuthors: int = Field(default=2, ge=1, le=10, strict=True)
+
+    @model_validator(mode="after")
+    def validate_keyword_mode(self):
+        if not self.autoKeywordsEnabled and not self.keywords:
+            raise ValueError("Укажите резервные слова или включите автоподбор")
+        return self
+
 
 def build_tg_collector_router():
     router = APIRouter(prefix="/api/tg-collector")
@@ -67,5 +98,22 @@ def build_tg_collector_router():
             audit.record(action="tg_collector_" + body.action, success=True, username=admin["sub"], resource="tg_collector", details={})
         from fastapi.responses import JSONResponse
         return JSONResponse({"ok": True, "collectionEnabled": data.get("collectionEnabled")}, headers={"Cache-Control": "private, no-store"})
+
+    @router.get("/discovery")
+    async def discovery_snapshot(admin=Depends(require_admin)):
+        from fastapi.responses import JSONResponse
+        data = await upstream("GET", suffix="/discovery")
+        return JSONResponse(data, headers={"Cache-Control": "private, no-store"})
+
+    @router.post("/discovery")
+    async def discovery_settings(body: DiscoveryBody, request: Request, admin=Depends(require_admin)):
+        if request.headers.get("origin") != str(request.base_url).rstrip("/"):
+            raise HTTPException(403, "Требуется запрос из этой админки")
+        await upstream("POST", suffix="/discovery", body=body.model_dump())
+        audit = getattr(request.app.state, "audit", None)
+        if audit:
+            audit.record(action="tg_discovery_settings", success=True, username=admin["sub"], resource="tg_collector", details={"enabled": body.enabled})
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"ok": True}, headers={"Cache-Control": "private, no-store"})
 
     return router
