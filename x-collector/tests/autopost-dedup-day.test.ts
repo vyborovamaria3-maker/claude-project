@@ -7,6 +7,7 @@ import {PGlite} from '@electric-sql/pglite';
 const load=createRequire(__filename);
 const {enqueue,scheduledDedupDay}=load('../scripts/autopost/store.cjs');
 const {digest}=load('../scripts/autopost/runtime.cjs');
+const {fingerprints}=load('../scripts/autopost/fingerprint.cjs');
 const schema=readFileSync('scripts/autopost/schema.sql','utf8');
 const DAY_MS=86_400_000;
 const make=(id:string,at:number,text='Unique research checklist')=>({id,name:'publisher',expected:'publisher',kind:'post',text,scheduled_at:at});
@@ -53,18 +54,21 @@ test('V2-05: uncertain or attempted running job blocks tomorrow enqueue',async()
   assert.equal((await db.query<{count:number}>("SELECT count(*)::int AS count FROM xc_auto_jobs")).rows[0].count,1);
  }finally{await db.close();}
 });
-test('V2-05: legacy dedup rows receive the same fingerprint and remain unique today',async()=>{
- const {db,c}=await fixture();
- const now=Date.now(),id=randomUUID();
+test('V2-05: true pre-V2 fingerprints block same-day and uncertain next-day posts',async()=>{
+ const {db,c}=await fixture();const now=Date.now(),id=randomUUID();
  try{
-  const normalized='unique research checklist';
-  const legacy=digest(['publisher','post',normalized].join('|'));
-  await db.query("INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,dedup,scheduled_at,created_at,status) VALUES($1,'publisher','publisher','post','Unique research checklist',$2,$3,$3,'published')",[id,legacy,now]);
+  const legacy=digest(['publisher','post','','unique research checklist'].join('|'));
+  const modern=fingerprints({name:'publisher',kind:'post',text:'Unique research checklist'}).contentHash;
+  assert.notEqual(legacy,modern);
+  await db.query("INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,dedup,scheduled_at,created_at,status,attempted) VALUES($1,'publisher','publisher','post','Unique research checklist',$2,$3,$3,'uncertain',true)",[id,legacy,now]);
   await db.exec(schema);
-  const row=await enqueue(c,make(randomUUID(),now));
-  assert.equal(row.id,id);
+  assert.equal((await enqueue(c,make(randomUUID(),now+DAY_MS))).id,id,'Uncertain pre-V2 send cannot repeat next day');
+  await db.query("UPDATE xc_auto_jobs SET status='published' WHERE id=$1",[id]);
+  assert.equal((await enqueue(c,make(randomUUID(),now))).id,id,'Legacy same-day job is not duplicated');
+  assert.notEqual((await enqueue(c,make(randomUUID(),now+DAY_MS))).id,id,'Confirmed next-day is allowed');
  }finally{await db.close();}
 });
+
 test('V2-05: a failed enqueue rolls back and account remains usable',async()=>{
  const {db,c}=await fixture();
  try{

@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS xc_auto_sync (
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS attempted_at bigint;
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS retry_count integer NOT NULL DEFAULT 0;
 -- V2-05: preserve the legacy UNIQUE(dedup) contract while adding day-scoped keys.
--- Legacy dedup hashes are compatible with the normalized content_hash algorithm.
+-- Legacy dedup hashes use a DIFFERENT pre-V2 string layout.
+-- Runtime matches both legacy dedup and V2 content hash to protect old jobs.
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS content_hash text;
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS dedup_day date;
 UPDATE xc_auto_jobs SET content_hash=dedup WHERE content_hash IS NULL;

@@ -1,3 +1,4 @@
+const {fingerprints}=require('./fingerprint.cjs');
 const nodeCrypto=require('node:crypto');const {runAi,readBreakers}=require('./breaker.cjs');const {readWorkerHealth}=require('./worker-health.cjs');const {name,handle,seal,digest}=require('./runtime.cjs');const {endpoint,generate,choices}=require('./providers.cjs');
 const safeProvider=p=>({...p,secret:undefined,hasKey:Boolean(p.secret)});
 function int(v,min,max){if(!Number.isInteger(v)||v<min||v>max)throw Error('Некорректное числовое значение');return v;}
@@ -14,8 +15,7 @@ async function enqueue(c,input){
  if(kind!=='post'&&(!/^\d{1,25}$/.test(input.target_id||'')||!handle(input.target_handle)))throw Error('Нужен целевой твит и username');
  if(!/^[a-f0-9-]{36}$/i.test(input.id||''))throw Error('Некорректный ID');
  const now=Date.now(),at=input.scheduled_at===undefined?now:int(input.scheduled_at,now-60000,now+365*86400000);
- const rawNormalized=(input.text||'').trim().normalize('NFKC').toLowerCase().replace(/\s+/g,' ');const withoutSourceLinks=rawNormalized.replace(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/(?:i\/status\/\d+|[A-Za-z0-9_]{1,15}\/status\/\d+)(?:\?[^\s]*)?/gi,' ').replace(/\s+/g,' ').trim();const normalized=withoutSourceLinks||rawNormalized;
- const contentHash=digest(kind==='post'?[input.name,kind,normalized].join('|'):[input.name,kind,input.target_id||''].join('|'));
+ const {contentHash,legacyDedup}=fingerprints({...input,kind});
  const dedupDay=scheduledDedupDay(at);
  const dedup=digest(contentHash+'|'+dedupDay);
  await c.query('BEGIN');
@@ -24,7 +24,7 @@ async function enqueue(c,input){
   const account=(await c.query("SELECT name FROM x_accounts WHERE name=$1 AND role='publisher' AND status='active' FOR UPDATE",[input.name])).rows[0];
   if(!account)throw Error('Активный аккаунт публикации не найден');
   // A possibly sent action blocks new same-content jobs even on future days.
-  const unresolved=(await c.query("SELECT * FROM xc_auto_jobs WHERE account_name=$1 AND kind=$2 AND content_hash=$3 AND attempted AND status IN ('running','uncertain') ORDER BY created_at LIMIT 1",[input.name,kind,contentHash])).rows[0];
+  const unresolved=(await c.query("SELECT * FROM xc_auto_jobs WHERE account_name=$1 AND kind=$2 AND (content_hash=$3 OR dedup=$4) AND attempted AND status IN ('running','uncertain') ORDER BY created_at LIMIT 1",[input.name,kind,contentHash,legacyDedup])).rows[0];
   if(unresolved){await c.query('COMMIT');return unresolved;}
   await c.query(`INSERT INTO xc_auto_jobs(id,account_name,expected_handle,kind,content,target_id,target_handle,evidence,reason,provider_id,dedup,scheduled_at,created_at,origin,content_hash,dedup_day)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16::date)
@@ -32,7 +32,7 @@ async function enqueue(c,input){
     input.id,input.name,input.expected.replace(/^@/,'').toLowerCase(),kind,input.text||null,input.target_id||null,input.target_handle||null,
     JSON.stringify(input.evidence||[]),input.reason||'',input.provider_id||null,dedup,at,now,input.origin||'manual',contentHash,dedupDay
    ]);
-  const row=(await c.query('SELECT * FROM xc_auto_jobs WHERE id=$1 OR dedup=$2 OR (account_name=$3 AND kind=$4 AND content_hash=$5 AND dedup_day=$6::date) ORDER BY created_at LIMIT 1',[input.id,dedup,input.name,kind,contentHash,dedupDay])).rows[0];
+  const row=(await c.query('SELECT * FROM xc_auto_jobs WHERE id=$1 OR dedup=$2 OR (account_name=$3 AND kind=$4 AND dedup_day=$6::date AND (content_hash=$5 OR dedup=$7)) ORDER BY created_at LIMIT 1',[input.id,dedup,input.name,kind,contentHash,dedupDay,legacyDedup])).rows[0];
   await c.query('COMMIT');
   return row;
  }catch(error){await c.query('ROLLBACK').catch(()=>{});throw error;}
