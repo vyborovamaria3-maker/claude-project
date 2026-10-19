@@ -3,7 +3,8 @@ import {decryptBufferWithKeys} from "../../lib/trade/crypto";
 
 /** Legacy and versioned X storage state; external explicit key contract preserved. */
 export function decryptSession(encrypted:Buffer,key:Buffer,keys:Record<string,Buffer>={}):string{
- return decryptBufferWithKeys(encrypted,key,keys).toString("utf8");
+ const plain=decryptBufferWithKeys(encrypted,key,keys);
+ try{return plain.toString("utf8");}finally{plain.fill(0);}
 }
 export function extractCookies(decrypted:Buffer):XCookie[]{
  let parsed:unknown;

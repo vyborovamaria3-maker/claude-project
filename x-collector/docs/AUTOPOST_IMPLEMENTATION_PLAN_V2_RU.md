@@ -174,3 +174,9 @@ Jitter для transient pre-send retry; разделение Worker на planner
 - Рабочая БД: **строго read-only** инвентаризация и AES-GCM tag validation без вывода plaintext. Test-only ротация разрешена лишь в БД с суффиксом `_test`, при явном подтверждении бэкапа/остановки Worker.
 - Смешанный V2/legacy формат и AAD/key-id проходят offline тесты; в prod-пути старый формат **не меняется**. План миграции всех читателей и откат до смены ключей описаны в runbook.
 - **V2-07 не закрыт:** действующая runtime-интеграция старого/нового keyring, полный PG restore drill и production switch остаются отдельными gated шагами. Никогда не менять production MASTER_KEY по одному только dry-run.
+
+### V2-07: mixed-format читатели (инкремент 2)
+
+- CJS `scripts/autopost/keyring.cjs` интегрирован с publisher, AI secrets и видимым X browser-login; TypeScript `lib/trade/crypto.ts` и `src/x/session.ts` читают legacy/V2. Есть перекрёстный тест TS ↔ CJS, проверка неизвестного ID/изменения заголовка и default legacy писателей.
+- `MASTER_KEY` остаётся legacy. Новые ID добавляются через `X_COLLECTOR_ENCRYPTION_KEYS`, запись V2 возможна только при отдельном `X_COLLECTOR_ACTIVE_KEY_ID`; в production это пока **не включать**.
+- Реальная ротация БД, удаление старого ключа и запуск live X **не выполнялись**. Следующий шаг: backup/restore dry-run в disposable PostgreSQL и review других consumers перед production switch.

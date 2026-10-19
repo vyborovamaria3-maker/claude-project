@@ -15,7 +15,10 @@ async function withEnv(vars:Record<string,string|undefined>,fn:()=>Promise<void>
   for(const [key,value] of Object.entries(vars))if(value!==undefined)process.env[key]=value;
   await fn();
  }finally{
-  for(const k of tracked)previous[k]===undefined?delete process.env[k]:process.env[k]=previous[k];
+  for(const k of tracked){
+   if(previous[k]===undefined)delete process.env[k];
+   else process.env[k]=previous[k];
+  }
   clearKeyCache();
  }
 }
