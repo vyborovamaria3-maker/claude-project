@@ -1,6 +1,6 @@
 # X Autoposting v2 — план внедрения и критерии приёмки
 
-**Статус:** APPROVED ROADMAP — план, **не реализованный код**. Дата 2026-10-19. База: PR #127, SHA `9c38189d5a3596ae7b6ac0a4b7027b84efae29a4`.
+**Статус:** актуализирован 2026-10-20 по offline-приёмке Windows и CI PR #127 на SHA `f0627c6a6c78edac9041c10d35914ad00804f9db`. Реализованный код и оставшиеся gates разделены в таблице ниже. Исходная архитектурная база: `9c38189d5a3596ae7b6ac0a4b7027b84efae29a4`.
 Архитектура: [AUTOPOST_TARGET_ARCHITECTURE_V2_RU.md](AUTOPOST_TARGET_ARCHITECTURE_V2_RU.md). Работа только в локальной инфраструктуре пользователя; не изменять `main`/не делать merge без отдельного решения. Никакой реальной X-отправки без разрешения.
 
 ## Этап 0 — baseline / миграции / тестовая среда (P0)
@@ -75,16 +75,18 @@ Jitter для transient pre-send retry; разделение Worker на planner
 
 | PR | Изменение | Зависимость | Состояние |
 |---|---|---|---|
-| V2-01 | Attempts + events + additive schema | Baseline | **В работе** — DB audit, trace correlation, typed publisher errors, tests/UI |
-| V2-02 | Atomic finalization + typed errors | V2-01 | Не начато |
-| V2-03 | Engagement reconciliation | V2-02 | **В работе** — read-only наблюдения и регрессионные mocks; live X не проверен |
-| V2-04 | Heartbeat/health UI | V2-01 | **Реализован offline-инкремент** — независимый heartbeat, UI и PostgreSQL-тесты; live X не проверен |
-| V2-05 | Priority + dedup | V2-01 | **В работе** — manual-first, additive дневная дедупликация и guard uncertain; CI/PG подтверждение ещё требуется |
-| V2-06 | Circuit breaker | V2-02 | **В работе** — DB breaker policy и тесты; рабочие точки интеграции отдельно |
-| V2-07 | Secret rotation/runbook | Baseline | **В работе** — инвентаризация, dry-run, новый формат и тестовая ротация; production migration запрещена до обновления читателей |
-| V2-08 | Offline acceptance / controlled live smoke | После P0 и CI | Локальная offline-приёмка Windows 19.10.2026; live X не выполнялся |
+| V2-01 | Attempts + events + additive schema | Baseline | **Реализован и проверен offline** — attempts/events, trace, typed errors, транзакционные rollback/concurrency, UI |
+| V2-02 | Atomic finalization + typed errors | V2-01 | **Реализован и проверен offline** — атомарная финализация, идемпотентность, потеря COMMIT acknowledgement, PostgreSQL fault-injection |
+| V2-03 | Engagement reconciliation | V2-02 | **Реализован и проверен на моках** — read-only present/absent/unknown, проверка account/target, без автоматического повторного action; live X NOT TESTED |
+| V2-04 | Heartbeat/health UI | V2-01 | **Реализован и проверен offline** — независимый heartbeat, health/UI и реальный Windows Worker restart |
+| V2-05 | Priority + dedup | V2-01 | **Функционально проверен offline; performance gate открыт** — на 200004 заданиях индекс используется и manual-first верен, но busy/quota-exhausted превышают 15 с; см. QUEUE_EXPLAIN_V205_20261020_RU.md |
+| V2-06 | Circuit breaker | V2-02 | **Реализован и проверен offline** — runtime account/AI breaker, open/half_open/reset и безопасная обработка ошибок |
+| V2-07 | Secret rotation/runbook | Baseline | **Тестовая часть проверена** — TS/CJS legacy/V2, rotation/rollback, Worker lock, полный pg_dump/restore; consumer/security review и рабочее переключение остаются отдельными gates |
+| V2-08 | Offline acceptance / controlled live smoke | После P0 и CI | **Offline acceptance + CI PASS** — Windows 367 unit / 12 PostgreSQL / 11 UI; CI 24 SUCCESS / 1 SKIPPED на f0627c6; live gate открыт |
 
-Каждый PR: миграция backward-compatible; rollback понятен; unit/PG/Next.js тесты; защита attempted; отсутствие секретов; актуальные README/ADR; нет автоматического merge в main. Этап V2-01 — первый кодовый шаг. Этот план **не является заявлением о выполненных изменениях v2**.
+**Таблица выше отражает текущую проверенную готовность.** Описания инкрементов ниже — история реализации; старые формулировки «не закрыт» и «следующий шаг» не отменяют последующую приёмку. Production rotation и live X не выполнялись.
+
+Каждый PR: миграция backward-compatible; rollback понятен; unit/PG/Next.js тесты; защита attempted; отсутствие секретов; актуальные README/ADR; нет автоматического merge в main. Факт offline-реализации подтверждён отчётом V2-08; это **не** подтверждение реальной X-публикации или разрешение рабочего запуска.
 
 ### V2-01: первый инкремент кода (автоматический DB audit)
 
@@ -187,3 +189,27 @@ Jitter для transient pre-send retry; разделение Worker на planner
 См. [отчёт](V2_08_LOCAL_ACCEPTANCE_20261019_RU.md). Проверки X выполнялись на моках;
 PostgreSQL и backup/restore — только в отдельных локальных `_test` БД.
 Live gate остаётся открытым: реальные действия X запрещены пользователем.
+
+
+### Актуальная сверка V2 и EXPLAIN, 20.10.2026
+
+Приоритет текущей таблицы статусов выше исторических заметок об инкрементах.
+V2-01–06 имеют offline-реализацию и регрессионную приёмку, но performance gate V2-05
+остаётся открытым: [замер на 200004 искусственных заданиях](QUEUE_EXPLAIN_V205_20261020_RU.md)
+выявил timeout 15 секунд при полностью занятых аккаунтах или исчерпанных дневных лимитах.
+Обычный выбор использует xc_auto_jobs_manual_due и занимает 35–42 мс на этом стенде.
+
+V2-07: mixed-format, повреждения/отсутствующие ключи, test-only rotation/rollback,
+блокировка активным Worker и полный pg_dump/restore уже проверены 19.10.2026.
+Остаются подтверждение всех runtime consumers перед рабочим V2-переключением,
+формальная retention/log-scrubbing policy и security review. Рабочая ротация
+является отдельным решением, а не условием продолжения offline-проверок.
+
+V2-08: offline Windows и CI на f0627c6 прошли; live X NOT TESTED.
+P2 (jitter, разделение Worker, расширенная параллельность, AI quality/prompt versions)
+остаётся отложенным этапом после замеров, а не выполненной частью V2.
+
+Следующий безопасный кодовый шаг: оптимизировать SQL eligibility/quota без
+изменения приоритета, account/breaker locks и send-boundary, затем повторить
+оба масштаба EXPLAIN и PostgreSQL-регрессии в отдельных *_test БД.
+В рамках этой сверки runtime SQL не менялся, live/рабочая ротация/merge не выполнялись.
