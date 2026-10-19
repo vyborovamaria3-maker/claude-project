@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS xc_auto_sync (
 
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS attempted_at bigint;
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS retry_count integer NOT NULL DEFAULT 0;
+-- Count daily attempted work once per account without scanning its queued/history rows.
+CREATE INDEX IF NOT EXISTS xc_auto_jobs_attempted_quota
+ ON xc_auto_jobs(account_name,(COALESCE(attempted_at,started_at))) WHERE attempted;
 -- V2-05: preserve the legacy UNIQUE(dedup) contract while adding day-scoped keys.
 -- Legacy dedup hashes use a DIFFERENT pre-V2 string layout.
 -- Runtime matches both legacy dedup and V2 content hash to protect old jobs.

@@ -79,7 +79,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 | V2-02 | Atomic finalization + typed errors | V2-01 | **Реализован и проверен offline** — атомарная финализация, идемпотентность, потеря COMMIT acknowledgement, PostgreSQL fault-injection |
 | V2-03 | Engagement reconciliation | V2-02 | **Реализован и проверен на моках** — read-only present/absent/unknown, проверка account/target, без автоматического повторного action; live X NOT TESTED |
 | V2-04 | Heartbeat/health UI | V2-01 | **Реализован и проверен offline** — независимый heartbeat, health/UI и реальный Windows Worker restart |
-| V2-05 | Priority + dedup | V2-01 | **Функционально проверен offline; performance gate открыт** — на 200004 заданиях индекс используется и manual-first верен, но busy/quota-exhausted превышают 15 с; см. QUEUE_EXPLAIN_V205_20261020_RU.md |
+| V2-05 | Priority + dedup | V2-01 | **Реализован и проверен offline на измеренном объёме** — account-level quota, manual-first/dedup/guards; 200004 jobs: mixed 2–19 мс, busy/quota-exhausted 53–55 мс; см. QUEUE_EXPLAIN_V205_20261020_RU.md |
 | V2-06 | Circuit breaker | V2-02 | **Реализован и проверен offline** — runtime account/AI breaker, open/half_open/reset и безопасная обработка ошибок |
 | V2-07 | Secret rotation/runbook | Baseline | **Тестовая часть проверена** — TS/CJS legacy/V2, rotation/rollback, Worker lock, полный pg_dump/restore; consumer/security review и рабочее переключение остаются отдельными gates |
 | V2-08 | Offline acceptance / controlled live smoke | После P0 и CI | **Offline acceptance + CI PASS** — Windows 367 unit / 12 PostgreSQL / 11 UI; CI 24 SUCCESS / 1 SKIPPED на f0627c6; live gate открыт |
@@ -213,3 +213,19 @@ P2 (jitter, разделение Worker, расширенная параллел
 изменения приоритета, account/breaker locks и send-boundary, затем повторить
 оба масштаба EXPLAIN и PostgreSQL-регрессии в отдельных *_test БД.
 В рамках этой сверки runtime SQL не менялся, live/рабочая ротация/merge не выполнялись.
+
+
+### V2-05: оптимизация квот после EXPLAIN, 20.10.2026
+
+Предыдущие timeout-наблюдения выше относятся к SQL до оптимизации.
+permitted_accounts MATERIALIZED ограничивает число подсчётов квоты числом
+доступных аккаунтов; новый additive partial index xc_auto_jobs_attempted_quota
+использует account_name и COALESCE(attempted_at,started_at) только для attempted.
+Manual-first остаётся перед LIMIT 20, ручные задания сохраняют прежнее исключение
+из config/pause/quota, но не из account/breaker guards. claim, lease и send-boundary
+не менялись. На том же наборе 200004 jobs старые busy/quota timeouts >15 с устранены
+(53.449/54.555 мс); mixed 2.134–18.854 мс. Подсчётов квоты: 100, paused/busy: 0.
+
+Performance gate закрыт для этого искусственного набора и проверенных сценариев,
+а не как универсальный production SLA. Live X, рабочая ротация и рабочее применение
+нового индекса не выполнялись. Исходные измерения сохранены для сравнения.
