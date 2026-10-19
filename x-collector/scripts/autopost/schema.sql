@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS xc_auto_jobs (
  lease_until bigint,result_id text,result_url text,message text,origin text NOT NULL DEFAULT 'manual'
 );
 CREATE INDEX IF NOT EXISTS xc_auto_jobs_due ON xc_auto_jobs(status,scheduled_at);
+-- Manual-first ordering must happen before LIMIT for every eligible account.
+CREATE INDEX IF NOT EXISTS xc_auto_jobs_manual_due ON xc_auto_jobs ((CASE WHEN origin='manual' THEN 0 ELSE 1 END),scheduled_at,created_at) WHERE status='queued';
 CREATE INDEX IF NOT EXISTS xc_auto_jobs_account ON xc_auto_jobs(account_name,created_at DESC);
 CREATE TABLE IF NOT EXISTS xc_auto_posts (
  tweet_id text PRIMARY KEY,account_name text NOT NULL,handle text NOT NULL,text text NOT NULL,url text NOT NULL,

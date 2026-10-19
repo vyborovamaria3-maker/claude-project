@@ -72,10 +72,14 @@ for(const kind of ['like','repost','follow'] as const){
   assert.deepEqual(await observe(kind),{status:'unknown'});
   assert.deepEqual(await observe(kind,{performed:true,available:true}),{status:'unknown'});
  });
- test(kind+': foreign target cannot be confirmed',async()=>{
+ if(kind!=='follow')test(kind+': foreign target cannot be confirmed',async()=>{
   assert.deepEqual(await observe(kind,{performed:true,observedHandle:'another_user'}),{status:'unknown'});
  });
 }
+test('follow: GraphQL evidence from another user is not the target identity',()=>{
+ const {extractUser}=load('../scripts/autopost/browser.cjs');
+ assert.equal(extractUser({data:{user:{rest_id:'42',legacy:{screen_name:'someone_else'}}}},'target'),null);
+});
 test('follow: a redirected profile cannot be mistaken for the intended target',async()=>{
  assert.deepEqual(await observe('follow',{performed:true,redirect:true}),{status:'unknown'});
 });

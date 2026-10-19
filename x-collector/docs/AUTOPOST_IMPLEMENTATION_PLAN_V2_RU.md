@@ -79,7 +79,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 | V2-02 | Atomic finalization + typed errors | V2-01 | Не начато |
 | V2-03 | Engagement reconciliation | V2-02 | **В работе** — read-only наблюдения и регрессионные mocks; live X не проверен |
 | V2-04 | Heartbeat/health UI | V2-01 | Не начато |
-| V2-05 | Priority + dedup | V2-01 | Не начато |
+| V2-05 | Priority + dedup | V2-01 | **В работе** — manual-first в SQL, дедупликация ещё не обновлена |
 | V2-06 | Circuit breaker | V2-02 | Не начато |
 | V2-07 | Secret rotation/runbook | Baseline | Не начато |
 | V2-08 | Controlled live smoke | После P0 и CI | Не начато |
@@ -130,3 +130,10 @@ Jitter для transient pre-send retry; разделение Worker на planner
 - `tests/autopost-action-observation.test.ts` проверяет Playwright-compatible mock-профили, положительные/отрицательные/неоднозначные наблюдения, чужой профиль, недоступный target и отсутствие отправки.
 - Прежние `manual_review` не массово переоткрываются: оператору нужно закончить их вручную. Никаких live X действий, слияния в main или обхода ограничений.
 - **Статус:** изменение кода; проверять CI на SHA этого коммита. Live X: **NOT TESTED**.
+
+### V2-05: приоритет ручных заданий (первый инкремент)
+
+- `queue.cjs/dueJobs` выбирает задания с `ORDER BY CASE WHEN origin='manual' THEN 0 ELSE 1 END` **перед** `LIMIT 20`; фильтры разрешений и блокировки аккаунта сохранены.
+- Добавлен частичный expression-index `xc_auto_jobs_manual_due` для `queued`. Его использование на большом объёме данных ещё нужно оценить через `EXPLAIN (ANALYZE, BUFFERS)` на отдельной тестовой PostgreSQL.
+- Тест проверяет 120 агентских заданий перед ручным и отсутствие автоматических заданий при паузе. Никакой X-публикации.
+- **V2-05 не закрыт:** дневная дедупликация и миграция старого `UNIQUE(dedup)` остаются отдельным этапом и требуют правил для uncertain/legacy.
