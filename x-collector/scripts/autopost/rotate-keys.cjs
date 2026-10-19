@@ -15,13 +15,16 @@ if(flags.size!==args.length||args.some(x=>!['--dry-run','--apply-test-only','--c
   try{
    const env={...process.env,...config()};
    oldKey=parseKey(env.MASTER_KEY);
-   if(rehearsal){
+   if(env.X_COLLECTOR_NEXT_MASTER_KEY){
     newKey=parseKey(env.X_COLLECTOR_NEXT_MASTER_KEY);
+   }
+   if(rehearsal){
+    if(!newKey)throw Error('NEW_KEY_REQUIRED');
     if(oldKey.equals(newKey))throw Error('NEW_KEY_MUST_DIFFER');
     if(!/^[A-Za-z0-9_-]{1,48}$/.test(env.X_COLLECTOR_NEXT_KEY_ID||''))throw Error('INVALID_NEW_KEY_ID');
    }
    c=await connect();
-   const options={legacyKey:oldKey,nextKey:newKey,nextId:env.X_COLLECTOR_NEXT_KEY_ID,
+   const options={legacyKey:oldKey,keys:newKey&&/^[A-Za-z0-9_-]{1,48}$/.test(env.X_COLLECTOR_NEXT_KEY_ID||'')?{[env.X_COLLECTOR_NEXT_KEY_ID]:newKey}:{},nextKey:newKey,nextId:env.X_COLLECTOR_NEXT_KEY_ID,
     confirmedBackup:flags.has('--confirm-backup'),confirmedStopped:flags.has('--confirm-worker-stopped')};
    const result=rehearsal?await rotateDisposableTestDatabase(c,options):await audit(c,options);
    console.log(JSON.stringify({ok:true,...result}));

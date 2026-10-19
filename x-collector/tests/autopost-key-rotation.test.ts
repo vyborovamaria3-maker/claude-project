@@ -7,7 +7,8 @@ const load=createRequire(__filename);
 const r=load('../scripts/autopost/key-rotation-core.cjs');
 function legacy(plain:Buffer,key:Buffer){
  const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',key,iv);
- return Buffer.concat([iv,c.getAuthTag(),Buffer.concat([c.update(plain),c.final()])]);
+ const data=Buffer.concat([c.update(plain),c.final()]);
+ return Buffer.concat([iv,c.getAuthTag(),data]);
 }
 test('V2-07: v2 key-id is authenticated; legacy is readable with old key only',()=>{
  const old=randomBytes(32),next=randomBytes(32),plain=Buffer.from('{"cookies":[{"name":"ct0","value":"not-real"}]}');
