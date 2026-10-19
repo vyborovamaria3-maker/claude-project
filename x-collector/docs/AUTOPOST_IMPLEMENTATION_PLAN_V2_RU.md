@@ -82,7 +82,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 | V2-05 | Priority + dedup | V2-01 | **В работе** — manual-first, additive дневная дедупликация и guard uncertain; CI/PG подтверждение ещё требуется |
 | V2-06 | Circuit breaker | V2-02 | **В работе** — DB breaker policy и тесты; рабочие точки интеграции отдельно |
 | V2-07 | Secret rotation/runbook | Baseline | **В работе** — инвентаризация, dry-run, новый формат и тестовая ротация; production migration запрещена до обновления читателей |
-| V2-08 | Controlled live smoke | После P0 и CI | Не начато |
+| V2-08 | Offline acceptance / controlled live smoke | После P0 и CI | Локальная offline-приёмка Windows 19.10.2026; live X не выполнялся |
 
 Каждый PR: миграция backward-compatible; rollback понятен; unit/PG/Next.js тесты; защита attempted; отсутствие секретов; актуальные README/ADR; нет автоматического merge в main. Этап V2-01 — первый кодовый шаг. Этот план **не является заявлением о выполненных изменениях v2**.
 
@@ -180,3 +180,10 @@ Jitter для transient pre-send retry; разделение Worker на planner
 - CJS `scripts/autopost/keyring.cjs` интегрирован с publisher, AI secrets и видимым X browser-login; TypeScript `lib/trade/crypto.ts` и `src/x/session.ts` читают legacy/V2. Есть перекрёстный тест TS ↔ CJS, проверка неизвестного ID/изменения заголовка и default legacy писателей.
 - `MASTER_KEY` остаётся legacy. Новые ID добавляются через `X_COLLECTOR_ENCRYPTION_KEYS`, запись V2 возможна только при отдельном `X_COLLECTOR_ACTIVE_KEY_ID`; в production это пока **не включать**.
 - Реальная ротация БД, удаление старого ключа и запуск live X **не выполнялись**. Следующий шаг: backup/restore dry-run в disposable PostgreSQL и review других consumers перед production switch.
+
+
+### V2-08: локальная offline-приёмка Windows, 19.10.2026
+
+См. [отчёт](V2_08_LOCAL_ACCEPTANCE_20261019_RU.md). Проверки X выполнялись на моках;
+PostgreSQL и backup/restore — только в отдельных локальных `_test` БД.
+Live gate остаётся открытым: реальные действия X запрещены пользователем.

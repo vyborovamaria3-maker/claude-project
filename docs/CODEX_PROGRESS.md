@@ -75,3 +75,6 @@ Blockchain Settings V2 validation: offline settings/import/RPC contracts, seed p
 
 
 PR #62 CI repair (2026-10-18): reconciled with current main, retaining the strict main secret scanner. Cancellation remains idempotent for cancelled jobs while reserved/finalized invitations remain non-cancellable; added four HTTP regressions. Webhook setup regression now expects both verified join requests and explicit private /join messages. Fixed Python lint and SQLAlchemy result tuple typing. No running TGInvite process, session, credentials, webhook or production database was touched. Main release-image and X/Intelligence checks passed; production deploy and scheduled backup remain blocked by SSH host-key mismatch, which was not bypassed.
+
+
+V2-08 Windows offline acceptance (2026-10-19, PR #127): dedicated loopback PostgreSQL *_test cluster, mocked X, real Worker heartbeat/restart and Next UI/API checks. Fixed autopost statistics SQL day alias, unknown-state UI, stale metric errors, and migration ledger lookup leaking through search_path. Added native/PGlite and Playwright regressions. Test-only key rotation/rollback and pg_dump/restore verified; no live X, real credentials, working DB changes or main merge. See x-collector/docs/V2_08_LOCAL_ACCEPTANCE_20261019_RU.md.

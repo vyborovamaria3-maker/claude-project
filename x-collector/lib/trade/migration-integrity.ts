@@ -14,7 +14,9 @@ export function migrationChecksum(sql:string):string {
 export async function runMigrations(c:MigrationConnection,files:MigrationFile[],options:{statusOnly?:boolean;baseline?:boolean;log?:(line:string)=>void}={}) {
   if(options.statusOnly&&options.baseline)throw Error('Cannot combine --status and --baseline-checksums');
   const log=options.log??(()=>{});
-  const exists=(await c.query("SELECT to_regclass('schema_migrations') IS NOT NULL AS present")).rows[0]?.present===true;
+  // A later search_path schema may contain another collector's ledger.
+  // Only the schema receiving this run's DDL owns its migration history.
+  const exists=(await c.query("SELECT to_regclass(format('%I.schema_migrations',current_schema())) IS NOT NULL AS present")).rows[0]?.present===true;
   // to_jsonb works against both legacy and checksum-aware ledgers, read-only.
   const rows=exists?(await c.query("SELECT filename,to_jsonb(m)->>'checksum' AS checksum FROM schema_migrations m")).rows:[];
   const ledger=new Map(rows.map(row=>[String(row.filename),row.checksum==null?null:String(row.checksum)]));
