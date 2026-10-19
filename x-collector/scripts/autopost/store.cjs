@@ -11,7 +11,7 @@ async function enqueue(c,input){
  if(!name(input.name)||!handle(input.expected)||!['post','reply','like','repost','follow'].includes(input.kind||'post'))throw Error('Некорректный аккаунт или действие');
  const kind=input.kind||'post';
  if(['post','reply'].includes(kind)&&(typeof input.text!=='string'||!input.text.trim()||Array.from(input.text).length>280))throw Error('Текст: 1–280 символов');
- if(kind!=='post'&&(!/^\\d{1,25}$/.test(input.target_id||'')||!handle(input.target_handle)))throw Error('Нужен целевой твит и username');
+ if(kind!=='post'&&(!/^\d{1,25}$/.test(input.target_id||'')||!handle(input.target_handle)))throw Error('Нужен целевой твит и username');
  if(!/^[a-f0-9-]{36}$/i.test(input.id||''))throw Error('Некорректный ID');
  const now=Date.now(),at=input.scheduled_at===undefined?now:int(input.scheduled_at,now-60000,now+365*86400000);
  const rawNormalized=(input.text||'').trim().normalize('NFKC').toLowerCase().replace(/\s+/g,' ');const withoutSourceLinks=rawNormalized.replace(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/(?:i\/status\/\d+|[A-Za-z0-9_]{1,15}\/status\/\d+)(?:\?[^\s]*)?/gi,' ').replace(/\s+/g,' ').trim();const normalized=withoutSourceLinks||rawNormalized;
