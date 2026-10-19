@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { discoverPublicSources } from "./discovery.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pool, migrate } from "../db.js";
 import { authorizedClient } from "../accounts/session.js";
@@ -55,6 +56,9 @@ async function main(): Promise<void> {
       }
       const seconds = await remainingPauseSeconds();
       if (seconds > 0) { await sleep(Math.min(seconds * 1000, 5000)); continue; }
+      if ((await discoverPublicSources(client, () => stopping)) === "halt") {
+        stopping = true; process.exitCode = 1; continue;
+      }
       const job = await claim();
       if (!job) { await sleep(3000); continue; }
       try { await processJob(client, job, () => stopping); }

@@ -75,3 +75,11 @@ Blockchain Settings V2 validation: offline settings/import/RPC contracts, seed p
 
 
 PR #62 CI repair (2026-10-18): reconciled with current main, retaining the strict main secret scanner. Cancellation remains idempotent for cancelled jobs while reserved/finalized invitations remain non-cancellable; added four HTTP regressions. Webhook setup regression now expects both verified join requests and explicit private /join messages. Fixed Python lint and SQLAlchemy result tuple typing. No running TGInvite process, session, credentials, webhook or production database was touched. Main release-image and X/Intelligence checks passed; production deploy and scheduled backup remain blocked by SSH host-key mismatch, which was not bypassed.
+
+
+TG crypto discovery (2026-10-19): added opt-in migration 016, persistent keyword/query/addition/source budgets, sequential public contacts.Search on the existing singleton worker, atomic source + job creation, global Stop/FloodWait handling and operator deletion tombstones. Control Center now edits keywords/limits and shows public discovery results via its authenticated server bridge. Tests include real disposable PostgreSQL budgets, Stop during RPC, paused/deleted source protection and account/session errors; no original TGInvite session is used.
+
+Automatic discovery keywords now come from the existing Twitter database through a
+bounded read-only query. Live verification read 2000 posts and extracted seven crypto
+topics; the first Telegram search found eight eligible sources and connected three
+within the daily budget. Original TGInvite session files were unchanged.
