@@ -78,6 +78,7 @@ function findMatches(job, candidates, now = Date.now()) {
 
 function classifyActionState(kind,done,available){
  if(!['like','repost','follow'].includes(kind))return 'unsupported';
+ if(done===true&&available===true)return 'unknown';
  if(done===true)return 'performed';
  if(available===true)return 'not_performed';
  return 'unknown';

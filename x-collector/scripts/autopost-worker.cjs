@@ -20,6 +20,7 @@ async function reconcileOne(c,now){
   const claim=await c.query("UPDATE xc_auto_reconcile SET status='running',attempts=attempts+1,first_checked_at=COALESCE(first_checked_at,$2),updated_at=$2 WHERE job_id=$1 AND status='queued' AND next_check_at<=$2 RETURNING attempts",[row.job_id,stamp]);
   if(!claim.rowCount)return false;
   const attempts=Number(claim.rows[0].attempts);
+  try{
   if(!['post','reply'].includes(row.kind)){
    const action=await reconcileAction(c,row);
    const checkNow=Date.now();
@@ -37,7 +38,6 @@ async function reconcileOne(c,now){
    }
    return true;
   }
-  try{
    const matches=await reconcilePost(c,row);
    const checkNow=Date.now();
    const decision=decideReconciliation({kind:row.kind,matches,now:checkNow,deadlineAt});

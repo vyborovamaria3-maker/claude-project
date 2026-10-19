@@ -31,6 +31,16 @@ function candidate(id:string,overrides:Record<string,unknown>={}) {
   };
 }
 
+test('contradictory X action controls are unknown, never confirmed success',()=>{
+ const {classifyActionState}=reconciliation;
+ for(const kind of ['like','repost','follow']){
+  assert.equal(classifyActionState(kind,true,true),'unknown');
+  assert.equal(classifyActionState(kind,true,false),'performed');
+  assert.equal(classifyActionState(kind,false,true),'not_performed');
+  assert.equal(classifyActionState(kind,false,false),'unknown');
+ }
+});
+
 test('reconciliation requires an exact author, text, and a timestamp near the send boundary',()=>{
   const now=1_800_000_010_000;
   const source=job();
