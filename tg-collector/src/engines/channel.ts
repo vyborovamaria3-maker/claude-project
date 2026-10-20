@@ -130,8 +130,8 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     try {
       await checkpoint.query("BEGIN");
       await checkpoint.query(
-        "UPDATE tg_jobs SET base_message_id=$2,high_message_id=$3,updated_at=now() WHERE id=$1",
-        [job.id, baseId, highId]);
+        "UPDATE tg_jobs SET base_message_id=$2,high_message_id=$3,history_scan_verified=$4,updated_at=now() WHERE id=$1",
+        [job.id, baseId, highId, recoveringHistory && baseId===0]);
       if (recoveringHistory && Number(source.last_message_id) === 0 && highId > 0) {
         // An observed upper bound allows priority fresh-message checks while
         // historical pages are still being persisted below that boundary.
