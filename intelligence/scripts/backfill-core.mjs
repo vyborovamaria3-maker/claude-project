@@ -105,14 +105,16 @@ export function cursorOf(source,row){
   if(source==="tg")return {sourceId:String(row.source_id),messageId:String(row.message_id)};
   return {address:row.address,signature:row.signature};
 }
-export function checkpointFor(source,scope,high){
+export function checkpointFor(source,scope,high,identity=null){
+  if(identity!==null&&!SHA256.test(identity))throw new TypeError("invalid database identity");
   if(!SOURCES.has(source)||!SAFE_SCOPE.test(scope))throw new TypeError("invalid backfill checkpoint scope");
-  return {version:1,source,scope,high,cursor:initialCursor(source),
+  return {version:1,source,scope,identity,high,cursor:initialCursor(source),
     visited:0,inserted:0,duplicates:0,excluded:0,complete:high===null};
 }
-export function validateCheckpoint(value,source,scope){
+export function validateCheckpoint(value,source,scope,identity=null){
   if(!value||typeof value!=="object"||Array.isArray(value)||
     value.version!==1||value.source!==source||value.scope!==scope||
+    value.identity!==identity||
     value.high!==null&&typeof value.high!=="object"||
     !value.cursor||typeof value.cursor!=="object"||
     typeof value.complete!=="boolean"||
@@ -125,10 +127,31 @@ export function validateCheckpoint(value,source,scope){
     if(Object.keys(member).sort().join(",")!==[...keys].sort().join(","))
       throw new TypeError("checkpoint cursor shape mismatch");
   }
+  // Defensive monotonic cursor validation: a copied or corrupted checkpoint
+  // must not be able to skip unrelated history in a different source scope.
+  const isX=v=>Number.isSafeInteger(v.len)&&v.len>=0&&
+    (v.len===0?v.id==="":NUMERIC_ID.test(v.id)&&v.id.length===v.len);
+  const isTg=v=>/^(0|[1-9][0-9]{0,19})$/.test(v.sourceId)&&
+    /^(0|[1-9][0-9]{0,19})$/.test(v.messageId);
+  const isChain=v=>typeof v.address==="string"&&typeof v.signature==="string"&&
+    /^[1-9A-HJ-NP-Za-km-z]{0,128}$/.test(v.address)&&
+    /^[1-9A-HJ-NP-Za-km-z]{0,128}$/.test(v.signature);
+  const isValid=source==="x"?isX:source==="tg"?isTg:isChain;
+  if(!isValid(value.cursor)||(value.high!==null&&!isValid(value.high))){
+    throw new TypeError("invalid backfill cursor");
+  }
+  if(value.high!==null){
+    const c=value.cursor,h=value.high;
+    const cmp=source==="x"?(c.len-h.len||c.id.localeCompare(h.id)):
+      source==="tg"?(BigInt(c.sourceId)-BigInt(h.sourceId)||
+        BigInt(c.messageId)-BigInt(h.messageId)):
+      (c.address.localeCompare(h.address)||c.signature.localeCompare(h.signature));
+    if(cmp>0)throw new TypeError("checkpoint cursor exceeds high-water bound");
+  }
   return value;
 }
-export async function readCheckpoint(path,source,scope){
-  try{return validateCheckpoint(JSON.parse(await readFile(path,"utf8")),source,scope)}
+export async function readCheckpoint(path,source,scope,identity=null){
+  try{return validateCheckpoint(JSON.parse(await readFile(path,"utf8")),source,scope,identity)}
   catch(error){if(error?.code==="ENOENT")return null;throw error;}
 }
 export async function writeCheckpoint(path,state){
