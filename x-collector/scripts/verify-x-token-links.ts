@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import {addresses} from "../lib/archive/model";
-import {q,tx,closePool} from "../lib/trade/pg";
+import {q,tx,closePool,AmbiguousCommitError} from "../lib/trade/pg";
 import {verifySolanaMintViaAlchemy} from "../src/collector/persistence/solana-mint-proof";
 import {
   emitXVerifiedTokenLinkOutbox,xVerifiedTokenLinksEnabled,
@@ -78,7 +78,8 @@ export async function verifyXTokenLinksOnce(options:ReturnType<typeof parseMintV
   const cache=new Map<string,Awaited<ReturnType<typeof verifySolanaMintViaAlchemy>>>();
   let nextCursor=options.cursor;
   let budgetHit=false;
-  for(const tweet of rows){
+  let haltedReason:"rpc_deferred"|"source_write_failed"|"source_commit_uncertain"|null=null;
+  rowLoop:for(const tweet of rows){
     const matches=addresses(tweet.text??"").slice(0,3);
     const validId=/^[1-9][0-9]{0,24}$/;
     if(!validId.test(tweet.tweet_id)||!tweet.author_id||!validId.test(tweet.author_id)){
@@ -95,19 +96,24 @@ export async function verifyXTokenLinksOnce(options:ReturnType<typeof parseMintV
       if(!cache.has(mint)){
         requests++;
         try{cache.set(mint,await verify(mint))}
-        catch{deferred++;continue;} // transport failure is NOT "not a mint"
+        catch{deferred++;haltedReason="rpc_deferred";break rowLoop;} // retry this tweet on next run
       }
       const proof=cache.get(mint);
       if(!proof){rejected++;continue;}
       verified++;
       try{if(await emit(tweet,mint,proof))emitted++;else skipped++;}
-      catch{deferred++;} // no raw exception/URL/credential in logs
+      catch(error){
+        deferred++;
+        haltedReason=error instanceof AmbiguousCommitError
+          ?"source_commit_uncertain":"source_write_failed";
+        break rowLoop; // preserve cursor; resolve uncertain COMMIT before another run
+      }
     }
     nextCursor=tweet.tweet_id;
   }
   return {mode:options.execute?"execute":"dry_run",scanned:rows.length,
     candidates,requests,verified,rejected,deferred,emitted,skipped,
-    nextCursor,budgetHit};
+    nextCursor,budgetHit,haltedReason};
 }
 async function main(){
   const args=parseMintVerificationArgs(process.argv.slice(2));
