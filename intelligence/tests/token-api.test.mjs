@@ -91,7 +91,7 @@ test("strict token/time/query validation rejects aliases, encoded slashes, futur
     base+"/timeline?"+window+"&limit=2&limit=4",
     base+"/timeline?"+window+"&unknown=1",
     base+"/timeline?knownAt="+encodeURIComponent(known),
-    base+"/links?"+window.replace(known,at.replace("03:30","23:30")),
+    base+"/links?"+window.replace(encodeURIComponent(known),encodeURIComponent("2026-10-20T23:30:00.000Z")),
     base+"/timeline?occurredBefore="+encodeURIComponent(at)+"&knownAt="+encodeURIComponent(known),
     "/api/intelligence/v1/tokens/SOL/timeline?"+window,
     "/api/intelligence/v1/tokens/solana%3A%2Fprivate/timeline?"+window,
