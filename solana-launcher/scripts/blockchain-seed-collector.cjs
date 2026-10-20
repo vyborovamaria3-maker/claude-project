@@ -906,10 +906,16 @@ function persistEvents(db, kind, address, transactions) {
         // Still ONE source-owned SQLite transaction: raw + wallet + token
         // observations roll back together when a lease-fenced task fails.
         if (process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED === "true") {
-          require("./blockchain-token-swap-outbox.cjs").emitTokenSwapEvidenceOutbox(db,{
-            kind,address,signature:tx.signature,payloadHash:hash,
-            observedAt,transaction:tx,
-          });
+          const rawRevision=db.prepare(
+            "SELECT raw_revision FROM chain_seed_events WHERE kind=? AND address=? AND signature=?"
+          ).get(kind,address,tx.signature).raw_revision;
+          const evidence={kind,address,signature:tx.signature,payloadHash:hash,
+            rawRevision,observedAt,transaction:tx};
+          require("./blockchain-token-swap-outbox.cjs").emitTokenSwapEvidenceOutbox(db,evidence);
+          // All revisions (including unparseable corrections) advance the
+          // active-evidence projection. Raw, observations and revision signal
+          // are committed/rolled back atomically in the source SQLite.
+          require("./blockchain-token-swap-revisions.cjs").emitTokenSwapRevisionOutbox(db,evidence);
         }
       }
     }
