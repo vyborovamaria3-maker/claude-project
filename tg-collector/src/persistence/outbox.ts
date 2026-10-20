@@ -250,7 +250,9 @@ export async function emitTgTokenLinksInvalidation(
   tx:PoolClient, sourceId:string,
   input:Omit<Parameters<typeof buildTgTokenLinksInvalidatedOutboxEvent>[0],"peerId">,
 ):Promise<boolean>{
-  if(!telegramVerifiedTokenLinksEnabled())return false;
+  // Do not gate tombstones on NEW link assertions: previously published
+  // claims still require edit/delete revocation while source Outbox is on.
+  if(!telegramOutboxEnabled())return false;
   const peer=await tx.query<{peer_id:string|null}>(
     "SELECT peer_id FROM tg_sources WHERE id=$1 FOR KEY SHARE",[sourceId]);
   const event=buildTgTokenLinksInvalidatedOutboxEvent({

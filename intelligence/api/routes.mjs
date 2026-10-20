@@ -1,5 +1,5 @@
 import {parseTokenId} from "@claude-project/contracts";
-import {queryTokenTimeline,queryActiveTokenLinks} from "../dist/index.js";
+import {queryTokenTimeline,queryActiveTokenLinks,queryActiveBlockchainSwapEvidence} from "../dist/index.js";
 
 const API_PREFIX="/api/intelligence/v1";
 const UTC=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
@@ -35,12 +35,12 @@ export function parseApiRequest(raw,now=new Date()){
     if(url.search)throw new TypeError("unexpected_query");
     return {kind:"health"};
   }
-  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links)$/.exec(url.pathname);
+  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence)$/.exec(url.pathname);
   if(!match)return null;
   let tokenId;
   try{tokenId=decodeURIComponent(match[1]);}
   catch{throw new TypeError("invalid_token_id");}
-  // v1 deliberately only exposes verified Solana mint IDs, not arbitrary
+  // v1 only accepts canonical Solana mint-format IDs, not arbitrary
   // wallet IDs, author IDs or ticker aliases.
   if(!tokenId.startsWith("solana:")||
      parseTokenId(tokenId)?.id!==tokenId){
@@ -107,6 +107,21 @@ function normalizeLink(row,tokenId){
     // source content, raw timeline payload, event keys or private DSNs.
   };
 }
+function normalizeSwapEvidence(row,tokenId){
+  if(row.canonical_token_id!==tokenId||typeof row.signature!=="string")
+    throw new TypeError("invalid_swap_token_attribution");
+  if(!Number.isSafeInteger(Number(row.slot))||Number(row.slot)<=0)
+    throw new TypeError("invalid_swap_slot");
+  return {
+    source:"blockchain",kind:"chain_transaction",
+    evidenceId:safeEvidenceId("chain:tx:solana:"+row.signature),
+    occurredAt:safeTime(row.occurred_at),observedAt:safeTime(row.observed_at),
+    attribution:"provider_parsed_wallet_swap",
+    finality:"not_independently_verified",
+    evidenceStatus:"current_source_revision_as_known_at",
+    tradeCompleteness:"unknown",
+  };
+}
 export async function queryTokenApi(pool,request){
   if(request.kind==="health"){
     await pool.query("SELECT 1 AS ok");
@@ -124,6 +139,17 @@ export async function queryTokenApi(pool,request){
     );
     const items=records.slice(0,request.limit).map(normalizeTimeline);
     return responseBase(request,items,records.length>request.limit);
+  }
+  if(request.kind==="swap-evidence"){
+    const records=await queryActiveBlockchainSwapEvidence(
+      pool,request.tokenId,request.occurredBefore,request.knownAt,request.limit+1,
+    );
+    const items=records.slice(0,request.limit)
+      .map(row=>normalizeSwapEvidence(row,request.tokenId));
+    return {...responseBase(request,items,records.length>request.limit),
+      evidenceScope:"current_wallet_revision_agreement_only",
+      mintVerification:"not_independently_verified",
+      tradeStatus:"not_a_confirmed_trade_tape"};
   }
   if(request.kind==="links"){
     const records=await queryActiveTokenLinks(

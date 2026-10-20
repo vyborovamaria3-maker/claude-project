@@ -57,15 +57,21 @@ export async function checkPgOutbox(pool){
   if(!rows[0]?.present)throw new Error("source outbox schema is not installed");
 }
 
-export async function checkDestination(pool){
+export async function checkDestination(pool,options={}){
   const result=await pool.query(`SELECT
     to_regclass('intelligence_inbox') IS NOT NULL AS inbox,
     to_regclass('entity_registry') IS NOT NULL AS registry,
     to_regclass('entity_evidence') IS NOT NULL AS evidence,
-    to_regclass('timeline_events') IS NOT NULL AS timeline`);
+    to_regclass('timeline_events') IS NOT NULL AS timeline,
+    to_regclass('token_link_observations') IS NOT NULL AS token_links,
+    to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS blockchain_revisions`);
   const row=result.rows[0];
-  if(!row?.inbox||!row.registry||!row.evidence||!row.timeline){
-    throw new Error("destination Intelligence migrations 001+002 required");
+  // Every consumer may encounter token-link events, so reject missing 004 before claiming.
+  if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
+    throw new Error("destination Intelligence migrations 001+002+004 required");
+  }
+  if(options.requireBlockchainRevisions===true && !row.blockchain_revisions){
+    throw new Error("destination Intelligence migration 005 required before Blockchain claim");
   }
 }
 
