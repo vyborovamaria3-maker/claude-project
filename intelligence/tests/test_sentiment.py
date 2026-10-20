@@ -6,11 +6,13 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+from types import SimpleNamespace
+import sys
 
 from intelligence.bootstrap import build_memory_runtime
 from intelligence.core.models import IntelligenceDocument, ProviderHealth
 from intelligence.nlp.sentiment import (
-    CRYPTO, FINTWIT, RUBERT, SCHEMA_VERSION, SentimentEngine,
+    CRYPTO, FINTWIT, RUBERT, SCHEMA_VERSION, SentimentEngine, LocalTransformersBackend,
     SourceText, detect_language, route_models,
 )
 from intelligence.providers.base import IntelligenceProvider
@@ -92,6 +94,53 @@ class SentimentTests(unittest.TestCase):
         backend = MockModels()
         engine(backend).analyze([x("The $SOL memecoin is extremely bullish!")])
         self.assertIn("$SOL", backend.calls[0][2][0])
+
+    def test_memory_policy_limits_model_residency_to_one_by_default(self):
+        b = LocalTransformersBackend()
+        self.assertEqual(b.device, "cpu")
+        self.assertEqual(b.max_loaded_models, 1)
+        first = (CRYPTO.key, "a" * 40)
+        second = (FINTWIT.key, "b" * 40)
+        b._loaded[first] = (object(), object())
+        b._make_room()
+        self.assertEqual(b._loaded, {}, "old model must be evicted before allocating next")
+        b._loaded[second] = (object(), object())
+        b.unload_all()
+        self.assertEqual(b._loaded, {})
+        for value in (0, -1, 4, 1.5, True):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "max_loaded_models"):
+                LocalTransformersBackend(max_loaded_models=value)
+
+    def test_cuda_eviction_releases_cached_tensors_with_fake_torch(self):
+        hits = []
+        fake_torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True,
+                                 empty_cache=lambda: hits.append("empty_cache"))
+        )
+        b = LocalTransformersBackend(device="cuda:0")
+        b._loaded[("cryptobert", "a" * 40)] = (object(), object())
+        with patch.dict(sys.modules, {"torch": fake_torch}):
+            b._make_room()
+            b._loaded[("rubert", "c" * 40)] = (object(), object())
+            b.unload_all()
+        self.assertEqual(len(hits), 2)
+        self.assertFalse(b._loaded)
+
+    def test_environment_policy_is_opt_in_and_bounded(self):
+        env = {
+            "SENTIMENT_CRYPTOBERT_REVISION": "a" * 40,
+            "SENTIMENT_FINTWITBERT_REVISION": "b" * 40,
+            "SENTIMENT_RUBERT_REVISION": "c" * 40,
+            "SENTIMENT_MAX_LOADED_MODELS": "2",
+            "SENTIMENT_DEVICE": "cpu",
+        }
+        with patch.dict(os.environ, env):
+            b = SentimentEngine.from_environment().backend
+            self.assertIsInstance(b, LocalTransformersBackend)
+            self.assertEqual(b.max_loaded_models, 2)
+        with patch.dict(os.environ, {**env, "SENTIMENT_MAX_LOADED_MODELS": "50"}):
+            with self.assertRaises(ValueError):
+                SentimentEngine.from_environment()
 
     def test_bounded_batching_and_exact_revision(self):
         backend = MockModels()
