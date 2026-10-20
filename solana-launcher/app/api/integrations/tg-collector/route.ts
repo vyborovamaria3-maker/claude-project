@@ -209,7 +209,7 @@ export async function GET(request: NextRequest) {
           (SELECT count(*)::int FROM tg_jobs WHERE state='running') AS running,
           (SELECT count(*)::int FROM tg_jobs WHERE state='failed') AS failed`),
       p.query(`SELECT pause_until, heartbeat_at, worker_started_at, block_reason, blocked_at,
-        collection_enabled, messages_total, messages_per_day, links_total, links_per_day, jobs_pending, jobs_failed,
+        collection_enabled, messages_total, messages_per_day, links_total, links_active_total, links_per_day, jobs_pending, jobs_failed,
         flood_wait_active, metrics_updated_at, worker_version, last_error_code,
         heartbeat_at > now() - interval '30 seconds' AS worker_online
         FROM tg_runtime WHERE id=1`),
@@ -236,6 +236,7 @@ export async function GET(request: NextRequest) {
         messages_total: Number(runtimeState.rows[0]?.messages_total ?? 0),
         messages_per_day: Number(runtimeState.rows[0]?.messages_per_day ?? 0),
         links_total: Number(runtimeState.rows[0]?.links_total ?? 0),
+        links_active_total: Number(runtimeState.rows[0]?.links_active_total ?? 0),
         links_per_day: Number(runtimeState.rows[0]?.links_per_day ?? 0),
         jobs_pending: Number(runtimeState.rows[0]?.jobs_pending ?? 0),
         jobs_failed: Number(runtimeState.rows[0]?.jobs_failed ?? 0),
