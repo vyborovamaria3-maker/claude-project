@@ -584,10 +584,13 @@ npm run history -- @existing_channel
 You can also select **«Вся история»** while adding a source in Settings → TG Collector, or
 click **«Собрать всю историю»** for an existing source. The admin panel shares the same UI.
 
-Full historical scanning is incremental and can require many worker turns. The collector keeps
-`tg_sources.history_low_message_id` (lowest saved message ID) and the job cursor to resume
-across restarts. A short page does **not** prove Telegram history is exhausted; the historical
-scan completes on an empty page. `history_complete` means the collector exhausted the
+Full historical scanning is incremental and can require many worker turns. The field
+`tg_sources.history_low_message_id` is a **minimum observed ID**, not proof that every
+higher message ID has been scanned: public discovery can store isolated older posts.
+Every newly started full-history pass starts at Telegram's latest accessible post,
+safely re-reading previously stored posts. Only committed `tg_jobs` page cursors are
+used to resume an already-running scan after restart. A short page does **not**
+prove Telegram history is exhausted; the historical scan completes on an empty page. `history_complete` means the collector exhausted the
 **accessible** history, not that all ever-published posts remain accessible.
 
 After upgrading an existing database, **stop the TG worker** and run:
@@ -599,6 +602,14 @@ npm run analyze:backfill
 npm run analyze:refresh
 npm run worker
 ```
+
+Until `npm run analyze:backfill` finishes, the token UI shows the remaining count
+and de-duplicates compatible v3/v4 mention totals by each message's actual version.
+Derived scores/velocity may still be incomplete; run `analyze:refresh` after
+backfill. Recent (7-day) RPC-verified `not_token` results are reused during
+reindexing; older negative results may be rechecked because an account can later
+become a mint. Keyword discovery does **not** automatically enable full history:
+only explicit CLI/API/UI operator choices do so.
 
 The new v4 extractor also finds URLs from Telegram `MessageEntityTextUrl` entities, which
 may be hidden behind a text label; these entities and selected forward/media metadata are
@@ -621,6 +632,12 @@ collection is intentionally rejected.
 The runtime now reports two different counts:
 - `links_total`: all retained canonical evidence, including orphaned historical records;
 - `links_active_total`: currently active, non-orphaned evidence.
+
+Migration `030_discovery_identity_reconciliation.sql` detaches old discovery
+`source_id`/connected-at claims when source `peer_id` differs from the recorded
+discovery `peer_id`, and detaches historical mention links too. Evidence rows
+remain intact. A recycled username can be tracked under a synthetic internal
+`peer_<id>` identifier, with the verified handle in `current_username`.
 
 Migrations `025_active_link_metrics.sql` and `026_current_public_username.sql` are
 additive; the former initializes exact active link counts and keeps them updated
@@ -653,7 +670,11 @@ FROM tg_sources s
 WHERE s.peer_id IS NULL
   AND (s.last_message_id > 0 OR s.history_low_message_id > 0
        OR EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id)
-       OR EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id))
+       OR EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id)
+       OR EXISTS(SELECT 1 FROM tg_jobs j WHERE j.source_id=s.id
+           AND (j.high_message_id IS NOT NULL OR j.cursor_before_id IS NOT NULL
+                OR j.fresh_high_message_id IS NOT NULL
+                OR j.fresh_cursor_before_id IS NOT NULL)))
 ORDER BY s.id;
 ```
 
@@ -682,7 +703,8 @@ npm run entities:refetch -- @public_channel --limit=200
 
 This command uses the existing authorized Telegram session, validates the
 immutable peer ID, rejects private-source collection, acquires the singleton
-worker lock, and re-fetches original message IDs in batches. Missing/deleted
+worker lock, and re-fetches original message IDs in batches. Unvisited records
+are prioritized so repeatedly unavailable newer posts do not starve older ones. Missing/deleted
 posts remain unverified. Do not assume a successful offline backfill can
 recover Telegram entities that were never originally stored.
 
