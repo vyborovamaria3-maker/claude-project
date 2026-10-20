@@ -162,3 +162,31 @@ Outputs contain per-model metadata/probabilities, source IDs, times and the
 source message SHA-256, **not** original message text. Storing these derived
 records into a production Intelligence feature table is a separate, reviewed
 migration/ETL step; no new model data is silently written to user databases.
+
+## Optional durable local result store (new standalone SQLite file)
+
+The standalone `--results-db` mode is **opt-in**. It writes ONLY derived
+model probabilities and provenance to a **separate absolute SQLite file**,
+never to X/TG source databases or the existing Intelligence runtime DB.
+
+```powershell
+# Windows PowerShell, from repository root with Python venv and cached models:
+$env:SENTIMENT_SOURCE_READ_ENABLED="true"
+py -m intelligence.nlp.cli --collector-db x --max-items 50 --results-db "C:\\sentiment-data\\model-results.sqlite"
+py -m intelligence.nlp.cli --collector-db tg --max-items 50 --results-db "C:\\sentiment-data\\model-results.sqlite"
+```
+
+Source DSNs must be provided through local environment variables and a
+database login restricted to SELECT. The sink rejects existing collector
+tables. It stores separate immutable result rows per source message, exact
+content hash, preprocessor version, model name and immutable model revision.
+Duplicate replays are no-ops, changing a model's revision produces distinct
+rows, and failure rolls back the entire batch. Inference time is recorded
+independently of source event time. Raw message text and provider sessions
+are **not** persisted to this database.
+
+Run these commands only after backing up/verifying the local databases and
+performing a small real-weight inference smoke. SQLite prediction rows are
+derived analytics, not authoritative trades or automatically validated
+sentiment for any specific Solana mint. The command is finite and does not
+run as a background service.
