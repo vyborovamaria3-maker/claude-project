@@ -49,7 +49,7 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
       },
     } as unknown as TelegramClient;
     await processJob(client, job, () => false);
-    assert.equal(calls, 2);
+    assert.equal(calls, 3);
     const checkpoint = await pool.query("SELECT state,cursor_before_id,scanned_count FROM tg_jobs WHERE source_id=$1", [id]);
     assert.equal(checkpoint.rows[0].state, "pending");
     assert.equal(checkpoint.rows[0].cursor_before_id, "901");
