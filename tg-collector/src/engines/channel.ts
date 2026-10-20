@@ -12,13 +12,20 @@ import { catchUpFreshPosts } from "./live-during-history.js";
 import { batchSize, initialLimit, maxPages } from "../runtime/config.js";
 import type { RawTelegramMessage as TgMessage } from "../analytics/extract.js";
 import { verifiedPublicUsername } from "../validation.js";
-type Source = { identifier: string; current_username: string|null; peer_id: string|null; access_hash: string|null; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean };
+import {assessPromotionalChannel,PROMO_SAMPLE_LIMIT,PROMOTIONAL_MILESTONE} from "../analytics/promo-spam.js";
+type Source = { identifier: string; current_username: string|null; peer_id: string|null; access_hash: string|null; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean;spam_kind:string|null;spam_screened_at:Date|null };
 
 export async function processJob(client: TelegramClient, job: Job, isStopping: () => boolean): Promise<void> {
   const { rows } = await pool.query<Source>(
-    "SELECT identifier,current_username,peer_id,access_hash,last_message_id,history_low_message_id,full_history,history_complete FROM tg_sources WHERE id=$1", [job.source_id]);
+    "SELECT identifier,current_username,peer_id,access_hash,last_message_id,history_low_message_id,full_history,history_complete,spam_kind,spam_screened_at FROM tg_sources WHERE id=$1", [job.source_id]);
   const source = rows[0];
   if (!source) throw new Error("Source was deleted");
+  if (source.spam_kind) {
+    // A marked source must never re-enter Telegram history from a retry.
+    await pool.query(`UPDATE tg_jobs SET state='failed',locked_until=NULL,
+      last_error='TG_SOURCE_SPAM_USELESS',updated_at=now() WHERE id=$1`,[job.id]);
+    return;
+  }
 
   let entity: Awaited<ReturnType<TelegramClient["getEntity"]>>[number];
   try {
@@ -109,6 +116,44 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     await identity.query("COMMIT");
   } catch (error) { await identity.query("ROLLBACK");throw error; }
   finally { identity.release(); }
+
+  // Screening is deliberately BEFORE fresh catch-up, discussion discovery and
+  // any history page. A rejected channel is not ingested from the preview.
+  if (!source.spam_screened_at) {
+    const preview=await client.getMessages(entity,{limit:PROMO_SAMPLE_LIMIT});
+    const assessment=assessPromotionalChannel(preview as unknown as TgMessage[]);
+    const tx=await pool.connect();
+    let active=false;
+    try {
+      await tx.query("BEGIN");
+      const changed=await tx.query(`UPDATE tg_sources SET
+        spam_sample_size=$2,spam_match_count=$3,
+        spam_screened_at=CASE WHEN $2>=12 THEN now() ELSE NULL END,
+        spam_kind=CASE WHEN $4::boolean THEN $5 ELSE spam_kind END,
+        spam_reason=CASE WHEN $4::boolean THEN $6 ELSE spam_reason END,
+        enabled=CASE WHEN $4::boolean THEN FALSE ELSE enabled END
+        WHERE id=$1 AND enabled=TRUE AND spam_kind IS NULL
+        RETURNING id`,
+        [job.source_id,assessment.inspected,assessment.matches,assessment.spam,
+         PROMOTIONAL_MILESTONE,assessment.spam
+          ? `Repeated VIP/Growth/MC/DEX PAID alerts; ${assessment.matches}/${assessment.inspected} posts; #${assessment.repeatedTicker}`
+          : null]);
+      active=Boolean(changed.rowCount);
+      if (!active || assessment.spam) {
+        await tx.query(`UPDATE tg_jobs SET state=$2,locked_until=NULL,
+          last_error=$3,updated_at=now() WHERE id=$1`,
+          [job.id,assessment.spam?"failed":"pending",
+            assessment.spam?"TG_SOURCE_SPAM_USELESS":null]);
+      }
+      await tx.query("COMMIT");
+    } catch (error) {await tx.query("ROLLBACK");throw error;}
+    finally{tx.release();}
+    if (!active || assessment.spam) {
+      if(assessment.spam) console.warn("TG source quarantined as promotional spam",
+        job.source_id,assessment.matches,assessment.inspected);
+      return;
+    }
+  }
 
   if(source.full_history&&entity instanceof Api.Channel)await discoverDiscussion(client,job.source_id,entity);
   if (source.full_history && !source.history_complete && Number(source.last_message_id) > 0) {
