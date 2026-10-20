@@ -5,7 +5,7 @@ import {randomUUID,createHash} from "node:crypto";
 import {
   emitVerifiedTgTokenLinkOutbox,
 } from "../../src/persistence/outbox.js";
-import {persistMessage} from "../../src/persistence/messages.js";
+import {persistMessage,markMessageDeleted} from "../../src/persistence/messages.js";
 
 test("TG: verified mint link shares native PostgreSQL transaction and rolls back safely",{
   skip:!process.env.DATABASE_URL,
@@ -47,6 +47,25 @@ test("TG: verified mint link shares native PostgreSQL transaction and rolls back
       "SELECT COUNT(*)::text AS n FROM outbox_events WHERE event_kind='token_link_verified'",
     );
     assert.equal(q.rows[0]?.n,"1");
+    // Views-only refresh is not a text edit and must NOT retract the link.
+    await persistMessage(tx,sourceId,{id:981,date:1792364400,message:text,views:55});
+    let current=await tx.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
+    );
+    assert.equal(current.rows[0]?.n,"0");
+    // Content edit invalidates previously verified links, regardless of mint.
+    await persistMessage(tx,sourceId,{id:981,date:1792364400,message:"edited without mint"});
+    current=await tx.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
+    );
+    assert.equal(current.rows[0]?.n,"1");
+    assert.equal(await markMessageDeleted(tx,sourceId,981),true);
+    assert.equal(await markMessageDeleted(tx,sourceId,981),false);
+    current=await tx.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
+    );
+    assert.equal(current.rows[0]?.n,"2");
+    // The same native transaction rolls back messages, verification and tombstones.
     await tx.query("ROLLBACK");finished=true;
     const absent=await tx.query<{n:string}>(
       "SELECT count(*)::text AS n FROM outbox_events WHERE event_key LIKE 'tg:tokenlink:tg:message:123456789:981:%'",
