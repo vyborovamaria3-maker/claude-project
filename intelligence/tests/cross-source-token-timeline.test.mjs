@@ -212,9 +212,12 @@ test("three isolated source outboxes produce one evidence-backed token timeline 
         claimed: 1, delivered: 0, duplicates: 1, failed: 0, lostLeases: 0,
       });
     }
-    for (const table of ["intelligence_inbox", "entity_evidence", "timeline_events"]) {
+    for (const [table, expected] of [
+      ["intelligence_inbox", 3], ["entity_registry", 4],
+      ["entity_evidence", 6], ["timeline_events", 3], ["timeline_event_entities", 6],
+    ]) {
       const count = await destination.query('SELECT count(*)::integer AS n FROM "' + table + '"');
-      assert.equal(count.rows[0].n, 3, table + " must remain idempotent");
+      assert.equal(count.rows[0].n, expected, table + " must remain idempotent");
     }
     assert.equal((await queryTokenTimeline(
       destination, token, "2026-10-18T01:10:00Z", "2026-10-18T01:30:00Z",
