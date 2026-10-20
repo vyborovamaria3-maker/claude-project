@@ -136,6 +136,15 @@ async function main(): Promise<void> {
         [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
       );
       for (const occurrence of occurrences.rows) {
+        // Lock the exact source evidence before confirming mint links.
+        // Otherwise an edit/delete racing the RPC resolver could publish a
+        // verified event with a NEW timestamp for an OLD source revision.
+        const locked=await tx.query<{text:string|null;deleted_at:Date|null}>(
+          "SELECT text,deleted_at FROM tg_messages WHERE source_id=$1 AND message_id=$2 FOR UPDATE",
+          [occurrence.source_id,occurrence.message_id],
+        );
+        if(!locked.rows[0] || locked.rows[0].deleted_at!==null ||
+           locked.rows[0].text!==occurrence.text)continue;
         await tx.query(
           "INSERT INTO tg_token_mentions(source_id,message_id,chain_id,mint,mention_type,resolution_status," +
           "confidence,message_date,analysis_version,extractor_name,orphaned) " +
