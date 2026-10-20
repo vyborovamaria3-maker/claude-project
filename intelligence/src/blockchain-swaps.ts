@@ -107,8 +107,9 @@ export async function ingestBlockchainSwapRevision(
 /**
  * Only CURRENT supported evidence as known at T. The latest rawRevision
  * (not delivery order) for each wallet+signature controls active attribution.
- * DISTINCT by signature+token suppresses duplicate observed wallet perspectives
- * for this token, but does NOT imply complete cross-DEX trade dedup or PnL.
+ * Only observations both SOURCE-observed and DESTINATION-ingested by knownAt
+ * are eligible. Disagreement between wallet perspectives (status/mint/slot/time)
+ * suppresses active attribution: not evidence of a settled trade or PnL.
  * Legacy ARCH-06a timeline observations are deliberately NOT promoted here.
  */
 export async function queryActiveBlockchainSwapEvidence(
@@ -121,19 +122,23 @@ export async function queryActiveBlockchainSwapEvidence(
     throw new RangeError("limit 1..500 required");
   const result=await tx.query(`WITH latest AS (
     SELECT DISTINCT ON (wallet_id,signature) wallet_id,signature,raw_revision,
-      canonical_token_id,state,slot,occurred_at,observed_at
+      canonical_token_id,state,slot,occurred_at,observed_at,inserted_at
     FROM blockchain_swap_evidence_revisions
-    WHERE observed_at<=$3::timestamptz
+    WHERE observed_at<=$3::timestamptz AND inserted_at<=$3::timestamptz
     ORDER BY wallet_id,signature,raw_revision DESC
-  ), deduplicated AS (
-    SELECT DISTINCT ON (signature,canonical_token_id)
-      signature,canonical_token_id,wallet_id,slot,occurred_at,observed_at,raw_revision
-    FROM latest
-    WHERE state='supported' AND canonical_token_id=$1
-      AND occurred_at<=$2::timestamptz
-    ORDER BY signature,canonical_token_id,wallet_id
+  ), consistent AS (
+    SELECT signature,MIN(canonical_token_id) AS canonical_token_id,
+      MIN(wallet_id) AS wallet_id,MIN(slot) AS slot,
+      MIN(occurred_at) AS occurred_at,MAX(observed_at) AS observed_at,
+      MAX(raw_revision) AS raw_revision
+    FROM latest GROUP BY signature
+    HAVING BOOL_AND(state='supported')
+      AND COUNT(DISTINCT canonical_token_id)=1
+      AND COUNT(DISTINCT slot)=1
+      AND COUNT(DISTINCT occurred_at)=1
   )
-  SELECT * FROM deduplicated
+  SELECT * FROM consistent
+  WHERE canonical_token_id=$1 AND occurred_at<=$2::timestamptz
   ORDER BY occurred_at DESC,signature
   LIMIT $4`,[tokenId,toUtcIso(occurredBefore),toUtcIso(knownAt),limit]);
   return result.rows;
