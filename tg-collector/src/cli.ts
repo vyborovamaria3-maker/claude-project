@@ -74,17 +74,31 @@ async function main(): Promise<void> {
     const tx = await pool.connect();
     try {
       await tx.query("BEGIN");
-      const source = await tx.query<{id:string}>(`SELECT s.id::text AS id FROM tg_sources s
+      const source = await tx.query<{id:string;full_history:boolean;history_complete:boolean}>(`
+        SELECT s.id::text,s.full_history,s.history_complete FROM tg_sources s
         JOIN tg_jobs j ON j.source_id=s.id
-        WHERE s.identifier=$1 AND j.state<>'running'
+        WHERE j.state<>'running'
+          AND ((s.current_username=$1 AND s.peer_id IS NOT NULL)
+            OR (s.identifier=$1 AND
+              (s.current_username IS NULL OR s.current_username=$1)))
         FOR UPDATE OF s,j`,[identifier]);
-      if(!source.rowCount) throw Error("Source not found or sync currently running");
+      if(source.rows.length!==1) throw Error("Source not found, ambiguous current username, or sync currently running");
       await tx.query(`UPDATE tg_sources SET full_history=TRUE,history_complete=FALSE,
         history_partial=TRUE,enabled=TRUE WHERE id=$1`,[source.rows[0].id]);
-      await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,run_at=now(),
-        base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
-        scanned_count=0,locked_until=NULL,last_error=NULL,updated_at=now()
-        WHERE source_id=$1 AND state IN ('pending','failed')`,[source.rows[0].id]);
+      if (!source.rows[0].full_history || source.rows[0].history_complete) {
+        // Starting or explicitly restarting a full scan requires a new
+        // authenticated head-to-oldest traversal. Keep Telegram delays intact.
+        await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,run_at=now(),
+          base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
+          history_scan_verified=FALSE,scanned_count=0,locked_until=NULL,
+          last_error=NULL,updated_at=now()
+          WHERE source_id=$1 AND state IN ('pending','failed')`,[source.rows[0].id]);
+      } else {
+        // "Continue" must not erase an already committed full-history cursor.
+        await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
+          run_at=now(),locked_until=NULL,last_error=NULL,updated_at=now()
+          WHERE source_id=$1 AND state='failed'`,[source.rows[0].id]);
+      }
       await tx.query("COMMIT");
       console.log("Historical scan queued:",identifier);
     } catch (error) {await tx.query("ROLLBACK");throw error;} finally {tx.release();}
