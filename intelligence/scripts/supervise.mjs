@@ -69,7 +69,7 @@ function usage(){
     "  --max-batches N is a per-source upper bound; 0 means until SIGINT/SIGTERM.",
     "  Use --sources x or --sources tg,blockchain to run only configured sources.",
     "  X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
-    "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002.",
+    "  INTELLIGENCE_DATABASE_URL: separate target PostgreSQL with migrations 001+002+004.",
     "  Requires existing source outbox schemas; does NOT apply migrations.",
     "  Preserve separate producer opt-ins; never point this at live DBs before backup/restore.",
   ].join("\n");
