@@ -93,7 +93,7 @@ def _process_in_chunks(
 
 def run(argv: list[str] | None = None, *, stop_event: threading.Event | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Offline-only X/TG sentiment: models must be prefetched on this laptop"
+        description="Opt-in local or remote X/TG sentiment with immutable approved model revisions"
     )
     parser.add_argument("--batch-size", type=int,
                         default=int(os.getenv("SENTIMENT_BATCH_SIZE", "2")))
@@ -127,13 +127,20 @@ def run(argv: list[str] | None = None, *, stop_event: threading.Event | None = N
             return 0
         if args.summary_source:
             raise ValueError("--summary-source requires --summary-as-of")
-        guard = ResourceController(stop=stop)
-        backend = LocalTransformersBackend(
-            device=args.device, max_loaded_models=args.max_loaded_models,
-            resources=guard,
-        )
-        engine = SentimentEngine.from_environment(backend=backend)
-        # CLI --batch-size must govern both model tensor batches and commits.
+        if os.environ.get("SENTIMENT_REMOTE_ENABLED") == "true":
+            # Explicit cloud opt-in: the notebook doesn't load Torch, model
+            # weights, or run AI RAM/CPU throttling for HTTP requests.
+            if args.batch_size > 8 or args.device != "cpu":
+                raise ValueError("remote inference requires 1..8 items and cpu client mode")
+            engine = SentimentEngine.from_environment()
+        else:
+            guard = ResourceController(stop=stop)
+            backend = LocalTransformersBackend(
+                device=args.device, max_loaded_models=args.max_loaded_models,
+                resources=guard,
+            )
+            engine = SentimentEngine.from_environment(backend=backend)
+        # CLI --batch-size governs both HTTP/tensor batches and commits.
         engine.batch_size = args.batch_size
         if args.check_config:
             print(json.dumps({
