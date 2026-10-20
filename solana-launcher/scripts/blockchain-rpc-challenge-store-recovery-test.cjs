@@ -32,6 +32,8 @@ async function main(){
     assert.throws(()=>recoverRpcChallengeStore(restored,{...options(epochA),previousEpoch:epochA}),/independent_recovery_epoch/);
     stale=openRpcChallengeStore(restored,options(epochA)); // emulate a pre-rotation handle
     recovered=recoverRpcChallengeStore(restored,{...options(epochB),previousEpoch:epochA});
+    assert.throws(()=>recoverRpcChallengeStore(restored,{...options(epochA),previousEpoch:epochB}),
+      /epoch_reused/,"an earlier row generation cannot be reactivated by caller error");
     assert.equal(stale.consumeChallenge(record(spent)),false,"old live handle fenced after rotation");
     assert.throws(()=>stale.issue(binding),/epoch_mismatch/);
     stale.close();stale=null;

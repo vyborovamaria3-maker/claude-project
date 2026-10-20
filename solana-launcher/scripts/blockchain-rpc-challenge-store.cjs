@@ -24,21 +24,21 @@ function openRpcChallengeStore(filename,options={}){
 function recoverRpcChallengeStore(filename,options={}){
   return openStore(filename,options,true);
 }
-function openStore(filename,{clock=Date.now,recoveryEpoch,previousEpoch},recover){
+function openStore(filename,{clock=Date.now,recoveryEpoch,previousEpoch,fileMustExist=false,allowInitialize=true},recover){
   if(typeof filename!=="string"||!isAbsolute(filename)||typeof clock!=="function")
     throw new TypeError("explicit_absolute_challenge_database_required");
   if(!validEpoch(recoveryEpoch)||
      (recover&&previousEpoch!==null&&!validEpoch(previousEpoch))||
      (recover&&previousEpoch===recoveryEpoch))
     throw new TypeError("independent_recovery_epoch_required");
-  const db=new Database(filename,{timeout:1000,fileMustExist:recover});
+  const db=new Database(filename,{timeout:1000,fileMustExist:recover||fileMustExist});
   try{
     db.pragma("synchronous=FULL");
     db.transaction(()=>{
       const app=db.pragma("application_id",{simple:true});
       const version=db.pragma("user_version",{simple:true});
       const objects=db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").get().n;
-      if(!recover&&app===0&&version===0&&objects===0){
+      if(!recover&&allowInitialize&&app===0&&version===0&&objects===0){
         db.exec(`CREATE TABLE rpc_challenges (
           challenge_hash TEXT PRIMARY KEY CHECK(length(challenge_hash)=64),
           recovery_epoch TEXT,
@@ -80,6 +80,8 @@ function openStore(filename,{clock=Date.now,recoveryEpoch,previousEpoch},recover
           const stored=db.prepare("SELECT epoch FROM rpc_challenge_generation WHERE id=1").get()?.epoch;
           if(recover){
             if(stored!==previousEpoch)throw new Error("challenge_recovery_compare_failed");
+            if(db.prepare("SELECT 1 FROM rpc_challenges WHERE recovery_epoch=? LIMIT 1").get(recoveryEpoch))
+              throw new Error("challenge_recovery_epoch_reused");
             db.prepare("UPDATE rpc_challenge_generation SET epoch=? WHERE id=1 AND epoch=?")
               .run(recoveryEpoch,previousEpoch);
           }else if(stored!==recoveryEpoch)throw new Error("challenge_recovery_epoch_mismatch");

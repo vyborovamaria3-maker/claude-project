@@ -48,3 +48,12 @@ RPC provenance follow-up: docs/architecture/ARCH_06_RPC_PROVENANCE.md specifies 
 Challenge persistence follow-up: the explicit dedicated SQLite adapter now implements durable issuance and conditional atomic consumption. Temporary synthetic tests cover process restarts, lost acknowledgement after commit, concurrent connections and replay refusal. Production acquisition/key custody/store deployment and backup rollback policy remain separate gates; this still does not prove finality, complete trades or PnL.
 
 Recovery follow-up: schema v2 now enforces an out-of-band recovery generation and explicit restore-time rotation. Prior generations (including all v1 rows) cannot consume after recovery, even if a restored snapshot says unused. Synthetic rollback/signed-replay/restart tests pass locally. External pin custody, stopped-worker recovery and a canonical DB remain required; silent rollback of the same generation is not automatically detectable.
+
+
+### Follow-up review of the four new commits (2026-10-20)
+
+Reviewed 71fe3592 (RAW upgrade/archive enforcement), d34e94ee (signed witness contract), 7a1e4ff5 (persistent atomic challenge consumption) and 4acd1d40 (restore generation fencing), including their interactions. Remote HEAD was still 4acd1d40: no additional external branch commits were present. Its 11 workflows / 16 checks were successful.
+
+Confirmed defect in 4acd1d40: low-level explicit recovery could be given a generation already present in retained rows, reactivating that generation. Recovery now rejects such reuse; a regression covers it. The new authority itself generates epochs and retains unique immutable history. Managed opens also reject empty restored challenge files rather than silently bootstrap them. Other reviewed boundaries remain explicit: witness signature authenticates only its configured collector; RAW storage is not protected from administrative DDL; challenge acceptance does not produce finalized trades or PnL.
+
+Added the separate durable generation authority with active/recovering phases, per-operation managed gates and restart-safe resume after either commit boundary. Temporary-file/process tests and the existing signed receipt/RAW suites pass locally. Intelligence typecheck and 54 local tests pass; 13 PostgreSQL tests require the disposable CI service. Full latest-head CI must be read separately. Production authority custody, whole-host rollback policy and trusted RPC acquisition remain deployment gates.

@@ -145,6 +145,29 @@ async function acceptanceTests(){
     assert.equal((await acceptRpcProvenance(event,signed,trust,context,store.consumeChallenge)).reason,
       "challenge_unknown_expired_or_consumed","valid old signature cannot bypass recovery revocation");
     store.close();store=null;
+    const {createRpcRecoveryAuthority}=require("./blockchain-rpc-recovery-authority.cjs");
+    const authority=createRpcRecoveryAuthority(join(dir,"authority.sqlite"),{
+      challengeFilename:join(dir,"managed.sqlite"),clock:()=>now,
+    });
+    try{
+      store=authority.createChallenges();
+      const before=authority.status(),nonce=store.issue({eventKey:event.eventKey,...trust});
+      const p=payload();p.challenge=nonce.challenge;
+      const receipt=envelope(p),expectedNonce={now,challenge:nonce.challenge};
+      const pending=authority.beginRecovery(before.epoch);
+      assert.equal((await acceptRpcProvenance(event,receipt,trust,expectedNonce,store.consumeChallenge)).reason,
+        "challenge_consumer_unavailable","pending authority blocks valid signed packages");
+      store.close();store=null;
+      authority.finishRecovery(pending.epoch,before.epoch);
+      store=authority.openChallenges();
+      assert.equal((await acceptRpcProvenance(event,receipt,trust,expectedNonce,store.consumeChallenge)).reason,
+        "challenge_unknown_expired_or_consumed");
+      const freshNonce=store.issue({eventKey:event.eventKey,...trust});
+      const freshPayload=payload();freshPayload.challenge=freshNonce.challenge;
+      assert.equal((await acceptRpcProvenance(event,envelope(freshPayload),trust,
+        {now,challenge:freshNonce.challenge},store.consumeChallenge)).challengeConsumed,true);
+      store.close();store=null;
+    }finally{if(store){store.close();store=null}authority.close()}
   }finally{if(store)store.close();rmSync(dir,{recursive:true,force:true});}
   console.log("[blockchain-rpc-provenance-test] OK: signed witness, pins, cluster, clocks, tampering, atomic replay refusal and no confidence promotion");
 }
