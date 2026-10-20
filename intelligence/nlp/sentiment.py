@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol, Sequence
 
 from intelligence.core.models import IntelligenceDocument
+from intelligence.nlp.resources import ResourceController, ResourcePressure
 
 
 @dataclass(frozen=True)
@@ -132,12 +133,14 @@ def route_models(source: str, language: str) -> tuple[str, ...]:
 
 class LocalTransformersBackend:
     """Lazy local-only PyTorch model loader; never contacts HF Hub on inference."""
-    def __init__(self, *, device: str = "cpu", max_loaded_models: int = 1) -> None:
+    def __init__(self, *, device: str = "cpu", max_loaded_models: int = 1,
+                 resources: ResourceController | None = None) -> None:
         if device != "cpu" and not re.fullmatch(r"cuda:[0-9]+", device):
             raise ValueError("device must be cpu or cuda:<index>")
         if type(max_loaded_models) is not int or not 1 <= max_loaded_models <= 3:
             raise ValueError("max_loaded_models must be an integer from 1 to 3")
         self.device = device
+        self.resources = resources if resources is not None else ResourceController()
         self.max_loaded_models = max_loaded_models
         # Insertion order acts as a tiny LRU cache. Default=1 to bound RAM
         # and GPU residency while still processing grouped model batches.
@@ -170,6 +173,10 @@ class LocalTransformersBackend:
                 torch.cuda.empty_cache()
 
     def predict(self, model: ModelSpec, revision: str, texts: Sequence[str]) -> list[dict[str, float]]:
+        # AI yields to collectors before importing heavyweight Torch, loading
+        # new model weights or consuming CPU/GPU for inference. Do not bypass.
+        if not self.resources.wait_for_capacity(unload=self.unload_all):
+            raise ResourcePressure("sentiment inference stopped before model execution")
         # Heavy deps are intentionally optional for normal collector/CI startup.
         try:
             import torch
