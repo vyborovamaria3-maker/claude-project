@@ -718,7 +718,28 @@ are prioritized so repeatedly unavailable newer posts do not starve older ones. 
 posts remain unverified. Do not assume a successful offline backfill can
 recover Telegram entities that were never originally stored.
 
-Version-4 backfill reuses mints already confirmed in `tg_tokens`, and
+### Strict mint verification and index migration
+
+Migration 032 clears duplicate cached current usernames and enforces their
+uniqueness. The original immutable Telegram peer IDs are retained.
+Migration 033 adds a durable cursor for the bounded keyword index so older
+true hits are not starved by substring false positives.
+
+Migration 034 invalidates earlier Solana mint confirmations that lack a new,
+strict on-chain layout check. Raw messages and candidates are preserved,
+but old unverified token attributions are excluded from active analytics.
+SPL Token Mints must be 82 bytes; Token-2022 extended Mints must have the
+mint account-type discriminator and valid extension structure.
+No paid RPC request is made by a migration. To revalidate previous mints,
+explicitly run `npm run tokens:resolve` with an approved RPC endpoint and a
+bounded `--limit`, followed by `npm run analyze:refresh`. This step may incur
+RPC charges; do not run it automatically.
+
+Mint and ticker references in one message count as one token mention.
+Conflicting ticker mappings retract previous ticker-only attribution.
+Telegram engagement snapshots refresh daily aggregate views transactionally.
+
+Version-4 backfill reuses strictly RPC-attested mints in `tg_tokens`, and
 unambiguous confirmed ticker associations. This avoids paying again to
 verify the same Solana mint. **New** addresses still require explicit
 `npm run tokens:resolve` with configured Alchemy RPC, if you choose to
