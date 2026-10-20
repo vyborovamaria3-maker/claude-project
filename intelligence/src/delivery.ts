@@ -1,8 +1,9 @@
 import type { ClaimOptions, ClaimedEvent } from "@claude-project/event-outbox";
 import { setTimeout as sleep } from "node:timers/promises";
-import { buildTimelineEvent, toUtcIso, validateVerifiedTokenLinkEvent, type TimelineEvent } from "@claude-project/contracts";
+import { buildTimelineEvent, toUtcIso, validateVerifiedTokenLinkEvent, validateTokenLinksInvalidatedEvent, type TimelineEvent } from "@claude-project/contracts";
 import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type RegistryEvent } from "./entity-registry.js";
 import { ingestTimelineEvent } from "./timeline.js";
+import { ingestTokenLinkObservation } from "./token-links.js";
 
 export type OutboxSource = {
   claim(options: ClaimOptions): Promise<ClaimedEvent[]>;
@@ -37,11 +38,15 @@ function extractEnvelope(event: ClaimedEvent): RegistryOutboxPayload {
   const raw = event.payload as unknown as RegistryOutboxPayload;
   // Verified link assertions must not be silently ignored by a generic inbox.
   // This checks proof structure; it cannot replace the source-side RPC check.
-  if(event.eventKind==="token_link_verified") {
-    validateVerifiedTokenLinkEvent({
+  if(event.eventKind==="token_link_verified" || event.eventKind==="token_links_invalidated") {
+    // A historical assertion/invalidation is never a generic timeline row.
+    if(raw.timelineEvent!==undefined)throw new TypeError("Token links have no timelineEvent");
+    const full={
       sourceSystem:event.sourceSystem,eventKind:event.eventKind,
       eventKey:event.eventKey,schemaVersion:event.schemaVersion,payload:raw,
-    });
+    };
+    if(event.eventKind==="token_link_verified")validateVerifiedTokenLinkEvent(full);
+    else validateTokenLinksInvalidatedEvent(full);
   }
   const registry = validateRegistryEvent(raw.registryEvent);
   if (registry.sourceSystem !== event.sourceSystem ||
@@ -96,6 +101,13 @@ async function writeDestination(
   try {
     await client.query("BEGIN"); open=true;
     const fresh=await ingestRegistryEvent(client,body.registryEvent);
+    if(event.eventKind==="token_link_verified"||event.eventKind==="token_links_invalidated"){
+      await ingestTokenLinkObservation(client,{
+        sourceSystem:event.sourceSystem as "x"|"tg",
+        eventKind:event.eventKind,eventKey:event.eventKey,
+        schemaVersion:"token-link-v1",payload:event.payload,
+      });
+    }
     if (body.timelineEvent) {
       await ingestTimelineEvent(client,event.sourceSystem,event.eventKind,body.timelineEvent);
     }
