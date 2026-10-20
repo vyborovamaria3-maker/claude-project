@@ -68,6 +68,45 @@ class RemoteTests(unittest.TestCase):
             self.assertNotIn(item.text, text)
         self.assertEqual(result[0]["model_results"]["cryptobert"]["revision"], REV["cryptobert"])
 
+    def test_injected_raw_text_extra_field_and_forged_hash_are_rejected(self):
+        from email.message import Message
+
+        class FakeResponse:
+            status = 200
+            def __init__(self, payload):
+                self.payload = json.dumps(payload).encode("utf-8")
+                self.headers = Message()
+                self.headers.add_header("Content-Type", "application/json")
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, max_bytes):
+                return self.payload[:max_bytes]
+
+        class FakeOpener:
+            def __init__(self, payload):
+                self.payload = payload
+            def open(self, *_a, **_kw):
+                return FakeResponse(self.payload)
+
+        original = SentimentEngine(REV, backend=Stub()).analyze(ITEMS[:1])
+        import copy
+        altered = copy.deepcopy(original)
+        altered[0]["raw_text"] = "secret source value"
+        altered_hash = copy.deepcopy(original)
+        altered_hash[0]["content_sha256"] = "0" * 64
+        altered_weights = copy.deepcopy(original)
+        altered_weights[0]["model_results"]["cryptobert"]["labels"]["bullish"] = 1.3
+        for payload in (altered, altered_hash, altered_weights):
+            with self.subTest(payload=payload[0].keys()):
+                client = RemoteSentimentEngine(
+                    REV, endpoint=self.url, token=SECRET,
+                    opener=FakeOpener({"results": payload}),
+                )
+                with self.assertRaisesRegex(RemoteInferenceError, "integrity"):
+                    client.analyze(ITEMS[:1])
+
     def test_wrong_pin_refused_even_if_service_is_authenticated(self):
         pins = dict(REV)
         pins["cryptobert"] = "d" * 40
