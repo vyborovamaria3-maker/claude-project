@@ -30,7 +30,7 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
     assert.equal(job.source_id, id);
     let calls = 0;
     const client = {
-      async getEntity() { return { className: "Channel", id: 123, title: "Fixture" }; },
+      async getEntity() { return { className: "Channel", id: 123, title: "Fixture", username: "fixture_public" }; },
       async getMessages() {
         calls++;
         if (calls === 1) return [{ id: 1000 }];
