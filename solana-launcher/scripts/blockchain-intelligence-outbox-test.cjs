@@ -4,7 +4,7 @@ const Database=require("better-sqlite3");
 const {
   enabled,ensureSchema,buildWalletRawEvent,emitRawChainOutbox,
 }=require("./blockchain-intelligence-outbox.cjs");
-const {persistEvents}=require("./blockchain-seed-collector.cjs");
+const {persistEvents,initDb}=require("./blockchain-seed-collector.cjs");
 
 const old=process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED;
 const db=new Database(":memory:");
@@ -16,13 +16,9 @@ try{
   assert.equal(enabled({}),false);
   assert.equal(enabled({BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED:"1"}),false);
   assert.equal(enabled({BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED:"true"}),true);
-  db.exec(`CREATE TABLE chain_seed_events (
-    kind TEXT NOT NULL,address TEXT NOT NULL,signature TEXT NOT NULL,
-    block_time INTEGER,slot INTEGER,payload_gzip BLOB NOT NULL,
-    payload_bytes INTEGER NOT NULL,observed_at INTEGER NOT NULL,
-    payload_hash TEXT,raw_revision INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY(kind,address,signature)
-  )`);
+  // Use the actual source bootstrap: RAW revision archive is now mandatory
+  // for all persistEvents callers, not just the opt-in token event path.
+  initDb(db);
   ensureSchema(db);
   process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED="true";
   assert.throws(()=>db.transaction(()=>{
