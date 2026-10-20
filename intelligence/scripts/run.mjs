@@ -39,7 +39,7 @@ function usage() {
     "  INTELLIGENCE_ETL_ENABLED=true node scripts/run.mjs --source x|tg|blockchain --once --limit 50",
     "Source env: X_SOURCE_DATABASE_URL, TG_SOURCE_DATABASE_URL, SOLANA_TRADE_DB_PATH",
     "Destination env: INTELLIGENCE_DATABASE_URL (required for --once)",
-    "Preconditions: source outbox schema and destination migrations 001+002",
+    "Preconditions: source outbox schema and destination migrations 001+002+004",
   ].join("\n");
 }
 async function status(source){
