@@ -3,7 +3,7 @@ import { pool, migrate } from "../db.js";
 import { createHash } from "node:crypto";
 import { extractLinks } from "../analytics/extract.js";
 import { authorizedClient } from "../accounts/session.js";
-import { normalizePublicUsername } from "../validation.js";
+import { normalizePublicUsername, verifiedPublicUsername } from "../validation.js";
 import { persistMessage } from "../persistence/messages.js";
 import { refreshGraphDays, utcDay } from "../analytics/rollups.js";
 import type { RawTelegramMessage } from "../analytics/extract.js";
@@ -40,8 +40,7 @@ async function main(): Promise<void> {
       usernames?: Array<{username?: string; active?: boolean}>;
     };
     const verifiedPeer = info.id?.toString();
-    const verifiedHandle = info.username ??
-      info.usernames?.find(item => item.active && item.username)?.username;
+    const verifiedHandle = verifiedPublicUsername(info);
     if (info.className !== "Channel" || !verifiedPeer || !verifiedHandle) {
       throw Error("TG_SMOKE_PUBLIC_PEER_REQUIRED: a verified public channel or supergroup is required.");
     }
