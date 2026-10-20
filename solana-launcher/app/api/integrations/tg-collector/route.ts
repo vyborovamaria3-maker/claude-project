@@ -110,12 +110,21 @@ export async function GET(request: NextRequest) {
     if (new URL(request.url).searchParams.get("mode") === "memecoin") {
       const [tokenStats, tokens, channels, unresolvedTickers, signals] = await Promise.all([
         p.query(`SELECT
-          (SELECT count(*)::integer FROM tg_tokens WHERE chain_id='solana-mainnet') AS tokens_total,
+          (SELECT count(*)::integer FROM tg_tokens WHERE chain_id='solana-mainnet'
+            AND metadata_status IN ('partial','verified') AND decimals IS NOT NULL) AS tokens_total,
+          (SELECT count(*)::integer FROM tg_messages
+            WHERE deleted_at IS NULL AND analysis_version < 4) AS analysis_backfill_remaining,
           (SELECT count(*)::integer FROM tg_token_candidates WHERE chain_id='solana-mainnet'
             AND candidate_type='address' AND resolution_status='unresolved') AS unresolved_addresses,
-          (SELECT count(*)::integer FROM tg_ticker_mentions WHERE message_date>=now()-interval '24 hours') AS ticker_mentions_24h,
-          (SELECT count(DISTINCT (chain_id,mint))::integer FROM tg_token_mentions
-            WHERE analysis_version=4 AND orphaned=FALSE AND message_date>=now()-interval '24 hours') AS confirmed_tokens_24h,
+          (SELECT count(*)::integer FROM tg_ticker_mentions tm
+            JOIN tg_messages msg USING(source_id,message_id)
+            WHERE tm.message_date>=now()-interval '24 hours' AND msg.deleted_at IS NULL
+              AND tm.analysis_version=CASE WHEN msg.analysis_version>=4 THEN 4 ELSE 3 END) AS ticker_mentions_24h,
+          (SELECT count(DISTINCT (tm.chain_id,tm.mint))::integer FROM tg_token_mentions tm
+            JOIN tg_messages msg USING(source_id,message_id)
+            WHERE tm.analysis_version=CASE WHEN msg.analysis_version>=4 THEN 4 ELSE 3 END
+              AND tm.orphaned=FALSE AND msg.deleted_at IS NULL
+              AND tm.message_date>=now()-interval '24 hours') AS confirmed_tokens_24h,
           (SELECT count(*)::integer FROM tg_signals WHERE detected_at>=now()-interval '24 hours'
             AND status<>'dismissed') AS signals_24h,
           (SELECT count(*)::integer FROM tg_token_market_snapshots
@@ -136,7 +145,8 @@ export async function GET(request: NextRequest) {
           LEFT JOIN LATERAL (
             SELECT count(*)::integer AS mentions_7d,count(DISTINCT tm.source_id)::integer AS sources_7d
             FROM tg_token_mentions tm JOIN tg_messages msg USING(source_id,message_id)
-            WHERE tm.chain_id=t.chain_id AND tm.mint=t.mint AND tm.analysis_version=4
+            WHERE tm.chain_id=t.chain_id AND tm.mint=t.mint
+              AND tm.analysis_version=CASE WHEN msg.analysis_version>=4 THEN 4 ELSE 3 END
               AND tm.orphaned=FALSE AND msg.deleted_at IS NULL AND tm.message_date>=now()-interval '7 days'
           ) m ON TRUE
           LEFT JOIN LATERAL (
@@ -156,6 +166,7 @@ export async function GET(request: NextRequest) {
             WHERE tn.chain_id=t.chain_id AND tn.mint=t.mint AND tn.model_version='keyword-v1'
           ) narrative ON TRUE
           WHERE t.chain_id='solana-mainnet'
+            AND t.metadata_status IN ('partial','verified') AND t.decimals IS NOT NULL
           ORDER BY COALESCE(m.mentions_7d,0) DESC,v.velocity DESC NULLS LAST,t.first_seen_at DESC LIMIT 30`),
         p.query(`
           SELECT s.id::text AS source_id,s.identifier,score.discovery_score::float8,
