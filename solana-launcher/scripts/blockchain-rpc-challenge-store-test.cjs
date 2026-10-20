@@ -13,13 +13,13 @@ const now=Date.UTC(2026,9,20,12);
 
 if(process.argv[2]==="--restart-child"){
   process.once("message",data=>{
-    const store=openRpcChallengeStore(data.file,{clock:()=>now});
+    const store=openRpcChallengeStore(data.file,{clock:()=>now,recoveryEpoch:"e".repeat(64)});
     const value=data.issue?store.issue(binding):store.consumeChallenge(data.record);
     if(data.crashAfterCommit)process.exit(23); // lost acknowledgement, no clean close
     store.close();process.send({value},()=>process.disconnect());
   });
 }else if(!isMainThread){
-  const store=openRpcChallengeStore(workerData.file,{clock:()=>now});
+  const store=openRpcChallengeStore(workerData.file,{clock:()=>now,recoveryEpoch:"e".repeat(64)});
   if(workerData.barrier){
     const barrier=new Int32Array(workerData.barrier);
     parentPort.postMessage({ready:true});
@@ -58,7 +58,7 @@ if(process.argv[2]==="--restart-child"){
     let store,other;
     try{
       assert.throws(()=>openRpcChallengeStore("relative.sqlite"),/absolute/);
-      store=openRpcChallengeStore(file,{clock:()=>now});
+      store=openRpcChallengeStore(file,{clock:()=>now,recoveryEpoch:"e".repeat(64)});
       const first=store.issue(binding);
       assert.match(first.challenge,/^[a-f0-9]{64}$/);
       const record={...binding,challenge:first.challenge,now};
@@ -68,7 +68,7 @@ if(process.argv[2]==="--restart-child"){
         assert.equal(store.consumeChallenge({...record,[field]:value}),false,field);
       }
       assert.equal(store.consumeChallenge(record),true);
-      store.close();store=openRpcChallengeStore(file,{clock:()=>now});
+      store.close();store=openRpcChallengeStore(file,{clock:()=>now,recoveryEpoch:"e".repeat(64)});
       assert.equal(store.consumeChallenge(record),false,"consumption survives reopen");
       const pending=store.issue(binding);store.close();store=null;
       assert.equal(await processRun(file,{record:{...binding,challenge:pending.challenge,now}}),true,
@@ -87,7 +87,7 @@ if(process.argv[2]==="--restart-child"){
       Atomics.store(new Int32Array(barrier),0,1);Atomics.notify(new Int32Array(barrier),0,2);
       assert.deepEqual((await Promise.all([a.done,b.done])).sort(),[false,true],"one concurrent winner");
       let clock=now;
-      store=openRpcChallengeStore(file,{clock:()=>clock});
+      store=openRpcChallengeStore(file,{clock:()=>clock,recoveryEpoch:"e".repeat(64)});
       const expiring=store.issue(binding,10);clock=now+10;
       assert.equal(store.consumeChallenge({...binding,challenge:expiring.challenge,now}),false,
         "expiry uses store clock even when verifier time is stale");
@@ -109,7 +109,7 @@ if(process.argv[2]==="--restart-child"){
       other.close();other=null;
       const foreign=join(dir,"foreign.sqlite");other=new Database(foreign);
       other.exec("CREATE TABLE synthetic_source(value TEXT); INSERT INTO synthetic_source VALUES('keep')");
-      assert.throws(()=>openRpcChallengeStore(foreign),/dedicated_challenge_schema/);
+      assert.throws(()=>openRpcChallengeStore(foreign,{recoveryEpoch:"e".repeat(64)}),/dedicated_challenge_schema/);
       assert.equal(other.prepare("SELECT value FROM synthetic_source").get().value,"keep");
       assert.equal(other.pragma("journal_mode",{simple:true}),"delete");
       other.close();other=null;

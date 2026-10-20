@@ -119,21 +119,31 @@ async function acceptanceTests(){
   assert.equal(concurrent.filter(r=>r.challengeConsumed===true).length,1);
   assert.equal(concurrent.filter(r=>r.reason==="challenge_unknown_expired_or_consumed").length,1);
   // Real persistent adapter, synthetic signed package, no permanent test files.
-  const {mkdtempSync,rmSync}=require("node:fs");
+  const {mkdtempSync,rmSync,copyFileSync}=require("node:fs");
   const {tmpdir}=require("node:os");
   const {join}=require("node:path");
-  const {openRpcChallengeStore}=require("./blockchain-rpc-challenge-store.cjs");
+  const {openRpcChallengeStore,recoverRpcChallengeStore}=require("./blockchain-rpc-challenge-store.cjs");
+  const Database=require("better-sqlite3");
   const dir=mkdtempSync(join(tmpdir(),"arch06-provenance-store-")),file=join(dir,"nonce.sqlite");
   let store;
   try{
-    store=openRpcChallengeStore(file,{clock:()=>now});
+    store=openRpcChallengeStore(file,{clock:()=>now,recoveryEpoch:"e".repeat(64)});
     const issued=store.issue({eventKey:event.eventKey,...trust});
     const bound=payload();bound.challenge=issued.challenge;
     const signed=envelope(bound),context={now,challenge:issued.challenge};
+    const snapshot=join(dir,"before-accept.sqlite"),backup=new Database(file);
+    try{await backup.backup(snapshot)}finally{backup.close()}
     assert.equal((await acceptRpcProvenance(event,signed,trust,context,store.consumeChallenge)).challengeConsumed,true);
-    store.close();store=openRpcChallengeStore(file,{clock:()=>now});
+    store.close();store=openRpcChallengeStore(file,{clock:()=>now,recoveryEpoch:"e".repeat(64)});
     assert.equal((await acceptRpcProvenance(event,signed,trust,context,store.consumeChallenge)).reason,
       "challenge_unknown_expired_or_consumed");
+    store.close();store=null;
+    const restored=join(dir,"restored.sqlite");copyFileSync(snapshot,restored);
+    store=recoverRpcChallengeStore(restored,{
+      clock:()=>now,previousEpoch:"e".repeat(64),recoveryEpoch:"f".repeat(64),
+    });
+    assert.equal((await acceptRpcProvenance(event,signed,trust,context,store.consumeChallenge)).reason,
+      "challenge_unknown_expired_or_consumed","valid old signature cannot bypass recovery revocation");
     store.close();store=null;
   }finally{if(store)store.close();rmSync(dir,{recursive:true,force:true});}
   console.log("[blockchain-rpc-provenance-test] OK: signed witness, pins, cluster, clocks, tampering, atomic replay refusal and no confidence promotion");
