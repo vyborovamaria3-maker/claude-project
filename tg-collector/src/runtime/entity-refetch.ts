@@ -21,8 +21,8 @@ async function main(): Promise<void> {
     const lock = await guard.query<{acquired:boolean}>("SELECT pg_try_advisory_lock(8260226) AS acquired");
     if (!lock.rows[0]?.acquired) throw new Error("Stop the Telegram worker before refetching message entities.");
     const sources = await pool.query<{
-      id:string;identifier:string;peer_id:string|null;access_hash:string|null;
-    }>(`SELECT id::text,identifier,peer_id,access_hash FROM tg_sources
+      id:string;identifier:string;current_username:string|null;peer_id:string|null;access_hash:string|null;
+    }>(`SELECT id::text,identifier,current_username,peer_id,access_hash FROM tg_sources
       WHERE identifier=$1 OR current_username=$1 ORDER BY (current_username=$1) DESC LIMIT 2`,[handle]);
     if (sources.rowCount !== 1) throw new Error("Missing or ambiguous source for @" + handle);
     const source = sources.rows[0];
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     client = await authorizedClient();
     let entity: Awaited<ReturnType<TelegramClient["getEntity"]>>[number];
     try {
-      entity = await client.getEntity(source.identifier);
+      entity = await client.getEntity(source.current_username??source.identifier);
     } catch (error) {
       if (!source.access_hash) throw error;
       entity = await client.getEntity(new Api.InputPeerChannel({
