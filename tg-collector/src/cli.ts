@@ -53,10 +53,12 @@ async function main(): Promise<void> {
          ON CONFLICT (source_id) DO NOTHING`,
         [rows[0].id]
       );
+      // Re-adding an existing source must not erase a committed page cursor
+      // or move a delayed/pending job ahead of its original schedule. An
+      // explicitly retried failed job resumes from its saved checkpoints.
       await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,run_at=now(),
-        locked_until=NULL,last_error=NULL,
-        base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,scanned_count=0
-        WHERE source_id=$1 AND state IN ('pending','failed')`, [rows[0].id]);
+        locked_until=NULL,last_error=NULL,updated_at=now()
+        WHERE source_id=$1 AND state='failed'`, [rows[0].id]);
       await tx.query("COMMIT");
       console.log("Added source:", identifier, fullHistory ? "(full history)" : "(recent messages)");
     } catch (error) {
