@@ -58,11 +58,11 @@ export async function checkPgOutbox(pool){
 }
 
 export async function checkDestination(pool){
-  const result=await pool.query(\`SELECT
+  const result=await pool.query(`SELECT
     to_regclass('intelligence_inbox') IS NOT NULL AS inbox,
     to_regclass('entity_registry') IS NOT NULL AS registry,
     to_regclass('entity_evidence') IS NOT NULL AS evidence,
-    to_regclass('timeline_events') IS NOT NULL AS timeline\`);
+    to_regclass('timeline_events') IS NOT NULL AS timeline`);
   const row=result.rows[0];
   if(!row?.inbox||!row.registry||!row.evidence||!row.timeline){
     throw new Error("destination Intelligence migrations 001+002 required");
