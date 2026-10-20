@@ -137,6 +137,18 @@ function initDb(db) {
     "  block_time INTEGER, slot INTEGER, payload_gzip BLOB NOT NULL, payload_bytes INTEGER NOT NULL, observed_at INTEGER NOT NULL,",
     "  payload_hash TEXT, raw_revision INTEGER NOT NULL DEFAULT 1,",
     "  PRIMARY KEY(kind,address,signature))",
+    // Immutable RAW snapshots for every new version and any previous current
+    // revision still available when the collector first upgrades. No retroactive
+    // claim that older overwritten RAW revisions can be reconstructed.
+    ";CREATE TABLE IF NOT EXISTS chain_seed_raw_revisions (",
+    "  kind TEXT NOT NULL,address TEXT NOT NULL,signature TEXT NOT NULL,",
+    "  raw_revision INTEGER NOT NULL CHECK(raw_revision>0),",
+    "  payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64),",
+    "  payload_gzip BLOB NOT NULL,payload_bytes INTEGER NOT NULL,",
+    "  observed_at INTEGER NOT NULL,block_time INTEGER,slot INTEGER,",
+    "  PRIMARY KEY(kind,address,signature,raw_revision))",
+    ";CREATE INDEX IF NOT EXISTS idx_chain_raw_revision_hash",
+    "  ON chain_seed_raw_revisions(kind,address,signature,payload_hash)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
     "  ON chain_seed_events(kind,address,block_time DESC)",
     ";CREATE TABLE IF NOT EXISTS chain_inventory_movements (",
@@ -878,6 +890,32 @@ function persistEvents(db, kind, address, transactions) {
     + " payload_hash=excluded.payload_hash,raw_revision=chain_seed_events.raw_revision+1"
     + " WHERE chain_seed_events.payload_hash IS NOT excluded.payload_hash"
   );
+  // These snapshots live in the SAME SQLite transaction as current raw
+  // replacement, source checkpoints and Outbox publication.
+  const previous=db.prepare("SELECT kind,address,signature,raw_revision,payload_hash,"+
+    "payload_gzip,payload_bytes,observed_at,block_time,slot FROM chain_seed_events "+
+    "WHERE kind=? AND address=? AND signature=?");
+  const current=db.prepare("SELECT kind,address,signature,raw_revision,payload_hash,"+
+    "payload_gzip,payload_bytes,observed_at,block_time,slot FROM chain_seed_events "+
+    "WHERE kind=? AND address=? AND signature=?");
+  const recordRevision=db.prepare("INSERT INTO chain_seed_raw_revisions "+
+    "(kind,address,signature,raw_revision,payload_hash,payload_gzip,payload_bytes,"+
+    "observed_at,block_time,slot) VALUES(?,?,?,?,?,?,?,?,?,?) "+
+    "ON CONFLICT(kind,address,signature,raw_revision) DO NOTHING");
+  const readRevision=db.prepare("SELECT payload_hash,payload_gzip,payload_bytes "+
+    "FROM chain_seed_raw_revisions WHERE kind=? AND address=? AND signature=? AND raw_revision=?");
+  function archive(row){
+    if(!row || !/^[a-f0-9]{64}$/.test(row.payload_hash||""))return;
+    const values=[row.kind,row.address,row.signature,row.raw_revision,row.payload_hash,
+      row.payload_gzip,row.payload_bytes,row.observed_at,row.block_time,row.slot];
+    if(recordRevision.run(...values).changes===0){
+      const stored=readRevision.get(row.kind,row.address,row.signature,row.raw_revision);
+      if(!stored || stored.payload_hash!==row.payload_hash ||
+         stored.payload_bytes!==row.payload_bytes ||
+         !Buffer.from(stored.payload_gzip).equals(Buffer.from(row.payload_gzip)))
+        throw new Error("Conflicting immutable raw revision snapshot");
+    }
+  }
   let saved = 0;
   db.transaction(() => {
     for (const tx of transactions) {
@@ -891,9 +929,14 @@ function persistEvents(db, kind, address, transactions) {
       const packed = gzipSync(Buffer.from(serialized), { level: 1 });
       const hash = createHash("sha256").update(serialized).digest("hex");
       const observedAt = Date.now();
+      const prior=previous.get(kind,address,tx.signature);
       const inserted = insert.run(kind, address, tx.signature,
         Number.isFinite(tx.timestamp) ? tx.timestamp : null,
         Number.isFinite(tx.slot) ? tx.slot : null, packed, bytes, observedAt, hash).changes;
+      if(inserted>0){
+        archive(prior);
+        archive(current.get(kind,address,tx.signature));
+      }
       saved += inserted;
       // The collector is inside a better-sqlite3 transaction. Its enclosing
       // processOne() transaction is lease-fenced; both raw row and event roll back.
