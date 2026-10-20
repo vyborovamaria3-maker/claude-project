@@ -99,8 +99,7 @@ def _validated(item: SourceText) -> tuple[str, str, str, str]:
 
 def _clean(text: str) -> str:
     text = _URL.sub(" URL ", text)
-    text = _HANDLE.sub(" USER ", text)
-    return _TICKER.sub(" ASSET ", text).strip()
+    return _HANDLE.sub(" USER ", text).strip()
 
 
 def detect_language(text: str) -> str:
