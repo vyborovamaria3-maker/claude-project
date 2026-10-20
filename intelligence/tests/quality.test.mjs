@@ -90,6 +90,20 @@ test("queue age/overlapping counts and alert thresholds stay explicit",()=>{
   assert.throws(()=>normalizeOutboxCounters({...raw,pending:"18446744073709551616"},at,60));
 });
 
+test("empty Outbox or source-only archive is not silently healthy",()=>{
+  const queue=normalizeOutboxCounters({
+    total:0,pending:0,ready:0,leased:0,retry_delayed:0,
+    dead_letter:0,processed:0,verified_links:0,invalidations:0,
+    oldest_pending_at:null,
+  },at,60);
+  assert.equal(sourceHealth({
+    status:"ok",queue,sample:{examined:0,excluded:0},
+  }),"attention");
+  assert.equal(sourceHealth({
+    status:"ok",queue,sample:{examined:10,excluded:0},
+  }),"attention");
+});
+
 test("checkpoint quality audit rejects wrong database identity without revealing file path",async()=>{
   const dir=await mkdtemp(join(tmpdir(),"arch09-q-"));
   const path=join(dir,"safe.json"),identity="a".repeat(64);
