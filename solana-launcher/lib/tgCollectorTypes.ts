@@ -77,6 +77,11 @@ export type TgCollectorSource = {
   title: string | null;
   peer_id: string | null;
   enabled: boolean;
+  spam_kind: "promotional_milestone" | null;
+  spam_screened_at: string | null;
+  spam_sample_size: number;
+  spam_match_count: number;
+  spam_reason: string | null;
   history_partial: boolean;
   full_history: boolean;
   history_complete: boolean;
@@ -124,7 +129,7 @@ export type TgCollectorSnapshot = {
   proxy: TgProxyStatus;
   blockReason: string | null;
   pausedUntil: string | null;
-  stats: { sources: number; messages: number; running: number; failed: number };
+  stats: { sources: number; spam_sources: number; messages: number; running: number; failed: number };
   runtimeMetrics: TgRuntimeMetrics;
   sources: TgCollectorSource[];
   sourceOptions: {id:string;identifier:string;current_username:string|null}[];
