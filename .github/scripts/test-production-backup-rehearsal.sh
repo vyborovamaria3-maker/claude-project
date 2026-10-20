@@ -22,7 +22,11 @@ docker run -d --rm --network none --name "$admin" \
   -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine >/dev/null
 ready=0
 for i in $(seq 1 45); do
-  if docker exec "$product" pg_isready -U potapoff >/dev/null 2>&1 &&
+  # Avoid a false positive during Docker entrypoint's bootstrap PostgreSQL
+  # server; it is intentionally stopped before the final server starts.
+  if docker logs "$product" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
+     docker logs "$admin" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
+     docker exec "$product" pg_isready -U potapoff >/dev/null 2>&1 &&
      docker exec "$admin" pg_isready -U potapoff_admin >/dev/null 2>&1; then
     ready=1
     break
