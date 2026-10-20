@@ -185,7 +185,13 @@ export async function syncMessageTokenCandidates(
     "WHERE tm.source_id=$1 AND tm.message_id=$2 AND tm.analysis_version=$3 " +
     "AND tick.source_id=tm.source_id AND tick.message_id=tm.message_id AND tick.analysis_version=$3 " +
     "AND reg.ticker=tick.ticker AND reg.chain_id=tick.chain_id AND reg.mint=tm.mint " +
-    "AND reg.resolution_status='confirmed' AND tm.mention_type='ticker'",
+    "AND reg.resolution_status='confirmed' AND tm.mention_type='ticker' " +
+    "AND ((SELECT count(DISTINCT r2.mint) FROM tg_ticker_registry r2 " +
+    "WHERE r2.ticker=tick.ticker AND r2.chain_id=tick.chain_id " +
+    "AND r2.resolution_status='confirmed' AND r2.mint IS NOT NULL)=1 " +
+    "OR EXISTS (SELECT 1 FROM tg_token_candidates addr WHERE addr.source_id=tm.source_id " +
+    "AND addr.message_id=tm.message_id AND addr.chain_id=tm.chain_id " +
+    "AND addr.analysis_version=$3 AND addr.candidate_type='address' AND addr.candidate_key=tm.mint))",
     [sourceId, messageId, ANALYSIS_VERSION],
   );
 
@@ -283,7 +289,7 @@ export async function refreshTokenChannelMetrics(tx: PoolClient, sourceId: strin
     "(SELECT count(*)::integer FROM tg_ticker_mentions t JOIN tg_messages m USING(source_id,message_id) " +
     "WHERE t.source_id=$1 AND m.deleted_at IS NULL AND t.analysis_version=$3 " +
     "AND (m.posted_at AT TIME ZONE 'UTC')::date=d.day) AS ticker_mentions," +
-    "(SELECT count(*)::integer FROM tg_token_mentions t JOIN tg_messages m USING(source_id,message_id) " +
+    "(SELECT count(DISTINCT (t.source_id,t.message_id,t.chain_id,t.mint))::integer FROM tg_token_mentions t JOIN tg_messages m USING(source_id,message_id) " +
     "WHERE t.source_id=$1 AND t.analysis_version=$3 AND t.orphaned=FALSE AND m.deleted_at IS NULL " +
     "AND (m.posted_at AT TIME ZONE 'UTC')::date=d.day) AS confirmed_token_mentions," +
     "(SELECT count(DISTINCT (t.chain_id,t.mint))::integer FROM tg_token_mentions t " +
@@ -314,7 +320,8 @@ export async function refreshTokenVelocity(tx: PoolClient, now = new Date()): Pr
     "('5m',interval '5 minutes',300),('15m',interval '15 minutes',900)," +
     "('1h',interval '1 hour',3600),('6h',interval '6 hours',21600),('24h',interval '24 hours',86400))," +
     "aggregates AS (SELECT tm.chain_id,tm.mint,w.window_name,date_trunc('minute',$1::timestamptz) AS window_start," +
-    "$1::timestamptz AS computed_at,w.seconds,count(*)::integer AS mentions," +
+    "$1::timestamptz AS computed_at,w.seconds," +
+    "count(DISTINCT (tm.source_id,tm.message_id,tm.chain_id,tm.mint))::integer AS mentions," +
     "count(DISTINCT tm.source_id)::integer AS unique_sources," +
     "count(DISTINCT NULLIF(m.sender_id,''))::integer AS unique_authors," +
     "count(DISTINCT COALESCE(fp.cluster_id::text,tm.source_id::text||':'||tm.message_id::text))::integer AS independent_clusters " +
