@@ -3,7 +3,7 @@ import { Api, type TelegramClient } from "telegram";
 import bigInt from "big-integer";
 import { pool, migrate } from "../db.js";
 import { authorizedClient } from "../accounts/session.js";
-import { normalizePublicUsername } from "../validation.js";
+import { normalizePublicUsername, verifiedPublicUsername } from "../validation.js";
 import { persistMessage } from "../persistence/messages.js";
 import { refreshGraphDays, utcDay } from "../analytics/rollups.js";
 import type { RawTelegramMessage } from "../analytics/extract.js";
@@ -38,7 +38,8 @@ async function main(): Promise<void> {
         channelId: bigInt(source.peer_id),accessHash: bigInt(source.access_hash),
       }));
     }
-    let channel = entity as {className?:string;id?:{toString():string};username?:string};
+    let channel = entity as {className?:string;id?:{toString():string};
+      username?:string;usernames?:Array<{username?:string;active?:boolean}>};
     if (channel.id?.toString() !== source.peer_id) {
       if (!source.access_hash) throw new Error("TG_SOURCE_IDENTITY_MISMATCH: channel no longer matches");
       entity = await client.getEntity(new Api.InputPeerChannel({
@@ -46,7 +47,8 @@ async function main(): Promise<void> {
       }));
       channel = entity as typeof channel;
     }
-    if (channel.className !== "Channel" || channel.id?.toString() !== source.peer_id || !channel.username)
+    if (channel.className !== "Channel" || channel.id?.toString() !== source.peer_id ||
+        !verifiedPublicUsername(channel))
       throw new Error("TG_SOURCE_UNSUPPORTED: only verified public channels can be rehydrated");
 
     const pending = await pool.query<{message_id:string}>(`
