@@ -32,8 +32,20 @@ async function main(): Promise<void> {
     if (!rows[0]?.acquired) throw Error("Stop the TG Collector worker before the smoke test.");
     client = await authorizedClient();
     const entity = await client.getEntity(handle);
-    const info = entity as { className?: string };
-    if (info.className !== "Channel") throw Error("A public channel or supergroup is required.");
+    const info = entity as {
+      className?: string;
+      id?: {toString(): string};
+      accessHash?: {toString(): string};
+      username?: string;
+      usernames?: Array<{username?: string; active?: boolean}>;
+    };
+    const verifiedPeer = info.id?.toString();
+    const verifiedHandle = info.username ??
+      info.usernames?.find(item => item.active && item.username)?.username;
+    if (info.className !== "Channel" || !verifiedPeer || !verifiedHandle) {
+      throw Error("TG_SMOKE_PUBLIC_PEER_REQUIRED: a verified public channel or supergroup is required.");
+    }
+    const currentUsername = normalizePublicUsername(verifiedHandle);
     const batch = await client.getMessages(entity, {limit:expectedMessages});
     const all = batch as unknown as RawTelegramMessage[];
     const messages = all.filter(m=>Number.isSafeInteger(m.id) && m.id>0 && typeof m.message==="string");
@@ -44,8 +56,31 @@ async function main(): Promise<void> {
     let sourceId = "";
     try {
       await tx.query("BEGIN");
-      const found = await tx.query<{id:string}>(
-        "INSERT INTO tg_sources(identifier) VALUES ($1) ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE RETURNING id::text", [handle]);
+      // The smoke tool also writes canonical evidence. A reassigned @username
+      // must never let a smoke run mix two unrelated Telegram channels.
+      const matches = await tx.query<{id:string;peer_id:string|null;has_messages:boolean}>(`
+        SELECT s.id::text,s.peer_id,
+          EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id) AS has_messages
+        FROM tg_sources s
+        WHERE s.peer_id=$1 OR s.identifier=$2 OR s.current_username=$2
+        FOR UPDATE OF s`, [verifiedPeer,handle]);
+      if (matches.rows.length > 1 ||
+          matches.rows.some(row => row.peer_id !== null && row.peer_id !== verifiedPeer)) {
+        throw Error("TG_SMOKE_IDENTITY_CONFLICT: username belongs to a different tracked peer; use an isolated test database.");
+      }
+      const previous = matches.rows[0];
+      if (previous && !previous.peer_id && previous.has_messages) {
+        throw Error("TG_SMOKE_UNVERIFIED_HISTORY: cannot attribute existing unverified messages to a new Telegram peer.");
+      }
+      const found = previous
+        ? await tx.query<{id:string}>(`
+            UPDATE tg_sources SET peer_id=$2,access_hash=COALESCE($3,access_hash),
+              current_username=$4 WHERE id=$1 RETURNING id::text`,
+            [previous.id,verifiedPeer,info.accessHash?.toString()??null,currentUsername])
+        : await tx.query<{id:string}>(`
+            INSERT INTO tg_sources(identifier,peer_id,access_hash,current_username)
+            VALUES($1,$2,$3,$4) RETURNING id::text`,
+            [handle,verifiedPeer,info.accessHash?.toString()??null,currentUsername]);
       sourceId = found.rows[0].id;
       const old = await tx.query<{posted_at:Date|null}>(
         "SELECT posted_at FROM tg_messages WHERE source_id=$1 AND message_id=ANY($2::bigint[])",
