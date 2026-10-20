@@ -8,11 +8,11 @@ import { finishJob } from "../queue/jobs.js";
 import { storePage } from "../persistence/pages.js";
 import { batchSize, initialLimit, maxPages } from "../runtime/config.js";
 import type { RawTelegramMessage as TgMessage } from "../analytics/extract.js";
-type Source = { identifier: string; last_message_id: string;full_history:boolean;history_complete:boolean };
+type Source = { identifier: string; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean };
 
 export async function processJob(client: TelegramClient, job: Job, isStopping: () => boolean): Promise<void> {
   const { rows } = await pool.query<Source>(
-    "SELECT identifier,last_message_id,full_history,history_complete FROM tg_sources WHERE id=$1", [job.source_id]);
+    "SELECT identifier,last_message_id,history_low_message_id,full_history,history_complete FROM tg_sources WHERE id=$1", [job.source_id]);
   const source = rows[0];
   if (!source) throw new Error("Source was deleted");
 
@@ -26,7 +26,8 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     [job.source_id, channel.id?.toString() ?? null, channel.title ?? source.identifier]);
 
   if(source.full_history&&entity instanceof Api.Channel)await discoverDiscussion(client,job.source_id,entity);
-  const baseId = Number(job.base_message_id ?? (source.full_history&&!source.history_complete?0:source.last_message_id));
+  const recoveringHistory = source.full_history && !source.history_complete;
+  const baseId = Number(job.base_message_id ?? (recoveringHistory ? 0 : source.last_message_id));
   let highId = job.high_message_id ? Number(job.high_message_id) : 0;
   let cursor = job.cursor_before_id ? Number(job.cursor_before_id) : 0;
   let scanned = job.scanned_count;
@@ -38,7 +39,11 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
       WHERE source_id=$1 AND message_id=$2 AND EXISTS(SELECT 1 FROM tg_sources s CROSS JOIN tg_runtime r
        WHERE s.id=$1 AND s.enabled AND r.id=1 AND r.collection_enabled)`,[job.source_id,msg.id,msg.views??null,msg.forwards??null,msg.replies?.replies??null,JSON.stringify(reactionCounts(msg))]);
     }
-    highId = latest[0]?.id ?? 0;
+    // For an existing partial channel, scan below the oldest persisted message.
+    // This avoids reloading the latest 500 messages instead of completing history.
+    highId = recoveringHistory && Number(source.history_low_message_id) > 0
+      ? Number(source.history_low_message_id) - 1
+      : (latest[0]?.id ?? 0);
     await pool.query(
       "UPDATE tg_jobs SET base_message_id=$2,high_message_id=$3,updated_at=now() WHERE id=$1",
       [job.id, baseId, highId]
@@ -78,8 +83,11 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     cursor=lowId;
     scanned+=messages.length;
     const initialCutoff = !source.full_history && baseId === 0 && scanned >= initialLimit;
-    if (messages.length < batchSize || initialCutoff) {
-      await finishJob(job, highId, initialCutoff && messages.length===batchSize,baseId);
+    // A short Telegram page is not proof that the history ended: deleted or
+    // inaccessible message IDs can produce short batches before older posts.
+    // Only an empty page proves exhaustion of the requested history interval.
+    if (initialCutoff) {
+      await finishJob(job, highId, true, baseId);
       console.log("Synced", source.identifier, messages.length, "latest batch", "high", highId);
       return;
     }
