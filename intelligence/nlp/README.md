@@ -120,3 +120,33 @@ validates routing, batching, provenance, no-text output, opt-in persistence,
 probabilities and fail-closed rules — **not** quality of the real weights.
 After downloading the three real models, run an actual small local smoke
 test and a human-labelled EN/RU crypto/X/TG benchmark before deploying.
+
+## Read directly from local existing X/TG PostgreSQL (opt-in)
+
+The `--collector-db` mode avoids manual JSONL export by reading the latest
+**already persisted** collector text. It does not open an X browser, join a
+Telegram channel, or issue provider requests. It uses a PostgreSQL
+`SET TRANSACTION READ ONLY` transaction and an explicitly bounded LIMIT,
+and does not modify the source database.
+
+```bash
+# Use an account GRANTed SELECT only on the specific necessary source tables:
+#   X: twitter_tweets
+#   TG: tg_messages, tg_sources
+# Set X_SOURCE_DATABASE_URL or TG_SOURCE_DATABASE_URL in a local secret store.
+SENTIMENT_SOURCE_READ_ENABLED=true python -m intelligence.nlp.cli --collector-db x --max-items 50 > x-sentiment.jsonl
+SENTIMENT_SOURCE_READ_ENABLED=true python -m intelligence.nlp.cli --collector-db tg --max-items 50 > tg-sentiment.jsonl
+```
+
+All three model revisions must first be pinned, and their weights downloaded
+to the laptop cache. Do not pass DSNs as CLI arguments or log them.
+This mode processes a bounded **current latest snapshot** of eligible messages.
+It is not a historical replay or complete source archive. TG uses the stable
+`tg_sources.peer_id + message_id` and excludes deleted messages;
+X uses stable `twitter_tweets.tweet_id`, not mutable handles. Neither source
+query automatically establishes a Solana mint or predicts a trade outcome.
+
+Outputs contain per-model metadata/probabilities, source IDs, times and the
+source message SHA-256, **not** original message text. Storing these derived
+records into a production Intelligence feature table is a separate, reviewed
+migration/ETL step; no new model data is silently written to user databases.
