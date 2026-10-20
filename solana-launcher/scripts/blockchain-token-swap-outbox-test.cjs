@@ -80,9 +80,10 @@ const oldBase=process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED;
 const oldNew=process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED;
 const db=new Database(":memory:");
 try{
-  initDb(db);
+  // Real collector bootstraps outbox schema when base opt-in is enabled.
   process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED="true";
   process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED="true";
+  initDb(db);
   assert.throws(()=>db.transaction(()=>{
     persistEvents(db,"wallet",wallet,[tx]);
     throw new Error("forced-rollback");
