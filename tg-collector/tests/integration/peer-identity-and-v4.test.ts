@@ -166,8 +166,8 @@ test("v4 re-analysis reuses an already verified Solana mint, including hidden en
   const idSuffix=randomUUID().replaceAll("-","").slice(0,15);
   let sourceId: string|null=null;
   try {
-    await pool.query(`INSERT INTO tg_tokens(chain_id,mint,decimals,metadata_status,metadata_provider)
-      VALUES('solana-mainnet',$1,9,'verified','offline-test') ON CONFLICT DO NOTHING`,[mint]);
+    await pool.query(`INSERT INTO tg_tokens(chain_id,mint,decimals,metadata_status,metadata_provider,mint_layout_verified_at)
+      VALUES('solana-mainnet',$1,9,'verified','offline-test',now()) ON CONFLICT DO NOTHING`,[mint]);
     const source=await pool.query<{id:string}>(`
       INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text`,["reused_mint_"+idSuffix]);
     sourceId=source.rows[0].id;
