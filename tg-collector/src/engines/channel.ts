@@ -18,6 +18,7 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
   if (!source) throw new Error("Source was deleted");
 
   let entity: Awaited<ReturnType<TelegramClient["getEntity"]>>[number];
+  let usedStablePeer = false;
   try {
     entity = await client.getEntity(source.identifier);
   } catch (error) {
@@ -29,6 +30,7 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     entity = await client.getEntity(new Api.InputPeerChannel({
       channelId: bigInt(source.peer_id), accessHash: bigInt(source.access_hash),
     }));
+    usedStablePeer = true;
   }
   // A Telegram username is mutable and may be reassigned to a different channel.
   // Always pin an already-identified source to its immutable channel ID. Never
@@ -41,18 +43,32 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     entity = await client.getEntity(new Api.InputPeerChannel({
       channelId: bigInt(source.peer_id), accessHash: bigInt(source.access_hash),
     }));
+    usedStablePeer = true;
     const pinned = entity as { id?: {toString(): string} };
     if (pinned.id?.toString() !== source.peer_id) {
       throw new Error("TG_SOURCE_IDENTITY_MISMATCH: persisted channel identity differs from MTProto response");
     }
   }
   // Never collect from user profiles/DMs: this module is channel/group-only.
-  const channel = entity as { className?: string; id?: {toString(): string}; title?: string; accessHash?: {toString():string} };
+  const channel = entity as {
+    className?: string; id?: {toString(): string}; title?: string; accessHash?: {toString():string};
+    username?: string; usernames?: Array<{username?:string;active?:boolean}>;
+  };
   if (channel.className !== "Channel") {
     throw new Error("TG_SOURCE_UNSUPPORTED: only public channels and supergroups are allowed");
   }
-  await pool.query("UPDATE tg_sources SET peer_id=$2,access_hash=COALESCE($3,access_hash),title=$4 WHERE id=$1",
-    [job.source_id, channel.id?.toString() ?? null, channel.accessHash?.toString() ?? null, channel.title ?? source.identifier]);
+  const latestHandle = channel.username ??
+    channel.usernames?.find(item => item.active && item.username)?.username ?? null;
+  const publicHandle = latestHandle && /^[a-z][a-z0-9_]{4,31}$/i.test(latestHandle)
+    ? latestHandle.toLowerCase() : null;
+  if (usedStablePeer && !publicHandle) {
+    // A former public channel may become private. A saved access hash alone is
+    // not permission to expand this public-only collector into private history.
+    throw new Error("TG_SOURCE_UNSUPPORTED: source no longer has a public username");
+  }
+  await pool.query("UPDATE tg_sources SET peer_id=$2,access_hash=COALESCE($3,access_hash),title=$4,current_username=$5 WHERE id=$1",
+    [job.source_id, channel.id?.toString() ?? null, channel.accessHash?.toString() ?? null,
+      channel.title ?? source.identifier, publicHandle]);
 
   if(source.full_history&&entity instanceof Api.Channel)await discoverDiscussion(client,job.source_id,entity);
   const recoveringHistory = source.full_history && !source.history_complete;
