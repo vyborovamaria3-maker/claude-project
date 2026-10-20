@@ -94,6 +94,46 @@ export async function syncMessageTokenCandidates(
     );
   }
 
+  // A newer analysis version must reuse previously verified Solana mints.
+  // Verified mint identity is blockchain metadata, not parser-version-specific;
+  // reindexing historical posts must not trigger another paid RPC check.
+  await tx.query(
+    `UPDATE tg_token_candidates c
+     SET resolution_status='confirmed_token',confidence=1,
+       provider=COALESCE(c.provider,t.metadata_provider),checked_at=COALESCE(c.checked_at,now())
+     FROM tg_tokens t
+     WHERE c.source_id=$1 AND c.message_id=$2 AND c.analysis_version=$3
+       AND c.chain_id=t.chain_id AND c.candidate_type='address'
+       AND c.candidate_key=t.mint AND c.resolution_status<>'confirmed_token'`,
+    [sourceId,messageId,ANALYSIS_VERSION],
+  );
+  await tx.query(
+    `INSERT INTO tg_token_mentions
+      (source_id,message_id,chain_id,mint,mention_type,resolution_status,
+       confidence,message_date,analysis_version,extractor_name,orphaned)
+     SELECT $1,$2,t.chain_id,t.mint,'mint','confirmed',1,$3,$4,'telegram-text',FALSE
+     FROM tg_tokens t WHERE t.chain_id=$5 AND t.mint=ANY($6::text[])
+     ON CONFLICT(source_id,message_id,chain_id,mint,mention_type,analysis_version)
+       DO UPDATE SET orphaned=FALSE,resolution_status='confirmed',confidence=1`,
+    [sourceId,messageId,messageDate,ANALYSIS_VERSION,SOLANA_CHAIN_ID,addresses],
+  );
+  // Reuse confirmed, unambiguous ticker-to-mint links from prior versions.
+  // A ticker mapped to multiple mints must remain ambiguous.
+  await tx.query(
+    `INSERT INTO tg_token_mentions
+      (source_id,message_id,chain_id,mint,mention_type,resolution_status,
+       confidence,message_date,analysis_version,extractor_name,orphaned)
+     SELECT $1,$2,reg.chain_id,min(reg.mint),'ticker','confirmed',
+       min(reg.confidence),$3,$4,'telegram-text',FALSE
+     FROM tg_ticker_registry reg
+     WHERE reg.chain_id=$5 AND reg.ticker=ANY($6::text[])
+       AND reg.mint IS NOT NULL AND reg.resolution_status='confirmed'
+     GROUP BY reg.chain_id,reg.ticker HAVING count(DISTINCT reg.mint)=1
+     ON CONFLICT(source_id,message_id,chain_id,mint,mention_type,analysis_version)
+       DO UPDATE SET orphaned=FALSE`,
+    [sourceId,messageId,messageDate,ANALYSIS_VERSION,SOLANA_CHAIN_ID,tickers],
+  );
+
   await tx.query(
     "UPDATE tg_token_mentions tm SET orphaned=TRUE " +
     "WHERE tm.source_id=$1 AND tm.message_id=$2 AND tm.analysis_version=$3 AND (" +
