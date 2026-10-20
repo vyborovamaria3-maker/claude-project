@@ -88,6 +88,11 @@ class SentimentTests(unittest.TestCase):
         self.assertNotIn(samples[1].text, json.dumps(result))
         self.assertEqual(result[3]["status"], "unsupported_language")
 
+    def test_cashtags_are_retained_for_crypto_model_inference(self):
+        backend = MockModels()
+        engine(backend).analyze([x("The $SOL memecoin is extremely bullish!")])
+        self.assertIn("$SOL", backend.calls[0][2][0])
+
     def test_bounded_batching_and_exact_revision(self):
         backend = MockModels()
         samples = [x("This coin will rally hard tomorrow", f"x:tweet:{n}") for n in range(1, 6)]
