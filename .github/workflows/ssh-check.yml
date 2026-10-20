@@ -12,6 +12,11 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Checkout audited SSH helper
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
       - name: Validate secrets
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
@@ -31,21 +36,16 @@ jobs:
           test -n "$GHCR_USERNAME"
           test -n "$GHCR_TOKEN"
 
-      - name: Configure SSH
+      - name: Configure pinned SSH (refuse unverified keys)
+        shell: bash
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           SERVER_SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$SERVER_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          ssh-keygen -F "$SERVER_HOST" -f ~/.ssh/known_hosts >/dev/null \
-            || { echo "SERVER_SSH_KNOWN_HOSTS does not contain SERVER_HOST" >&2; exit 1; }
+          SERVER_SSH_HOST_KEY_SHA256: ${{ secrets.SERVER_SSH_HOST_KEY_SHA256 }}
+        run: bash .github/scripts/prepare-pinned-ssh.sh
 
       - name: Check server and Docker access
         env:
@@ -55,7 +55,6 @@ jobs:
         run: |
           set -euxo pipefail
           ssh \
-            -vvv \
             -i ~/.ssh/deploy_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
