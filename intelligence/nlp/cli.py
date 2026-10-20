@@ -47,6 +47,9 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", default="cpu", help="cpu or cuda:0")
     parser.add_argument("--results-db", default=None,
                         help="optional separate absolute SQLite file for durable derived probabilities")
+    parser.add_argument("--summary-as-of", default=None,
+                        help="read-only derived model averages available as of ISO timestamp")
+    parser.add_argument("--summary-source", choices=("x", "tg"), default=None)
     parser.add_argument("--collector-db", choices=("x", "tg"),
                         help="read bounded latest messages from an existing read-only PG collector")
     parser.add_argument("--check-config", action="store_true",
@@ -55,6 +58,16 @@ def run(argv: list[str] | None = None) -> int:
     try:
         if not 1 <= args.max_items <= 1000 or not 1 <= args.batch_size <= 32:
             raise ValueError("invalid batch-size or max-items")
+        if args.summary_as_of:
+            if args.collector_db or not args.results_db:
+                raise ValueError("summary requires a standalone --results-db only")
+            from intelligence.nlp.summary import summarize_as_of
+            for item in summarize_as_of(args.results_db, _parse_date(args.summary_as_of),
+                                        source=args.summary_source):
+                print(json.dumps(item, sort_keys=True))
+            return 0
+        if args.summary_source:
+            raise ValueError("--summary-source requires --summary-as-of")
         engine = SentimentEngine.from_environment(
             backend=LocalTransformersBackend(device=args.device)
         )
