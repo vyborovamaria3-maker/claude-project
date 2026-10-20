@@ -40,7 +40,10 @@ docker run -d --rm --name "$container" \
   postgres:17-alpine >/dev/null
 ready=0
 for i in $(seq 1 45); do
-  if docker exec "$container" pg_isready -U postgres >/dev/null 2>&1; then
+  # Ignore PostgreSQL's temporary bootstrap server, which accepts requests
+  # before the entrypoint stops and restarts the final postmaster.
+  if docker logs "$container" 2>&1 | grep -Fq 'PostgreSQL init process complete; ready for start up.' &&
+     docker exec "$container" pg_isready -U postgres >/dev/null 2>&1; then
     ready=1
     break
   fi
