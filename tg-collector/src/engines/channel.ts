@@ -30,6 +30,22 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
       channelId: bigInt(source.peer_id), accessHash: bigInt(source.access_hash),
     }));
   }
+  // A Telegram username is mutable and may be reassigned to a different channel.
+  // Always pin an already-identified source to its immutable channel ID. Never
+  // silently ingest someone else's posts into the previous source/evidence.
+  const resolved = entity as { className?: string; id?: {toString(): string} };
+  if (source.peer_id && resolved.id?.toString() !== source.peer_id) {
+    if (!source.access_hash) {
+      throw new Error("TG_SOURCE_IDENTITY_MISMATCH: username now belongs to another channel; saved access hash unavailable");
+    }
+    entity = await client.getEntity(new Api.InputPeerChannel({
+      channelId: bigInt(source.peer_id), accessHash: bigInt(source.access_hash),
+    }));
+    const pinned = entity as { id?: {toString(): string} };
+    if (pinned.id?.toString() !== source.peer_id) {
+      throw new Error("TG_SOURCE_IDENTITY_MISMATCH: persisted channel identity differs from MTProto response");
+    }
+  }
   // Never collect from user profiles/DMs: this module is channel/group-only.
   const channel = entity as { className?: string; id?: {toString(): string}; title?: string; accessHash?: {toString():string} };
   if (channel.className !== "Channel") {
