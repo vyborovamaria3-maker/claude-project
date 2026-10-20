@@ -26,7 +26,7 @@ test('external evidence requires real public Telegram posts; budgets and Stop fe
   await pool.query("DELETE FROM tg_external_daily WHERE day=(now()AT TIME ZONE 'UTC')::date");await pool.query("DELETE FROM tg_discovery_daily WHERE day=(now()AT TIME ZONE 'UTC')::date");
   await discoverExternalPosts(client,settings,()=>false,async()=>new Response('public group without a web preview'));
   assert.equal(calls,2);assert.equal((await pool.query('SELECT count(*)::int AS n FROM tg_external_verified_posts WHERE peer_id=$1',[peer.toString()])).rows[0].n,1);
-  const source=(await pool.query('SELECT full_history FROM tg_sources WHERE identifier=$1',[group])).rows[0];assert.equal(source.full_history,true);
+  const source=(await pool.query('SELECT full_history FROM tg_sources WHERE identifier=$1',[group])).rows[0];assert.equal(source.full_history,false,'external discovery must not opt the operator into full-history scans');
   await discoverExternalPosts(client,settings,()=>false,async()=>new Response(''));assert.equal(calls,2,'durable daily page cap prevents further RPCs');
   await pool.query("DELETE FROM tg_external_daily WHERE day=(now()AT TIME ZONE 'UTC')::date");
   await pool.query('DELETE FROM tg_external_candidates WHERE username LIKE $1',[prefix+'%']);settings.external_sources=[news];text='unrelated text without the requested asset';

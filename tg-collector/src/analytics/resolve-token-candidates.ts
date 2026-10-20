@@ -6,8 +6,17 @@ import { ANALYSIS_VERSION } from "./extract.js";
 import { detectPropagationPatterns, refreshChannelScores, refreshTokenChannelMetrics, SOLANA_CHAIN_ID } from "./token-intelligence.js";
 import { syncTokenNarratives } from "./narratives.js";
 import { readMintAccount } from "./solana-mint-rpc.js";
+import {retractAmbiguousTickerMentions} from "./ticker-reconcile.js";
+import {activeMintOccurrences} from "./token-candidate-occurrences.js";
 
 async function recomputeFirstMention(tx: import("pg").PoolClient, mint: string): Promise<void> {
+  await tx.query(`DELETE FROM tg_token_first_mentions f
+    WHERE f.chain_id=$1 AND f.mint=$2
+      AND NOT EXISTS (SELECT 1 FROM tg_token_mentions tm
+        JOIN tg_messages m USING(source_id,message_id)
+        WHERE tm.chain_id=f.chain_id AND tm.mint=f.mint
+          AND tm.analysis_version=$3 AND tm.orphaned=FALSE AND m.deleted_at IS NULL)`,
+    [SOLANA_CHAIN_ID,mint,ANALYSIS_VERSION]);
   await tx.query(
     "WITH first_row AS (" +
     "SELECT tm.chain_id,tm.mint,tm.source_id,tm.message_id,tm.message_date,tm.observed_at," +
@@ -83,10 +92,11 @@ async function main(): Promise<void> {
       }
 
       await tx.query(
-        "INSERT INTO tg_tokens(chain_id,mint,decimals,token_program,metadata_status,metadata_provider,metadata_updated_at) " +
-        "VALUES($1,$2,$3,$4,'partial','alchemy-solana-rpc',now()) " +
+        "INSERT INTO tg_tokens(chain_id,mint,decimals,token_program,metadata_status,metadata_provider,metadata_updated_at,mint_layout_verified_at) " +
+        "VALUES($1,$2,$3,$4,'partial','alchemy-solana-rpc',now(),now()) " +
         "ON CONFLICT(chain_id,mint) DO UPDATE SET decimals=EXCLUDED.decimals,token_program=EXCLUDED.token_program," +
-        "metadata_provider=EXCLUDED.metadata_provider,metadata_updated_at=now()",
+        "metadata_status=CASE WHEN tg_tokens.metadata_status='verified' THEN 'verified' ELSE 'partial' END," +
+        "metadata_provider=EXCLUDED.metadata_provider,metadata_updated_at=now(),mint_layout_verified_at=now()",
         [SOLANA_CHAIN_ID, candidate.mint, mintInfo.decimals, mintInfo.owner],
       );
       await tx.query(
@@ -99,22 +109,7 @@ async function main(): Promise<void> {
         [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
       );
 
-      const occurrences = await tx.query<{
-        source_id: string; message_id: string; message_date: Date | null; tickers: string[]; text: string;
-        peer_id: string|null; edited_at: Date|null;
-      }>(
-        "SELECT c.source_id::text,c.message_id::text,m.posted_at AS message_date,m.text," +
-        "s.peer_id::text AS peer_id,m.edited_at," +
-        "COALESCE(array_agg(DISTINCT t.ticker) FILTER (WHERE t.ticker IS NOT NULL),'{}') AS tickers " +
-        "FROM tg_token_candidates c JOIN tg_messages m USING(source_id,message_id) " +
-        "JOIN tg_sources s ON s.id=c.source_id " +
-        "LEFT JOIN tg_ticker_mentions t ON t.source_id=c.source_id AND t.message_id=c.message_id " +
-        "AND t.chain_id=c.chain_id AND t.analysis_version=$3 " +
-        "WHERE c.chain_id=$1 AND c.candidate_type='address' AND c.candidate_key=$2 " +
-        "AND c.analysis_version=$3 AND c.resolution_status='confirmed_token' AND m.deleted_at IS NULL " +
-        "GROUP BY c.source_id,c.message_id,m.posted_at,m.text,s.peer_id,m.edited_at",
-        [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
-      );
+      const occurrences = await activeMintOccurrences(tx,candidate.mint);
       for (const occurrence of occurrences.rows) {
         // Lock the exact source evidence before confirming mint links.
         // Otherwise an edit/delete racing the RPC resolver could publish a
@@ -191,8 +186,21 @@ async function main(): Promise<void> {
           affected.set(occurrence.source_id, days);
         }
       }
-      await recomputeFirstMention(tx, candidate.mint);
-      await detectPropagationPatterns(tx, SOLANA_CHAIN_ID, candidate.mint);
+      // A ticker first mapped to mint A can later become ambiguous when B is
+      // verified. Retract old ticker-only attributions, but retain explicit
+      // mint-address evidence and ticker associations with a unique witness.
+      const withdrawn = await retractAmbiguousTickerMentions(tx);
+      const recheck = new Set<string>([candidate.mint]);
+      for (const row of withdrawn.rows) {
+        recheck.add(row.mint);
+        if (row.day) {
+          const days = affected.get(row.source_id) ?? new Set<string>();
+          days.add(row.day);
+          affected.set(row.source_id, days);
+        }
+      }
+      for (const mint of recheck) await recomputeFirstMention(tx, mint);
+      for (const mint of recheck) await detectPropagationPatterns(tx, SOLANA_CHAIN_ID, mint);
       await tx.query("COMMIT");
       verified++;
     } catch (error) {

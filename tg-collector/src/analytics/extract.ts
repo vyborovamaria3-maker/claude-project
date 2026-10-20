@@ -2,7 +2,7 @@
  * Evidence-only Telegram relationship extraction.
  * Mentions and address co-occurrence do not establish identity, ownership or coordinated behavior.
  */
-export const ANALYSIS_VERSION = 3;
+export const ANALYSIS_VERSION = 4;
 
 import { isSolanaAddress, normalizeTarget } from "./normalize.js";
 export { isSolanaAddress } from "./normalize.js";
@@ -17,6 +17,8 @@ export interface RawTelegramMessage {
   senderId?: { toString(): string };
   date?: number;
   editDate?: number;
+  entities?: {className?: string;offset?: number;length?: number;url?: string}[];
+  media?: {className?: string};
   replyToMsgId?: number;
   replyTo?: { replyToMsgId?: number | { toString(): string } };
   reactions?: {results?: {count?:number;reaction?:{className?:string;emoticon?:string;documentId?:{toString():string}}}[]};
@@ -26,6 +28,8 @@ export interface RawTelegramMessage {
   fwdFrom?: {
     fromId?: { className?: string; channelId?: { toString(): string } };
     fromName?: string;
+    date?: number;
+    channelPost?: number;
   };
   /** Future adapter: Bot API channel forwarding, not GramJS forward_from user. */
   forward_from_chat?: { id?: number | string; username?: string; type?: string };
@@ -57,10 +61,19 @@ export function extractLinks(message: RawTelegramMessage): MessageLink[] {
   }
   // forward_sender_name/fromName/forward_from are unverified/private-person attribution.
   const txt = message.message ?? "";
-  for (const match of txt.matchAll(MENTION_RE)) add("mention", "handle", match[1]);
-  for (const match of txt.matchAll(TME_RE)) add("mention", "handle", match[1]);
-  for (const match of txt.matchAll(EVM_RE)) add("address", "evm_address", match[0]);
-  for (const match of txt.matchAll(TOKEN_RE)) add("address", "solana_address", match[0]);
+  // MTProto MessageEntityTextUrl URLs are absent from message.text itself.
+  // Only extract web URLs; this does not grant hidden senders an identity.
+  const hiddenUrls = (message.entities ?? [])
+    .filter(entity => entity.className === "MessageEntityTextUrl" && typeof entity.url === "string")
+    .map(entity => entity.url!)
+    .filter(url => /^https?:\/\//i.test(url) && url.length <= 2048);
+  const evidenceTexts = [txt, ...hiddenUrls];
+  for (const content of evidenceTexts) {
+    for (const match of content.matchAll(MENTION_RE)) add("mention", "handle", match[1]);
+  for (const match of content.matchAll(TME_RE)) add("mention", "handle", match[1]);
+  for (const match of content.matchAll(EVM_RE)) add("address", "evm_address", match[0]);
+  for (const match of content.matchAll(TOKEN_RE)) add("address", "solana_address", match[0]);
+  }
   return [...links.values()].sort((a,b) => a.kind.localeCompare(b.kind) ||
     a.targetKind.localeCompare(b.targetKind) || a.targetKey.localeCompare(b.targetKey));
 }
