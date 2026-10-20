@@ -58,9 +58,10 @@ async function main(): Promise<void> {
       await tx.query("BEGIN");
       // The smoke tool also writes canonical evidence. A reassigned @username
       // must never let a smoke run mix two unrelated Telegram channels.
-      const matches = await tx.query<{id:string;peer_id:string|null;has_messages:boolean}>(`
+      const matches = await tx.query<{id:string;peer_id:string|null;has_evidence:boolean}>(`
         SELECT s.id::text,s.peer_id,
-          EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id) AS has_messages
+          (EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id) OR
+           EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id)) AS has_evidence
         FROM tg_sources s
         WHERE s.peer_id=$1 OR s.identifier=$2 OR s.current_username=$2
         FOR UPDATE OF s`, [verifiedPeer,handle]);
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
         throw Error("TG_SMOKE_IDENTITY_CONFLICT: username belongs to a different tracked peer; use an isolated test database.");
       }
       const previous = matches.rows[0];
-      if (previous && !previous.peer_id && previous.has_messages) {
+      if (previous && !previous.peer_id && previous.has_evidence) {
         throw Error("TG_SMOKE_UNVERIFIED_HISTORY: cannot attribute existing unverified messages to a new Telegram peer.");
       }
       const found = previous
