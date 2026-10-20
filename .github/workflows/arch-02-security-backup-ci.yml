@@ -1,0 +1,52 @@
+name: ARCH-02 SSH pins and restore rehearsal
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/prepare-pinned-ssh.sh"
+      - ".github/scripts/test-pinned-ssh.sh"
+      - ".github/scripts/test-production-backup-rehearsal.sh"
+      - ".github/workflows/arch-02-security-backup-ci.yml"
+      - ".github/workflows/ssh-check.yml"
+      - ".github/workflows/potapoff-backup.yml"
+      - ".github/workflows/potapoff-production.yml"
+      - ".github/workflows/landing-release.yml"
+      - "solana-launcher/scripts/backup-production.sh"
+      - "solana-launcher/scripts/verify-backup-restore.sh"
+  push:
+    branches:
+      - fix/arch-02-pinned-ssh-backup-restore-20261020
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ssh-pinning:
+    name: Port-aware host pin negative regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check shell syntax
+        run: |
+          bash -n .github/scripts/prepare-pinned-ssh.sh
+          bash -n .github/scripts/test-pinned-ssh.sh
+          bash -n .github/scripts/test-production-backup-rehearsal.sh
+          bash -n solana-launcher/scripts/backup-production.sh
+          bash -n solana-launcher/scripts/verify-backup-restore.sh
+      - name: Verify pinning without real SSH keys or hosts
+        run: bash .github/scripts/test-pinned-ssh.sh
+
+  disposable-recovery:
+    name: Synthetic PG16 and PG17 full restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Verify backup, isolated restore and corruption rejection
+        run: bash .github/scripts/test-production-backup-rehearsal.sh
