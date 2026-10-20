@@ -34,7 +34,7 @@ export function classifyTelegramError(error: unknown, attempts: number, random: 
     }
     return { action: "halt", code: "TG_RATE_LIMIT_UNKNOWN", scope: "account" };
   }
-  if (/CHANNEL_PRIVATE|USERNAME_INVALID|USERNAME_NOT_OCCUPIED|CHAT_ADMIN_REQUIRED|USER_NOT_PARTICIPANT|TG_SOURCE_UNSUPPORTED/.test(text)) {
+  if (/CHANNEL_PRIVATE|USERNAME_INVALID|USERNAME_NOT_OCCUPIED|CHAT_ADMIN_REQUIRED|USER_NOT_PARTICIPANT|TG_SOURCE_UNSUPPORTED|TG_SOURCE_IDENTITY_MISMATCH/.test(text)) {
     return { action: "failed", code: "TG_SOURCE_INACCESSIBLE" };
   }
   if (attempts >= 5) return { action: "failed", code: "TG_RETRY_EXHAUSTED" };
