@@ -123,12 +123,15 @@ export async function syncMessageTokenCandidates(
     `INSERT INTO tg_token_mentions
       (source_id,message_id,chain_id,mint,mention_type,resolution_status,
        confidence,message_date,analysis_version,extractor_name,orphaned)
-     SELECT $1,$2,reg.chain_id,min(reg.mint),'ticker','confirmed',
-       min(reg.confidence),$3,$4,'telegram-text',FALSE
-     FROM tg_ticker_registry reg
-     WHERE reg.chain_id=$5 AND reg.ticker=ANY($6::text[])
-       AND reg.mint IS NOT NULL AND reg.resolution_status='confirmed'
-     GROUP BY reg.chain_id,reg.ticker HAVING count(DISTINCT reg.mint)=1
+     SELECT DISTINCT $1,$2,stable.chain_id,stable.mint,'ticker','confirmed',
+       stable.confidence,$3,$4,'telegram-text',FALSE
+     FROM (
+       SELECT reg.chain_id,reg.ticker,min(reg.mint) AS mint,min(reg.confidence) AS confidence
+       FROM tg_ticker_registry reg
+       WHERE reg.chain_id=$5 AND reg.ticker=ANY($6::text[])
+         AND reg.mint IS NOT NULL AND reg.resolution_status='confirmed'
+       GROUP BY reg.chain_id,reg.ticker HAVING count(DISTINCT reg.mint)=1
+     ) stable
      ON CONFLICT(source_id,message_id,chain_id,mint,mention_type,analysis_version)
        DO UPDATE SET orphaned=FALSE`,
     [sourceId,messageId,messageDate,ANALYSIS_VERSION,SOLANA_CHAIN_ID,tickers],
