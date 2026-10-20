@@ -237,3 +237,58 @@ zero-coverage results. Models are reported independently by source and
 immutable revision. The benchmark never downloads weights, scrapes providers,
 stores message bodies or claims trading effectiveness. If coverage is low,
 high macro-F1 on the matched subset must not be presented as representative.
+
+## Disk size and resident memory (October 2026)
+
+Official Hugging Face Safetensors weight sizes (decimal MB, excludes tokenizer,
+PyTorch installation and temporary cache):
+
+| Model | One `model.safetensors` file |
+| --- | ---: |
+| CryptoBERT | 498,620,100 bytes (~499 MB) |
+| FinTwitBERT-sentiment | ~439 MB |
+| RuBERT-tiny2 Russian sentiment | ~117 MB |
+| **Total** | **~1.055 GB** |
+
+Allocate **6–10 GB of free disk** before installing Python + optional
+CUDA-enabled PyTorch and downloading the weights. The exact additional disk
+requirement for PyTorch depends on operating system, wheel variant and cache.
+No duplicate `pytorch_model.bin`, `tf_model.h5` or `flax_model.msgpack`
+weight formats are downloaded by our explicit prefetch helper.
+
+To inspect actual upstream sizes and immutable revisions **without downloading
+weights**:
+
+```powershell
+py -m intelligence.nlp.prefetch --models cryptobert fintwitbert rubert --sizes
+```
+
+For offline inference the default is **one resident model at a time**;
+weights of inactive models are released before the next model is loaded:
+
+```powershell
+$env:SENTIMENT_BATCH_SIZE="8"
+$env:SENTIMENT_MAX_LOADED_MODELS="1"
+$env:SENTIMENT_DEVICE="cpu"
+# If local CUDA PyTorch correctly detects the GPU:
+$env:SENTIMENT_DEVICE="cuda:0"
+# CLI usage: --max-loaded-models 1  (or 2–3 to trade memory for speed)
+```
+
+The CLI's independent `--max-loaded-models` defaults to 1. Resident limits
+refer to *model objects*, not a strict process memory budget. Python/PyTorch
+and the CUDA context have extra overhead, and peak usage during load can be
+higher. `torch.cuda.empty_cache()` releases **unused cached** GPU allocations,
+not all memory held by PyTorch or by other software.
+
+For Windows RTX 50-series GPUs, follow
+<https://pytorch.org/get-started/locally/> and select a CUDA-capable build
+that supports Blackwell (such as a supported CUDA 13.x wheel).
+Check locally before enabling GPU inference:
+
+```powershell
+py -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+```
+
+The output must report `True`; actual smoke inference must also succeed.
+Do not infer GPU compatibility from the graphics card name alone.
