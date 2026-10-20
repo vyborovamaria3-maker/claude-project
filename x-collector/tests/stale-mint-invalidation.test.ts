@@ -9,7 +9,7 @@ import {PGlite} from "@electric-sql/pglite";
  */
 test("replayed old X observation cannot generate mint invalidation",async()=>{
   const store=await readFile(
-    new URL("../src/collector/persistence/collector-store.ts",import.meta.url),"utf8");
+    "src/collector/persistence/collector-store.ts","utf8");
   assert.match(store,/WHERE EXCLUDED\.updated_at >= twitter_tweets\.updated_at\s+RETURNING tweet_id/);
   assert.match(store,/genuinelyWrittenIds\.has\(t\.id\)/);
   const db=new PGlite();
