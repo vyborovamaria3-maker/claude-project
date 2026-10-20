@@ -95,6 +95,26 @@ class SentimentTests(unittest.TestCase):
         engine(backend).analyze([x("The $SOL memecoin is extremely bullish!")])
         self.assertIn("$SOL", backend.calls[0][2][0])
 
+    def test_inference_availability_is_stamped_only_after_model_finished(self):
+        import time
+        class SlowMock:
+            def __init__(self):
+                self.finished_at = None
+            def predict(self, model, revision, texts):
+                time.sleep(0.025)
+                self.finished_at = datetime.now(timezone.utc)
+                return [{label: value for label, value in zip(
+                    model.labels, (0.1, 0.2, 0.7), strict=True)} for _ in texts]
+        stub = SlowMock()
+        result = engine(stub).analyze([
+            tg("Это действительно замечательная новость!")
+        ])[0]
+        published = datetime.fromisoformat(
+            result["inference_at"].replace("Z", "+00:00"))
+        self.assertIsNotNone(stub.finished_at)
+        self.assertGreaterEqual(published + timedelta(milliseconds=1),
+                                stub.finished_at)
+
     def test_memory_policy_limits_model_residency_to_one_by_default(self):
         b = LocalTransformersBackend()
         self.assertEqual(b.device, "cpu")
