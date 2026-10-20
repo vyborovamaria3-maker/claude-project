@@ -124,14 +124,32 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
       }),
       /key mismatch/,
     );
-    // Two wallet viewpoints with the same tx/mint are not two token trades.
-    const wallet2="2".repeat(32);
-    const walletProof=makeRevision(1,"d","2026-10-20T01:21:00Z",
-      transaction(mint2,320000003));
-    // Simulate another valid wallet-owned transaction perspective with its
-    // own envelope. It must not be manufactured from a different fee payer.
-    assert.equal(walletProof.payload.swapRevision.walletId,"solana:"+wallet);
-    assert.equal((await active(mint2,"2026-10-20T01:30:00Z")).length,1);
+    // A second wallet can observe the same signature + token; token-level
+    // active projection must count it once, without inventing trade PnL.
+    let bytes=BigInt("0x"+("43".repeat(32))),wallet2="";
+    const alphabet="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    while(bytes>0n){wallet2=alphabet[Number(bytes%58n)]+wallet2;bytes/=58n;}
+    const tx2=transaction(mint2,320000003);
+    tx2.feePayer=wallet2;
+    tx2.events.swap.nativeInput.account=wallet2;
+    tx2.events.swap.tokenOutputs[0].userAccount=wallet2;
+    tx2.accountData[0].account=wallet2;
+    tx2.accountData[0].tokenBalanceChanges[0].userAccount=wallet2;
+    const fromOtherWallet=buildTokenSwapRevisionEvent({
+      kind:"wallet",address:wallet2,signature,rawRevision:1,
+      payloadHash:"d".repeat(64),observedAt:Date.parse("2026-10-20T01:21:00Z"),
+      transaction:tx2,
+    });
+    assert.equal(fromOtherWallet.payload.swapRevision.status,"supported");
+    emitSqlite(sqlite,fromOtherWallet);
+    assert.deepEqual(await deliver(),{
+      claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0,
+    });
+    assert.equal((await active(mint2,"2026-10-20T01:30:00Z")).length,1,
+      "same signature and mint observed from two wallets is one token-level record");
+    const afterSecond=await pool.query(
+      "SELECT COUNT(*)::integer AS n FROM blockchain_swap_evidence_revisions");
+    assert.equal(afterSecond.rows[0].n,4);
   }finally{
     if(sqlite)sqlite.close();
     if(pool)await pool.end();
