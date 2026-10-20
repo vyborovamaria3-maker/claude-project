@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from intelligence.errors.exceptions import IntelligenceError, JobValidationError, QueueError
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from intelligence.nlp.sentiment import SentimentEngine
 from intelligence.providers.registry import ProviderRegistry
 from intelligence.security.sanitizer import sanitize_text
 from intelligence.storage.base import DocumentStore
@@ -14,7 +18,9 @@ class IntelligenceWorker:
         queue: JobQueue,
         registry: ProviderRegistry,
         store: DocumentStore,
+        sentiment: SentimentEngine | None = None,
     ) -> None:
+        self.sentiment = sentiment
         self.queue = queue
         self.registry = registry
         self.store = store
@@ -31,6 +37,8 @@ class IntelligenceWorker:
             stored_ids: list[str] = []
             for document in collected:
                 normalized = provider.normalize(document)
+                if self.sentiment is not None:
+                    normalized = self.sentiment.enrich_document(normalized)
                 stored = self.store.save(normalized)
                 if stored.id not in stored_ids:
                     stored_ids.append(stored.id)

@@ -1,0 +1,6 @@
+# Optional local-only sentiment inference; NOT included in the normal API/Docker build.
+# Review and pin concrete wheel hashes in the deployment lock before production.
+transformers>=4.45,<5
+torch>=2.4,<3
+safetensors>=0.4,<1
+huggingface-hub>=0.26,<2
