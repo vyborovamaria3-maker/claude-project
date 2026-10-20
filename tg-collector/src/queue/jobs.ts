@@ -5,6 +5,9 @@ export type Job = {
   id: string; source_id: string; attempts: number;
   base_message_id: string | null; high_message_id: string | null;
   cursor_before_id: string | null; scanned_count: number;
+  fresh_base_message_id?: string | null;
+  fresh_high_message_id?: string | null;
+  fresh_cursor_before_id?: string | null;
 };
 
 export async function claim(): Promise<Job | undefined> {
