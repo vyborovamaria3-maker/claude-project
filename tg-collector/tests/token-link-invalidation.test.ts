@@ -57,10 +57,23 @@ test("invalidation is off by default and uses caller transaction only",async()=>
     const payload=JSON.parse(String(queries[1]!.values[4]));
     assert.equal(payload.tokenLinksInvalidation.reason,"edited");
     assert.equal(payload.registryEvent.evidenceRef.sourceId,"tg:message:12345:111");
+    // Pausing NEW mint assertions cannot disable revocation of older proofs.
+    delete process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED;
+    assert.equal(await emitTgTokenLinksInvalidation(tx as never,"source-local-id",body),true);
+    assert.equal(queries.length,4);
+    assert.equal(JSON.parse(String(queries[3]!.values[4])).tokenLinksInvalidation.reason,"edited");
   }finally{
     if(out===undefined)delete process.env.TG_INTELLIGENCE_OUTBOX_ENABLED;
     else process.env.TG_INTELLIGENCE_OUTBOX_ENABLED=out;
     if(links===undefined)delete process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED;
     else process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED=links;
   }
+});
+
+test("edited signed Telegram channel peer ID is not lost or normalized",()=>{
+  const event=buildTgTokenLinksInvalidatedOutboxEvent({...input,peerId:"-100123456789"});
+  assert.equal(event.payload.registryEvent.evidenceRef.sourceId,
+    "tg:message:-100123456789:111");
+  assert.equal(event.payload.registryEvent.entityRefs[0]!.canonicalId,
+    "tg:source:-100123456789");
 });

@@ -3,7 +3,7 @@ import {validateCheckpoint} from "./backfill-core.mjs";
 
 export const SOURCE_NAMES=["x","tg","blockchain"];
 const NUMERIC=/^[1-9][0-9]{0,24}$/;
-const TG_PEER=/^[1-9][0-9]{0,19}$/;
+const TG_PEER=/^-?[1-9][0-9]{0,19}$/;
 const BASE58=/^[1-9A-HJ-NP-Za-km-z]+$/;
 const HASH=/^[a-f0-9]{64}$/;
 

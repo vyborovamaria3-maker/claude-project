@@ -74,6 +74,7 @@ export async function queryActiveTokenLinks(
     FROM token_link_observations v
     WHERE v.state='verified' AND v.canonical_token_id=$1
       AND v.observed_at<=$3::timestamptz
+      AND v.inserted_at<=$3::timestamptz
       AND COALESCE(v.occurred_at,v.observed_at)<=$2::timestamptz
     ORDER BY v.source_system,v.evidence_source_id,v.observed_at DESC,v.event_key DESC
   )
@@ -85,6 +86,7 @@ export async function queryActiveTokenLinks(
       AND inv.state='invalidated'
       AND inv.observed_at >= v.observed_at
       AND inv.observed_at <= $3::timestamptz
+      AND inv.inserted_at <= $3::timestamptz
   )
   ORDER BY v.observed_at DESC,v.source_system,v.evidence_source_id
   LIMIT $4`,[tokenId,toUtcIso(occurredBefore),toUtcIso(knownAt),limit]);

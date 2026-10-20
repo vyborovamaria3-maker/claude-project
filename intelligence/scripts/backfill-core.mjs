@@ -6,7 +6,7 @@ const SAFE_SCOPE=/^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$/;
 const SOURCES=new Set(["x","tg","blockchain"]);
 const SHA256=/^[a-f0-9]{64}$/;
 const NUMERIC_ID=/^[1-9][0-9]{0,24}$/;
-const PEER=/^[1-9][0-9]{0,19}$/;
+const PEER=/^-?[1-9][0-9]{0,19}$/;
 
 export function parseBackfillArgs(argv){
   const result={source:null,limit:20,execute:false,scope:null,checkpoint:null,help:false};
