@@ -207,7 +207,8 @@ export default function TGCollectorTab() {
     { title: "Ошибки", value: data?.stats.failed ?? 0 },
     { title: "Сообщений сегодня", value: data?.runtimeMetrics.messages_per_day ?? 0 },
     { title: "Связей сегодня", value: data?.runtimeMetrics.links_per_day ?? 0 },
-    { title: "Всего связей", value: data?.runtimeMetrics.links_total ?? 0 },
+    { title: "Активных связей", value: data?.runtimeMetrics.links_active_total ?? 0 },
+    { title: "Всего связей (с историей)", value: data?.runtimeMetrics.links_total ?? 0 },
     { title: "Заданий в очереди", value: data?.runtimeMetrics.jobs_pending ?? 0 },
   ];
   const globallyPaused = Boolean(data?.pausedUntil && new Date(data.pausedUntil) > new Date());
