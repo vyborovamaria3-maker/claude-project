@@ -23,6 +23,12 @@ test('public post dedup, canonical reactions, discussion queue, Stop and full hi
   await discoverPublicSources(client,()=>false);assert.equal(calls,2,'source cap does not stop message discovery');
   const mentions=(await pool.query('SELECT * FROM tg_discovery_mentions WHERE peer_id=$1',[peer])).rows;assert.equal(mentions.length,1);assert.equal(mentions[0].matched_terms.length,2);
   const source=(await pool.query('SELECT * FROM tg_sources WHERE peer_id=$1',[peer])).rows[0];assert.equal(source.full_history,false,'keyword hits are not full-history opt-ins');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM tg_messages WHERE source_id=$1',[source.id])).rows[0].n,0,
+    'Discovery must not ingest channel posts before the 120-post screening');
+  // Simulate a legitimate channel completing the mandatory preview, then
+  // rediscover the same public post and verify normal persistence resumes.
+  await pool.query('UPDATE tg_sources SET spam_screened_at=now(),spam_sample_size=120 WHERE id=$1',[source.id]);
+  await ready();await discoverPublicSources(client,()=>false);
   const saved=(await pool.query('SELECT views,reactions FROM tg_messages WHERE source_id=$1 AND message_id=10',[source.id])).rows[0];assert.equal(saved.views,123);assert.equal(saved.reactions[0].count,5);
   await pool.query('UPDATE tg_discovery_settings SET max_new_per_day=2 WHERE id=1');
   await discoverDiscussion({invoke:async()=>({fullChat:new Api.ChannelFull({id:chat.id,linkedChatId:group.id}),chats:[group]})}as unknown as TelegramClient,String(source.id),chat);
