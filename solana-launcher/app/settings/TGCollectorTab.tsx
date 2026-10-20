@@ -100,10 +100,12 @@ export default function TGCollectorTab() {
     return () => { controller.abort(); clearInterval(interval); };
   }, [refresh]);
 
-  async function command(action: "add" | "pause" | "resume" | "sync" | "retry" | "remove" | "start" | "stop" | "history", source?: Source) {
+  async function command(action: "add" | "pause" | "resume" | "sync" | "retry" | "remove" | "start" | "stop" | "history" | "spam-clear", source?: Source) {
     if (busy) return;
     if (action === "remove" && source &&
       !window.confirm(`Удалить @${source.identifier} и все собранные сообщения из TG Collector? Это нельзя отменить.`)) return;
+    if (action === "spam-clear" && source &&
+      !window.confirm(`Снять метку «Спам / бесполезный» с @${source.current_username || source.identifier}? Дальнейший сбор разрешится без повторной автопроверки.`)) return;
     setBusy(action + (source?.id ?? ""));
     setError(null);
     setNotice(null);
@@ -124,6 +126,7 @@ export default function TGCollectorTab() {
       setNotice(
         action === "add" ? "Источник добавлен в очередь." :
         action === "remove" ? "Источник и его сообщения удалены." :
+        action === "spam-clear" ? "Метка спама снята вручную. Сбор источника разрешён." :
         action === "history" ? "Полная история поставлена в очередь. Прогресс сохраняется между проходами." :
         action === "pause" ? "Источник приостановлен после текущего запроса." :
         action === "resume" ? "Сбор источника возобновлён." :
@@ -203,6 +206,7 @@ export default function TGCollectorTab() {
 
   const metrics = [
     { title: "Источники", value: data?.stats.sources ?? 0 },
+    { title: "Спам / бесполезные", value: data?.stats.spam_sources ?? 0 },
     { title: "Сообщения", value: data?.stats.messages ?? 0 },
     { title: "Выполняются", value: data?.stats.running ?? 0 },
     { title: "Ошибки", value: data?.stats.failed ?? 0 },
@@ -394,8 +398,8 @@ export default function TGCollectorTab() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-content">{source.title || "@" + source.identifier}</span>
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${pill(source.state)}`}>{source.enabled ? source.state ?? "без задачи" : "пауза"}</span>
-                    {source.history_partial && <span className="text-xs text-amber-300">История неполная</span>}
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${pill(source.state)}`}>{source.spam_kind ? "Спам / бесполезный" : source.enabled ? source.state ?? "без задачи" : "пауза"}</span>
+                    {source.history_partial && !source.spam_kind && <span className="text-xs text-amber-300">История неполная</span>}
                   </div>
                   <a href={`https://t.me/${source.current_username || source.identifier}`} rel="noreferrer noopener" target="_blank" className="text-xs text-primary hover:underline">@{source.current_username || source.identifier}</a>
                   {source.current_username && source.current_username !== source.identifier &&
@@ -410,7 +414,14 @@ export default function TGCollectorTab() {
                     История: {source.history_complete ? "полная (для доступных сообщений)" : source.full_history ? "сбор старых сообщений продолжается" : source.history_partial ? "неполная" : "не проверена"}
                     {source.history_low_message_id && source.history_low_message_id !== "0" ? ` · Самый старый сохранённый ID: ${source.history_low_message_id}` : ""}
                   </div>
-                  {source.last_error && <div className="mt-2 max-w-xl break-words text-xs text-red-300">Ошибка: {source.last_error}</div>}
+                  {source.spam_kind && (
+                    <p className="mt-2 max-w-xl text-xs text-amber-300">
+                      Сбор автоматически остановлен: {source.spam_reason || "повторяющиеся рекламные milestone-уведомления"}.
+                      Проверено {source.spam_sample_size} последних постов, совпадений {source.spam_match_count}.
+                      Исходные сообщения не удалены.
+                    </p>
+                  )}
+                  {source.last_error && !source.spam_kind && <div className="mt-2 max-w-xl break-words text-xs text-red-300">Ошибка: {source.last_error}</div>}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={busy !== null} onClick={() => { setSelected(source.id); setPage(0); }} className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted hover:text-content">Сообщения</button>
@@ -418,10 +429,10 @@ export default function TGCollectorTab() {
                     <button type="button" disabled={busy !== null} title="Отключает новые задания" onClick={() => void command("pause", source)}
                       className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted hover:text-content"><Pause className="mr-1 inline h-3.5 w-3.5" /> Пауза</button>
                   ) : (
-                    <button type="button" disabled={busy !== null} onClick={() => void command("resume", source)}
+                    <button type="button" disabled={busy !== null || !!source.spam_kind} onClick={() => void command("resume", source)}
                       className="rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-300"><Play className="mr-1 inline h-3.5 w-3.5" /> Возобновить</button>
                   )}
-                  <button type="button" disabled={busy !== null || source.state === "running"}
+                  <button type="button" disabled={busy !== null || source.state === "running" || !!source.spam_kind}
                     onClick={() => {
                       if (!source.history_complete || window.confirm(
                         "Повторно проверить всю историю канала? Уже собранные посты сохранятся, но Telegram придётся перечитать доступную историю."
@@ -431,8 +442,15 @@ export default function TGCollectorTab() {
                     {source.history_complete ? "Перепроверить историю" :
                       source.full_history ? "Продолжить историю" : "Собрать всю историю"}
                   </button>
-                  <button type="button" disabled={busy !== null || !source.enabled || source.state === "running" || source.state === "delayed"} onClick={() => void command(source.state === "failed" ? "retry" : "sync", source)}
+                  <button type="button" disabled={busy !== null || !source.enabled || !!source.spam_kind || source.state === "running" || source.state === "delayed"} onClick={() => void command(source.state === "failed" ? "retry" : "sync", source)}
                     className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted disabled:opacity-30 hover:text-content"><RefreshCw className="mr-1 inline h-3.5 w-3.5" /> {source.state === "failed" ? "Повтор" : "Синхронизировать"}</button>
+                  {source.spam_kind && (
+                    <button type="button" disabled={busy !== null}
+                      onClick={() => void command("spam-clear",source)}
+                      className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-300">
+                      Снять метку спама
+                    </button>
+                  )}
                   <button type="button" disabled={busy !== null || source.state === "running"} onClick={() => void command("remove", source)}
                     className="rounded-lg border border-red-500/20 px-3 py-2 text-xs text-red-300 disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" aria-label="Удалить" /></button>
                 </div>

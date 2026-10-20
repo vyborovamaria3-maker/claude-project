@@ -29,7 +29,7 @@ async function main(): Promise<void> {
     try {
       await tx.query("BEGIN");
       const known = await tx.query<{id:string}>(`
-        SELECT id::text FROM tg_sources WHERE current_username=$1 AND peer_id IS NOT NULL
+        SELECT id::text FROM tg_sources WHERE current_username=$1 AND peer_id IS NOT NULL AND spam_kind IS NULL
         FOR UPDATE`, [identifier]);
       if (known.rowCount && known.rowCount > 1)
         throw new Error("Ambiguous current Telegram username; inspect peer IDs");
@@ -37,17 +37,18 @@ async function main(): Promise<void> {
         ? await tx.query<{id:string}>(`
           UPDATE tg_sources SET enabled=TRUE,full_history=full_history OR $2::boolean,
             history_partial=CASE WHEN history_complete THEN FALSE ELSE history_partial OR $2::boolean END
-          WHERE id=$1 RETURNING id::text`,[known.rows[0].id,fullHistory])
+          WHERE id=$1 AND spam_kind IS NULL RETURNING id::text`,[known.rows[0].id,fullHistory])
         : await tx.query<{id:string}>(`
           INSERT INTO tg_sources(identifier,full_history,history_partial) VALUES ($1,$2,$2)
           ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE,
             full_history=tg_sources.full_history OR EXCLUDED.full_history,
             history_partial=CASE WHEN tg_sources.history_complete THEN FALSE ELSE
               tg_sources.history_partial OR EXCLUDED.full_history END
-          WHERE tg_sources.current_username IS NULL OR tg_sources.current_username=$1
+          WHERE tg_sources.spam_kind IS NULL
+            AND (tg_sources.current_username IS NULL OR tg_sources.current_username=$1)
           RETURNING id::text`,[identifier,fullHistory]);
       if (!rows.length)
-        throw new Error("Original username was reassigned to a different channel; reconcile by peer_id first");
+        throw new Error("Source is blocked as spam or original username was reassigned; inspect before re-adding");
       await tx.query(
         `INSERT INTO tg_jobs(source_id) VALUES ($1)
          ON CONFLICT (source_id) DO NOTHING`,
@@ -77,7 +78,7 @@ async function main(): Promise<void> {
       const source = await tx.query<{id:string;full_history:boolean;history_complete:boolean}>(`
         SELECT s.id::text,s.full_history,s.history_complete FROM tg_sources s
         JOIN tg_jobs j ON j.source_id=s.id
-        WHERE j.state<>'running'
+        WHERE j.state<>'running' AND s.spam_kind IS NULL
           AND ((s.current_username=$1 AND s.peer_id IS NOT NULL)
             OR (s.identifier=$1 AND
               (s.current_username IS NULL OR s.current_username=$1)))
