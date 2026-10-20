@@ -13,8 +13,8 @@ test("a recycled username cannot redirect public discovery evidence to the previ
   const handle="recycled_"+suffix;
   const peerA=String(Date.now())+"100";
   const peerB=String(Date.now())+"200";
-  const status = await pool.query<{enabled:boolean;revision:number}>(
-    "SELECT enabled,revision FROM tg_discovery_settings WHERE id=1");
+  const status = await pool.query<{enabled:boolean;revision:number;max_new_per_day:number;max_sources:number}>(
+    "SELECT enabled,revision,max_new_per_day,max_sources FROM tg_discovery_settings WHERE id=1");
   const runtime = await pool.query<{collection_enabled:boolean}>(
     "SELECT collection_enabled FROM tg_runtime WHERE id=1");
   let sourceId: string | null = null;
@@ -24,7 +24,7 @@ test("a recycled username cannot redirect public discovery evidence to the previ
       INSERT INTO tg_sources(identifier,peer_id,current_username)
       VALUES($1,$2,$3) RETURNING id::text`,[handle,peerA,"new_"+suffix]);
     sourceId=source.rows[0].id;
-    await pool.query("UPDATE tg_discovery_settings SET enabled=TRUE WHERE id=1");
+    await pool.query("UPDATE tg_discovery_settings SET enabled=TRUE,max_new_per_day=100,max_sources=1000 WHERE id=1");
     await pool.query("UPDATE tg_runtime SET collection_enabled=TRUE,block_reason=NULL,pause_until=NULL WHERE id=1");
     // Simulate an old discovery association made by username, not verified ID.
     await pool.query(`INSERT INTO tg_discovered_sources
@@ -64,8 +64,8 @@ test("a recycled username cannot redirect public discovery evidence to the previ
     await pool.query("DELETE FROM tg_discovered_sources WHERE peer_id=$1",[peerB]);
     if(newSourceId)await pool.query("DELETE FROM tg_sources WHERE id=$1",[newSourceId]);
     if(sourceId)await pool.query("DELETE FROM tg_sources WHERE id=$1",[sourceId]);
-    await pool.query("UPDATE tg_discovery_settings SET enabled=$1 WHERE id=1",
-      [status.rows[0].enabled]);
+    await pool.query("UPDATE tg_discovery_settings SET enabled=$1,max_new_per_day=$2,max_sources=$3 WHERE id=1",
+      [status.rows[0].enabled,status.rows[0].max_new_per_day,status.rows[0].max_sources]);
     await pool.query("UPDATE tg_runtime SET collection_enabled=$1 WHERE id=1",
       [runtime.rows[0].collection_enabled]);
     // Pool is reused by the next test in this file.
