@@ -34,6 +34,6 @@ jobs:
       - name: Install lightweight existing database client for runtime imports
         run: python -m pip install --disable-pip-version-check "psycopg[binary]==3.2.9"
       - name: Test routing, provenance, worker and CLI without model downloads
-        run: python -m unittest intelligence.tests.test_sentiment intelligence.tests.test_sentiment_cli intelligence.tests.test_sentiment_sources intelligence.tests.test_worker_pipeline -v
+        run: python -m unittest intelligence.tests.test_sentiment intelligence.tests.test_sentiment_cli intelligence.tests.test_sentiment_sources intelligence.tests.test_sentiment_results_store intelligence.tests.test_worker_pipeline -v
       - name: Compile new Python modules
         run: python -m compileall -q intelligence/nlp intelligence/worker/jobs.py intelligence/bootstrap.py
