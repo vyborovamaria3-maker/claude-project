@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import closing
+
 import json
 import sqlite3
 import tempfile
@@ -40,7 +42,7 @@ class DurableSentimentTests(unittest.TestCase):
             batch = engine().analyze([observation])
             self.assertEqual(store_predictions(path, batch), 1)
             self.assertEqual(store_predictions(path, batch), 0)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 row = db.execute(
                     "SELECT model_key, model_revision, inference_at, probabilities_json "
                     "FROM sentiment_predictions"
@@ -53,7 +55,7 @@ class DurableSentimentTests(unittest.TestCase):
                 self.assertEqual(db.execute(
                     "SELECT count(*) FROM sentiment_predictions").fetchone()[0], 1)
             self.assertEqual(store_predictions(path, engine(new_rubert=True).analyze([observation])), 1)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 self.assertEqual(db.execute(
                     "SELECT count(*) FROM sentiment_predictions").fetchone()[0], 2)
 
@@ -70,7 +72,7 @@ class DurableSentimentTests(unittest.TestCase):
                 "bearish": 0.8, "neutral": 0.1, "bullish": 0.1
             }
             self.assertEqual(store_predictions(path, [tampered]), 0)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 row = db.execute(
                     "SELECT probabilities_json FROM sentiment_predictions "
                     "WHERE model_key='cryptobert'"
@@ -90,7 +92,7 @@ class DurableSentimentTests(unittest.TestCase):
             forged["source"] = "blockchain"
             with self.assertRaisesRegex(ValueError, "result source"):
                 store_predictions(path, [ok, forged])
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 self.assertEqual(db.execute(
                     "SELECT count(*) FROM sentiment_predictions").fetchone()[0], 0)
             bad_scores = json.loads(json.dumps(ok))
@@ -102,7 +104,7 @@ class DurableSentimentTests(unittest.TestCase):
 
     def test_bounded_cli_can_persist_without_exporting_raw_message(self):
         import io
-        from contextlib import redirect_stdout, redirect_stderr
+        from contextlib import closing, redirect_stdout, redirect_stderr
         from intelligence.nlp import cli
         text = "The new crypto coin is bullish today"
         row = {"source": "x", "source_id": "x:tweet:9875",
@@ -118,7 +120,7 @@ class DurableSentimentTests(unittest.TestCase):
             self.assertEqual(rc, 0, err.getvalue())
             self.assertNotIn(text, out.getvalue())
             self.assertEqual(len(out.getvalue().splitlines()), 1)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 self.assertEqual(db.execute(
                     "SELECT count(*) FROM sentiment_predictions"
                 ).fetchone()[0], 2)
@@ -153,14 +155,14 @@ class DurableSentimentTests(unittest.TestCase):
     def test_explicit_path_does_not_mutate_collector_or_runtime_database(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp, "collector.sqlite")
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.execute("CREATE TABLE tg_messages (id INTEGER PRIMARY KEY)")
             rows = engine().analyze([SourceText(
                 "tg", "tg:message:-100222:10", "Очень хороший рынок сегодня", NOW
             )])
             with self.assertRaisesRegex(ValueError, "separate"):
                 store_predictions(path, rows)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 self.assertEqual(db.execute(
                     "SELECT COUNT(*) FROM sqlite_master WHERE name='sentiment_predictions'"
                 ).fetchone()[0], 0)

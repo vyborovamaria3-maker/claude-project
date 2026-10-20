@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -155,7 +155,7 @@ class DurableStopTests(unittest.TestCase):
             self.assertEqual(code, 130)
             self.assertEqual(model.calls, 1, "do not start second batch after stop")
             self.assertEqual(len(stdout.getvalue().splitlines()), 1)
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 self.assertEqual(conn.execute(
                     "SELECT count(*) FROM sentiment_predictions").fetchone()[0], 1)
             # A later explicit bounded rerun resumes idempotently.
@@ -165,7 +165,7 @@ class DurableStopTests(unittest.TestCase):
                 self.assertEqual(cli._process_in_chunks(
                     rerun, self.rows(), batch_size=1, results_db=db, stop=stop
                 ), 0)
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 self.assertEqual(conn.execute(
                     "SELECT count(*) FROM sentiment_predictions").fetchone()[0], 3)
 
@@ -190,7 +190,7 @@ class DurableStopTests(unittest.TestCase):
                     cli._process_in_chunks(
                         engine, self.rows(), batch_size=1, results_db=db, stop=stop
                     )
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 self.assertEqual(conn.execute(
                     "SELECT count(*) FROM sentiment_predictions").fetchone()[0], 1)
 

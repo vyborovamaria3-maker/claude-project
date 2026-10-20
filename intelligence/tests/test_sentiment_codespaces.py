@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import shutil
 import subprocess
 import threading
 import unittest
@@ -96,7 +97,7 @@ class CodespacesApiTests(unittest.TestCase):
         api = root / "intelligence/nlp/scripts/codespaces_api.sh"
         for path in (setup, api):
             with self.subTest(path=path):
-                r = subprocess.run(["bash", "-n", str(path)], capture_output=True, text=True)
+                r = subprocess.run([shutil.which("bash") or "bash", "-n", str(path)], capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, r.stderr)
         code = setup.read_text()
         self.assertIn("https://download.pytorch.org/whl/cpu", code)
