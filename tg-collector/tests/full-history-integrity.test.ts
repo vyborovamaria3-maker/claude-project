@@ -18,6 +18,39 @@ test("hidden Telegram text_link URLs participate in evidence extraction", () => 
     link.kind === "mention" && link.targetKind === "handle" && link.targetKey === "examplechannel"));
 });
 
+test("legacy messages cannot be assigned to a newly resolved username owner without peer provenance", {
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const { pool, migrate } = await import("../src/db.js");
+  const { processJob } = await import("../src/engines/channel.js");
+  await migrate();
+  const handle = "legacy_" + randomUUID().replaceAll("-", "").slice(0, 12);
+  const source = await pool.query<{id:string}>(`
+    INSERT INTO tg_sources(identifier,last_message_id,history_low_message_id)
+    VALUES($1,100,1) RETURNING id::text`, [handle]);
+  const sourceId = source.rows[0].id;
+  try {
+    const job = await pool.query(`
+      INSERT INTO tg_jobs(source_id) VALUES($1) RETURNING *`, [sourceId]);
+    const client = {
+      async getEntity() {
+        return {className:"Channel",id:{toString:()=> "123456"},
+          accessHash:{toString:()=> "654321"},username:"verified_legacy"};
+      },
+      async getMessages() {throw Error("Must not fetch unverified legacy history");},
+    } as unknown as TelegramClient;
+    await assert.rejects(
+      processJob(client, job.rows[0], () => false),
+      /TG_SOURCE_IDENTITY_UNVERIFIED/,
+    );
+    const check = await pool.query<{peer_id:string|null}>(
+      "SELECT peer_id FROM tg_sources WHERE id=$1", [sourceId]);
+    assert.equal(check.rows[0].peer_id,null);
+  } finally {
+    await pool.query("DELETE FROM tg_sources WHERE id=$1",[sourceId]);
+  }
+});
+
 test("full-history resumes below the oldest persisted post and scans until an empty page", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
