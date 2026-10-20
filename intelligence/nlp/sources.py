@@ -16,11 +16,11 @@ from intelligence.nlp.sentiment import SourceText
 # Column shapes from the current X and TG collectors. Fully parameterized,
 # hard-coded queries: source names are never interpolated into SQL.
 _X_QUERY = """
-SELECT tweet_id, text, first_seen_at, posted_at
+SELECT tweet_id, text, updated_at, posted_at
 FROM twitter_tweets
 WHERE text IS NOT NULL AND btrim(text) <> ''
   AND tweet_id ~ '^[1-9][0-9]*$'
-ORDER BY first_seen_at DESC, tweet_id DESC LIMIT %s
+ORDER BY updated_at DESC, tweet_id DESC LIMIT %s
 """
 _TG_QUERY = """
 SELECT s.peer_id, m.message_id, m.text, m.collected_at, m.posted_at
