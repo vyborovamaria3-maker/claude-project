@@ -35,7 +35,30 @@ export async function ingestTimelineEvent(
     event.observedAt,event.evidenceRef.sourceId,event.schemaVersion,
     JSON.stringify(event.payload),
   ]);
-  if (inserted.rows.length === 0) return false;
+  if (inserted.rows.length === 0) {
+    // A duplicate key is only idempotent if EVERY persisted timeline field
+    // and the exact entity membership agree. Inbox identity alone is insufficient.
+    const previous=await tx.query("SELECT event_key FROM timeline_events " +
+      "WHERE source_system=$1 AND source_event_kind=$2 AND event_key=$3 " +
+      "AND timeline_kind=$4 AND occurred_at=$5::timestamptz " +
+      "AND observed_at=$6::timestamptz AND evidence_source_id=$7 " +
+      "AND schema_version=$8 AND payload=$9::jsonb",[
+      sourceSystem,sourceEventKind,event.eventKey,event.kind,event.occurredAt,
+      event.observedAt,event.evidenceRef.sourceId,event.schemaVersion,
+      JSON.stringify(event.payload),
+    ]);
+    if(previous.rows.length!==1)
+      throw new TypeError("Timeline event identity collision");
+    const identities=await tx.query("SELECT kind,canonical_id FROM timeline_event_entities " +
+      "WHERE source_system=$1 AND source_event_kind=$2 AND event_key=$3 " +
+      "ORDER BY kind,canonical_id",[sourceSystem,sourceEventKind,event.eventKey]);
+    const incoming=new Set(source.entityRefs.map(ref=>ref.kind+"|"+ref.canonicalId));
+    const stored=new Set(identities.rows.map(row=>String(row.kind)+"|"+String(row.canonical_id)));
+    if(incoming.size!==source.entityRefs.length||stored.size!==identities.rows.length||
+       incoming.size!==stored.size||[...incoming].some(identity=>!stored.has(identity)))
+      throw new TypeError("Timeline entity attribution collision");
+    return false;
+  }
   for (const entity of source.entityRefs) {
     await tx.query(`INSERT INTO timeline_event_entities
       (source_system,source_event_kind,event_key,kind,canonical_id)
