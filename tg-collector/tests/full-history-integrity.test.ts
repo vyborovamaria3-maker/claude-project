@@ -57,6 +57,38 @@ test("legacy messages cannot be assigned to a newly resolved username owner with
   }
 });
 
+test("an unverified source with only a persisted job checkpoint cannot switch Telegram identity", {
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const { pool,migrate } = await import("../src/db.js");
+  const { processJob } = await import("../src/engines/channel.js");
+  await migrate();
+  const identifier = "checkpoint_" + randomUUID().replaceAll("-","").slice(0,14);
+  const source = await pool.query<{id:string}>(
+    "INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text",[identifier]);
+  const sourceId = source.rows[0].id;
+  try {
+    const job = await pool.query(`INSERT INTO tg_jobs
+      (source_id,base_message_id,high_message_id,cursor_before_id)
+      VALUES($1,0,850,800) RETURNING *`, [sourceId]);
+    const telegram = {
+      async getEntity() {
+        return {className:"Channel",id:{toString:()=> "902101"},
+          username:"checkpoint_public",title:"Unverified fixture"};
+      },
+      async getMessages() {throw Error("Must not fetch on unverified checkpoint");},
+    } as unknown as TelegramClient;
+    await assert.rejects(processJob(telegram,job.rows[0],()=>false),
+      /TG_SOURCE_IDENTITY_UNVERIFIED/);
+    const actual = await pool.query<{peer_id:string|null;last_message_id:string}>(
+      "SELECT peer_id,last_message_id::text FROM tg_sources WHERE id=$1",[sourceId]);
+    assert.equal(actual.rows[0].peer_id,null);
+    assert.equal(actual.rows[0].last_message_id,"0");
+  } finally {
+    await pool.query("DELETE FROM tg_sources WHERE id=$1",[sourceId]);
+  }
+});
+
 test("full-history resumes below the oldest persisted post and scans until an empty page", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
