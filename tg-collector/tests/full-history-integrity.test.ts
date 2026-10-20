@@ -85,18 +85,34 @@ test("full-history resumes below the oldest persisted post and scans until an em
       [sourceId]);
     assert.equal(beforeFresh.rows[0].history_complete,false);
     const historyCursor = beforeFresh.rows[0].cursor_before_id;
-    originals.unshift(
-      {id:652,date:postedAt+652,message:"Brand new post #652"},
-      {id:651,date:postedAt+651,message:"Brand new post #651"},
-    );
+    // More than two short pages of new messages: the fresh cursor must survive
+    // a worker turn without incorrectly advancing last_message_id or old-history cursor.
+    const newcomers = Array.from({length:80},(_,i)=>({
+      id:730-i,date:postedAt+730-i,message:"Brand new post #"+(730-i),
+    }));
+    originals.unshift(...newcomers);
     await pool.query("UPDATE tg_sources SET live_checked_at=now()-interval '1 minute' WHERE id=$1",[sourceId]);
     await processJob(client, await readJob(), () => false);
+    const midFresh = await pool.query<{
+      last_message_id:string;cursor_before_id:string;fresh_cursor_before_id:string;
+    }>(`SELECT s.last_message_id::text,j.cursor_before_id::text,j.fresh_cursor_before_id::text
+      FROM tg_sources s JOIN tg_jobs j ON j.source_id=s.id WHERE s.id=$1`,[sourceId]);
+    assert.equal(midFresh.rows[0].last_message_id,"650",
+      "newest watermark must not skip an unfinished fresh interval");
+    assert.equal(midFresh.rows[0].cursor_before_id,historyCursor,
+      "historical cursor must remain unchanged while fresh catch-up is incomplete");
+    assert.equal(midFresh.rows[0].fresh_cursor_before_id,"661",
+      "newest-to-oldest cursor must persist across worker turns");
+    await processJob(client, await readJob(), () => false);
     const fresh = await pool.query<{count:number}>(
-      "SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1 AND message_id IN (651,652)",[sourceId]);
-    assert.equal(fresh.rows[0].count,2, "fresh posts must be ingested during historical backfill");
-    const afterFresh = await pool.query<{last_message_id:string;history_complete:boolean;cursor_before_id:string}>(
-      "SELECT s.last_message_id::text,s.history_complete,j.cursor_before_id::text FROM tg_sources s JOIN tg_jobs j ON j.source_id=s.id WHERE s.id=$1",[sourceId]);
-    assert.equal(afterFresh.rows[0].last_message_id,"652");
+      "SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1 AND message_id BETWEEN 651 AND 730",[sourceId]);
+    assert.equal(fresh.rows[0].count,80, "all fresh posts must be ingested during historical backfill");
+    const afterFresh = await pool.query<{
+      last_message_id:string;history_complete:boolean;cursor_before_id:string;fresh_cursor_before_id:string|null;
+    }>(`SELECT s.last_message_id::text,s.history_complete,j.cursor_before_id::text,
+      j.fresh_cursor_before_id::text FROM tg_sources s JOIN tg_jobs j ON j.source_id=s.id WHERE s.id=$1`,[sourceId]);
+    assert.equal(afterFresh.rows[0].last_message_id,"730");
+    assert.equal(afterFresh.rows[0].fresh_cursor_before_id,null);
     assert.equal(afterFresh.rows[0].history_complete,false);
     assert.ok(Number(afterFresh.rows[0].cursor_before_id)<Number(historyCursor),
       "historical checkpoint must continue after the fresh catch-up pass");
@@ -117,8 +133,8 @@ test("full-history resumes below the oldest persisted post and scans until an em
         s.history_low_message_id::text, s.history_partial, s.history_complete
       FROM tg_sources s JOIN tg_messages m ON m.source_id=s.id
       WHERE s.id=$1 GROUP BY s.id`, [sourceId]);
-    assert.equal(state.rows[0].count,652);
-    assert.equal(state.rows[0].distinct_count,652);
+    assert.equal(state.rows[0].count,730);
+    assert.equal(state.rows[0].distinct_count,730);
     assert.equal(state.rows[0].history_low_message_id,"1");
     assert.equal(state.rows[0].history_partial,false);
     assert.equal(state.rows[0].history_complete,true);
@@ -146,7 +162,7 @@ test("full-history resumes below the oldest persisted post and scans until an em
     await assert.rejects(processJob(client, await readJob(), () => false), /TG_SOURCE_IDENTITY_MISMATCH/);
     const after = await pool.query<{count:number}>(
       "SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1", [sourceId]);
-    assert.equal(after.rows[0].count,652);
+    assert.equal(after.rows[0].count,730);
   } finally {
     if (sourceId) await pool.query("DELETE FROM tg_sources WHERE id=$1", [sourceId]);
     await pool.end();
