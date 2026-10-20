@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { RawTelegramMessage } from "../analytics/extract.js";
+import { isSolanaAddress } from "../analytics/normalize.js";
 
 /**
  * Source-side opt-in. The source's native migration runs by default but the
@@ -131,4 +132,77 @@ async function insertOutbox(
       event.sourceSystem,event.eventKind,event.eventKey,
       event.schemaVersion,JSON.stringify(event.payload),
     ]);
+}
+
+const VERIFIED_TOKEN_PROGRAMS=new Set([
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+]);
+
+/** Separate opt-in gate for mint links; native Telegram and source Outbox stay independent. */
+export function telegramVerifiedTokenLinksEnabled(env: NodeJS.ProcessEnv=process.env):boolean {
+  return telegramOutboxEnabled(env) && env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED==="true";
+}
+
+/**
+ * A verified token link is a HISTORICAL evidence observation, not an active
+ * token-to-message membership or a token timeline entry. The destination
+ * cannot assume it remains current after an edit/delete until ARCH-07.
+ * No raw Telegram content is ever included in the emitted payload.
+ */
+export function buildVerifiedTgTokenLinkOutboxEvent(input:{
+  peerId:string|null; messageId:string; text:string; mint:string;
+  tokenProgram:string; provider:"alchemy-solana-rpc";
+  sourceRevisionSha256:string; observedAt:Date; postedAt:Date|null;
+}) {
+  const peer=stablePeer(input.peerId);
+  if(!/^[1-9][0-9]*$/.test(input.messageId) ||
+     !isSolanaAddress(input.mint) || !VERIFIED_TOKEN_PROGRAMS.has(input.tokenProgram) ||
+     input.provider!=="alchemy-solana-rpc" ||
+     !/^[a-f0-9]{64}$/.test(input.sourceRevisionSha256) ||
+     typeof input.text!=="string") {
+    throw new TypeError("Invalid verified Telegram mint evidence");
+  }
+  // Require a literal token boundary. A ticker, substring or mere address
+  // existence never qualifies as on-chain-verified evidence.
+  const exactMint=new RegExp("(?<![1-9A-HJ-NP-Za-km-z])"+input.mint+"(?![1-9A-HJ-NP-Za-km-z])");
+  if(!exactMint.test(input.text))throw new TypeError("Mint not literally present in current message");
+  const observedAt=utcObserved(input.observedAt);
+  const occurredAt=input.postedAt?utcObserved(input.postedAt):observedAt;
+  const evidenceRef={
+    sourceKind:"tg_message",sourceId:`tg:message:${peer}:${input.messageId}`,
+    observedAt,occurredAt,parserVersion:"tg-mint-verifier-v1",
+  };
+  const tokenId="solana:"+input.mint;
+  const entityRefs=[
+    {kind:"source",canonicalId:`tg:source:${peer}`,firstSeenAt:observedAt,lastSeenAt:observedAt},
+    {kind:"token",canonicalId:tokenId,firstSeenAt:observedAt,lastSeenAt:observedAt},
+  ];
+  const eventKey=`tg:tokenlink:${evidenceRef.sourceId}:${input.mint}:${input.sourceRevisionSha256}:${input.observedAt.getTime()}`;
+  return {
+    sourceSystem:"tg",eventKind:"token_link_verified",eventKey,
+    schemaVersion:"token-link-v1",
+    payload:{
+      registryEvent:{
+        sourceSystem:"tg",eventKind:"token_link_verified",
+        eventKey,schemaVersion:"token-link-v1",entityRefs,evidenceRef,
+      },
+      tokenLink:{
+        status:"verified",canonicalTokenId:tokenId,basis:"literal_mint_address",
+        sourceRevisionSha256:input.sourceRevisionSha256,
+        mintVerification:{
+          chainId:"solana-mainnet",method:"spl_mint_account",
+          tokenProgram:input.tokenProgram,provider:input.provider,checkedAt:observedAt,
+        },
+      },
+    },
+  };
+}
+
+/** Caller must own the same transaction that confirms the on-chain mint. */
+export async function emitVerifiedTgTokenLinkOutbox(tx:PoolClient,input:Parameters<typeof buildVerifiedTgTokenLinkOutboxEvent>[0]):Promise<boolean>{
+  if(!telegramVerifiedTokenLinksEnabled())return false;
+  const event=buildVerifiedTgTokenLinkOutboxEvent(input);
+  await insertOutbox(tx,event);
+  return true;
 }
