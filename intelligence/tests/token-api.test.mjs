@@ -220,6 +220,11 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
       occurredAt:occurred,observedAt:firstAt,entityRefs:[author,entity],
       evidenceRef:evidence,payload:{text:"SECRET sensitive X payload"},
     }));
+    assert.equal((await pool.query("SELECT COUNT(*)::integer AS n "+
+      "FROM intelligence_inbox WHERE ingested_at<='2026-10-20T02:10:00Z'")).rows[0].n,0,
+      "unavailable future destination ingestion must not leak into past");
+    await pool.query("UPDATE intelligence_inbox SET ingested_at='2026-10-20T02:01:00Z' "+
+      "WHERE source_system='x' AND event_key='x:1024:test'");
     const source=buildEntityRef({kind:"source",
       canonicalId:formatSourceId("tg","-100123"),
       firstSeenAt:firstAt,lastSeenAt:firstAt});
