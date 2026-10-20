@@ -38,11 +38,12 @@ async function main(): Promise<void> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("--limit must be an integer from 1 to 1000");
 
   const candidates = await pool.query<{ mint: string }>(
-    "SELECT DISTINCT candidate_key AS mint FROM tg_token_candidates " +
-    "WHERE chain_id=$1 AND candidate_type='address' AND analysis_version=$3 " +
-    "AND resolution_status IN ('unresolved','ambiguous') " +
-    "AND (checked_at IS NULL OR checked_at < now() - interval '24 hours') " +
-    "ORDER BY candidate_key LIMIT $2",
+    "SELECT DISTINCT c.candidate_key AS mint FROM tg_token_candidates c " +
+    "JOIN tg_messages m ON m.source_id=c.source_id AND m.message_id=c.message_id " +
+    "WHERE c.chain_id=$1 AND c.candidate_type='address' AND c.analysis_version=$3 " +
+    "AND m.deleted_at IS NULL AND c.resolution_status IN ('unresolved','ambiguous') " +
+    "AND (c.checked_at IS NULL OR c.checked_at < now() - interval '24 hours') " +
+    "ORDER BY c.candidate_key LIMIT $2",
     [SOLANA_CHAIN_ID, limit, ANALYSIS_VERSION],
   );
   let verified = 0;
@@ -68,9 +69,11 @@ async function main(): Promise<void> {
         await tx.query(
           // A not-yet-created mint may become valid later. Do not permanently
           // label addresses as not_token; back off retry by 24 hours.
-          "UPDATE tg_token_candidates SET resolution_status='ambiguous',confidence=NULL," +
-          "provider='alchemy-solana-rpc',checked_at=now() WHERE chain_id=$1 AND candidate_type='address' " +
-          "AND candidate_key=$2 AND analysis_version=$3 " +
+          "UPDATE tg_token_candidates c SET resolution_status='ambiguous',confidence=NULL," +
+          "provider='alchemy-solana-rpc',checked_at=now() FROM tg_messages m " +
+          "WHERE m.source_id=c.source_id AND m.message_id=c.message_id AND m.deleted_at IS NULL " +
+          "AND c.chain_id=$1 AND c.candidate_type='address' " +
+          "AND c.candidate_key=$2 AND c.analysis_version=$3 " +
           "AND resolution_status IN ('unresolved','ambiguous')",
           [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
         );
@@ -87,9 +90,11 @@ async function main(): Promise<void> {
         [SOLANA_CHAIN_ID, candidate.mint, mintInfo.decimals, mintInfo.owner],
       );
       await tx.query(
-        "UPDATE tg_token_candidates SET resolution_status='confirmed_token',confidence=1," +
-        "provider='alchemy-solana-rpc',checked_at=now() WHERE chain_id=$1 AND candidate_type='address' " +
-        "AND candidate_key=$2 AND analysis_version=$3 " +
+        "UPDATE tg_token_candidates c SET resolution_status='confirmed_token',confidence=1," +
+        "provider='alchemy-solana-rpc',checked_at=now() FROM tg_messages m " +
+        "WHERE m.source_id=c.source_id AND m.message_id=c.message_id AND m.deleted_at IS NULL " +
+        "AND c.chain_id=$1 AND c.candidate_type='address' " +
+        "AND c.candidate_key=$2 AND c.analysis_version=$3 " +
         "AND resolution_status IN ('unresolved','ambiguous','confirmed_token')",
         [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
       );
