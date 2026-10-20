@@ -17,7 +17,7 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
   const source = rows[0];
   if (!source) throw new Error("Source was deleted");
 
-  let entity: Awaited<ReturnType<TelegramClient["getEntity"]>>;
+  let entity: Awaited<ReturnType<TelegramClient["getEntity"]>>[number];
   try {
     entity = await client.getEntity(source.identifier);
   } catch (error) {
