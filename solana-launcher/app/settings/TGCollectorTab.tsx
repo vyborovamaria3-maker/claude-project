@@ -416,7 +416,7 @@ export default function TGCollectorTab() {
                       {source.full_history ? "Продолжить историю" : "Собрать всю историю"}
                     </button>
                   )}
-                  <button type="button" disabled={busy !== null || !source.enabled || source.state === "running"} onClick={() => void command(source.state === "failed" ? "retry" : "sync", source)}
+                  <button type="button" disabled={busy !== null || !source.enabled || source.state === "running" || source.state === "delayed"} onClick={() => void command(source.state === "failed" ? "retry" : "sync", source)}
                     className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted disabled:opacity-30 hover:text-content"><RefreshCw className="mr-1 inline h-3.5 w-3.5" /> {source.state === "failed" ? "Повтор" : "Синхронизировать"}</button>
                   <button type="button" disabled={busy !== null || source.state === "running"} onClick={() => void command("remove", source)}
                     className="rounded-lg border border-red-500/20 px-3 py-2 text-xs text-red-300 disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" aria-label="Удалить" /></button>
