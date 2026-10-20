@@ -24,6 +24,7 @@
     "backtest:run": "tsx src/analytics/backtest.ts"
   },
   "dependencies": {
+    "big-integer": "^1.6.52",
     "dotenv": "^18.0.6",
     "pg": "^8.23.1",
     "telegram": "^2.26.22"
