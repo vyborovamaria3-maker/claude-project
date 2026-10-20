@@ -111,10 +111,14 @@ export async function checkApiReadiness(pool){
     "SELECT to_regclass('intelligence_inbox') IS NOT NULL AS inbox,"+
     "to_regclass('timeline_events') IS NOT NULL AS timeline,"+
     "to_regclass('timeline_event_entities') IS NOT NULL AS entities,"+
-    "to_regclass('token_link_observations') IS NOT NULL AS links",
+    "to_regclass('token_link_observations') IS NOT NULL AS links,"+
+    "to_regclass('blockchain_swap_evidence_revisions') IS NOT NULL AS swap_revisions",
   );
   if(!result.rows[0]?.inbox||!result.rows[0]?.timeline||
      !result.rows[0]?.entities||!result.rows[0]?.links){
     throw new Error("intelligence_api_migrations_001_002_004_required");
+  }
+  if(!result.rows[0]?.swap_revisions){
+    throw new Error("intelligence_api_migration_005_required");
   }
 }
