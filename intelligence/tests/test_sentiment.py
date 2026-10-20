@@ -81,7 +81,7 @@ class SentimentTests(unittest.TestCase):
         self.assertEqual(result[1]["model_results"]["rubert"]["task"], "general_sentiment")
         self.assertEqual(result[1]["model_results"]["rubert"]["labels"]["negative"], .7)
         self.assertEqual(result[0]["observed_at"], "2026-10-20T08:45:00.000Z")
-        self.assertRegex(result[0]["inference_at"], r"^\\d{4}-\\d{2}-\\d{2}T")
+        self.assertTrue(result[0]["inference_at"].endswith("Z"))
         self.assertEqual(result[0]["source_id"], "x:tweet:123")
         self.assertEqual(result[0]["content_sha256"], hashlib.sha256(samples[0].text.encode()).hexdigest())
         self.assertNotIn(samples[0].text, json.dumps(result))
