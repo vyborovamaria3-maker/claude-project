@@ -113,6 +113,7 @@ try{
   })(),/forced-rollback/);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_events").get().n,0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM chain_seed_raw_revisions").get().n,0);
   assert.equal(persistEvents(db,"wallet",wallet,[tx]),1);
   const rows=db.prepare("SELECT event_kind,payload FROM outbox_events ORDER BY id").all();
   assert.deepEqual(rows.map(r=>r.event_kind),[
@@ -141,6 +142,15 @@ try{
   assert.equal(db.prepare(
     "SELECT raw_revision FROM chain_seed_events WHERE kind='wallet' AND address=? AND signature=?"
   ).get(wallet,signature).raw_revision,3);
+  const rawHistory=db.prepare(
+    "SELECT raw_revision,payload_hash,payload_gzip,payload_bytes FROM chain_seed_raw_revisions "+
+    "WHERE kind='wallet' AND address=? AND signature=? ORDER BY raw_revision"
+  ).all(wallet,signature);
+  assert.deepEqual(rawHistory.map(r=>r.raw_revision),[1,2,3],
+    "all post-install raw versions must remain independently recoverable");
+  assert.equal(new Set(rawHistory.map(r=>r.payload_hash)).size,3);
+  assert(rawHistory.every(r=>r.payload_gzip.length>0&&r.payload_bytes>0));
+  assert.equal(rawHistory.length,3);
   delete process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED;
   assert.equal(persistEvents(db,"wallet",wallet,[{...tx,slot:250000003}]),1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,9,
