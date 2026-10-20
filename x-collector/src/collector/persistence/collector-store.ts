@@ -7,6 +7,8 @@ import { Page } from "../../../lib/archive/model";
 import {recordRaw,recordRawBatch} from '../../../lib/trade/intelligence-store';
 import type { PoolClient } from "pg";
 import { emitXTweetOutbox } from "./intelligence-outbox";
+import { emitXTokenLinksInvalidation, xVerifiedTokenLinksEnabled } from "./verified-token-links";
+import {createHash} from "node:crypto";
 export interface PersistenceLease { workerId: string; attempt: number; accountName: string; accountOwner: string; }
 async function assertPersistenceLease(client: PoolClient, taskId: number | undefined, lease?: PersistenceLease) {
   if (!lease) return;
@@ -117,6 +119,18 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
           { transport: "HTTP GraphQL" }, client);
       }
       await recordRawBatch(client,chunk.map(t=>({eventType:'TWEET',externalId:t.id,payload:t,collectedAt:new Date(t.observedAt??now),collectorAccount:collectorAccount??null})));
+      // Only when enabled: lock existing tweets before the upsert so a proof
+      // worker cannot commit a stale mint link between reading old text and
+      // storing the new source revision. Never perform RPC inside this tx.
+      const oldRows=xVerifiedTokenLinksEnabled()
+        ? (await client.query<{tweet_id:string;text:string|null;author_id:string|null;posted_at:string|number|null}>(
+          "SELECT tweet_id,text,author_id,posted_at FROM twitter_tweets " +
+          "WHERE tweet_id=ANY($1::text[]) ORDER BY tweet_id FOR UPDATE",
+          [chunk.map(t=>t.id)],
+        )).rows
+        : [];
+      const previousById=new Map(oldRows.map(row=>[row.tweet_id,row]));
+
       const values: unknown[] = [];
       const placeholders = chunk.map((t, j) => {
         const off = j * 14;
@@ -197,7 +211,23 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
       }
       // Source tweet/archive writes and Intelligence Outbox share this transaction.
       // Unresolved author IDs are intentionally not re-identified from handles.
-      for (const t of chunk) await emitXTweetOutbox(client,t,now);
+      for (const t of chunk) {
+        const previous=previousById.get(t.id);
+        if(previous && previous.text!==t.text){
+          const authorId=t.authorId??previous.author_id;
+          if(authorId){
+            const sourceRevisionSha256=createHash("sha256")
+              .update(JSON.stringify(["edited",t.text,t.postedAt??null]))
+              .digest("hex");
+            await emitXTokenLinksInvalidation(client,{
+              tweetId:t.id,authorId,reason:"edited",sourceRevisionSha256,
+              observedAt:new Date(),
+              postedAt:t.postedAt===null?null:new Date(t.postedAt),
+            });
+          }
+        }
+        await emitXTweetOutbox(client,t,now);
+      }
       return newlyLinked;
     };
     // Only count successful transaction results; tx() may retry rollbacks.
