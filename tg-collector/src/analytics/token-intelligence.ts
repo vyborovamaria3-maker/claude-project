@@ -94,9 +94,11 @@ export async function syncMessageTokenCandidates(
     );
   }
 
-  // A newer analysis version must reuse previously verified Solana mints.
-  // Verified mint identity is blockchain metadata, not parser-version-specific;
-  // reindexing historical posts must not trigger another paid RPC check.
+  // Reuse only token accounts whose mint structure was previously checked.
+  // tg_tokens may also contain unverified/pending metadata rows; their mere
+  // existence is not confirmation that a base58 address is a Solana mint.
+  // A verified token may have partial metadata but must have mint decimals.
+  // Reindexing trusted rows must not issue another paid RPC check.
   await tx.query(
     `UPDATE tg_token_candidates c
      SET resolution_status='confirmed_token',confidence=1,
@@ -104,7 +106,8 @@ export async function syncMessageTokenCandidates(
      FROM tg_tokens t
      WHERE c.source_id=$1 AND c.message_id=$2 AND c.analysis_version=$3
        AND c.chain_id=t.chain_id AND c.candidate_type='address'
-       AND c.candidate_key=t.mint AND c.resolution_status<>'confirmed_token'`,
+       AND c.candidate_key=t.mint AND c.resolution_status<>'confirmed_token'
+       AND t.metadata_status IN ('partial','verified') AND t.decimals IS NOT NULL`,
     [sourceId,messageId,ANALYSIS_VERSION],
   );
   await tx.query(
@@ -113,6 +116,7 @@ export async function syncMessageTokenCandidates(
        confidence,message_date,analysis_version,extractor_name,orphaned)
      SELECT $1::bigint,$2::bigint,t.chain_id,t.mint,'mint','confirmed',1,$3,$4,'telegram-text',FALSE
      FROM tg_tokens t WHERE t.chain_id=$5 AND t.mint=ANY($6::text[])
+       AND t.metadata_status IN ('partial','verified') AND t.decimals IS NOT NULL
      ON CONFLICT(source_id,message_id,chain_id,mint,mention_type,analysis_version)
        DO UPDATE SET orphaned=FALSE,resolution_status='confirmed',confidence=1`,
     [sourceId,messageId,messageDate,ANALYSIS_VERSION,SOLANA_CHAIN_ID,addresses],
