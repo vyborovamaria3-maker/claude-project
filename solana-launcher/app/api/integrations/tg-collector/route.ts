@@ -193,7 +193,7 @@ export async function GET(request: NextRequest) {
     if (!Number.isInteger(page) || page < 0 || page > 100) throw new ApiError("Недопустимая страница");
 
     const [sources, stats, runtimeState, proxy, messages] = await Promise.all([
-      p.query(`SELECT s.id::text, s.identifier, s.peer_id, s.title, s.enabled,
+      p.query(`SELECT s.id::text, s.identifier, s.current_username, s.peer_id, s.title, s.enabled,
         s.history_partial,s.full_history,s.history_complete,s.history_low_message_id::text, s.last_message_id::text, s.last_success_at,
         COALESCE(mc.message_count,0)::int AS message_count,
         j.state, j.run_at, j.attempts, j.scanned_count, j.last_error,
@@ -214,7 +214,7 @@ export async function GET(request: NextRequest) {
         heartbeat_at > now() - interval '30 seconds' AS worker_online
         FROM tg_runtime WHERE id=1`),
       readTgProxy(p),
-      p.query(`SELECT m.source_id::text, s.identifier, m.message_id::text,
+      p.query(`SELECT m.source_id::text, COALESCE(s.current_username,s.identifier) AS identifier, m.message_id::text,
         m.sender_id, m.posted_at, m.text, m.views, m.forwards, m.replies,m.reactions,m.engagement_observed_at
         FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id
         WHERE ($1::bigint IS NULL OR m.source_id=$1)
