@@ -195,6 +195,7 @@ class SentimentEngine:
     def analyze(self, items: Sequence[SourceText]) -> list[dict[str, Any]]:
         if len(items) > 1000:
             raise ValueError("one analysis batch cannot exceed 1000 messages")
+        inference_at = _timestamp(datetime.now(timezone.utc), "inference_at")
         records: list[dict[str, Any]] = []
         groups: dict[str, list[tuple[int, str]]] = {}
         for item in items:
@@ -206,6 +207,7 @@ class SentimentEngine:
                 "source_id": item.source_id, "observed_at": observed,
                 "occurred_at": occurred, "content_sha256": content_hash,
                 "preprocess_version": PREPROCESS_VERSION, "language": language,
+                "inference_at": inference_at,
                 "model_results": {},
                 "status": "classified" if names else "unsupported_language",
             }
