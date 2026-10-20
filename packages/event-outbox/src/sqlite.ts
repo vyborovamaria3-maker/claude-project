@@ -72,3 +72,22 @@ export function failSqlite(db: SqliteDb, id: string, owner: string, leaseUntil: 
     AND processed_at IS NULL AND dead_lettered_at IS NULL`)
     .run(reason.slice(0,1000),maxAttempts,stamp,nextAttemptAt.toISOString(),id,owner,leaseUntil,stamp).changes===1;
 }
+
+
+/** Extend exactly one live claim, returning its new fencing timestamp. */
+export function renewSqlite(
+  db: SqliteDb, id: string, owner: string, leaseUntil: string, leaseMs: number,
+  now = new Date(),
+): string | null {
+  if (!Number.isInteger(leaseMs) || leaseMs < 1000 || leaseMs > 3_600_000 ||
+      !Number.isFinite(now.getTime())) throw new RangeError("Invalid leaseMs/now");
+  const prior = new Date(leaseUntil).getTime();
+  if (!Number.isFinite(prior)) throw new RangeError("Invalid leaseUntil");
+  const stamp = now.toISOString();
+  const next = new Date(Math.max(prior, now.getTime() + leaseMs)).toISOString();
+  const result = db.prepare(\`UPDATE outbox_events SET lease_until=?
+    WHERE id=? AND lease_owner=? AND lease_until=? AND lease_until>?
+      AND processed_at IS NULL AND dead_lettered_at IS NULL\`)
+    .run(next, id, owner, leaseUntil, stamp);
+  return result.changes === 1 ? next : null;
+}
