@@ -902,6 +902,15 @@ function persistEvents(db, kind, address, transactions) {
           kind,address,signature:tx.signature,payloadHash:hash,
           blockTime:tx.timestamp,observedAt,
         });
+        // A second opt-in gate limits expensive/derived token evidence.
+        // Still ONE source-owned SQLite transaction: raw + wallet + token
+        // observations roll back together when a lease-fenced task fails.
+        if (process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED === "true") {
+          require("./blockchain-token-swap-outbox.cjs").emitTokenSwapEvidenceOutbox(db,{
+            kind,address,signature:tx.signature,payloadHash:hash,
+            observedAt,transaction:tx,
+          });
+        }
       }
     }
   })();
