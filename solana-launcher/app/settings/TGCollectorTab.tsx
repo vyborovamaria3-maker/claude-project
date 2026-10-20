@@ -421,13 +421,16 @@ export default function TGCollectorTab() {
                     <button type="button" disabled={busy !== null} onClick={() => void command("resume", source)}
                       className="rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-300"><Play className="mr-1 inline h-3.5 w-3.5" /> Возобновить</button>
                   )}
-                  {!source.history_complete && (
-                    <button type="button" disabled={busy !== null || source.state === "running"}
-                      onClick={() => void command("history", source)}
-                      className="rounded-lg border border-primary-border px-3 py-2 text-xs text-primary disabled:opacity-40">
-                      {source.full_history ? "Продолжить историю" : "Собрать всю историю"}
-                    </button>
-                  )}
+                  <button type="button" disabled={busy !== null || source.state === "running"}
+                    onClick={() => {
+                      if (!source.history_complete || window.confirm(
+                        "Повторно проверить всю историю канала? Уже собранные посты сохранятся, но Telegram придётся перечитать доступную историю."
+                      )) void command("history", source);
+                    }}
+                    className="rounded-lg border border-primary-border px-3 py-2 text-xs text-primary disabled:opacity-40">
+                    {source.history_complete ? "Перепроверить историю" :
+                      source.full_history ? "Продолжить историю" : "Собрать всю историю"}
+                  </button>
                   <button type="button" disabled={busy !== null || !source.enabled || source.state === "running" || source.state === "delayed"} onClick={() => void command(source.state === "failed" ? "retry" : "sync", source)}
                     className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted disabled:opacity-30 hover:text-content"><RefreshCw className="mr-1 inline h-3.5 w-3.5" /> {source.state === "failed" ? "Повтор" : "Синхронизировать"}</button>
                   <button type="button" disabled={busy !== null || source.state === "running"} onClick={() => void command("remove", source)}
