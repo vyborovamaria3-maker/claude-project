@@ -67,7 +67,7 @@ export async function persistMessage(
      VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(peer_id,message_id) DO UPDATE SET text=EXCLUDED.text,last_seen_at=now(),source_id=EXCLUDED.source_id,
       matched_terms=(SELECT ARRAY(SELECT DISTINCT unnest(tg_discovery_mentions.matched_terms||EXCLUDED.matched_terms)))`,
       [lookup.peer_id,msg.id,lookup.identifier,lookup.title??lookup.identifier,msg.message.slice(0,8192),typeof msg.date==='number'?new Date(msg.date*1000):null,terms,sourceId]);
-    await tx.query('UPDATE tg_sources SET full_history=TRUE WHERE id=$1',[sourceId]);
+    // An observed keyword hit is evidence, not an operator request for full-history backfill.
    }
   }
   await replaceEvidence(tx, sourceId, msg);
