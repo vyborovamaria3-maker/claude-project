@@ -33,6 +33,13 @@ async function readMintAccount(rpcUrl: string, mint: string): Promise<{ decimals
 }
 
 async function recomputeFirstMention(tx: import("pg").PoolClient, mint: string): Promise<void> {
+  await tx.query(`DELETE FROM tg_token_first_mentions f
+    WHERE f.chain_id=$1 AND f.mint=$2
+      AND NOT EXISTS (SELECT 1 FROM tg_token_mentions tm
+        JOIN tg_messages m USING(source_id,message_id)
+        WHERE tm.chain_id=f.chain_id AND tm.mint=f.mint
+          AND tm.analysis_version=$3 AND tm.orphaned=FALSE AND m.deleted_at IS NULL)`,
+    [SOLANA_CHAIN_ID,mint,ANALYSIS_VERSION]);
   await tx.query(
     "WITH first_row AS (" +
     "SELECT tm.chain_id,tm.mint,tm.source_id,tm.message_id,tm.message_date,tm.observed_at," +
