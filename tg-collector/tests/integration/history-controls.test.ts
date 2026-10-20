@@ -49,7 +49,6 @@ test("CLI history preserves delayed and in-progress cursors", {
     assert.equal(sourceState.rows[0].history_complete,false);
   } finally {
     await pool.query("DELETE FROM tg_sources WHERE id=$1",[id]);
-    await pool.end();
   }
 });
 
@@ -80,5 +79,6 @@ test("a delayed recent-only job converted to full history cannot claim completio
       "next worker turn must start a verified scan from Telegram head");
   } finally {
     await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
+    await pool.end();
   }
 });
