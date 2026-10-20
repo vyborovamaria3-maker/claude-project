@@ -156,6 +156,8 @@ class RemoteSentimentEngine:
                     "preprocess_version": PREPROCESS_VERSION,
                     "status": "classified" if names else "unsupported_language",
                 }
+                if set(row) != set(expected) | {"model_results", "inference_at"}:
+                    raise ValueError("unexpected fields in remote sentiment result")
                 if any(row.get(key) != value for key, value in expected.items()):
                     raise ValueError("source provenance does not match input")
                 when = row.get("inference_at")
@@ -170,7 +172,11 @@ class RemoteSentimentEngine:
                     raise ValueError("model routing mismatch")
                 for name, result in row["model_results"].items():
                     spec = MODELS[name]
-                    if not isinstance(result, dict) or any((
+                    if not isinstance(result, dict) or set(result) != {
+                        "model", "revision", "task", "max_tokens", "labels"
+                    }:
+                        raise ValueError("unexpected fields in remote model output")
+                    if any((
                         result.get("model") != spec.repository,
                         result.get("revision") != self.revisions[name],
                         result.get("task") != spec.task,
