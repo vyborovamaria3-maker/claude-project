@@ -6,8 +6,8 @@ import { source, sourceId, rawPage, recordRawPage, storePage } from "../../../li
 import { Page } from "../../../lib/archive/model";
 import {recordRaw,recordRawBatch} from '../../../lib/trade/intelligence-store';
 import type { PoolClient } from "pg";
-import { emitXTweetOutbox } from "./intelligence-outbox";
-import { emitXTokenLinksInvalidation, xVerifiedTokenLinksEnabled } from "./verified-token-links";
+import { emitXTweetOutbox, xIntelligenceOutboxEnabled } from "./intelligence-outbox";
+import { emitXTokenLinksInvalidation } from "./verified-token-links";
 import {createHash} from "node:crypto";
 export interface PersistenceLease { workerId: string; attempt: number; accountName: string; accountOwner: string; }
 async function assertPersistenceLease(client: PoolClient, taskId: number | undefined, lease?: PersistenceLease) {
@@ -122,7 +122,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
       // Only when enabled: lock existing tweets before the upsert so a proof
       // worker cannot commit a stale mint link between reading old text and
       // storing the new source revision. Never perform RPC inside this tx.
-      const oldRows=xVerifiedTokenLinksEnabled()
+      const oldRows=xIntelligenceOutboxEnabled()
         ? (await client.query<{tweet_id:string;text:string|null;author_id:string|null;posted_at:string|number|null}>(
           "SELECT tweet_id,text,author_id,posted_at FROM twitter_tweets " +
           "WHERE tweet_id=ANY($1::text[]) ORDER BY tweet_id FOR UPDATE",
@@ -142,7 +142,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
         return `($${off + 1},$${off + 2},$${off + 3},$${off + 4},$${off + 5},$${off + 6},$${off + 7},$${off + 8},$${off + 9},$${off + 10},$${off + 11},$${off + 12},$${off + 13},$${off + 14})`;
       }).join(",");
 
-      await client.query(
+      const updatedTweets=await client.query<{tweet_id:string}>(
         `INSERT INTO twitter_tweets
            (tweet_id, author_id, handle, text, url, views, likes, retweets, replies, is_verified, posted_at, first_seen_at, updated_at, source_query)
          VALUES ${placeholders}
@@ -156,10 +156,12 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
            posted_at = COALESCE(EXCLUDED.posted_at,twitter_tweets.posted_at),
            source_query = COALESCE(EXCLUDED.source_query, twitter_tweets.source_query),
            updated_at = EXCLUDED.updated_at
-         WHERE EXCLUDED.updated_at >= twitter_tweets.updated_at`,
+         WHERE EXCLUDED.updated_at >= twitter_tweets.updated_at
+         RETURNING tweet_id`,
         values
       );
 
+      const genuinelyWrittenIds=new Set(updatedTweets.rows.map(row=>row.tweet_id));
       if (taskId !== undefined) {
         const inserted = await client.query(
           "INSERT INTO x_task_tweets(task_id,tweet_id) SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING",
@@ -213,7 +215,7 @@ export async function persistTweets(mint: string | null, tweets: unknown[], sour
       // Unresolved author IDs are intentionally not re-identified from handles.
       for (const t of chunk) {
         const previous=previousById.get(t.id);
-        if(previous && previous.text!==t.text){
+        if(previous && genuinelyWrittenIds.has(t.id) && previous.text!==t.text){
           const authorId=t.authorId??previous.author_id;
           if(authorId){
             const sourceRevisionSha256=createHash("sha256")
