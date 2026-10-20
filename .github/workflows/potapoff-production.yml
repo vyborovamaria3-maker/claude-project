@@ -95,6 +95,7 @@ jobs:
 
           "${SCP[@]}" \
             solana-launcher/scripts/backup-production.sh \
+            solana-launcher/scripts/verify-backup-restore.sh \
             solana-launcher/scripts/healthcheck-production.sh \
             solana-launcher/scripts/deploy-production.sh \
             "$SERVER_USER@$SERVER_HOST:/opt/potapoff-deploy/scripts/"
