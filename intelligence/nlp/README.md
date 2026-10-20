@@ -53,7 +53,7 @@ packages into the normal collectors or the production Intelligence Docker
 image. Model downloads can be hundreds of MB; check disk space and licenses.
 
 ```bash
-python -m pip install -r intelligence/requirements-sentiment.txt
+python -m pip install -r intelligence/requirements.txt -r intelligence/requirements-sentiment.txt
 ```
 
 Explicit command for public model revision lookup, and optional local download:
