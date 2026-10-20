@@ -354,3 +354,15 @@ disabled until a 2-message benchmark proves compatibility and headroom.
 Avoid continuous high-throughput sentiment jobs while source coverage is
 incomplete. No production model benchmark or sustained combined laptop
 load test has yet been performed.
+
+## Codespaces one-command real CPU smoke and private endpoint
+
+See **[CODESPACES.md](CODESPACES.md)** for the exact step-by-step commands.
+Run `gh pr checkout 142` and then `bash intelligence/nlp/scripts/codespaces_setup.sh`
+from an existing GitHub Codespace terminal. Setup installs CPU-only Torch in an
+isolated environment, downloads only the approved pinned models, and tests
+real forward passes on three synthetic texts. No external LLM keys, collector
+credentials or laptop GPU are required. Optional localhost-only bearer-
+authenticated endpoint: `bash intelligence/nlp/scripts/codespaces_api.sh`.
+Never make its forwarded port public. Codespaces is for trials, not 24/7
+free hosting. Tests cannot prove real-weight compatibility until run there.
