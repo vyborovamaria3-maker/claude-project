@@ -123,3 +123,36 @@ test("RPC candidate promotion ignores soft-deleted message observations",{
     await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
   }
 });
+
+test("restoring a deleted message never reactivates a pre-strict mint",{
+  skip: !process.env.DATABASE_URL,
+},async()=>{
+  const {pool,migrate}=await import("../../src/db.js");
+  await migrate();
+  const suffix=randomUUID().replaceAll("-","").slice(0,13);
+  const mint="legacy_"+suffix,chain="solana-mainnet";
+  const source=(await pool.query<{id:string}>(
+    "INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text",
+    ["untrusted_"+suffix])).rows[0].id;
+  try {
+    await pool.query(`INSERT INTO tg_tokens(chain_id,mint,decimals,metadata_status)
+      VALUES($1,$2,9,'verified')`,[chain,mint]);
+    await pool.query(`INSERT INTO tg_messages(source_id,message_id,text,posted_at,deleted_at)
+      VALUES($1,912,'legacy candidate',now(),now())`,[source]);
+    await pool.query(`INSERT INTO tg_token_mentions(source_id,message_id,chain_id,mint,
+      mention_type,resolution_status,confidence,message_date,analysis_version,orphaned)
+      VALUES($1,912,$2,$3,'mint','confirmed',1,now(),4,TRUE)`,[source,chain,mint]);
+    await pool.query(`UPDATE tg_messages SET deleted_at=NULL
+      WHERE source_id=$1 AND message_id=912`,[source]);
+    const result=(await pool.query<{orphaned:boolean}>(`
+      SELECT orphaned FROM tg_token_mentions WHERE source_id=$1 AND message_id=912`,
+      [source])).rows[0];
+    assert.equal(result.orphaned,true,"legacy unverified token remains unconfirmed");
+    const first=(await pool.query<{n:number}>(`SELECT count(*)::integer AS n
+      FROM tg_token_first_mentions WHERE chain_id=$1 AND mint=$2`,[chain,mint])).rows[0];
+    assert.equal(first.n,0);
+  } finally {
+    await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
+    await pool.query("DELETE FROM tg_tokens WHERE chain_id=$1 AND mint=$2",[chain,mint]);
+  }
+});
