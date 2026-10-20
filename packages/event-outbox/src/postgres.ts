@@ -89,7 +89,7 @@ export async function renewPostgres(
     throw new RangeError("Invalid leaseMs");
   }
   const result = await client.query(`UPDATE outbox_events
-    SET lease_until=GREATEST(lease_until, NOW() + ($4::integer * interval '1 millisecond'))
+    SET lease_until=GREATEST(lease_until, DATE_TRUNC('milliseconds', NOW()) + ($4::integer * interval '1 millisecond'))
     WHERE id=$1 AND lease_owner=$2 AND lease_until=$3::timestamptz
       AND lease_until>NOW() AND processed_at IS NULL AND dead_lettered_at IS NULL
     RETURNING lease_until`, [id, owner, leaseUntil, leaseMs]);
