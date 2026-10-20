@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from typing import Any
@@ -44,6 +45,8 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-items", type=int, default=100)
     parser.add_argument("--device", default="cpu", help="cpu or cuda:0")
+    parser.add_argument("--collector-db", choices=("x", "tg"),
+                        help="read bounded latest messages from an existing read-only PG collector")
     parser.add_argument("--check-config", action="store_true",
                         help="validate model SHA revisions; do not load models or read stdin")
     args = parser.parse_args(argv)
@@ -60,16 +63,25 @@ def run(argv: list[str] | None = None) -> int:
             }, sort_keys=True))
             return 0
 
-        items = []
-        # A bounded stream, not an unlimited readlines()/bulk provider fetch.
-        for line in sys.stdin:
-            if len(line) > 25000:
-                raise ValueError("input line exceeds limit")
-            if not line.strip():
-                continue
-            if len(items) >= args.max_items:
-                raise ValueError("input item limit exceeded")
-            items.append(_source_text(json.loads(line)))
+        if args.collector_db:
+            if os.environ.get("SENTIMENT_SOURCE_READ_ENABLED") != "true":
+                raise ValueError("read-only collector scan requires explicit opt-in")
+            from intelligence.nlp.sources import read_collector_texts
+            name = "X_SOURCE_DATABASE_URL" if args.collector_db == "x" else "TG_SOURCE_DATABASE_URL"
+            items = read_collector_texts(
+                args.collector_db, dsn=os.environ.get(name, ""), limit=args.max_items
+            )
+        else:
+            items = []
+            # A bounded stream, not an unlimited readlines()/bulk provider fetch.
+            for line in sys.stdin:
+                if len(line) > 25000:
+                    raise ValueError("input line exceeds limit")
+                if not line.strip():
+                    continue
+                if len(items) >= args.max_items:
+                    raise ValueError("input item limit exceeded")
+                items.append(_source_text(json.loads(line)))
         for result in engine.analyze(items):
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
