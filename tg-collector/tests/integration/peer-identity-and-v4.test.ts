@@ -155,6 +155,40 @@ test("v4 re-analysis reuses a recent RPC-verified negative mint result", {
   }
 });
 
+test("old verified metadata without strict mint layout attestation stays unconfirmed",{
+  skip:!process.env.DATABASE_URL,
+},async()=>{
+  const {pool,migrate}=await import("../../src/db.js");
+  const {persistMessage}=await import("../../src/persistence/messages.js");
+  await migrate();
+  const mint="So11111111111111111111111111111111111111112";
+  const wasPresent=(await pool.query("SELECT 1 FROM tg_tokens WHERE chain_id='solana-mainnet' AND mint=$1",[mint])).rowCount;
+  const source=(await pool.query<{id:string}>(`INSERT INTO tg_sources(identifier)
+    VALUES($1) RETURNING id::text`,["unattested_"+randomUUID().replaceAll("-","").slice(0,11)])).rows[0].id;
+  try{
+    await pool.query(`INSERT INTO tg_tokens(chain_id,mint,decimals,metadata_status,metadata_provider)
+      VALUES('solana-mainnet',$1,9,'verified','old-parser')
+      ON CONFLICT DO NOTHING`,[mint]);
+    const tx=await pool.connect();
+    try{
+      await tx.query("BEGIN");
+      await persistMessage(tx,source,{id:881,message:"Candidate "+mint,date:1792065600});
+      await tx.query("COMMIT");
+    }catch(error){await tx.query("ROLLBACK");throw error;}finally{tx.release();}
+    const candidate=(await pool.query<{resolution_status:string}>(`
+      SELECT resolution_status FROM tg_token_candidates
+      WHERE source_id=$1 AND message_id=881 AND candidate_key=$2 AND analysis_version=4`,[source,mint])).rows[0];
+    assert.equal(candidate.resolution_status,"unresolved");
+    const mentions=(await pool.query<{count:number}>(`
+      SELECT count(*)::integer AS count FROM tg_token_mentions
+      WHERE source_id=$1 AND message_id=881 AND orphaned=FALSE`,[source])).rows[0];
+    assert.equal(mentions.count,0);
+  }finally{
+    await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
+    if(!wasPresent)await pool.query("DELETE FROM tg_tokens WHERE chain_id='solana-mainnet' AND mint=$1",[mint]);
+  }
+});
+
 test("v4 re-analysis reuses an already verified Solana mint, including hidden entities", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
