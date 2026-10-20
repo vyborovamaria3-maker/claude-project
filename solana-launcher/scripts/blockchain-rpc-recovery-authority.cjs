@@ -4,6 +4,7 @@ const {openSync,closeSync,realpathSync,existsSync,statSync}=require("node:fs");
 const {isAbsolute,dirname,basename,join}=require("node:path");
 const {randomBytes}=require("node:crypto");
 const {openRpcChallengeStore,recoverRpcChallengeStore}=require("./blockchain-rpc-challenge-store.cjs");
+const {scopeFor}=require("./blockchain-rpc-rollback-anchor.cjs");
 const APP_ID=0x41523647; // AR6G, separate from the challenge DB
 const epoch=v=>typeof v==="string"&&/^[a-f0-9]{64}$/.test(v);
 function canonical(file){
@@ -18,8 +19,8 @@ function distinct(a,b){
     if(x.dev===y.dev&&x.ino===y.ino)throw new Error("separate_recovery_database_required");
   }
 }
-function createRpcRecoveryAuthority(filename,{challengeFilename,clock=Date.now}={}){
-  return connect(filename,{challengeFilename,clock},true);
+function createRpcRecoveryAuthority(filename,options={}){
+  return connect(filename,options,true);
 }
 function openRpcRecoveryAuthority(filename,options={}){
   return connect(filename,options,false);
@@ -28,7 +29,7 @@ function openRpcRecoveryAuthority(filename,options={}){
  * Missing/corrupt authorities are never automatically recreated. No environment
  * lookup, network, secrets, backup copying or source DB discovery is performed.
  */
-function connect(filename,{challengeFilename,clock=Date.now},create){
+function connect(filename,{challengeFilename,clock=Date.now,anchor,allowAnchorRecovery=false},create){
   const authorityPath=canonical(filename);
   if(typeof clock!=="function")throw new TypeError("trusted_recovery_clock_required");
   if(create){
@@ -65,6 +66,12 @@ function connect(filename,{challengeFilename,clock=Date.now},create){
         db.prepare("INSERT INTO recovery_state VALUES(1,?,'active',?,?)")
           .run(initial,canonical(challengeFilename),authorityPath);
         db.prepare("INSERT INTO recovery_history VALUES(?,NULL,?)").run(initial,time());
+        if(anchor){
+          const head=readAnchor();
+          if(head.sequence!==0)throw new Error("anchor_bootstrap_not_fresh");
+          db.exec("CREATE TABLE recovery_anchor (id INTEGER PRIMARY KEY CHECK(id=1),anchor_id TEXT NOT NULL,head TEXT NOT NULL,sequence INTEGER NOT NULL) STRICT");
+          db.prepare("INSERT INTO recovery_anchor VALUES(1,?,?,?)").run(head.id,head.head,head.sequence);
+        }
         db.pragma("application_id="+APP_ID);db.pragma("user_version=1");
       }).immediate();
     }
@@ -78,6 +85,50 @@ function connect(filename,{challengeFilename,clock=Date.now},create){
       return s;
     };
     row();
+    const anchored=!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='recovery_anchor'").get();
+    if(anchored&&!anchor)throw new Error("independent_rollback_anchor_required");
+    if(anchor&&!anchored)throw new Error("explicit_anchored_bootstrap_required");
+    function readAnchor(){
+      if(!anchor||typeof anchor.readHead!=="function"||typeof anchor.advance!=="function")
+        throw new Error("independent_rollback_anchor_required");
+      const h=anchor.readHead();
+      if(!h||![h.id,h.head,h.scope].every(epoch)||!Number.isSafeInteger(h.sequence)||h.sequence<0||
+         h.scope!==scopeFor(authorityPath))throw new Error("rollback_anchor_scope_invalid");
+      if(anchor.storageFilename){
+        distinct(filename,anchor.storageFilename);
+        distinct(create?challengeFilename:row().challenge_path,anchor.storageFilename);
+      }
+      return h;
+    }
+    function checkAnchor(permitMismatch=false){
+      if(!anchored)return null;
+      const saved=db.prepare("SELECT * FROM recovery_anchor WHERE id=1").get(),h=readAnchor();
+      if(!saved||saved.anchor_id!==h.id||h.sequence<saved.sequence||
+         (h.sequence===saved.sequence&&h.head!==saved.head))throw new Error("rollback_anchor_regressed_or_replaced");
+      if(!permitMismatch&&(saved.head!==h.head||saved.sequence!==h.sequence))throw new Error("joint_store_rollback_or_interrupted_commit");
+      return h;
+    }
+    db.transaction(()=>checkAnchor(allowAnchorRecovery)).immediate();
+    function mutate(operation,callback,permitMismatch=false,preflight){
+      return db.transaction((...args)=>{
+        const before=checkAnchor(permitMismatch);
+        if(preflight)preflight(...args);
+        const next=before?anchor.advance({expectedHead:before.head,scope:before.scope,operation}):null;
+        if(before){
+          const actual=readAnchor();
+          if(!next||actual.id!==before.id||actual.head!==next.head||actual.head===before.head||
+             actual.sequence!==before.sequence+1)throw new Error("rollback_anchor_advance_invalid");
+        }
+        const result=callback(...args);
+        if(next){
+          const actual=readAnchor();
+          if(actual.id!==before.id||actual.head!==next.head||actual.sequence!==before.sequence+1)
+            throw new Error("rollback_anchor_advance_invalid");
+          db.prepare("UPDATE recovery_anchor SET head=?,sequence=? WHERE id=1").run(actual.head,actual.sequence);
+        }
+        return result;
+      });
+    }
     if(db.pragma("journal_mode=WAL",{simple:true})!=="wal")throw new Error("recovery_wal_required");
     db.pragma("synchronous=FULL");
     const summary=s=>({epoch:s.epoch,phase:s.phase});
@@ -88,18 +139,21 @@ function connect(filename,{challengeFilename,clock=Date.now},create){
       return s;
     };
     function challenges(createFile){
-      return db.transaction(()=>{
+      const transaction=(createFile?callback=>mutate("create_challenges",callback,false,()=>active()):callback=>db.transaction(()=>{
+        checkAnchor();return callback();
+      }));
+      return transaction(()=>{
         const s=active();
         if(createFile)closeSync(openSync(s.challenge_path,"wx",0o600));
         const store=openRpcChallengeStore(s.challenge_path,{
           recoveryEpoch:s.epoch,clock,fileMustExist:true,allowInitialize:createFile,
         });
-        const issue=db.transaction((binding,ttl)=>{
+        const issue=mutate("issue",(binding,ttl)=>{
           active(s.epoch);return store.issue(binding,ttl);
-        });
-        const consume=db.transaction(record=>{
+        },false,()=>active(s.epoch));
+        const consume=mutate("consume",record=>{
           active(s.epoch);return store.consumeChallenge(record);
-        });
+        },false,()=>active(s.epoch));
         // Lock ordering is always authority -> challenge. Rotation cannot race
         // past an authorized challenge commit. Old handles fail after rotation.
         return {issue:(binding,ttl)=>issue.immediate(binding,ttl),
@@ -107,18 +161,40 @@ function connect(filename,{challengeFilename,clock=Date.now},create){
       }).immediate();
     }
     return {
-      status:()=>summary(row()),
+      status:()=>db.transaction(()=>{checkAnchor();return summary(row())}).immediate(),
+      recoveryStatus:()=>{
+        if(!allowAnchorRecovery||!anchored)throw new Error("explicit_anchor_recovery_mode_required");
+        return db.transaction(()=>({ ...summary(row()),anchor:checkAnchor(true) })).immediate();
+      },
+      beginAnchoredRecovery:(expectedEpoch,expectedAnchorHead)=>{
+        if(!allowAnchorRecovery||!anchored)throw new Error("explicit_anchor_recovery_mode_required");
+        return db.transaction(()=>{
+          const current=checkAnchor(true);
+          if(!epoch(expectedAnchorHead)||current.head!==expectedAnchorHead)
+            throw new Error("rollback_anchor_compare_failed");
+          if(row().epoch!==expectedEpoch)throw new Error("recovery_authority_epoch_mismatch");
+          return mutate("recover_rollback",()=>{
+            const s=row(),next=randomBytes(32).toString("hex");
+            db.prepare("INSERT INTO recovery_history VALUES(?,?,?)").run(next,s.epoch,time());
+            db.prepare("UPDATE recovery_state SET epoch=?,phase='recovering' WHERE id=1").run(next);
+            return summary(row());
+          },true).immediate();
+        }).immediate();
+      },
       createChallenges:()=>challenges(true),
       openChallenges:()=>challenges(false),
-      beginRecovery:expectedEpoch=>db.transaction(()=>{
+      beginRecovery:expectedEpoch=>mutate("begin_recovery",()=>{
         if(!epoch(expectedEpoch))throw new TypeError("expected_recovery_epoch_required");
         const s=active(expectedEpoch),next=randomBytes(32).toString("hex");
         // Unique history prevents generation reuse. Never accept an imported epoch.
         db.prepare("INSERT INTO recovery_history VALUES(?,?,?)").run(next,s.epoch,time());
         db.prepare("UPDATE recovery_state SET epoch=?,phase='recovering' WHERE id=1").run(next);
         return summary(row());
+      },false,()=>{
+        if(!epoch(expectedEpoch))throw new TypeError("expected_recovery_epoch_required");
+        active(expectedEpoch);
       }).immediate(),
-      finishRecovery:(expectedEpoch,previousEpoch)=>db.transaction(()=>{
+      finishRecovery:(expectedEpoch,previousEpoch)=>mutate("finish_recovery",()=>{
         const s=row();
         if(!epoch(expectedEpoch)||s.epoch!==expectedEpoch)throw new Error("recovery_authority_epoch_mismatch");
         let store;
@@ -138,6 +214,8 @@ function connect(filename,{challengeFilename,clock=Date.now},create){
         }finally{if(store)store.close()}
         db.prepare("UPDATE recovery_state SET phase='active' WHERE id=1").run();
         return summary(row());
+      },false,()=>{
+        if(!epoch(expectedEpoch)||row().epoch!==expectedEpoch)throw new Error("recovery_authority_epoch_mismatch");
       }).immediate(),
       close:()=>db.close(),
     };

@@ -146,8 +146,12 @@ async function acceptanceTests(){
       "challenge_unknown_expired_or_consumed","valid old signature cannot bypass recovery revocation");
     store.close();store=null;
     const {createRpcRecoveryAuthority}=require("./blockchain-rpc-recovery-authority.cjs");
-    const authority=createRpcRecoveryAuthority(join(dir,"authority.sqlite"),{
-      challengeFilename:join(dir,"managed.sqlite"),clock:()=>now,
+    const {createRpcRollbackAnchor}=require("./blockchain-rpc-rollback-anchor.cjs");
+    const authorityFile=join(dir,"authority.sqlite"),anchor=createRpcRollbackAnchor(join(dir,"witness.sqlite"),{
+      authorityFilename:authorityFile,
+    });
+    const authority=createRpcRecoveryAuthority(authorityFile,{
+      challengeFilename:join(dir,"managed.sqlite"),clock:()=>now,anchor,
     });
     try{
       store=authority.createChallenges();
@@ -167,7 +171,7 @@ async function acceptanceTests(){
       assert.equal((await acceptRpcProvenance(event,envelope(freshPayload),trust,
         {now,challenge:freshNonce.challenge},store.consumeChallenge)).challengeConsumed,true);
       store.close();store=null;
-    }finally{if(store){store.close();store=null}authority.close()}
+    }finally{if(store){store.close();store=null}authority.close();anchor.close()}
   }finally{if(store)store.close();rmSync(dir,{recursive:true,force:true});}
   console.log("[blockchain-rpc-provenance-test] OK: signed witness, pins, cluster, clocks, tampering, atomic replay refusal and no confidence promotion");
 }
