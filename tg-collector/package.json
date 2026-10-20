@@ -6,6 +6,7 @@
   "scripts": {
     "login": "tsx src/cli.ts login",
     "add": "tsx src/cli.ts add",
+    "history": "tsx src/cli.ts history",
     "list": "tsx src/cli.ts list",
     "migrate": "tsx src/cli.ts migrate",
     "worker": "tsx src/worker.ts",
