@@ -28,7 +28,7 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
    keyword=EXCLUDED.keyword,last_seen_at=now()`,[candidate.peer,candidate.username,candidate.title,keyword]);
   const found=(await tx.query<{connected_at:Date|null}>("SELECT connected_at FROM tg_discovered_sources WHERE peer_id=$1",[candidate.peer])).rows[0];
   // A source previously removed or paused by the operator must not be resurrected.
-  const existing=await tx.query("SELECT id FROM tg_sources WHERE peer_id=$1 OR identifier=$2",[candidate.peer,candidate.username]);
+  const existing=await tx.query("SELECT id FROM tg_sources WHERE peer_id=$1",[candidate.peer]);
   if (existing.rowCount) await tx.query(`UPDATE tg_discovered_sources SET source_id=$2,
    connected_at=COALESCE(connected_at,now()) WHERE peer_id=$1`,[candidate.peer,existing.rows[0].id]);
   const budget=(await tx.query<{added:number;total:number}>(`SELECT COALESCE((SELECT added FROM tg_discovery_daily
@@ -43,9 +43,9 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
      ON CONFLICT(day) DO UPDATE SET added=tg_discovery_daily.added+1`);
    }
   }
-  if(msg||fullCollection)await tx.query('UPDATE tg_sources SET full_history=TRUE WHERE peer_id=$1 OR identifier=$2',[candidate.peer,candidate.username]);
+  if(msg||fullCollection)await tx.query('UPDATE tg_sources SET full_history=TRUE WHERE peer_id=$1',[candidate.peer]);
   if(msg&&typeof msg.message==='string'){
-   const linked=(await tx.query<{id:string;enabled:boolean}>('SELECT id::text,enabled FROM tg_sources WHERE peer_id=$1 OR identifier=$2',[candidate.peer,candidate.username])).rows[0];
+   const linked=(await tx.query<{id:string;enabled:boolean}>('SELECT id::text,enabled FROM tg_sources WHERE peer_id=$1',[candidate.peer])).rows[0];
    await tx.query(`INSERT INTO tg_discovery_mentions(peer_id,message_id,username,title,text,posted_at,matched_terms,source_id)
     VALUES($1,$2,$3,$4,$5,$6,ARRAY[$7]::text[],$8) ON CONFLICT(peer_id,message_id) DO UPDATE SET
     text=EXCLUDED.text,last_seen_at=now(),source_id=EXCLUDED.source_id,
