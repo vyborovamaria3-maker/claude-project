@@ -223,6 +223,11 @@ class SentimentEngine:
 
     @classmethod
     def from_environment(cls, *, backend: PredictionBackend | None = None) -> "SentimentEngine":
+        if os.environ.get("SENTIMENT_REMOTE_ENABLED") == "true":
+            if backend is not None:
+                raise ValueError("remote sentiment cannot use a local model backend")
+            from intelligence.nlp.remote import RemoteSentimentEngine
+            return RemoteSentimentEngine.from_environment()
         revisions = {key: os.environ.get(model.revision_env, "") for key, model in MODELS.items()}
         return cls(
             revisions, backend=backend if backend is not None else LocalTransformersBackend(
