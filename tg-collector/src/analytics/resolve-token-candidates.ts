@@ -107,10 +107,11 @@ async function main(): Promise<void> {
       }
 
       await tx.query(
-        "INSERT INTO tg_tokens(chain_id,mint,decimals,token_program,metadata_status,metadata_provider,metadata_updated_at) " +
-        "VALUES($1,$2,$3,$4,'partial','alchemy-solana-rpc',now()) " +
+        "INSERT INTO tg_tokens(chain_id,mint,decimals,token_program,metadata_status,metadata_provider,metadata_updated_at,mint_layout_verified_at) " +
+        "VALUES($1,$2,$3,$4,'partial','alchemy-solana-rpc',now(),now()) " +
         "ON CONFLICT(chain_id,mint) DO UPDATE SET decimals=EXCLUDED.decimals,token_program=EXCLUDED.token_program," +
-        "metadata_provider=EXCLUDED.metadata_provider,metadata_updated_at=now()",
+        "metadata_status=CASE WHEN tg_tokens.metadata_status='verified' THEN 'verified' ELSE 'partial' END," +
+        "metadata_provider=EXCLUDED.metadata_provider,metadata_updated_at=now(),mint_layout_verified_at=now()",
         [SOLANA_CHAIN_ID, candidate.mint, mintInfo.decimals, mintInfo.owner],
       );
       await tx.query(
