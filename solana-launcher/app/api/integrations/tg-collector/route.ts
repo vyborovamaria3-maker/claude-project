@@ -196,6 +196,9 @@ export async function GET(request: NextRequest) {
       p.query(`SELECT s.id::text, s.identifier, s.current_username, s.peer_id, s.title, s.enabled,
         s.history_partial,s.full_history,s.history_complete,s.history_low_message_id::text, s.last_message_id::text, s.last_success_at,
         COALESCE(mc.message_count,0)::int AS message_count,
+        (SELECT count(*)::int FROM tg_messages legacy
+          WHERE legacy.source_id=s.id AND legacy.deleted_at IS NULL
+            AND legacy.entities_observed_at IS NULL) AS entities_unverified,
         j.state, j.run_at, j.attempts, j.scanned_count, j.last_error,
         (SELECT parent.identifier FROM tg_source_discussions ds JOIN tg_sources parent ON parent.id=ds.channel_source_id WHERE ds.discussion_source_id=s.id LIMIT 1) AS discussion_for,
         (SELECT status FROM tg_source_discussions ds WHERE ds.channel_source_id=s.id) AS discussion_status
