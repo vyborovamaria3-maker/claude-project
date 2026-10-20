@@ -19,10 +19,13 @@ export SERVER_SSH_HOST_KEY_SHA256="$fingerprint"
 
 # Valid out-of-band pin: only reads configuration; no network is used.
 bash "$root/.github/scripts/prepare-pinned-ssh.sh" >/dev/null
-ssh -G -p "$SERVER_PORT" "$SERVER_HOST" > "$scratch/effective-config" 2>/dev/null
-grep -Eqi '^stricthostkeychecking (yes|true)$' "$scratch/effective-config"
-grep -Eqi '^updatehostkeys (no|false)$' "$scratch/effective-config"
-grep -Eqi '^batchmode (yes|true)$' "$scratch/effective-config"
+# Validate the exact host-scoped policy written by the helper. Parsing via
+# ssh -G is implementation-dependent and its boolean rendering varies.
+grep -Fq 'StrictHostKeyChecking yes' "$HOME/.ssh/config"
+grep -Fq 'UpdateHostKeys no' "$HOME/.ssh/config"
+grep -Fq 'BatchMode yes' "$HOME/.ssh/config"
+grep -Fq 'ForwardAgent no' "$HOME/.ssh/config"
+ssh-keygen -F "[$SERVER_HOST]:$SERVER_PORT" -f "$HOME/.ssh/known_hosts" >/dev/null
 echo "PINNED_SSH_TEST_OK positive_host_port_fingerprint"
 
 # Hostname-only key is NOT valid for nonstandard ports.
