@@ -215,3 +215,13 @@ test("real temporary PostgreSQL sources + destination counters remain separate f
     await admin.end();
   }
 });
+
+test("quality samples recognize canonical signed peer IDs instead of classifying valid channels as missing",()=>{
+  const sample=inspectSourceSamples("tg",[{
+    peer_id:"-100123456789",message_id:"42",
+    deleted_at:null,collected_at:new Date("2026-10-20T01:00:00Z"),
+  }]);
+  assert.equal(sample.candidateEligible,1);
+  assert.equal(sample.excluded,0);
+  assert.equal(sample.historicalCoverage,"unknown");
+});
