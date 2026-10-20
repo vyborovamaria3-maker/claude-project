@@ -113,6 +113,48 @@ test("v4 leaves pending, unverified Solana address records unresolved", {
   }
 });
 
+test("v4 re-analysis reuses a recent RPC-verified negative mint result", {
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const {pool,migrate} = await import("../../src/db.js");
+  const {persistMessage} = await import("../../src/persistence/messages.js");
+  await migrate();
+  const address = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  const id = "neg_cache_"+randomUUID().replaceAll("-","").slice(0,12);
+  const source=(await pool.query<{id:string}>(
+    "INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text",[id])).rows[0].id;
+  try {
+    const tx=await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      await tx.query(`INSERT INTO tg_messages(source_id,message_id,text,analysis_version)
+        VALUES($1,777,$2,3)`,[source,"Old post "+address]);
+      await tx.query(`INSERT INTO tg_token_candidates(source_id,message_id,chain_id,
+        candidate_type,candidate_key,raw_value,analysis_version,resolution_status,
+        confidence,provider,checked_at)
+        VALUES($1,777,'solana-mainnet','address',$2,$2,3,'not_token',0.95,
+          'alchemy-solana-rpc',now())`,[source,address]);
+      await persistMessage(tx,source,{id:777,message:"Old post "+address,
+        date:1792065600});
+      await tx.query("COMMIT");
+    } catch (error) {await tx.query("ROLLBACK");throw error;}
+    finally{tx.release();}
+    const result=await pool.query<{resolution_status:string;provider:string}>(`
+      SELECT resolution_status,provider FROM tg_token_candidates
+      WHERE source_id=$1 AND message_id=777 AND candidate_key=$2 AND analysis_version=4`,
+      [source,address]);
+    assert.equal(result.rows[0]?.resolution_status,"not_token");
+    assert.equal(result.rows[0]?.provider,"alchemy-solana-rpc");
+    const active=(await pool.query<{total:number}>(`
+      SELECT count(*)::integer AS total FROM tg_token_mentions
+      WHERE source_id=$1 AND message_id=777 AND analysis_version=4 AND orphaned=FALSE`,
+      [source])).rows[0].total;
+    assert.equal(active,0);
+  } finally {
+    await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
+  }
+});
+
 test("v4 re-analysis reuses an already verified Solana mint, including hidden entities", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
