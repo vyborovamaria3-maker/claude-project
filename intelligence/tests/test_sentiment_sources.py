@@ -58,7 +58,7 @@ class SentimentSourcesTests(unittest.TestCase):
         self.assertIn("FROM twitter_tweets", query)
         self.assertIn("updated_at", query, "current text must use latest observed update timestamp")
         self.assertEqual(args, (3,))
-        self.assertNotIn("UPDATE", query.upper())
+        self.assertTrue(query.lstrip().upper().startswith("SELECT"))
         self.assertEqual(calls[0][1]["connect_timeout"], 5)
 
     def test_tg_uses_peer_id_not_database_surrogate_and_skips_deleted(self):
@@ -69,7 +69,7 @@ class SentimentSourcesTests(unittest.TestCase):
         self.assertIn("m.deleted_at IS NULL", query)
         self.assertIn("s.peer_id", query)
         self.assertIn("JOIN tg_sources", query)
-        self.assertNotIn("UPDATE", query.upper())
+        self.assertTrue(query.lstrip().upper().startswith("SELECT"))
 
     def test_no_query_run_for_invalid_limit_or_source(self):
         def connect(*a, **kw):
