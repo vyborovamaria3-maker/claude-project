@@ -56,6 +56,18 @@ image. Model downloads can be hundreds of MB; check disk space and licenses.
 python -m pip install -r intelligence/requirements-sentiment.txt
 ```
 
+Explicit command for public model revision lookup, and optional local download:
+
+```bash
+python -m intelligence.nlp.prefetch --models cryptobert fintwitbert rubert
+python -m intelligence.nlp.prefetch --models cryptobert fintwitbert rubert --download
+```
+
+The first command queries only repository metadata; the second downloads
+approved tokenizer/config/safetensors files into the operator's local cache
+and prints the exact model commit SHA environment variables. On Windows
+PowerShell, set each printed value using `$env:VARIABLE="sha"`.
+
 Retrieve *real* upstream immutable 40-character commit revisions for **all**
 three repositories before running. Example explicit preparation script:
 
