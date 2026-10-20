@@ -56,6 +56,7 @@ class SentimentSourcesTests(unittest.TestCase):
         self.assertEqual(conn.db_cursor.statements[0], ("SET TRANSACTION READ ONLY", None))
         query, args = conn.db_cursor.statements[1]
         self.assertIn("FROM twitter_tweets", query)
+        self.assertIn("updated_at", query, "current text must use latest observed update timestamp")
         self.assertEqual(args, (3,))
         self.assertNotIn("UPDATE", query.upper())
         self.assertEqual(calls[0][1]["connect_timeout"], 5)
