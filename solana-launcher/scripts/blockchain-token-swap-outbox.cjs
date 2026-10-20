@@ -5,7 +5,7 @@
  * only when a single SOL/WSOL-quoted wallet swap leg reconciles to balances.
  */
 const {parseEvidence}=require("./blockchain-forensics-core.cjs");
-const {decodedBytes,ensureSchema}=require("./blockchain-intelligence-outbox.cjs");
+const {decodedBytes}=require("./blockchain-intelligence-outbox.cjs");
 const HASH=/^[0-9a-f]{64}$/;
 const DECODER_VERSION="5";
 const MAX_EVIDENCE_AGE_MS=20*365*24*60*60*1000;
@@ -83,7 +83,8 @@ function emitTokenSwapEvidenceOutbox(db,input){
   if(!enabled())return false;
   const event=buildTokenSwapEvidenceEvent(input);
   if(!event)return false;
-  ensureSchema(db);
+  // The source bootstrap owns DDL (initDb). Never run migrations per swap
+  // or inside the hot-path source transaction.
   const now=new Date(input.observedAt).toISOString();
   const result=db.prepare("INSERT OR IGNORE INTO outbox_events " +
     "(source_system,event_kind,event_key,schema_version,payload,created_at,next_attempt_at) " +
