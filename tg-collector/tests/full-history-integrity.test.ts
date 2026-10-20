@@ -32,6 +32,11 @@ test("legacy messages cannot be assigned to a newly resolved username owner with
   try {
     const job = await pool.query(`
       INSERT INTO tg_jobs(source_id) VALUES($1) RETURNING *`, [sourceId]);
+    // Historical discovery linked source_id by username: this apparent peer
+    // association must not authorize ownership of an unverified archive.
+    await pool.query(`
+      INSERT INTO tg_discovered_sources(peer_id,username,title,keyword,source_id)
+      VALUES('123456',$1,'Stale username association','test',$2)`, [handle,sourceId]);
     const client = {
       async getEntity() {
         return {className:"Channel",id:{toString:()=> "123456"},
@@ -47,6 +52,7 @@ test("legacy messages cannot be assigned to a newly resolved username owner with
       "SELECT peer_id FROM tg_sources WHERE id=$1", [sourceId]);
     assert.equal(check.rows[0].peer_id,null);
   } finally {
+    await pool.query("DELETE FROM tg_discovered_sources WHERE peer_id='123456' AND source_id=$1",[sourceId]);
     await pool.query("DELETE FROM tg_sources WHERE id=$1",[sourceId]);
   }
 });
