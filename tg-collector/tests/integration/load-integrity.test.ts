@@ -18,6 +18,7 @@ test("load: simultaneous writes cannot lose daily rollups or duplicate evidence"
     "INSERT INTO tg_sources(identifier,peer_id) VALUES($1,$2) RETURNING id::text",
     ["pressure_"+suffix,"89"+Date.now().toString().slice(-12)])).rows[0].id;
   try {
+    const baselineStarted=Date.now();
     await pool.query(`INSERT INTO tg_messages(source_id,message_id,text,posted_at,views)
       SELECT $1,i,'baseline', $2::timestamptz,1
       FROM generate_series(1,10000) i`,[source,date]);
@@ -28,7 +29,9 @@ test("load: simultaneous writes cannot lose daily rollups or duplicate evidence"
       await bootstrap.query("COMMIT");
     }catch(error){await bootstrap.query("ROLLBACK");throw error;}
     finally{bootstrap.release();}
+    const baselineMs=Date.now()-baselineStarted;
     const writers=4;
+    const writesStarted=Date.now();
     const results=await Promise.allSettled(Array.from({length:writers},async(_,i)=>{
       const client=await pool.connect();
       try{
@@ -36,7 +39,7 @@ test("load: simultaneous writes cannot lose daily rollups or duplicate evidence"
         await client.query("SET LOCAL lock_timeout='12s'");
         for(let n=0;n<4;n++){
           await persistMessage(client,source,{
-            id:2001+i*4+n,date:Math.floor(new Date(date).getTime()/1000),
+            id:20001+i*4+n,date:Math.floor(new Date(date).getTime()/1000),
             message:"Parallel "+i+" "+n,views:10,
           });
         }
@@ -45,6 +48,7 @@ test("load: simultaneous writes cannot lose daily rollups or duplicate evidence"
       }catch(error){await client.query("ROLLBACK");throw error;}
       finally{client.release();}
     }));
+    const parallelWritesMs=Date.now()-writesStarted;
     assert.ok(results.every(r=>r.status==="fulfilled"),
       "parallel source writers must not deadlock or collide: "+
        results.filter(r=>r.status==="rejected").map(r=>String((r as PromiseRejectedResult).reason)).join("; "));
@@ -60,6 +64,7 @@ test("load: simultaneous writes cannot lose daily rollups or duplicate evidence"
     // Updates do NOT lock the per-source INSERT counter. Deliberately hold
     // four independent transactions open after modifying different rows,
     // then race their destructive DELETE+INSERT daily refresh.
+    const editsStarted=Date.now();
     let ready=0;
     let release!:()=>void;
     const barrier=new Promise<void>(resolve=>{release=resolve;});
@@ -79,6 +84,7 @@ test("load: simultaneous writes cannot lose daily rollups or duplicate evidence"
       }catch(error){await tx.query("ROLLBACK");throw error;}
       finally{tx.release();}
     }));
+    const parallelEditsMs=Date.now()-editsStarted;
     assert.ok(revisions.every(r=>r.status==="fulfilled"),
       "parallel edits must not corrupt daily aggregates: "+
         revisions.filter(r=>r.status==="rejected").map(r=>String((r as PromiseRejectedResult).reason)).join("; "));
@@ -88,6 +94,9 @@ test("load: simultaneous writes cannot lose daily rollups or duplicate evidence"
       [source])).rows[0];
     assert.equal(afterEdit.posts,10000+writers*4);
     assert.equal(afterEdit.views,String(10000+writers*4*10+4*29));
+    console.log(JSON.stringify({stress:"postgres-ingestion",baselinePosts:10000,
+      parallelWriters:writers,parallelNewMessages:16,parallelEdits:4,
+      baselineMs,parallelWritesMs,parallelEditsMs,finalMessages:afterEdit.posts}));
   }finally{
     await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
   }
