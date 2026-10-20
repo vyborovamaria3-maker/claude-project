@@ -176,7 +176,10 @@ export async function syncMessageTokenCandidates(
   if (addresses.length) {
     await tx.query(
       "UPDATE tg_token_mentions SET orphaned=FALSE WHERE source_id=$1 AND message_id=$2 " +
-      "AND analysis_version=$3 AND mention_type='mint' AND mint=ANY($4::text[])",
+      "AND analysis_version=$3 AND mention_type='mint' AND mint=ANY($4::text[]) " +
+      "AND EXISTS (SELECT 1 FROM tg_tokens t WHERE t.chain_id=tg_token_mentions.chain_id " +
+      "AND t.mint=tg_token_mentions.mint AND t.metadata_status IN ('partial','verified') " +
+      "AND t.decimals IS NOT NULL AND t.mint_layout_verified_at IS NOT NULL)",
       [sourceId, messageId, ANALYSIS_VERSION, addresses],
     );
   }
