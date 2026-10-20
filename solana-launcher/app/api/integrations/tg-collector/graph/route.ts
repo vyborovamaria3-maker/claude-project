@@ -165,7 +165,9 @@ export async function GET(request: NextRequest) {
     ]);
 
     const sources = sourceResult.rows;
-    const byHandle = new Map(sources.map(s => [(s.current_username ?? s.identifier).toLowerCase(), s]));
+    // A historical @mention is evidence of text, not immutable Telegram
+    // identity: public usernames can be renamed/reassigned years later.
+    // Resolve graph edges to tracked source nodes only for verified peer IDs.
     const byPeer = new Map(sources.filter(s => s.peer_id).map(s => [s.peer_id!, s]));
     const nodes = new Map<string, { id: string; label: string; kind: string }>();
     const graphEdges: Array<{
@@ -186,8 +188,8 @@ export async function GET(request: NextRequest) {
         id: link.source_id, identifier: link.identifier, current_username: null, title: null, peer_id: null,
       };
       const from = "source:" + origin.id;
-      const known = link.target_kind === "handle" ? byHandle.get(link.target_key)
-        : link.target_kind === "channel_id" ? byPeer.get(link.target_key) : undefined;
+      const known = link.target_kind === "channel_id"
+        ? byPeer.get(link.target_key) : undefined;
       if (known && known.id === origin.id) continue;
       const to = known ? "source:" + known.id : link.target_kind + ":" + link.target_key;
       const neededNodes = (nodes.has(from) ? 0 : 1) + (nodes.has(to) ? 0 : 1);
