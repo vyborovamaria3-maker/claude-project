@@ -22,7 +22,7 @@ test("a recycled username cannot redirect public discovery evidence to the previ
   try {
     const source=await pool.query<{id:string}>(`
       INSERT INTO tg_sources(identifier,peer_id,current_username)
-      VALUES($1,$2,$3) RETURNING id::text`,[handle,peerA,"new_"+suffix]);
+      VALUES($1,$2,$3) RETURNING id::text`,[handle,peerA,handle]);
     sourceId=source.rows[0].id;
     await pool.query("UPDATE tg_discovery_settings SET enabled=TRUE,max_new_per_day=100,max_sources=1000 WHERE id=1");
     await pool.query("UPDATE tg_runtime SET collection_enabled=TRUE,block_reason=NULL,pause_until=NULL WHERE id=1");
@@ -56,6 +56,10 @@ test("a recycled username cannot redirect public discovery evidence to the previ
     const oldSource=await pool.query<{count:number}>(`
       SELECT count(*)::integer AS count FROM tg_sources WHERE identifier=$1`,[handle]);
     assert.equal(oldSource.rows[0].count,1,"old owner must retain its original archive");
+    const oldHandle=await pool.query<{current_username:string|null}>(
+      "SELECT current_username FROM tg_sources WHERE id=$1",[sourceId]);
+    assert.equal(oldHandle.rows[0].current_username,null,
+      "verified new owner must evict the previous peer's stale public handle");
     await assert.rejects(pool.query("INSERT INTO tg_sources(identifier,peer_id) VALUES($1,$2)",
       ["duplicate_"+suffix,peerA]),(error:unknown)=>
       (error as {code?:string}).code==="23505","duplicate verified channel ID must be rejected");
