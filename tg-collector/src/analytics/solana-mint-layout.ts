@@ -16,7 +16,11 @@ export function decodeMintAccount(
     // Token-2022 TLV header: extension type (u16), payload length (u16).
     // Reject malformed/truncated extension storage, not unknown extension IDs.
     for (let offset = 166; offset < data.length;) {
-      if (offset + 4 > data.length) return null;
+      if (offset + 4 > data.length) {
+        // Extension storage may end with 1-3 bytes of unused zero padding.
+        for (let i = offset; i < data.length; i++) if (data[i] !== 0) return null;
+        break;
+      }
       const kind = data[offset] | (data[offset + 1] << 8);
       const size = data[offset + 2] | (data[offset + 3] << 8);
       if (kind === 0 && size === 0) {
