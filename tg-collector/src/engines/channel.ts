@@ -10,6 +10,7 @@ import { storePage } from "../persistence/pages.js";
 import { catchUpFreshPosts } from "./live-during-history.js";
 import { batchSize, initialLimit, maxPages } from "../runtime/config.js";
 import type { RawTelegramMessage as TgMessage } from "../analytics/extract.js";
+import { verifiedPublicUsername } from "../validation.js";
 type Source = { identifier: string; peer_id: string|null; access_hash: string|null; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean };
 
 export async function processJob(client: TelegramClient, job: Job, isStopping: () => boolean): Promise<void> {
@@ -55,10 +56,7 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
   if (channel.className !== "Channel") {
     throw new Error("TG_SOURCE_UNSUPPORTED: only public channels and supergroups are allowed");
   }
-  const latestHandle = channel.username ??
-    channel.usernames?.find(item => item.active && item.username)?.username ?? null;
-  const publicHandle = latestHandle && /^[a-z][a-z0-9_]{4,31}$/i.test(latestHandle)
-    ? latestHandle.toLowerCase() : null;
+  const publicHandle = verifiedPublicUsername(channel);
   if (!publicHandle) {
     // Only public sources are in scope, even if GramJS can still resolve a
     // now-private channel directly from its cached username. Checking only
