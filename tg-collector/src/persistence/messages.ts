@@ -10,6 +10,15 @@ export function reactionCounts(msg:RawTelegramMessage){
   emoji:r.reaction?.emoticon??null,customEmojiId:r.reaction?.documentId?.toString()??null,count:r.count
  }));
 }
+export function safeMessageEntities(msg: RawTelegramMessage) {
+  return (msg.entities ?? []).slice(0, 256).map(entity => ({
+    className: String(entity.className ?? "").slice(0, 80),
+    offset: Number.isSafeInteger(entity.offset) ? entity.offset : null,
+    length: Number.isSafeInteger(entity.length) ? entity.length : null,
+    url: typeof entity.url === "string" && /^https?:\/\//i.test(entity.url) ? entity.url.slice(0, 2048) : null,
+  }));
+}
+
 export async function persistMessage(
   tx: PoolClient, sourceId: string, msg: RawTelegramMessage
 ): Promise<void> {
@@ -19,19 +28,27 @@ export async function persistMessage(
   const replyToMessageId = parsedReplyId !== null && Number.isSafeInteger(parsedReplyId) && parsedReplyId > 0 && parsedReplyId !== msg.id
     ? parsedReplyId : null;
   await tx.query(
-    `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies,analysis_version,deleted_at,edited_at,reply_to_message_id,reactions,engagement_observed_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,$11,$12::jsonb,now())
+    `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies,analysis_version,deleted_at,edited_at,reply_to_message_id,reactions,engagement_observed_at,entities,media_type,forward_from_name,forward_date,forward_message_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,$11,$12::jsonb,now(),$13::jsonb,$14,$15,$16,$17)
      ON CONFLICT(source_id,message_id) DO UPDATE SET
        sender_id=EXCLUDED.sender_id, posted_at=EXCLUDED.posted_at,
        text=EXCLUDED.text, views=EXCLUDED.views,
        forwards=EXCLUDED.forwards, replies=EXCLUDED.replies, edited_at=EXCLUDED.edited_at, reply_to_message_id=EXCLUDED.reply_to_message_id,
+       entities=EXCLUDED.entities,media_type=EXCLUDED.media_type,
+       forward_from_name=EXCLUDED.forward_from_name,forward_date=EXCLUDED.forward_date,
+       forward_message_id=EXCLUDED.forward_message_id,
        reactions=EXCLUDED.reactions,engagement_observed_at=now(),collected_at=now(), analysis_version=EXCLUDED.analysis_version, deleted_at=NULL`,
     [sourceId, msg.id, msg.senderId?.toString() ?? null,
       typeof msg.date === "number" ? new Date(msg.date * 1000) : null,
       msg.message, msg.views ?? null, msg.forwards ?? null,
       msg.replies?.replies ?? null, ANALYSIS_VERSION,
       typeof msg.editDate === "number" ? new Date(msg.editDate * 1000) : null,
-      replyToMessageId,JSON.stringify(reactionCounts(msg))]
+      replyToMessageId,JSON.stringify(reactionCounts(msg)),
+      JSON.stringify(safeMessageEntities(msg)),msg.media?.className?.slice(0,100) ?? null,
+      msg.fwdFrom?.fromName?.slice(0,256) ?? msg.forward_sender_name?.slice(0,256) ?? null,
+      typeof msg.fwdFrom?.date === "number" ? new Date(msg.fwdFrom.date*1000) : null,
+      Number.isSafeInteger(msg.fwdFrom?.channelPost) && Number(msg.fwdFrom?.channelPost) > 0
+        ? msg.fwdFrom!.channelPost : null]
   );
   if (replyToMessageId !== null) {
     await tx.query("INSERT INTO tg_message_threads(source_id,message_id,reply_to_message_id) VALUES($1,$2,$3) " +
