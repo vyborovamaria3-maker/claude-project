@@ -68,6 +68,11 @@ jobs:
           psql "postgresql://tg:tg@127.0.0.1:5432/postgres" -v ON_ERROR_STOP=1 -c "CREATE DATABASE tg_collector_restore_ci"
           export TG_RESTORE_CHECK_DATABASE_URL="postgresql://tg:tg@127.0.0.1:5432/tg_collector_restore_ci"
           bash scripts/restore-check.sh "$archive"
+          DATABASE_URL="$TG_RESTORE_CHECK_DATABASE_URL" npm run migrate
+          if bash scripts/restore-check.sh "$archive"; then
+            echo "ERROR: restore must refuse a nonempty target database" >&2
+            exit 1
+          fi
           actual="$(psql "$TG_RESTORE_CHECK_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id WHERE s.identifier='ci_backup_restore_fixture' AND m.message_id=23 AND m.views=42")"
           test "$actual" = 1
           original="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM tg_messages")"
