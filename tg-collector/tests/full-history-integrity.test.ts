@@ -77,6 +77,30 @@ test("full-history resumes below the oldest persisted post and scans until an em
     await pool.query(`UPDATE tg_jobs SET base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
       scanned_count=0,state='pending' WHERE source_id=$1`, [sourceId]);
 
+    // Advance the old-history cursor, then publish two NEW posts before it
+    // completes: they must appear immediately without resetting old history.
+    await processJob(client, await readJob(), () => false);
+    const beforeFresh = await pool.query<{history_complete:boolean;cursor_before_id:string}>(
+      "SELECT s.history_complete,j.cursor_before_id::text FROM tg_sources s JOIN tg_jobs j ON j.source_id=s.id WHERE s.id=$1",
+      [sourceId]);
+    assert.equal(beforeFresh.rows[0].history_complete,false);
+    const historyCursor = beforeFresh.rows[0].cursor_before_id;
+    originals.unshift(
+      {id:652,date:postedAt+652,message:"Brand new post #652"},
+      {id:651,date:postedAt+651,message:"Brand new post #651"},
+    );
+    await pool.query("UPDATE tg_sources SET live_checked_at=now()-interval '1 minute' WHERE id=$1",[sourceId]);
+    await processJob(client, await readJob(), () => false);
+    const fresh = await pool.query<{count:number}>(
+      "SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1 AND message_id IN (651,652)",[sourceId]);
+    assert.equal(fresh.rows[0].count,2, "fresh posts must be ingested during historical backfill");
+    const afterFresh = await pool.query<{last_message_id:string;history_complete:boolean;cursor_before_id:string}>(
+      "SELECT s.last_message_id::text,s.history_complete,j.cursor_before_id::text FROM tg_sources s JOIN tg_jobs j ON j.source_id=s.id WHERE s.id=$1",[sourceId]);
+    assert.equal(afterFresh.rows[0].last_message_id,"652");
+    assert.equal(afterFresh.rows[0].history_complete,false);
+    assert.ok(Number(afterFresh.rows[0].cursor_before_id)<Number(historyCursor),
+      "historical checkpoint must continue after the fresh catch-up pass");
+
     let complete = false;
     for (let turn = 0; turn < 30; turn++) {
       await processJob(client, await readJob(), () => false);
@@ -93,8 +117,8 @@ test("full-history resumes below the oldest persisted post and scans until an em
         s.history_low_message_id::text, s.history_partial, s.history_complete
       FROM tg_sources s JOIN tg_messages m ON m.source_id=s.id
       WHERE s.id=$1 GROUP BY s.id`, [sourceId]);
-    assert.equal(state.rows[0].count,650);
-    assert.equal(state.rows[0].distinct_count,650);
+    assert.equal(state.rows[0].count,652);
+    assert.equal(state.rows[0].distinct_count,652);
     assert.equal(state.rows[0].history_low_message_id,"1");
     assert.equal(state.rows[0].history_partial,false);
     assert.equal(state.rows[0].history_complete,true);
@@ -122,7 +146,7 @@ test("full-history resumes below the oldest persisted post and scans until an em
     await assert.rejects(processJob(client, await readJob(), () => false), /TG_SOURCE_IDENTITY_MISMATCH/);
     const after = await pool.query<{count:number}>(
       "SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1", [sourceId]);
-    assert.equal(after.rows[0].count,650);
+    assert.equal(after.rows[0].count,652);
   } finally {
     if (sourceId) await pool.query("DELETE FROM tg_sources WHERE id=$1", [sourceId]);
     await pool.end();
