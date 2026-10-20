@@ -28,6 +28,23 @@ test("PostgreSQL timeline excludes late-observed historical events", {skip:!url}
       observedAt:"2026-10-18T00:20:00Z",payload:{source:"public"}});
     assert.equal(await ingestTimelineEvent(db,"x","tweet_observed",timeline),true);
     assert.equal(await ingestTimelineEvent(db,"x","tweet_observed",timeline),false);
+    // Replays must compare ALL immutable material fields and membership.
+    // A matching event key with different content must not silently ACK.
+    await assert.rejects(
+      ingestTimelineEvent(db,"x","tweet_observed",{
+        ...timeline,payload:{tampered:true},
+      }),/Timeline event identity collision/,
+    );
+    const other=buildEntityRef({kind:"token",
+      canonicalId:formatTokenId("solana","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+      firstSeenAt:"2026-10-18T00:00:00Z",
+      lastSeenAt:"2026-10-18T00:20:00Z",
+    });
+    await assert.rejects(
+      ingestTimelineEvent(db,"x","tweet_observed",{
+        ...timeline,entityRefs:[other],
+      }),/Timeline entity attribution collision/,
+    );
     assert.equal((await queryTokenTimeline(db,token,"2026-10-18T00:10:00Z","2026-10-18T00:10:00Z")).length,0);
     assert.equal((await queryTokenTimeline(db,token,"2026-10-18T00:10:00Z","2026-10-18T00:30:00Z")).length,1);
     assert.equal((await queryTokenTimeline(db,token,"2026-10-17T23:59:00Z","2026-10-18T00:30:00Z")).length,0);
