@@ -22,7 +22,7 @@ test('native PostgreSQL migration CLI detects drift before DDL and explicitly ba
    let output='';child.stdout.on('data',b=>{output+=b;});child.stderr.on('data',b=>{output+=b;});child.on('error',reject);child.on('exit',code=>resolve({code,output}));
   });
   assert.equal((await cli('--status')).code,0);
-  assert.equal((await c.query("SELECT to_regclass('schema_migrations') present")).rows[0].present,null);
+  assert.equal((await c.query("SELECT to_regclass(format('%I.schema_migrations',current_schema())) present")).rows[0].present,null);
   const applied=await cli();assert.equal(applied.code,0,applied.output);
   assert.equal((await c.query('SELECT * FROM schema_migrations WHERE checksum IS NOT NULL')).rowCount,REQUIRED.length);
   assert.equal((await cli()).code,0);

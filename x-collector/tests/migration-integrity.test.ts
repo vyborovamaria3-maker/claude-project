@@ -17,6 +17,17 @@ test('checksums enforce preflight drift, read-only status, explicit legacy basel
   await runMigrations(db,files);
   await runMigrations(db,files); // Never replay inserts on restart.
   assert.equal((await db.query('SELECT * FROM fixture')).rows.length,1);
+  // An existing public ledger must not suppress migrations in a fresh schema.
+  await db.exec('CREATE SCHEMA isolated; SET search_path TO isolated,public');
+  const isolatedStatus:string[]=[];
+  await runMigrations(db,files,{statusOnly:true,log:line=>isolatedStatus.push(line)});
+  assert(isolatedStatus.every(line=>line.startsWith('[pending]')));
+  assert.equal((await db.query<{present:string|null}>("SELECT to_regclass('isolated.schema_migrations') present")).rows[0].present,null);
+  await runMigrations(db,files);
+  assert.equal((await db.query('SELECT * FROM isolated.fixture')).rows.length,1);
+  assert.equal((await db.query('SELECT * FROM isolated.schema_migrations')).rows.length,2);
+  assert.equal((await db.query('SELECT * FROM public.schema_migrations')).rows.length,2);
+  await db.exec('SET search_path TO public; DROP SCHEMA isolated CASCADE');
   const changed=[{...files[0],sql:'CREATE TABLE fixture(id TEXT);'},files[1],{filename:'003.sql',sql:'CREATE TABLE forbidden(id INT);'}];
   await assert.rejects(runMigrations(db,changed),/checksum drift: 001.sql/);
   await assert.rejects(runMigrations(db,changed,{baseline:true}),/checksum drift/);

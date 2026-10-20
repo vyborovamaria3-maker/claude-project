@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
+const load=createRequire(__filename);
+const {command}=load('../scripts/autopost/engine.cjs');
+type Database={query:(sql:string,params?:unknown[])=>Promise<unknown>;exec?:(sql:string)=>Promise<unknown>};
+export async function checkAutopostStatistics(db:Database){
+ const execute=db.exec?db.exec.bind(db):db.query.bind(db);
+ await execute('CREATE TABLE x_accounts(name text PRIMARY KEY); CREATE TABLE x_tasks(id bigint PRIMARY KEY)');
+ await execute(readFileSync('scripts/autopost/schema.sql','utf8'));
+ assert.deepEqual(await command(db,{action:'stats',name:'publisher'}),{posts:[],snapshots:[],sync:[]});
+ await assert.rejects(command(db,{action:'stats',name:'invalid account'}),/Некорректный аккаунт/);
+ const day=86_400_000,offset=10_800_000;
+ const start=Math.floor((Date.now()+offset)/day)*day-offset-2*day;
+ const insertPost='INSERT INTO xc_auto_posts(tweet_id,account_name,handle,text,url,posted_at,updated_at) VALUES($1,$2,$2,$1,$1,$3,$3)';
+ await db.query(insertPost,['1','publisher',start]);
+ await db.query(insertPost,['2','other',start]);
+ const insertMetric='INSERT INTO xc_auto_metrics(tweet_id,measured_at,views,likes) VALUES($1,$2,$3,$4)';
+ await db.query(insertMetric,['1',start-1000,'1','0']);
+ await db.query(insertMetric,['1',start+1000,'2','0']);
+ await db.query(insertMetric,['1',start+2000,'9007199254740993',null]);
+ await db.query(insertMetric,['2',start+1000,'999','99']);
+ const result=await command(db,{action:'stats',name:'publisher'});
+ assert.equal(result.posts.length,1);
+ assert.equal(result.snapshots.length,2);
+ assert.deepEqual(result.snapshots.map((s:{views:string})=>s.views),['1','9007199254740993']);
+ assert.equal(result.snapshots[1].likes,null);
+ assert.equal(result.snapshots[0].day,new Date(start-1000+offset).toISOString().slice(0,10));
+ assert.equal(result.snapshots[1].day,new Date(start+offset).toISOString().slice(0,10));
+ assert.deepEqual(result.sync,[]);
+}
