@@ -18,7 +18,7 @@ export async function indexKnownMentions(){
    const terms=settings.message_terms.filter(t=>matchesSearchTerm(row.text,t));if(!terms.length)continue;
    await tx.query(`INSERT INTO tg_discovery_mentions(peer_id,message_id,username,title,text,posted_at,matched_terms,source_id)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,[row.peer_id,row.message_id,row.identifier,row.title??row.identifier,row.text.slice(0,8192),row.posted_at,terms,row.id]);
-   if(row.enabled)await tx.query('UPDATE tg_sources SET full_history=TRUE WHERE id=$1',[row.id]);
+   // Indexing existing mentions must not override the operator's history preference.
   }
   await tx.query('COMMIT');
  }catch(error){await tx.query('ROLLBACK');throw error;}finally{tx.release();}
