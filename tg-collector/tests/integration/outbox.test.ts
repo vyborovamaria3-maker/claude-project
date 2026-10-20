@@ -11,6 +11,8 @@ test("TG PostgreSQL: page transaction commits message, revision and delete outbo
   await migrate();
   const client=await pool.connect();
   const old=process.env.TG_INTELLIGENCE_OUTBOX_ENABLED;
+  const oldMintLinks=process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED;
+  delete process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED;
   process.env.TG_INTELLIGENCE_OUTBOX_ENABLED="true";
   const peer="123456789";
   const identifier="outbox_test_"+randomUUID().replaceAll("-","").slice(0,22);
@@ -44,7 +46,12 @@ test("TG PostgreSQL: page transaction commits message, revision and delete outbo
     assert.equal(deletedTwice.rows[0]?.n,"2","a second deletion after restoring must have its own evidence revision");
     const payloads=await client.query<{payload:{registryEvent:{entityRefs:{kind:string}[]}}}>(
       "SELECT payload FROM outbox_events WHERE source_system='tg' ORDER BY id");
-    assert.equal(payloads.rows.length,5);
+    // Three source revisions + two deletes + four source-wide token tombstones.
+    // Existing mint proofs must still be invalidated while issuance is OFF.
+    assert.equal(payloads.rows.length,9);
+    const invalidations=await client.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE source_system='tg' AND event_kind='token_links_invalidated'");
+    assert.equal(invalidations.rows[0]?.n,"4");
     assert.ok(payloads.rows.every(row=>
       row.payload.registryEvent.entityRefs.every(entity=>entity.kind==="source")));
     await client.query("ROLLBACK");rolledBack=true;
@@ -53,6 +60,8 @@ test("TG PostgreSQL: page transaction commits message, revision and delete outbo
     assert.equal(absent.rows[0]?.n,"0","ROLLBACK removes messages and corresponding outbox revisions");
   } finally {
     if (!rolledBack) {try{await client.query("ROLLBACK")}catch{}}
+    if(oldMintLinks===undefined) delete process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED;
+    else process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED=oldMintLinks;
     if(old===undefined) delete process.env.TG_INTELLIGENCE_OUTBOX_ENABLED;
     else process.env.TG_INTELLIGENCE_OUTBOX_ENABLED=old;
     client.release();
