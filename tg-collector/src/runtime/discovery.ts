@@ -29,8 +29,8 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
   // Legacy discovery versions could attach source_id by recycled username.
   // Re-check identity on each discovery turn, even after migration 030.
   await tx.query(`UPDATE tg_discovered_sources d SET source_id=NULL,connected_at=NULL
-    WHERE d.peer_id=$1 AND (d.source_id IS NULL OR NOT EXISTS(
-      SELECT 1 FROM tg_sources s WHERE s.id=d.source_id AND s.peer_id=d.peer_id))`,
+    WHERE d.peer_id=$1 AND d.source_id IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM tg_sources s WHERE s.id=d.source_id AND s.peer_id=d.peer_id)`,
     [candidate.peer]);
   await tx.query(`UPDATE tg_discovery_mentions dm SET source_id=NULL
     WHERE dm.peer_id=$1 AND dm.source_id IS NOT NULL AND NOT EXISTS(
