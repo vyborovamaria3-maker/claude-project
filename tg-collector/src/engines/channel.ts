@@ -7,6 +7,7 @@ import { pool } from "../db.js";
 import type { Job } from "../queue/jobs.js";
 import { finishJob } from "../queue/jobs.js";
 import { storePage } from "../persistence/pages.js";
+import { catchUpFreshPosts } from "./live-during-history.js";
 import { batchSize, initialLimit, maxPages } from "../runtime/config.js";
 import type { RawTelegramMessage as TgMessage } from "../analytics/extract.js";
 type Source = { identifier: string; peer_id: string|null; access_hash: string|null; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean };
@@ -66,11 +67,29 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     // not permission to expand this public-only collector into private history.
     throw new Error("TG_SOURCE_UNSUPPORTED: source no longer has a public username");
   }
+  const resolvedPeer = channel.id?.toString() ?? null;
+  if (!resolvedPeer) throw new Error("TG_SOURCE_UNSUPPORTED: no immutable channel ID");
+  const duplicate = await pool.query<{id:string}>(
+    "SELECT id::text FROM tg_sources WHERE peer_id=$1 AND id<>$2 LIMIT 1",
+    [resolvedPeer, job.source_id]);
+  if (duplicate.rowCount) {
+    throw new Error("TG_SOURCE_DUPLICATE_PEER: another source already tracks Telegram channel " + resolvedPeer);
+  }
   await pool.query("UPDATE tg_sources SET peer_id=$2,access_hash=COALESCE($3,access_hash),title=$4,current_username=$5 WHERE id=$1",
     [job.source_id, channel.id?.toString() ?? null, channel.accessHash?.toString() ?? null,
       channel.title ?? source.identifier, publicHandle]);
 
   if(source.full_history&&entity instanceof Api.Channel)await discoverDiscussion(client,job.source_id,entity);
+  if (source.full_history && !source.history_complete && Number(source.last_message_id) > 0) {
+    const caughtUp = await catchUpFreshPosts(client, entity, job, Number(source.last_message_id));
+    if (!caughtUp) {
+      // Preserve the independent historical cursor while the higher-priority
+      // fresh-message interval finishes in subsequent worker turns.
+      await pool.query(`UPDATE tg_jobs SET state='pending',attempts=0,locked_until=NULL,
+        run_at=now()+interval '5 seconds',updated_at=now() WHERE id=$1`, [job.id]);
+      return;
+    }
+  }
   const recoveringHistory = source.full_history && !source.history_complete;
   const baseId = Number(job.base_message_id ?? (recoveringHistory ? 0 : source.last_message_id));
   let highId = job.high_message_id ? Number(job.high_message_id) : 0;
@@ -89,10 +108,23 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     highId = recoveringHistory && Number(source.history_low_message_id) > 0
       ? Number(source.history_low_message_id) - 1
       : (latest[0]?.id ?? 0);
-    await pool.query(
-      "UPDATE tg_jobs SET base_message_id=$2,high_message_id=$3,updated_at=now() WHERE id=$1",
-      [job.id, baseId, highId]
-    );
+    const checkpoint = await pool.connect();
+    try {
+      await checkpoint.query("BEGIN");
+      await checkpoint.query(
+        "UPDATE tg_jobs SET base_message_id=$2,high_message_id=$3,updated_at=now() WHERE id=$1",
+        [job.id, baseId, highId]);
+      if (recoveringHistory && Number(source.last_message_id) === 0 && highId > 0) {
+        // An observed upper bound allows priority fresh-message checks while
+        // historical pages are still being persisted below that boundary.
+        await checkpoint.query(
+          "UPDATE tg_sources SET last_message_id=GREATEST(last_message_id,$2) WHERE id=$1",
+          [job.source_id, highId]);
+      }
+      await checkpoint.query("COMMIT");
+    } catch (error) {
+      await checkpoint.query("ROLLBACK"); throw error;
+    } finally {checkpoint.release();}
   }
 
   if (highId <= baseId) {
