@@ -24,23 +24,43 @@ async function main(): Promise<void> {
   if (action === "migrate") { await migrate(); console.log("TG schema migrated"); return; }
   if (action === "add") {
     const identifier = normalizePublicUsername(process.argv[3] || "");
+    const fullHistory = process.argv.includes("--full");
     const tx = await pool.connect();
     try {
       await tx.query("BEGIN");
-      const { rows } = await tx.query<{ id: string }>(
-        "INSERT INTO tg_sources(identifier) VALUES ($1) ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE RETURNING id",
-        [identifier]
-      );
+      const known = await tx.query<{id:string}>(`
+        SELECT id::text FROM tg_sources WHERE current_username=$1 AND peer_id IS NOT NULL
+        FOR UPDATE`, [identifier]);
+      if (known.rowCount && known.rowCount > 1)
+        throw new Error("Ambiguous current Telegram username; inspect peer IDs");
+      const { rows } = known.rowCount
+        ? await tx.query<{id:string}>(`
+          UPDATE tg_sources SET enabled=TRUE,full_history=full_history OR $2::boolean,
+            history_partial=CASE WHEN history_complete THEN FALSE ELSE history_partial OR $2::boolean END
+          WHERE id=$1 RETURNING id::text`,[known.rows[0].id,fullHistory])
+        : await tx.query<{id:string}>(`
+          INSERT INTO tg_sources(identifier,full_history,history_partial) VALUES ($1,$2,$2)
+          ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE,
+            full_history=tg_sources.full_history OR EXCLUDED.full_history,
+            history_partial=CASE WHEN tg_sources.history_complete THEN FALSE ELSE
+              tg_sources.history_partial OR EXCLUDED.full_history END
+          WHERE tg_sources.current_username IS NULL OR tg_sources.current_username=$1
+          RETURNING id::text`,[identifier,fullHistory]);
+      if (!rows.length)
+        throw new Error("Original username was reassigned to a different channel; reconcile by peer_id first");
       await tx.query(
         `INSERT INTO tg_jobs(source_id) VALUES ($1)
          ON CONFLICT (source_id) DO NOTHING`,
         [rows[0].id]
       );
-      await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0, run_at=now(),
-        locked_until=NULL, last_error=NULL
-        WHERE source_id=$1 AND state IN ('pending','failed','delayed')`, [rows[0].id]);
+      // Re-adding an existing source must not erase a committed page cursor
+      // or move a delayed/pending job ahead of its original schedule. An
+      // explicitly retried failed job resumes from its saved checkpoints.
+      await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,run_at=now(),
+        locked_until=NULL,last_error=NULL,updated_at=now()
+        WHERE source_id=$1 AND state='failed'`, [rows[0].id]);
       await tx.query("COMMIT");
-      console.log("Added source:", identifier);
+      console.log("Added source:", identifier, fullHistory ? "(full history)" : "(recent messages)");
     } catch (error) {
       await tx.query("ROLLBACK");
       throw error;
@@ -49,17 +69,52 @@ async function main(): Promise<void> {
     }
     return;
   }
+  if (action === "history") {
+    const identifier = normalizePublicUsername(process.argv[3] || "");
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      const source = await tx.query<{id:string;full_history:boolean;history_complete:boolean}>(`
+        SELECT s.id::text,s.full_history,s.history_complete FROM tg_sources s
+        JOIN tg_jobs j ON j.source_id=s.id
+        WHERE j.state<>'running'
+          AND ((s.current_username=$1 AND s.peer_id IS NOT NULL)
+            OR (s.identifier=$1 AND
+              (s.current_username IS NULL OR s.current_username=$1)))
+        FOR UPDATE OF s,j`,[identifier]);
+      if(source.rows.length!==1) throw Error("Source not found, ambiguous current username, or sync currently running");
+      await tx.query(`UPDATE tg_sources SET full_history=TRUE,history_complete=FALSE,
+        history_partial=TRUE,enabled=TRUE WHERE id=$1`,[source.rows[0].id]);
+      if (!source.rows[0].full_history || source.rows[0].history_complete) {
+        // Starting or explicitly restarting a full scan requires a new
+        // authenticated head-to-oldest traversal. Keep Telegram delays intact.
+        await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,run_at=now(),
+          base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
+          history_scan_verified=FALSE,scanned_count=0,locked_until=NULL,
+          last_error=NULL,updated_at=now()
+          WHERE source_id=$1 AND state IN ('pending','failed')`,[source.rows[0].id]);
+      } else {
+        // "Continue" must not erase an already committed full-history cursor.
+        await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
+          run_at=now(),locked_until=NULL,last_error=NULL,updated_at=now()
+          WHERE source_id=$1 AND state='failed'`,[source.rows[0].id]);
+      }
+      await tx.query("COMMIT");
+      console.log("Historical scan queued:",identifier);
+    } catch (error) {await tx.query("ROLLBACK");throw error;} finally {tx.release();}
+    return;
+  }
   if (action === "list") {
     const { rows } = await pool.query(
       `SELECT s.identifier, s.title, s.last_message_id, s.history_partial,
-              s.last_success_at, j.state, j.run_at, j.last_error
+              s.last_success_at, s.full_history,s.history_complete,s.history_low_message_id,j.state, j.run_at, j.last_error
          FROM tg_sources s LEFT JOIN tg_jobs j ON j.source_id=s.id
         ORDER BY s.id`
     );
     console.table(rows);
     return;
   }
-  throw new Error("Usage: npm run migrate | npm run login | npm run add -- @channel | npm run list");
+  throw new Error("Usage: npm run migrate | npm run login | npm run add -- @channel [--full] | npm run history -- @channel | npm run list");
 }
 main().catch(err => { console.error(err instanceof Error ? err.message : String(err)); process.exitCode=1; })
   .finally(() => pool.end());

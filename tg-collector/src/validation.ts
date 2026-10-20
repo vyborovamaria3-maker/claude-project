@@ -1,3 +1,16 @@
+/** Use only Telegram-advertised public handles, never historical operator aliases. */
+export function verifiedPublicUsername(channel: {
+  username?: string;
+  usernames?: Array<{username?: string;active?: boolean}>;
+}): string | null {
+  const handles = [channel.username, ...(channel.usernames ?? [])
+    .filter(item => item.active)
+    .map(item => item.username)];
+  const valid = handles.find(name => typeof name === "string" &&
+    /^[a-z][a-z0-9_]{4,31}$/i.test(name));
+  return valid?.toLowerCase() ?? null;
+}
+
 export function normalizePublicUsername(input: string): string {
   const value = input.trim()
     .replace(/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\//i, "")
@@ -23,9 +36,9 @@ export function telegramWaitSeconds(error: unknown): number | null {
 
 export function publicDiscoveryChannel(input: unknown): {peer: string; username: string; title: string} | null {
  const c = input as {className?: string; username?: string;usernames?:{username:string;active?:boolean}[]; title?: string; id?: {toString(): string}; broadcast?: boolean; megagroup?: boolean; forbidden?: boolean} | null;
- const username=c?.username??c?.usernames?.find(u=>u.active)?.username;
+ const username=c ? verifiedPublicUsername(c) : null;
  if (!c || c.className !== "Channel" || (!c.broadcast && !c.megagroup) || c.forbidden ||
-     !username || !/^[a-z][a-z0-9_]{4,31}$/i.test(username)) return null;
+     !username) return null;
  const peer=c.id?.toString(); if (!peer || !/^[1-9][0-9]{0,18}$/.test(peer)) return null;
  return {peer,username:username.toLowerCase(),title:(c.title || username).slice(0,255)};
 }

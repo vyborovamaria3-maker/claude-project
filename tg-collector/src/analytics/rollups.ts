@@ -11,6 +11,15 @@ export function utcDay(date: Date | null | undefined): string | null {
 export async function refreshGraphDays(tx: PoolClient, sourceId: string, days: string[]): Promise<void> {
   const unique = [...new Set(days)].filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
   if (!unique.length) return;
+  // Concurrent edits of separate posts in one channel do not lock the same
+  // tg_messages row (or the INSERT-only message counter). Without a durable
+  // per-source transaction lock, two DELETE+INSERT rollup rebuilds can both
+  // observe a missing daily row and collide on its primary key.
+  // This advisory xact lock is released on commit/rollback, not held across
+  // Telegram network calls. Hash collisions only cause extra serialization,
+  // never identity mixing or incorrect attribution.
+  await tx.query("SELECT pg_advisory_xact_lock(8260227, hashtext($1::text))",
+    [sourceId]);
   await tx.query(
     "DELETE FROM tg_graph_daily_edges WHERE source_id=$1 AND day = ANY($2::date[])",
     [sourceId, unique]

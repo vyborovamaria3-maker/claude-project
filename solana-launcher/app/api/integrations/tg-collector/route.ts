@@ -110,12 +110,21 @@ export async function GET(request: NextRequest) {
     if (new URL(request.url).searchParams.get("mode") === "memecoin") {
       const [tokenStats, tokens, channels, unresolvedTickers, signals] = await Promise.all([
         p.query(`SELECT
-          (SELECT count(*)::integer FROM tg_tokens WHERE chain_id='solana-mainnet') AS tokens_total,
+          (SELECT count(*)::integer FROM tg_tokens WHERE chain_id='solana-mainnet'
+            AND metadata_status IN ('partial','verified') AND decimals IS NOT NULL AND mint_layout_verified_at IS NOT NULL) AS tokens_total,
+          (SELECT count(*)::integer FROM tg_messages
+            WHERE deleted_at IS NULL AND analysis_version < 4) AS analysis_backfill_remaining,
           (SELECT count(*)::integer FROM tg_token_candidates WHERE chain_id='solana-mainnet'
             AND candidate_type='address' AND resolution_status='unresolved') AS unresolved_addresses,
-          (SELECT count(*)::integer FROM tg_ticker_mentions WHERE message_date>=now()-interval '24 hours') AS ticker_mentions_24h,
-          (SELECT count(DISTINCT (chain_id,mint))::integer FROM tg_token_mentions
-            WHERE analysis_version=3 AND orphaned=FALSE AND message_date>=now()-interval '24 hours') AS confirmed_tokens_24h,
+          (SELECT count(*)::integer FROM tg_ticker_mentions tm
+            JOIN tg_messages msg USING(source_id,message_id)
+            WHERE tm.message_date>=now()-interval '24 hours' AND msg.deleted_at IS NULL
+              AND tm.analysis_version=CASE WHEN msg.analysis_version>=4 THEN 4 ELSE 3 END) AS ticker_mentions_24h,
+          (SELECT count(DISTINCT (tm.chain_id,tm.mint))::integer FROM tg_token_mentions tm
+            JOIN tg_messages msg USING(source_id,message_id)
+            WHERE tm.analysis_version=CASE WHEN msg.analysis_version>=4 THEN 4 ELSE 3 END
+              AND tm.orphaned=FALSE AND msg.deleted_at IS NULL
+              AND tm.message_date>=now()-interval '24 hours') AS confirmed_tokens_24h,
           (SELECT count(*)::integer FROM tg_signals WHERE detected_at>=now()-interval '24 hours'
             AND status<>'dismissed') AS signals_24h,
           (SELECT count(*)::integer FROM tg_token_market_snapshots
@@ -134,9 +143,11 @@ export async function GET(request: NextRequest) {
             COALESCE(narrative.names,'{}'::text[]) AS narratives
           FROM tg_tokens t
           LEFT JOIN LATERAL (
-            SELECT count(*)::integer AS mentions_7d,count(DISTINCT tm.source_id)::integer AS sources_7d
+            SELECT count(DISTINCT (tm.source_id,tm.message_id))::integer AS mentions_7d,
+              count(DISTINCT tm.source_id)::integer AS sources_7d
             FROM tg_token_mentions tm JOIN tg_messages msg USING(source_id,message_id)
-            WHERE tm.chain_id=t.chain_id AND tm.mint=t.mint AND tm.analysis_version=3
+            WHERE tm.chain_id=t.chain_id AND tm.mint=t.mint
+              AND tm.analysis_version=CASE WHEN msg.analysis_version>=4 THEN 4 ELSE 3 END
               AND tm.orphaned=FALSE AND msg.deleted_at IS NULL AND tm.message_date>=now()-interval '7 days'
           ) m ON TRUE
           LEFT JOIN LATERAL (
@@ -156,6 +167,7 @@ export async function GET(request: NextRequest) {
             WHERE tn.chain_id=t.chain_id AND tn.mint=t.mint AND tn.model_version='keyword-v1'
           ) narrative ON TRUE
           WHERE t.chain_id='solana-mainnet'
+            AND t.metadata_status IN ('partial','verified') AND t.decimals IS NOT NULL AND t.mint_layout_verified_at IS NOT NULL
           ORDER BY COALESCE(m.mentions_7d,0) DESC,v.velocity DESC NULLS LAST,t.first_seen_at DESC LIMIT 30`),
         p.query(`
           SELECT s.id::text AS source_id,s.identifier,score.discovery_score::float8,
@@ -191,30 +203,37 @@ export async function GET(request: NextRequest) {
     if (search.length > 120) throw new ApiError("Поисковый запрос слишком длинный");
     const page = Number(params.get("page") || 0);
     if (!Number.isInteger(page) || page < 0 || page > 100) throw new ApiError("Недопустимая страница");
+    const sourcePage = Number(params.get("sourcePage") || 0);
+    if (!Number.isSafeInteger(sourcePage) || sourcePage < 0 || sourcePage > 10000)
+      throw new ApiError("Недопустимая страница источников");
 
-    const [sources, stats, runtimeState, proxy, messages] = await Promise.all([
-      p.query(`SELECT s.id::text, s.identifier, s.peer_id, s.title, s.enabled,
-        s.history_partial,s.full_history,s.history_complete, s.last_message_id::text, s.last_success_at,
+    const [sources, sourceOptions, stats, runtimeState, proxy, messages] = await Promise.all([
+      p.query(`SELECT s.id::text, s.identifier, s.current_username, s.peer_id, s.title, s.enabled,
+        s.history_partial,s.full_history,s.history_complete,s.history_low_message_id::text, s.last_message_id::text, s.last_success_at,
         COALESCE(mc.message_count,0)::int AS message_count,
+        (SELECT count(*)::int FROM tg_messages legacy
+          WHERE legacy.source_id=s.id AND legacy.deleted_at IS NULL
+            AND legacy.entities_observed_at IS NULL) AS entities_unverified,
         j.state, j.run_at, j.attempts, j.scanned_count, j.last_error,
         (SELECT parent.identifier FROM tg_source_discussions ds JOIN tg_sources parent ON parent.id=ds.channel_source_id WHERE ds.discussion_source_id=s.id LIMIT 1) AS discussion_for,
         (SELECT status FROM tg_source_discussions ds WHERE ds.channel_source_id=s.id) AS discussion_status
         FROM tg_sources s
         LEFT JOIN tg_source_message_counters mc ON mc.source_id=s.id
         LEFT JOIN tg_jobs j ON j.source_id=s.id
-        ORDER BY s.created_at DESC LIMIT 500`),
+        ORDER BY s.created_at DESC, s.id DESC LIMIT 100 OFFSET $1`, [sourcePage * 100]),
+      p.query(`SELECT id::text,identifier,current_username FROM tg_sources ORDER BY created_at DESC,id DESC`),
       p.query(`SELECT
           (SELECT count(*)::int FROM tg_sources) AS sources,
           (SELECT COALESCE(sum(message_count),0)::int FROM tg_source_message_counters) AS messages,
           (SELECT count(*)::int FROM tg_jobs WHERE state='running') AS running,
           (SELECT count(*)::int FROM tg_jobs WHERE state='failed') AS failed`),
       p.query(`SELECT pause_until, heartbeat_at, worker_started_at, block_reason, blocked_at,
-        collection_enabled, messages_total, messages_per_day, links_total, links_per_day, jobs_pending, jobs_failed,
+        collection_enabled, messages_total, messages_per_day, links_total, links_active_total, links_per_day, jobs_pending, jobs_failed,
         flood_wait_active, metrics_updated_at, worker_version, last_error_code,
         heartbeat_at > now() - interval '30 seconds' AS worker_online
         FROM tg_runtime WHERE id=1`),
       readTgProxy(p),
-      p.query(`SELECT m.source_id::text, s.identifier, m.message_id::text,
+      p.query(`SELECT m.source_id::text, COALESCE(s.current_username,s.identifier) AS identifier, m.message_id::text,
         m.sender_id, m.posted_at, m.text, m.views, m.forwards, m.replies,m.reactions,m.engagement_observed_at
         FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id
         WHERE ($1::bigint IS NULL OR m.source_id=$1)
@@ -236,6 +255,7 @@ export async function GET(request: NextRequest) {
         messages_total: Number(runtimeState.rows[0]?.messages_total ?? 0),
         messages_per_day: Number(runtimeState.rows[0]?.messages_per_day ?? 0),
         links_total: Number(runtimeState.rows[0]?.links_total ?? 0),
+        links_active_total: Number(runtimeState.rows[0]?.links_active_total ?? 0),
         links_per_day: Number(runtimeState.rows[0]?.links_per_day ?? 0),
         jobs_pending: Number(runtimeState.rows[0]?.jobs_pending ?? 0),
         jobs_failed: Number(runtimeState.rows[0]?.jobs_failed ?? 0),
@@ -245,6 +265,8 @@ export async function GET(request: NextRequest) {
         last_error_code: runtimeState.rows[0]?.last_error_code ?? null,
       },
       sources: sources.rows,
+      sourceOptions: sourceOptions.rows,
+      sourcePage,
       messages: messages.rows,
       page,
     }, { headers: noStore });
@@ -262,16 +284,41 @@ export async function POST(request: NextRequest) {
     const p = pool();
     if (action === "add") {
       const username = publicUsername(input.username);
+      if (input.fullHistory !== undefined && typeof input.fullHistory !== "boolean")
+        throw new ApiError("fullHistory должен быть логическим значением");
+      const fullHistory = input.fullHistory === true;
       const tx = await p.connect();
       try {
         await tx.query("BEGIN");
-        const source = await tx.query<{id: string}>(`
-          INSERT INTO tg_sources(identifier) VALUES($1)
-          ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE
-          RETURNING id::text`, [username]);
+        // Prefer a Telegram-verified current handle over its old, mutable alias.
+        // A released original username may now belong to an unrelated channel.
+        const existing = await tx.query<{id:string}>(`
+          SELECT id::text FROM tg_sources WHERE current_username=$1
+            AND peer_id IS NOT NULL FOR UPDATE`,[username]);
+        if (existing.rowCount && existing.rowCount > 1)
+          throw new ApiError("Неоднозначный Telegram username: требуется проверка источников",409);
+        const source = existing.rowCount
+          ? await tx.query<{id:string}>(`
+              UPDATE tg_sources SET enabled=TRUE,
+                full_history=full_history OR $2::boolean,
+                history_partial=CASE WHEN history_complete THEN FALSE ELSE history_partial OR $2::boolean END
+              WHERE id=$1 RETURNING id::text`,[existing.rows[0].id,fullHistory])
+          : await tx.query<{id:string}>(`
+              INSERT INTO tg_sources(identifier,full_history,history_partial) VALUES($1,$2,$2)
+              ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE,
+                full_history=tg_sources.full_history OR EXCLUDED.full_history,
+                history_partial=CASE WHEN tg_sources.history_complete THEN FALSE
+                  ELSE tg_sources.history_partial OR EXCLUDED.full_history END
+              WHERE tg_sources.current_username IS NULL OR tg_sources.current_username=$1
+              RETURNING id::text`,[username,fullHistory]);
+        if (!source.rowCount)
+          throw new ApiError("Старый username уже закреплён за другим Telegram ID. Проверьте источник по peer_id.",409);
         await tx.query(`
           INSERT INTO tg_jobs(source_id) VALUES($1)
           ON CONFLICT (source_id) DO NOTHING`, [source.rows[0].id]);
+        // Re-adding an existing source must not lose either history/fresh
+        // checkpoint. Existing pending/delayed jobs keep their run_at and
+        // Telegram FloodWait. Manual retry resumes a failed job in place.
         await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,
           run_at=now(), locked_until=NULL, last_error=NULL, updated_at=now()
           WHERE source_id=$1 AND state='failed'`, [source.rows[0].id]);
@@ -282,13 +329,45 @@ export async function POST(request: NextRequest) {
         throw error;
       } finally { tx.release(); }
     }
+    if (action === "history") {
+      const id = sourceId(input.sourceId);
+      const tx = await p.connect();
+      try {
+        await tx.query("BEGIN");
+        const source = await tx.query<{id: string;full_history:boolean;history_complete:boolean}>(`
+          SELECT s.id::text AS id,s.full_history,s.history_complete FROM tg_sources s
+          JOIN tg_jobs j ON j.source_id=s.id
+          WHERE s.id=$1 AND j.state<>'running' FOR UPDATE OF s,j`, [id]);
+        if (!source.rowCount) throw new ApiError("Источник не найден или задание уже выполняется", 409);
+        await tx.query(`UPDATE tg_sources SET full_history=TRUE,history_complete=FALSE,history_partial=TRUE,
+          enabled=TRUE WHERE id=$1`, [id]);
+        if (!source.rows[0].full_history || source.rows[0].history_complete) {
+          await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
+            base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
+            history_scan_verified=FALSE,scanned_count=0,locked_until=NULL,
+            last_error=NULL,run_at=now(),updated_at=now()
+            WHERE source_id=$1 AND state IN ('pending','failed')`, [id]);
+        } else {
+          // An existing full-history scan must resume at its saved checkpoint,
+          // not restart because the operator clicked "Continue" twice.
+          await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
+            locked_until=NULL,last_error=NULL,run_at=now(),updated_at=now()
+            WHERE source_id=$1 AND state='failed'`, [id]);
+        }
+        await tx.query("COMMIT");
+        return NextResponse.json({ok:true}, {headers:noStore});
+      } catch (error) {
+        await tx.query("ROLLBACK");
+        throw error;
+      } finally { tx.release(); }
+    }
+
     if (action === "start" || action === "stop") {
       if (action === "start") {
         const state = await p.query<{block_reason: string | null}>("SELECT block_reason FROM tg_runtime WHERE id=1");
         if (state.rows[0]?.block_reason) throw new ApiError(`Сборщик заблокирован: ${state.rows[0].block_reason}. Сначала снимите ограничение вручную.`, 409);
         await p.query("UPDATE tg_runtime SET collection_enabled=TRUE WHERE id=1");
-        await p.query(`UPDATE tg_jobs SET state='pending',run_at=now(),locked_until=NULL,last_error=NULL,updated_at=now()
-          WHERE state='pending' AND source_id IN (SELECT id FROM tg_sources WHERE enabled)`);
+        // Keep each job's run_at: resetting every pending job causes a burst of Telegram requests.
       } else {
         await p.query("UPDATE tg_runtime SET collection_enabled=FALSE WHERE id=1");
       }
@@ -344,10 +423,10 @@ export async function POST(request: NextRequest) {
       const result = await p.query(`
         UPDATE tg_jobs SET state='pending', attempts=0, run_at=now(),
           locked_until=NULL, last_error=NULL, updated_at=now()
-        WHERE source_id=$1 AND state IN ('pending','delayed','failed')
+        WHERE source_id=$1 AND state IN ('pending','failed')
           AND EXISTS(SELECT 1 FROM tg_sources WHERE id=$1 AND enabled)
         RETURNING id`, [id]);
-      if (!result.rowCount) throw new ApiError("Задание активно, источник приостановлен или не найден", 409);
+      if (!result.rowCount) throw new ApiError("Задание выполняется, отложено Telegram (FloodWait), источник приостановлен или не найден", 409);
       return NextResponse.json({ ok: true }, { headers: noStore });
     }
     if (action === "remove") {

@@ -60,6 +60,7 @@ export type TgRuntimeMetrics = {
   messages_total: number;
   messages_per_day: number;
   links_total: number;
+  links_active_total: number;
   links_per_day: number;
   jobs_pending: number;
   jobs_failed: number;
@@ -72,13 +73,18 @@ export type TgRuntimeMetrics = {
 export type TgCollectorSource = {
   id: string;
   identifier: string;
+  current_username: string | null;
   title: string | null;
   peer_id: string | null;
   enabled: boolean;
   history_partial: boolean;
+  full_history: boolean;
+  history_complete: boolean;
+  history_low_message_id: string;
   last_message_id: string;
   last_success_at: string | null;
   message_count: number;
+  entities_unverified: number;
   state: "pending" | "running" | "delayed" | "failed" | null;
   run_at: string | null;
   attempts: number | null;
@@ -121,6 +127,8 @@ export type TgCollectorSnapshot = {
   stats: { sources: number; messages: number; running: number; failed: number };
   runtimeMetrics: TgRuntimeMetrics;
   sources: TgCollectorSource[];
+  sourceOptions: {id:string;identifier:string;current_username:string|null}[];
+  sourcePage: number;
   messages: TgCollectedMessage[];
   page: number;
 };

@@ -5,6 +5,9 @@ export type Job = {
   id: string; source_id: string; attempts: number;
   base_message_id: string | null; high_message_id: string | null;
   cursor_before_id: string | null; scanned_count: number;
+  fresh_base_message_id?: string | null;
+  fresh_high_message_id?: string | null;
+  fresh_cursor_before_id?: string | null;
 };
 
 export async function claim(): Promise<Job | undefined> {
@@ -32,12 +35,18 @@ export async function finishJob(job: Job, highId: number, partial: boolean,baseI
     await tx.query("BEGIN");
     await tx.query(
       `UPDATE tg_sources SET last_message_id=GREATEST(last_message_id,$2),
-        history_partial=CASE WHEN full_history AND $4::boolean AND NOT $3 THEN FALSE ELSE history_partial OR $3 END,
-        history_complete=history_complete OR (full_history AND $4::boolean AND NOT $3), last_success_at=now()
-        WHERE id=$1`, [job.source_id, highId, partial,baseId===0]
+        history_partial=CASE WHEN full_history AND $4::boolean AND NOT $3
+          AND EXISTS(SELECT 1 FROM tg_jobs j WHERE j.id=$5 AND j.history_scan_verified)
+          THEN FALSE ELSE history_partial OR $3 END,
+        history_complete=history_complete OR
+          (full_history AND $4::boolean AND NOT $3
+            AND EXISTS(SELECT 1 FROM tg_jobs j WHERE j.id=$5 AND j.history_scan_verified)),
+        last_success_at=now()
+        WHERE id=$1`, [job.source_id, highId, partial,baseId===0,job.id]
     );
     await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,
       base_message_id=NULL, high_message_id=NULL, cursor_before_id=NULL,
+      history_scan_verified=FALSE,
       scanned_count=0, run_at=now()+($2::int * interval '1 second'),
       locked_until=NULL, last_error=NULL, updated_at=now() WHERE id=$1`,
       [job.id, pollSeconds]);

@@ -50,3 +50,33 @@ jobs:
         run: npm run typecheck
       - name: Unit and database integration tests
         run: npm test
+      - name: Backup and clean restore round-trip
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v psql
+          command -v pg_dump
+          command -v pg_restore
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO tg_sources(identifier,peer_id) VALUES('ci_backup_restore_fixture','9988776655')"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "INSERT INTO tg_messages(source_id,message_id,text,posted_at,views) SELECT id,23,'Backup restoration fixture',now(),42 FROM tg_sources WHERE identifier='ci_backup_restore_fixture'"
+          export TG_BACKUP_DIR="${RUNNER_TEMP}/tg-collector-backups"
+          bash scripts/backup.sh
+          archive="$(find "$TG_BACKUP_DIR" -name 'tg-collector-*.dump' -type f -print -quit)"
+          test -s "$archive"
+          test -s "$archive.sha256"
+          sha256sum -c "$archive.sha256"
+          psql "postgresql://tg:tg@127.0.0.1:5432/postgres" -v ON_ERROR_STOP=1 -c "CREATE DATABASE tg_collector_restore_ci"
+          export TG_RESTORE_CHECK_DATABASE_URL="postgresql://tg:tg@127.0.0.1:5432/tg_collector_restore_ci"
+          bash scripts/restore-check.sh "$archive"
+          DATABASE_URL="$TG_RESTORE_CHECK_DATABASE_URL" npm run migrate
+          if bash scripts/restore-check.sh "$archive"; then
+            echo "ERROR: restore must refuse a nonempty target database" >&2
+            exit 1
+          fi
+          actual="$(psql "$TG_RESTORE_CHECK_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id WHERE s.identifier='ci_backup_restore_fixture' AND m.message_id=23 AND m.views=42")"
+          test "$actual" = 1
+          original="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM tg_messages")"
+          restored="$(psql "$TG_RESTORE_CHECK_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM tg_messages")"
+          test "$restored" = "$original"
+          echo "PASS: complete PostgreSQL backup/restore integrity round-trip (${restored} messages)"
+
