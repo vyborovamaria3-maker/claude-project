@@ -167,6 +167,31 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     await pool.query("UPDATE blockchain_swap_evidence_revisions SET inserted_at=observed_at");
     assert.equal((await active(mint2,"2026-10-20T01:30:00Z")).length,0,
       "one wallet revoking the same signature must prevent a contradictory active claim");
+    // Supported-but-conflicting wallet views also suppress attribution.
+    for(const [offset,change] of [
+      [0,{mint:true}],[1,{slot:true}],[2,{time:true}],[3,{}],
+    ]){
+      const candidate=structuredClone(tx2);
+      if(change.mint){
+        candidate.events.swap.tokenOutputs[0].mint=mint;
+        candidate.accountData[0].tokenBalanceChanges[0].mint=mint;
+      }
+      if(change.slot)candidate.slot++;
+      if(change.time)candidate.timestamp++;
+      const next=buildTokenSwapRevisionEvent({
+        kind:"wallet",address:wallet2,signature,rawRevision:3+offset,
+        payloadHash:String(offset+1).repeat(64),
+        observedAt:Date.parse("2026-10-20T01:23:00Z")+offset*1000,
+        transaction:candidate,
+      });
+      assert.equal(next.payload.swapRevision.status,"supported");
+      emitSqlite(sqlite,next);
+      assert.equal((await deliver()).delivered,1);
+      await pool.query("UPDATE blockchain_swap_evidence_revisions SET inserted_at=observed_at");
+      assert.equal((await active(mint2,"2026-10-20T01:30:00Z")).length,
+        offset===3?1:0,"conflicting mint, slot or occurrence cannot become active evidence");
+      assert.equal((await active(mint,"2026-10-20T01:30:00Z")).length,0);
+    }
     // Late-delivered contradictory evidence must not retroactively change an
     // earlier as-of view.
     assert.equal((await active(mint2,"2026-10-20T01:21:30Z")).length,1);

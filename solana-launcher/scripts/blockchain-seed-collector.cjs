@@ -7,7 +7,7 @@
 // Requires Python 3 for the bounded XLSX reader; collection supports Helius with Alchemy raw-history fallback.
 const fs = require("node:fs");
 const path = require("node:path");
-const { gzipSync } = require("node:zlib");
+const { gzipSync, gunzipSync } = require("node:zlib");
 const { randomUUID, createHash } = require("node:crypto");
 // The local CLI does not inherit Next.js environment loading.
 require("dotenv").config({ path: path.join(process.cwd(), ".env.local"), quiet: true });
@@ -147,6 +147,16 @@ function initDb(db) {
     "  payload_gzip BLOB NOT NULL,payload_bytes INTEGER NOT NULL,",
     "  observed_at INTEGER NOT NULL,block_time INTEGER,slot INTEGER,",
     "  PRIMARY KEY(kind,address,signature,raw_revision))",
+    ";CREATE TRIGGER IF NOT EXISTS chain_raw_revisions_no_replace BEFORE INSERT ON chain_seed_raw_revisions",
+    "  WHEN EXISTS(SELECT 1 FROM chain_seed_raw_revisions r WHERE r.kind=NEW.kind AND r.address=NEW.address",
+    "    AND r.signature=NEW.signature AND r.raw_revision=NEW.raw_revision AND (r.payload_hash IS NOT NEW.payload_hash",
+    "    OR r.payload_gzip IS NOT NEW.payload_gzip OR r.payload_bytes IS NOT NEW.payload_bytes",
+    "    OR r.observed_at IS NOT NEW.observed_at OR r.block_time IS NOT NEW.block_time OR r.slot IS NOT NEW.slot)) BEGIN",
+    "  SELECT RAISE(ABORT,'Immutable raw revision snapshot'); END",
+    ";CREATE TRIGGER IF NOT EXISTS chain_raw_revisions_no_update BEFORE UPDATE ON chain_seed_raw_revisions BEGIN",
+    "  SELECT RAISE(ABORT,'Immutable raw revision snapshot'); END",
+    ";CREATE TRIGGER IF NOT EXISTS chain_raw_revisions_no_delete BEFORE DELETE ON chain_seed_raw_revisions BEGIN",
+    "  SELECT RAISE(ABORT,'Immutable raw revision snapshot'); END",
     ";CREATE INDEX IF NOT EXISTS idx_chain_raw_revision_hash",
     "  ON chain_seed_raw_revisions(kind,address,signature,payload_hash)",
     ";CREATE INDEX IF NOT EXISTS idx_chain_seed_events_latest",
@@ -902,16 +912,28 @@ function persistEvents(db, kind, address, transactions) {
     "(kind,address,signature,raw_revision,payload_hash,payload_gzip,payload_bytes,"+
     "observed_at,block_time,slot) VALUES(?,?,?,?,?,?,?,?,?,?) "+
     "ON CONFLICT(kind,address,signature,raw_revision) DO NOTHING");
-  const readRevision=db.prepare("SELECT payload_hash,payload_gzip,payload_bytes "+
+  const readRevision=db.prepare("SELECT payload_hash,payload_gzip,payload_bytes,observed_at,block_time,slot "+
     "FROM chain_seed_raw_revisions WHERE kind=? AND address=? AND signature=? AND raw_revision=?");
   function archive(row){
-    if(!row || !/^[a-f0-9]{64}$/.test(row.payload_hash||""))return;
+    if(!row)return;
+    // Pre-hash schemas still contain recoverable gzip bytes. Hash those bytes,
+    // retaining the original observation clock; never invent earlier revisions.
+    if(row.payload_hash===null){
+      const unpacked=gunzipSync(row.payload_gzip);
+      if(unpacked.length!==row.payload_bytes)
+        throw new Error("Invalid legacy raw snapshot size");
+      row={...row,payload_hash:createHash("sha256").update(unpacked).digest("hex")};
+    }
+    if(!/^[a-f0-9]{64}$/.test(row.payload_hash||""))
+      throw new Error("Invalid raw snapshot hash");
     const values=[row.kind,row.address,row.signature,row.raw_revision,row.payload_hash,
       row.payload_gzip,row.payload_bytes,row.observed_at,row.block_time,row.slot];
     if(recordRevision.run(...values).changes===0){
       const stored=readRevision.get(row.kind,row.address,row.signature,row.raw_revision);
       if(!stored || stored.payload_hash!==row.payload_hash ||
          stored.payload_bytes!==row.payload_bytes ||
+         stored.observed_at!==row.observed_at ||
+         stored.block_time!==row.block_time ||stored.slot!==row.slot ||
          !Buffer.from(stored.payload_gzip).equals(Buffer.from(row.payload_gzip)))
         throw new Error("Conflicting immutable raw revision snapshot");
     }
@@ -930,11 +952,11 @@ function persistEvents(db, kind, address, transactions) {
       const hash = createHash("sha256").update(serialized).digest("hex");
       const observedAt = Date.now();
       const prior=previous.get(kind,address,tx.signature);
+      archive(prior);
       const inserted = insert.run(kind, address, tx.signature,
         Number.isFinite(tx.timestamp) ? tx.timestamp : null,
         Number.isFinite(tx.slot) ? tx.slot : null, packed, bytes, observedAt, hash).changes;
       if(inserted>0){
-        archive(prior);
         archive(current.get(kind,address,tx.signature));
       }
       saved += inserted;

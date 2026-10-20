@@ -115,6 +115,11 @@ function verifyOfflineSwapProof(event,receipts){
     return fail("wrong_signature_request");
   if(JSON.stringify(receipts.mintRequest)!==JSON.stringify(plan.mint))
     return fail("wrong_mint_request");
+  // An error envelope cannot simultaneously supply usable evidence.
+  for(const response of [receipts.signatureResponse,receipts.mintResponse]){
+    if(!response||typeof response!=="object"||Array.isArray(response)||
+       Object.hasOwn(response,"error"))return fail("rpc_error_envelope");
+  }
   const sr=receipts.signatureResponse?.result;
   if(!sr||!Number.isSafeInteger(sr.context?.slot)||
     sr.context.slot<revision.slot||
@@ -143,6 +148,7 @@ function verifyOfflineSwapProof(event,receipts){
   // finalized account snapshot, not a historical state proof.
   return {
     status:"rpc_reported_finalized_tx_and_current_mint",
+    provenance:"unverified_offline_receipts",
     signature:revision.signature,mint:revision.canonicalTokenId,
     sourceRawRevision:revision.rawRevision,
     sourceRawSha256:revision.rawSha256,
@@ -151,6 +157,7 @@ function verifyOfflineSwapProof(event,receipts){
     mintAccountContextSlot:mr.context.slot,
     mintProgram:result.program,
     limits:[
+      "rpc_origin_and_cluster_not_authenticated",
       "rpc_response_not_cryptographic_attestation",
       "current_mint_account_not_mint_state_at_transaction_slot",
       "not_a_verified_trade_or_pnl",

@@ -128,3 +128,5 @@ queued. A referenced public-chat lookup returned no matching/readable ordinary p
 in the initial check; no private joins or unverified mention counts were introduced.
 Existing scheduled supervisor and local admin/frontend were restarted after they
 were found stopped; original TGInvite files were preserved.
+
+ARCH-06 PR #150 continuation (2026-10-20): preserve available pre-hash SQLite RAW snapshots on upgrade/replay, enforce append-only archive writes, reject mixed RPC result/error envelopes and label offline receipt provenance unverified. Synthetic regressions added for upgrades/rollback/mutations and supported inter-wallet mint/slot/time disagreement. See docs/architecture/ARCH_06_INTEGRITY_AUDIT_FIXES.md for verification and remaining provenance/finality/PnL blockers.

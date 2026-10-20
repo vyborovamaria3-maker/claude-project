@@ -1,6 +1,8 @@
 "use strict";
 const assert=require("node:assert/strict");
 const Database=require("better-sqlite3");
+const {gzipSync}=require("node:zlib");
+const {createHash}=require("node:crypto");
 const {initDb,persistEvents}=require("./blockchain-seed-collector.cjs");
 const {
   enabled,buildTokenSwapEvidenceEvent,
@@ -151,6 +153,14 @@ try{
   assert.equal(new Set(rawHistory.map(r=>r.payload_hash)).size,3);
   assert(rawHistory.every(r=>r.payload_gzip.length>0&&r.payload_bytes>0));
   assert.equal(rawHistory.length,3);
+  assert.throws(()=>db.prepare("UPDATE chain_seed_raw_revisions SET slot=1").run(),
+    /Immutable raw revision/);
+  assert.throws(()=>db.prepare("DELETE FROM chain_seed_raw_revisions").run(),
+    /Immutable raw revision/);
+  assert.throws(()=>db.exec("INSERT OR REPLACE INTO chain_seed_raw_revisions "+
+    "SELECT kind,address,signature,raw_revision,payload_hash,payload_gzip,payload_bytes,"+
+    "observed_at+1,block_time,slot FROM chain_seed_raw_revisions WHERE raw_revision=1"),
+    /Immutable raw revision/);
   delete process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED;
   assert.equal(persistEvents(db,"wallet",wallet,[{...tx,slot:250000003}]),1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,9,
@@ -161,5 +171,33 @@ try{
   if(oldNew===undefined)delete process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED;
   else process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED=oldNew;
   db.close();
+}
+// Upgrade fixtures: pre-hash and pre-archive schemas, in memory only.
+for(const legacyHash of [null,createHash("sha256").update(JSON.stringify(tx)).digest("hex")]){
+  const legacy=new Database(":memory:");
+  try{
+    const bytes=Buffer.from(JSON.stringify(tx)), packed=gzipSync(bytes);
+    legacy.exec("CREATE TABLE chain_seed_events (kind TEXT,address TEXT,signature TEXT,"+
+      "block_time INTEGER,slot INTEGER,payload_gzip BLOB,payload_bytes INTEGER,observed_at INTEGER,"+
+      "payload_hash TEXT,raw_revision INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(kind,address,signature))");
+    legacy.prepare("INSERT INTO chain_seed_events VALUES(?,?,?,?,?,?,?,?,?,?)")
+      .run("wallet",wallet,signature,tx.timestamp,tx.slot,packed,bytes.length,now,legacyHash,1);
+    initDb(legacy);
+    initDb(legacy); // additive, repeatable upgrade
+    assert.throws(()=>legacy.transaction(()=>{
+      persistEvents(legacy,"wallet",wallet,[{...tx,slot:250000009}]);
+      throw new Error("upgrade-rollback");
+    })(),/upgrade-rollback/);
+    assert.equal(legacy.prepare("SELECT COUNT(*) n FROM chain_seed_raw_revisions").get().n,0);
+    // Even an unchanged current row must archive the available pre-upgrade bytes.
+    persistEvents(legacy,"wallet",wallet,[tx]);
+    const first=legacy.prepare("SELECT * FROM chain_seed_raw_revisions WHERE raw_revision=1").get();
+    assert(first);
+    assert.deepEqual(first.payload_gzip,packed);
+    assert.equal(first.payload_hash,createHash("sha256").update(bytes).digest("hex"));
+    assert.equal(first.observed_at,now);
+    persistEvents(legacy,"wallet",wallet,[{...tx,slot:250000009}]);
+    assert.deepEqual(legacy.prepare("SELECT * FROM chain_seed_raw_revisions WHERE raw_revision=1").get(),first);
+  }finally{legacy.close();}
 }
 console.log("[blockchain-token-swap-outbox-test] OK: exact mint refs, conservative proof, revisions, rollback and dual opt-ins");

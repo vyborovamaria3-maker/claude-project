@@ -28,3 +28,17 @@ Draft PR stacked on #149 → #148 → #147. No production rollout, RPC requests,
 `provider parsed swap evidence` ≠ `SPL Mint verified at swap slot` ≠ `finalized trade tape` ≠ `verified PnL`.
 
 Existing archived historic timeline remains historical and can show superseded revisions. Only the new **active** query excludes invalidated or conflicting claims, and only among the sources visible by `knownAt`.
+
+
+## Codex continuation � 2026-10-20
+
+Review of current #150 HEAD 32bee1b0 and its stacked base (#149 -> #148 -> #147): all ten original workflows / fifteen jobs completed successfully. Separate code review covered RAW persistence, revision agreement, source/destination time filters, preclaim 005 readiness, receipt consistency and the read-only API allowlist/auth/session configuration.
+
+Confirmed follow-up defects and fixes:
+- Available legacy RAW bytes with a NULL pre-upgrade hash were silently skipped before replacement. Archive the original gzip with a derived SHA-256 and original clocks, including unchanged rows encountered after upgrade. Never reconstruct overwritten revisions.
+- RAW history had no database enforcement against UPDATE/DELETE or conflicting INSERT OR REPLACE. Add additive triggers and compare archived slot/time metadata as well as bytes/hash. Administrative DDL can still remove these protections; this is not tamper-proof storage.
+- Offline RPC envelopes could contain both a result and an error. Reject those contradictory envelopes and explicitly return `provenance: unverified_offline_receipts` plus unauthenticated-origin/cluster limitations. Request matching remains structural, not authenticated acquisition.
+
+Synthetic in-memory SQLite regressions cover idempotent upgrade, legacy NULL/hash rows, unchanged-row archival, rollback and mutation/replacement refusal. PostgreSQL regression adds conflicting supported wallet mint/slot/occurrence and subsequent agreement restoration. Local Intelligence strict typecheck/build and 54 tests passed; 13 PostgreSQL tests require the disposable CI service. Targeted source persistence/outbox and RPC suites passed. Full local blockchain suite stopped at missing `next/server` in the minimal dependency installation; the full suite must pass in latest-head CI.
+
+Unchanged blockers: authenticated endpoint/cluster/request-response provenance, historical mint state, independently established finality, complete trade decoding/history and authoritative PnL. No real database, secret or RPC used; no main changes or merge.

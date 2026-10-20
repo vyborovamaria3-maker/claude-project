@@ -65,12 +65,16 @@ assert.deepEqual(plan.mint,{
 const valid=verifyOfflineSwapProof(event,receipts());
 assert.equal(valid.status,"rpc_reported_finalized_tx_and_current_mint");
 assert.equal(valid.mintProgram,"spl-token");
+assert.equal(valid.provenance,"unverified_offline_receipts");
+assert(valid.limits.includes("rpc_origin_and_cluster_not_authenticated"));
 assert.equal(valid.transactionSlot,slot);
 assert(valid.limits.includes("current_mint_account_not_mint_state_at_transaction_slot"));
 assert(!JSON.stringify(valid).includes("tokenBalanceChanges"));
 
 const checks=[
   ["no_rpc_receipts",r=>null],
+  ["rpc_error_envelope",r=>{r.signatureResponse.error={code:-32603,message:"synthetic"};return r}],
+  ["rpc_error_envelope",r=>{r.mintResponse.error={code:-32603,message:"synthetic"};return r}],
   ["wrong_signature_request",r=>{r.signatureRequest.params[0][0]="2".repeat(64);return r}],
   ["wrong_mint_request",r=>{r.mintRequest.params[1].commitment="confirmed";return r}],
   ["signature_status_unavailable",r=>{r.signatureResponse.result.value=[null];return r}],
