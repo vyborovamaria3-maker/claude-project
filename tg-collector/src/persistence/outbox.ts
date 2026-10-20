@@ -11,7 +11,9 @@ export function telegramOutboxEnabled(env: NodeJS.ProcessEnv = process.env): boo
   return env.TG_INTELLIGENCE_OUTBOX_ENABLED === "true";
 }
 
-const STABLE_PEER = /^[1-9][0-9]{0,19}$/;
+// Telegram channel identifiers may be signed (e.g. -100123). Preserve the
+// sign exactly; never infer or strip it from a mutable @username.
+const STABLE_PEER = /^-?[1-9][0-9]{0,19}$/;
 function stablePeer(peerId: string | null): string {
   if (!peerId || !STABLE_PEER.test(peerId)) {
     throw new Error("TG_INTELLIGENCE_PEER_UNRESOLVED: stable numeric channel peer_id required");
