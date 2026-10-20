@@ -640,10 +640,10 @@ source's Telegram ID.
 
 **Legacy identity preflight.** Sources collected before verified peer IDs existed
 may still have `tg_sources.peer_id IS NULL` even though their histories contain
-messages. Those rows now fail closed with `TG_SOURCE_IDENTITY_UNVERIFIED` when
-Telegram resolves the original username but no independently verified discovery
-mapping confirms the peer. This is intentional: a username can have changed
-owners since the archive was collected. The worker does not overwrite the old
+messages. Those rows now fail closed with `TG_SOURCE_IDENTITY_UNVERIFIED` even
+if an old discovery row points at a Telegram peer: earlier discovery code could
+attach `source_id` by the mutable username. That historical association is not
+independent proof of archive ownership. The worker does not overwrite old
 messages or guess a peer ID. Before restarting the worker, inspect:
 
 ```sql
@@ -652,7 +652,8 @@ SELECT s.id, s.identifier, s.last_message_id, s.history_low_message_id,
 FROM tg_sources s
 WHERE s.peer_id IS NULL
   AND (s.last_message_id > 0 OR s.history_low_message_id > 0
-       OR EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id))
+       OR EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id)
+       OR EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id))
 ORDER BY s.id;
 ```
 
