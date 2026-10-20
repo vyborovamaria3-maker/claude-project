@@ -89,6 +89,58 @@ test("an unverified source with only a persisted job checkpoint cannot switch Te
   }
 });
 
+test("full-history scans gaps above isolated old discovery evidence", {
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const {pool,migrate} = await import("../src/db.js");
+  const {processJob} = await import("../src/engines/channel.js");
+  await migrate();
+  const handle="sparse_"+randomUUID().replaceAll("-","").slice(0,12);
+  const source=(await pool.query<{id:string}>(`
+    INSERT INTO tg_sources(identifier,peer_id,current_username,
+      full_history,history_partial,history_low_message_id,last_message_id)
+    VALUES($1,'787878',$1,TRUE,TRUE,10,100) RETURNING id::text`,
+    [handle])).rows[0].id;
+  try {
+    // This old post may have been discovered independently while IDs 11–89
+    // were never scanned. Old code incorrectly treated minimum ID=10 as
+    // proof that everything above 10 was already collected.
+    await pool.query(`INSERT INTO tg_messages(source_id,message_id,text,posted_at)
+      VALUES($1,10,'isolated old post',now()),($1,100,'latest post',now())`,
+      [source]);
+    const job=(await pool.query(`
+      INSERT INTO tg_jobs(source_id) VALUES($1) RETURNING *`,[source])).rows[0];
+    const history=Array.from({length:100},(_,i)=>({
+      id:100-i,message:"Gap post "+String(100-i),date:1792065600+i,
+    }));
+    const client={
+      async getEntity(){return {className:"Channel",
+        id:{toString:()=> "787878"},username:handle,title:"Public fixture"};},
+      async getMessages(_entity:unknown,opts:{limit:number;offsetId?:number;minId?:number}){
+        return history.filter(msg=>msg.id<(opts.offsetId??Infinity) &&
+          msg.id>(opts.minId??0)).slice(0,opts.limit);
+      },
+    } as unknown as TelegramClient;
+    for(let turn=0;turn<6;turn++){
+      const current=(await pool.query("SELECT * FROM tg_jobs WHERE source_id=$1",
+        [source])).rows[0];
+      await processJob(client,current,()=>false);
+      const state=await pool.query<{history_complete:boolean}>(
+        "SELECT history_complete FROM tg_sources WHERE id=$1",[source]);
+      if(state.rows[0].history_complete)break;
+    }
+    const rows=await pool.query<{count:number;history_complete:boolean}>(`
+      SELECT count(m.message_id)::integer AS count,s.history_complete
+      FROM tg_sources s JOIN tg_messages m ON m.source_id=s.id
+      WHERE s.id=$1 GROUP BY s.id`,[source]);
+    assert.equal(rows.rows[0].count,100,
+      "isolated old evidence must not skip uncollected middle range");
+    assert.equal(rows.rows[0].history_complete,true);
+  } finally {
+    await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
+  }
+});
+
 test("full-history resumes below the oldest persisted post and scans until an empty page", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
