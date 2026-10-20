@@ -333,17 +333,26 @@ export async function POST(request: NextRequest) {
       const tx = await p.connect();
       try {
         await tx.query("BEGIN");
-        const source = await tx.query<{id: string}>(`
-          SELECT s.id::text AS id FROM tg_sources s
+        const source = await tx.query<{id: string;full_history:boolean;history_complete:boolean}>(`
+          SELECT s.id::text AS id,s.full_history,s.history_complete FROM tg_sources s
           JOIN tg_jobs j ON j.source_id=s.id
           WHERE s.id=$1 AND j.state<>'running' FOR UPDATE OF s,j`, [id]);
         if (!source.rowCount) throw new ApiError("Источник не найден или задание уже выполняется", 409);
         await tx.query(`UPDATE tg_sources SET full_history=TRUE,history_complete=FALSE,history_partial=TRUE,
           enabled=TRUE WHERE id=$1`, [id]);
-        await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
-          base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
-          scanned_count=0,locked_until=NULL,last_error=NULL,run_at=now(),updated_at=now()
-          WHERE source_id=$1 AND state IN ('pending','failed')`, [id]);
+        if (!source.rows[0].full_history || source.rows[0].history_complete) {
+          await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
+            base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
+            history_scan_verified=FALSE,scanned_count=0,locked_until=NULL,
+            last_error=NULL,run_at=now(),updated_at=now()
+            WHERE source_id=$1 AND state IN ('pending','failed')`, [id]);
+        } else {
+          // An existing full-history scan must resume at its saved checkpoint,
+          // not restart because the operator clicked "Continue" twice.
+          await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
+            locked_until=NULL,last_error=NULL,run_at=now(),updated_at=now()
+            WHERE source_id=$1 AND state='failed'`, [id]);
+        }
         await tx.query("COMMIT");
         return NextResponse.json({ok:true}, {headers:noStore});
       } catch (error) {
