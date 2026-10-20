@@ -27,8 +27,17 @@ test("full-history resumes below the oldest persisted post and scans until an em
   const postedAt = Math.floor(new Date("2026-10-15T12:00:00Z").valueOf() / 1000);
   const originals = Array.from({length: 650}, (_, n) =>
     ({id: n + 1, date: postedAt + n, message: "Historical post #" + (n + 1)})).reverse();
+  let oldUsernameUnavailable = false;
+  let usedStablePeer = false;
   const client = {
-    async getEntity() { return {className: "Channel", title: "History test channel", id: {toString: () => "123456"}}; },
+    async getEntity(peer: unknown) {
+      if (oldUsernameUnavailable && typeof peer === "string") throw Error("USERNAME_INVALID");
+      if (oldUsernameUnavailable && typeof peer !== "string") usedStablePeer = true;
+      return {
+        className: "Channel", title: "History test channel",
+        id: {toString: () => "123456"},accessHash:{toString:()=> "987654321"},
+      };
+    },
     async getMessages(_entity: unknown, options: {limit: number;offsetId?: number;minId?: number}) {
       const offset = options.offsetId ?? Number.MAX_SAFE_INTEGER;
       // Intentional *short* nonterminal pages simulate Telegram gaps/deletions.
@@ -85,8 +94,10 @@ test("full-history resumes below the oldest persisted post and scans until an em
     assert.equal(state.rows[0].history_partial,false);
     assert.equal(state.rows[0].history_complete,true);
 
-    // Incremental rerun of the same latest page remains idempotent.
+    // Username can change; a previously saved access hash still resolves the channel.
+    oldUsernameUnavailable = true;
     await processJob(client, await readJob(), () => false);
+    assert.equal(usedStablePeer,true, "previously resolved channel survives a username rename");
     const after = await pool.query<{count:number}>(
       "SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1", [sourceId]);
     assert.equal(after.rows[0].count,650);
