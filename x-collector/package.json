@@ -73,7 +73,8 @@
     "jobs:dlq": "tsx scripts/dlq.ts",
     "audit:unused:files": "npm exec --yes --package=knip@6.41.0 -- knip --config knip.jsonc --include files --reporter json --no-progress",
     "signal:quality": "tsx scripts/signal-quality.ts",
-    "link:tweet-tokens": "tsx scripts/link-tweets-to-tokens.ts"
+    "link:tweet-tokens": "tsx scripts/link-tweets-to-tokens.ts",
+    "intelligence:verify-x-mints": "tsx scripts/verify-x-token-links.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
