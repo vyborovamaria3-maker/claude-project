@@ -14,6 +14,8 @@ test("SPL requires a valid 82-byte mint layout",()=>{
 test("Token-2022 mints require the extension account-type marker",()=>{
   const extended=Buffer.alloc(166);sample().copy(extended);extended[165]=1;
   assert.equal(decodeMintAccount(TOKEN_2022_PROGRAM,extended)?.decimals,9);
+  assert.equal(decodeMintAccount(TOKEN_2022_PROGRAM,Buffer.concat([extended,Buffer.alloc(2)]))?.decimals,9,
+    "zero-padded extension capacity is valid");
   const tokenAccount=Buffer.from(extended);tokenAccount[165]=2;
   assert.equal(decodeMintAccount(TOKEN_2022_PROGRAM,tokenAccount),null);
   const padding=Buffer.from(extended);padding[100]=5;
