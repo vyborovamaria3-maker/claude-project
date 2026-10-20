@@ -51,6 +51,47 @@ test("a recycled username cannot redirect public discovery evidence to the previ
   }
 });
 
+test("v4 leaves pending, unverified Solana address records unresolved", {
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const {pool,migrate} = await import("../../src/db.js");
+  const {persistMessage} = await import("../../src/persistence/messages.js");
+  await migrate();
+  // Token Program is a valid Solana address but not a mint account.
+  // The mock pending row must not turn it into a confirmed token.
+  const address = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  const wasPresent = await pool.query("SELECT 1 FROM tg_tokens WHERE chain_id='solana-mainnet' AND mint=$1", [address]);
+  const source = await pool.query<{id:string}>(
+    "INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text",
+    ["pending_mint_" + randomUUID().replaceAll("-","").slice(0,12)]);
+  try {
+    await pool.query(`INSERT INTO tg_tokens(chain_id,mint,metadata_status)
+      VALUES('solana-mainnet',$1,'pending') ON CONFLICT DO NOTHING`, [address]);
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      await persistMessage(tx,source.rows[0].id,{
+        id:451,message:"Unverified contract " + address,date:1792065600,
+      });
+      await tx.query("COMMIT");
+    } catch(error) {await tx.query("ROLLBACK");throw error;}
+    finally {tx.release();}
+    const candidate = await pool.query<{resolution_status:string}>(`
+      SELECT resolution_status FROM tg_token_candidates
+      WHERE source_id=$1 AND message_id=451 AND candidate_key=$2 AND analysis_version=4`,
+      [source.rows[0].id,address]);
+    assert.equal(candidate.rows[0]?.resolution_status,"unresolved");
+    const mentions = await pool.query<{count:number}>(`
+      SELECT count(*)::integer AS count FROM tg_token_mentions
+      WHERE source_id=$1 AND message_id=451 AND mint=$2 AND analysis_version=4 AND orphaned=FALSE`,
+      [source.rows[0].id,address]);
+    assert.equal(mentions.rows[0].count,0);
+  } finally {
+    await pool.query("DELETE FROM tg_sources WHERE id=$1",[source.rows[0].id]);
+    if(!wasPresent.rowCount) await pool.query("DELETE FROM tg_tokens WHERE chain_id='solana-mainnet' AND mint=$1",[address]);
+  }
+});
+
 test("v4 re-analysis reuses an already verified Solana mint, including hidden entities", {
   skip: !process.env.DATABASE_URL,
 }, async () => {
