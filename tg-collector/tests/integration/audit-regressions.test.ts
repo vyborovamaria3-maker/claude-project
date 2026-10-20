@@ -94,3 +94,32 @@ test("engagement snapshot refreshes the daily views aggregate",{
     await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
   }
 });
+
+test("RPC candidate promotion ignores soft-deleted message observations",{
+  skip: !process.env.DATABASE_URL,
+},async()=>{
+  const {pool,migrate}=await import("../../src/db.js");
+  const {activeMintOccurrences}=await import("../../src/analytics/token-candidate-occurrences.js");
+  await migrate();
+  const suffix=randomUUID().replaceAll("-","").slice(0,12);
+  const mint="mint_"+suffix;
+  const source=(await pool.query<{id:string}>(
+    "INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text",
+    ["dead_mint_"+suffix])).rows[0].id;
+  try {
+    await pool.query(`INSERT INTO tg_messages(source_id,message_id,text,posted_at,deleted_at)
+      VALUES($1,911,'live',now(),NULL),($1,912,'deleted',now(),now())`,[source]);
+    await pool.query(`INSERT INTO tg_token_candidates(
+      source_id,message_id,chain_id,candidate_type,candidate_key,raw_value,analysis_version)
+      VALUES($1,911,'solana-mainnet','address',$2,$2,4),
+        ($1,912,'solana-mainnet','address',$2,$2,4)`,[source,mint]);
+    const tx=await pool.connect();
+    try {
+      const rows=await activeMintOccurrences(tx,mint);
+      assert.deepEqual(rows.rows.map(row=>row.message_id),["911"],
+        "the deleted message must not be resurrected as an active token mention");
+    } finally {tx.release();}
+  } finally {
+    await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
+  }
+});
