@@ -76,6 +76,8 @@ const checks=[
   ["signature_status_unavailable",r=>{r.signatureResponse.result.value=[null];return r}],
   ["signature_status_unavailable",r=>{r.signatureResponse.result.context.slot=slot-1;return r}],
   ["signature_failed_or_unknown_error",r=>{r.signatureResponse.result.value[0].err={InstructionError:[0,"Custom"]};return r}],
+  ["signature_status_fields_disagree",r=>{r.signatureResponse.result.value[0].status={Err:{InstructionError:[0,"Custom"]}};return r}],
+  ["signature_status_fields_disagree",r=>{delete r.signatureResponse.result.value[0].status;return r}],
   ["transaction_not_reported_finalized",r=>{r.signatureResponse.result.value[0].confirmationStatus="confirmed";return r}],
   ["transaction_not_reported_finalized",r=>{r.signatureResponse.result.value[0].confirmationStatus=null;return r}],
   ["transaction_slot_mismatch",r=>{r.signatureResponse.result.value[0].slot=slot+1;return r}],
