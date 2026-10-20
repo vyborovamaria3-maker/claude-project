@@ -24,6 +24,20 @@ REVISIONS = {"cryptobert": "a" * 40, "fintwitbert": "b" * 40,
 
 
 class LaptopResourceTests(unittest.TestCase):
+    def test_codespaces_container_ram_limit_takes_precedence_over_host(self):
+        import tempfile
+        from pathlib import Path
+        from intelligence.nlp.resources import _linux_container_free_mb
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / "memory.max").write_text(str(8 * 1024**3))
+            (folder / "memory.current").write_text(str(7 * 1024**3))
+            self.assertEqual(_linux_container_free_mb(folder), 1024)
+            (folder / "memory.max").write_text("max")
+            self.assertIsNone(_linux_container_free_mb(folder))
+            (folder / "memory.max").write_text("bad")
+            self.assertIsNone(_linux_container_free_mb(folder))
+
     def test_high_memory_priority_set_once_for_multiple_batches(self):
         calls = []
         ctrl = ResourceController(
