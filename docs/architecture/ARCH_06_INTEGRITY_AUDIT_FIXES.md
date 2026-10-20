@@ -44,3 +44,5 @@ Synthetic in-memory SQLite regressions cover idempotent upgrade, legacy NULL/has
 Unchanged blockers: authenticated endpoint/cluster/request-response provenance, historical mint state, independently established finality, complete trade decoding/history and authoritative PnL. No real database, secret or RPC used; no main changes or merge.
 
 RPC provenance follow-up: docs/architecture/ARCH_06_RPC_PROVENANCE.md specifies an offline collector-signed package verifier and an atomic challenge-consumption acceptance adapter. It authenticates only the configured witness report. Real endpoint acquisition, durable challenge storage and historical/finality/PnL gates remain blocked; no existing API confidence changes.
+
+Challenge persistence follow-up: the explicit dedicated SQLite adapter now implements durable issuance and conditional atomic consumption. Temporary synthetic tests cover process restarts, lost acknowledgement after commit, concurrent connections and replay refusal. Production acquisition/key custody/store deployment and backup rollback policy remain separate gates; this still does not prove finality, complete trades or PnL.

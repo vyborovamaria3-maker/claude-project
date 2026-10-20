@@ -118,6 +118,24 @@ async function acceptanceTests(){
   const concurrent=await Promise.all([1,2].map(()=>acceptRpcProvenance(event,e,trust,expected,consume)));
   assert.equal(concurrent.filter(r=>r.challengeConsumed===true).length,1);
   assert.equal(concurrent.filter(r=>r.reason==="challenge_unknown_expired_or_consumed").length,1);
+  // Real persistent adapter, synthetic signed package, no permanent test files.
+  const {mkdtempSync,rmSync}=require("node:fs");
+  const {tmpdir}=require("node:os");
+  const {join}=require("node:path");
+  const {openRpcChallengeStore}=require("./blockchain-rpc-challenge-store.cjs");
+  const dir=mkdtempSync(join(tmpdir(),"arch06-provenance-store-")),file=join(dir,"nonce.sqlite");
+  let store;
+  try{
+    store=openRpcChallengeStore(file,{clock:()=>now});
+    const issued=store.issue({eventKey:event.eventKey,...trust});
+    const bound=payload();bound.challenge=issued.challenge;
+    const signed=envelope(bound),context={now,challenge:issued.challenge};
+    assert.equal((await acceptRpcProvenance(event,signed,trust,context,store.consumeChallenge)).challengeConsumed,true);
+    store.close();store=openRpcChallengeStore(file,{clock:()=>now});
+    assert.equal((await acceptRpcProvenance(event,signed,trust,context,store.consumeChallenge)).reason,
+      "challenge_unknown_expired_or_consumed");
+    store.close();store=null;
+  }finally{if(store)store.close();rmSync(dir,{recursive:true,force:true});}
   console.log("[blockchain-rpc-provenance-test] OK: signed witness, pins, cluster, clocks, tampering, atomic replay refusal and no confidence promotion");
 }
 acceptanceTests().catch(error=>{console.error(error);process.exitCode=1});
