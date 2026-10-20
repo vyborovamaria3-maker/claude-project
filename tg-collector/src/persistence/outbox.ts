@@ -206,3 +206,54 @@ export async function emitVerifiedTgTokenLinkOutbox(tx:PoolClient,input:Paramete
   await insertOutbox(tx,event);
   return true;
 }
+
+/** A source-level tombstone invalidates ALL previously verified mints for this
+ * exact message evidence, not just the mint currently visible after an edit. */
+export function buildTgTokenLinksInvalidatedOutboxEvent(input:{
+  peerId:string|null;messageId:number;reason:"edited"|"deleted";
+  sourceRevisionSha256:string;observedAt:Date;postedAt:Date|null;
+}){
+  const peer=stablePeer(input.peerId);
+  if(!Number.isSafeInteger(input.messageId)||input.messageId<=0||
+     !["edited","deleted"].includes(input.reason)||
+     !/^[a-f0-9]{64}$/.test(input.sourceRevisionSha256)){
+    throw new TypeError("Invalid Telegram token-link invalidation");
+  }
+  const observedAt=utcObserved(input.observedAt);
+  const occurredAt=input.postedAt?utcObserved(input.postedAt):observedAt;
+  const sourceId=`tg:message:${peer}:${input.messageId}`;
+  const eventKey=`tg:tokenlinks:invalidate:${sourceId}:${input.reason}:${input.sourceRevisionSha256}:${input.observedAt.getTime()}`;
+  return {
+    sourceSystem:"tg",eventKind:"token_links_invalidated",eventKey,
+    schemaVersion:"token-link-v1",
+    payload:{
+      registryEvent:{
+        sourceSystem:"tg",eventKind:"token_links_invalidated",eventKey,
+        schemaVersion:"token-link-v1",
+        entityRefs:[{kind:"source",canonicalId:`tg:source:${peer}`,
+          firstSeenAt:observedAt,lastSeenAt:observedAt}],
+        evidenceRef:{sourceKind:"tg_message",sourceId,
+          observedAt,occurredAt,parserVersion:"tg-mint-verifier-v1"},
+      },
+      tokenLinksInvalidation:{
+        status:"invalidated",reason:input.reason,
+        sourceRevisionSha256:input.sourceRevisionSha256,
+      },
+    },
+  };
+}
+
+/** Must be called inside the same source transaction as the edit/deletion. */
+export async function emitTgTokenLinksInvalidation(
+  tx:PoolClient, sourceId:string,
+  input:Omit<Parameters<typeof buildTgTokenLinksInvalidatedOutboxEvent>[0],"peerId">,
+):Promise<boolean>{
+  if(!telegramVerifiedTokenLinksEnabled())return false;
+  const peer=await tx.query<{peer_id:string|null}>(
+    "SELECT peer_id FROM tg_sources WHERE id=$1 FOR KEY SHARE",[sourceId]);
+  const event=buildTgTokenLinksInvalidatedOutboxEvent({
+    ...input,peerId:peer.rows[0]?.peer_id??null,
+  });
+  await insertOutbox(tx,event);
+  return true;
+}
