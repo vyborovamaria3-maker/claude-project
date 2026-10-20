@@ -39,12 +39,12 @@ function tokenAccounts(tx, mint) {
 }
 function hasPath(edges, starts, ends, ownerByAccount, protocolUser) {
   // An exact-amount checked-transfer chain must cross the protocol's user account.
-  const visit = (node, seen, includesUser) => {
+  const visit = (node, seen, includesUser, after = -1) => {
     const user = includesUser || ownerByAccount.get(node) === protocolUser;
     if (ends.has(node) && seen.size > 1) return user;
     if (seen.size > 8) return false;
-    return edges.some(e => e.source === node && !seen.has(e.destination)
-      && visit(e.destination, new Set([...seen, e.destination]), user));
+    return edges.some((e,index) => index > after && e.source === node && !seen.has(e.destination)
+      && visit(e.destination, new Set([...seen, e.destination]), user, index));
   };
   return [...starts].some(start => visit(start, new Set([start]), false));
 }

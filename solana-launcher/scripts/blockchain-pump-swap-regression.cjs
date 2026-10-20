@@ -38,6 +38,7 @@ for(const mutate of [
  e=>e.tokenBalanceDeltas.find(d=>d.owner===routed.trader&&d.mint===mint).deltaRaw='1',
  e=>e.tokenBalanceDeltas.push({...e.tokenBalanceDeltas.find(d=>d.owner===routed.trader&&d.mint===mint),owner:'ambiguous'}),
  e=>e.raw.meta.innerInstructions=[],
+ e=>{for(const group of e.raw.meta.innerInstructions)group.instructions.reverse();},
  e=>{for(const g of e.raw.meta.innerInstructions)for(const ix of g.instructions)if(ix.parsed?.type==='transferChecked'&&ix.parsed.info.mint===mint)ix.parsed.info.tokenAmount.amount='1';},
 ]){
  const e=structuredClone(base);mutate(e);assert.equal(p.txsToTrades([e],mint).length,0);
@@ -51,12 +52,13 @@ const truncated=structuredClone(base);truncated.raw.meta.logMessages=truncated.r
  initDb(db);db.exec('CREATE TABLE token_trades(mint TEXT,signature TEXT,trader TEXT,type TEXT,amount_tokens REAL,amount_sol REAL,PRIMARY KEY(mint,signature))');
  db.prepare("INSERT INTO chain_seed_targets(kind,address,source_mask,priority) VALUES('token',?,1,100)").run(mint);
  const api={...p,fetchTransactionsForAddress:async()=>({transactions:events,exhausted:true,httpRequests:0,pagesFetched:1}),persistTokenTrades:(m,rows)=>{for(const t of rows)db.prepare('INSERT OR REPLACE INTO token_trades VALUES(?,?,?,?,?,?)').run(m,t.signature,t.trader,t.type,t.amountTokens,t.amountSol)},markTokenTradeChecked:()=>{}};
- const result=await processOne(db,claimOne(db),{recentLimit:10,backfillLimit:10},api);assert.equal(result.normalizedTrades,10);
- assert.equal(db.prepare('SELECT count(*) n FROM token_trades').get().n,10);
- const saved=db.prepare('SELECT trader FROM token_trades WHERE signature=?').get(routed.signature);assert.equal(saved.trader,routed.trader);
+ const result=await processOne(db,claimOne(db),{recentLimit:10,backfillLimit:10},api);assert.equal(result.normalizedTrades,0,"current collector intentionally persists RAW only");
+ assert.equal(db.prepare('SELECT count(*) n FROM token_trades').get().n,0);
+ assert.equal(db.prepare('SELECT count(*) n FROM chain_seed_events').get().n,10);
+ assert.equal(db.prepare('SELECT count(*) n FROM chain_seed_raw_revisions').get().n,10);
  cacheWalletTrades(db,routed.trader,events,p.txsToTrades,{sourceProvider:'alchemy'});
  assert.equal(db.prepare('SELECT count(*) n FROM chain_wallet_trades WHERE wallet=? AND signature=?').get(routed.trader,routed.signature).n,1);
  assert.equal(db.prepare('SELECT count(*) n FROM chain_wallet_trades WHERE wallet=?').get(routed.protocolTrader).n,0);
  }finally{db.close()}
- console.log('[blockchain-pump-swap] OK: 10 saved real swaps (5 BUY/5 SELL), routed recipient, USDC settlement, ambiguous/failed/spoofed rejection, collector and wallet-cache persistence');
+ console.log('[blockchain-pump-swap] OK: 10 saved real swaps (5 BUY/5 SELL), routed recipient, USDC settlement, ambiguous/failed/spoofed rejection, raw-only collector and explicit wallet-cache persistence');
 })().catch(e=>{console.error(e);process.exitCode=1});
