@@ -6,7 +6,7 @@ import os
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from datetime import datetime, timezone
 from http.server import HTTPServer
 from pathlib import Path
@@ -62,7 +62,7 @@ class WindowsSmokeTests(unittest.TestCase):
                 db = root / ".local/sentiment/windows-remote-smoke.sqlite"
                 self.assertTrue(db.exists())
                 import sqlite3
-                with sqlite3.connect(db) as conn:
+                with closing(sqlite3.connect(db)) as conn, conn:
                     rows = conn.execute(
                         "SELECT model_key,COUNT(*) FROM sentiment_predictions GROUP BY model_key"
                     ).fetchall()
