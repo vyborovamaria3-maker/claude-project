@@ -4,3 +4,6 @@ transformers>=4.45,<5
 torch>=2.4,<3
 safetensors>=0.4,<1
 huggingface-hub>=0.26,<2
+
+# Optional AI process RAM/RSS probes and OS low-priority scheduling.
+psutil>=6.0,<8
