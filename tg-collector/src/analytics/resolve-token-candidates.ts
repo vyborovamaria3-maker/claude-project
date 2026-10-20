@@ -4,6 +4,7 @@ import { ANALYSIS_VERSION } from "./extract.js";
 import { detectPropagationPatterns, refreshChannelScores, refreshTokenChannelMetrics, SOLANA_CHAIN_ID } from "./token-intelligence.js";
 import { syncTokenNarratives } from "./narratives.js";
 import {retractAmbiguousTickerMentions} from "./ticker-reconcile.js";
+import {activeMintOccurrences} from "./token-candidate-occurrences.js";
 
 import {decodeMintAccount} from "./solana-mint-layout.js";
 type AccountInfo = { owner?: string; data?: [string, string] | string[] } | null;
@@ -121,18 +122,7 @@ async function main(): Promise<void> {
         [SOLANA_CHAIN_ID, candidate.mint],
       );
 
-      const occurrences = await tx.query<{
-        source_id: string; message_id: string; message_date: Date | null; tickers: string[]; text: string;
-      }>(
-        "SELECT c.source_id::text,c.message_id::text,m.posted_at AS message_date,m.text," +
-        "COALESCE(array_agg(DISTINCT t.ticker) FILTER (WHERE t.ticker IS NOT NULL),'{}') AS tickers " +
-        "FROM tg_token_candidates c JOIN tg_messages m USING(source_id,message_id) " +
-        "LEFT JOIN tg_ticker_mentions t ON t.source_id=c.source_id AND t.message_id=c.message_id " +
-        "AND t.chain_id=c.chain_id AND t.analysis_version=$3 " +
-        "WHERE c.chain_id=$1 AND c.candidate_type='address' AND c.candidate_key=$2 " +
-        "AND c.analysis_version=$3 AND m.deleted_at IS NULL GROUP BY c.source_id,c.message_id,m.posted_at",
-        [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
-      );
+      const occurrences = await activeMintOccurrences(tx,candidate.mint);
       for (const occurrence of occurrences.rows) {
         await tx.query(
           "INSERT INTO tg_token_mentions(source_id,message_id,chain_id,mint,mention_type,resolution_status," +
