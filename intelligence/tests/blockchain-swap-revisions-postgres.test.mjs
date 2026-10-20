@@ -86,6 +86,11 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
       assert.deepEqual(await deliver(),{
         claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0,
       });
+    assert.equal((await active(mint,"2026-10-20T01:05:00Z")).length,0,
+      "source observation backfilled after T is NOT Intelligence-known at T");
+    // Emulate delivery occurring at observation time for the original
+    // historical correction fixture (never done to production data).
+    await pool.query("UPDATE blockchain_swap_evidence_revisions SET inserted_at=observed_at");
     assert.equal((await active(mint,"2026-10-20T01:05:00Z")).length,1,
       "before correction, original proof was genuinely known");
     assert.equal((await active(mint,"2026-10-20T01:15:00Z")).length,0,
@@ -145,11 +150,26 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     assert.deepEqual(await deliver(),{
       claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0,
     });
+    await pool.query("UPDATE blockchain_swap_evidence_revisions SET inserted_at=observed_at");
     assert.equal((await active(mint2,"2026-10-20T01:30:00Z")).length,1,
-      "same signature and mint observed from two wallets is one token-level record");
+      "same signature, mint and slot observed from two wallets is one token-level record");
     const afterSecond=await pool.query(
       "SELECT COUNT(*)::integer AS n FROM blockchain_swap_evidence_revisions");
     assert.equal(afterSecond.rows[0].n,4);
+    const conflicting=buildTokenSwapRevisionEvent({
+      kind:"wallet",address:wallet2,signature,rawRevision:2,
+      payloadHash:"e".repeat(64),observedAt:Date.parse("2026-10-20T01:22:00Z"),
+      transaction:{...tx2,type:"UNKNOWN"},
+    });
+    assert.equal(conflicting.payload.swapRevision.status,"unsupported");
+    emitSqlite(sqlite,conflicting);
+    assert.equal((await deliver()).delivered,1);
+    await pool.query("UPDATE blockchain_swap_evidence_revisions SET inserted_at=observed_at");
+    assert.equal((await active(mint2,"2026-10-20T01:30:00Z")).length,0,
+      "one wallet revoking the same signature must prevent a contradictory active claim");
+    // Late-delivered contradictory evidence must not retroactively change an
+    // earlier as-of view.
+    assert.equal((await active(mint2,"2026-10-20T01:21:30Z")).length,1);
   }finally{
     if(sqlite)sqlite.close();
     if(pool)await pool.end();
