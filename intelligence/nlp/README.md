@@ -211,3 +211,29 @@ verified token mentions.
 It does **not** create a token-level financial feature or imply historical
 model availability before inference; a future token-feature join must enforce
 the same availability boundary and verified mint attribution.
+
+## Independent model quality benchmark (manual labels required)
+
+A model's existence or green integration tests are **not evidence** that it
+predicts crypto market behaviour reliably. Label a held-out, time-separated
+real X/TG sample manually and run:
+
+```bash
+python -m intelligence.nlp.benchmark --predictions predictions.jsonl --gold manually_labelled.jsonl
+```
+
+Each gold JSONL record contains **only** source evidence IDs, the original
+`content_sha256`, and human truth for one or more relevant model tasks:
+
+```json
+{"source":"x","source_id":"x:tweet:123","content_sha256":"<exact 64-digit SHA256 of original text>","labels":{"cryptobert":"bullish","fintwitbert":"bullish"}}
+```
+
+The evaluator matches on (source, canonical message ID, exact content hash)
+rather than ticker or handle. It rejects duplicate/unknown labels and mixed
+unverified model revisions; reports macro-F1 **on matched examples**, each
+class's precision/recall/F1, coverage of eligible human labels and explicit
+zero-coverage results. Models are reported independently by source and
+immutable revision. The benchmark never downloads weights, scrapes providers,
+stores message bodies or claims trading effectiveness. If coverage is low,
+high macro-F1 on the matched subset must not be presented as representative.
