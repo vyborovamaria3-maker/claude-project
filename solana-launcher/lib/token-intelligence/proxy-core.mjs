@@ -27,9 +27,9 @@ function asUtc(input,field){
   if(!Number.isFinite(date.getTime()))
     throw new SafeProxyError("invalid_"+field,400);
   const expected=date.toISOString();
-  const normalized=input.replace(/Z$/,input.includes(".")?
-    (input.match(/\.(\d{1,3})Z$/)?.[1]??"").padEnd(3,"0")+"Z":
-    ".000Z");
+  const normalized=input.includes(".")
+    ?input.replace(/\.(\d{1,3})Z$/,(_,fraction)=>"."+fraction.padEnd(3,"0")+"Z")
+    :input.slice(0,-1)+".000Z";
   if(normalized!==expected)throw new SafeProxyError("invalid_"+field,400);
   return expected;
 }
