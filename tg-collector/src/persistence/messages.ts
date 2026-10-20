@@ -1,9 +1,10 @@
 import {matchesSearchTerm} from "../runtime/message-search.js";
+import {createHash} from "node:crypto";
 import type { PoolClient } from "pg";
 import { ANALYSIS_VERSION, extractLinks, type RawTelegramMessage } from "../analytics/extract.js";
 import { refreshGraphDays, utcDay } from "../analytics/rollups.js";
 import { syncMessageTokenCandidates } from "../analytics/token-intelligence.js";
-import { emitTgMessageOutbox, emitTgDeletionOutbox } from "./outbox.js";
+import { emitTgMessageOutbox, emitTgDeletionOutbox, emitTgTokenLinksInvalidation, telegramVerifiedTokenLinksEnabled } from "./outbox.js";
 
 export function reactionCounts(msg:RawTelegramMessage){
  return (msg.reactions?.results??[]).slice(0,100).filter(r=>Number.isSafeInteger(r.count)&&Number(r.count)>=0).map(r=>({
@@ -18,6 +19,15 @@ export async function persistMessage(
   const parsedReplyId = typeof rawReplyId === "number" ? rawReplyId : rawReplyId ? Number(rawReplyId.toString()) : null;
   const replyToMessageId = parsedReplyId !== null && Number.isSafeInteger(parsedReplyId) && parsedReplyId > 0 && parsedReplyId !== msg.id
     ? parsedReplyId : null;
+  // For historical token evidence, changed text or restoration must revoke
+  // ALL previously verified message links. Mere views/likes updates do not.
+  // The message row is locked through the same native PG transaction.
+  const previous=telegramVerifiedTokenLinksEnabled()
+    ? (await tx.query<{text:string|null;deleted_at:Date|null;posted_at:Date|null}>(
+        "SELECT text,deleted_at,posted_at FROM tg_messages WHERE source_id=$1 AND message_id=$2 FOR UPDATE",
+        [sourceId,msg.id],
+      )).rows[0]
+    : undefined;
   await tx.query(
     `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies,analysis_version,deleted_at,edited_at,reply_to_message_id,reactions,engagement_observed_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,$11,$12::jsonb,now())
@@ -54,6 +64,15 @@ export async function persistMessage(
    }
   }
   await replaceEvidence(tx, sourceId, msg);
+  if(previous && (previous.text!==msg.message || previous.deleted_at!==null)){
+    const sourceRevisionSha256=createHash("sha256").update(JSON.stringify([
+      "edited",msg.message,msg.editDate??null,
+    ])).digest("hex");
+    await emitTgTokenLinksInvalidation(tx,sourceId,{
+      messageId:msg.id,reason:"edited",sourceRevisionSha256,
+      observedAt:new Date(),postedAt:previous.posted_at,
+    });
+  }
   await emitTgMessageOutbox(tx, sourceId, msg);
 }
 
@@ -97,5 +116,14 @@ export async function markMessageDeleted(
   if (day) await refreshGraphDays(tx, sourceId, [day]);
   await emitTgDeletionOutbox(tx, sourceId, messageId,
     result.rows[0]!.deleted_at, result.rows[0]!.deletion_revision);
+  if(telegramVerifiedTokenLinksEnabled()){
+    const sourceRevisionSha256=createHash("sha256")
+      .update("deleted:"+result.rows[0]!.deletion_revision).digest("hex");
+    await emitTgTokenLinksInvalidation(tx,sourceId,{
+      messageId,reason:"deleted",sourceRevisionSha256,
+      observedAt:result.rows[0]!.deleted_at,
+      postedAt:result.rows[0]!.posted_at,
+    });
+  }
   return true;
 }
