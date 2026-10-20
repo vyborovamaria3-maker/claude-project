@@ -31,6 +31,7 @@ test("full-history resumes below the oldest persisted post and scans until an em
   let usedStablePeer = false;
   let usernameReassigned = false;
   let fallbackPrivate = false;
+  let directPrivate = false;
   const client = {
     async getEntity(peer: unknown) {
       if (oldUsernameUnavailable && typeof peer === "string") throw Error("USERNAME_INVALID");
@@ -39,7 +40,7 @@ test("full-history resumes below the oldest persisted post and scans until an em
         className: "Channel", title: "History test channel",
         id: {toString: () => usernameReassigned && typeof peer === "string" ? "999999" : "123456"},
         accessHash:{toString:()=> "987654321"},
-        username: fallbackPrivate && typeof peer !== "string" ? undefined
+        username: (fallbackPrivate && typeof peer !== "string") || (directPrivate && typeof peer === "string") ? undefined
           : usernameReassigned && typeof peer === "string" ? "other_channel" : "history_verified",
       };
     },
@@ -157,6 +158,14 @@ test("full-history resumes below the oldest persisted post and scans until an em
     await assert.rejects(processJob(client, await readJob(), () => false), /TG_SOURCE_UNSUPPORTED/,
       "a former public channel must not be followed into a private source");
     fallbackPrivate = false;
+    // Even a directly resolved, still-accessible Channel is out of scope if
+    // Telegram no longer exposes a verified public handle.
+    usernameReassigned = false;
+    directPrivate = true;
+    await assert.rejects(processJob(client, await readJob(), () => false), /TG_SOURCE_UNSUPPORTED/,
+      "a directly resolved private channel must never be ingested");
+    directPrivate = false;
+    usernameReassigned = true;
     // Without an old access hash, a mismatch must fail closed before ingesting.
     await pool.query("UPDATE tg_sources SET access_hash=NULL WHERE id=$1", [sourceId]);
     await assert.rejects(processJob(client, await readJob(), () => false), /TG_SOURCE_IDENTITY_MISMATCH/);
