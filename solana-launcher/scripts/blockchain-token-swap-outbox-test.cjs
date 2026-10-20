@@ -5,6 +5,7 @@ const {initDb,persistEvents}=require("./blockchain-seed-collector.cjs");
 const {
   enabled,buildTokenSwapEvidenceEvent,
 }=require("./blockchain-token-swap-outbox.cjs");
+const {buildTokenSwapRevisionEvent}=require("./blockchain-token-swap-revisions.cjs");
 
 const wallet="1".repeat(32);
 const mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -75,6 +76,28 @@ assert.equal(buildTokenSwapEvidenceEvent({...source,kind:"token"}),null);
 assert.throws(()=>buildTokenSwapEvidenceEvent({...source,address:"not-a-wallet"}));
 assert.throws(()=>buildTokenSwapEvidenceEvent({...source,signature:"not-a-signature"}));
 assert.throws(()=>buildTokenSwapEvidenceEvent({...source,payloadHash:"bad"}));
+const revision=buildTokenSwapRevisionEvent({...source,rawRevision:1});
+assert.equal(revision.eventKind,"token_swap_evidence_revision");
+assert.equal(revision.payload.swapRevision.rawRevision,1);
+assert.equal(revision.payload.swapRevision.status,"supported");
+assert.equal(revision.payload.swapRevision.canonicalTokenId,"solana:"+mint);
+assert.equal(revision.payload.swapRevision.slot,tx.slot);
+assert.deepEqual(revision.payload.registryEvent.entityRefs.map(x=>x.kind),["wallet"]);
+assert.equal(revision.payload.timelineEvent,undefined);
+const noProof=buildTokenSwapRevisionEvent({...source,rawRevision:2,
+  transaction:{...tx,type:"UNKNOWN"}});
+assert.equal(noProof.payload.swapRevision.status,"unsupported");
+assert.equal(noProof.payload.swapRevision.canonicalTokenId,null);
+assert.equal(noProof.payload.swapRevision.slot,null);
+assert.equal(noProof.payload.registryEvent.evidenceRef.occurredAt,undefined);
+assert.equal(noProof.payload.timelineEvent,undefined);
+for(const wrong of [
+  {...source,rawRevision:0},{...source,rawRevision:1.5},
+  {...source,rawRevision:Number.MAX_SAFE_INTEGER+1},
+  {...source,rawRevision:1,address:"not-a-wallet"},
+  {...source,rawRevision:1,payloadHash:"not-sha"},
+])assert.throws(()=>buildTokenSwapRevisionEvent(wrong));
+
 
 const oldBase=process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED;
 const oldNew=process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED;
@@ -92,22 +115,35 @@ try{
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,0);
   assert.equal(persistEvents(db,"wallet",wallet,[tx]),1);
   const rows=db.prepare("SELECT event_kind,payload FROM outbox_events ORDER BY id").all();
-  assert.deepEqual(rows.map(r=>r.event_kind),
-    ["wallet_transaction_observed","token_swap_evidence_observed"]);
+  assert.deepEqual(rows.map(r=>r.event_kind),[
+    "wallet_transaction_observed","token_swap_evidence_observed",
+    "token_swap_evidence_revision",
+  ]);
   assert.equal(rows[1].payload.includes("nativeBalanceChange"),false);
+  assert.equal(rows[2].payload.includes("nativeBalanceChange"),false);
   assert.equal(persistEvents(db,"wallet",wallet,[tx]),0);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,2);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,3);
   const corrected={...tx,slot:250000001};
   assert.equal(persistEvents(db,"wallet",wallet,[corrected]),1);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,4,
-    "new immutable raw revision must get its own token observation");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,6,
+    "new immutable raw revision must get token and revision events");
   const invalid={...corrected,slot:250000002,type:"UNKNOWN"};
   assert.equal(persistEvents(db,"wallet",wallet,[invalid]),1);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,5,
-    "unknown revised raw may still be retained but must not create a new token claim");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,8,
+    "unknown revision emits wallet and superseding unsupported status, not a mint claim");
+  const revisions=db.prepare(
+    "SELECT payload FROM outbox_events WHERE event_kind='token_swap_evidence_revision' ORDER BY id"
+  ).all().map(r=>JSON.parse(r.payload).swapRevision);
+  assert.deepEqual(revisions.map(r=>[r.rawRevision,r.status,r.canonicalTokenId]),[
+    [1,"supported","solana:"+mint],[2,"supported","solana:"+mint],
+    [3,"unsupported",null],
+  ]);
+  assert.equal(db.prepare(
+    "SELECT raw_revision FROM chain_seed_events WHERE kind='wallet' AND address=? AND signature=?"
+  ).get(wallet,signature).raw_revision,3);
   delete process.env.BLOCKCHAIN_INTELLIGENCE_TOKEN_EVENTS_ENABLED;
   assert.equal(persistEvents(db,"wallet",wallet,[{...tx,slot:250000003}]),1);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,6,
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM outbox_events").get().n,9,
     "feature OFF returns to raw-only output");
 }finally{
   if(oldBase===undefined)delete process.env.BLOCKCHAIN_INTELLIGENCE_OUTBOX_ENABLED;
