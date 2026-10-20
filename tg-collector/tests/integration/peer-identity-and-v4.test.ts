@@ -1,0 +1,97 @@
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { test } from "node:test";
+
+test("a recycled username cannot redirect public discovery evidence to the previous peer", {
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const {pool,migrate} = await import("../../src/db.js");
+  const {addCandidate} = await import("../../src/runtime/discovery.js");
+  await migrate();
+  const suffix = randomUUID().replaceAll("-","").slice(0,12);
+  const handle="recycled_"+suffix;
+  const peerA=String(Date.now())+"100";
+  const peerB=String(Date.now())+"200";
+  const status = await pool.query<{enabled:boolean;revision:number}>(
+    "SELECT enabled,revision FROM tg_discovery_settings WHERE id=1");
+  const runtime = await pool.query<{collection_enabled:boolean}>(
+    "SELECT collection_enabled FROM tg_runtime WHERE id=1");
+  let sourceId: string | null = null;
+  try {
+    const source=await pool.query<{id:string}>(`
+      INSERT INTO tg_sources(identifier,peer_id,current_username)
+      VALUES($1,$2,$3) RETURNING id::text`,[handle,peerA,"new_"+suffix]);
+    sourceId=source.rows[0].id;
+    await pool.query("UPDATE tg_discovery_settings SET enabled=TRUE WHERE id=1");
+    await pool.query("UPDATE tg_runtime SET collection_enabled=TRUE,block_reason=NULL,pause_until=NULL WHERE id=1");
+    await addCandidate({peer:peerB,username:handle,title:"Unrelated public channel"},
+      "memecoin",status.rows[0].revision,{id:42,message:"@CryptoTest",date:1792065600});
+    const messages=await pool.query<{count:number}>(`
+      SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1`,[sourceId]);
+    assert.equal(messages.rows[0].count,0,"unrelated channel's post may not enter previous source");
+    const evidence=await pool.query<{source_id:string|null}>(`
+      SELECT source_id::text FROM tg_discovery_mentions WHERE peer_id=$1 AND message_id=42`,[peerB]);
+    assert.equal(evidence.rows[0]?.source_id,null);
+    const sources=await pool.query<{count:number}>(`
+      SELECT count(*)::integer AS count FROM tg_sources WHERE identifier=$1`,[handle]);
+    assert.equal(sources.rows[0].count,1,"a reused alias cannot silently produce a second source");
+    await assert.rejects(pool.query("INSERT INTO tg_sources(identifier,peer_id) VALUES($1,$2)",
+      ["duplicate_"+suffix,peerA]),(error:unknown)=>
+      (error as {code?:string}).code==="23505","duplicate verified channel ID must be rejected");
+  } finally {
+    await pool.query("DELETE FROM tg_discovery_mentions WHERE peer_id=$1",[peerB]);
+    await pool.query("DELETE FROM tg_discovered_sources WHERE peer_id=$1",[peerB]);
+    if(sourceId)await pool.query("DELETE FROM tg_sources WHERE id=$1",[sourceId]);
+    await pool.query("UPDATE tg_discovery_settings SET enabled=$1 WHERE id=1",
+      [status.rows[0].enabled]);
+    await pool.query("UPDATE tg_runtime SET collection_enabled=$1 WHERE id=1",
+      [runtime.rows[0].collection_enabled]);
+    await pool.end();
+  }
+});
+
+test("v4 re-analysis reuses an already verified Solana mint, including hidden entities", {
+  skip: !process.env.DATABASE_URL,
+}, async () => {
+  const {pool,migrate} = await import("../../src/db.js");
+  const {persistMessage} = await import("../../src/persistence/messages.js");
+  await migrate();
+  const mint="So11111111111111111111111111111111111111112";
+  const original=await pool.query("SELECT 1 FROM tg_tokens WHERE chain_id='solana-mainnet' AND mint=$1",[mint]);
+  const idSuffix=randomUUID().replaceAll("-","").slice(0,15);
+  let sourceId: string|null=null;
+  try {
+    await pool.query(`INSERT INTO tg_tokens(chain_id,mint,decimals,metadata_status,metadata_provider)
+      VALUES('solana-mainnet',$1,9,'verified','offline-test') ON CONFLICT DO NOTHING`,[mint]);
+    const source=await pool.query<{id:string}>(`
+      INSERT INTO tg_sources(identifier) VALUES($1) RETURNING id::text`,["reused_mint_"+idSuffix]);
+    sourceId=source.rows[0].id;
+    const tx=await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      await persistMessage(tx,sourceId,{
+        id:121,message:"Project token $WRAPPED",
+        date:1792065600,
+        entities:[{className:"MessageEntityTextUrl",url:"https://solscan.io/token/"+mint}],
+      });
+      await tx.query("COMMIT");
+    } catch(error){await tx.query("ROLLBACK");throw error;} finally{tx.release();}
+    const row=await pool.query<{resolution_status:string;analysis_version:number}>(`
+      SELECT resolution_status,analysis_version FROM tg_token_candidates
+      WHERE source_id=$1 AND message_id=121 AND candidate_key=$2`,[sourceId,mint]);
+    assert.equal(row.rows[0]?.resolution_status,"confirmed_token");
+    assert.equal(row.rows[0]?.analysis_version,4);
+    const mention=await pool.query<{count:number}>(`
+      SELECT count(*)::integer AS count FROM tg_token_mentions
+      WHERE source_id=$1 AND message_id=121 AND mint=$2 AND analysis_version=4 AND orphaned=FALSE`,[sourceId,mint]);
+    assert.ok(mention.rows[0].count>=1);
+    const marker=await pool.query<{entities_observed_at:Date|null}>(`
+      SELECT entities_observed_at FROM tg_messages WHERE source_id=$1 AND message_id=121`,[sourceId]);
+    assert.ok(marker.rows[0].entities_observed_at,"fetched entities must have provenance");
+  } finally {
+    if(sourceId)await pool.query("DELETE FROM tg_sources WHERE id=$1",[sourceId]);
+    if(!original.rowCount)await pool.query("DELETE FROM tg_tokens WHERE chain_id='solana-mainnet' AND mint=$1",[mint]);
+    await pool.end();
+  }
+});
