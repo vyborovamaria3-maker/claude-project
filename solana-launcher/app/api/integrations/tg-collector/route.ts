@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
       const [tokenStats, tokens, channels, unresolvedTickers, signals] = await Promise.all([
         p.query(`SELECT
           (SELECT count(*)::integer FROM tg_tokens WHERE chain_id='solana-mainnet'
-            AND metadata_status IN ('partial','verified') AND decimals IS NOT NULL) AS tokens_total,
+            AND metadata_status IN ('partial','verified') AND decimals IS NOT NULL AND mint_layout_verified_at IS NOT NULL) AS tokens_total,
           (SELECT count(*)::integer FROM tg_messages
             WHERE deleted_at IS NULL AND analysis_version < 4) AS analysis_backfill_remaining,
           (SELECT count(*)::integer FROM tg_token_candidates WHERE chain_id='solana-mainnet'
@@ -167,7 +167,7 @@ export async function GET(request: NextRequest) {
             WHERE tn.chain_id=t.chain_id AND tn.mint=t.mint AND tn.model_version='keyword-v1'
           ) narrative ON TRUE
           WHERE t.chain_id='solana-mainnet'
-            AND t.metadata_status IN ('partial','verified') AND t.decimals IS NOT NULL
+            AND t.metadata_status IN ('partial','verified') AND t.decimals IS NOT NULL AND t.mint_layout_verified_at IS NOT NULL
           ORDER BY COALESCE(m.mentions_7d,0) DESC,v.velocity DESC NULLS LAST,t.first_seen_at DESC LIMIT 30`),
         p.query(`
           SELECT s.id::text AS source_id,s.identifier,score.discovery_score::float8,
