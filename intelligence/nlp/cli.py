@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterator
 
-from intelligence.nlp.sentiment import LocalTransformersBackend, SentimentEngine, SourceText
+from intelligence.nlp.sentiment import LocalTransformersBackend, SentimentEngine, SourceText, _validated
 from intelligence.nlp.resources import ResourceController, ResourcePressure
 
 
@@ -68,13 +68,19 @@ def _process_in_chunks(
     for offset in range(0, len(items), batch_size):
         if stop.is_set():
             return 130
+        # Reject invalid IDs/timestamps BEFORE opening the optional RAM
+        # sampler or loading any model. This preserves clear input failures
+        # even on machines where the optional psutil wheel is not installed.
+        chunk = items[offset:offset + batch_size]
+        for item in chunk:
+            _validated(item)
         # Fake test backends do not require psutil; real backend always applies
         # the guard again immediately before model execution.
         backend = engine.backend
         if isinstance(backend, LocalTransformersBackend):
             if not backend.resources.wait_for_capacity(unload=backend.unload_all):
                 return 130
-        results = engine.analyze(items[offset:offset + batch_size])
+        results = engine.analyze(chunk)
         if results_db:
             store_predictions(results_db, results)
         for result in results:
