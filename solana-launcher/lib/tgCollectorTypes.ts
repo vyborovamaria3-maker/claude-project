@@ -76,6 +76,9 @@ export type TgCollectorSource = {
   peer_id: string | null;
   enabled: boolean;
   history_partial: boolean;
+  full_history: boolean;
+  history_complete: boolean;
+  history_low_message_id: string;
   last_message_id: string;
   last_success_at: string | null;
   message_count: number;
