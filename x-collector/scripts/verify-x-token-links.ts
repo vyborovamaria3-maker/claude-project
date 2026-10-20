@@ -74,7 +74,7 @@ export async function verifyXTokenLinksOnce(options:ReturnType<typeof parseMintV
   }));
   const rows=await read(options.cursor,options.limit);
   if(rows.length>options.limit)throw new Error("source returned too many tweets");
-  let candidates=0,requests=0,verified=0,rejected=0,deferred=0,emitted=0,skipped=0;
+  let scanned=0,candidates=0,requests=0,verified=0,rejected=0,deferred=0,emitted=0,skipped=0;
   const cache=new Map<string,Awaited<ReturnType<typeof verifySolanaMintViaAlchemy>>>();
   let nextCursor=options.cursor;
   let budgetHit=false;
@@ -83,10 +83,10 @@ export async function verifyXTokenLinksOnce(options:ReturnType<typeof parseMintV
     const matches=addresses(tweet.text??"").slice(0,3);
     const validId=/^[1-9][0-9]{0,24}$/;
     if(!validId.test(tweet.tweet_id)||!tweet.author_id||!validId.test(tweet.author_id)){
-      skipped++;nextCursor=tweet.tweet_id;continue;
+      skipped++;scanned++;nextCursor=tweet.tweet_id;continue;
     }
     if(!options.execute){
-      candidates+=matches.length;nextCursor=tweet.tweet_id;continue;
+      candidates+=matches.length;scanned++;nextCursor=tweet.tweet_id;continue;
     }
     if(matches.some(m=>!cache.has(m)) && requests+matches.filter(m=>!cache.has(m)).length>options.maxRpc){
       budgetHit=true;break; // resume at LAST COMPLETED tweet, not partial row
@@ -109,9 +109,10 @@ export async function verifyXTokenLinksOnce(options:ReturnType<typeof parseMintV
         break rowLoop; // preserve cursor; resolve uncertain COMMIT before another run
       }
     }
+    scanned++;
     nextCursor=tweet.tweet_id;
   }
-  return {mode:options.execute?"execute":"dry_run",scanned:rows.length,
+  return {mode:options.execute?"execute":"dry_run",selected:rows.length,scanned,
     candidates,requests,verified,rejected,deferred,emitted,skipped,
     nextCursor,budgetHit,haltedReason};
 }
