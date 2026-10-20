@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { runDeliveryBatch } from "../dist/index.js";
 import {
   sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
@@ -134,7 +136,7 @@ async function main(){
     for(const connection of resources.reverse())await connection.close();
   }
 }
-const isEntrypoint=process.argv[1] && new URL("file://"+process.argv[1].replaceAll("\\","/")).pathname===new URL(import.meta.url).pathname;
+const isEntrypoint=process.argv[1] && pathToFileURL(resolve(process.argv[1])).href===import.meta.url;
 if(isEntrypoint){
   main().catch(()=>{
     // Never print raw error/DSN/session/path in operator logs.
