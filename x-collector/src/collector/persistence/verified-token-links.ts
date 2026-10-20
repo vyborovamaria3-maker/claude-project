@@ -89,3 +89,56 @@ export async function emitXVerifiedTokenLinkOutbox(
   ]);
   return true;
 }
+
+/** Immutable source-wide invalidation: editing X text revokes EVERY verified
+ * mint claim for the old tweet revision. Does not delete historical evidence. */
+export function buildXTokenLinksInvalidatedOutboxEvent(input:{
+  tweetId:string;authorId:string;reason:"edited";
+  sourceRevisionSha256:string;observedAt:Date;postedAt:Date|null;
+}){
+  if(!/^[1-9][0-9]{0,24}$/.test(input.tweetId)||
+     !/^[1-9][0-9]{0,24}$/.test(input.authorId)||
+     input.reason!=="edited"||
+     !/^[a-f0-9]{64}$/.test(input.sourceRevisionSha256)) {
+    throw new TypeError("Invalid X token link invalidation");
+  }
+  const observedAt=input.observedAt.toISOString();
+  const occurredAt=input.postedAt?.toISOString()??observedAt;
+  const sourceId=`x:tweet:${input.tweetId}`;
+  const eventKey=`x:tokenlinks:invalidate:${sourceId}:edited:${input.sourceRevisionSha256}:${input.observedAt.getTime()}`;
+  return {
+    sourceSystem:"x",eventKind:"token_links_invalidated",eventKey,
+    schemaVersion:"token-link-v1",
+    payload:{
+      registryEvent:{
+        sourceSystem:"x",eventKind:"token_links_invalidated",
+        eventKey,schemaVersion:"token-link-v1",
+        entityRefs:[{
+          kind:"author",canonicalId:`x:${input.authorId}`,
+          firstSeenAt:observedAt,lastSeenAt:observedAt,
+        }],
+        evidenceRef:{sourceKind:"x_tweet",sourceId,observedAt,occurredAt,
+          parserVersion:"x-mint-verifier-v1"},
+      },
+      tokenLinksInvalidation:{status:"invalidated",reason:"edited",
+        sourceRevisionSha256:input.sourceRevisionSha256},
+    },
+  };
+}
+
+/** Must be called inside the native tweet upsert transaction, after taking
+ * the row lock and proving the persisted text changed. */
+export async function emitXTokenLinksInvalidation(
+  tx:PoolClient,input:Parameters<typeof buildXTokenLinksInvalidatedOutboxEvent>[0],
+):Promise<boolean>{
+  if(!xVerifiedTokenLinksEnabled())return false;
+  const event=buildXTokenLinksInvalidatedOutboxEvent(input);
+  await tx.query(`INSERT INTO outbox_events
+    (source_system,event_kind,event_key,schema_version,payload)
+    VALUES($1,$2,$3,$4,$5::jsonb)
+    ON CONFLICT(source_system,event_kind,event_key) DO NOTHING`,[
+    event.sourceSystem,event.eventKind,event.eventKey,event.schemaVersion,
+    JSON.stringify(event.payload),
+  ]);
+  return true;
+}
