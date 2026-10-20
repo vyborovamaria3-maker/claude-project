@@ -132,3 +132,17 @@ test("Blockchain replay uses exact wallet raw hash and refuses null hash instead
     assert.equal(db.prepare("SELECT count(*) AS n FROM outbox_events").get().n,1);
   }finally{db.close();}
 });
+
+test("signed native Telegram peer ID is preserved during snapshot backfill",()=>{
+  const event=buildTgSnapshotEvent({
+    source_id:"3",message_id:"42",peer_id:"-100123456789",
+    collected_at:new Date("2026-10-20T01:00:00Z"),
+    posted_at:new Date("2026-10-19T01:00:00Z"),
+    deleted_at:null,text:"message with no verified token evidence",
+  });
+  assert.equal(event.payload.registryEvent.entityRefs[0].canonicalId,
+    "tg:source:-100123456789");
+  assert.equal(event.payload.registryEvent.evidenceRef.sourceId,
+    "tg:message:-100123456789:42");
+  assert.equal(event.payload.registryEvent.entityRefs.length,1);
+});

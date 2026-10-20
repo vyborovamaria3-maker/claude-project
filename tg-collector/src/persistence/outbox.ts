@@ -11,7 +11,9 @@ export function telegramOutboxEnabled(env: NodeJS.ProcessEnv = process.env): boo
   return env.TG_INTELLIGENCE_OUTBOX_ENABLED === "true";
 }
 
-const STABLE_PEER = /^[1-9][0-9]{0,19}$/;
+// Telegram channel identifiers may be signed (e.g. -100123). Preserve the
+// sign exactly; never infer or strip it from a mutable @username.
+const STABLE_PEER = /^-?[1-9][0-9]{0,19}$/;
 function stablePeer(peerId: string | null): string {
   if (!peerId || !STABLE_PEER.test(peerId)) {
     throw new Error("TG_INTELLIGENCE_PEER_UNRESOLVED: stable numeric channel peer_id required");
@@ -248,7 +250,9 @@ export async function emitTgTokenLinksInvalidation(
   tx:PoolClient, sourceId:string,
   input:Omit<Parameters<typeof buildTgTokenLinksInvalidatedOutboxEvent>[0],"peerId">,
 ):Promise<boolean>{
-  if(!telegramVerifiedTokenLinksEnabled())return false;
+  // Do not gate tombstones on NEW link assertions: previously published
+  // claims still require edit/delete revocation while source Outbox is on.
+  if(!telegramOutboxEnabled())return false;
   const peer=await tx.query<{peer_id:string|null}>(
     "SELECT peer_id FROM tg_sources WHERE id=$1 FOR KEY SHARE",[sourceId]);
   const event=buildTgTokenLinksInvalidatedOutboxEvent({
