@@ -26,6 +26,16 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
   await tx.query(`INSERT INTO tg_discovered_sources(peer_id,username,title,keyword) VALUES($1,$2,$3,$4)
    ON CONFLICT(peer_id) DO UPDATE SET username=EXCLUDED.username,title=EXCLUDED.title,
    keyword=EXCLUDED.keyword,last_seen_at=now()`,[candidate.peer,candidate.username,candidate.title,keyword]);
+  // Legacy discovery versions could attach source_id by recycled username.
+  // Re-check identity on each discovery turn, even after migration 030.
+  await tx.query(`UPDATE tg_discovered_sources d SET source_id=NULL,connected_at=NULL
+    WHERE d.peer_id=$1 AND (d.source_id IS NULL OR NOT EXISTS(
+      SELECT 1 FROM tg_sources s WHERE s.id=d.source_id AND s.peer_id=d.peer_id))`,
+    [candidate.peer]);
+  await tx.query(`UPDATE tg_discovery_mentions dm SET source_id=NULL
+    WHERE dm.peer_id=$1 AND dm.source_id IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM tg_sources s WHERE s.id=dm.source_id AND s.peer_id=dm.peer_id)`,
+    [candidate.peer]);
   const found=(await tx.query<{connected_at:Date|null}>("SELECT connected_at FROM tg_discovered_sources WHERE peer_id=$1",[candidate.peer])).rows[0];
   // A source previously removed or paused by the operator must not be resurrected.
   const existing=await tx.query("SELECT id FROM tg_sources WHERE peer_id=$1",[candidate.peer]);
@@ -34,16 +44,29 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
   const budget=(await tx.query<{added:number;total:number}>(`SELECT COALESCE((SELECT added FROM tg_discovery_daily
    WHERE day=(now() AT TIME ZONE 'UTC')::date),0)::int AS added,(SELECT count(*)::int FROM tg_sources) AS total`)).rows[0];
   if (!found.connected_at && !existing.rowCount && budget.added<settings.max_new_per_day && budget.total<settings.max_sources && (!msg || fullCollection || settings.max_new_per_day===1 || settings.max_new_per_day-budget.added>1)) {
-   const source=await tx.query<{id:string}>(`INSERT INTO tg_sources(identifier,peer_id,title) VALUES($1,$2,$3)
-    ON CONFLICT(identifier) DO NOTHING RETURNING id::text`,[candidate.username,candidate.peer,candidate.title]);
-   if(source.rowCount) {
-    await tx.query("INSERT INTO tg_jobs(source_id) VALUES($1) ON CONFLICT(source_id) DO NOTHING",[source.rows[0].id]);
-    await tx.query("UPDATE tg_discovered_sources SET source_id=$2,connected_at=now() WHERE peer_id=$1",[candidate.peer,source.rows[0].id]);
-    await tx.query(`INSERT INTO tg_discovery_daily(day,added) VALUES((now() AT TIME ZONE 'UTC')::date,1)
-     ON CONFLICT(day) DO UPDATE SET added=tg_discovery_daily.added+1`);
+   // If @username was originally recorded for a different channel, keep
+   // that archive untouched. Track the verified new peer under a stable
+   // synthetic identifier and retain its real handle as current_username.
+   let source=await tx.query<{id:string}>(`INSERT INTO tg_sources(identifier,peer_id,title,current_username)
+    VALUES($1,$2,$3,$1) ON CONFLICT DO NOTHING RETURNING id::text`,
+    [candidate.username,candidate.peer,candidate.title]);
+   if(!source.rowCount) {
+    source=await tx.query<{id:string}>(`INSERT INTO tg_sources(identifier,peer_id,title,current_username)
+      VALUES('peer_' || $2,$2,$3,$1) ON CONFLICT DO NOTHING RETURNING id::text`,
+      [candidate.username,candidate.peer,candidate.title]);
+   }
+   // Recover from a concurrent API/discovery insert that already pinned peer.
+   const tracked=source.rows[0] ?? (await tx.query<{id:string}>(
+     "SELECT id::text FROM tg_sources WHERE peer_id=$1",[candidate.peer])).rows[0];
+   if(tracked) {
+    await tx.query("INSERT INTO tg_jobs(source_id) VALUES($1) ON CONFLICT(source_id) DO NOTHING",[tracked.id]);
+    await tx.query("UPDATE tg_discovered_sources SET source_id=$2,connected_at=now() WHERE peer_id=$1",[candidate.peer,tracked.id]);
+    if(source.rowCount) await tx.query(`INSERT INTO tg_discovery_daily(day,added)
+      VALUES((now() AT TIME ZONE 'UTC')::date,1)
+      ON CONFLICT(day) DO UPDATE SET added=tg_discovery_daily.added+1`);
    }
   }
-  if(msg||fullCollection)await tx.query('UPDATE tg_sources SET full_history=TRUE WHERE peer_id=$1',[candidate.peer]);
+  // Discovery of a matching post must not override the operator's opt-in.
   if(msg&&typeof msg.message==='string'){
    const linked=(await tx.query<{id:string;enabled:boolean}>('SELECT id::text,enabled FROM tg_sources WHERE peer_id=$1',[candidate.peer])).rows[0];
    await tx.query(`INSERT INTO tg_discovery_mentions(peer_id,message_id,username,title,text,posted_at,matched_terms,source_id)
