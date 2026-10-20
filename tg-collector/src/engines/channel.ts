@@ -19,7 +19,6 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
   if (!source) throw new Error("Source was deleted");
 
   let entity: Awaited<ReturnType<TelegramClient["getEntity"]>>[number];
-  let usedStablePeer = false;
   try {
     entity = await client.getEntity(source.identifier);
   } catch (error) {
@@ -31,7 +30,6 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     entity = await client.getEntity(new Api.InputPeerChannel({
       channelId: bigInt(source.peer_id), accessHash: bigInt(source.access_hash),
     }));
-    usedStablePeer = true;
   }
   // A Telegram username is mutable and may be reassigned to a different channel.
   // Always pin an already-identified source to its immutable channel ID. Never
@@ -44,7 +42,6 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     entity = await client.getEntity(new Api.InputPeerChannel({
       channelId: bigInt(source.peer_id), accessHash: bigInt(source.access_hash),
     }));
-    usedStablePeer = true;
     const pinned = entity as { id?: {toString(): string} };
     if (pinned.id?.toString() !== source.peer_id) {
       throw new Error("TG_SOURCE_IDENTITY_MISMATCH: persisted channel identity differs from MTProto response");
@@ -62,9 +59,10 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     channel.usernames?.find(item => item.active && item.username)?.username ?? null;
   const publicHandle = latestHandle && /^[a-z][a-z0-9_]{4,31}$/i.test(latestHandle)
     ? latestHandle.toLowerCase() : null;
-  if (usedStablePeer && !publicHandle) {
-    // A former public channel may become private. A saved access hash alone is
-    // not permission to expand this public-only collector into private history.
+  if (!publicHandle) {
+    // Only public sources are in scope, even if GramJS can still resolve a
+    // now-private channel directly from its cached username. Checking only
+    // the stable-peer fallback would silently fetch private channel history.
     throw new Error("TG_SOURCE_UNSUPPORTED: source no longer has a public username");
   }
   const resolvedPeer = channel.id?.toString() ?? null;
