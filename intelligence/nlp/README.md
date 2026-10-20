@@ -388,3 +388,13 @@ explicitly opts in. For a private three-message HTTP smoke without any
 live source data, see [CODESPACES.md](CODESPACES.md) Step 3. The Codespaces
 endpoint is a dev/test service and sleeps with the Codespace; never expose
 its forwarded port publicly.
+
+## Acer Windows: minimal remote-only client
+
+See [CODESPACES.md](CODESPACES.md) Step 4 for a single PowerShell smoke
+command. It uses the user's existing private `gh codespace ports forward`
+tunnel and SSH-based bearer retrieval (does **not** print tokens). Windows
+client setup requires only Python 3.11/3.12 standard library; never install
+`requirements-sentiment.txt` for remote-only use. Derived test results are
+written to a separate ignored SQLite file; there is no automatic collector
+access, no Torch downloads on the laptop and no remote LLM connection.
