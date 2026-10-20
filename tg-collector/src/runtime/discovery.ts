@@ -73,13 +73,16 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
   }
   // Discovery of a matching post must not override the operator's opt-in.
   if(msg&&typeof msg.message==='string'){
-   const linked=(await tx.query<{id:string;enabled:boolean}>('SELECT id::text,enabled FROM tg_sources WHERE peer_id=$1',[candidate.peer])).rows[0];
+   const linked=(await tx.query<{id:string;enabled:boolean;spam_screened_at:Date|null;spam_kind:string|null}>(
+     'SELECT id::text,enabled,spam_screened_at,spam_kind FROM tg_sources WHERE peer_id=$1',
+     [candidate.peer])).rows[0];
    await tx.query(`INSERT INTO tg_discovery_mentions(peer_id,message_id,username,title,text,posted_at,matched_terms,source_id)
     VALUES($1,$2,$3,$4,$5,$6,ARRAY[$7]::text[],$8) ON CONFLICT(peer_id,message_id) DO UPDATE SET
     text=EXCLUDED.text,last_seen_at=now(),source_id=EXCLUDED.source_id,
     matched_terms=(SELECT ARRAY(SELECT DISTINCT unnest(tg_discovery_mentions.matched_terms||EXCLUDED.matched_terms)))`,
     [candidate.peer,msg.id,candidate.username,candidate.title,msg.message.slice(0,8192),typeof msg.date==='number'?new Date(msg.date*1000):null,keyword,linked?.id??null]);
-   if(linked?.enabled){await persistMessage(tx,linked.id,msg);if(typeof msg.date==='number'){const day=utcDay(new Date(msg.date*1000));if(day)await refreshGraphDays(tx,linked.id,[day]);};}
+   if(linked?.enabled && linked.spam_screened_at && !linked.spam_kind){
+     await persistMessage(tx,linked.id,msg);if(typeof msg.date==='number'){const day=utcDay(new Date(msg.date*1000));if(day)await refreshGraphDays(tx,linked.id,[day]);};}
   }
   if(external&&msg)await tx.query(`INSERT INTO tg_external_verified_posts(peer_id,message_id,provider,origin,reference_url)
    SELECT $1,$2,$3,$4,$5 FROM tg_discovery_mentions WHERE peer_id=$1 AND message_id=$2
