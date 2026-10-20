@@ -29,13 +29,15 @@ test("full-history resumes below the oldest persisted post and scans until an em
     ({id: n + 1, date: postedAt + n, message: "Historical post #" + (n + 1)})).reverse();
   let oldUsernameUnavailable = false;
   let usedStablePeer = false;
+  let usernameReassigned = false;
   const client = {
     async getEntity(peer: unknown) {
       if (oldUsernameUnavailable && typeof peer === "string") throw Error("USERNAME_INVALID");
-      if (oldUsernameUnavailable && typeof peer !== "string") usedStablePeer = true;
+      if (typeof peer !== "string") usedStablePeer = true;
       return {
         className: "Channel", title: "History test channel",
-        id: {toString: () => "123456"},accessHash:{toString:()=> "987654321"},
+        id: {toString: () => usernameReassigned && typeof peer === "string" ? "999999" : "123456"},
+        accessHash:{toString:()=> "987654321"},
       };
     },
     async getMessages(_entity: unknown, options: {limit: number;offsetId?: number;minId?: number}) {
@@ -98,6 +100,16 @@ test("full-history resumes below the oldest persisted post and scans until an em
     oldUsernameUnavailable = true;
     await processJob(client, await readJob(), () => false);
     assert.equal(usedStablePeer,true, "previously resolved channel survives a username rename");
+    oldUsernameUnavailable = false;
+    usernameReassigned = true;
+    usedStablePeer = false;
+    await processJob(client, await readJob(), () => false);
+    assert.equal(usedStablePeer,true, "a recycled username must be resolved back to the original peer");
+    const stablePeer = await pool.query<{peer_id: string}>("SELECT peer_id FROM tg_sources WHERE id=$1", [sourceId]);
+    assert.equal(stablePeer.rows[0]?.peer_id, "123456", "source identity must never switch to recycled username owner");
+    // Without an old access hash, a mismatch must fail closed before ingesting.
+    await pool.query("UPDATE tg_sources SET access_hash=NULL WHERE id=$1", [sourceId]);
+    await assert.rejects(processJob(client, await readJob(), () => false), /TG_SOURCE_IDENTITY_MISMATCH/);
     const after = await pool.query<{count:number}>(
       "SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1", [sourceId]);
     assert.equal(after.rows[0].count,650);
