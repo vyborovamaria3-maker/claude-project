@@ -292,3 +292,65 @@ py -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_
 
 The output must report `True`; actual smoke inference must also succeed.
 Do not infer GPU compatibility from the graphics card name alone.
+
+## Laptop resource controller — Acer Aspire A715-75G, 16 GB RAM / GTX 1650
+
+**The laptop is the sole execution host.** X Collector, XActions, TG Collector,
+local PostgreSQL and Intelligence must coexist; no additional server is
+assumed. The optional AI worker now runs at **idle/below-normal OS scheduling
+priority** (its *own* process only), waits for RAM headroom before loading
+weights or computing, and unloads model objects when memory is tight.
+
+Defaults (set before opening the AI process; RAM values are MiB):
+
+```powershell
+$env:SENTIMENT_DEVICE="cpu"                     # GTX 1650: begin with CPU
+$env:SENTIMENT_BATCH_SIZE="2"                    # two messages per batch
+$env:SENTIMENT_MAX_LOADED_MODELS="1"             # one model resident
+$env:SENTIMENT_MIN_FREE_RAM_MB="3072"            # preserve 3 GiB OS/collector cushion
+$env:SENTIMENT_MAX_AI_RSS_MB="3072"              # AI process soft resident budget
+$env:SENTIMENT_MODEL_RESERVE_MB="640"            # headroom for next model load
+$env:SENTIMENT_RESOURCE_POLL_SECONDS="5"
+$env:SENTIMENT_MAX_MEMORY_WAIT_SECONDS="120"    # bounded wait, not indefinite
+```
+
+This is **soft cooperative backpressure**, not a hard Windows Job Object
+memory limit: a model allocation can overshoot between probes. If the
+operating system cannot provide reliable RAM metrics, if process idle
+priority cannot be set, or RAM remains too low after 120 seconds, AI
+**fails closed** and exits with status 2 rather than starving collectors.
+The X/TG processes themselves are never paused or reprioritized.
+Windows OS scheduling priority affects CPU competition, not I/O, DB
+locks or GPU fairness.
+
+Use a **dedicated** derived-results SQLite file. On Ctrl+C or SIGTERM, AI
+finishes the in-flight inference and SQLite transaction, then stops
+before starting another mini-batch. Already committed mini-batches are
+kept; reruns deduplicate by source ID, content hash and model revision.
+Exiting with status 130 means controlled interruption. If the process
+is forcibly killed or the computer powers off mid-batch, only the
+unfinished batch may need replay; completed commits remain intact.
+
+Example using already collected local text (source DB is read-only):
+
+```powershell
+$env:SENTIMENT_SOURCE_READ_ENABLED="true"
+py -m intelligence.nlp.cli --collector-db x --batch-size 2 --max-items 20 --results-db "C:\\sentiment-data\\model-results.sqlite"
+py -m intelligence.nlp.cli --collector-db tg --batch-size 2 --max-items 20 --results-db "C:\\sentiment-data\\model-results.sqlite"
+```
+
+This command requires an actual cached model, pinned revisions, the
+optional `psutil` dependency in `requirements-sentiment.txt`, and
+database users with `SELECT` only. The client cannot prioritize collectors
+that are running in other processes by itself; it simply lowers **AI** CPU
+priority and yields when global free RAM is low. Running PostgreSQL or
+browser collectors already near physical-memory exhaustion may still
+require reducing their own configured worker count.
+
+**Operational caution:** CPU inference on the i5-10300H with collectors
+active may be slow. Start with 10–20 items, use Task Manager to measure
+available RAM, page faults and collector latency; leave GTX 1650 CUDA
+disabled until a 2-message benchmark proves compatibility and headroom.
+Avoid continuous high-throughput sentiment jobs while source coverage is
+incomplete. No production model benchmark or sustained combined laptop
+load test has yet been performed.
