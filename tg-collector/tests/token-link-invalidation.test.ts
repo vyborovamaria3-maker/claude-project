@@ -64,3 +64,11 @@ test("invalidation is off by default and uses caller transaction only",async()=>
     else process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED=links;
   }
 });
+
+test("edited signed Telegram channel peer ID is not lost or normalized",()=>{
+  const event=buildTgTokenLinksInvalidatedOutboxEvent({...input,peerId:"-100123456789"});
+  assert.equal(event.payload.registryEvent.evidenceRef.sourceId,
+    "tg:message:-100123456789:111");
+  assert.equal(event.payload.registryEvent.entityRefs[0]!.canonicalId,
+    "tg:source:-100123456789");
+});
