@@ -4,8 +4,7 @@ import { ANALYSIS_VERSION } from "./extract.js";
 import { detectPropagationPatterns, refreshChannelScores, refreshTokenChannelMetrics, SOLANA_CHAIN_ID } from "./token-intelligence.js";
 import { syncTokenNarratives } from "./narratives.js";
 
-const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+import {decodeMintAccount} from "./solana-mint-layout.js";
 type AccountInfo = { owner?: string; data?: [string, string] | string[] } | null;
 
 async function readMintAccount(rpcUrl: string, mint: string): Promise<{ decimals: number; owner: string } | null> {
@@ -26,14 +25,10 @@ async function readMintAccount(rpcUrl: string, mint: string): Promise<{ decimals
   if (body.error) throw new Error("Alchemy RPC error " + String(body.error.code ?? "") + ": " + (body.error.message ?? "unknown"));
   const account = body.result?.value;
   if (!account) return null;
-  if (account.owner !== TOKEN_PROGRAM && account.owner !== TOKEN_2022_PROGRAM) return null;
-  const encoded = Array.isArray(account.data) ? account.data[0] : undefined;
+  const encoded = Array.isArray(account.data) && account.data[1] === "base64"
+    ? account.data[0] : undefined;
   if (!encoded || typeof encoded !== "string") return null;
-  const data = Buffer.from(encoded, "base64");
-  // SPL Mint base layout: supply at byte 36, decimals at 44, initialized at 45.
-  // Token accounts are longer and do not have the Mint initialized byte at this offset.
-  if (data.length < 82 || data[45] !== 1 || data[44] > 30) return null;
-  return { decimals: data[44], owner: account.owner };
+  return decodeMintAccount(account.owner, Buffer.from(encoded, "base64"));
 }
 
 async function recomputeFirstMention(tx: import("pg").PoolClient, mint: string): Promise<void> {
@@ -126,7 +121,7 @@ async function main(): Promise<void> {
         "LEFT JOIN tg_ticker_mentions t ON t.source_id=c.source_id AND t.message_id=c.message_id " +
         "AND t.chain_id=c.chain_id AND t.analysis_version=$3 " +
         "WHERE c.chain_id=$1 AND c.candidate_type='address' AND c.candidate_key=$2 " +
-        "AND c.analysis_version=$3 GROUP BY c.source_id,c.message_id,m.posted_at",
+        "AND c.analysis_version=$3 AND m.deleted_at IS NULL GROUP BY c.source_id,c.message_id,m.posted_at",
         [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
       );
       for (const occurrence of occurrences.rows) {
@@ -178,8 +173,48 @@ async function main(): Promise<void> {
           affected.set(occurrence.source_id, days);
         }
       }
-      await recomputeFirstMention(tx, candidate.mint);
-      await detectPropagationPatterns(tx, SOLANA_CHAIN_ID, candidate.mint);
+      // A ticker first mapped to mint A can later become ambiguous when B is
+      // verified. Retract old ticker-only attributions, but retain explicit
+      // mint-address evidence and ticker associations with a unique witness.
+      const withdrawn = await tx.query<{
+        source_id:string; day:string|null; mint:string;
+      }>(`UPDATE tg_token_mentions tm SET orphaned=TRUE
+        FROM tg_messages m
+        WHERE m.source_id=tm.source_id AND m.message_id=tm.message_id
+          AND tm.chain_id=$1 AND tm.analysis_version=$2
+          AND tm.mention_type='ticker' AND tm.orphaned=FALSE
+          AND NOT EXISTS (SELECT 1 FROM tg_token_candidates addr
+            WHERE addr.source_id=tm.source_id AND addr.message_id=tm.message_id
+              AND addr.chain_id=tm.chain_id AND addr.analysis_version=tm.analysis_version
+              AND addr.candidate_type='address' AND addr.candidate_key=tm.mint)
+          AND EXISTS (SELECT 1 FROM tg_ticker_mentions tick
+            WHERE tick.source_id=tm.source_id AND tick.message_id=tm.message_id
+              AND tick.chain_id=tm.chain_id AND tick.analysis_version=tm.analysis_version
+              AND (SELECT count(DISTINCT reg.mint) FROM tg_ticker_registry reg
+                WHERE reg.chain_id=tick.chain_id AND reg.ticker=tick.ticker
+                AND reg.resolution_status='confirmed' AND reg.mint IS NOT NULL)>1)
+          AND NOT EXISTS (SELECT 1 FROM tg_ticker_mentions tick
+            JOIN tg_ticker_registry reg ON reg.ticker=tick.ticker
+              AND reg.chain_id=tick.chain_id AND reg.mint=tm.mint
+              AND reg.resolution_status='confirmed'
+            WHERE tick.source_id=tm.source_id AND tick.message_id=tm.message_id
+              AND tick.chain_id=tm.chain_id AND tick.analysis_version=tm.analysis_version
+              AND (SELECT count(DISTINCT other.mint) FROM tg_ticker_registry other
+                WHERE other.chain_id=tick.chain_id AND other.ticker=tick.ticker
+                  AND other.resolution_status='confirmed' AND other.mint IS NOT NULL)=1)
+        RETURNING tm.source_id::text,m.posted_at::date::text AS day,tm.mint`,
+        [SOLANA_CHAIN_ID, ANALYSIS_VERSION]);
+      const recheck = new Set<string>([candidate.mint]);
+      for (const row of withdrawn.rows) {
+        recheck.add(row.mint);
+        if (row.day) {
+          const days = affected.get(row.source_id) ?? new Set<string>();
+          days.add(row.day);
+          affected.set(row.source_id, days);
+        }
+      }
+      for (const mint of recheck) await recomputeFirstMention(tx, mint);
+      for (const mint of recheck) await detectPropagationPatterns(tx, SOLANA_CHAIN_ID, mint);
       await tx.query("COMMIT");
       verified++;
     } catch (error) {
