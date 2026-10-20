@@ -94,6 +94,26 @@ export async function syncMessageTokenCandidates(
     );
   }
 
+  // A previously RPC-rejected account should not be charged again just
+  // because the local extractor version changed. Negative results are
+  // time-bounded: an empty Solana account can become a token mint later.
+  await tx.query(
+    `UPDATE tg_token_candidates c SET resolution_status='not_token',
+        confidence=p.confidence,provider=p.provider,checked_at=p.checked_at
+      FROM tg_token_candidates p
+      WHERE c.source_id=$1 AND c.message_id=$2 AND c.analysis_version=$3
+        AND c.chain_id=p.chain_id AND c.candidate_type='address'
+        AND c.candidate_key=p.candidate_key AND c.resolution_status='unresolved'
+        AND p.candidate_type='address' AND p.analysis_version<$3
+        AND p.resolution_status='not_token' AND p.provider='alchemy-solana-rpc'
+        AND p.checked_at >= now()-interval '7 days'
+        AND NOT EXISTS (SELECT 1 FROM tg_tokens t
+          WHERE t.chain_id=c.chain_id AND t.mint=c.candidate_key
+            AND t.metadata_status IN ('partial','verified')
+            AND t.decimals IS NOT NULL)`,
+    [sourceId,messageId,ANALYSIS_VERSION],
+  );
+
   // Reuse only token accounts whose mint structure was previously checked.
   // tg_tokens may also contain unverified/pending metadata rows; their mere
   // existence is not confirmation that a base58 address is a Solana mint.
