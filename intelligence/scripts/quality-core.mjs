@@ -137,7 +137,11 @@ export async function loadCheckpointSummary(path,source,identity){
 export function sourceHealth(entry){
   if(entry.status!=="ok")return "unavailable";
   const {queue,sample}=entry;
-  if(!queue.countsConsistent||queue.deadLetter>0||queue.stale||
+  // An empty source or source snapshots with no Outbox output cannot prove
+  // collection/delivery health. Avoid a misleading green "all clear".
+  if((sample.examined===0&&queue.total===0)||
+     (sample.examined>0&&queue.total===0)||
+     !queue.countsConsistent||queue.deadLetter>0||queue.stale||
      sample.excluded>0)return "attention";
   return "observed";
 }
