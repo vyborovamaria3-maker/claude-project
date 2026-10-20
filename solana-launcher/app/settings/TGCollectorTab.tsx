@@ -42,6 +42,7 @@ export default function TGCollectorTab() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [channel, setChannel] = useState("");
+  const [fullHistory, setFullHistory] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +99,7 @@ export default function TGCollectorTab() {
     return () => { controller.abort(); clearInterval(interval); };
   }, [refresh]);
 
-  async function command(action: "add" | "pause" | "resume" | "sync" | "retry" | "remove" | "start" | "stop", source?: Source) {
+  async function command(action: "add" | "pause" | "resume" | "sync" | "retry" | "remove" | "start" | "stop" | "history", source?: Source) {
     if (busy) return;
     if (action === "remove" && source &&
       !window.confirm(`Удалить @${source.identifier} и все собранные сообщения из TG Collector? Это нельзя отменить.`)) return;
@@ -110,7 +111,7 @@ export default function TGCollectorTab() {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(accessKey ? {Authorization: `Bearer ${accessKey}`} : {}) },
         body: JSON.stringify(
-          action === "add" ? { action, username: channel.trim() }
+          action === "add" ? { action, username: channel.trim(), fullHistory }
             : { action, sourceId: source?.id, confirm: action === "remove" ? source?.identifier : undefined }
         ),
       });
@@ -122,6 +123,7 @@ export default function TGCollectorTab() {
       setNotice(
         action === "add" ? "Источник добавлен в очередь." :
         action === "remove" ? "Источник и его сообщения удалены." :
+        action === "history" ? "Полная история поставлена в очередь. Прогресс сохраняется между проходами." :
         action === "pause" ? "Источник приостановлен после текущего запроса." :
         action === "resume" ? "Сбор источника возобновлён." :
         action === "start" ? "Сбор запущен. Worker начнёт брать доступные задания." :
@@ -291,6 +293,11 @@ export default function TGCollectorTab() {
       <section className="surface-panel p-5 sm:p-6">
         <h3 className="font-semibold text-content">Добавить источник</h3>
         <p className="mt-1 text-xs text-content-muted">Публичный @username или ссылка t.me/username. Без вступления в закрытые чаты.</p>
+        <label className="mt-3 flex items-center gap-2 text-sm text-content-muted">
+          <input type="checkbox" checked={fullHistory} onChange={event => setFullHistory(event.target.checked)}
+            className="accent-primary" />
+          Собрать всю доступную историю (может занять много времени)
+        </label>
         <form onSubmit={onAdd} className="mt-4 flex flex-wrap gap-2">
           <input aria-label="Telegram username" value={channel} onChange={event => setChannel(event.target.value)} maxLength={128}
             placeholder="@channel или https://t.me/channel" required
@@ -379,6 +386,10 @@ export default function TGCollectorTab() {
                   </div>
                   <a href={`https://t.me/${source.identifier}`} rel="noreferrer noopener" target="_blank" className="text-xs text-primary hover:underline">@{source.identifier}</a>
                   <div className="mt-2 text-xs text-content-muted">{source.message_count} сообщений · ID {source.last_message_id} · Успешная синхронизация: {formatDate(source.last_success_at)}</div>
+                  <div className="mt-1 text-xs text-content-muted">
+                    История: {source.history_complete ? "полная (для доступных сообщений)" : source.full_history ? "сбор старых сообщений продолжается" : source.history_partial ? "неполная" : "не проверена"}
+                    {source.history_low_message_id && source.history_low_message_id !== "0" ? ` · Самый старый сохранённый ID: ${source.history_low_message_id}` : ""}
+                  </div>
                   {source.last_error && <div className="mt-2 max-w-xl break-words text-xs text-red-300">Ошибка: {source.last_error}</div>}
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -389,6 +400,13 @@ export default function TGCollectorTab() {
                   ) : (
                     <button type="button" disabled={busy !== null} onClick={() => void command("resume", source)}
                       className="rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-300"><Play className="mr-1 inline h-3.5 w-3.5" /> Возобновить</button>
+                  )}
+                  {!source.history_complete && (
+                    <button type="button" disabled={busy !== null || source.state === "running"}
+                      onClick={() => void command("history", source)}
+                      className="rounded-lg border border-primary-border px-3 py-2 text-xs text-primary disabled:opacity-40">
+                      {source.full_history ? "Продолжить историю" : "Собрать всю историю"}
+                    </button>
                   )}
                   <button type="button" disabled={busy !== null || !source.enabled || source.state === "running"} onClick={() => void command(source.state === "failed" ? "retry" : "sync", source)}
                     className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted disabled:opacity-30 hover:text-content"><RefreshCw className="mr-1 inline h-3.5 w-3.5" /> {source.state === "failed" ? "Повтор" : "Синхронизировать"}</button>
