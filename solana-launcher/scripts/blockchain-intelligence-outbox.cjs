@@ -78,4 +78,4 @@ function emitRawChainOutbox(db,input){
       event.schemaVersion,JSON.stringify(event.payload),now,now);
   return true;
 }
-module.exports={enabled,ensureSchema,buildWalletRawEvent,emitRawChainOutbox};
+module.exports={enabled,decodedBytes,ensureSchema,buildWalletRawEvent,emitRawChainOutbox};
