@@ -60,6 +60,7 @@ export type TgRuntimeMetrics = {
   messages_total: number;
   messages_per_day: number;
   links_total: number;
+  links_active_total: number;
   links_per_day: number;
   jobs_pending: number;
   jobs_failed: number;
