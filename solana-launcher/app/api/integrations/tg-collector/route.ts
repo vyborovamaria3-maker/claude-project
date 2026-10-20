@@ -269,13 +269,29 @@ export async function POST(request: NextRequest) {
       const tx = await p.connect();
       try {
         await tx.query("BEGIN");
-        const source = await tx.query<{id: string}>(`
-          INSERT INTO tg_sources(identifier,full_history,history_partial) VALUES($1,$2,$2)
-          ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE,
-            full_history=tg_sources.full_history OR EXCLUDED.full_history,
-            history_partial=CASE WHEN tg_sources.history_complete THEN FALSE
-              ELSE tg_sources.history_partial OR EXCLUDED.full_history END
-          RETURNING id::text`, [username,fullHistory]);
+        // Prefer a Telegram-verified current handle over its old, mutable alias.
+        // A released original username may now belong to an unrelated channel.
+        const existing = await tx.query<{id:string}>(`
+          SELECT id::text FROM tg_sources WHERE current_username=$1
+            AND peer_id IS NOT NULL FOR UPDATE`,[username]);
+        if (existing.rowCount && existing.rowCount > 1)
+          throw new ApiError("Неоднозначный Telegram username: требуется проверка источников",409);
+        const source = existing.rowCount
+          ? await tx.query<{id:string}>(`
+              UPDATE tg_sources SET enabled=TRUE,
+                full_history=full_history OR $2::boolean,
+                history_partial=CASE WHEN history_complete THEN FALSE ELSE history_partial OR $2::boolean END
+              WHERE id=$1 RETURNING id::text`,[existing.rows[0].id,fullHistory])
+          : await tx.query<{id:string}>(`
+              INSERT INTO tg_sources(identifier,full_history,history_partial) VALUES($1,$2,$2)
+              ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE,
+                full_history=tg_sources.full_history OR EXCLUDED.full_history,
+                history_partial=CASE WHEN tg_sources.history_complete THEN FALSE
+                  ELSE tg_sources.history_partial OR EXCLUDED.full_history END
+              WHERE tg_sources.current_username IS NULL OR tg_sources.current_username=$1
+              RETURNING id::text`,[username,fullHistory]);
+        if (!source.rowCount)
+          throw new ApiError("Старый username уже закреплён за другим Telegram ID. Проверьте источник по peer_id.",409);
         await tx.query(`
           INSERT INTO tg_jobs(source_id) VALUES($1)
           ON CONFLICT (source_id) DO NOTHING`, [source.rows[0].id]);
