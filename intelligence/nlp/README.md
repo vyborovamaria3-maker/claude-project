@@ -32,16 +32,16 @@ messages return `unsupported_language` rather than guessed class labels.
   access to HF, no remote trust code or pickle weights.
 - Source message content is never copied into the sentiment result. Output
   includes canonical source message ID, SHA-256 of exact input text,
-  observed/occurred timestamps (UTC), model repository, exact immutable HF
+  observed/occurred timestamps (UTC) **and actual inference_at** (never\n  backdated), model repository, exact immutable HF
   commit SHA, tokenizer-length contract, separate 3-way probability maps.
 - Results are stored under `IntelligenceDocument.metrics["sentiment-v1"]`.
   The original content and `raw_hash` evidence remain unchanged. Existing
   JSON-based SQLite/PG stores already persist metrics. Repeat runs with
   different revisions require an explicit reprocessing strategy.
-- Every input uses **observation time**. Do not backdate a new model
-  prediction as if the model was available when the original event occurred.
-  Add `inference_at` and model-availability tracking before use in
-  historical trading backtests.
+- Every input uses **observation time** and stores independent **inference_at**.
+  Do not backdate a new model prediction as if the model was available when
+  the original event occurred. Proper feature publication/availability gating
+  is still required for historical trading backtests.
 - This is classification of the full *message*, not per-token sentiment:
   linking predictions to specific Solana token mints requires an independent
   exact-evidence resolver.
