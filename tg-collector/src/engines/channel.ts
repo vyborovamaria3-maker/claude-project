@@ -94,9 +94,21 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
   if (duplicate.rowCount) {
     throw new Error("TG_SOURCE_DUPLICATE_PEER: another source already tracks Telegram channel " + resolvedPeer);
   }
-  await pool.query("UPDATE tg_sources SET peer_id=$2,access_hash=COALESCE($3,access_hash),title=$4,current_username=$5 WHERE id=$1",
-    [job.source_id, channel.id?.toString() ?? null, channel.accessHash?.toString() ?? null,
-      channel.title ?? source.identifier, publicHandle]);
+  const identity = await pool.connect();
+  try {
+    await identity.query("BEGIN");
+    // The current verified handle belongs to this peer, not to an archived
+    // previous owner whose username snapshot has become stale.
+    await identity.query(`UPDATE tg_sources SET current_username=NULL
+      WHERE current_username=$1 AND peer_id IS DISTINCT FROM $2`,
+      [publicHandle,resolvedPeer]);
+    await identity.query(`UPDATE tg_sources
+      SET peer_id=$2,access_hash=COALESCE($3,access_hash),title=$4,current_username=$5
+      WHERE id=$1`,[job.source_id,resolvedPeer,channel.accessHash?.toString()??null,
+        channel.title??source.identifier,publicHandle]);
+    await identity.query("COMMIT");
+  } catch (error) { await identity.query("ROLLBACK");throw error; }
+  finally { identity.release(); }
 
   if(source.full_history&&entity instanceof Api.Channel)await discoverDiscussion(client,job.source_id,entity);
   if (source.full_history && !source.history_complete && Number(source.last_message_id) > 0) {
