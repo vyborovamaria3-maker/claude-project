@@ -3,7 +3,7 @@
 The Intelligence modules are built independently of collector databases.
 Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql.
+Migration order: 001_entity_registry.sql, 002_timeline.sql, optional 003_feature_store.sql, mandatory 004_token_link_observations.sql before source delivery. Do not start the ETL supervisor against a target missing 004.
 
 - Ingest RegistryEvent after claiming a source outbox event; source ACK only after
   destination transaction commits. Consumer runDeliveryBatch remains a bounded,
