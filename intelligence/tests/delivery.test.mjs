@@ -116,3 +116,71 @@ test("timeline cannot silently replace canonical entity or rewrite observation t
     assert.deepEqual(log,["payload_invalid"]);
   }
 });
+
+
+test("slow destination write renews exact lease before using new ACK fencing token",async()=>{
+  const log=[];
+  const pool=stubDestination(log);
+  const original=pool.connect;
+  pool.connect=async()=>{
+    const client=await original();
+    const query=client.query;
+    client.query=async(sql,...args)=>{
+      if(sql.includes("INSERT INTO intelligence_inbox")){
+        await new Promise(resolve=>setTimeout(resolve,850));
+      }
+      return query(sql,...args);
+    };
+    return client;
+  };
+  let lastRenewal="",renewed=0,acked="";
+  const source={
+    claim:async()=>[sample()],
+    renew:async(event)=>{
+      renewed++;
+      lastRenewal=new Date(Date.now()+3000).toISOString();
+      return lastRenewal;
+    },
+    ack:async event=>{acked=event.leaseUntil;return true},
+    fail:async()=>{throw new Error("unexpected NACK")},
+  };
+  const result=await runDeliveryBatch(source,pool,{
+    workerId:"worker1",batchSize:1,leaseMs:1000,
+  });
+  assert.ok(renewed>=1,"the claim must renew while destination write is slow");
+  assert.equal(acked,lastRenewal,"ACK must fence on the latest lease token");
+  assert.equal(result.delivered,1);
+  assert.equal(result.lostLeases,0);
+});
+
+test("failed lease renewal never ACKs a potentially stale claim",async()=>{
+  const log=[];
+  const pool=stubDestination(log);
+  const original=pool.connect;
+  pool.connect=async()=>{
+    const client=await original();
+    const query=client.query;
+    client.query=async(sql,...args)=>{
+      if(sql.includes("INSERT INTO intelligence_inbox")){
+        await new Promise(resolve=>setTimeout(resolve,440));
+      }
+      return query(sql,...args);
+    };
+    return client;
+  };
+  let ackCount=0,nackCount=0,renewCount=0;
+  const source={
+    claim:async()=>[sample()],
+    renew:async()=>{renewCount++;return null},
+    ack:async()=>{ackCount++;return true},
+    fail:async()=>{nackCount++;return true},
+  };
+  const result=await runDeliveryBatch(source,pool,{
+    workerId:"worker1",batchSize:1,leaseMs:1000,
+  });
+  assert.equal(renewCount,1);
+  assert.equal(ackCount,0);
+  assert.equal(nackCount,0);
+  assert.equal(result.lostLeases,1);
+  assert.equal(result.delivered,0);
+});
