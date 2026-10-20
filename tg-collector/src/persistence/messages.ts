@@ -22,7 +22,7 @@ export async function persistMessage(
   // For historical token evidence, changed text or restoration must revoke
   // ALL previously verified message links. Mere views/likes updates do not.
   // The message row is locked through the same native PG transaction.
-  const previous=telegramVerifiedTokenLinksEnabled()
+  const previous=telegramOutboxEnabled()
     ? (await tx.query<{text:string|null;deleted_at:Date|null;posted_at:Date|null}>(
         "SELECT text,deleted_at,posted_at FROM tg_messages WHERE source_id=$1 AND message_id=$2 FOR UPDATE",
         [sourceId,msg.id],
