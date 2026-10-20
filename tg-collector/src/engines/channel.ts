@@ -11,17 +11,21 @@ import { catchUpFreshPosts } from "./live-during-history.js";
 import { batchSize, initialLimit, maxPages } from "../runtime/config.js";
 import type { RawTelegramMessage as TgMessage } from "../analytics/extract.js";
 import { verifiedPublicUsername } from "../validation.js";
-type Source = { identifier: string; peer_id: string|null; access_hash: string|null; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean };
+type Source = { identifier: string; current_username: string|null; peer_id: string|null; access_hash: string|null; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean };
 
 export async function processJob(client: TelegramClient, job: Job, isStopping: () => boolean): Promise<void> {
   const { rows } = await pool.query<Source>(
-    "SELECT identifier,peer_id,access_hash,last_message_id,history_low_message_id,full_history,history_complete FROM tg_sources WHERE id=$1", [job.source_id]);
+    "SELECT identifier,current_username,peer_id,access_hash,last_message_id,history_low_message_id,full_history,history_complete FROM tg_sources WHERE id=$1", [job.source_id]);
   const source = rows[0];
   if (!source) throw new Error("Source was deleted");
 
   let entity: Awaited<ReturnType<TelegramClient["getEntity"]>>[number];
   try {
-    entity = await client.getEntity(source.identifier);
+    // An immutable-ID-verified discovery source may have a synthetic original
+    // identifier when its current public handle was previously owned by another
+    // channel. Resolve its last verified handle, then still verify peer_id.
+    entity = await client.getEntity(
+      source.current_username ?? source.identifier);
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
     if (!/USERNAME_INVALID|USERNAME_NOT_OCCUPIED|PEER_ID_INVALID|CHANNEL_INVALID/i.test(text)
@@ -117,11 +121,11 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
       WHERE source_id=$1 AND message_id=$2 AND EXISTS(SELECT 1 FROM tg_sources s CROSS JOIN tg_runtime r
        WHERE s.id=$1 AND s.enabled AND r.id=1 AND r.collection_enabled)`,[job.source_id,msg.id,msg.views??null,msg.forwards??null,msg.replies?.replies??null,JSON.stringify(reactionCounts(msg))]);
     }
-    // For an existing partial channel, scan below the oldest persisted message.
-    // This avoids reloading the latest 500 messages instead of completing history.
-    highId = recoveringHistory && Number(source.history_low_message_id) > 0
-      ? Number(source.history_low_message_id) - 1
-      : (latest[0]?.id ?? 0);
+    // A row with a low message ID is not proof of continuous coverage:
+    // search/discovery can persist isolated old posts above huge unscanned gaps.
+    // Only a committed tg_jobs page cursor proves progress within a scan.
+    // Restart any new history scan from the newest accessible Telegram post.
+    highId = latest[0]?.id ?? 0;
     const checkpoint = await pool.connect();
     try {
       await checkpoint.query("BEGIN");
