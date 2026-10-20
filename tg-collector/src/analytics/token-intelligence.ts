@@ -111,7 +111,7 @@ export async function syncMessageTokenCandidates(
     `INSERT INTO tg_token_mentions
       (source_id,message_id,chain_id,mint,mention_type,resolution_status,
        confidence,message_date,analysis_version,extractor_name,orphaned)
-     SELECT $1,$2,t.chain_id,t.mint,'mint','confirmed',1,$3,$4,'telegram-text',FALSE
+     SELECT $1::bigint,$2::bigint,t.chain_id,t.mint,'mint','confirmed',1,$3,$4,'telegram-text',FALSE
      FROM tg_tokens t WHERE t.chain_id=$5 AND t.mint=ANY($6::text[])
      ON CONFLICT(source_id,message_id,chain_id,mint,mention_type,analysis_version)
        DO UPDATE SET orphaned=FALSE,resolution_status='confirmed',confidence=1`,
@@ -123,7 +123,7 @@ export async function syncMessageTokenCandidates(
     `INSERT INTO tg_token_mentions
       (source_id,message_id,chain_id,mint,mention_type,resolution_status,
        confidence,message_date,analysis_version,extractor_name,orphaned)
-     SELECT $1,$2,stable.chain_id,stable.mint,'ticker','confirmed',
+     SELECT $1::bigint,$2::bigint,stable.chain_id,stable.mint,'ticker','confirmed',
        max(stable.confidence),$3,$4,'telegram-text',FALSE
      FROM (
        SELECT reg.chain_id,reg.ticker,min(reg.mint) AS mint,min(reg.confidence) AS confidence
