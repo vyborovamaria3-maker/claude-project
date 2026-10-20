@@ -13,14 +13,40 @@ CREATE TABLE IF NOT EXISTS xc_auto_config (
 );
 CREATE TABLE IF NOT EXISTS xc_auto_control (id int PRIMARY KEY CHECK(id=1),paused boolean NOT NULL DEFAULT true,heartbeat bigint);
 INSERT INTO xc_auto_control(id) VALUES(1) ON CONFLICT DO NOTHING;
+-- V2-04: health is operational state, separate from audit and job transactions.
+-- V2-06: independent account/AI circuit breakers; never store raw errors/secrets.
+CREATE TABLE IF NOT EXISTS xc_auto_breakers(
+ kind text NOT NULL CHECK(kind IN ('account','ai')),
+ subject text NOT NULL,
+ state text NOT NULL DEFAULT 'closed' CHECK(state IN ('closed','open','half_open')),
+ consecutive_failures integer NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),
+ reason_code text,
+ opened_at bigint,
+ resume_at bigint,
+ updated_at bigint NOT NULL,
+ PRIMARY KEY(kind,subject)
+);
+CREATE INDEX IF NOT EXISTS xc_auto_breakers_active
+ ON xc_auto_breakers(kind,state,resume_at) WHERE state<>'closed';
+CREATE TABLE IF NOT EXISTS xc_auto_worker_health(
+ id int PRIMARY KEY CHECK(id=1),
+ worker_id text NOT NULL, started_at bigint NOT NULL, heartbeat_at bigint NOT NULL
+);
+CREATE TABLE IF NOT EXISTS xc_auto_component_health(
+ component text PRIMARY KEY CHECK(component IN ('planner','publisher','reconcile','sync')),
+ worker_id text NOT NULL, state text NOT NULL CHECK(state IN ('busy','idle','error')),
+ last_started_at bigint,last_completed_at bigint,last_error_code text,updated_at bigint NOT NULL
+);
 CREATE TABLE IF NOT EXISTS xc_auto_jobs (
  id text PRIMARY KEY,account_name text NOT NULL,expected_handle text NOT NULL,kind text NOT NULL CHECK(kind IN ('post','reply','like','repost','follow')),
  content text, target_id text,target_handle text,evidence jsonb NOT NULL DEFAULT '[]',reason text NOT NULL DEFAULT '',provider_id text,
  dedup text NOT NULL UNIQUE,status text NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','published','failed','uncertain','cancelled')),
- attempted boolean NOT NULL DEFAULT false,scheduled_at bigint NOT NULL,created_at bigint NOT NULL,started_at bigint,finished_at bigint,
+ attempted boolean NOT NULL DEFAULT false,retry_count integer NOT NULL DEFAULT 0,scheduled_at bigint NOT NULL,created_at bigint NOT NULL,started_at bigint,finished_at bigint,
  lease_until bigint,result_id text,result_url text,message text,origin text NOT NULL DEFAULT 'manual'
 );
 CREATE INDEX IF NOT EXISTS xc_auto_jobs_due ON xc_auto_jobs(status,scheduled_at);
+-- Manual-first ordering must happen before LIMIT for every eligible account.
+CREATE INDEX IF NOT EXISTS xc_auto_jobs_manual_due ON xc_auto_jobs ((CASE WHEN origin='manual' THEN 0 ELSE 1 END),scheduled_at,created_at) WHERE status='queued';
 CREATE INDEX IF NOT EXISTS xc_auto_jobs_account ON xc_auto_jobs(account_name,created_at DESC);
 CREATE TABLE IF NOT EXISTS xc_auto_posts (
  tweet_id text PRIMARY KEY,account_name text NOT NULL,handle text NOT NULL,text text NOT NULL,url text NOT NULL,
@@ -37,6 +63,27 @@ CREATE TABLE IF NOT EXISTS xc_auto_sync (
 );
 
 ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS attempted_at bigint;
+ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS retry_count integer NOT NULL DEFAULT 0;
+-- Count daily attempted work once per account without scanning its queued/history rows.
+CREATE INDEX IF NOT EXISTS xc_auto_jobs_attempted_quota
+ ON xc_auto_jobs(account_name,(COALESCE(attempted_at,started_at))) WHERE attempted;
+-- V2-05: preserve the legacy UNIQUE(dedup) contract while adding day-scoped keys.
+-- Legacy dedup hashes use a DIFFERENT pre-V2 string layout.
+-- Runtime matches both legacy dedup and V2 content hash to protect old jobs.
+ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS content_hash text;
+ALTER TABLE xc_auto_jobs ADD COLUMN IF NOT EXISTS dedup_day date;
+UPDATE xc_auto_jobs SET content_hash=dedup WHERE content_hash IS NULL;
+UPDATE xc_auto_jobs SET dedup_day=(to_timestamp(scheduled_at/1000.0) AT TIME ZONE 'Europe/Moscow')::date WHERE dedup_day IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS xc_auto_jobs_content_day
+ ON xc_auto_jobs(account_name,kind,content_hash,dedup_day)
+ WHERE content_hash IS NOT NULL AND dedup_day IS NOT NULL;
+CREATE INDEX IF NOT EXISTS xc_auto_jobs_unresolved_hash
+ ON xc_auto_jobs(account_name,kind,content_hash)
+ WHERE attempted AND status IN ('uncertain','running');
+-- Efficiently inspect only pre-V2 backfilled posts when their source URL differs.
+CREATE INDEX IF NOT EXISTS xc_auto_jobs_historical_post
+ ON xc_auto_jobs(account_name,kind,created_at)
+ WHERE content_hash=dedup;
 
 CREATE TABLE IF NOT EXISTS xc_auto_sources (
  list_id text PRIMARY KEY CHECK(list_id ~ '^[0-9]{1,25}$'),
@@ -45,3 +92,175 @@ CREATE TABLE IF NOT EXISTS xc_auto_sources (
  next_run bigint NOT NULL DEFAULT 0,
  last_task_id bigint REFERENCES x_tasks(id)
 );
+
+
+CREATE TABLE IF NOT EXISTS xc_auto_reconcile (
+ job_id text PRIMARY KEY REFERENCES xc_auto_jobs(id) ON DELETE CASCADE,
+ account_name text NOT NULL,
+ expected_handle text NOT NULL,
+ kind text NOT NULL CHECK(kind IN ('post','reply','like','repost','follow')),
+ attempted_at bigint NOT NULL,
+ first_checked_at bigint,
+ next_check_at bigint NOT NULL,
+ deadline_at bigint NOT NULL,
+ attempts integer NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+ status text NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','resolved','manual_review','manual_required')),
+ matched_tweet_id text,
+ candidates jsonb NOT NULL DEFAULT '[]'::jsonb CHECK(jsonb_typeof(candidates)='array'),
+ last_error text,
+ created_at bigint NOT NULL,
+ updated_at bigint NOT NULL,
+ finished_at bigint,
+ CHECK(deadline_at >= attempted_at)
+);
+CREATE INDEX IF NOT EXISTS xc_auto_reconcile_due ON xc_auto_reconcile(next_check_at,created_at) WHERE status='queued';
+CREATE INDEX IF NOT EXISTS xc_auto_reconcile_account ON xc_auto_reconcile(account_name,status,updated_at DESC);
+
+
+-- V2-01: this is a forward-only audit for transitions committed AFTER deployment.
+-- Legacy rows are not retroactively labeled as confirmed or attempted.
+CREATE TABLE IF NOT EXISTS xc_auto_job_attempts (
+ attempt_id text PRIMARY KEY,
+ job_id text NOT NULL REFERENCES xc_auto_jobs(id) ON DELETE RESTRICT,
+ attempt_no integer NOT NULL CHECK (attempt_no > 0),
+ started_at bigint NOT NULL,
+ boundary_at bigint,
+ finished_at bigint,
+ status text NOT NULL CHECK (status IN ('claimed','boundary_recorded','retry_scheduled','uncertain','published','failed','cancelled')),
+ error_category text CHECK (error_category IS NULL OR error_category IN ('X_ERROR','DB_ERROR','VALIDATION_ERROR','PROCESS_ERROR')),
+ error_code text,
+ trace_id text NOT NULL,
+ UNIQUE(job_id,attempt_no)
+);
+CREATE INDEX IF NOT EXISTS xc_auto_job_attempts_recent ON xc_auto_job_attempts(job_id,attempt_no DESC);
+
+CREATE TABLE IF NOT EXISTS xc_auto_job_events (
+ event_id bigserial PRIMARY KEY,
+ job_id text NOT NULL REFERENCES xc_auto_jobs(id) ON DELETE RESTRICT,
+ attempt_id text REFERENCES xc_auto_job_attempts(attempt_id) ON DELETE RESTRICT,
+ event_type text NOT NULL,
+ occurred_at bigint NOT NULL,
+ payload jsonb NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(payload)='object')
+);
+ALTER TABLE xc_auto_job_events ADD COLUMN IF NOT EXISTS trace_id text;
+CREATE INDEX IF NOT EXISTS xc_auto_job_events_by_job ON xc_auto_job_events(job_id,event_id);
+CREATE INDEX IF NOT EXISTS xc_auto_job_events_by_attempt ON xc_auto_job_events(attempt_id,event_id) WHERE attempt_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION xc_auto_job_events_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+ RAISE EXCEPTION 'Autopost audit events are append-only' USING ERRCODE='23514';
+END;
+$$;
+DROP TRIGGER IF EXISTS xc_auto_events_immutable ON xc_auto_job_events;
+CREATE TRIGGER xc_auto_events_immutable BEFORE UPDATE OR DELETE ON xc_auto_job_events
+FOR EACH ROW EXECUTE FUNCTION xc_auto_job_events_append_only();
+DROP TRIGGER IF EXISTS xc_auto_events_no_truncate ON xc_auto_job_events;
+CREATE TRIGGER xc_auto_events_no_truncate BEFORE TRUNCATE ON xc_auto_job_events
+FOR EACH STATEMENT EXECUTE FUNCTION xc_auto_job_events_append_only();
+
+-- AFTER triggers guarantee that job transitions and their audit rows have
+-- the same PostgreSQL commit/rollback even for old runtime call sites.
+CREATE OR REPLACE FUNCTION xc_auto_job_audit_transition() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+ ts bigint;
+ active_id text;
+ next_attempt integer;
+ event_kind text;
+BEGIN
+ ts := floor(extract(epoch from clock_timestamp())*1000)::bigint;
+ IF TG_OP='INSERT' THEN
+   INSERT INTO xc_auto_job_events(job_id,trace_id,event_type,occurred_at,payload)
+   VALUES(NEW.id,NEW.id,'created',COALESCE(NEW.created_at,ts),
+          jsonb_build_object('status',NEW.status,'origin',NEW.origin));
+   RETURN NEW;
+ END IF;
+ IF NEW.status=OLD.status AND NEW.attempted IS NOT DISTINCT FROM OLD.attempted THEN
+   RETURN NEW;
+ END IF;
+
+ IF OLD.status IS DISTINCT FROM NEW.status AND NEW.status='running' THEN
+   SELECT COALESCE(max(attempt_no),0)+1 INTO next_attempt FROM xc_auto_job_attempts WHERE job_id=NEW.id;
+   active_id := gen_random_uuid()::text;
+   INSERT INTO xc_auto_job_attempts(attempt_id,job_id,attempt_no,started_at,status,trace_id)
+   VALUES(active_id,NEW.id,next_attempt,COALESCE(NEW.started_at,ts),'claimed',gen_random_uuid()::text);
+ ELSE
+   SELECT attempt_id INTO active_id FROM xc_auto_job_attempts
+   WHERE job_id=NEW.id ORDER BY attempt_no DESC LIMIT 1;
+ END IF;
+
+ IF OLD.attempted IS DISTINCT FROM NEW.attempted AND NEW.attempted THEN
+   UPDATE xc_auto_job_attempts
+   SET boundary_at=COALESCE(NEW.attempted_at,ts),status='boundary_recorded'
+   WHERE attempt_id=active_id AND status='claimed';
+   INSERT INTO xc_auto_job_events(job_id,attempt_id,trace_id,event_type,occurred_at,payload)
+   VALUES(NEW.id,active_id,(SELECT trace_id FROM xc_auto_job_attempts WHERE attempt_id=active_id),'boundary_recorded',COALESCE(NEW.attempted_at,ts),
+          jsonb_build_object('attempted',true));
+ END IF;
+
+ IF OLD.status IS DISTINCT FROM NEW.status THEN
+   event_kind := CASE
+     WHEN NEW.status='running' THEN 'claimed'
+     WHEN OLD.status='uncertain' AND NEW.status='queued' THEN 'manual_retry_approved'
+     WHEN NEW.status='queued' THEN 'retry_scheduled'
+     WHEN NEW.status='uncertain' THEN 'uncertain'
+     WHEN NEW.status='published' THEN 'published'
+     WHEN NEW.status='failed' THEN 'failed'
+     WHEN NEW.status='cancelled' THEN 'cancelled'
+     ELSE 'state_changed' END;
+   IF OLD.status='running' AND NEW.status IN ('queued','uncertain','published','failed','cancelled') THEN
+     UPDATE xc_auto_job_attempts
+     SET status=CASE NEW.status WHEN 'queued' THEN 'retry_scheduled' ELSE NEW.status END,
+         finished_at=COALESCE(NEW.finished_at,ts)
+     WHERE attempt_id=active_id AND status IN ('claimed','boundary_recorded');
+   ELSIF OLD.status='uncertain' AND NEW.status='published' THEN
+     UPDATE xc_auto_job_attempts
+     SET status='published',finished_at=COALESCE(NEW.finished_at,ts)
+     WHERE attempt_id=active_id AND status='uncertain';
+   END IF;
+   INSERT INTO xc_auto_job_events(job_id,attempt_id,trace_id,event_type,occurred_at,payload)
+   VALUES(NEW.id,active_id,COALESCE((SELECT trace_id FROM xc_auto_job_attempts WHERE attempt_id=active_id),NEW.id),event_kind,ts,
+          jsonb_build_object('from',OLD.status,'to',NEW.status,
+                             'retry_count',NEW.retry_count,
+                             'attempted',NEW.attempted));
+ END IF;
+ RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS xc_auto_jobs_audit ON xc_auto_jobs;
+CREATE TRIGGER xc_auto_jobs_audit
+AFTER INSERT OR UPDATE OF status,attempted,attempted_at ON xc_auto_jobs
+FOR EACH ROW EXECUTE FUNCTION xc_auto_job_audit_transition();
+
+-- Reconciliation observations are auditable without changing the job status.
+-- Store no candidate text, session secrets, raw X errors or private URLs.
+CREATE OR REPLACE FUNCTION xc_auto_reconcile_audit_transition() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+ active_id text;
+ active_trace text;
+ event_kind text;
+ ts bigint;
+BEGIN
+ IF TG_OP='UPDATE' AND NEW.status=OLD.status AND NEW.attempts=OLD.attempts THEN
+   RETURN NEW;
+ END IF;
+ SELECT attempt_id,trace_id INTO active_id,active_trace
+ FROM xc_auto_job_attempts WHERE job_id=NEW.job_id ORDER BY attempt_no DESC LIMIT 1;
+ ts := floor(extract(epoch from clock_timestamp())*1000)::bigint;
+ event_kind := CASE
+   WHEN TG_OP='INSERT' THEN 'reconcile_created'
+   WHEN NEW.status IS DISTINCT FROM OLD.status THEN 'reconcile_status_changed'
+   ELSE 'reconcile_observed' END;
+ INSERT INTO xc_auto_job_events(job_id,attempt_id,trace_id,event_type,occurred_at,payload)
+ VALUES(NEW.job_id,active_id,COALESCE(active_trace,NEW.job_id),event_kind,ts,
+   jsonb_build_object('kind',NEW.kind,'status',NEW.status,'checks',NEW.attempts));
+ RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS xc_auto_reconcile_audit ON xc_auto_reconcile;
+CREATE TRIGGER xc_auto_reconcile_audit
+AFTER INSERT OR UPDATE OF status,attempts ON xc_auto_reconcile
+FOR EACH ROW EXECUTE FUNCTION xc_auto_reconcile_audit_transition();
+
