@@ -88,7 +88,7 @@ docker exec -i "$ADMIN_POSTGRES_CONTAINER" pg_restore --list < "$DEST/admin-post
   sha256sum -c SHA256SUMS >/dev/null
 )
 
-mv -- "$DEST" "$FINAL_DEST"
+mv -T -- "$DEST" "$FINAL_DEST"
 DEST="" # disarm failed-backup cleanup after atomic promotion
 # Prune only completed, verified timestamp directories. Never delete
 # .incomplete-* while another backup could still be writing one.
