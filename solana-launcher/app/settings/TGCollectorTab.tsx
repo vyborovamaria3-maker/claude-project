@@ -389,6 +389,11 @@ export default function TGCollectorTab() {
                   {source.current_username && source.current_username !== source.identifier &&
                     <div className="mt-1 text-xs text-content-muted">Ранее: @{source.identifier}. Источник закреплён за Telegram ID, а не за username.</div>}
                   <div className="mt-2 text-xs text-content-muted">{source.message_count} сообщений · ID {source.last_message_id} · Успешная синхронизация: {formatDate(source.last_success_at)}</div>
+                  {source.entities_unverified > 0 &&
+                    <p className="mt-1 text-xs text-amber-300">
+                      У {source.entities_unverified} старых постов ссылки внутри текста ещё не проверены.
+                      Для восстановления используй локальную команду entities:refetch.
+                    </p>}
                   <div className="mt-1 text-xs text-content-muted">
                     История: {source.history_complete ? "полная (для доступных сообщений)" : source.full_history ? "сбор старых сообщений продолжается" : source.history_partial ? "неполная" : "не проверена"}
                     {source.history_low_message_id && source.history_low_message_id !== "0" ? ` · Самый старый сохранённый ID: ${source.history_low_message_id}` : ""}
