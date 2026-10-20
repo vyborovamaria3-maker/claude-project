@@ -1,6 +1,6 @@
 import type { ClaimOptions, ClaimedEvent } from "@claude-project/event-outbox";
 import { setTimeout as sleep } from "node:timers/promises";
-import { buildTimelineEvent, toUtcIso, type TimelineEvent } from "@claude-project/contracts";
+import { buildTimelineEvent, toUtcIso, validateVerifiedTokenLinkEvent, type TimelineEvent } from "@claude-project/contracts";
 import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type RegistryEvent } from "./entity-registry.js";
 import { ingestTimelineEvent } from "./timeline.js";
 
@@ -35,6 +35,14 @@ function extractEnvelope(event: ClaimedEvent): RegistryOutboxPayload {
     throw new TypeError("Missing registryEvent payload");
   }
   const raw = event.payload as unknown as RegistryOutboxPayload;
+  // Verified link assertions must not be silently ignored by a generic inbox.
+  // This checks proof structure; it cannot replace the source-side RPC check.
+  if(event.eventKind==="token_link_verified") {
+    validateVerifiedTokenLinkEvent({
+      sourceSystem:event.sourceSystem,eventKind:event.eventKind,
+      eventKey:event.eventKey,schemaVersion:event.schemaVersion,payload:raw,
+    });
+  }
   const registry = validateRegistryEvent(raw.registryEvent);
   if (registry.sourceSystem !== event.sourceSystem ||
     registry.eventKind !== event.eventKind ||
