@@ -48,6 +48,20 @@ if [[ ! -x "$VENV/bin/python" ]]; then
   "$PYTHON" -m venv "$VENV"
 fi
 P="$VENV/bin/python"
+# Debian/Ubuntu may create bin/python and then fail while bootstrapping pip
+# if python3.12-venv was not installed yet. A later retry must *repair* this
+# incomplete venv, not assume that the executable means installation worked.
+if ! "$P" -m pip --version >/dev/null 2>&1; then
+  echo "Detected an incomplete venv without pip; rebuilding it safely..."
+  if ! "$PYTHON" -m venv --clear "$VENV"; then
+    echo "Cannot create Python venv. On Ubuntu: sudo apt-get install python3.12-venv" >&2
+    exit 2
+  fi
+fi
+if ! "$P" -m pip --version >/dev/null 2>&1; then
+  echo "Python venv is still missing pip after repair" >&2
+  exit 2
+fi
 "$P" -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 'torch>=2.4,<3'
 "$P" -m pip install --no-cache-dir -r intelligence/requirements.txt -r intelligence/requirements-sentiment.txt
 "$P" - <<'PY'
