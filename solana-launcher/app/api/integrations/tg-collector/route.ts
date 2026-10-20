@@ -194,7 +194,7 @@ export async function GET(request: NextRequest) {
 
     const [sources, stats, runtimeState, proxy, messages] = await Promise.all([
       p.query(`SELECT s.id::text, s.identifier, s.peer_id, s.title, s.enabled,
-        s.history_partial,s.full_history,s.history_complete, s.last_message_id::text, s.last_success_at,
+        s.history_partial,s.full_history,s.history_complete,s.history_low_message_id::text, s.last_message_id::text, s.last_success_at,
         COALESCE(mc.message_count,0)::int AS message_count,
         j.state, j.run_at, j.attempts, j.scanned_count, j.last_error,
         (SELECT parent.identifier FROM tg_source_discussions ds JOIN tg_sources parent ON parent.id=ds.channel_source_id WHERE ds.discussion_source_id=s.id LIMIT 1) AS discussion_for,
@@ -262,19 +262,31 @@ export async function POST(request: NextRequest) {
     const p = pool();
     if (action === "add") {
       const username = publicUsername(input.username);
+      if (input.fullHistory !== undefined && typeof input.fullHistory !== "boolean")
+        throw new ApiError("fullHistory должен быть логическим значением");
+      const fullHistory = input.fullHistory === true;
       const tx = await p.connect();
       try {
         await tx.query("BEGIN");
         const source = await tx.query<{id: string}>(`
-          INSERT INTO tg_sources(identifier) VALUES($1)
-          ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE
-          RETURNING id::text`, [username]);
+          INSERT INTO tg_sources(identifier,full_history,history_partial) VALUES($1,$2,$2)
+          ON CONFLICT(identifier) DO UPDATE SET enabled=TRUE,
+            full_history=tg_sources.full_history OR EXCLUDED.full_history,
+            history_partial=CASE WHEN tg_sources.history_complete THEN FALSE
+              ELSE tg_sources.history_partial OR EXCLUDED.full_history END
+          RETURNING id::text`, [username,fullHistory]);
         await tx.query(`
           INSERT INTO tg_jobs(source_id) VALUES($1)
           ON CONFLICT (source_id) DO NOTHING`, [source.rows[0].id]);
         await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,
+          base_message_id=NULL, high_message_id=NULL, cursor_before_id=NULL, scanned_count=0,
           run_at=now(), locked_until=NULL, last_error=NULL, updated_at=now()
-          WHERE source_id=$1 AND state='failed'`, [source.rows[0].id]);
+          WHERE source_id=$1 AND state IN ('failed','delayed','pending') AND $2::boolean
+            AND EXISTS(SELECT 1 FROM tg_sources WHERE id=$1 AND NOT history_complete)`,
+          [source.rows[0].id,fullHistory]);
+        await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,run_at=now(),
+          locked_until=NULL,last_error=NULL,updated_at=now()
+          WHERE source_id=$1 AND state='failed' AND NOT $2::boolean`, [source.rows[0].id,fullHistory]);
         await tx.query("COMMIT");
         return NextResponse.json({ ok: true, sourceId: source.rows[0].id }, { headers: noStore });
       } catch (error) {
@@ -282,13 +294,36 @@ export async function POST(request: NextRequest) {
         throw error;
       } finally { tx.release(); }
     }
+    if (action === "history") {
+      const id = sourceId(input.sourceId);
+      const tx = await p.connect();
+      try {
+        await tx.query("BEGIN");
+        const source = await tx.query<{id: string}>(`
+          SELECT s.id::text AS id FROM tg_sources s
+          JOIN tg_jobs j ON j.source_id=s.id
+          WHERE s.id=$1 AND j.state<>'running' FOR UPDATE OF s,j`, [id]);
+        if (!source.rowCount) throw new ApiError("Источник не найден или задание уже выполняется", 409);
+        await tx.query(`UPDATE tg_sources SET full_history=TRUE,history_complete=FALSE,history_partial=TRUE,
+          enabled=TRUE WHERE id=$1`, [id]);
+        await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
+          base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
+          scanned_count=0,locked_until=NULL,last_error=NULL,run_at=now(),updated_at=now()
+          WHERE source_id=$1`, [id]);
+        await tx.query("COMMIT");
+        return NextResponse.json({ok:true}, {headers:noStore});
+      } catch (error) {
+        await tx.query("ROLLBACK");
+        throw error;
+      } finally { tx.release(); }
+    }
+
     if (action === "start" || action === "stop") {
       if (action === "start") {
         const state = await p.query<{block_reason: string | null}>("SELECT block_reason FROM tg_runtime WHERE id=1");
         if (state.rows[0]?.block_reason) throw new ApiError(`Сборщик заблокирован: ${state.rows[0].block_reason}. Сначала снимите ограничение вручную.`, 409);
         await p.query("UPDATE tg_runtime SET collection_enabled=TRUE WHERE id=1");
-        await p.query(`UPDATE tg_jobs SET state='pending',run_at=now(),locked_until=NULL,last_error=NULL,updated_at=now()
-          WHERE state='pending' AND source_id IN (SELECT id FROM tg_sources WHERE enabled)`);
+        // Keep each job's run_at: resetting every pending job causes a burst of Telegram requests.
       } else {
         await p.query("UPDATE tg_runtime SET collection_enabled=FALSE WHERE id=1");
       }
