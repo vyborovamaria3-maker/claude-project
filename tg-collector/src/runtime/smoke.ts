@@ -59,8 +59,13 @@ async function main(): Promise<void> {
       // must never let a smoke run mix two unrelated Telegram channels.
       const matches = await tx.query<{id:string;peer_id:string|null;has_evidence:boolean}>(`
         SELECT s.id::text,s.peer_id,
-          (EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id) OR
-           EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id)) AS has_evidence
+          (s.last_message_id > 0 OR s.history_low_message_id > 0 OR
+           EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id) OR
+           EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id) OR
+           EXISTS(SELECT 1 FROM tg_jobs j WHERE j.source_id=s.id
+             AND (j.high_message_id IS NOT NULL OR j.cursor_before_id IS NOT NULL
+               OR j.fresh_high_message_id IS NOT NULL
+               OR j.fresh_cursor_before_id IS NOT NULL))) AS has_evidence
         FROM tg_sources s
         WHERE s.peer_id=$1 OR s.identifier=$2 OR s.current_username=$2
         FOR UPDATE OF s`, [verifiedPeer,handle]);
