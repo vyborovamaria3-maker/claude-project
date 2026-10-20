@@ -1,3 +1,4 @@
+import { ANALYSIS_VERSION } from "../../src/analytics/extract.js";
 import { readFile } from "node:fs/promises";
 import "dotenv/config";
 import assert from "node:assert/strict";
@@ -66,16 +67,16 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
     execFileSync(process.execPath, ["--import", "tsx", "src/analytics/backfill.ts", "--batch-size=10"], { cwd: process.cwd(), stdio: "pipe" });
     const backfilled = await pool.query<{analysis_version: number}>(
       "SELECT analysis_version FROM tg_messages WHERE source_id=$1 AND message_id=1000", [id]);
-    assert.equal(backfilled.rows[0].analysis_version, 3);
+    assert.equal(backfilled.rows[0].analysis_version, ANALYSIS_VERSION);
     const linksAfterBackfill = await pool.query<{count: string}>(
       "SELECT count(*)::text AS count FROM tg_message_links WHERE source_id=$1 AND message_id=1000", [id]);
     assert.equal(linksAfterBackfill.rows[0].count, linksBeforeBackfill.rows[0].count);
     const fingerprintCount = await pool.query<{count: string}>(
-      "SELECT count(*)::text AS count FROM tg_message_fingerprints WHERE source_id=$1 AND message_id=1000 AND analysis_version=3", [id]);
+      "SELECT count(*)::text AS count FROM tg_message_fingerprints WHERE source_id=$1 AND message_id=1000 AND analysis_version=$2", [id, ANALYSIS_VERSION]);
     assert.equal(fingerprintCount.rows[0].count, "1");
     execFileSync(process.execPath, ["--import", "tsx", "src/analytics/backfill.ts", "--batch-size=10"], { cwd: process.cwd(), stdio: "pipe" });
     const fingerprintCountAgain = await pool.query<{count: string}>(
-      "SELECT count(*)::text AS count FROM tg_message_fingerprints WHERE source_id=$1 AND message_id=1000 AND analysis_version=3", [id]);
+      "SELECT count(*)::text AS count FROM tg_message_fingerprints WHERE source_id=$1 AND message_id=1000 AND analysis_version=$2", [id, ANALYSIS_VERSION]);
     assert.equal(fingerprintCountAgain.rows[0].count, "1", "repeated backfill must be idempotent");
 
     const tx = await pool.connect();
