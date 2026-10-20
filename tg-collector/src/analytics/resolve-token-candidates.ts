@@ -216,7 +216,8 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ checked: candidates.rows.length, verified, rejected, deferred }));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+main().catch(() => {
+  // Do not print DB connection strings, provider responses, SQL or API keys.
+  console.error("TG mint resolver failed: source_or_database_operation_failed");
   process.exitCode = 1;
 }).finally(() => pool.end());
