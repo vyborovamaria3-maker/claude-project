@@ -143,7 +143,8 @@ export async function GET(request: NextRequest) {
             COALESCE(narrative.names,'{}'::text[]) AS narratives
           FROM tg_tokens t
           LEFT JOIN LATERAL (
-            SELECT count(*)::integer AS mentions_7d,count(DISTINCT tm.source_id)::integer AS sources_7d
+            SELECT count(DISTINCT (tm.source_id,tm.message_id))::integer AS mentions_7d,
+              count(DISTINCT tm.source_id)::integer AS sources_7d
             FROM tg_token_mentions tm JOIN tg_messages msg USING(source_id,message_id)
             WHERE tm.chain_id=t.chain_id AND tm.mint=t.mint
               AND tm.analysis_version=CASE WHEN msg.analysis_version>=4 THEN 4 ELSE 3 END
