@@ -132,11 +132,42 @@ def route_models(source: str, language: str) -> tuple[str, ...]:
 
 class LocalTransformersBackend:
     """Lazy local-only PyTorch model loader; never contacts HF Hub on inference."""
-    def __init__(self, *, device: str = "cpu") -> None:
+    def __init__(self, *, device: str = "cpu", max_loaded_models: int = 1) -> None:
         if device != "cpu" and not re.fullmatch(r"cuda:[0-9]+", device):
             raise ValueError("device must be cpu or cuda:<index>")
+        if type(max_loaded_models) is not int or not 1 <= max_loaded_models <= 3:
+            raise ValueError("max_loaded_models must be an integer from 1 to 3")
         self.device = device
+        self.max_loaded_models = max_loaded_models
+        # Insertion order acts as a tiny LRU cache. Default=1 to bound RAM
+        # and GPU residency while still processing grouped model batches.
         self._loaded: dict[tuple[str, str], tuple[Any, Any]] = {}
+
+    def unload_all(self) -> None:
+        """Release cached model references. CUDA context itself may remain."""
+        self._loaded.clear()
+        import gc
+        gc.collect()
+        if self.device.startswith("cuda:"):
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+
+    def _make_room(self) -> None:
+        if len(self._loaded) < self.max_loaded_models:
+            return
+        # Drop CPU/GPU references before allocating a new ~440–500 MB model.
+        oldest = next(iter(self._loaded))
+        del self._loaded[oldest]
+        import gc
+        gc.collect()
+        if self.device.startswith("cuda:"):
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def predict(self, model: ModelSpec, revision: str, texts: Sequence[str]) -> list[dict[str, float]]:
         # Heavy deps are intentionally optional for normal collector/CI startup.
@@ -147,6 +178,7 @@ class LocalTransformersBackend:
             raise RuntimeError("install intelligence/requirements-sentiment.txt explicitly") from exc
         key = (model.key, revision)
         if key not in self._loaded:
+            self._make_room()
             opts = dict(revision=revision, local_files_only=True, trust_remote_code=False)
             tokenizer = AutoTokenizer.from_pretrained(model.repository, **opts)
             loaded = AutoModelForSequenceClassification.from_pretrained(
@@ -158,7 +190,8 @@ class LocalTransformersBackend:
             loaded.to(self.device)
             loaded.eval()
             self._loaded[key] = (tokenizer, loaded)
-        tokenizer, loaded = self._loaded[key]
+        tokenizer, loaded = self._loaded.pop(key)
+        self._loaded[key] = (tokenizer, loaded)  # Refresh LRU order.
         values = tokenizer(list(texts), truncation=True, padding=True,
                            max_length=model.max_tokens, return_tensors="pt")
         values = {k: v.to(self.device) for k, v in values.items()}
@@ -186,7 +219,8 @@ class SentimentEngine:
         revisions = {key: os.environ.get(model.revision_env, "") for key, model in MODELS.items()}
         return cls(
             revisions, backend=backend if backend is not None else LocalTransformersBackend(
-                device=os.environ.get("SENTIMENT_DEVICE", "cpu")
+                device=os.environ.get("SENTIMENT_DEVICE", "cpu"),
+                max_loaded_models=int(os.environ.get("SENTIMENT_MAX_LOADED_MODELS", "1")),
             ),
             batch_size=int(os.environ.get("SENTIMENT_BATCH_SIZE", "8")),
         )
