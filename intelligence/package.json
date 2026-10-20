@@ -27,7 +27,8 @@
     "etl:once": "node scripts/run.mjs --once",
     "etl:supervise": "node scripts/supervise.mjs --sources x,tg,blockchain",
     "etl:backfill": "node scripts/backfill.mjs",
-    "etl:quality": "node scripts/quality.mjs"
+    "etl:quality": "node scripts/quality.mjs",
+    "api:local": "node api/start.mjs"
   },
   "exports": {
     ".": {
