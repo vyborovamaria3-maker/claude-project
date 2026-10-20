@@ -144,3 +144,38 @@ test("source-wide X edit invalidation is revisioned, token-agnostic and contains
     ...sample,sourceRevisionSha256:"c".repeat(64),
   }).eventKey,first.eventKey);
 });
+
+test("deferred RPC retains cursor so failed mint observation can be retried",async()=>{
+  const oldOut=process.env.X_INTELLIGENCE_OUTBOX_ENABLED;
+  const oldLink=process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED;
+  const oldVerify=process.env.X_INTELLIGENCE_MINT_VERIFY_ENABLED;
+  const oldRpc=process.env.ALCHEMY_SOLANA_RPC_URL;
+  try{
+    process.env.X_INTELLIGENCE_OUTBOX_ENABLED="true";
+    process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED="true";
+    process.env.X_INTELLIGENCE_MINT_VERIFY_ENABLED="true";
+    process.env.ALCHEMY_SOLANA_RPC_URL="https://solana.example";
+    let writes=0;
+    const result=await verifyXTokenLinksOnce(parseMintVerificationArgs([
+      "--execute","--limit=2","--max-rpc=2","--cursor=50",
+    ]),{
+      read:async()=>[{tweet_id:"51",author_id:"999",text:mint,posted_at:null},
+        {tweet_id:"52",author_id:"999",text:mint,posted_at:null}],
+      verify:async()=>{throw new Error("secret RPC URL in provider error")},
+      emit:async()=>{writes++;return true},
+    });
+    assert.equal(result.requests,1);
+    assert.equal(result.deferred,1);
+    assert.equal(result.nextCursor,"50");
+    assert.equal(result.haltedReason,"rpc_deferred");
+    assert.equal(writes,0);
+    assert.equal(JSON.stringify(result).includes("secret"),false);
+  }finally{
+    for(const [key,value] of [
+      ["X_INTELLIGENCE_OUTBOX_ENABLED",oldOut],["X_INTELLIGENCE_TOKEN_LINKS_ENABLED",oldLink],
+      ["X_INTELLIGENCE_MINT_VERIFY_ENABLED",oldVerify],["ALCHEMY_SOLANA_RPC_URL",oldRpc],
+    ] as const){
+      if(value===undefined)delete process.env[key];else process.env[key]=value;
+    }
+  }
+});
