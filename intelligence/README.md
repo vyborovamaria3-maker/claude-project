@@ -3,7 +3,7 @@
 The Intelligence modules are built independently of collector databases.
 Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migration order: 001_entity_registry.sql, 002_timeline.sql, optional 003_feature_store.sql, mandatory 004_token_link_observations.sql before source delivery. Do not start the ETL supervisor against a target missing 004.
+Migration order: 001_entity_registry.sql, 002_timeline.sql, optional 003_feature_store.sql, mandatory 004_token_link_observations.sql before source delivery. ARCH-06b revision events additionally require 005_blockchain_swap_evidence_revisions.sql before enabling Blockchain token events. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
 
 - Ingest RegistryEvent after claiming a source outbox event; source ACK only after
   destination transaction commits. Consumer runDeliveryBatch remains a bounded,

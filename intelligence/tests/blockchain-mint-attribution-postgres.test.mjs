@@ -71,6 +71,10 @@ test("actual Blockchain swap Outbox -> Intelligence PG token timeline: as-of, pr
     assert.deepEqual(await batch(),{
       claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0,
     });
+    assert.equal((await queryTokenTimeline(pool,"solana:"+mint,
+      "2026-10-18T02:00:00Z","2026-10-20T02:00:00Z")).length,0,
+      "late destination ingestion must not leak into an earlier knownAt");
+    await pool.query("UPDATE intelligence_inbox SET ingested_at='2026-10-20T01:01:00Z'");
     const found=await queryTokenTimeline(pool,"solana:"+mint,
       "2026-10-18T02:00:00Z","2026-10-20T02:00:00Z");
     assert.equal(found.length,1);

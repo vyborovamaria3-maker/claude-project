@@ -81,6 +81,10 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
     // retry delivers an older verified assertion later.
     assert.equal((await send(pool,edit)).delivered,1);
     assert.equal((await send(pool,initial)).delivered,1);
+    assert.equal((await queryActiveTokenLinks(pool,token,
+      "2026-10-20T01:10:00Z","2026-10-20T01:05:00Z")).length,0,
+      "late Intelligence delivery cannot retroactively count as known");
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
     let current=await queryActiveTokenLinks(pool,token,"2026-10-20T01:10:00Z","2026-10-20T01:05:00Z");
     assert.equal(current.length,0,"late old confirmation cannot resurrect edited message");
     current=await queryActiveTokenLinks(pool,token,"2026-10-20T01:10:00Z","2026-10-20T01:02:00Z");
@@ -92,6 +96,7 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
       "2026-10-20T01:10:00Z","2026-10-20T01:05:00Z")).length,0);
 
     assert.equal((await send(pool,restored)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
     current=await queryActiveTokenLinks(pool,token,"2026-10-20T01:10:00Z","2026-10-20T01:08:00Z");
     assert.equal(current.length,1,"reverified newer message revision can become active");
     assert.equal(current[0].source_revision_sha256,"b".repeat(64));
