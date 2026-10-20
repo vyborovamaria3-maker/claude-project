@@ -4,6 +4,7 @@ import { buildTimelineEvent, toUtcIso, validateVerifiedTokenLinkEvent, validateT
 import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type RegistryEvent } from "./entity-registry.js";
 import { ingestTimelineEvent } from "./timeline.js";
 import { ingestTokenLinkObservation } from "./token-links.js";
+import { ingestBlockchainSwapRevision } from "./blockchain-swaps.js";
 
 export type OutboxSource = {
   claim(options: ClaimOptions): Promise<ClaimedEvent[]>;
@@ -106,6 +107,12 @@ async function writeDestination(
         sourceSystem:event.sourceSystem as "x"|"tg",
         eventKind:event.eventKind,eventKey:event.eventKey,
         schemaVersion:"token-link-v1",payload:event.payload,
+      });
+    }
+    if(event.eventKind==="token_swap_evidence_revision"){
+      await ingestBlockchainSwapRevision(client,{
+        sourceSystem:event.sourceSystem,eventKind:event.eventKind,
+        eventKey:event.eventKey,schemaVersion:event.schemaVersion,payload:body,
       });
     }
     if (body.timelineEvent) {
