@@ -91,3 +91,11 @@ test("verified TG Outbox emission is transaction-owned and opt-in",async()=>{
     else process.env.TG_INTELLIGENCE_TOKEN_LINKS_ENABLED=priorLinks;
   }
 });
+
+test("verified mint link supports native signed Telegram channel peer ID",()=>{
+  const event=buildVerifiedTgTokenLinkOutboxEvent({...args,peerId:"-100123456789"});
+  assert.equal(event.payload.registryEvent.evidenceRef.sourceId,
+    "tg:message:-100123456789:42");
+  assert.equal(event.payload.registryEvent.entityRefs[0]!.canonicalId,
+    "tg:source:-100123456789");
+});
