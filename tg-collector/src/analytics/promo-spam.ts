@@ -3,15 +3,15 @@
  */
 export const PROMOTIONAL_MILESTONE = "promotional_milestone" as const;
 export const PROMO_SAMPLE_LIMIT = 120;
-const TICKER = /(?:^|[^\\p{L}\\p{N}_])[#$]([A-Za-z][A-Za-z0-9]{1,9})\\b/u;
+const TICKER = /(?:^|[^\p{L}\p{N}_])[#$]([A-Za-z][A-Za-z0-9]{1,9})\b/u;
 
 export function promotionalMilestoneKind(text: string): typeof PROMOTIONAL_MILESTONE | null {
   if (text.length > 16_384) return null;
   const tag = TICKER.test(text);
-  const vip = /\\bVIP\\s*[:：]\\s*x\\s*\\d+(?:[.,]\\d+)?\\b/i.test(text);
-  const growth = /\\bGrowth\\s*[:：]\\s*x\\s*\\d+(?:[.,]\\d+)?\\b/i.test(text);
-  const promotion = /\\bDEX\\s+PAID\\b|\\bGet\\s+VIP\\s+access\\b/i.test(text);
-  const milestone = /\\bMC\\s*[:：]|(?:\\$\\s*\\d[\\d.,]*\\s*[KMB]?\\s*(?:→|->)\\s*\\$\\s*\\d)/i.test(text);
+  const vip = /\bVIP\s*[:：]\s*x\s*\d+(?:[.,]\d+)?\b/i.test(text);
+  const growth = /\bGrowth\s*[:：]\s*x\s*\d+(?:[.,]\d+)?\b/i.test(text);
+  const promotion = /\bDEX\s+PAID\b|\bGet\s+VIP\s+access\b/i.test(text);
+  const milestone = /\bMC\s*[:：]|(?:\$\s*\d[\d.,]*\s*[KMB]?\s*(?:→|->)\s*\$\s*\d)/i.test(text);
   return tag && vip && growth && promotion && milestone ? PROMOTIONAL_MILESTONE : null;
 }
 
