@@ -190,3 +190,24 @@ performing a small real-weight inference smoke. SQLite prediction rows are
 derived analytics, not authoritative trades or automatically validated
 sentiment for any specific Solana mint. The command is finite and does not
 run as a background service.
+
+## Safe as-of reporting — do not use future inference in backtests
+
+To report **source-level** model averages from the derived SQLite file:
+
+```powershell
+py -m intelligence.nlp.cli --results-db "C:\\sentiment-data\\model-results.sqlite" --summary-as-of "2026-10-20T12:00:00Z"
+py -m intelligence.nlp.cli --results-db "C:\\sentiment-data\\model-results.sqlite" --summary-as-of "2026-10-20T12:00:00Z" --summary-source x
+```
+
+This mode is SQLite read-only, requires **no model revisions/weights**, and
+includes a score only when **both the original observation time and the real
+inference time** are at or before the requested as-of. English bullish/bearish
+and Russian general positive/negative are summarized **separately for each
+model**, not averaged into a fabricated universal bullish score. Counts
+represent text-revision predictions, not independent unique people and not
+verified token mentions.
+
+It does **not** create a token-level financial feature or imply historical
+model availability before inference; a future token-feature join must enforce
+the same availability boundary and verified mint attribution.
