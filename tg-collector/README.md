@@ -628,3 +628,47 @@ transactionally on inserts, deletes, and soft-deletion status changes.
 
 Enabling full history will **not** move jobs currently delayed by Telegram forward in
 time. Their existing `run_at` and page checkpoint remain intact until the delay ends.
+
+### Safe rollout for PR #138 follow-up fixes
+
+The source identity migration `027_source_peer_identity.sql` refuses to run if
+two preexisting `tg_sources` rows share the same confirmed `peer_id`. **Do not**
+delete either source automatically: compare messages and evidence, reconcile in
+a disposable backup and retry the migration. Old username aliases are not
+authoritative. The Worker also refuses to silently overwrite a different
+source's Telegram ID.
+
+The new-message collector uses a separate durable `tg_jobs.fresh_*` checkpoint
+while it continues scanning an older history interval. It checks for recent
+posts approximately every 30 seconds and prioritizes those posts without
+advancing the historical cursor. Neither side ignores FloodWait or source
+pauses. Migration `028_live_while_backfill.sql` adds these checkpoint fields.
+
+Previously collected text has `entities_observed_at=NULL`, even when the
+migrated default `entities=[]` is present. That means **hidden URLs may be
+missing**, regardless of `history_complete`. Migration
+`029_entities_coverage.sql` and the UI expose this as separate evidence
+coverage. To restore it on a **local laptop only**, stop the TG Worker, back up
+the database, run migrations, then issue bounded refetch batches:
+
+```bash
+npm run entities:refetch -- @public_channel --limit=200
+```
+
+This command uses the existing authorized Telegram session, validates the
+immutable peer ID, rejects private-source collection, acquires the singleton
+worker lock, and re-fetches original message IDs in batches. Missing/deleted
+posts remain unverified. Do not assume a successful offline backfill can
+recover Telegram entities that were never originally stored.
+
+Version-4 backfill reuses mints already confirmed in `tg_tokens`, and
+unambiguous confirmed ticker associations. This avoids paying again to
+verify the same Solana mint. **New** addresses still require explicit
+`npm run tokens:resolve` with configured Alchemy RPC, if you choose to
+verify them. Finish with `npm run analyze:refresh` to rebuild derived
+scores and first mentions. The project does not issue those paid requests
+automatically during migrations.
+
+Recommended safe order: local backup → stop Worker → migrate → backfill →
+optional entity refetch → optional tokens:resolve → analyze:refresh →
+restart Worker → run live smoke on a disposable PostgreSQL database.
