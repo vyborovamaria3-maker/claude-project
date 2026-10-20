@@ -10,6 +10,7 @@ import math
 import os
 import sys
 import time
+from pathlib import Path
 from dataclasses import dataclass
 from threading import Event
 from typing import Callable
@@ -58,6 +59,25 @@ class ResourcePolicy:
         )
 
 
+def _linux_container_free_mb(root: Path = Path("/sys/fs/cgroup")) -> float | None:
+    """Honor cgroup v2 memory limits in GitHub Codespaces containers.
+
+    psutil.virtual_memory().available can represent the host instead of the
+    Codespace container. Fail back to host readings if no cgroup limit exists.
+    """
+    try:
+        max_text = (root / "memory.max").read_text(encoding="ascii").strip()
+        now_text = (root / "memory.current").read_text(encoding="ascii").strip()
+        if max_text == "max":
+            return None
+        maximum, used = int(max_text), int(now_text)
+        if 0 < maximum and 0 <= used <= maximum:
+            return (maximum - used) / (1024 * 1024)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def sample_local_memory() -> MemorySample:
     """Native snapshots require optional psutil; no credentials/network."""
     try:
@@ -66,8 +86,10 @@ def sample_local_memory() -> MemorySample:
         raise ResourcePressure(
             "local memory guard requires the optional sentiment dependencies"
         ) from exc
+    host_free = psutil.virtual_memory().available / (1024 * 1024)
+    container_free = _linux_container_free_mb() if sys.platform.startswith("linux") else None
     return MemorySample(
-        available_mb=psutil.virtual_memory().available / (1024 * 1024),
+        available_mb=min(host_free, container_free) if container_free is not None else host_free,
         ai_rss_mb=psutil.Process().memory_info().rss / (1024 * 1024),
     )
 
