@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createHash } from "node:crypto";
-import { emitVerifiedTgTokenLinkOutbox } from "../persistence/outbox.js";
+import { emitVerifiedTgTokenLinkOutbox, telegramVerifiedTokenLinksEnabled } from "../persistence/outbox.js";
 import { pool, migrate } from "../db.js";
 import { ANALYSIS_VERSION } from "./extract.js";
 import { detectPropagationPatterns, refreshChannelScores, refreshTokenChannelMetrics, SOLANA_CHAIN_ID } from "./token-intelligence.js";
@@ -180,7 +180,9 @@ async function main(): Promise<void> {
         // The existing RPC call above actually verified an initialized SPL
         // Mint account. Emit historical mint evidence in the SAME transaction.
         // Missing immutable peer identity and stale/nonliteral text fail closed.
-        if (occurrence.peer_id && occurrence.text.includes(candidate.mint)) {
+        if (telegramVerifiedTokenLinksEnabled() && occurrence.peer_id &&
+            typeof occurrence.text==="string" &&
+            new RegExp("(?<![1-9A-HJ-NP-Za-km-z])"+candidate.mint+"(?![1-9A-HJ-NP-Za-km-z])").test(occurrence.text)) {
           const revision=createHash("sha256").update(JSON.stringify([
             occurrence.text,occurrence.message_date?.toISOString()??null,
             occurrence.edited_at?.toISOString()??null,
