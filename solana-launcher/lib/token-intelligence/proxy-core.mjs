@@ -72,8 +72,8 @@ function evidence(value){
     throw new SafeProxyError("upstream_invalid",502);
   return value;
 }
-function sanitizeItems(items,resource,limit){
-  if(!Array.isArray(items)||items.length>limit)
+function sanitizeItems(items,resource,query){
+  if(!Array.isArray(items)||items.length>query.limit)
     throw new SafeProxyError("upstream_invalid",502);
   return items.map(item=>{
     if(!item||typeof item!=="object"||Array.isArray(item))
@@ -84,6 +84,12 @@ function sanitizeItems(items,resource,limit){
       occurredAt:item.occurredAt===null&&resource==="links"?null:safeDate(item.occurredAt),
       observedAt:safeDate(item.observedAt),
     };
+    // Defense in depth: the browser must never see future-known observations
+    // even if an upstream regression accidentally weakens its SQL predicates.
+    if(common.observedAt>query.knownAt ||
+       (common.occurredAt!==null&&common.occurredAt>query.occurredBefore)){
+      throw new SafeProxyError("upstream_invalid",502);
+    }
     if(resource==="timeline"){
       if(!KINDS.has(item.kind))throw new SafeProxyError("upstream_invalid",502);
       return {...common,kind:item.kind};
@@ -116,7 +122,7 @@ export function projectVerifiedResponse(json,resource,tokenId,query){
       editDeleteCoverage:"not_guaranteed_for_legacy_source_history",
     }:{}),
     truncated:json.truncated,
-    items:sanitizeItems(json.items,resource,query.limit),
+    items:sanitizeItems(json.items,resource,query),
   };
 }
 async function readBounded(response){
