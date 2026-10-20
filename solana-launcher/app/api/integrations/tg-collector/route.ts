@@ -202,8 +202,11 @@ export async function GET(request: NextRequest) {
     if (search.length > 120) throw new ApiError("Поисковый запрос слишком длинный");
     const page = Number(params.get("page") || 0);
     if (!Number.isInteger(page) || page < 0 || page > 100) throw new ApiError("Недопустимая страница");
+    const sourcePage = Number(params.get("sourcePage") || 0);
+    if (!Number.isSafeInteger(sourcePage) || sourcePage < 0 || sourcePage > 10000)
+      throw new ApiError("Недопустимая страница источников");
 
-    const [sources, stats, runtimeState, proxy, messages] = await Promise.all([
+    const [sources, sourceOptions, stats, runtimeState, proxy, messages] = await Promise.all([
       p.query(`SELECT s.id::text, s.identifier, s.current_username, s.peer_id, s.title, s.enabled,
         s.history_partial,s.full_history,s.history_complete,s.history_low_message_id::text, s.last_message_id::text, s.last_success_at,
         COALESCE(mc.message_count,0)::int AS message_count,
@@ -216,7 +219,8 @@ export async function GET(request: NextRequest) {
         FROM tg_sources s
         LEFT JOIN tg_source_message_counters mc ON mc.source_id=s.id
         LEFT JOIN tg_jobs j ON j.source_id=s.id
-        ORDER BY s.created_at DESC LIMIT 500`),
+        ORDER BY s.created_at DESC, s.id DESC LIMIT 100 OFFSET $1`, [sourcePage * 100]),
+      p.query(`SELECT id::text,identifier,current_username FROM tg_sources ORDER BY created_at DESC,id DESC`),
       p.query(`SELECT
           (SELECT count(*)::int FROM tg_sources) AS sources,
           (SELECT COALESCE(sum(message_count),0)::int FROM tg_source_message_counters) AS messages,
@@ -260,6 +264,8 @@ export async function GET(request: NextRequest) {
         last_error_code: runtimeState.rows[0]?.last_error_code ?? null,
       },
       sources: sources.rows,
+      sourceOptions: sourceOptions.rows,
+      sourcePage,
       messages: messages.rows,
       page,
     }, { headers: noStore });
