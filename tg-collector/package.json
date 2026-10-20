@@ -7,6 +7,7 @@
     "login": "tsx src/cli.ts login",
     "add": "tsx src/cli.ts add",
     "history": "tsx src/cli.ts history",
+    "entities:refetch": "tsx src/runtime/entity-refetch.ts",
     "list": "tsx src/cli.ts list",
     "migrate": "tsx src/cli.ts migrate",
     "worker": "tsx src/worker.ts",
