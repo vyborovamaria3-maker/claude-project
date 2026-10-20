@@ -7,8 +7,8 @@ const {
 }=require("./blockchain-token-swap-outbox.cjs");
 
 const wallet="1".repeat(32);
-const mint="2".repeat(32);
-const signature="3".repeat(64);
+const mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const signature="1".repeat(64);
 const now=Date.UTC(2026,9,20,4,45,0);
 const tx={
   signature,slot:250000000,timestamp:1700000000,type:"SWAP",
