@@ -151,3 +151,69 @@ test("resilience: 12,000 posts across six channels are isolated under concurrent
       channels:6,concurrentRefreshes:6,elapsedMs:Date.now()-start}));
   }finally{await pool.query("DELETE FROM tg_sources WHERE id=ANY($1::bigint[])",[sources]);}
 });
+
+test("resilience: simulated transport failure after first page resumes from committed cursor",{
+  skip:!process.env.DATABASE_URL,
+  timeout:55_000,
+},async()=>{
+  const {pool,migrate}=await import("../../src/db.js");
+  const {processJob}=await import("../../src/engines/channel.js");
+  const {handleFailure}=await import("../../src/queue/jobs.js");
+  await migrate();
+  const sourceName="crash_"+randomUUID().replaceAll("-","").slice(0,12);
+  const peer="911"+Math.floor(Math.random()*1e11).toString().padStart(11,"0");
+  const source=(await pool.query<{id:string}>(`
+    INSERT INTO tg_sources(identifier,current_username,peer_id,full_history,history_partial)
+    VALUES($1,$1,$2,TRUE,TRUE) RETURNING id::text`,[sourceName,peer])).rows[0].id;
+  let failOnce=true;
+  const original=Array.from({length:220},(_,i)=>({
+    id:220-i,message:"Historical "+String(220-i),date:stamp+i,
+  }));
+  const telegram={
+    async getEntity(){
+      return {className:"Channel",id:{toString:()=>peer},
+        username:sourceName,title:"Public fixture"};
+    },
+    async getMessages(_entity:unknown,opts:{
+      limit:number;offsetId?:number;minId?:number;
+    }){
+      if(opts.limit===100 && opts.offsetId===121 && failOnce){
+        failOnce=false;
+        throw new Error("ECONNRESET simulated after one committed page");
+      }
+      return original.filter(x=>x.id<(opts.offsetId??Infinity) &&
+        x.id>(opts.minId??0)).slice(0,opts.limit);
+    },
+  };
+  try{
+    const first=(await pool.query(`INSERT INTO tg_jobs(source_id)
+      VALUES($1) RETURNING *`,[source])).rows[0];
+    let threw=false;
+    try{await processJob(telegram as never,first,()=>false);}
+    catch(error){threw=true;await handleFailure(first,error);}
+    assert.equal(threw,true,"the transport failure must occur in the second page");
+    const state=(await pool.query<{
+      state:string;cursor_before_id:string|null;scanned_count:number;
+    }>(`SELECT state,cursor_before_id::text,scanned_count
+      FROM tg_jobs WHERE source_id=$1`,[source])).rows[0];
+    assert.equal(state.state,"delayed");
+    assert.equal(state.cursor_before_id,"121",
+      "a committed page cursor must not be erased by network retry");
+    assert.equal(state.scanned_count,100);
+    for(let turn=0;turn<8;turn++){
+      const job=(await pool.query("SELECT * FROM tg_jobs WHERE source_id=$1",[source])).rows[0];
+      await processJob(telegram as never,job,()=>false);
+      const status=(await pool.query<{history_complete:boolean}>(`
+        SELECT history_complete FROM tg_sources WHERE id=$1`,[source])).rows[0];
+      if(status.history_complete)break;
+    }
+    const result=(await pool.query<{n:number;min_id:string;max_id:string}>(`
+      SELECT count(*)::integer AS n,min(message_id)::text AS min_id,
+        max(message_id)::text AS max_id FROM tg_messages WHERE source_id=$1`,
+      [source])).rows[0];
+    assert.deepEqual(result,{n:220,min_id:"1",max_id:"220"});
+    const finished=(await pool.query<{history_complete:boolean}>(`
+      SELECT history_complete FROM tg_sources WHERE id=$1`,[source])).rows[0];
+    assert.equal(finished.history_complete,true);
+  }finally{await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);}
+});
