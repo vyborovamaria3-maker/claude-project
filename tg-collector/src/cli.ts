@@ -45,7 +45,7 @@ async function main(): Promise<void> {
       await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,run_at=now(),
         locked_until=NULL,last_error=NULL,
         base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,scanned_count=0
-        WHERE source_id=$1 AND state IN ('pending','failed','delayed')`, [rows[0].id]);
+        WHERE source_id=$1 AND state IN ('pending','failed')`, [rows[0].id]);
       await tx.query("COMMIT");
       console.log("Added source:", identifier, fullHistory ? "(full history)" : "(recent messages)");
     } catch (error) {
@@ -71,7 +71,7 @@ async function main(): Promise<void> {
       await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,run_at=now(),
         base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
         scanned_count=0,locked_until=NULL,last_error=NULL,updated_at=now()
-        WHERE source_id=$1`,[source.rows[0].id]);
+        WHERE source_id=$1 AND state IN ('pending','failed')`,[source.rows[0].id]);
       await tx.query("COMMIT");
       console.log("Historical scan queued:",identifier);
     } catch (error) {await tx.query("ROLLBACK");throw error;} finally {tx.release();}
