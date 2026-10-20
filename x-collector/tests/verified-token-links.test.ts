@@ -141,6 +141,10 @@ test("X edit invalidation is one atomic source Outbox tombstone in PGlite",async
     assert.equal(await emitXVerifiedTokenLinkOutbox(tx,input),true);
     assert.equal(await emitXTokenLinksInvalidation(tx,invalidation),true);
     assert.equal(await emitXTokenLinksInvalidation(tx,invalidation),true);
+    // Previously verified source links must be revoked even if issuing NEW
+    // mint proofs has been turned off.
+    delete process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED;
+    assert.equal(await emitXTokenLinksInvalidation(tx,invalidation),true);
     await pg.exec("COMMIT");
     const stored=await pg.query<{event_kind:string;payload:{tokenLinksInvalidation?:{reason:string}}}>(
       "SELECT event_kind,payload FROM outbox_events ORDER BY id",
