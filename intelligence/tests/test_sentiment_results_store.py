@@ -123,6 +123,33 @@ class DurableSentimentTests(unittest.TestCase):
                     "SELECT count(*) FROM sentiment_predictions"
                 ).fetchone()[0], 2)
 
+    def test_summary_cli_is_read_only_and_requires_no_model_download(self):
+        import io
+        import os
+        from contextlib import redirect_stdout, redirect_stderr
+        from intelligence.nlp import cli
+        with tempfile.TemporaryDirectory() as tmp:
+            file = Path(tmp, "sentiment.sqlite")
+            record = engine().analyze([SourceText(
+                "x", "x:tweet:882", "This crypto asset is bullish", NOW
+            )])
+            store_predictions(file, record)
+            # Intentionally unset model revisions: an as-of report uses
+            # only the already stored derived data, not remote model weights.
+            with patch.dict(os.environ, {}, clear=True):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    rc = cli.run([
+                        "--results-db", str(file), "--summary-as-of",
+                        "2100-01-01T00:00:00Z", "--summary-source", "x"
+                    ])
+            self.assertEqual(rc, 0, stderr.getvalue())
+            rows = [json.loads(line) for line in stdout.getvalue().splitlines()]
+            self.assertEqual(len(rows), 2)
+            self.assertEqual({r["model_key"] for r in rows},
+                             {"cryptobert", "fintwitbert"})
+            self.assertNotIn("This crypto asset", stdout.getvalue())
+
     def test_explicit_path_does_not_mutate_collector_or_runtime_database(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp, "collector.sqlite")
