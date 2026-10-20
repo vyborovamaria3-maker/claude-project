@@ -4,6 +4,7 @@ export type RuntimeMetrics = {
   messages_total: number;
   messages_per_day: number;
   links_total: number;
+  links_active_total: number;
   links_per_day: number;
   jobs_pending: number;
   jobs_failed: number;
@@ -19,6 +20,7 @@ async function refreshRuntimeMetrics(): Promise<void> {
           WHERE day = (now() AT TIME ZONE 'UTC')::date
         ),0),
         links_total = COALESCE((SELECT links_total FROM tg_runtime_metrics WHERE id=1),0),
+        links_active_total = COALESCE((SELECT links_active_total FROM tg_runtime_metrics WHERE id=1),0),
         links_per_day = COALESCE((
           SELECT sum(evidence_count) FROM tg_graph_daily_edges
           WHERE day = (now() AT TIME ZONE 'UTC')::date
