@@ -62,10 +62,12 @@ export async function checkDestination(pool){
     to_regclass('intelligence_inbox') IS NOT NULL AS inbox,
     to_regclass('entity_registry') IS NOT NULL AS registry,
     to_regclass('entity_evidence') IS NOT NULL AS evidence,
-    to_regclass('timeline_events') IS NOT NULL AS timeline`);
+    to_regclass('timeline_events') IS NOT NULL AS timeline,
+    to_regclass('token_link_observations') IS NOT NULL AS token_links`);
   const row=result.rows[0];
-  if(!row?.inbox||!row.registry||!row.evidence||!row.timeline){
-    throw new Error("destination Intelligence migrations 001+002 required");
+  // Every consumer may encounter token-link events, so reject missing 004 before claiming.
+  if(!row?.inbox||!row.registry||!row.evidence||!row.timeline||!row.token_links){
+    throw new Error("destination Intelligence migrations 001+002+004 required");
   }
 }
 
