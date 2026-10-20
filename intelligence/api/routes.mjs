@@ -43,8 +43,7 @@ export function parseApiRequest(raw,now=new Date()){
   // v1 deliberately only exposes verified Solana mint IDs, not arbitrary
   // wallet IDs, author IDs or ticker aliases.
   if(!tokenId.startsWith("solana:")||
-     parseTokenId(tokenId)?.id!==tokenId ||
-     !["solana",...[]].includes(tokenId.slice(0,6))){
+     parseTokenId(tokenId)?.id!==tokenId){
     throw new TypeError("invalid_token_id");
   }
   const query=url.searchParams;
