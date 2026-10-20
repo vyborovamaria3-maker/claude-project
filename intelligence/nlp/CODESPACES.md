@@ -97,6 +97,13 @@ authenticated private tunnel (rather than exposing the port publicly).
   / 3 GiB free-memory budgets, one model at a time, CPU `batch_size=1`.
   Two-vCPU Codespaces CPU inference can be slow. The limiter is not a
   guarantee against all memory allocation spikes.
+- **`ensurepip` or `No module named pip`:** Ubuntu may lack
+  `python3.12-venv`, leaving a half-created `.venv-sentiment`. Run
+  `sudo apt-get update && sudo apt-get install -y python3.12-venv`,
+  then `python3.12 -m venv --clear .venv-sentiment` and rerun
+  `bash intelligence/nlp/scripts/codespaces_setup.sh`. Updated setup
+  scripts automatically rebuild a venv without pip after you install
+  the missing system package.
 - **Dependency/model failure:** save only the nonsecret traceback summary
   or failing package/model name when asking for help. Do **not** paste
   the generated `api-token`, GitHub tokens or private source records.
