@@ -130,3 +130,5 @@ Existing scheduled supervisor and local admin/frontend were restarted after they
 were found stopped; original TGInvite files were preserved.
 
 ARCH-06 PR #150 continuation (2026-10-20): preserve available pre-hash SQLite RAW snapshots on upgrade/replay, enforce append-only archive writes, reject mixed RPC result/error envelopes and label offline receipt provenance unverified. Synthetic regressions added for upgrades/rollback/mutations and supported inter-wallet mint/slot/time disagreement. See docs/architecture/ARCH_06_INTEGRITY_AUDIT_FIXES.md for verification and remaining provenance/finality/PnL blockers.
+
+ARCH-06 RPC provenance preparation (2026-10-20, Draft #150): offline Ed25519 witness verification with out-of-band endpoint/cluster pins, exact RPC exchanges, bounded clocks and mandatory injected atomic challenge consumption for acceptance. Synthetic tests only; no acquisition, secret loading, database or API promotion. See docs/architecture/ARCH_06_RPC_PROVENANCE.md.
