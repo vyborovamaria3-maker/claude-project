@@ -103,3 +103,7 @@ NUL
 # Local admin-site configuration
 admin-site/sources.json
 admin-site/logs.json
+
+# Disposable local/Codespaces sentiment weights, venv and API bearer
+/.venv-sentiment/
+/.local/sentiment/
