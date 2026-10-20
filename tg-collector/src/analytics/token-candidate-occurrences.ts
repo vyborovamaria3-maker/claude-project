@@ -15,7 +15,7 @@ export async function activeMintOccurrences(
     "LEFT JOIN tg_ticker_mentions t ON t.source_id=c.source_id AND t.message_id=c.message_id " +
     "AND t.chain_id=c.chain_id AND t.analysis_version=$3 " +
     "WHERE c.chain_id=$1 AND c.candidate_type='address' AND c.candidate_key=$2 " +
-    "AND c.analysis_version=$3 AND m.deleted_at IS NULL GROUP BY c.source_id,c.message_id,m.posted_at",
+    "AND c.analysis_version=$3 AND m.deleted_at IS NULL GROUP BY c.source_id,c.message_id,m.posted_at,m.text",
     [chainId,mint,version],
   );
 }
