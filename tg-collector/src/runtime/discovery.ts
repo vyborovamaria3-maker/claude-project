@@ -26,6 +26,11 @@ export async function addCandidate(candidate: NonNullable<ReturnType<typeof publ
   await tx.query(`INSERT INTO tg_discovered_sources(peer_id,username,title,keyword) VALUES($1,$2,$3,$4)
    ON CONFLICT(peer_id) DO UPDATE SET username=EXCLUDED.username,title=EXCLUDED.title,
    keyword=EXCLUDED.keyword,last_seen_at=now()`,[candidate.peer,candidate.username,candidate.title,keyword]);
+  // MTProto has just resolved this public handle to candidate.peer. Evict
+  // cached handles on other peers; their archives stay pinned by peer_id.
+  await tx.query(`UPDATE tg_sources SET current_username=NULL
+    WHERE current_username=$1 AND peer_id IS DISTINCT FROM $2`,
+    [candidate.username,candidate.peer]);
   // Legacy discovery versions could attach source_id by recycled username.
   // Re-check identity on each discovery turn, even after migration 030.
   await tx.query(`UPDATE tg_discovered_sources d SET source_id=NULL,connected_at=NULL
