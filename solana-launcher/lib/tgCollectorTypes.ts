@@ -127,6 +127,8 @@ export type TgCollectorSnapshot = {
   stats: { sources: number; messages: number; running: number; failed: number };
   runtimeMetrics: TgRuntimeMetrics;
   sources: TgCollectorSource[];
+  sourceOptions: {id:string;identifier:string;current_username:string|null}[];
+  sourcePage: number;
   messages: TgCollectedMessage[];
   page: number;
 };
