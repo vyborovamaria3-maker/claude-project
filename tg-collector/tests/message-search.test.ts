@@ -35,7 +35,7 @@ test('public post dedup, canonical reactions, discussion queue, Stop and full hi
   const hist=(await pool.query('INSERT INTO tg_sources(identifier,peer_id,full_history) VALUES($1,$2,TRUE) RETURNING id',[prefix+'_hist',historyPeer])).rows[0];
   const job=(await pool.query('INSERT INTO tg_jobs(source_id)VALUES($1)RETURNING *',[hist.id])).rows[0];
   const all=Array.from({length:600},(_,i)=>({id:600-i,message:'ordinary public history',date:1700000000,views:i,reactions:{results:[]}}));
-  const historyClient={getEntity:async()=>new Api.Channel({id:bigInt(historyPeer),title:'History',megagroup:true}),getMessages:async(_e:unknown,o:{limit:number;offsetId?:number})=>o.offsetId?all.filter(m=>m.id<o.offsetId!).slice(0,o.limit):all.slice(0,o.limit)}as unknown as TelegramClient;
+  const historyClient={getEntity:async()=>new Api.Channel({id:bigInt(historyPeer),title:'History',megagroup:true,username:prefix+'_hist'}),getMessages:async(_e:unknown,o:{limit:number;offsetId?:number})=>o.offsetId?all.filter(m=>m.id<o.offsetId!).slice(0,o.limit):all.slice(0,o.limit)}as unknown as TelegramClient;
   for(let turn=0;turn<6;turn++){
    const current=(await pool.query('SELECT * FROM tg_jobs WHERE id=$1',[job.id])).rows[0];await processJob(historyClient,current,()=>false);
    if((await pool.query('SELECT history_complete FROM tg_sources WHERE id=$1',[hist.id])).rows[0].history_complete)break;
