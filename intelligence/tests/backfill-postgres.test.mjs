@@ -114,7 +114,9 @@ test("ARCH-08 X/TG source snapshots commit to independent outboxes, then real In
       "SELECT count(*)::integer AS n FROM entity_evidence"),2);
     const clocks=await pools.dst.query("SELECT source_system,observed_at,occurred_at FROM timeline_events ORDER BY source_system");
     assert.equal(clocks.rows.length,2);
-    assert.equal(new Date(clocks.rows[1].observed_at).toISOString(),
+    const telegramClock=clocks.rows.find(row=>row.source_system==="tg");
+    assert.ok(telegramClock,"a Telegram source clock must exist");
+    assert.equal(new Date(telegramClock.observed_at).toISOString(),
       new Date(observedTG).toISOString());
   }finally{
     for(const pool of Object.values(pools))await pool.end();
