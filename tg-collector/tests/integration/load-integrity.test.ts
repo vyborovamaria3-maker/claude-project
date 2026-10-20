@@ -92,3 +92,45 @@ test("load: simultaneous writes cannot lose daily rollups or duplicate evidence"
     await pool.query("DELETE FROM tg_sources WHERE id=$1",[source]);
   }
 });
+
+
+test("load: SKIP LOCKED distributes 24 runnable source jobs without double claims",{
+  skip:!process.env.DATABASE_URL,
+  timeout:40_000,
+},async()=>{
+  const {pool,migrate}=await import("../../src/db.js");
+  const {claim}=await import("../../src/queue/jobs.js");
+  await migrate();
+  const suffix=randomUUID().replaceAll("-","").slice(0,12);
+  const prior=(await pool.query<{
+    collection_enabled:boolean;block_reason:string|null;pause_until:Date|null;
+  }>("SELECT collection_enabled,block_reason,pause_until FROM tg_runtime WHERE id=1")).rows[0];
+  const sources:string[]=[];
+  try {
+    await pool.query(`UPDATE tg_runtime
+      SET collection_enabled=TRUE,block_reason=NULL,pause_until=NULL WHERE id=1`);
+    const list=await pool.query<{id:string}>(`INSERT INTO tg_sources(identifier)
+      SELECT $1||'_'||n FROM generate_series(1,24) n RETURNING id::text`,
+      ["queue_pressure_"+suffix]);
+    sources.push(...list.rows.map(x=>x.id));
+    await pool.query(`INSERT INTO tg_jobs(source_id,run_at)
+      SELECT id,'2000-01-01'::timestamptz FROM tg_sources WHERE id=ANY($1::bigint[])`,
+      [sources]);
+    const started=Date.now();
+    const jobs=await Promise.all(Array.from({length:24},()=>claim()));
+    const elapsed=Date.now()-started;
+    assert.equal(jobs.filter(Boolean).length,24,"all 24 jobs should be claimed");
+    const ids=jobs.map(x=>x?.id);
+    assert.equal(new Set(ids).size,24,"SKIP LOCKED cannot issue same job twice");
+    assert.deepEqual(new Set(jobs.map(x=>x?.source_id)),new Set(sources));
+    const states=await pool.query<{running:number}>(`
+      SELECT count(*)::int AS running FROM tg_jobs
+      WHERE source_id=ANY($1::bigint[]) AND state='running'`,[sources]);
+    assert.equal(states.rows[0].running,24);
+    console.log(JSON.stringify({stress:"parallel-queue-claim",jobs:24,claims:24,elapsedMs:elapsed}));
+  }finally{
+    if(sources.length)await pool.query("DELETE FROM tg_sources WHERE id=ANY($1::bigint[])",[sources]);
+    await pool.query(`UPDATE tg_runtime SET collection_enabled=$1,block_reason=$2,pause_until=$3
+      WHERE id=1`,[prior.collection_enabled,prior.block_reason,prior.pause_until]);
+  }
+});
