@@ -248,6 +248,7 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
       await ingestRegistryEvent(pool,event.payload.registryEvent);
       await ingestTokenLinkObservation(pool,event);
     }
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
     await withServer(pool,async origin=>{
       const earlier="occurredBefore="+encodeURIComponent(occurred)+"&knownAt="+encodeURIComponent("2026-10-20T02:10:00Z");
       const later="occurredBefore="+encodeURIComponent(occurred)+"&knownAt="+encodeURIComponent("2026-10-20T02:50:00Z");
