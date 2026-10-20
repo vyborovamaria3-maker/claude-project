@@ -157,3 +157,55 @@ GitHub Codespaces SSH tunnel; no tunnel is created by this PR. Sending
 the unmodified API bearer in a browser-exposed public link is forbidden.
 This integration does **not** automatically send real collector data,
 activate an Intelligence worker, or connect an external LLM.
+
+## Step 4 — Acer/Windows private-client smoke (no local PyTorch)
+
+You have already verified the Codespaces API, token authentication and
+`gh codespace ports forward 8765:8765` from Windows. In Windows PowerShell,
+**not in Codespaces**, with the **private tunnel still open** in its separate
+PowerShell window, switch the local repository clone to PR #142:
+
+```powershell
+Set-Location 'C:\\Users\\<YOUR-WINDOWS-USER>\\claude-project'
+git status --short
+gh pr checkout 142
+git pull --ff-only
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\intelligence\\nlp\\scripts\\windows_remote_smoke.ps1
+```
+
+Review `git status --short` first; do **not** switch branches if you have
+uncommitted work that could be overwritten. If the actual clone path differs
+from the example, use the actual path. Windows paths may contain Cyrillic.
+
+This single-purpose PowerShell script:
+
+- requires local Python 3.11/3.12 and the GitHub CLI already authorized with
+  `codespace` permission;
+- checks the loopback `/healthz` endpoint on the existing *private* tunnel;
+- uses `gh codespace ssh -c <CodespaceName> -- ...` to fetch the current
+  bearer token into the process environment only; never prints or saves it;
+- creates an isolated, **stdlib-only** `.venv-sentiment-client` Python
+  environment. **No pip downloads, Torch, Transformers, local model weights,
+  CUDA, GPU or dedicated ML RAM load on the Acer**;
+- pins the exact SHAs that passed Codespaces actual forward inference;
+- uses the real `python -m intelligence.nlp.cli` process logic in opt-in
+  `SENTIMENT_REMOTE_ENABLED=true` mode on exactly three hardcoded synthetic
+  X/TG messages, which exercises both HTTP calls and SQLite per-batch commits;
+- saves derived results only to the ignored
+  `.local/sentiment/windows-remote-smoke.sqlite`. It never reads or writes
+  X/TG collector databases, starts a service or sends private Telegram texts;
+- restores the original PowerShell process environment on completion.
+
+Expected output:
+
+```
+WINDOWS REMOTE SENTIMENT SMOKE PASSED
+CryptoBERT + FinTwitBERT + RuBERT: same-SHA remote classification OK.
+```
+
+Use this as a manual connectivity test only, **not** as a scheduled worker.
+When the Codespace is stopped or your Codespaces allowance is exhausted,
+requests time out and collectors must operate independently. Keep both the
+Codespaces API port and forwarded tunnel private. Real X/TG source text
+sending still requires explicit source-by-source permission and dedicated
+ingestion integration; external LLM calls remain unimplemented.
