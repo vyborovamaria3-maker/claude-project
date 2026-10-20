@@ -2,6 +2,7 @@
 import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
 import {createRequire} from "node:module";
+import {createHash} from "node:crypto";
 import {
   parseBackfillArgs,checkpointFor,readCheckpoint,writeCheckpoint,
   withExclusiveCheckpointLock,advanceCheckpoint,cursorOf,validateCheckpoint,
@@ -18,6 +19,23 @@ export function validateBackfillGate(options,env=process.env){
      env.INTELLIGENCE_BACKFILL_WRITE_ENABLED!=="true"){
     throw new Error("explicit_backfill_opt_in_required");
   }
+}
+/** Hashed DB identity avoids sharing a checkpoint between two different
+ * source environments without writing DSNs, SQL passwords or RPC URLs. */
+export async function sourceIdentity(source,connection){
+  let parts;
+  if(source==="blockchain"){
+    const entry=connection.pragma("database_list").find(row=>row.name==="main");
+    parts={file:entry?.file??""};
+  }else{
+    const {rows}=await connection.query(
+      "SELECT current_database() AS database,current_schema() AS schema,"+
+      "current_user AS user,inet_server_addr()::text AS server,"+
+      "inet_server_port() AS port");
+    parts=rows[0];
+    if(!parts)throw new Error("database_identity_unavailable");
+  }
+  return createHash("sha256").update(JSON.stringify([source,parts])).digest("hex");
 }
 export async function readHighWater(source,connection){
   if(source==="x"){
@@ -157,12 +175,13 @@ export async function runOneBackfillPage(options,dependencies={}){
   const ownsConnection=!dependencies.connection;
   try{
     if(connection.kind==="pg")await checkPgOutbox(connection.connection);
+    const identity=await sourceIdentity(options.source,connection.connection);
     const existing=options.execute
-      ?await readCheckpoint(options.checkpoint,options.source,options.scope):null;
+      ?await readCheckpoint(options.checkpoint,options.source,options.scope,identity):null;
     const high=existing?existing.high:
       await readHighWater(options.source,connection.connection);
-    const state=existing??checkpointFor(options.source,options.scope??"dry-run",high);
-    validateCheckpoint(state,options.source,options.scope??"dry-run");
+    const state=existing??checkpointFor(options.source,options.scope??"dry-run",high,identity);
+    validateCheckpoint(state,options.source,options.scope??"dry-run",identity);
     if(options.execute&&!existing)await writeCheckpoint(options.checkpoint,state);
     const page=connection.kind==="pg"
       ?await processPgPage(connection.connection,options.source,state,options.limit,options.execute)
