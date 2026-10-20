@@ -1,11 +1,8 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import pg from "pg";
-import Database from "better-sqlite3";
 import {
-  claimPostgres, ackPostgres, failPostgres,
-  claimSqlite, ackSqlite, failSqlite,
-} from "@claude-project/event-outbox";
+  sourceConnection, checkPgOutbox, checkDestination, destinationConnection,
+} from "./etl-connections.mjs";
 import { runDeliveryBatch } from "../dist/index.js";
 
 /**
@@ -44,45 +41,6 @@ function usage() {
     "Destination env: INTELLIGENCE_DATABASE_URL (required for --once)",
     "Preconditions: source outbox schema and destination migrations 001+002",
   ].join("\n");
-}
-function requiredEnv(name) {
-  const value=process.env[name]?.trim();
-  if(!value)throw new Error("missing required source/destination configuration: "+name);
-  return value;
-}
-function sourceConnection(source,once) {
-  if(source==="blockchain"){
-    const filename=requiredEnv("SOLANA_TRADE_DB_PATH");
-    const db=new Database(filename,{readonly:!once,fileMustExist:true});
-    try{
-      const has=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='outbox_events'").get();
-      if(!has)throw new Error("source outbox schema is not installed");
-      return {
-        kind:"sqlite",connection:db,
-        close:async()=>db.close(),
-        port:{
-          claim:async options=>claimSqlite(db,options),
-          ack:async event=>ackSqlite(db,event.id,event.leaseOwner,event.leaseUntil),
-          fail:async(event,code,next)=>failSqlite(db,event.id,event.leaseOwner,event.leaseUntil,code,next)
-        },
-      };
-    }catch(error){db.close();throw error;}
-  }
-  const url=requiredEnv(source==="x"?"X_SOURCE_DATABASE_URL":"TG_SOURCE_DATABASE_URL");
-  const pool=new pg.Pool({connectionString:url,max:2,connectionTimeoutMillis:5000});
-  return {
-    kind:"pg",connection:pool,
-    close:async()=>pool.end(),
-    port:{
-      claim:options=>claimPostgres(pool,options),
-      ack:event=>ackPostgres(pool,event.id,event.leaseOwner,event.leaseUntil),
-      fail:(event,code,next)=>failPostgres(pool,event.id,event.leaseOwner,event.leaseUntil,code,next),
-    }
-  };
-}
-async function checkPgOutbox(pool){
-  const {rows}=await pool.query("SELECT to_regclass('outbox_events') IS NOT NULL AS present");
-  if(!rows[0]?.present)throw new Error("source outbox schema is not installed");
 }
 async function status(source){
   const at=new Date().toISOString();
@@ -125,17 +83,6 @@ async function status(source){
     maxAttempts:row.max_attempts===null?0:Number(row.max_attempts),
   };
 }
-async function checkDestination(pool){
-  const result=await pool.query(`SELECT
-    to_regclass('intelligence_inbox') IS NOT NULL AS inbox,
-    to_regclass('entity_registry') IS NOT NULL AS registry,
-    to_regclass('entity_evidence') IS NOT NULL AS evidence,
-    to_regclass('timeline_events') IS NOT NULL AS timeline`);
-  const row=result.rows[0];
-  if(!row?.inbox||!row.registry||!row.evidence||!row.timeline){
-    throw new Error("destination Intelligence migrations 001+002 required");
-  }
-}
 async function main(){
   const args=argumentsFor(process.argv.slice(2));
   if(args.help){console.log(usage());return;}
@@ -150,10 +97,7 @@ async function main(){
       return;
     }
     if(source.kind==="pg")await checkPgOutbox(source.connection);
-    destination=new pg.Pool({
-      connectionString:requiredEnv("INTELLIGENCE_DATABASE_URL"),
-      max:2,connectionTimeoutMillis:5000,
-    });
+    destination=destinationConnection();
     await checkDestination(destination);
     const stats=await runDeliveryBatch(source.port,destination,{
       workerId:randomUUID(),batchSize:args.limit,leaseMs:120_000,
