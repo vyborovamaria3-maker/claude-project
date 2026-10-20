@@ -568,3 +568,187 @@ Telegram confirms public identity and readable history. Their unrelated messages
 are never counted as token mentions. The candidate retains the originating public
 post URL, and the admin marks these as related public groups rather than matched
 posts. No join or verification-bot step is attempted.
+
+
+## Full channel history (opt-in)
+
+The default `npm run add -- @public_channel` keeps the initial collection bounded to the latest
+`TG_INITIAL_MESSAGE_LIMIT` posts (500 by default), and reports incomplete history. To collect
+all Telegram-accessible older posts instead:
+
+```bash
+npm run add -- @public_channel --full
+npm run history -- @existing_channel
+```
+
+You can also select **«Вся история»** while adding a source in Settings → TG Collector, or
+click **«Собрать всю историю»** for an existing source. The admin panel shares the same UI.
+
+Full historical scanning is incremental and can require many worker turns. The field
+`tg_sources.history_low_message_id` is a **minimum observed ID**, not proof that every
+higher message ID has been scanned: public discovery can store isolated older posts.
+Every newly started full-history pass starts at Telegram's latest accessible post,
+safely re-reading previously stored posts. Only committed `tg_jobs` page cursors are
+used to resume an already-running scan after restart. Migration
+`031_verified_history_pass.sql` invalidates earlier `history_complete`
+claims that lack a verified full-scan marker; a new scan may re-read many
+posts, but retains evidence and respects Telegram FloodWait. A delayed
+recent-only job upgraded to full history cannot claim completeness: its
+old interval finishes first, then a verified full pass starts. Repeated
+`history` commands preserve an already-running full-history page cursor.
+A short page does **not**
+prove Telegram history is exhausted; the historical scan completes on an empty page. `history_complete` means the collector exhausted the
+**accessible** history, not that all ever-published posts remain accessible.
+
+After upgrading an existing database, **stop the TG worker** and run:
+
+```bash
+npm run backup
+npm run migrate
+npm run analyze:backfill
+npm run analyze:refresh
+npm run worker
+```
+
+Until `npm run analyze:backfill` finishes, the token UI shows the remaining count
+and de-duplicates compatible v3/v4 mention totals by each message's actual version.
+Derived scores/velocity may still be incomplete; run `analyze:refresh` after
+backfill. Recent (7-day) RPC-verified `not_token` results are reused during
+reindexing; older negative results may be rechecked because an account can later
+become a mint. Keyword discovery does **not** automatically enable full history:
+only explicit CLI/API/UI operator choices do so.
+
+The new v4 extractor also finds URLs from Telegram `MessageEntityTextUrl` entities, which
+may be hidden behind a text label; these entities and selected forward/media metadata are
+retained with each message. For a real Telegram check use a disposable local database and
+`npm run smoke:mtproto -- @your_test_channel`; this compares Telegram fields and evidence,
+then replays the batch to verify idempotency. It still cannot certify complete channel history
+without independent observation. Never check in a Telegram session or proxy credentials.
+
+
+### Channel identity and evidence counters
+
+The original `tg_sources.identifier` is a stable operator-entered alias. A channel's
+Telegram ID (`peer_id`) is pinned after first resolution, and `current_username` is
+refreshed from the verified Telegram entity for public links in Settings and the graph.
+If the old username is reused by a different channel, that new channel is **not**
+substituted into the old source's history. A stored access hash is used only to recover
+the original channel while it still exposes a public username; private-channel
+collection is intentionally rejected.
+
+The runtime now reports two different counts:
+- `links_total`: all retained canonical evidence, including orphaned historical records;
+- `links_active_total`: currently active, non-orphaned evidence.
+
+The source manager now paginates 100 records per page while the graph
+still receives the complete lightweight source selector list.
+
+Migration `030_discovery_identity_reconciliation.sql` detaches old discovery
+`source_id`/connected-at claims when source `peer_id` differs from the recorded
+discovery `peer_id`, and detaches historical mention links too. Evidence rows
+remain intact. A recycled username can be tracked under a synthetic internal
+`peer_<id>` identifier, with the verified handle in `current_username`.
+
+Migrations `025_active_link_metrics.sql` and `026_current_public_username.sql` are
+additive; the former initializes exact active link counts and keeps them updated
+transactionally on inserts, deletes, and soft-deletion status changes.
+
+Enabling full history will **not** move jobs currently delayed by Telegram forward in
+time. Their existing `run_at` and page checkpoint remain intact until the delay ends.
+
+### Safe rollout for PR #138 follow-up fixes
+
+The source identity migration `027_source_peer_identity.sql` refuses to run if
+two preexisting `tg_sources` rows share the same confirmed `peer_id`. **Do not**
+delete either source automatically: compare messages and evidence, reconcile in
+a disposable backup and retry the migration. Old username aliases are not
+authoritative. The Worker also refuses to silently overwrite a different
+source's Telegram ID.
+
+**Legacy identity preflight.** Sources collected before verified peer IDs existed
+may still have `tg_sources.peer_id IS NULL` even though their histories contain
+messages. Those rows now fail closed with `TG_SOURCE_IDENTITY_UNVERIFIED` even
+if an old discovery row points at a Telegram peer: earlier discovery code could
+attach `source_id` by the mutable username. That historical association is not
+independent proof of archive ownership. The worker does not overwrite old
+messages or guess a peer ID. Before restarting the worker, inspect:
+
+```sql
+SELECT s.id, s.identifier, s.last_message_id, s.history_low_message_id,
+  (SELECT count(*) FROM tg_messages m WHERE m.source_id=s.id) AS stored_messages
+FROM tg_sources s
+WHERE s.peer_id IS NULL
+  AND (s.last_message_id > 0 OR s.history_low_message_id > 0
+       OR EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id)
+       OR EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id)
+       OR EXISTS(SELECT 1 FROM tg_jobs j WHERE j.source_id=s.id
+           AND (j.high_message_id IS NOT NULL OR j.cursor_before_id IS NOT NULL
+                OR j.fresh_high_message_id IS NOT NULL
+                OR j.fresh_cursor_before_id IS NOT NULL)))
+ORDER BY s.id;
+```
+
+For any result, review the original archive and independently confirm the
+Telegram channel ID before changing source identity. Never bulk-assign
+`peer_id` from the current username alone; an identity conflict needs manual
+reconciliation on a backed-up database. The MTProto smoke test similarly refuses
+to reuse existing unverified archives or attach posts to a conflicting peer.
+
+The new-message collector uses a separate durable `tg_jobs.fresh_*` checkpoint
+while it continues scanning an older history interval. It checks for recent
+posts approximately every 30 seconds and prioritizes those posts without
+advancing the historical cursor. Neither side ignores FloodWait or source
+pauses. Migration `028_live_while_backfill.sql` adds these checkpoint fields.
+
+Previously collected text has `entities_observed_at=NULL`, even when the
+migrated default `entities=[]` is present. That means **hidden URLs may be
+missing**, regardless of `history_complete`. Migration
+`029_entities_coverage.sql` and the UI expose this as separate evidence
+coverage. To restore it on a **local laptop only**, stop the TG Worker, back up
+the database, run migrations, then issue bounded refetch batches:
+
+```bash
+npm run entities:refetch -- @public_channel --limit=200
+```
+
+This command uses the existing authorized Telegram session, validates the
+immutable peer ID, rejects private-source collection, acquires the singleton
+worker lock, and re-fetches original message IDs in batches. Unvisited records
+are prioritized so repeatedly unavailable newer posts do not starve older ones. Missing/deleted
+posts remain unverified. Do not assume a successful offline backfill can
+recover Telegram entities that were never originally stored.
+
+### Strict mint verification and index migration
+
+Migration 032 clears duplicate cached current usernames and enforces their
+uniqueness. The original immutable Telegram peer IDs are retained.
+Migration 033 adds a durable cursor for the bounded keyword index so older
+true hits are not starved by substring false positives.
+
+Migration 034 invalidates earlier Solana mint confirmations that lack a new,
+strict on-chain layout check. Raw messages and candidates are preserved,
+but old unverified token attributions are excluded from active analytics.
+SPL Token Mints must be 82 bytes; Token-2022 extended Mints must have the
+mint account-type discriminator and valid extension structure.
+Migration 035 protects the original message undelete trigger from reviving
+unattested legacy token mentions after a message is restored.
+No paid RPC request is made by a migration. To revalidate previous mints,
+explicitly run `npm run tokens:resolve` with an approved RPC endpoint and a
+bounded `--limit`, followed by `npm run analyze:refresh`. This step may incur
+RPC charges; do not run it automatically.
+
+Mint and ticker references in one message count as one token mention.
+Conflicting ticker mappings retract previous ticker-only attribution.
+Telegram engagement snapshots refresh daily aggregate views transactionally.
+
+Version-4 backfill reuses strictly RPC-attested mints in `tg_tokens`, and
+unambiguous confirmed ticker associations. This avoids paying again to
+verify the same Solana mint. **New** addresses still require explicit
+`npm run tokens:resolve` with configured Alchemy RPC, if you choose to
+verify them. Finish with `npm run analyze:refresh` to rebuild derived
+scores and first mentions. The project does not issue those paid requests
+automatically during migrations.
+
+Recommended safe order: local backup → stop Worker → migrate → backfill →
+optional entity refetch → optional tokens:resolve → analyze:refresh →
+restart Worker → run live smoke on a disposable PostgreSQL database.

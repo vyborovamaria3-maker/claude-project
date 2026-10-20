@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
     const auth = await requireProdAuth(request); if (auth) return auth;
     const action = new URL(request.url).searchParams.get('action');
     if (action === 'autopost-overview' || action === 'autopost-stats') {localLogin(request);return NextResponse.json(await autopostCommand({action:action==='autopost-overview'?'overview':'stats',name:new URL(request.url).searchParams.get('name')}),{headers:{'Cache-Control':'no-store'}});}
+    if (action === 'autopost-audit') {localLogin(request);return NextResponse.json(await autopostCommand({action:'audit',id:new URL(request.url).searchParams.get('id')}),{headers:{'Cache-Control':'no-store'}});}
     if (action === 'publish-status') {localLogin(request);return NextResponse.json(publicPublishJob(await autopostCommand({action:'status',id:new URL(request.url).searchParams.get('id')})), {headers:{'Cache-Control':'no-store'}});}
     if (action === 'account-login-status') {localLogin(request);return NextResponse.json(loginStatus(new URL(request.url).searchParams.get('id')), {headers:{'Cache-Control':'no-store'}});}
     if (action === 'account-errors') return NextResponse.json(await accountErrors(new URL(request.url).searchParams.get('name')),{headers:{'Cache-Control':'no-store'}});
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
       if(input.action==='account-parse-start'&&'workerActive' in result&&!result.workerActive)await runXCollectorAction('worker-start');
       return NextResponse.json(result,{headers:{'Cache-Control':'no-store'}});
     }
-    if (['autopost-source-retry','autopost-provider-save','autopost-provider-test','autopost-config-save','autopost-pause','autopost-enqueue','autopost-cancel','autopost-sync'].includes(input?.action)) {localLogin(request);return NextResponse.json(await autopostCommand({...input,action:input.action.slice(9)}));}
+    if (['autopost-source-retry','autopost-provider-save','autopost-provider-test','autopost-config-save','autopost-pause','autopost-breaker-reset','autopost-enqueue','autopost-cancel','autopost-sync','autopost-reconcile-confirm','autopost-reconcile-retry'].includes(input?.action)) {localLogin(request);return NextResponse.json(await autopostCommand({...input,action:input.action.slice(9)}));}
     if (input?.action === 'publish-start') {localLogin(request);return NextResponse.json(publicPublishJob(await autopostCommand({...input,action:'enqueue',kind:'post'})),{status:202});}
     if (['account-login-start','account-login-finish','account-login-cancel'].includes(input?.action)) {localLogin(request);return NextResponse.json(input.action==='account-login-start'?startAccountLogin(input):input.action==='account-login-finish'?finishAccountLogin(input.id):cancelAccountLogin(input.id));}
     if (input?.action === 'account-settings-save') return NextResponse.json(await saveAccountSettings(input));

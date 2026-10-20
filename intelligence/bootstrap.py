@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,11 @@ def _build_runtime(
     queue: JobQueue,
     store: DocumentStore,
 ) -> IntelligenceRuntime:
-    worker = IntelligenceWorker(queue, registry, store)
+    sentiment = None
+    if os.getenv("INTELLIGENCE_SENTIMENT_ENABLED") == "true":
+        from intelligence.nlp.sentiment import SentimentEngine
+        sentiment = SentimentEngine.from_environment()
+    worker = IntelligenceWorker(queue, registry, store, sentiment=sentiment)
     return IntelligenceRuntime(
         registry=registry,
         queue=queue,

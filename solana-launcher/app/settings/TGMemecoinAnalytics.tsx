@@ -21,7 +21,7 @@ type SignalRow = {
 };
 type Snapshot = {
   tokenStats: {
-    tokens_total: number; unresolved_addresses: number; ticker_mentions_24h: number;
+    tokens_total: number; unresolved_addresses: number; analysis_backfill_remaining: number; ticker_mentions_24h: number;
     confirmed_tokens_24h: number; signals_24h: number; market_snapshots_24h: number;
   };
   tokens: TokenRow[];
@@ -102,6 +102,13 @@ export default function TGMemecoinAnalytics({ authToken }: { authToken: string }
         </div>
       </div>
       {error && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-300">{error}</div>}
+      {(stats?.analysis_backfill_remaining ?? 0) > 0 && (
+        <p role="status" className="text-xs text-amber-300">
+          Аналитика v4 ещё пересчитывается: {fmt(stats?.analysis_backfill_remaining,0)} сообщений осталось
+          переиндексировать. Статистика упоминаний включает актуальные версии v3/v4 без двойного подсчёта,
+          но производные рейтинги и скорость могут быть неполными до analyze:backfill и analyze:refresh.
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {cards.map((card) => {
           const Icon = card.icon;

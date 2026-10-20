@@ -1,12 +1,17 @@
 import type { ClaimOptions, ClaimedEvent } from "@claude-project/event-outbox";
-import { buildTimelineEvent, toUtcIso, type TimelineEvent } from "@claude-project/contracts";
+import { setTimeout as sleep } from "node:timers/promises";
+import { buildTimelineEvent, toUtcIso, validateVerifiedTokenLinkEvent, validateTokenLinksInvalidatedEvent, type TimelineEvent } from "@claude-project/contracts";
 import { ingestRegistryEvent, validateRegistryEvent, type PgTransaction, type RegistryEvent } from "./entity-registry.js";
 import { ingestTimelineEvent } from "./timeline.js";
+import { ingestTokenLinkObservation } from "./token-links.js";
+import { ingestBlockchainSwapRevision } from "./blockchain-swaps.js";
 
 export type OutboxSource = {
   claim(options: ClaimOptions): Promise<ClaimedEvent[]>;
   ack(event: ClaimedEvent): Promise<boolean>;
   fail(event: ClaimedEvent, reasonCode: string, nextAttemptAt: Date): Promise<boolean>;
+  /** Optional: exchange an exact active claim for a new lease fencing token. */
+  renew?(event: ClaimedEvent, leaseMs: number): Promise<string | null>;
 };
 
 export type DestinationClient = PgTransaction & { release(): void };
@@ -32,6 +37,18 @@ function extractEnvelope(event: ClaimedEvent): RegistryOutboxPayload {
     throw new TypeError("Missing registryEvent payload");
   }
   const raw = event.payload as unknown as RegistryOutboxPayload;
+  // Verified link assertions must not be silently ignored by a generic inbox.
+  // This checks proof structure; it cannot replace the source-side RPC check.
+  if(event.eventKind==="token_link_verified" || event.eventKind==="token_links_invalidated") {
+    // A historical assertion/invalidation is never a generic timeline row.
+    if(raw.timelineEvent!==undefined)throw new TypeError("Token links have no timelineEvent");
+    const full={
+      sourceSystem:event.sourceSystem,eventKind:event.eventKind,
+      eventKey:event.eventKey,schemaVersion:event.schemaVersion,payload:raw,
+    };
+    if(event.eventKind==="token_link_verified")validateVerifiedTokenLinkEvent(full);
+    else validateTokenLinksInvalidatedEvent(full);
+  }
   const registry = validateRegistryEvent(raw.registryEvent);
   if (registry.sourceSystem !== event.sourceSystem ||
     registry.eventKind !== event.eventKind ||
@@ -85,6 +102,19 @@ async function writeDestination(
   try {
     await client.query("BEGIN"); open=true;
     const fresh=await ingestRegistryEvent(client,body.registryEvent);
+    if(event.eventKind==="token_link_verified"||event.eventKind==="token_links_invalidated"){
+      await ingestTokenLinkObservation(client,{
+        sourceSystem:event.sourceSystem as "x"|"tg",
+        eventKind:event.eventKind,eventKey:event.eventKey,
+        schemaVersion:"token-link-v1",payload:event.payload,
+      });
+    }
+    if(event.eventKind==="token_swap_evidence_revision"){
+      await ingestBlockchainSwapRevision(client,{
+        sourceSystem:event.sourceSystem,eventKind:event.eventKind,
+        eventKey:event.eventKey,schemaVersion:event.schemaVersion,payload:body,
+      });
+    }
     if (body.timelineEvent) {
       await ingestTimelineEvent(client,event.sourceSystem,event.eventKind,body.timelineEvent);
     }
@@ -113,9 +143,42 @@ export async function runDeliveryBatch(
   if (claimed.length > options.batchSize) throw new Error("Source returned oversized claim");
   const stats: DeliveryStats={claimed:claimed.length,delivered:0,duplicates:0,failed:0,lostLeases:0};
   for (const event of claimed) {
+    let active: ClaimedEvent=event;
+    let lostDuringRenewal=false;
+    const stop=new AbortController();
+    // Each renewal is awaited: never let two renewals race with each other or
+    // with the final ACK/NACK. The supervisor claims batchSize=1 so unstarted
+    // events cannot expire while waiting behind another slow destination write.
+    const heartbeat: Promise<void>=source.renew ? (async()=>{
+      while(!stop.signal.aborted){
+        try{
+          await sleep(Math.max(250,Math.floor(options.leaseMs/3)),undefined,{signal:stop.signal});
+        }catch{break}
+        if(stop.signal.aborted)break;
+        try{
+          const next=await source.renew!(active,options.leaseMs);
+          if(!next || !Number.isFinite(Date.parse(next))){
+            lostDuringRenewal=true;
+            break;
+          }
+          active={...active,leaseUntil:next};
+        }catch{
+          // A destination COMMIT may already be in progress. Never ACK with
+          // an uncertain lease: a later source replay is safe and idempotent.
+          lostDuringRenewal=true;
+          break;
+        }
+      }
+    })() : Promise.resolve();
+    const finish=async()=>{stop.abort();await heartbeat};
     try {
       const fresh=await writeDestination(destination,event);
-      const acked=await source.ack(event);
+      await finish();
+      if(lostDuringRenewal){
+        stats.lostLeases++;
+        continue;
+      }
+      const acked=await source.ack(active);
       if (!acked) {
         stats.lostLeases++;
       } else if(fresh) {
@@ -124,11 +187,16 @@ export async function runDeliveryBatch(
         stats.duplicates++;
       }
     } catch(error) {
+      await finish();
       // Codes only: do not leak raw provider response, sessions, or credentials to source outbox.
       const code=error instanceof TypeError?"payload_invalid":"delivery_failed";
       stats.failed++;
+      if(lostDuringRenewal){
+        stats.lostLeases++;
+        continue;
+      }
       const next=new Date(Date.now()+retryDelayMs);
-      try {if (!await source.fail(event,code,next)) stats.lostLeases++}
+      try {if (!await source.fail(active,code,next)) stats.lostLeases++}
       catch {stats.lostLeases++}
     }
   }

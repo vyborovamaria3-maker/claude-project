@@ -22,12 +22,12 @@ test('public post dedup, canonical reactions, discussion queue, Stop and full hi
   let calls=0;const client={invoke:async()=>{calls++;return new Api.messages.MessagesSlice({count:1000,nextRate:1,messages:[msg],chats:[chat],users:[]});}}as unknown as Pick<TelegramClient,'invoke'>;
   await discoverPublicSources(client,()=>false);assert.equal(calls,2,'source cap does not stop message discovery');
   const mentions=(await pool.query('SELECT * FROM tg_discovery_mentions WHERE peer_id=$1',[peer])).rows;assert.equal(mentions.length,1);assert.equal(mentions[0].matched_terms.length,2);
-  const source=(await pool.query('SELECT * FROM tg_sources WHERE peer_id=$1',[peer])).rows[0];assert.equal(source.full_history,true);
+  const source=(await pool.query('SELECT * FROM tg_sources WHERE peer_id=$1',[peer])).rows[0];assert.equal(source.full_history,false,'keyword hits are not full-history opt-ins');
   const saved=(await pool.query('SELECT views,reactions FROM tg_messages WHERE source_id=$1 AND message_id=10',[source.id])).rows[0];assert.equal(saved.views,123);assert.equal(saved.reactions[0].count,5);
   await pool.query('UPDATE tg_discovery_settings SET max_new_per_day=2 WHERE id=1');
   await discoverDiscussion({invoke:async()=>({fullChat:new Api.ChannelFull({id:chat.id,linkedChatId:group.id}),chats:[group]})}as unknown as TelegramClient,String(source.id),chat);
   const linked=(await pool.query('SELECT discussion_source_id,status FROM tg_source_discussions WHERE channel_source_id=$1',[source.id])).rows[0];assert.equal(linked.status,'connected');
-  assert.equal((await pool.query('SELECT full_history FROM tg_sources WHERE id=$1',[linked.discussion_source_id])).rows[0].full_history,true);
+  assert.equal((await pool.query('SELECT full_history FROM tg_sources WHERE id=$1',[linked.discussion_source_id])).rows[0].full_history,false,'linked public discussion is not an automatic full-history opt-in');
   await pool.query('DELETE FROM tg_discovery_mentions WHERE peer_id=$1',[peer]);await ready();
   await discoverPublicSources({invoke:async()=>{await pool.query('UPDATE tg_runtime SET collection_enabled=FALSE WHERE id=1');return new Api.messages.MessagesSlice({count:1000,messages:[new Api.Message({id:11,peerId:msg.peerId,date:msg.date,message:msg.message})],chats:[chat],users:[]});}}as unknown as Pick<TelegramClient,'invoke'>,()=>false);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM tg_discovery_mentions WHERE peer_id=$1 AND message_id=11',[peer])).rows[0].n,0);
@@ -35,7 +35,7 @@ test('public post dedup, canonical reactions, discussion queue, Stop and full hi
   const hist=(await pool.query('INSERT INTO tg_sources(identifier,peer_id,full_history) VALUES($1,$2,TRUE) RETURNING id',[prefix+'_hist',historyPeer])).rows[0];
   const job=(await pool.query('INSERT INTO tg_jobs(source_id)VALUES($1)RETURNING *',[hist.id])).rows[0];
   const all=Array.from({length:600},(_,i)=>({id:600-i,message:'ordinary public history',date:1700000000,views:i,reactions:{results:[]}}));
-  const historyClient={getEntity:async()=>new Api.Channel({id:bigInt(historyPeer),title:'History',megagroup:true}),getMessages:async(_e:unknown,o:{limit:number;offsetId?:number})=>o.offsetId?all.filter(m=>m.id<o.offsetId!).slice(0,o.limit):all.slice(0,o.limit)}as unknown as TelegramClient;
+  const historyClient={getEntity:async()=>new Api.Channel({id:bigInt(historyPeer),title:'History',megagroup:true,username:prefix+'_hist'}),getMessages:async(_e:unknown,o:{limit:number;offsetId?:number})=>o.offsetId?all.filter(m=>m.id<o.offsetId!).slice(0,o.limit):all.slice(0,o.limit)}as unknown as TelegramClient;
   for(let turn=0;turn<6;turn++){
    const current=(await pool.query('SELECT * FROM tg_jobs WHERE id=$1',[job.id])).rows[0];await processJob(historyClient,current,()=>false);
    if((await pool.query('SELECT history_complete FROM tg_sources WHERE id=$1',[hist.id])).rows[0].history_complete)break;

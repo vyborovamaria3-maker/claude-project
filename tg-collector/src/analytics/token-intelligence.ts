@@ -94,6 +94,74 @@ export async function syncMessageTokenCandidates(
     );
   }
 
+  // A previously RPC-rejected account should not be charged again just
+  // because the local extractor version changed. Negative results are
+  // time-bounded: an empty Solana account can become a token mint later.
+  await tx.query(
+    `UPDATE tg_token_candidates c SET resolution_status='not_token',
+        confidence=p.confidence,provider=p.provider,checked_at=p.checked_at
+      FROM tg_token_candidates p
+      WHERE c.source_id=$1 AND c.message_id=$2 AND c.analysis_version=$3
+        AND c.chain_id=p.chain_id AND c.candidate_type='address'
+        AND c.candidate_key=p.candidate_key AND c.resolution_status='unresolved'
+        AND p.candidate_type='address' AND p.analysis_version<$3
+        AND p.resolution_status='not_token' AND p.provider='alchemy-solana-rpc'
+        AND p.checked_at >= now()-interval '7 days'
+        AND NOT EXISTS (SELECT 1 FROM tg_tokens t
+          WHERE t.chain_id=c.chain_id AND t.mint=c.candidate_key
+            AND t.metadata_status IN ('partial','verified')
+            AND t.decimals IS NOT NULL)`,
+    [sourceId,messageId,ANALYSIS_VERSION],
+  );
+
+  // Reuse only token accounts whose mint structure was previously checked.
+  // tg_tokens may also contain unverified/pending metadata rows; their mere
+  // existence is not confirmation that a base58 address is a Solana mint.
+  // A verified token may have partial metadata but must have mint decimals.
+  // Reindexing trusted rows must not issue another paid RPC check.
+  await tx.query(
+    `UPDATE tg_token_candidates c
+     SET resolution_status='confirmed_token',confidence=1,
+       provider=COALESCE(c.provider,t.metadata_provider),checked_at=COALESCE(c.checked_at,now())
+     FROM tg_tokens t
+     WHERE c.source_id=$1 AND c.message_id=$2 AND c.analysis_version=$3
+       AND c.chain_id=t.chain_id AND c.candidate_type='address'
+       AND c.candidate_key=t.mint AND c.resolution_status<>'confirmed_token'
+       AND t.metadata_status IN ('partial','verified') AND t.decimals IS NOT NULL AND t.mint_layout_verified_at IS NOT NULL`,
+    [sourceId,messageId,ANALYSIS_VERSION],
+  );
+  await tx.query(
+    `INSERT INTO tg_token_mentions
+      (source_id,message_id,chain_id,mint,mention_type,resolution_status,
+       confidence,message_date,analysis_version,extractor_name,orphaned)
+     SELECT $1::bigint,$2::bigint,t.chain_id,t.mint,'mint','confirmed',1,$3,$4,'telegram-text',FALSE
+     FROM tg_tokens t WHERE t.chain_id=$5 AND t.mint=ANY($6::text[])
+       AND t.metadata_status IN ('partial','verified') AND t.decimals IS NOT NULL AND t.mint_layout_verified_at IS NOT NULL
+     ON CONFLICT(source_id,message_id,chain_id,mint,mention_type,analysis_version)
+       DO UPDATE SET orphaned=FALSE,resolution_status='confirmed',confidence=1`,
+    [sourceId,messageId,messageDate,ANALYSIS_VERSION,SOLANA_CHAIN_ID,addresses],
+  );
+  // Reuse confirmed, unambiguous ticker-to-mint links from prior versions.
+  // A ticker mapped to multiple mints must remain ambiguous.
+  await tx.query(
+    `INSERT INTO tg_token_mentions
+      (source_id,message_id,chain_id,mint,mention_type,resolution_status,
+       confidence,message_date,analysis_version,extractor_name,orphaned)
+     SELECT $1::bigint,$2::bigint,stable.chain_id,stable.mint,'ticker','confirmed',
+       max(stable.confidence),$3,$4,'telegram-text',FALSE
+     FROM (
+       SELECT reg.chain_id,reg.ticker,min(reg.mint) AS mint,min(reg.confidence) AS confidence
+       FROM tg_ticker_registry reg
+       WHERE reg.chain_id=$5 AND reg.ticker=ANY($6::text[])
+         AND reg.mint IS NOT NULL AND reg.resolution_status='confirmed'
+       GROUP BY reg.chain_id,reg.ticker HAVING count(DISTINCT reg.mint)=1
+     ) stable
+     GROUP BY stable.chain_id,stable.mint
+     ON CONFLICT(source_id,message_id,chain_id,mint,mention_type,analysis_version)
+       DO UPDATE SET orphaned=FALSE`,
+    [sourceId,messageId,messageDate,ANALYSIS_VERSION,SOLANA_CHAIN_ID,tickers],
+  );
+
   await tx.query(
     "UPDATE tg_token_mentions tm SET orphaned=TRUE " +
     "WHERE tm.source_id=$1 AND tm.message_id=$2 AND tm.analysis_version=$3 AND (" +
@@ -108,7 +176,10 @@ export async function syncMessageTokenCandidates(
   if (addresses.length) {
     await tx.query(
       "UPDATE tg_token_mentions SET orphaned=FALSE WHERE source_id=$1 AND message_id=$2 " +
-      "AND analysis_version=$3 AND mention_type='mint' AND mint=ANY($4::text[])",
+      "AND analysis_version=$3 AND mention_type='mint' AND mint=ANY($4::text[]) " +
+      "AND EXISTS (SELECT 1 FROM tg_tokens t WHERE t.chain_id=tg_token_mentions.chain_id " +
+      "AND t.mint=tg_token_mentions.mint AND t.metadata_status IN ('partial','verified') " +
+      "AND t.decimals IS NOT NULL AND t.mint_layout_verified_at IS NOT NULL)",
       [sourceId, messageId, ANALYSIS_VERSION, addresses],
     );
   }
@@ -117,7 +188,13 @@ export async function syncMessageTokenCandidates(
     "WHERE tm.source_id=$1 AND tm.message_id=$2 AND tm.analysis_version=$3 " +
     "AND tick.source_id=tm.source_id AND tick.message_id=tm.message_id AND tick.analysis_version=$3 " +
     "AND reg.ticker=tick.ticker AND reg.chain_id=tick.chain_id AND reg.mint=tm.mint " +
-    "AND reg.resolution_status='confirmed' AND tm.mention_type='ticker'",
+    "AND reg.resolution_status='confirmed' AND tm.mention_type='ticker' " +
+    "AND ((SELECT count(DISTINCT r2.mint) FROM tg_ticker_registry r2 " +
+    "WHERE r2.ticker=tick.ticker AND r2.chain_id=tick.chain_id " +
+    "AND r2.resolution_status='confirmed' AND r2.mint IS NOT NULL)=1 " +
+    "OR EXISTS (SELECT 1 FROM tg_token_candidates addr WHERE addr.source_id=tm.source_id " +
+    "AND addr.message_id=tm.message_id AND addr.chain_id=tm.chain_id " +
+    "AND addr.analysis_version=$3 AND addr.candidate_type='address' AND addr.candidate_key=tm.mint))",
     [sourceId, messageId, ANALYSIS_VERSION],
   );
 
@@ -215,7 +292,7 @@ export async function refreshTokenChannelMetrics(tx: PoolClient, sourceId: strin
     "(SELECT count(*)::integer FROM tg_ticker_mentions t JOIN tg_messages m USING(source_id,message_id) " +
     "WHERE t.source_id=$1 AND m.deleted_at IS NULL AND t.analysis_version=$3 " +
     "AND (m.posted_at AT TIME ZONE 'UTC')::date=d.day) AS ticker_mentions," +
-    "(SELECT count(*)::integer FROM tg_token_mentions t JOIN tg_messages m USING(source_id,message_id) " +
+    "(SELECT count(DISTINCT (t.source_id,t.message_id,t.chain_id,t.mint))::integer FROM tg_token_mentions t JOIN tg_messages m USING(source_id,message_id) " +
     "WHERE t.source_id=$1 AND t.analysis_version=$3 AND t.orphaned=FALSE AND m.deleted_at IS NULL " +
     "AND (m.posted_at AT TIME ZONE 'UTC')::date=d.day) AS confirmed_token_mentions," +
     "(SELECT count(DISTINCT (t.chain_id,t.mint))::integer FROM tg_token_mentions t " +
@@ -246,7 +323,8 @@ export async function refreshTokenVelocity(tx: PoolClient, now = new Date()): Pr
     "('5m',interval '5 minutes',300),('15m',interval '15 minutes',900)," +
     "('1h',interval '1 hour',3600),('6h',interval '6 hours',21600),('24h',interval '24 hours',86400))," +
     "aggregates AS (SELECT tm.chain_id,tm.mint,w.window_name,date_trunc('minute',$1::timestamptz) AS window_start," +
-    "$1::timestamptz AS computed_at,w.seconds,count(*)::integer AS mentions," +
+    "$1::timestamptz AS computed_at,w.seconds," +
+    "count(DISTINCT (tm.source_id,tm.message_id,tm.chain_id,tm.mint))::integer AS mentions," +
     "count(DISTINCT tm.source_id)::integer AS unique_sources," +
     "count(DISTINCT NULLIF(m.sender_id,''))::integer AS unique_authors," +
     "count(DISTINCT COALESCE(fp.cluster_id::text,tm.source_id::text||':'||tm.message_id::text))::integer AS independent_clusters " +

@@ -12,6 +12,11 @@ test('empty source cycles enqueue only an original post without fabricated targe
  const c={query:async(sql:string,values:unknown[])=>{
   if(sql.startsWith('SELECT * FROM xc_ai_providers'))return {rows:[{id:'provider'}]};
   if(sql.startsWith('SELECT content'))return {rows:[]};
+  if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return {rows:[]};
+  if(sql.includes('AND (content_hash=$3 OR dedup=$4) AND attempted'))return {rows:[]};
+  if(sql.includes('AND (content_hash=dedup OR content_hash IS NULL)'))return {rows:[]};
+  if(sql.startsWith('SELECT state,resume_at,updated_at FROM xc_auto_breakers'))return {rows:[]};
+  if(sql.startsWith("UPDATE xc_auto_breakers SET state='closed'"))return {rows:[]};
   if(sql.startsWith('SELECT name'))return {rows:[{name:'publisher'}]};
   if(sql.startsWith('INSERT INTO xc_auto_jobs')){inserted=values;return {rows:[]};}
   if(sql.startsWith('SELECT * FROM xc_auto_jobs'))return {rows:[{created_at:now}]};
@@ -32,6 +37,6 @@ test('original post generation rejects fabricated reaction targets',async()=>{
  delete load.cache[modulePath];const {planOriginal}=load(modulePath);
  try{
   const c={query:async(sql:string)=>({rows:sql.includes('xc_ai_providers')?[{}]:[]})};
-  await assert.rejects(planOriginal(c,{account_name:'publisher',kinds:['post'],language:'en',style:''},Date.now()),/Неизвестное действие или источник/);
+  await assert.rejects(planOriginal(c,{account_name:'publisher',provider_id:'provider',kinds:['post'],language:'en',style:''},Date.now()),/Неизвестное действие или источник/);
  }finally{generate.mock.restore();delete load.cache[modulePath];}
 });

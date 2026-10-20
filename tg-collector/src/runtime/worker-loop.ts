@@ -3,6 +3,7 @@ import { discoverPublicSources } from "./discovery.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pool, migrate } from "../db.js";
 import { authorizedClient } from "../accounts/session.js";
+import { connectWithRetry } from "./connect-retry.js";
 import { claim, handleFailure } from "../queue/jobs.js";
 import { processJob } from "../engines/channel.js";
 import { startHeartbeat, remainingPauseSeconds } from "../monitoring/heartbeat.js";
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
       "SELECT block_reason FROM tg_runtime WHERE id=1");
     if (state.rows[0]?.block_reason) throw new Error("TG_COLLECTOR_BLOCKED: " + state.rows[0].block_reason);
     try {
-      client = await authorizedClient();
+      client = await connectWithRetry(authorizedClient);
     } catch (error) {
       const classification = classifyTelegramError(error, 0);
       if (classification.action === "halt")
