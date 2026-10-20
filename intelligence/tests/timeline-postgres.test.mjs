@@ -45,6 +45,10 @@ test("PostgreSQL timeline excludes late-observed historical events", {skip:!url}
         ...timeline,entityRefs:[other],
       }),/Timeline entity attribution collision/,
     );
+    assert.equal((await queryTokenTimeline(db,token,"2026-10-18T00:10:00Z","2026-10-18T00:30:00Z")).length,0,
+      "Intelligence was not informed at source observation time");
+    await db.query("UPDATE intelligence_inbox SET ingested_at='2026-10-18T00:21:00Z' "+
+      "WHERE source_system='x' AND event_key='x:987654:v1'");
     assert.equal((await queryTokenTimeline(db,token,"2026-10-18T00:10:00Z","2026-10-18T00:10:00Z")).length,0);
     assert.equal((await queryTokenTimeline(db,token,"2026-10-18T00:10:00Z","2026-10-18T00:30:00Z")).length,1);
     assert.equal((await queryTokenTimeline(db,token,"2026-10-17T23:59:00Z","2026-10-18T00:30:00Z")).length,0);

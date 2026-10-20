@@ -98,7 +98,7 @@ async function main(){
     }
     if(source.kind==="pg")await checkPgOutbox(source.connection);
     destination=destinationConnection();
-    await checkDestination(destination);
+    await checkDestination(destination,{requireBlockchainRevisions:args.source==='blockchain'});
     const stats=await runDeliveryBatch(source.port,destination,{
       workerId:randomUUID(),batchSize:args.limit,leaseMs:120_000,
     });
