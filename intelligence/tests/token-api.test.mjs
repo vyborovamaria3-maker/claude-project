@@ -40,6 +40,13 @@ function fakePool(){
           occurred_at:new Date(occurred),observed_at:new Date("2026-10-20T02:00:00Z"),
         }]};
       }
+      if(sql.includes("FROM blockchain_swap_evidence_revisions")){
+        return {rows:[{
+          signature:"1".repeat(64),canonical_token_id:id,slot:"320000001",
+          occurred_at:new Date(occurred),observed_at:new Date("2026-10-20T02:00:00Z"),
+          wallet_id:"SECRET-wallet",raw_revision:"27",
+        }]};
+      }
       if(sql.includes("WITH latest AS")){
         return {rows:[{
           source_system:"tg",evidence_source_id:"tg:message:-100123:42",
@@ -84,6 +91,7 @@ test("strict token/time/query validation rejects aliases, encoded slashes, futur
   const now=new Date(at);
   assert.equal(parseApiRequest("/api/intelligence/v1/health",now).kind,"health");
   assert.equal(parseApiRequest(base+"/timeline?"+window+"&limit=3",now).limit,3);
+  assert.equal(parseApiRequest(base+"/swap-evidence?"+window+"&limit=3",now).kind,"swap-evidence");
   for(const route of [
     base+"/timeline?"+window+"&limit=101",
     base+"/timeline?"+window+"&limit=0",
@@ -132,10 +140,17 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     assert.equal(linked.items[0].evidenceId,"tg:message:-100123:42");
     assert.equal(linked.linkState,"active_as_known_at");
     assert.ok(!JSON.stringify(linked).includes("SECRET"));
+    const swap=await fetch(origin+base+"/swap-evidence?"+window,{headers:headers()});
+    assert.equal(swap.status,200);
+    const swapBody=await swap.json();
+    assert.equal(swapBody.items.length,1);
+    assert.equal(swapBody.items[0].finality,"not_independently_verified");
+    assert.equal(swapBody.tradeStatus,"not_a_confirmed_trade_tape");
+    assert.ok(!JSON.stringify(swapBody).includes("SECRET"));
     const ready=await fetch(origin+"/api/intelligence/v1/health",{headers:headers()});
     assert.equal(ready.status,200);
     assert.equal((await ready.json()).sourceCollectorsChecked,false);
-    assert.equal(pool.logs.length,3);
+    assert.equal(pool.logs.length,4);
     assert.equal(pool.logs[0].params[0],id);
     assert.equal(pool.logs[0].params[3],2,"fetch limit+1 for truncation detection");
   });
@@ -183,8 +198,11 @@ test("readiness requires destination 001/002/004; no fallback to source database
     inbox:true,timeline:true,entities:true,links:false,
   }]})};
   await assert.rejects(checkApiReadiness(failed),/migrations_001_002_004_required/);
+  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
+    inbox:true,timeline:true,entities:true,links:true,swap_revisions:false,
+  }]})}),/migration_005_required/);
   await assert.doesNotReject(checkApiReadiness({query:async()=>({rows:[{
-    inbox:true,timeline:true,entities:true,links:true,
+    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,
   }]})}));
 });
 
@@ -199,7 +217,8 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
   try{
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
-    for(const file of ["001_entity_registry.sql","002_timeline.sql","004_token_link_observations.sql"]){
+    for(const file of ["001_entity_registry.sql","002_timeline.sql","004_token_link_observations.sql",
+      "005_blockchain_swap_evidence_revisions.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -252,6 +271,10 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
     await withServer(pool,async origin=>{
       const earlier="occurredBefore="+encodeURIComponent(occurred)+"&knownAt="+encodeURIComponent("2026-10-20T02:10:00Z");
       const later="occurredBefore="+encodeURIComponent(occurred)+"&knownAt="+encodeURIComponent("2026-10-20T02:50:00Z");
+      const rawSwaps=await fetch(origin+base+"/swap-evidence?"+earlier,{headers:headers()});
+      assert.equal(rawSwaps.status,200);
+      assert.equal((await rawSwaps.json()).items.length,0,
+        "no blockchain evidence cannot be promoted to a trade");
       const tl=await fetch(origin+base+"/timeline?"+earlier,{headers:headers()});
       assert.equal(tl.status,200);
       const payload=await tl.json();
