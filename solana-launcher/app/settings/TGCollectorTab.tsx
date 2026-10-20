@@ -41,6 +41,7 @@ export default function TGCollectorTab() {
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
+  const [sourcePage, setSourcePage] = useState(0);
   const [channel, setChannel] = useState("");
   const [fullHistory, setFullHistory] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export default function TGCollectorTab() {
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!accessKey && !localConnected) return;
-    const params = new URLSearchParams({ page: String(page) });
+    const params = new URLSearchParams({ page: String(page), sourcePage: String(sourcePage) });
     if (selected) params.set("source", selected);
     if (query) params.set("q", query);
     try {
@@ -74,7 +75,7 @@ export default function TGCollectorTab() {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [selected, query, page, accessKey, localConnected]);
+  }, [selected, query, page, sourcePage, accessKey, localConnected]);
 
   useEffect(() => {
     if (!data?.proxy || proxyDirty) return;
@@ -373,9 +374,20 @@ export default function TGCollectorTab() {
       </section>
 
       <section className="surface-panel p-5 sm:p-6">
-        <h3 className="font-semibold text-content">Источники и задания</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-semibold text-content">Источники и задания</h3>
+          <div className="flex items-center gap-3 text-xs text-content-muted">
+            <span>Страница {sourcePage + 1} из {Math.max(1,Math.ceil((data?.stats.sources ?? 0)/100))}</span>
+            <button type="button" onClick={() => setSourcePage(p => Math.max(0,p-1))}
+              disabled={sourcePage === 0 || busy !== null}
+              className="rounded-lg border border-bg-border px-2 py-1 disabled:opacity-40">Назад</button>
+            <button type="button" onClick={() => setSourcePage(p => p+1)}
+              disabled={busy !== null || (sourcePage+1)*100 >= (data?.stats.sources ?? 0)}
+              className="rounded-lg border border-bg-border px-2 py-1 disabled:opacity-40">Дальше</button>
+          </div>
+        </div>
         <div className="mt-4 space-y-3">
-          {data?.sources.length === 0 && <p className="text-sm text-content-muted">Источников пока нет. Добавьте публичный канал выше.</p>}
+          {data?.sources.length === 0 && <p className="text-sm text-content-muted">{(data?.stats.sources ?? 0) > 0 ? "На этой странице источников нет." : "Источников пока нет. Добавьте публичный канал выше."}</p>}
           {data?.sources.map(source => (
             <div key={source.id} className="rounded-xl border border-bg-border bg-bg-soft p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -427,7 +439,7 @@ export default function TGCollectorTab() {
         </div>
       </section>
 
-      <TGGraphPanel sources={data?.sources ?? []} authToken={accessKey} />
+      <TGGraphPanel sources={data?.sourceOptions ?? []} authToken={accessKey} />
       <TGMemecoinAnalytics authToken={accessKey} />
 
       <section className="surface-panel p-5 sm:p-6">
