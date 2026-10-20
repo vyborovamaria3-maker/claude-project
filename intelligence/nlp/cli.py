@@ -45,6 +45,8 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-items", type=int, default=100)
     parser.add_argument("--device", default="cpu", help="cpu or cuda:0")
+    parser.add_argument("--results-db", default=None,
+                        help="optional separate absolute SQLite file for durable derived probabilities")
     parser.add_argument("--collector-db", choices=("x", "tg"),
                         help="read bounded latest messages from an existing read-only PG collector")
     parser.add_argument("--check-config", action="store_true",
@@ -82,7 +84,13 @@ def run(argv: list[str] | None = None) -> int:
                 if len(items) >= args.max_items:
                     raise ValueError("input item limit exceeded")
                 items.append(_source_text(json.loads(line)))
-        for result in engine.analyze(items):
+        results = engine.analyze(items)
+        if args.results_db:
+            from intelligence.nlp.results_store import store_predictions
+            # Atomically persist all result vectors before writing JSONL.
+            # Never open/modify source X/TG databases from this sink.
+            store_predictions(args.results_db, results)
+        for result in results:
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except Exception:
