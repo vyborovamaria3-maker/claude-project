@@ -131,7 +131,9 @@ export function buildXTokenLinksInvalidatedOutboxEvent(input:{
 export async function emitXTokenLinksInvalidation(
   tx:PoolClient,input:Parameters<typeof buildXTokenLinksInvalidatedOutboxEvent>[0],
 ):Promise<boolean>{
-  if(!xVerifiedTokenLinksEnabled())return false;
+  // Retractions must continue whenever the source Outbox is active, even if
+  // NEW mint verification has been disabled. Otherwise an old live link survives edits.
+  if(!xIntelligenceOutboxEnabled())return false;
   const event=buildXTokenLinksInvalidatedOutboxEvent(input);
   await tx.query(`INSERT INTO outbox_events
     (source_system,event_kind,event_key,schema_version,payload)
