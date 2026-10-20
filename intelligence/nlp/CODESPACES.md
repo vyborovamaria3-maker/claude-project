@@ -111,3 +111,49 @@ authenticated private tunnel (rather than exposing the port publicly).
   unattended 24/7 inference. A proper cloud CPU server/managed endpoint
   will be a **separate deployment**, with independent credentials,
   monitoring, rate limits and access controls.
+
+## Step 3 — verify the remote *client* inside Codespaces
+
+Keep the private API server running in the first terminal. In another
+Codespaces terminal, **after checking out the updated PR branch**:
+
+```bash
+git pull --ff-only
+bash intelligence/nlp/scripts/codespaces_client_smoke.sh
+```
+
+This sends only the three synthetic Step 1 messages through the **new
+remote client**, verifies the exact pinned source/model mappings and saves
+derived probabilities to a separate SQLite file. The client does not import
+PyTorch; the Codespace API process hosts the weights. Do not paste the
+random `.local/sentiment/api-token` into a chat or shell history.
+
+For an **explicitly authorized** subsequent connection from the laptop,
+use a privately authenticated SSH / GitHub CLI port-forward to the Codespace
+(not a Public Codespaces port), then set these locally on the client:
+
+```bash
+export SENTIMENT_REMOTE_ENABLED=true
+export SENTIMENT_REMOTE_ENDPOINT=http://127.0.0.1:8765/v1/sentiment/predict
+export SENTIMENT_REMOTE_TOKEN="<private value from the Codespace>"
+export SENTIMENT_CRYPTOBERT_REVISION=9e37c910fe87727cb842a9ac55c6388256fe0f15
+export SENTIMENT_FINTWITBERT_REVISION=da059da3b3bbcb43f9ed1aeb5ae61644010c7e1e
+export SENTIMENT_RUBERT_REVISION=ad9be38671d4444945734cce7cdaadacc5002cc4
+```
+
+The endpoint is used **only if `SENTIMENT_REMOTE_ENABLED=true`**. Raw
+message text is sent off-device at that point, so choose explicit sources
+and obtain permission before sending real/private X/TG records. Existing
+collectors and PG are not accessed by the client smoke. The client verifies
+message IDs, timestamps, content hashes, model names, every pinned model
+SHA, exact label sets and probability normalization. It refuses insecure
+HTTP except local loopback, ignores redirect targets (no token forwarding),
+uses short timeouts, and never echoes source text/API tokens in failures.
+
+**Do not assume the forwarded private Codespaces HTTPS URL can be called
+with only the inference API token.** Private forwarded ports separately
+require GitHub authentication. Prefer a user-initiated, authenticated
+GitHub Codespaces SSH tunnel; no tunnel is created by this PR. Sending
+the unmodified API bearer in a browser-exposed public link is forbidden.
+This integration does **not** automatically send real collector data,
+activate an Intelligence worker, or connect an external LLM.
