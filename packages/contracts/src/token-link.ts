@@ -1,7 +1,7 @@
 import {
   buildEntityRef, type EntityRef,
 } from "./entity-registry.js";
-import { buildEvidenceRef, type EvidenceRef } from "./evidence.js";
+import type { EvidenceRef } from "./evidence.js";
 import { formatTokenId, type TokenId } from "./canonical-ids.js";
 import { toUtcIso } from "./time.js";
 
@@ -126,4 +126,46 @@ export function buildVerifiedTokenLinkEvent(input: {
       },
     },
   };
+}
+
+/**
+ * Receiver-side structural validation. Only the native source RPC resolver
+ * can establish that the source text and on-chain account were really seen;
+ * this check prevents malformed/inconsistent outbox envelopes. It does NOT
+ * independently contact an RPC or read private message text.
+ */
+export function validateVerifiedTokenLinkEvent(input: unknown): VerifiedTokenLinkEvent {
+  if (!input || typeof input!=="object" || Array.isArray(input))
+    throw new TypeError("Invalid token link event");
+  const raw=input as VerifiedTokenLinkEvent;
+  if (!["x","tg"].includes(raw.sourceSystem) ||
+      raw.eventKind!=="token_link_verified" ||
+      raw.schemaVersion!=="token-link-v1" ||
+      !raw.payload || !raw.payload.registryEvent || !raw.payload.tokenLink) {
+    throw new TypeError("Invalid token link envelope");
+  }
+  const link=raw.payload.tokenLink,reg=raw.payload.registryEvent;
+  if (link.status!=="verified" || link.basis!=="literal_mint_address" ||
+      reg.sourceSystem!==raw.sourceSystem || reg.eventKind!==raw.eventKind ||
+      reg.schemaVersion!==raw.schemaVersion || reg.eventKey!==raw.eventKey ||
+      !Array.isArray(reg.entityRefs) || reg.entityRefs.length!==2) {
+    throw new TypeError("Invalid token link attribution");
+  }
+  const mint=link.canonicalTokenId?.startsWith("solana:")
+    ? link.canonicalTokenId.slice("solana:".length) : "";
+  const expected=buildVerifiedTokenLinkEvent({
+    sourceSystem:raw.sourceSystem,
+    sourceEntity:reg.entityRefs[0]!,
+    evidenceRef:reg.evidenceRef,
+    mint,matchedLiteralMint:mint,
+    sourceRevisionSha256:link.sourceRevisionSha256,
+    mintVerification:link.mintVerification,
+  });
+  if (raw.eventKey!==expected.eventKey ||
+      JSON.stringify(reg.entityRefs)!==JSON.stringify(expected.payload.registryEvent.entityRefs) ||
+      JSON.stringify(reg.evidenceRef)!==JSON.stringify(expected.payload.registryEvent.evidenceRef) ||
+      JSON.stringify(link)!==JSON.stringify(expected.payload.tokenLink)) {
+    throw new TypeError("Inconsistent verified token link evidence");
+  }
+  return raw;
 }
