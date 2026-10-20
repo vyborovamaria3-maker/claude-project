@@ -589,7 +589,14 @@ Full historical scanning is incremental and can require many worker turns. The f
 higher message ID has been scanned: public discovery can store isolated older posts.
 Every newly started full-history pass starts at Telegram's latest accessible post,
 safely re-reading previously stored posts. Only committed `tg_jobs` page cursors are
-used to resume an already-running scan after restart. A short page does **not**
+used to resume an already-running scan after restart. Migration
+`031_verified_history_pass.sql` invalidates earlier `history_complete`
+claims that lack a verified full-scan marker; a new scan may re-read many
+posts, but retains evidence and respects Telegram FloodWait. A delayed
+recent-only job upgraded to full history cannot claim completeness: its
+old interval finishes first, then a verified full pass starts. Repeated
+`history` commands preserve an already-running full-history page cursor.
+A short page does **not**
 prove Telegram history is exhausted; the historical scan completes on an empty page. `history_complete` means the collector exhausted the
 **accessible** history, not that all ever-published posts remain accessible.
 
@@ -632,6 +639,9 @@ collection is intentionally rejected.
 The runtime now reports two different counts:
 - `links_total`: all retained canonical evidence, including orphaned historical records;
 - `links_active_total`: currently active, non-orphaned evidence.
+
+The source manager now paginates 100 records per page while the graph
+still receives the complete lightweight source selector list.
 
 Migration `030_discovery_identity_reconciliation.sql` detaches old discovery
 `source_id`/connected-at claims when source `peer_id` differs from the recorded
