@@ -88,6 +88,10 @@ test("proxy strips sensitive upstream fields from verified Timeline and links",(
     {...fixture(),historicalCompleteness:"complete"},
     {...fixture(),items:[{...fixture().items[0],verification:"unverified"}]},
     {...fixture(),items:Array(6).fill(fixture().items[0])},
+    {...fixture(),items:[{...fixture().items[0],
+      observedAt:"2026-10-20T03:01:00.000Z"}]},
+    {...fixture(),items:[{...fixture().items[0],
+      occurredAt:"2026-10-19T22:01:00.000Z"}]},
   ])assert.throws(()=>projectVerifiedResponse(bad,"links",tokenId,query),SafeProxyError);
 });
 test("fetch is loopback-only, supplies secret only to local upstream and never projects it",async()=>{
