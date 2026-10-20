@@ -53,18 +53,35 @@ test("TG: verified mint link shares native PostgreSQL transaction and rolls back
       "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
     );
     assert.equal(current.rows[0]?.n,"0");
-    // Content edit invalidates previously verified links, regardless of mint.
-    await persistMessage(tx,sourceId,{id:981,date:1792364400,message:"edited without mint"});
+    // Reobserving the same literal mint in an edited text does NOT inherit
+    // old on-chain verification; the native candidate becomes unresolved.
+    await tx.query(
+      "UPDATE tg_token_candidates SET resolution_status='confirmed_token' " +
+      "WHERE source_id=$1 AND message_id=$2 AND candidate_type='address'",
+      [sourceId,981],
+    );
+    await persistMessage(tx,sourceId,{id:981,date:1792364400,message:text+" revised"});
+    const pending=await tx.query<{status:string}>(
+      "SELECT resolution_status AS status FROM tg_token_candidates " +
+      "WHERE source_id=$1 AND message_id=$2 AND candidate_type='address' LIMIT 1",
+      [sourceId,981],
+    );
+    assert.equal(pending.rows[0]?.status,"unresolved");
     current=await tx.query<{n:string}>(
       "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
     );
     assert.equal(current.rows[0]?.n,"1");
+    await persistMessage(tx,sourceId,{id:981,date:1792364400,message:"edited without mint"});
+    current=await tx.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
+    );
+    assert.equal(current.rows[0]?.n,"2");
     assert.equal(await markMessageDeleted(tx,sourceId,981),true);
     assert.equal(await markMessageDeleted(tx,sourceId,981),false);
     current=await tx.query<{n:string}>(
       "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
     );
-    assert.equal(current.rows[0]?.n,"2");
+    assert.equal(current.rows[0]?.n,"3");
     // The same native transaction rolls back messages, verification and tombstones.
     await tx.query("ROLLBACK");finished=true;
     const absent=await tx.query<{n:string}>(
