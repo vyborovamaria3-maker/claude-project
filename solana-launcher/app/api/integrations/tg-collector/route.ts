@@ -282,7 +282,7 @@ export async function POST(request: NextRequest) {
         await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,
           base_message_id=NULL, high_message_id=NULL, cursor_before_id=NULL, scanned_count=0,
           run_at=now(), locked_until=NULL, last_error=NULL, updated_at=now()
-          WHERE source_id=$1 AND state IN ('failed','delayed','pending') AND $2::boolean
+          WHERE source_id=$1 AND state IN ('failed','pending') AND $2::boolean
             AND EXISTS(SELECT 1 FROM tg_sources WHERE id=$1 AND NOT history_complete)`,
           [source.rows[0].id,fullHistory]);
         await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,run_at=now(),
@@ -310,7 +310,7 @@ export async function POST(request: NextRequest) {
         await tx.query(`UPDATE tg_jobs SET state='pending',attempts=0,
           base_message_id=NULL,high_message_id=NULL,cursor_before_id=NULL,
           scanned_count=0,locked_until=NULL,last_error=NULL,run_at=now(),updated_at=now()
-          WHERE source_id=$1`, [id]);
+          WHERE source_id=$1 AND state IN ('pending','failed')`, [id]);
         await tx.query("COMMIT");
         return NextResponse.json({ok:true}, {headers:noStore});
       } catch (error) {
