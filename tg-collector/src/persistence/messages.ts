@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 import { ANALYSIS_VERSION, extractLinks, type RawTelegramMessage } from "../analytics/extract.js";
 import { refreshGraphDays, utcDay } from "../analytics/rollups.js";
 import { syncMessageTokenCandidates } from "../analytics/token-intelligence.js";
-import { emitTgMessageOutbox, emitTgDeletionOutbox, emitTgTokenLinksInvalidation, telegramVerifiedTokenLinksEnabled } from "./outbox.js";
+import { emitTgMessageOutbox, emitTgDeletionOutbox, emitTgTokenLinksInvalidation, telegramOutboxEnabled } from "./outbox.js";
 
 export function reactionCounts(msg:RawTelegramMessage){
  return (msg.reactions?.results??[]).slice(0,100).filter(r=>Number.isSafeInteger(r.count)&&Number(r.count)>=0).map(r=>({
@@ -22,7 +22,7 @@ export async function persistMessage(
   // For historical token evidence, changed text or restoration must revoke
   // ALL previously verified message links. Mere views/likes updates do not.
   // The message row is locked through the same native PG transaction.
-  const previous=telegramVerifiedTokenLinksEnabled()
+  const previous=telegramOutboxEnabled()
     ? (await tx.query<{text:string|null;deleted_at:Date|null;posted_at:Date|null}>(
         "SELECT text,deleted_at,posted_at FROM tg_messages WHERE source_id=$1 AND message_id=$2 FOR UPDATE",
         [sourceId,msg.id],
@@ -132,7 +132,7 @@ export async function markMessageDeleted(
   if (day) await refreshGraphDays(tx, sourceId, [day]);
   await emitTgDeletionOutbox(tx, sourceId, messageId,
     result.rows[0]!.deleted_at, result.rows[0]!.deletion_revision);
-  if(telegramVerifiedTokenLinksEnabled()){
+  if(telegramOutboxEnabled()){
     const sourceRevisionSha256=createHash("sha256")
       .update("deleted:"+result.rows[0]!.deletion_revision).digest("hex");
     await emitTgTokenLinksInvalidation(tx,sourceId,{
