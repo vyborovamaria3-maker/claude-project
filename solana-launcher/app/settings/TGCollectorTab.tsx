@@ -385,7 +385,9 @@ export default function TGCollectorTab() {
                     <span className={`rounded-full border px-2 py-0.5 text-[11px] ${pill(source.state)}`}>{source.enabled ? source.state ?? "без задачи" : "пауза"}</span>
                     {source.history_partial && <span className="text-xs text-amber-300">История неполная</span>}
                   </div>
-                  <a href={`https://t.me/${source.identifier}`} rel="noreferrer noopener" target="_blank" className="text-xs text-primary hover:underline">@{source.identifier}</a>
+                  <a href={`https://t.me/${source.current_username || source.identifier}`} rel="noreferrer noopener" target="_blank" className="text-xs text-primary hover:underline">@{source.current_username || source.identifier}</a>
+                  {source.current_username && source.current_username !== source.identifier &&
+                    <div className="mt-1 text-xs text-content-muted">Ранее: @{source.identifier}. Источник закреплён за Telegram ID, а не за username.</div>}
                   <div className="mt-2 text-xs text-content-muted">{source.message_count} сообщений · ID {source.last_message_id} · Успешная синхронизация: {formatDate(source.last_success_at)}</div>
                   <div className="mt-1 text-xs text-content-muted">
                     История: {source.history_complete ? "полная (для доступных сообщений)" : source.full_history ? "сбор старых сообщений продолжается" : source.history_partial ? "неполная" : "не проверена"}
