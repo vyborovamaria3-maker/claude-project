@@ -72,7 +72,11 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
     const legacy = await pool.query<{has_evidence:boolean}>(`
       SELECT (s.last_message_id > 0 OR s.history_low_message_id > 0 OR
         EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id) OR
-        EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id))
+        EXISTS(SELECT 1 FROM tg_discovery_mentions dm WHERE dm.source_id=s.id) OR
+        EXISTS(SELECT 1 FROM tg_jobs j WHERE j.source_id=s.id
+          AND (j.high_message_id IS NOT NULL OR j.cursor_before_id IS NOT NULL
+            OR j.fresh_high_message_id IS NOT NULL
+            OR j.fresh_cursor_before_id IS NOT NULL)))
         AS has_evidence
       FROM tg_sources s WHERE s.id=$1`, [job.source_id]);
     if (legacy.rows[0]?.has_evidence) {
