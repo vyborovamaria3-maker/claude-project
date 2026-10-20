@@ -7,6 +7,7 @@ import { pool } from "../db.js";
 import type { Job } from "../queue/jobs.js";
 import { finishJob } from "../queue/jobs.js";
 import { storePage } from "../persistence/pages.js";
+import { refreshGraphDays } from "../analytics/rollups.js";
 import { catchUpFreshPosts } from "./live-during-history.js";
 import { batchSize, initialLimit, maxPages } from "../runtime/config.js";
 import type { RawTelegramMessage as TgMessage } from "../analytics/extract.js";
@@ -116,10 +117,30 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
 
   if (!job.high_message_id) {
     const latest = await client.getMessages(entity, {limit:source.full_history?20:1});
-    if(source.full_history)for(const msg of latest){
-     await pool.query(`UPDATE tg_messages SET views=$3,forwards=$4,replies=$5,reactions=$6::jsonb,engagement_observed_at=now()
-      WHERE source_id=$1 AND message_id=$2 AND EXISTS(SELECT 1 FROM tg_sources s CROSS JOIN tg_runtime r
-       WHERE s.id=$1 AND s.enabled AND r.id=1 AND r.collection_enabled)`,[job.source_id,msg.id,msg.views??null,msg.forwards??null,msg.replies?.replies??null,JSON.stringify(reactionCounts(msg))]);
+    if (source.full_history && latest.length) {
+      // Refresh the daily aggregates in the SAME transaction as engagement
+      // snapshots. A plain UPDATE without this leaves source views stale.
+      const refresh = await pool.connect();
+      try {
+        await refresh.query("BEGIN");
+        const days = new Set<string>();
+        for (const msg of latest) {
+          const saved = await refresh.query<{day:string|null}>(`UPDATE tg_messages
+            SET views=$3,forwards=$4,replies=$5,reactions=$6::jsonb,engagement_observed_at=now()
+            WHERE source_id=$1 AND message_id=$2 AND deleted_at IS NULL
+              AND EXISTS(SELECT 1 FROM tg_sources s CROSS JOIN tg_runtime r
+                WHERE s.id=$1 AND s.enabled AND r.id=1 AND r.collection_enabled)
+            RETURNING (posted_at AT TIME ZONE 'UTC')::date::text AS day`,
+            [job.source_id,msg.id,msg.views??null,msg.forwards??null,
+              msg.replies?.replies??null,JSON.stringify(reactionCounts(msg))]);
+          if (saved.rows[0]?.day) days.add(saved.rows[0].day);
+        }
+        await refreshGraphDays(refresh, job.source_id, [...days]);
+        await refresh.query("COMMIT");
+      } catch (error) {
+        await refresh.query("ROLLBACK");
+        throw error;
+      } finally { refresh.release(); }
     }
     // A row with a low message ID is not proof of continuous coverage:
     // search/discovery can persist isolated old posts above huge unscanned gaps.
