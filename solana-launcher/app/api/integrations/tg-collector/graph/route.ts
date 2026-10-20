@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 const globalPools = globalThis as typeof globalThis & { __tgCollectorPool?: Pool };
 const noStore = { "Cache-Control": "private, no-store, max-age=0" };
-type Source = { id: string; identifier: string; title: string | null; peer_id: string | null };
+type Source = { id: string; identifier: string; current_username: string | null; title: string | null; peer_id: string | null };
 type LinkRow = {
   source_id: string; identifier: string; kind: "mention" | "forward" | "address";
   target_kind: "handle" | "channel_id" | "solana_address" | "evm_address";
@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: "Invalid evidence selector" }, { status: 400, headers: noStore });
       }
       const details = await p.query(`
-        SELECT s.identifier, l.message_id::text, m.posted_at, left(m.text,1500) AS text
+        SELECT COALESCE(s.current_username,s.identifier) AS identifier, l.message_id::text, m.posted_at, left(m.text,1500) AS text
         FROM tg_message_links l
         JOIN tg_messages m USING(source_id,message_id)
         JOIN tg_sources s ON s.id=l.source_id
@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [sourceResult, totalResult, edgeResult, metricResult, overlapResult, addressResult] = await Promise.all([
-      p.query<Source>("SELECT id::text, identifier, title, peer_id FROM tg_sources ORDER BY id"),
+      p.query<Source>("SELECT id::text, identifier, current_username, title, peer_id FROM tg_sources ORDER BY id"),
       p.query<{total: number}>(`
         SELECT count(*)::integer AS total FROM (
           SELECT e.source_id,e.kind,e.target_kind,e.target_key
@@ -90,18 +90,18 @@ export async function GET(request: NextRequest) {
         ) all_edges
       `, [selected, days]),
       p.query<LinkRow>(`
-        SELECT e.source_id::text, s.identifier, e.kind, e.target_kind, e.target_key,
+        SELECT e.source_id::text, COALESCE(s.current_username,s.identifier) AS identifier, e.kind, e.target_kind, e.target_key,
           sum(e.evidence_count)::integer AS strength, max(e.last_seen) AS last_seen,
           min(e.sample_message_id)::text AS sample_message_id
         FROM tg_graph_daily_edges e JOIN tg_sources s ON s.id=e.source_id
         WHERE ($1::bigint IS NULL OR e.source_id=$1)
           AND ($2::integer=0 OR e.day >= (now() AT TIME ZONE 'UTC')::date - ($2::integer - 1))
-        GROUP BY e.source_id, s.identifier, e.kind, e.target_kind, e.target_key
+        GROUP BY e.source_id, s.identifier,s.current_username, e.kind, e.target_kind, e.target_key
         ORDER BY sum(e.evidence_count) DESC, e.source_id, e.kind, e.target_key
         LIMIT $3 OFFSET $4
       `, [selected, days, edgeLimit, edgeOffset]),
       p.query(`
-        SELECT s.id::text AS source_id, s.identifier,
+        SELECT s.id::text AS source_id, COALESCE(s.current_username,s.identifier) AS identifier,
           coalesce(m.posts_7d,0)::integer AS posts_7d,
           coalesce(m.posts_30d,0)::integer AS posts_30d,
           m.avg_views::integer AS avg_views_snapshot,
@@ -143,7 +143,8 @@ export async function GET(request: NextRequest) {
           GROUP BY a.source_id,b.source_id
           ORDER BY shared_addresses DESC LIMIT 20
         )
-        SELECT a.identifier AS left_channel, b.identifier AS right_channel, p.shared_addresses
+        SELECT COALESCE(a.current_username,a.identifier) AS left_channel,
+          COALESCE(b.current_username,b.identifier) AS right_channel, p.shared_addresses
         FROM pairs p
         JOIN tg_sources a ON a.id=p.left_id
         JOIN tg_sources b ON b.id=p.right_id
@@ -164,7 +165,7 @@ export async function GET(request: NextRequest) {
     ]);
 
     const sources = sourceResult.rows;
-    const byHandle = new Map(sources.map(s => [s.identifier.toLowerCase(), s]));
+    const byHandle = new Map(sources.map(s => [(s.current_username ?? s.identifier).toLowerCase(), s]));
     const byPeer = new Map(sources.filter(s => s.peer_id).map(s => [s.peer_id!, s]));
     const nodes = new Map<string, { id: string; label: string; kind: string }>();
     const graphEdges: Array<{
@@ -182,7 +183,7 @@ export async function GET(request: NextRequest) {
     let nodeTruncated = false;
     for (const link of edgeResult.rows) {
       const origin = sourceById.get(link.source_id) ?? {
-        id: link.source_id, identifier: link.identifier, title: null, peer_id: null,
+        id: link.source_id, identifier: link.identifier, current_username: null, title: null, peer_id: null,
       };
       const from = "source:" + origin.id;
       const known = link.target_kind === "handle" ? byHandle.get(link.target_key)
