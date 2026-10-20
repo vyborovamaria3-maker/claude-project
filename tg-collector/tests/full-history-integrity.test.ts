@@ -30,6 +30,7 @@ test("full-history resumes below the oldest persisted post and scans until an em
   let oldUsernameUnavailable = false;
   let usedStablePeer = false;
   let usernameReassigned = false;
+  let fallbackPrivate = false;
   const client = {
     async getEntity(peer: unknown) {
       if (oldUsernameUnavailable && typeof peer === "string") throw Error("USERNAME_INVALID");
@@ -38,6 +39,8 @@ test("full-history resumes below the oldest persisted post and scans until an em
         className: "Channel", title: "History test channel",
         id: {toString: () => usernameReassigned && typeof peer === "string" ? "999999" : "123456"},
         accessHash:{toString:()=> "987654321"},
+        username: fallbackPrivate && typeof peer !== "string" ? undefined
+          : usernameReassigned && typeof peer === "string" ? "other_channel" : "history_verified",
       };
     },
     async getMessages(_entity: unknown, options: {limit: number;offsetId?: number;minId?: number}) {
@@ -105,8 +108,15 @@ test("full-history resumes below the oldest persisted post and scans until an em
     usedStablePeer = false;
     await processJob(client, await readJob(), () => false);
     assert.equal(usedStablePeer,true, "a recycled username must be resolved back to the original peer");
-    const stablePeer = await pool.query<{peer_id: string}>("SELECT peer_id FROM tg_sources WHERE id=$1", [sourceId]);
+    const stablePeer = await pool.query<{peer_id: string;current_username:string}>(
+      "SELECT peer_id,current_username FROM tg_sources WHERE id=$1", [sourceId]);
     assert.equal(stablePeer.rows[0]?.peer_id, "123456", "source identity must never switch to recycled username owner");
+    assert.equal(stablePeer.rows[0]?.current_username,"history_verified",
+      "links should use the currently verified public username");
+    fallbackPrivate = true;
+    await assert.rejects(processJob(client, await readJob(), () => false), /TG_SOURCE_UNSUPPORTED/,
+      "a former public channel must not be followed into a private source");
+    fallbackPrivate = false;
     // Without an old access hash, a mismatch must fail closed before ingesting.
     await pool.query("UPDATE tg_sources SET access_hash=NULL WHERE id=$1", [sourceId]);
     await assert.rejects(processJob(client, await readJob(), () => false), /TG_SOURCE_IDENTITY_MISMATCH/);
