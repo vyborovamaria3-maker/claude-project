@@ -20,8 +20,8 @@ test("ambiguous ticker history is retracted; mint+cashtag counts once", {
     const tx=await pool.connect();
     try {
       await tx.query("BEGIN");
-      await tx.query(`INSERT INTO tg_tokens(chain_id,mint,decimals,metadata_status)
-        VALUES($1,$2,9,'partial'),($1,$3,9,'partial')`,[chain,a,b]);
+      await tx.query(`INSERT INTO tg_tokens(chain_id,mint,decimals,metadata_status,mint_layout_verified_at)
+        VALUES($1,$2,9,'partial',now()),($1,$3,9,'partial',now())`,[chain,a,b]);
       await tx.query(`INSERT INTO tg_ticker_registry(ticker,chain_id,mint,resolution_status,confidence)
         VALUES($1,$2,$3,'confirmed',1),($1,$2,$4,'confirmed',1)`,[ticker,chain,a,b]);
       await tx.query(`INSERT INTO tg_messages(source_id,message_id,text,posted_at)
