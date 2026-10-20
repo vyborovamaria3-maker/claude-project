@@ -45,6 +45,8 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-items", type=int, default=100)
     parser.add_argument("--device", default="cpu", help="cpu or cuda:0")
+    parser.add_argument("--max-loaded-models", type=int, default=1,
+                        help="resident model cache limit, 1..3 (default 1 to save RAM/VRAM)")
     parser.add_argument("--results-db", default=None,
                         help="optional separate absolute SQLite file for durable derived probabilities")
     parser.add_argument("--summary-as-of", default=None,
@@ -69,7 +71,8 @@ def run(argv: list[str] | None = None) -> int:
         if args.summary_source:
             raise ValueError("--summary-source requires --summary-as-of")
         engine = SentimentEngine.from_environment(
-            backend=LocalTransformersBackend(device=args.device)
+            backend=LocalTransformersBackend(device=args.device,
+                                             max_loaded_models=args.max_loaded_models)
         )
         if args.check_config:
             print(json.dumps({
