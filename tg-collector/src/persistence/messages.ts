@@ -65,6 +65,22 @@ export async function persistMessage(
   }
   await replaceEvidence(tx, sourceId, msg);
   if(previous && (previous.text!==msg.message || previous.deleted_at!==null)){
+    // Invalidate native confirmed status too: a newer source revision must
+    // undergo another real RPC mint-account check, even when the same literal
+    // address remains in edited/restored text. Candidate rows were already
+    // refreshed by replaceEvidence() above.
+    await tx.query(
+      "UPDATE tg_token_candidates SET resolution_status='unresolved'," +
+      "confidence=NULL,provider=NULL,checked_at=NULL " +
+      "WHERE source_id=$1 AND message_id=$2 AND analysis_version=$3 " +
+      "AND candidate_type='address' AND resolution_status='confirmed_token'",
+      [sourceId,msg.id,ANALYSIS_VERSION],
+    );
+    await tx.query(
+      "UPDATE tg_token_mentions SET orphaned=TRUE " +
+      "WHERE source_id=$1 AND message_id=$2 AND analysis_version=$3",
+      [sourceId,msg.id,ANALYSIS_VERSION],
+    );
     const sourceRevisionSha256=createHash("sha256").update(JSON.stringify([
       "edited",msg.message,msg.editDate??null,
     ])).digest("hex");
