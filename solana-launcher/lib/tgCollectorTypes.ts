@@ -73,6 +73,7 @@ export type TgRuntimeMetrics = {
 export type TgCollectorSource = {
   id: string;
   identifier: string;
+  current_username: string | null;
   title: string | null;
   peer_id: string | null;
   enabled: boolean;
