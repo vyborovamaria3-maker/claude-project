@@ -85,9 +85,9 @@ export function renewSqlite(
   if (!Number.isFinite(prior)) throw new RangeError("Invalid leaseUntil");
   const stamp = now.toISOString();
   const next = new Date(Math.max(prior, now.getTime() + leaseMs)).toISOString();
-  const result = db.prepare(\`UPDATE outbox_events SET lease_until=?
+  const result = db.prepare(`UPDATE outbox_events SET lease_until=?
     WHERE id=? AND lease_owner=? AND lease_until=? AND lease_until>?
-      AND processed_at IS NULL AND dead_lettered_at IS NULL\`)
+      AND processed_at IS NULL AND dead_lettered_at IS NULL`)
     .run(next, id, owner, leaseUntil, stamp);
   return result.changes === 1 ? next : null;
 }
