@@ -27,14 +27,16 @@ async function main(): Promise<void> {
         await client.query("BEGIN");
         const { rows } = await client.query<{
           source_id: string; message_id: string; text: string; posted_at: Date | null;
-        }>(`SELECT source_id::text, message_id::text, text, posted_at
-              FROM tg_messages WHERE analysis_version < $1
+          entities: {className?:string;url?:string;offset?:number;length?:number}[] | null;
+        }>(`SELECT source_id::text, message_id::text, text, posted_at, entities
+              FROM tg_messages WHERE analysis_version < $1 AND deleted_at IS NULL
               ORDER BY source_id, message_id FOR UPDATE SKIP LOCKED LIMIT $2`,
           [ANALYSIS_VERSION, batchSize]);
         const affected = new Map<string, string[]>();
         for (const row of rows) {
           await replaceEvidence(client, row.source_id, {
             id: Number(row.message_id), message: row.text,
+            entities: Array.isArray(row.entities) ? row.entities : [],
             date: row.posted_at ? Math.floor(new Date(row.posted_at).getTime() / 1000) : undefined,
           }, { preserveExistingForwards: true });
           const day = utcDay(row.posted_at);
