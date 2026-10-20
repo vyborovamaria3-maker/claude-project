@@ -22,7 +22,7 @@ test('public post dedup, canonical reactions, discussion queue, Stop and full hi
   let calls=0;const client={invoke:async()=>{calls++;return new Api.messages.MessagesSlice({count:1000,nextRate:1,messages:[msg],chats:[chat],users:[]});}}as unknown as Pick<TelegramClient,'invoke'>;
   await discoverPublicSources(client,()=>false);assert.equal(calls,2,'source cap does not stop message discovery');
   const mentions=(await pool.query('SELECT * FROM tg_discovery_mentions WHERE peer_id=$1',[peer])).rows;assert.equal(mentions.length,1);assert.equal(mentions[0].matched_terms.length,2);
-  const source=(await pool.query('SELECT * FROM tg_sources WHERE peer_id=$1',[peer])).rows[0];assert.equal(source.full_history,true);
+  const source=(await pool.query('SELECT * FROM tg_sources WHERE peer_id=$1',[peer])).rows[0];assert.equal(source.full_history,false,'keyword hits are not full-history opt-ins');
   const saved=(await pool.query('SELECT views,reactions FROM tg_messages WHERE source_id=$1 AND message_id=10',[source.id])).rows[0];assert.equal(saved.views,123);assert.equal(saved.reactions[0].count,5);
   await pool.query('UPDATE tg_discovery_settings SET max_new_per_day=2 WHERE id=1');
   await discoverDiscussion({invoke:async()=>({fullChat:new Api.ChannelFull({id:chat.id,linkedChatId:group.id}),chats:[group]})}as unknown as TelegramClient,String(source.id),chat);
