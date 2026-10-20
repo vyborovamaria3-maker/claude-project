@@ -18,6 +18,7 @@ test("a recycled username cannot redirect public discovery evidence to the previ
   const runtime = await pool.query<{collection_enabled:boolean}>(
     "SELECT collection_enabled FROM tg_runtime WHERE id=1");
   let sourceId: string | null = null;
+  let newSourceId: string | null = null;
   try {
     const source=await pool.query<{id:string}>(`
       INSERT INTO tg_sources(identifier,peer_id,current_username)
@@ -25,23 +26,43 @@ test("a recycled username cannot redirect public discovery evidence to the previ
     sourceId=source.rows[0].id;
     await pool.query("UPDATE tg_discovery_settings SET enabled=TRUE WHERE id=1");
     await pool.query("UPDATE tg_runtime SET collection_enabled=TRUE,block_reason=NULL,pause_until=NULL WHERE id=1");
+    // Simulate an old discovery association made by username, not verified ID.
+    await pool.query(`INSERT INTO tg_discovered_sources
+      (peer_id,username,title,keyword,source_id,connected_at)
+      VALUES($1,$2,'Wrong alias owner','memecoin',$3,now())`,
+      [peerB,handle,sourceId]);
+    await pool.query(`INSERT INTO tg_discovery_mentions
+      (peer_id,message_id,username,title,text,matched_terms,source_id)
+      VALUES($1,43,$2,'Stale','historical hit',ARRAY['memecoin'],$3)`,
+      [peerB,handle,sourceId]);
     await addCandidate({peer:peerB,username:handle,title:"Unrelated public channel"},
       "memecoin",status.rows[0].revision,{id:42,message:"@CryptoTest",date:1792065600});
     const messages=await pool.query<{count:number}>(`
       SELECT count(*)::integer AS count FROM tg_messages WHERE source_id=$1`,[sourceId]);
     assert.equal(messages.rows[0].count,0,"unrelated channel's post may not enter previous source");
-    const evidence=await pool.query<{source_id:string|null}>(`
-      SELECT source_id::text FROM tg_discovery_mentions WHERE peer_id=$1 AND message_id=42`,[peerB]);
-    assert.equal(evidence.rows[0]?.source_id,null);
-    const sources=await pool.query<{count:number}>(`
+    const newSource=await pool.query<{id:string;identifier:string;current_username:string;full_history:boolean}>(`
+      SELECT id::text,identifier,current_username,full_history FROM tg_sources WHERE peer_id=$1`,[peerB]);
+    assert.equal(newSource.rows.length,1,"discovered peer must be tracked despite recycled handle");
+    newSourceId=newSource.rows[0].id;
+    assert.equal(newSource.rows[0].identifier,"peer_"+peerB);
+    assert.equal(newSource.rows[0].current_username,handle);
+    assert.equal(newSource.rows[0].full_history,false,"keyword discovery must remain opt-in");
+    const evidence=await pool.query<{message_id:string;source_id:string|null}>(`
+      SELECT message_id::text,source_id::text FROM tg_discovery_mentions
+      WHERE peer_id=$1 ORDER BY message_id`,[peerB]);
+    assert.deepEqual(evidence.rows.map(row=>[row.message_id,row.source_id]),
+      [["42",newSourceId],["43",null]],
+      "only verified peer evidence may attach to a source");
+    const oldSource=await pool.query<{count:number}>(`
       SELECT count(*)::integer AS count FROM tg_sources WHERE identifier=$1`,[handle]);
-    assert.equal(sources.rows[0].count,1,"a reused alias cannot silently produce a second source");
+    assert.equal(oldSource.rows[0].count,1,"old owner must retain its original archive");
     await assert.rejects(pool.query("INSERT INTO tg_sources(identifier,peer_id) VALUES($1,$2)",
       ["duplicate_"+suffix,peerA]),(error:unknown)=>
       (error as {code?:string}).code==="23505","duplicate verified channel ID must be rejected");
   } finally {
     await pool.query("DELETE FROM tg_discovery_mentions WHERE peer_id=$1",[peerB]);
     await pool.query("DELETE FROM tg_discovered_sources WHERE peer_id=$1",[peerB]);
+    if(newSourceId)await pool.query("DELETE FROM tg_sources WHERE id=$1",[newSourceId]);
     if(sourceId)await pool.query("DELETE FROM tg_sources WHERE id=$1",[sourceId]);
     await pool.query("UPDATE tg_discovery_settings SET enabled=$1 WHERE id=1",
       [status.rows[0].enabled]);
