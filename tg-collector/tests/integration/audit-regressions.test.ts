@@ -110,9 +110,9 @@ test("RPC candidate promotion ignores soft-deleted message observations",{
     await pool.query(`INSERT INTO tg_messages(source_id,message_id,text,posted_at,deleted_at)
       VALUES($1,911,'live',now(),NULL),($1,912,'deleted',now(),now())`,[source]);
     await pool.query(`INSERT INTO tg_token_candidates(
-      source_id,message_id,chain_id,candidate_type,candidate_key,raw_value,analysis_version)
-      VALUES($1,911,'solana-mainnet','address',$2,$2,4),
-        ($1,912,'solana-mainnet','address',$2,$2,4)`,[source,mint]);
+      source_id,message_id,chain_id,candidate_type,candidate_key,raw_value,analysis_version,resolution_status)
+      VALUES($1,911,'solana-mainnet','address',$2,$2,4,'confirmed_token'),
+        ($1,912,'solana-mainnet','address',$2,$2,4,'confirmed_token')`,[source,mint]);
     const tx=await pool.connect();
     try {
       const rows=await activeMintOccurrences(tx,mint);
