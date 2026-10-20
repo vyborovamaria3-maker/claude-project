@@ -18,6 +18,9 @@ export async function storePage(job: Job, rows: TgMessage[], lowId: number): Pro
       if (day) affectedDays.push(day);
     }
     await refreshGraphDays(tx, job.source_id, affectedDays);
+    await tx.query(`UPDATE tg_sources SET history_low_message_id =
+      CASE WHEN history_low_message_id=0 THEN $2::bigint ELSE LEAST(history_low_message_id,$2::bigint) END
+      WHERE id=$1`, [job.source_id, lowId]);
     await tx.query(`UPDATE tg_jobs SET cursor_before_id=$2,
       scanned_count=scanned_count+$3, locked_until=now()+interval '15 minutes',
       updated_at=now() WHERE id=$1`, [job.id, lowId, rows.length]);
