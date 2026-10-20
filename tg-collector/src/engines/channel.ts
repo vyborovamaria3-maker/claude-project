@@ -142,8 +142,8 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
       if (!active || assessment.spam) {
         await tx.query(`UPDATE tg_jobs SET state=$2,locked_until=NULL,
           last_error=$3,updated_at=now() WHERE id=$1`,
-          [job.id,assessment.spam?"failed":"pending",
-            assessment.spam?"TG_SOURCE_SPAM_USELESS":null]);
+          [job.id,active && assessment.spam?"failed":"pending",
+            active && assessment.spam?"TG_SOURCE_SPAM_USELESS":null]);
       }
       await tx.query("COMMIT");
     } catch (error) {await tx.query("ROLLBACK");throw error;}
