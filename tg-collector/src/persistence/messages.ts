@@ -28,13 +28,13 @@ export async function persistMessage(
   const replyToMessageId = parsedReplyId !== null && Number.isSafeInteger(parsedReplyId) && parsedReplyId > 0 && parsedReplyId !== msg.id
     ? parsedReplyId : null;
   await tx.query(
-    `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies,analysis_version,deleted_at,edited_at,reply_to_message_id,reactions,engagement_observed_at,entities,media_type,forward_from_name,forward_date,forward_message_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,$11,$12::jsonb,now(),$13::jsonb,$14,$15,$16,$17)
+    `INSERT INTO tg_messages(source_id,message_id,sender_id,posted_at,text,views,forwards,replies,analysis_version,deleted_at,edited_at,reply_to_message_id,reactions,engagement_observed_at,entities,media_type,forward_from_name,forward_date,forward_message_id,entities_observed_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10,$11,$12::jsonb,now(),$13::jsonb,$14,$15,$16,$17,now())
      ON CONFLICT(source_id,message_id) DO UPDATE SET
        sender_id=EXCLUDED.sender_id, posted_at=EXCLUDED.posted_at,
        text=EXCLUDED.text, views=EXCLUDED.views,
        forwards=EXCLUDED.forwards, replies=EXCLUDED.replies, edited_at=EXCLUDED.edited_at, reply_to_message_id=EXCLUDED.reply_to_message_id,
-       entities=EXCLUDED.entities,media_type=EXCLUDED.media_type,
+       entities=EXCLUDED.entities,entities_observed_at=now(),media_type=EXCLUDED.media_type,
        forward_from_name=EXCLUDED.forward_from_name,forward_date=EXCLUDED.forward_date,
        forward_message_id=EXCLUDED.forward_message_id,
        reactions=EXCLUDED.reactions,engagement_observed_at=now(),collected_at=now(), analysis_version=EXCLUDED.analysis_version, deleted_at=NULL`,
