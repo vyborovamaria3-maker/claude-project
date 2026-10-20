@@ -67,6 +67,22 @@ export async function processJob(client: TelegramClient, job: Job, isStopping: (
   }
   const resolvedPeer = channel.id?.toString() ?? null;
   if (!resolvedPeer) throw new Error("TG_SOURCE_UNSUPPORTED: no immutable channel ID");
+  if (!source.peer_id) {
+    // Pre-peer-ID archives have no independently confirmed channel identity.
+    // Attaching a newly resolved owner of the old username would contaminate
+    // the archived evidence. Only a matching peer recorded by public Telegram
+    // discovery provides independent provenance for these legacy rows.
+    const legacy = await pool.query<{has_evidence:boolean;verified_discovery:boolean}>(`
+      SELECT
+        (s.last_message_id > 0 OR s.history_low_message_id > 0 OR
+         EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id)) AS has_evidence,
+        EXISTS(SELECT 1 FROM tg_discovered_sources d
+          WHERE d.source_id=s.id AND d.peer_id=$2) AS verified_discovery
+      FROM tg_sources s WHERE s.id=$1`, [job.source_id,resolvedPeer]);
+    if (legacy.rows[0]?.has_evidence && !legacy.rows[0]?.verified_discovery) {
+      throw new Error("TG_SOURCE_IDENTITY_UNVERIFIED: legacy source already contains evidence without a verified Telegram peer ID; manually verify before ingesting.");
+    }
+  }
   const duplicate = await pool.query<{id:string}>(
     "SELECT id::text FROM tg_sources WHERE peer_id=$1 AND id<>$2 LIMIT 1",
     [resolvedPeer, job.source_id]);
