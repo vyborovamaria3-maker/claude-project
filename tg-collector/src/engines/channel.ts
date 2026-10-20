@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { Api,type TelegramClient } from "telegram";
+import bigInt from "big-integer";
 import {discoverDiscussion} from "../runtime/discussion.js";
 import {reactionCounts} from "../persistence/messages.js";
 import { pool } from "../db.js";
@@ -8,22 +9,34 @@ import { finishJob } from "../queue/jobs.js";
 import { storePage } from "../persistence/pages.js";
 import { batchSize, initialLimit, maxPages } from "../runtime/config.js";
 import type { RawTelegramMessage as TgMessage } from "../analytics/extract.js";
-type Source = { identifier: string; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean };
+type Source = { identifier: string; peer_id: string|null; access_hash: string|null; last_message_id: string; history_low_message_id: string; full_history:boolean;history_complete:boolean };
 
 export async function processJob(client: TelegramClient, job: Job, isStopping: () => boolean): Promise<void> {
   const { rows } = await pool.query<Source>(
-    "SELECT identifier,last_message_id,history_low_message_id,full_history,history_complete FROM tg_sources WHERE id=$1", [job.source_id]);
+    "SELECT identifier,peer_id,access_hash,last_message_id,history_low_message_id,full_history,history_complete FROM tg_sources WHERE id=$1", [job.source_id]);
   const source = rows[0];
   if (!source) throw new Error("Source was deleted");
 
-  const entity = await client.getEntity(source.identifier);
+  let entity: Awaited<ReturnType<TelegramClient["getEntity"]>>;
+  try {
+    entity = await client.getEntity(source.identifier);
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    if (!/USERNAME_INVALID|USERNAME_NOT_OCCUPIED|PEER_ID_INVALID|CHANNEL_INVALID/i.test(text)
+      || !source.peer_id || !source.access_hash) throw error;
+    // A historical channel can change its public username. Reuse its verified
+    // input peer rather than silently losing the source or guessing a new name.
+    entity = await client.getEntity(new Api.InputPeerChannel({
+      channelId: bigInt(source.peer_id), accessHash: bigInt(source.access_hash),
+    }));
+  }
   // Never collect from user profiles/DMs: this module is channel/group-only.
-  const channel = entity as { className?: string; id?: {toString(): string}; title?: string };
+  const channel = entity as { className?: string; id?: {toString(): string}; title?: string; accessHash?: {toString():string} };
   if (channel.className !== "Channel") {
     throw new Error("TG_SOURCE_UNSUPPORTED: only public channels and supergroups are allowed");
   }
-  await pool.query("UPDATE tg_sources SET peer_id=$2,title=$3 WHERE id=$1",
-    [job.source_id, channel.id?.toString() ?? null, channel.title ?? source.identifier]);
+  await pool.query("UPDATE tg_sources SET peer_id=$2,access_hash=COALESCE($3,access_hash),title=$4 WHERE id=$1",
+    [job.source_id, channel.id?.toString() ?? null, channel.accessHash?.toString() ?? null, channel.title ?? source.identifier]);
 
   if(source.full_history&&entity instanceof Api.Channel)await discoverDiscussion(client,job.source_id,entity);
   const recoveringHistory = source.full_history && !source.history_complete;
