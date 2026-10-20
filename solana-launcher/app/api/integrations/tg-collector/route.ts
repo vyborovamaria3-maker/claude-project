@@ -115,7 +115,7 @@ export async function GET(request: NextRequest) {
             AND candidate_type='address' AND resolution_status='unresolved') AS unresolved_addresses,
           (SELECT count(*)::integer FROM tg_ticker_mentions WHERE message_date>=now()-interval '24 hours') AS ticker_mentions_24h,
           (SELECT count(DISTINCT (chain_id,mint))::integer FROM tg_token_mentions
-            WHERE analysis_version=3 AND orphaned=FALSE AND message_date>=now()-interval '24 hours') AS confirmed_tokens_24h,
+            WHERE analysis_version=4 AND orphaned=FALSE AND message_date>=now()-interval '24 hours') AS confirmed_tokens_24h,
           (SELECT count(*)::integer FROM tg_signals WHERE detected_at>=now()-interval '24 hours'
             AND status<>'dismissed') AS signals_24h,
           (SELECT count(*)::integer FROM tg_token_market_snapshots
@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
           LEFT JOIN LATERAL (
             SELECT count(*)::integer AS mentions_7d,count(DISTINCT tm.source_id)::integer AS sources_7d
             FROM tg_token_mentions tm JOIN tg_messages msg USING(source_id,message_id)
-            WHERE tm.chain_id=t.chain_id AND tm.mint=t.mint AND tm.analysis_version=3
+            WHERE tm.chain_id=t.chain_id AND tm.mint=t.mint AND tm.analysis_version=4
               AND tm.orphaned=FALSE AND msg.deleted_at IS NULL AND tm.message_date>=now()-interval '7 days'
           ) m ON TRUE
           LEFT JOIN LATERAL (
