@@ -75,3 +75,25 @@ export async function failPostgres(
     [id,owner,reason.slice(0,1000),nextAttemptAt.toISOString(),maxAttempts,leaseUntil]);
   return result.rows.length === 1;
 }
+
+
+/**
+ * Renew only the exact still-active claim. The returned database timestamp
+ * becomes the next fencing token for ACK/NACK/renew; never reuse the old one.
+ * Keeping this operation in the source database avoids cross-DB locks.
+ */
+export async function renewPostgres(
+  client: PgQuery, id: string, owner: string, leaseUntil: string, leaseMs: number,
+): Promise<string | null> {
+  if (!Number.isInteger(leaseMs) || leaseMs < 1000 || leaseMs > 3_600_000) {
+    throw new RangeError("Invalid leaseMs");
+  }
+  const result = await client.query(\`UPDATE outbox_events
+    SET lease_until=GREATEST(lease_until, NOW() + ($4::integer * interval '1 millisecond'))
+    WHERE id=$1 AND lease_owner=$2 AND lease_until=$3::timestamptz
+      AND lease_until>NOW() AND processed_at IS NULL AND dead_lettered_at IS NULL
+    RETURNING lease_until\`, [id, owner, leaseUntil, leaseMs]);
+  const value = result.rows[0]?.lease_until;
+  return value === undefined ? null :
+    (value instanceof Date ? value : new Date(String(value))).toISOString();
+}
