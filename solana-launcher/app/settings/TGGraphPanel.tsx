@@ -130,7 +130,7 @@ export default function TGGraphPanel({ sources, authToken }: { sources: SourceOp
           <select value={source} onChange={event=>setSource(event.target.value)}
             className="ml-2 max-w-56 rounded-lg border border-bg-border bg-bg-soft px-2 py-2 text-content">
             <option value="">Все источники</option>
-            {sources.map(s => <option key={s.id} value={s.id}>@{s.identifier}</option>)}
+            {sources.map(s => <option key={s.id} value={s.id}>@{s.current_username || s.identifier}</option>)}
           </select>
         </label>
         <label className="text-xs text-content-muted">Тип
