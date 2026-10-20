@@ -84,6 +84,7 @@ export type TgCollectorSource = {
   last_message_id: string;
   last_success_at: string | null;
   message_count: number;
+  entities_unverified: number;
   state: "pending" | "running" | "delayed" | "failed" | null;
   run_at: string | null;
   attempts: number | null;
