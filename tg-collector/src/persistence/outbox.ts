@@ -11,7 +11,9 @@ export function telegramOutboxEnabled(env: NodeJS.ProcessEnv = process.env): boo
   return env.TG_INTELLIGENCE_OUTBOX_ENABLED === "true";
 }
 
-const STABLE_PEER = /^[1-9][0-9]{0,19}$/;
+// Telegram channel identifiers may be signed (e.g. -100123). Preserve the
+// sign exactly; never infer or strip it from a mutable @username.
+const STABLE_PEER = /^-?[1-9][0-9]{0,19}$/;
 function stablePeer(peerId: string | null): string {
   if (!peerId || !STABLE_PEER.test(peerId)) {
     throw new Error("TG_INTELLIGENCE_PEER_UNRESOLVED: stable numeric channel peer_id required");
@@ -203,6 +205,59 @@ export function buildVerifiedTgTokenLinkOutboxEvent(input:{
 export async function emitVerifiedTgTokenLinkOutbox(tx:PoolClient,input:Parameters<typeof buildVerifiedTgTokenLinkOutboxEvent>[0]):Promise<boolean>{
   if(!telegramVerifiedTokenLinksEnabled())return false;
   const event=buildVerifiedTgTokenLinkOutboxEvent(input);
+  await insertOutbox(tx,event);
+  return true;
+}
+
+/** A source-level tombstone invalidates ALL previously verified mints for this
+ * exact message evidence, not just the mint currently visible after an edit. */
+export function buildTgTokenLinksInvalidatedOutboxEvent(input:{
+  peerId:string|null;messageId:number;reason:"edited"|"deleted";
+  sourceRevisionSha256:string;observedAt:Date;postedAt:Date|null;
+}){
+  const peer=stablePeer(input.peerId);
+  if(!Number.isSafeInteger(input.messageId)||input.messageId<=0||
+     !["edited","deleted"].includes(input.reason)||
+     !/^[a-f0-9]{64}$/.test(input.sourceRevisionSha256)){
+    throw new TypeError("Invalid Telegram token-link invalidation");
+  }
+  const observedAt=utcObserved(input.observedAt);
+  const occurredAt=input.postedAt?utcObserved(input.postedAt):observedAt;
+  const sourceId=`tg:message:${peer}:${input.messageId}`;
+  const eventKey=`tg:tokenlinks:invalidate:${sourceId}:${input.reason}:${input.sourceRevisionSha256}:${input.observedAt.getTime()}`;
+  return {
+    sourceSystem:"tg",eventKind:"token_links_invalidated",eventKey,
+    schemaVersion:"token-link-v1",
+    payload:{
+      registryEvent:{
+        sourceSystem:"tg",eventKind:"token_links_invalidated",eventKey,
+        schemaVersion:"token-link-v1",
+        entityRefs:[{kind:"source",canonicalId:`tg:source:${peer}`,
+          firstSeenAt:observedAt,lastSeenAt:observedAt}],
+        evidenceRef:{sourceKind:"tg_message",sourceId,
+          observedAt,occurredAt,parserVersion:"tg-mint-verifier-v1"},
+      },
+      tokenLinksInvalidation:{
+        status:"invalidated",reason:input.reason,
+        sourceRevisionSha256:input.sourceRevisionSha256,
+      },
+    },
+  };
+}
+
+/** Must be called inside the same source transaction as the edit/deletion. */
+export async function emitTgTokenLinksInvalidation(
+  tx:PoolClient, sourceId:string,
+  input:Omit<Parameters<typeof buildTgTokenLinksInvalidatedOutboxEvent>[0],"peerId">,
+):Promise<boolean>{
+  // Do not gate tombstones on NEW link assertions: previously published
+  // claims still require edit/delete revocation while source Outbox is on.
+  if(!telegramOutboxEnabled())return false;
+  const peer=await tx.query<{peer_id:string|null}>(
+    "SELECT peer_id FROM tg_sources WHERE id=$1 FOR KEY SHARE",[sourceId]);
+  const event=buildTgTokenLinksInvalidatedOutboxEvent({
+    ...input,peerId:peer.rows[0]?.peer_id??null,
+  });
   await insertOutbox(tx,event);
   return true;
 }

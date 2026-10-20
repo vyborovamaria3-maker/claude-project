@@ -5,38 +5,7 @@ import { pool, migrate } from "../db.js";
 import { ANALYSIS_VERSION } from "./extract.js";
 import { detectPropagationPatterns, refreshChannelScores, refreshTokenChannelMetrics, SOLANA_CHAIN_ID } from "./token-intelligence.js";
 import { syncTokenNarratives } from "./narratives.js";
-
-const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-type AccountInfo = { owner?: string; data?: [string, string] | string[] } | null;
-
-async function readMintAccount(rpcUrl: string, mint: string): Promise<{ decimals: number; owner: string } | null> {
-  const response = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0", id: 1, method: "getAccountInfo",
-      params: [mint, { encoding: "base64", commitment: "confirmed" }],
-    }),
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!response.ok) throw new Error("Alchemy RPC returned HTTP " + response.status);
-  const body = await response.json() as {
-    result?: { value?: AccountInfo };
-    error?: { message?: string; code?: number };
-  };
-  if (body.error) throw new Error("Alchemy RPC error " + String(body.error.code ?? "") + ": " + (body.error.message ?? "unknown"));
-  const account = body.result?.value;
-  if (!account) return null;
-  if (account.owner !== TOKEN_PROGRAM && account.owner !== TOKEN_2022_PROGRAM) return null;
-  const encoded = Array.isArray(account.data) ? account.data[0] : undefined;
-  if (!encoded || typeof encoded !== "string") return null;
-  const data = Buffer.from(encoded, "base64");
-  // SPL Mint base layout: supply at byte 36, decimals at 44, initialized at 45.
-  // Token accounts are longer and do not have the Mint initialized byte at this offset.
-  if (data.length < 82 || data[45] !== 1 || data[44] > 30) return null;
-  return { decimals: data[44], owner: account.owner };
-}
+import { readMintAccount } from "./solana-mint-rpc.js";
 
 async function recomputeFirstMention(tx: import("pg").PoolClient, mint: string): Promise<void> {
   await tx.query(
@@ -69,10 +38,13 @@ async function main(): Promise<void> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("--limit must be an integer from 1 to 1000");
 
   const candidates = await pool.query<{ mint: string }>(
-    "SELECT DISTINCT candidate_key AS mint FROM tg_token_candidates " +
-    "WHERE chain_id=$1 AND candidate_type='address' AND resolution_status='unresolved' " +
-    "ORDER BY candidate_key LIMIT $2",
-    [SOLANA_CHAIN_ID, limit],
+    "SELECT DISTINCT c.candidate_key AS mint FROM tg_token_candidates c " +
+    "JOIN tg_messages m ON m.source_id=c.source_id AND m.message_id=c.message_id " +
+    "WHERE c.chain_id=$1 AND c.candidate_type='address' AND c.analysis_version=$3 " +
+    "AND m.deleted_at IS NULL AND c.resolution_status IN ('unresolved','ambiguous') " +
+    "AND (c.checked_at IS NULL OR c.checked_at < now() - interval '24 hours') " +
+    "ORDER BY c.candidate_key LIMIT $2",
+    [SOLANA_CHAIN_ID, limit, ANALYSIS_VERSION],
   );
   let verified = 0;
   let rejected = 0;
@@ -83,10 +55,10 @@ async function main(): Promise<void> {
     let mintInfo: { decimals: number; owner: string } | null;
     try {
       mintInfo = await readMintAccount(rpcUrl, candidate.mint);
-    } catch (error) {
+    } catch {
       deferred++;
-      console.warn("Mint check deferred; candidate remains unresolved:", candidate.mint,
-        error instanceof Error ? error.message : String(error));
+      // Never print raw RPC/provider errors: they may include private URLs or keys.
+      console.warn("Mint verification deferred: provider_unavailable_or_invalid");
       continue;
     }
 
@@ -95,10 +67,15 @@ async function main(): Promise<void> {
       await tx.query("BEGIN");
       if (!mintInfo) {
         await tx.query(
-          "UPDATE tg_token_candidates SET resolution_status='not_token',confidence=0.95," +
-          "provider='alchemy-solana-rpc',checked_at=now() WHERE chain_id=$1 AND candidate_type='address' " +
-          "AND candidate_key=$2 AND resolution_status='unresolved'",
-          [SOLANA_CHAIN_ID, candidate.mint],
+          // A not-yet-created mint may become valid later. Do not permanently
+          // label addresses as not_token; back off retry by 24 hours.
+          "UPDATE tg_token_candidates c SET resolution_status='ambiguous',confidence=NULL," +
+          "provider='alchemy-solana-rpc',checked_at=now() FROM tg_messages m " +
+          "WHERE m.source_id=c.source_id AND m.message_id=c.message_id AND m.deleted_at IS NULL " +
+          "AND c.chain_id=$1 AND c.candidate_type='address' " +
+          "AND c.candidate_key=$2 AND c.analysis_version=$3 " +
+          "AND resolution_status IN ('unresolved','ambiguous')",
+          [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
         );
         rejected++;
         await tx.query("COMMIT");
@@ -113,10 +90,13 @@ async function main(): Promise<void> {
         [SOLANA_CHAIN_ID, candidate.mint, mintInfo.decimals, mintInfo.owner],
       );
       await tx.query(
-        "UPDATE tg_token_candidates SET resolution_status='confirmed_token',confidence=1," +
-        "provider='alchemy-solana-rpc',checked_at=now() WHERE chain_id=$1 AND candidate_type='address' " +
-        "AND candidate_key=$2",
-        [SOLANA_CHAIN_ID, candidate.mint],
+        "UPDATE tg_token_candidates c SET resolution_status='confirmed_token',confidence=1," +
+        "provider='alchemy-solana-rpc',checked_at=now() FROM tg_messages m " +
+        "WHERE m.source_id=c.source_id AND m.message_id=c.message_id AND m.deleted_at IS NULL " +
+        "AND c.chain_id=$1 AND c.candidate_type='address' " +
+        "AND c.candidate_key=$2 AND c.analysis_version=$3 " +
+        "AND resolution_status IN ('unresolved','ambiguous','confirmed_token')",
+        [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
       );
 
       const occurrences = await tx.query<{
@@ -131,11 +111,20 @@ async function main(): Promise<void> {
         "LEFT JOIN tg_ticker_mentions t ON t.source_id=c.source_id AND t.message_id=c.message_id " +
         "AND t.chain_id=c.chain_id AND t.analysis_version=$3 " +
         "WHERE c.chain_id=$1 AND c.candidate_type='address' AND c.candidate_key=$2 " +
-        "AND c.analysis_version=$3 AND m.deleted_at IS NULL " +
+        "AND c.analysis_version=$3 AND c.resolution_status='confirmed_token' AND m.deleted_at IS NULL " +
         "GROUP BY c.source_id,c.message_id,m.posted_at,m.text,s.peer_id,m.edited_at",
         [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
       );
       for (const occurrence of occurrences.rows) {
+        // Lock the exact source evidence before confirming mint links.
+        // Otherwise an edit/delete racing the RPC resolver could publish a
+        // verified event with a NEW timestamp for an OLD source revision.
+        const locked=await tx.query<{text:string|null;deleted_at:Date|null}>(
+          "SELECT text,deleted_at FROM tg_messages WHERE source_id=$1 AND message_id=$2 FOR UPDATE",
+          [occurrence.source_id,occurrence.message_id],
+        );
+        if(!locked.rows[0] || locked.rows[0].deleted_at!==null ||
+           locked.rows[0].text!==occurrence.text)continue;
         await tx.query(
           "INSERT INTO tg_token_mentions(source_id,message_id,chain_id,mint,mention_type,resolution_status," +
           "confidence,message_date,analysis_version,extractor_name,orphaned) " +
@@ -232,7 +221,8 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ checked: candidates.rows.length, verified, rejected, deferred }));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+main().catch(() => {
+  // Do not print DB connection strings, provider responses, SQL or API keys.
+  console.error("TG mint resolver failed: source_or_database_operation_failed");
   process.exitCode = 1;
 }).finally(() => pool.end());

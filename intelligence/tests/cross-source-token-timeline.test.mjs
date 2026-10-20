@@ -166,6 +166,13 @@ test("three isolated source outboxes produce one evidence-backed token timeline 
       });
     }
 
+    assert.equal((await queryTokenTimeline(
+      destination,token,"2026-10-18T01:10:00Z","2026-10-18T01:30:00Z",
+    )).length,0,"late ETL ingestion is never retroactive");
+    // Historical synthetic test fixtures model prompt destination ingest.
+    await destination.query("UPDATE intelligence_inbox i SET ingested_at=e.observed_at "+
+      "FROM entity_evidence e WHERE e.source_system=i.source_system "+
+      "AND e.event_kind=i.event_kind AND e.event_key=i.event_key");
     const all = await queryTokenTimeline(
       destination, token, "2026-10-18T01:10:00Z", "2026-10-18T01:30:00Z",
     );
