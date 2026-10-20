@@ -122,6 +122,13 @@ function verifyOfflineSwapProof(event,receipts){
     return fail("signature_status_unavailable");
   const status=sr.value[0];
   if(status.err!==null)return fail("signature_failed_or_unknown_error");
+  // Solana exposes BOTH err and the legacy Result-shaped status field.
+  // A contradictory/missing status is untrustworthy, not finalized proof.
+  if(!status.status||typeof status.status!=="object"||
+     Array.isArray(status.status)||
+     Object.keys(status.status).length!==1||
+     !Object.hasOwn(status.status,"Ok")||status.status.Ok!==null)
+    return fail("signature_status_fields_disagree");
   if(status.confirmationStatus!=="finalized")
     return fail("transaction_not_reported_finalized");
   if(status.slot!==revision.slot)
