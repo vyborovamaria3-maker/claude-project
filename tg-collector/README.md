@@ -568,3 +568,41 @@ Telegram confirms public identity and readable history. Their unrelated messages
 are never counted as token mentions. The candidate retains the originating public
 post URL, and the admin marks these as related public groups rather than matched
 posts. No join or verification-bot step is attempted.
+
+
+## Full channel history (opt-in)
+
+The default `npm run add -- @public_channel` keeps the initial collection bounded to the latest
+`TG_INITIAL_MESSAGE_LIMIT` posts (500 by default), and reports incomplete history. To collect
+all Telegram-accessible older posts instead:
+
+```bash
+npm run add -- @public_channel --full
+npm run history -- @existing_channel
+```
+
+You can also select **«Вся история»** while adding a source in Settings → TG Collector, or
+click **«Собрать всю историю»** for an existing source. The admin panel shares the same UI.
+
+Full historical scanning is incremental and can require many worker turns. The collector keeps
+`tg_sources.history_low_message_id` (lowest saved message ID) and the job cursor to resume
+across restarts. A short page does **not** prove Telegram history is exhausted; the historical
+scan completes on an empty page. `history_complete` means the collector exhausted the
+**accessible** history, not that all ever-published posts remain accessible.
+
+After upgrading an existing database, **stop the TG worker** and run:
+
+```bash
+npm run backup
+npm run migrate
+npm run analyze:backfill
+npm run analyze:refresh
+npm run worker
+```
+
+The new v4 extractor also finds URLs from Telegram `MessageEntityTextUrl` entities, which
+may be hidden behind a text label; these entities and selected forward/media metadata are
+retained with each message. For a real Telegram check use a disposable local database and
+`npm run smoke:mtproto -- @your_test_channel`; this compares Telegram fields and evidence,
+then replays the batch to verify idempotency. It still cannot certify complete channel history
+without independent observation. Never check in a Telegram session or proxy credentials.
