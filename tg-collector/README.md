@@ -638,6 +638,30 @@ a disposable backup and retry the migration. Old username aliases are not
 authoritative. The Worker also refuses to silently overwrite a different
 source's Telegram ID.
 
+**Legacy identity preflight.** Sources collected before verified peer IDs existed
+may still have `tg_sources.peer_id IS NULL` even though their histories contain
+messages. Those rows now fail closed with `TG_SOURCE_IDENTITY_UNVERIFIED` when
+Telegram resolves the original username but no independently verified discovery
+mapping confirms the peer. This is intentional: a username can have changed
+owners since the archive was collected. The worker does not overwrite the old
+messages or guess a peer ID. Before restarting the worker, inspect:
+
+```sql
+SELECT s.id, s.identifier, s.last_message_id, s.history_low_message_id,
+  (SELECT count(*) FROM tg_messages m WHERE m.source_id=s.id) AS stored_messages
+FROM tg_sources s
+WHERE s.peer_id IS NULL
+  AND (s.last_message_id > 0 OR s.history_low_message_id > 0
+       OR EXISTS(SELECT 1 FROM tg_messages m WHERE m.source_id=s.id))
+ORDER BY s.id;
+```
+
+For any result, review the original archive and independently confirm the
+Telegram channel ID before changing source identity. Never bulk-assign
+`peer_id` from the current username alone; an identity conflict needs manual
+reconciliation on a backed-up database. The MTProto smoke test similarly refuses
+to reuse existing unverified archives or attach posts to a conflicting peer.
+
 The new-message collector uses a separate durable `tg_jobs.fresh_*` checkpoint
 while it continues scanning an older history interval. It checks for recent
 posts approximately every 30 seconds and prioritizes those posts without
