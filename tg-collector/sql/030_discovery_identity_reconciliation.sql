@@ -7,11 +7,8 @@ WHERE d.source_id IS NOT NULL
     SELECT 1 FROM tg_sources s WHERE s.id=d.source_id AND s.peer_id=d.peer_id
   );
 
--- An old "connected" timestamp without a verified tracked source must not
--- suppress discovery of the real channel behind a recycled username.
-UPDATE tg_discovered_sources
-SET connected_at=NULL
-WHERE source_id IS NULL AND connected_at IS NOT NULL;
+-- An existing connected_at with NULL source_id can be an intentional removal
+-- tombstone (ON DELETE SET NULL). Preserve it; do not resurrect deleted peers.
 
 UPDATE tg_discovery_mentions dm
 SET source_id=NULL
