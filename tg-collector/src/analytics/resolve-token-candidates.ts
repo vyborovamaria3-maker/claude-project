@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { createHash } from "node:crypto";
+import { emitVerifiedTgTokenLinkOutbox } from "../persistence/outbox.js";
 import { pool, migrate } from "../db.js";
 import { ANALYSIS_VERSION } from "./extract.js";
 import { detectPropagationPatterns, refreshChannelScores, refreshTokenChannelMetrics, SOLANA_CHAIN_ID } from "./token-intelligence.js";
@@ -119,14 +121,18 @@ async function main(): Promise<void> {
 
       const occurrences = await tx.query<{
         source_id: string; message_id: string; message_date: Date | null; tickers: string[]; text: string;
+        peer_id: string|null; edited_at: Date|null;
       }>(
         "SELECT c.source_id::text,c.message_id::text,m.posted_at AS message_date,m.text," +
+        "s.peer_id::text AS peer_id,m.edited_at," +
         "COALESCE(array_agg(DISTINCT t.ticker) FILTER (WHERE t.ticker IS NOT NULL),'{}') AS tickers " +
         "FROM tg_token_candidates c JOIN tg_messages m USING(source_id,message_id) " +
+        "JOIN tg_sources s ON s.id=c.source_id " +
         "LEFT JOIN tg_ticker_mentions t ON t.source_id=c.source_id AND t.message_id=c.message_id " +
         "AND t.chain_id=c.chain_id AND t.analysis_version=$3 " +
         "WHERE c.chain_id=$1 AND c.candidate_type='address' AND c.candidate_key=$2 " +
-        "AND c.analysis_version=$3 GROUP BY c.source_id,c.message_id,m.posted_at",
+        "AND c.analysis_version=$3 AND m.deleted_at IS NULL " +
+        "GROUP BY c.source_id,c.message_id,m.posted_at,m.text,s.peer_id,m.edited_at",
         [SOLANA_CHAIN_ID, candidate.mint, ANALYSIS_VERSION],
       );
       for (const occurrence of occurrences.rows) {
@@ -170,6 +176,22 @@ async function main(): Promise<void> {
         );
         await syncTokenNarratives(tx, occurrence.source_id, occurrence.message_id,
           SOLANA_CHAIN_ID, candidate.mint, occurrence.text);
+
+        // The existing RPC call above actually verified an initialized SPL
+        // Mint account. Emit historical mint evidence in the SAME transaction.
+        // Missing immutable peer identity and stale/nonliteral text fail closed.
+        if (occurrence.peer_id && occurrence.text.includes(candidate.mint)) {
+          const revision=createHash("sha256").update(JSON.stringify([
+            occurrence.text,occurrence.message_date?.toISOString()??null,
+            occurrence.edited_at?.toISOString()??null,
+          ])).digest("hex");
+          await emitVerifiedTgTokenLinkOutbox(tx,{
+            peerId:occurrence.peer_id,messageId:occurrence.message_id,
+            text:occurrence.text,mint:candidate.mint,tokenProgram:mintInfo.owner,
+            provider:"alchemy-solana-rpc",sourceRevisionSha256:revision,
+            observedAt:new Date(),postedAt:occurrence.message_date,
+          });
+        }
 
         const day = occurrence.message_date?.toISOString().slice(0, 10);
         if (day) {
