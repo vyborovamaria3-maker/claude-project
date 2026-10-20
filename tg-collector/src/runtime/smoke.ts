@@ -1,5 +1,7 @@
 import "dotenv/config";
 import { pool, migrate } from "../db.js";
+import { createHash } from "node:crypto";
+import { extractLinks } from "../analytics/extract.js";
 import { authorizedClient } from "../accounts/session.js";
 import { normalizePublicUsername } from "../validation.js";
 import { persistMessage } from "../persistence/messages.js";
@@ -74,10 +76,61 @@ async function main(): Promise<void> {
     if (saved.rows[0].count !== messages.length) {
       throw Error("Mismatch between received messages and PostgreSQL persistence.");
     }
+    // Compare actual PostgreSQL fields and extracted links with the Telegram batch.
+    const persisted = await pool.query<{
+      message_id: string;posted_at: Date|null;text:string;views:number|null;
+      forwards:number|null;replies:number|null;
+    }>(`SELECT message_id::text,posted_at,text,views,forwards,replies
+      FROM tg_messages WHERE source_id=$1 AND message_id=ANY($2::bigint[])`,[sourceId,ids]);
+    const savedById = new Map(persisted.rows.map(row => [row.message_id,row]));
+    for (const msg of messages) {
+      const row = savedById.get(String(msg.id));
+      if (!row) throw Error("Missing Telegram message in PostgreSQL: " + msg.id);
+      const postedAt = typeof msg.date === "number" ? new Date(msg.date*1000).getTime() : null;
+      const savedAt = row.posted_at ? new Date(row.posted_at).getTime() : null;
+      if (row.text !== msg.message || postedAt !== savedAt ||
+          row.views !== (msg.views ?? null) ||
+          row.forwards !== (msg.forwards ?? null) ||
+          row.replies !== (msg.replies?.replies ?? null)) {
+        throw Error("Telegram/PostgreSQL field mismatch for message ID " + msg.id);
+      }
+      const expected = extractLinks(msg).map(link =>
+        [link.kind,link.targetKind,link.targetKey].join(":")).sort();
+      const actual = await pool.query<{kind:string;target_kind:string;target_key:string}>(
+        "SELECT kind,target_kind,target_key FROM tg_message_links WHERE source_id=$1 AND message_id=$2",
+        [sourceId,msg.id]);
+      const actualKeys = actual.rows.map(link =>
+        [link.kind,link.target_kind,link.target_key].join(":")).sort();
+      if (expected.join("|") !== actualKeys.join("|"))
+        throw Error("Telegram/PostgreSQL evidence mismatch for message ID " + msg.id);
+    }
+    // Replay the same messages: neither message count nor evidence count may grow.
+    const before = await pool.query<{messages:number;links:number}>(`
+      SELECT (SELECT count(*)::integer FROM tg_messages WHERE source_id=$1) AS messages,
+             (SELECT count(*)::integer FROM tg_message_links WHERE source_id=$1) AS links`,[sourceId]);
+    const replay = await pool.connect();
+    try {
+      await replay.query("BEGIN");
+      for (const msg of messages) await persistMessage(replay,sourceId,msg);
+      await replay.query("COMMIT");
+    } catch (error) { await replay.query("ROLLBACK");throw error; }
+    finally { replay.release(); }
+    const after = await pool.query<{messages:number;links:number}>(`
+      SELECT (SELECT count(*)::integer FROM tg_messages WHERE source_id=$1) AS messages,
+             (SELECT count(*)::integer FROM tg_message_links WHERE source_id=$1) AS links`,[sourceId]);
+    if (before.rows[0].messages !== after.rows[0].messages ||
+        before.rows[0].links !== after.rows[0].links)
+      throw Error("Smoke replay is not idempotent");
+    const sample = messages.slice(0,5).map(msg=>({
+      id:msg.id,
+      textSha256:createHash("sha256").update(msg.message ?? "").digest("hex"),
+    }));
+
     console.log(JSON.stringify({
       source: "@"+handle, expectedMessages, received: all.length, persisted: saved.rows[0].count,
-      firstFiveMessageIds: ids.slice(0,5), evidence: evidence.rows,
-      note: "Verify these message IDs against Telegram manually. Historical completeness is not proven.",
+      firstFiveMessageIds: ids.slice(0,5), sample, evidence: evidence.rows,
+      replayIdempotent: true, telegramFieldComparison: "passed",
+      note: "This validates fetched message fields and evidence but does not prove completeness of full channel history.",
     }, null, 2));
   } finally {
     if (client) await client.disconnect();
