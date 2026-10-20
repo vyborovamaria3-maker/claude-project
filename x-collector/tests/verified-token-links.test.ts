@@ -1,6 +1,8 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import type {PoolClient} from "pg";
+import {PGlite} from "@electric-sql/pglite";
+import fs from "node:fs/promises";
 import {
   buildVerifiedXTweetTokenLinkOutboxEvent,
   emitXVerifiedTokenLinkOutbox,xVerifiedTokenLinksEnabled,
@@ -80,5 +82,35 @@ test("X verified link writer is offline by default and uses caller transaction o
     else process.env.X_INTELLIGENCE_OUTBOX_ENABLED=oldOut;
     if(oldLink===undefined)delete process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED;
     else process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED=oldLink;
+  }
+});
+
+test("X source verified link is atomic and deduplicated in PGlite",async()=>{
+  const pg=new PGlite();
+  const prevOut=process.env.X_INTELLIGENCE_OUTBOX_ENABLED;
+  const prevLink=process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED;
+  const tx={query:(sql:string,params?:unknown[])=>pg.query(sql,params)} as unknown as PoolClient;
+  try{
+    const ddl=await fs.readFile("migrations/050_intelligence_source_outbox.sql","utf8");
+    await pg.exec(ddl);
+    process.env.X_INTELLIGENCE_OUTBOX_ENABLED="true";
+    process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED="true";
+    await pg.exec("BEGIN");
+    assert.equal(await emitXVerifiedTokenLinkOutbox(tx,input),true);
+    await pg.exec("ROLLBACK");
+    const empty=await pg.query<{n:string}>("SELECT count(*)::text AS n FROM outbox_events");
+    assert.equal(empty.rows[0]?.n,"0");
+    await pg.exec("BEGIN");
+    assert.equal(await emitXVerifiedTokenLinkOutbox(tx,input),true);
+    assert.equal(await emitXVerifiedTokenLinkOutbox(tx,input),true);
+    await pg.exec("COMMIT");
+    const one=await pg.query<{n:string}>("SELECT count(*)::text AS n FROM outbox_events");
+    assert.equal(one.rows[0]?.n,"1");
+  }finally{
+    if(prevOut===undefined)delete process.env.X_INTELLIGENCE_OUTBOX_ENABLED;
+    else process.env.X_INTELLIGENCE_OUTBOX_ENABLED=prevOut;
+    if(prevLink===undefined)delete process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED;
+    else process.env.X_INTELLIGENCE_TOKEN_LINKS_ENABLED=prevLink;
+    await pg.close();
   }
 });
