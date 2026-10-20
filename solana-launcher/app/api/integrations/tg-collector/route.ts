@@ -396,10 +396,10 @@ export async function POST(request: NextRequest) {
       const result = await p.query(`
         UPDATE tg_jobs SET state='pending', attempts=0, run_at=now(),
           locked_until=NULL, last_error=NULL, updated_at=now()
-        WHERE source_id=$1 AND state IN ('pending','delayed','failed')
+        WHERE source_id=$1 AND state IN ('pending','failed')
           AND EXISTS(SELECT 1 FROM tg_sources WHERE id=$1 AND enabled)
         RETURNING id`, [id]);
-      if (!result.rowCount) throw new ApiError("Задание активно, источник приостановлен или не найден", 409);
+      if (!result.rowCount) throw new ApiError("Задание выполняется, отложено Telegram (FloodWait), источник приостановлен или не найден", 409);
       return NextResponse.json({ ok: true }, { headers: noStore });
     }
     if (action === "remove") {
