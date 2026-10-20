@@ -429,7 +429,7 @@ export default function TGCollectorTab() {
                     <button type="button" disabled={busy !== null} title="Отключает новые задания" onClick={() => void command("pause", source)}
                       className="rounded-lg border border-bg-border px-3 py-2 text-xs text-content-muted hover:text-content"><Pause className="mr-1 inline h-3.5 w-3.5" /> Пауза</button>
                   ) : (
-                    <button type="button" disabled={busy !== null || !!source.spam_kind} onClick={() => void command("resume", source)
+                    <button type="button" disabled={busy !== null || !!source.spam_kind} onClick={() => void command("resume", source)}
                       className="rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-300"><Play className="mr-1 inline h-3.5 w-3.5" /> Возобновить</button>
                   )}
                   <button type="button" disabled={busy !== null || source.state === "running" || !!source.spam_kind}
