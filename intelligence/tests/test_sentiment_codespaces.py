@@ -103,6 +103,8 @@ class CodespacesApiTests(unittest.TestCase):
         self.assertIn("HF_HUB_OFFLINE=1", code)
         self.assertIn("smoke-predictions.jsonl", code)
         self.assertIn("CODESPACES", code)
+        self.assertIn('if ! "$P" -m pip --version', code)
+        self.assertIn('"$PYTHON" -m venv --clear "$VENV"', code)
         self.assertNotIn("cuda:0", code.lower())
 
 
