@@ -47,7 +47,7 @@ test("a recycled username cannot redirect public discovery evidence to the previ
       [status.rows[0].enabled]);
     await pool.query("UPDATE tg_runtime SET collection_enabled=$1 WHERE id=1",
       [runtime.rows[0].collection_enabled]);
-    await pool.end();
+    // Pool is reused by the next test in this file.
   }
 });
 
