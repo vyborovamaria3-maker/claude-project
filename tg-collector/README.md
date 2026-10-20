@@ -606,3 +606,25 @@ retained with each message. For a real Telegram check use a disposable local dat
 `npm run smoke:mtproto -- @your_test_channel`; this compares Telegram fields and evidence,
 then replays the batch to verify idempotency. It still cannot certify complete channel history
 without independent observation. Never check in a Telegram session or proxy credentials.
+
+
+### Channel identity and evidence counters
+
+The original `tg_sources.identifier` is a stable operator-entered alias. A channel's
+Telegram ID (`peer_id`) is pinned after first resolution, and `current_username` is
+refreshed from the verified Telegram entity for public links in Settings and the graph.
+If the old username is reused by a different channel, that new channel is **not**
+substituted into the old source's history. A stored access hash is used only to recover
+the original channel while it still exposes a public username; private-channel
+collection is intentionally rejected.
+
+The runtime now reports two different counts:
+- `links_total`: all retained canonical evidence, including orphaned historical records;
+- `links_active_total`: currently active, non-orphaned evidence.
+
+Migrations `025_active_link_metrics.sql` and `026_current_public_username.sql` are
+additive; the former initializes exact active link counts and keeps them updated
+transactionally on inserts, deletes, and soft-deletion status changes.
+
+Enabling full history will **not** move jobs currently delayed by Telegram forward in
+time. Their existing `run_at` and page checkpoint remain intact until the delay ends.
