@@ -35,7 +35,7 @@ test("message evidence uses stable peer, no DB-local surrogate or private text",
   assert.notEqual(buildTgOutboxEvent("123456789",{...msg,message:"Edited"},now).eventKey,e.eventKey);
 });
 test("refuse unresolved/mutable channel identity and malformed messages",()=>{
-  for(const peer of [null,"@channel","-100123","somechannel","0"," 123"]){
+  for(const peer of [null,"@channel","somechannel","0"," 123","-0","+100123"]){
     assert.throws(()=>buildTgOutboxEvent(peer,msg,now),/PEER_UNRESOLVED/);
   }
   assert.throws(()=>buildTgOutboxEvent("123",{...msg,id:0},now),/Invalid Telegram message/);
@@ -51,4 +51,18 @@ test("delete envelope preserves origin without fabricating timeline publication"
   assert.equal(buildTgDeletionOutboxEvent("123456789",42,now,"20261018013000123456").eventKey,
     buildTgDeletionOutboxEvent("123456789",42,new Date("2026-10-18T01:30:59Z"),"20261018013000123456").eventKey);
   assert.throws(()=>buildTgDeletionOutboxEvent(null,42,now),/PEER_UNRESOLVED/);
+});
+
+test("canonical negative Telegram channel peer ID survives publication and soft-delete",()=>{
+  const peer="-100123456789";
+  const event=buildTgOutboxEvent(peer,msg,now);
+  const registry=event.payload.registryEvent as {
+    evidenceRef:{sourceId:string};entityRefs:{canonicalId:string}[];
+  };
+  assert.equal(registry.evidenceRef.sourceId,"tg:message:-100123456789:42");
+  assert.equal(registry.entityRefs[0]?.canonicalId,"tg:source:-100123456789");
+  const deleted=buildTgDeletionOutboxEvent(peer,42,now);
+  assert.equal((deleted.payload.registryEvent as {
+    evidenceRef:{sourceId:string}
+  }).evidenceRef.sourceId,"tg:message:-100123456789:42");
 });

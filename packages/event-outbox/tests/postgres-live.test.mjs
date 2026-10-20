@@ -76,6 +76,9 @@ test("PostgreSQL renewed lease fences stale ACK/NACK from same worker ID",{skip:
       await emitPostgres(client,{...event,eventKey:"pg-reused-worker-fencing"});
       await client.query("COMMIT");
     }finally{client.release()}
+    // A just-committed server NOW() can be slightly ahead of the Node clock.
+    // Make this fixture due deterministically; do not change production claim semantics.
+    await pool.query("UPDATE outbox_events SET next_attempt_at=NOW() - interval '1 second' WHERE event_key=$1",["pg-reused-worker-fencing"]);
     const first=(await claimPostgres(pool,{workerId:"reused-worker",batchSize:1,leaseMs:10000,now:new Date()}))[0];
     assert.ok(first);
     await pool.query("UPDATE outbox_events SET lease_until=NOW() - interval '1 second' WHERE id=$1",[first.id]);
