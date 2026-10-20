@@ -298,15 +298,12 @@ export async function POST(request: NextRequest) {
         await tx.query(`
           INSERT INTO tg_jobs(source_id) VALUES($1)
           ON CONFLICT (source_id) DO NOTHING`, [source.rows[0].id]);
+        // Re-adding an existing source must not lose either history/fresh
+        // checkpoint. Existing pending/delayed jobs keep their run_at and
+        // Telegram FloodWait. Manual retry resumes a failed job in place.
         await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,
-          base_message_id=NULL, high_message_id=NULL, cursor_before_id=NULL, scanned_count=0,
           run_at=now(), locked_until=NULL, last_error=NULL, updated_at=now()
-          WHERE source_id=$1 AND state IN ('failed','pending') AND $2::boolean
-            AND EXISTS(SELECT 1 FROM tg_sources WHERE id=$1 AND NOT history_complete)`,
-          [source.rows[0].id,fullHistory]);
-        await tx.query(`UPDATE tg_jobs SET state='pending', attempts=0,run_at=now(),
-          locked_until=NULL,last_error=NULL,updated_at=now()
-          WHERE source_id=$1 AND state='failed' AND NOT $2::boolean`, [source.rows[0].id,fullHistory]);
+          WHERE source_id=$1 AND state='failed'`, [source.rows[0].id]);
         await tx.query("COMMIT");
         return NextResponse.json({ ok: true, sourceId: source.rows[0].id }, { headers: noStore });
       } catch (error) {
