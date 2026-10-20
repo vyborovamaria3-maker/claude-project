@@ -55,7 +55,10 @@ async function main(): Promise<void> {
       SELECT message_id::text FROM tg_messages
       WHERE source_id=$1 AND deleted_at IS NULL AND entities_observed_at IS NULL
         AND (entities_refetch_attempted_at IS NULL OR entities_refetch_attempted_at<now()-interval '1 hour')
-      ORDER BY message_id DESC LIMIT $2`,[source.id,limit]);
+      -- Retry unavailable posts later, but first visit older records that
+      -- have never been checked so a few deleted newest posts cannot starve
+      -- the legacy archive across repeated bounded invocations.
+      ORDER BY entities_refetch_attempted_at NULLS FIRST, message_id DESC LIMIT $2`,[source.id,limit]);
     let hydrated = 0;
     let unavailable = 0;
     for (let i=0;i<pending.rows.length;i+=25) {
