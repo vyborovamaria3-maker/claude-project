@@ -108,7 +108,7 @@ class SentimentTests(unittest.TestCase):
             engine().analyze([x("This is bullish", "x:tweet:0")])
         with self.assertRaises(ValueError):
             engine().analyze([x("This is bullish", "x:tweet:33")]*1001)
-        self.assertEqual(engine().analyze([x("text", "x:tweet:123")])[0]["status"], "unsupported_language")
+        self.assertEqual(engine().analyze([x("🚀", "x:tweet:123")])[0]["status"], "unsupported_language")
         with self.assertRaises(ValueError):
             engine().analyze([SourceText("x", "x:tweet:123", "good", NOW,
                                         occurred_at=NOW + timedelta(days=1))])
