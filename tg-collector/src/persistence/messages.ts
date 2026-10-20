@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 import { ANALYSIS_VERSION, extractLinks, type RawTelegramMessage } from "../analytics/extract.js";
 import { refreshGraphDays, utcDay } from "../analytics/rollups.js";
 import { syncMessageTokenCandidates } from "../analytics/token-intelligence.js";
-import { emitTgMessageOutbox, emitTgDeletionOutbox, emitTgTokenLinksInvalidation, telegramVerifiedTokenLinksEnabled } from "./outbox.js";
+import { emitTgMessageOutbox, emitTgDeletionOutbox, emitTgTokenLinksInvalidation, telegramOutboxEnabled } from "./outbox.js";
 
 export function reactionCounts(msg:RawTelegramMessage){
  return (msg.reactions?.results??[]).slice(0,100).filter(r=>Number.isSafeInteger(r.count)&&Number(r.count)>=0).map(r=>({
@@ -132,7 +132,7 @@ export async function markMessageDeleted(
   if (day) await refreshGraphDays(tx, sourceId, [day]);
   await emitTgDeletionOutbox(tx, sourceId, messageId,
     result.rows[0]!.deleted_at, result.rows[0]!.deletion_revision);
-  if(telegramVerifiedTokenLinksEnabled()){
+  if(telegramOutboxEnabled()){
     const sourceRevisionSha256=createHash("sha256")
       .update("deleted:"+result.rows[0]!.deletion_revision).digest("hex");
     await emitTgTokenLinksInvalidation(tx,sourceId,{
