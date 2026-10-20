@@ -1,0 +1,40 @@
+name: POTAPoff Token Intelligence Proxy
+
+on:
+  pull_request:
+    paths:
+      - "solana-launcher/lib/token-intelligence/**"
+      - "solana-launcher/app/api/intelligence/token/**"
+      - "solana-launcher/app/intelligence/**"
+      - "solana-launcher/scripts/token-intelligence-proxy-regression.mjs"
+      - "solana-launcher/package.json"
+      - ".github/workflows/token-intelligence-potapoff.yml"
+  push:
+    branches:
+      - feat/arch-11-potapoff-token-intelligence-ui-20261020
+    paths:
+      - "solana-launcher/**"
+      - ".github/workflows/token-intelligence-potapoff.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: potapoff-token-intelligence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proxy-unit:
+    name: Offline proxy security and output contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v4
+      - name: Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Test isolated proxy security and source redaction
+        run: node --test solana-launcher/scripts/token-intelligence-proxy-regression.mjs
