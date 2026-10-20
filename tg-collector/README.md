@@ -730,6 +730,8 @@ strict on-chain layout check. Raw messages and candidates are preserved,
 but old unverified token attributions are excluded from active analytics.
 SPL Token Mints must be 82 bytes; Token-2022 extended Mints must have the
 mint account-type discriminator and valid extension structure.
+Migration 035 protects the original message undelete trigger from reviving
+unattested legacy token mentions after a message is restored.
 No paid RPC request is made by a migration. To revalidate previous mints,
 explicitly run `npm run tokens:resolve` with an approved RPC endpoint and a
 bounded `--limit`, followed by `npm run analyze:refresh`. This step may incur
