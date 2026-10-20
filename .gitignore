@@ -106,4 +106,5 @@ admin-site/logs.json
 
 # Disposable local/Codespaces sentiment weights, venv and API bearer
 /.venv-sentiment/
+/.venv-sentiment-client/
 /.local/sentiment/
