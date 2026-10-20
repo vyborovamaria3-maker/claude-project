@@ -35,7 +35,7 @@ On a clean checkout with Node 22 and disposable PostgreSQL 16:
 1. Install/check \`packages/contracts\`, \`packages/event-outbox\`, and \`intelligence\` using their own READMEs.
 2. Supply **only a disposable** \`INTELLIGENCE_TEST_DB_URL\` (not the laptop's live source/target databases).
 3. Run \`npm --prefix intelligence run check\`. The new cross-source test creates isolated schemas with random names and an in-memory SQLite source; it drops those temporary schemas on completion.
-4. Confirm source pool isolation and three unique entries in \`intelligence_inbox\`, \`entity_evidence\`, \`timeline_events\`; confirm one query by the same canonical token returns X/TG/chain evidence.
+4. Confirm source pool isolation and three distinct events in \`intelligence_inbox\` and \`timeline_events\`, six entity-evidence links, and four canonical entities; confirm one query by the same canonical token returns X/TG/chain evidence.
 5. Verify before-observation query excludes late TG evidence, early-occurred cutoff excludes later events, other mint returns no rows, and forced replays are counted as duplicates.
 6. Verify process failure / lease expiry / DLQ tests in the existing suites and add full producer→resolver tests before claiming live token-link delivery.
 7. Inspect target **latest SHA** GitHub Actions checks. Tests are not assumed passed until the actual run is green.
