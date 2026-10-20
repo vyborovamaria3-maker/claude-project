@@ -18,7 +18,7 @@ const occurred="2026-10-19T22:00:00Z";
 function evidence(observedAt){
   return buildEvidenceRef({
     sourceKind:"tg_message",sourceAccountId:"1234",messageId:"42",
-    observedAt,occurredAt,parserVersion:"tg-mint-verifier-v1",
+    observedAt,occurredAt:occurred,parserVersion:"tg-mint-verifier-v1",
   });
 }
 function ref(observedAt){
