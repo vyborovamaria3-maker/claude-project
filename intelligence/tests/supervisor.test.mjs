@@ -82,10 +82,10 @@ test("two independent sources can make progress without sharing a claim queue",a
   const stop=new AbortController();
   const [a,b]=await Promise.all([
     runSourceLoop({source:"tg",signal:stop.signal,pollMs:100,paceMs:0,maxBatches:2,
-      runBatch:async()=>{tg++;return {claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0}}},
+      runBatch:async()=>{tg++;return {claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0}},
     }),
     runSourceLoop({source:"blockchain",signal:stop.signal,pollMs:100,paceMs:0,maxBatches:2,
-      runBatch:async()=>{chain++;return {claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0}}},
+      runBatch:async()=>{chain++;return {claimed:1,delivered:1,duplicates:0,failed:0,lostLeases:0}},
     }),
   ]);
   assert.equal(a.delivered,2);
