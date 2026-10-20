@@ -33,8 +33,14 @@ test("PostgreSQL: Stop preserves page checkpoint; rebuild excludes soft deletes;
       async getEntity() { return { className: "Channel", id: 123, title: "Fixture", username: "fixture_public" }; },
       async getMessages() {
         calls++;
-        if (calls === 1) return [{ id: 1000 }];
-        assert.equal(calls, 2, "Stop must prevent the next Telegram page request");
+        if (calls === 1) {
+          // First mandatory preview is evidence-only, not a persisted page.
+          return Array.from({length:120},(_,i)=>({
+            id:1000-i,message:"Ordinary historical article",date:1792065600,
+          }));
+        }
+        if (calls === 2) return [{ id: 1000 }];
+        assert.equal(calls, 3, "Stop must prevent the next Telegram page request");
         await pool.query("UPDATE tg_runtime SET collection_enabled=FALSE WHERE id=1");
         return Array.from({ length: 100 }, (_, i) => ({ id: 1000-i,
           message: "@fixture_handle", date: 1792065600,
