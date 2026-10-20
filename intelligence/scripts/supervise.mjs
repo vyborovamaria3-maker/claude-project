@@ -99,7 +99,7 @@ async function main(){
       sources.push({name,connection,workerId:randomUUID()});
     }
     destination=destinationConnection();
-    await checkDestination(destination);
+    await checkDestination(destination,{requireBlockchainRevisions:options.sources.includes('blockchain')});
     const report=event=>console.log(JSON.stringify({
       timestamp:new Date().toISOString(),...event,
     }));

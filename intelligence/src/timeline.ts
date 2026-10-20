@@ -84,8 +84,11 @@ export async function queryTokenTimeline(
     FROM timeline_events t JOIN timeline_event_entities e
       ON e.source_system=t.source_system
       AND e.source_event_kind=t.source_event_kind AND e.event_key=t.event_key
+    JOIN intelligence_inbox i ON i.source_system=t.source_system
+      AND i.event_kind=t.source_event_kind AND i.event_key=t.event_key
     WHERE e.kind='token' AND e.canonical_id=$1
       AND t.occurred_at <= $2 AND t.observed_at <= $3
+      AND i.ingested_at <= $3
     ORDER BY t.occurred_at DESC,t.source_system,t.event_key
     LIMIT $4`, [
       tokenId,toUtcIso(occurredBefore),toUtcIso(knownAt),limit,
