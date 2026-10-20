@@ -366,3 +366,25 @@ credentials or laptop GPU are required. Optional localhost-only bearer-
 authenticated endpoint: `bash intelligence/nlp/scripts/codespaces_api.sh`.
 Never make its forwarded port public. Codespaces is for trials, not 24/7
 free hosting. Tests cannot prove real-weight compatibility until run there.
+
+## Explicit remote pinned-model inference (no local ML weights)
+
+`SENTIMENT_REMOTE_ENABLED=true` selects the authenticated remote engine.
+The client uses only the standard Python HTTP library; it does **not**
+load PyTorch, Transformers or model weights on your Acer. The Codespaces
+server, not a generic substitute LLM, must run **the exact three model
+revisions**. Supply `SENTIMENT_REMOTE_ENDPOINT` (HTTPS or a *private
+loopback SSH tunnel*), `SENTIMENT_REMOTE_TOKEN` (never commit/log), and all
+three `SENTIMENT_*_REVISION` values. The default remains **remote off**.
+`INTELLIGENCE_SENTIMENT_ENABLED=true` is still required separately to
+enable sentiment enrichment in an Intelligence worker; X/TG collectors
+remain unchanged, and metadata-only events are not text.
+
+Remote client validates per-source/model identity, hashes, timestamps,
+labels, SHA pins, response size and probability normalization and disables
+HTTP redirect following. Each CLI mini-batch still commits separately into
+opt-in standalone SQLite. No real message is transmitted until an operator
+explicitly opts in. For a private three-message HTTP smoke without any
+live source data, see [CODESPACES.md](CODESPACES.md) Step 3. The Codespaces
+endpoint is a dev/test service and sleeps with the Codespace; never expose
+its forwarded port publicly.
