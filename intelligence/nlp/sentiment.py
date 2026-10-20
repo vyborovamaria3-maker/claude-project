@@ -228,7 +228,6 @@ class SentimentEngine:
     def analyze(self, items: Sequence[SourceText]) -> list[dict[str, Any]]:
         if len(items) > 1000:
             raise ValueError("one analysis batch cannot exceed 1000 messages")
-        inference_at = _timestamp(datetime.now(timezone.utc), "inference_at")
         records: list[dict[str, Any]] = []
         groups: dict[str, list[tuple[int, str]]] = {}
         for item in items:
@@ -240,7 +239,7 @@ class SentimentEngine:
                 "source_id": item.source_id, "observed_at": observed,
                 "occurred_at": occurred, "content_sha256": content_hash,
                 "preprocess_version": PREPROCESS_VERSION, "language": language,
-                "inference_at": inference_at,
+                "inference_at": None,  # Filled only AFTER all model calls finish.
                 "model_results": {},
                 "status": "classified" if names else "unsupported_language",
             }
@@ -267,6 +266,11 @@ class SentimentEngine:
                         "task": spec.task, "labels": dict(probs),
                         "max_tokens": spec.max_tokens,
                     }
+        # End-of-batch availability time is conservative for every model.
+        # Never publish a timestamp before its inference actually completed.
+        completed_at = _timestamp(datetime.now(timezone.utc), "inference_at")
+        for record in records:
+            record["inference_at"] = completed_at
         return records
 
     def enrich_document(self, document: IntelligenceDocument) -> IntelligenceDocument:
