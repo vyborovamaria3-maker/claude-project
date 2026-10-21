@@ -10,6 +10,8 @@ const fee=require("./blockchain-fee-intelligence.cjs");
 const rollup=require("./blockchain-fee-rollup.cjs");
 const {inspectNativeBalances}=require("./blockchain-fee-balance-check.cjs");
 const baseline=require("./blockchain-collector-baseline.cjs");
+const {normalizeFullTransaction}=require("./blockchain-alchemy-provider.cjs");
+const savedSwaps=require("./fixtures/alchemy-saved-swaps.json");
 const SYSTEM="11111111111111111111111111111111";
 function mkTx(signature,{failed=false,withTransfers=true,feeLamports=11000}={}) {
   const ins=withTransfers ? [
@@ -29,6 +31,18 @@ function fixtureRow(db,kind,address,tx) {
     .run(kind,address,tx.signature,1,createHash("sha256").update(bytes).digest("hex"),gzipSync(bytes),bytes.length,123,1700000000,1700000000500);
 }
 function run() {
+  // Ten retained real Alchemy receipts must preserve exact native fee arithmetic.
+  const saved=savedSwaps.map(normalizeFullTransaction);
+  assert.equal(saved.length,10);
+  for(const tx of saved) {
+    assert.ok(tx && tx.signature && Number.isSafeInteger(tx.raw.meta.fee));
+    const check=inspectNativeBalances(tx.raw.meta);
+    assert.equal(check.status,"MATCH","Balance conservation failed for saved Solana "+tx.signature);
+    const fees=fee.extractFees(tx);
+    assert.equal(fees.length,1,"No registry means only explicit network fee is classified");
+    assert.equal(fees[0].kind,"network_total");
+    assert.equal(fees[0].amountAtomic,String(tx.raw.meta.fee));
+  }
   assert.equal(fee.atomic("90071992547409930001").toString(),"90071992547409930001");
   assert.equal(fee.atomic(9007199254740993),null);
   assert.equal(fee.atomic(-1),null);
