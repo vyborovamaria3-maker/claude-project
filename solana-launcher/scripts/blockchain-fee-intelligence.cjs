@@ -109,6 +109,12 @@ function prepareOutput(db) {
     economic_role TEXT NOT NULL, evidence_path TEXT NOT NULL, reason TEXT NOT NULL,
     PRIMARY KEY(target_kind,target_address,signature,raw_revision,event_key)
   );
+  CREATE TABLE fee_invalid_observations (
+    target_kind TEXT NOT NULL, target_address TEXT NOT NULL, signature TEXT NOT NULL,
+    raw_revision INTEGER, reason TEXT NOT NULL,
+    PRIMARY KEY(target_kind,target_address,signature)
+  );
+  CREATE INDEX idx_fee_invalid_signature ON fee_invalid_observations(signature);
   CREATE INDEX idx_fee_signature ON fee_evidence(signature,fee_kind);
   CREATE INDEX idx_fee_payer ON fee_evidence(payer,fee_kind);
   CREATE INDEX idx_fee_service ON fee_evidence(service_id,fee_kind);`);
@@ -125,6 +131,8 @@ function project(sourceDb, outputDb, options = {}) {
   const insert = outputDb.prepare(`INSERT INTO fee_evidence(target_kind,target_address,signature,raw_revision,
     raw_sha256,event_key,slot,block_time,fee_kind,amount_atomic,asset,payer,recipient,service_id,
     classification_status,economic_role,evidence_path,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const insertInvalid = outputDb.prepare(`INSERT OR REPLACE INTO fee_invalid_observations
+    (target_kind,target_address,signature,raw_revision,reason) VALUES(?,?,?,?,?)`);
   const stats = {schema:"blockchain-fee-evidence-v1",diagnosticOnly:true,observations:0,invalidEvidence:0,
     networkFeeObservations:0,candidateTransfers:0,exportedEvents:0,
     limitations:["Only meta.fee is exact; its base/priority split is unknown.",
@@ -143,7 +151,12 @@ function project(sourceDb, outputDb, options = {}) {
     try {
       decoded = decodeEvidence(row);
       events = extractFees(decoded.tx,registry);
-    } catch { stats.invalidEvidence++; continue; } // Malformed evidence is never promoted.
+    } catch {
+      stats.invalidEvidence++;
+      insertInvalid.run(row.kind,row.address,row.signature,row.raw_revision||null,
+        "raw_or_execution_evidence_invalid");
+      continue;
+    } // Bad RAW is retained as a quality blocker for the same signature.
     write(row,decoded,events); // Output DB failure must abort rather than be hidden as bad RAW.
     stats.networkFeeObservations++;
     stats.candidateTransfers += events.length-1;
