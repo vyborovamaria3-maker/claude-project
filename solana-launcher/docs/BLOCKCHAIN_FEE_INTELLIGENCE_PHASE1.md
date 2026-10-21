@@ -89,6 +89,41 @@ instruction index. В выходной таблице его уникально�
 `(target_kind,target_address,signature,raw_revision,event_key)`.
 Это **проекция доказательств**, а не бухгалтерская проводка.
 
+## Расширение: deduplication и DEX adversarial replay
+
+Теперь по завершении fee-evidence проекции выполняется
+`scripts/blockchain-fee-rollup.cjs`. Он создаёт **только в новой выходной БД**:
+
+- `fee_network_consensus`: уникальная `signature`, число RAW-наблюдений,
+  число уникальных RAW-хешей и результат сверки `OBSERVED_CONSISTENT /
+  PARTIAL / CONFLICT`.
+- `fee_payer_observed_totals`: сумма `meta.fee` по **уникальным signatures**,
+  только для согласованных наблюдений с известным плательщиком и слотом.
+  Суммы считаются в `BigInt`, хранятся строкой lamports; SQLite `SUM`
+  не используется.
+- `fee_transfer_consensus`: сверка отдельных кандидатов tip/service по
+  `(signature,event_key)`, без добавления к подтверждённым издержкам.
+
+При конфликте суммы, плательщика или слота `network_fee_lamports=NULL`
+и конфликтная signature **не входит** в `fee_payer_observed_totals`.
+Повторение signature под несколькими targets не увеличивает итог.
+Различие RAW-хешей отмечается в отчёте и не выдаётся за финальность.
+Даже `OBSERVED_CONSISTENT` означает лишь согласие сохранённых наблюдений,
+а не криптографическую финальность, полноту истории или подтверждённый PnL.
+
+Новая команда `npm run blockchain:dex-adversarial-test` прогоняет
+сохранённые реальные Pump-транзакции и синтетические adversarial-мутации:
+split fill, неоднозначный multi-hop quote, несколько событий, слишком
+большое атомарное количество, отсутствие доказательств исполнения,
+нарушение signer-атрибуции и пути checked transfer.
+Опасный вход обязан давать **0 подтверждённых сделок**. Это регрессия
+отказа, **не** доказательство полной поддержки Jupiter, Raydium или Orca.
+
+Пока **не добавлены** полноценный transaction-level inventory,
+Raydium/Orca/Jupiter decoder fixtures и историческая оценка торговых fees.
+Эти направления должны опираться на настоящие RAW-образцы для каждого
+семейства DEX и отдельную проверку reconciliation.
+
 ## Следующие этапы (не выполнены данным PR)
 
 1. Расширить сохранённые adversarial DEX fixtures для Raydium/Orca/Jupiter,
