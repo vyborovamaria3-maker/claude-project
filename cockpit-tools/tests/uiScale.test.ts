@@ -29,5 +29,4 @@ describe('uiScale helpers', () => {
     assert.equal(stepUiScale(1.3, 1), 1.5);
     assert.equal(stepUiScale(1.3, -1), 1.25);
   });
-
 });
