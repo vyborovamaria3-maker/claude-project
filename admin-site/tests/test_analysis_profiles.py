@@ -10,7 +10,6 @@ import sys
 from fastapi.testclient import TestClient
 
 ADMIN_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ADMIN_ROOT.parent
 sys.path.insert(0, str(ADMIN_ROOT))
 
 from app.analysis_catalog import CATALOG, CATALOG_BY_ID, DOMAINS, VALUE_TYPES
