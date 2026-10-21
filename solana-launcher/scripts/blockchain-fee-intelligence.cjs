@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { gunzipSync } = require("node:zlib");
+const { buildFeeRollups } = require("./blockchain-fee-rollup.cjs");
 const MAX_RAW_BYTES = 2 * 1024 * 1024;
 const MAX_OBSERVATIONS = 5000;
 const SYSTEM = "11111111111111111111111111111111";
@@ -146,6 +147,8 @@ function project(sourceDb, outputDb, options = {}) {
     stats.candidateTransfers += events.length-1;
     stats.exportedEvents += events.length;
   }
+  // Reconcile per-signature before producing any aggregate; candidates remain candidates.
+  stats.rollup = buildFeeRollups(outputDb);
   outputDb.prepare("INSERT INTO fee_projection_info(key,value) VALUES(?,?)")
     .run("run_manifest",JSON.stringify({...stats,limit,generatedAt:new Date().toISOString()}));
   return stats;
