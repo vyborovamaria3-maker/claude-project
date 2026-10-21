@@ -51,6 +51,11 @@ function run(){
   assert.equal(conflicted.accountRows[0].reason,"owner_changed_across_balance_snapshots");
   assert.equal(decodeInventoryMovements(ownerConflict)[0].owner,null,
     "Conflicting pre/post owner must not be silently overwritten");
+  assert.equal(decodeInventoryMovements(ownerConflict)[0].attributionStatus,"owner_conflict");
+  const undecodable=tx("float",{amount:"30"});
+  undecodable.decodedOperations[0].info.tokenAmount.amount=0.3;
+  assert.equal(decodeInventoryMovements(undecodable)[0].amountRaw,null);
+
 
   const mintConflict=tx("mint-conflict");
   mintConflict.postTokenBalances[1].mint="mint-2";
@@ -59,9 +64,9 @@ function run(){
   const unsafe=tx("unsafe");
   unsafe.decodedOperations[0].info.tokenAmount.amount=9007199254740993;
   const unsafeResult=reconcileInventoryEvidence(unsafe);
-  assert.equal(unsafeResult.status,"PARTIAL");
-  assert.equal(unsafeResult.accountRows.every(r=>r.status==="MATCH"),true,
-    "The unparseable instruction is not allowed to contribute numeric movement");
+  assert.equal(unsafeResult.status,"MISMATCH");
+  assert.ok(unsafeResult.accountRows.every(r=>r.status==="MISMATCH"),
+    "The unparseable instruction cannot become a fabricated exact movement");
 
   const t22=tx("token2022",{postA:"0",postB:"100",preA:"100",preB:"0",amount:"100",programId:TOKEN_2022});
   t22.postTokenBalances[1].uiTokenAmount.amount="95";
