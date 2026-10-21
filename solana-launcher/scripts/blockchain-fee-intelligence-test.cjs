@@ -7,6 +7,7 @@ const { gzipSync }=require("node:zlib");
 const { createHash }=require("node:crypto");
 const Database=require("better-sqlite3");
 const fee=require("./blockchain-fee-intelligence.cjs");
+const rollup=require("./blockchain-fee-rollup.cjs");
 const baseline=require("./blockchain-collector-baseline.cjs");
 const SYSTEM="11111111111111111111111111111111";
 function mkTx(signature,{failed=false,withTransfers=true,feeLamports=11000}={}) {
@@ -58,6 +59,20 @@ function run() {
     assert.equal(report.invalidEvidence,1);
     assert.equal(report.networkFeeObservations,3);
     assert.equal(report.exportedEvents,7,"two success observations with 3 fees each, one failed tx fee");
+    assert.equal(report.rollup.networkSignatures,2,"one transaction fee even if observed for wallet + mint");
+    assert.equal(report.rollup.networkConsistent,2);
+    assert.equal(report.rollup.candidateTransferGroups,2,"one tip + one service candidate per instruction");
+    assert.equal(report.rollup.candidateConsistent,2);
+    assert.deepEqual(output.prepare("SELECT signature,observation_count,status FROM fee_network_consensus ORDER BY signature")
+      .all(),[{signature:"sig-1",observation_count:2,status:"OBSERVED_CONSISTENT"},
+      {signature:"sig-2",observation_count:1,status:"OBSERVED_CONSISTENT"}]);
+    assert.deepEqual(output.prepare("SELECT payer,unique_signatures,network_fee_lamports FROM fee_payer_observed_totals").all(),
+      [{payer:"walletA",unique_signatures:2,network_fee_lamports:"22000"}]);
+    assert.equal(output.prepare("SELECT COUNT(*) n FROM fee_transfer_consensus").get().n,2);
+    assert.equal(output.prepare("SELECT COUNT(*) n FROM fee_transfer_consensus WHERE status='OBSERVED_CONSISTENT'").get().n,2);
+    assert.equal(rollup.decimal("90071992547409930001").toString(),"90071992547409930001");
+    assert.throws(()=>rollup.decimal("9007199254740993.1"));
+
     assert.equal(output.prepare("SELECT count(*) n FROM fee_evidence").get().n,7);
     assert.equal(output.prepare("SELECT count(*) n FROM fee_evidence WHERE fee_kind='network_total'").get().n,3);
     assert.equal(output.prepare("SELECT count(*) n FROM fee_evidence WHERE fee_kind='service_fee_candidate' AND classification_status='CANDIDATE'").get().n,2);
@@ -74,6 +89,23 @@ function run() {
     assert.equal(audit.evidence.sample.ingestDelayP50Ms,500);
     assert.equal(audit.evidence.sample.ingestDelayP95Ms,500);
     assert.throws(()=>baseline.analyze(source,{sampleLimit:1001}));
+    // Different RAW receipts for the same signature MUST NOT be summed or silently selected.
+    fixtureRow(source,"dex_program","program-A",mkTx("sig-1",{feeLamports:12000}));
+    fixtureRow(source,"wallet","walletA",mkTx("sig-large",{feeLamports:"90071992547409930001",withTransfers:false}));
+    const conflictingOutput=new Database(path.join(dir,"conflicting.db"));
+    try {
+      const conflicting=fee.project(source,conflictingOutput,{registry,limit:10});
+      assert.equal(conflicting.rollup.networkSignatures,3);
+      assert.equal(conflicting.rollup.networkConflicts,1);
+      const bad=conflictingOutput.prepare("SELECT status,reason,network_fee_lamports FROM fee_network_consensus WHERE signature='sig-1'").get();
+      assert.equal(bad.status,"CONFLICT");assert.equal(bad.network_fee_lamports,null);
+      const kept=conflictingOutput.prepare("SELECT unique_signatures,network_fee_lamports FROM fee_payer_observed_totals WHERE payer='walletA'").get();
+      assert.equal(kept.unique_signatures,2);
+      assert.equal(kept.network_fee_lamports,(90071992547409930001n+11000n).toString());
+      const candidates=conflictingOutput.prepare("SELECT COUNT(*) n FROM fee_transfer_consensus WHERE signature='sig-1'").get().n;
+      assert.equal(candidates,2,"Transfer candidates are kept separate from contradicted network totals");
+    } finally { conflictingOutput.close(); }
+
   } finally {
     output.close();source.close();fs.rmSync(dir,{recursive:true,force:true});
   }
