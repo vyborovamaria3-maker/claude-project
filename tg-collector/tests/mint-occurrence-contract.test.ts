@@ -51,7 +51,7 @@ test("active mint occurrences exclude deleted, unresolved and old evidence", {
         (1, 12, '${SOLANA_CHAIN_ID}', 'address', 'mint-good', ${ANALYSIS_VERSION}, 'pending'),
         (2, 13, '${SOLANA_CHAIN_ID}', 'address', 'mint-good', ${ANALYSIS_VERSION - 1}, 'confirmed_token'),
         (2, 14, '${SOLANA_CHAIN_ID}', 'address', 'mint-other', ${ANALYSIS_VERSION}, 'confirmed_token');
-      INSERT INTO tg_ticker_mentions VALUES (1, 10, '${SOLANA_CHAIN_ID}', 7, 'GOOD');
+      INSERT INTO tg_ticker_mentions VALUES (1, 10, '${SOLANA_CHAIN_ID}', ${ANALYSIS_VERSION}, 'GOOD');
     `);
 
     const result = await activeMintOccurrences(db as unknown as PoolClient, "mint-good");
