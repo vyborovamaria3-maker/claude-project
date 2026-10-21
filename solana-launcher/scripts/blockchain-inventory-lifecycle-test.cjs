@@ -85,6 +85,18 @@ function unit(){
   assert.deepEqual(fail.issues,["EXECUTION_FAILED"]);
   const unknown=tx("unknown");delete unknown.transactionError;
   assert.deepEqual(inspectLifecycle(unknown).issues,["EXECUTION_UNKNOWN"]);
+  const duplicate=tx("duplicate");
+  duplicate.preTokenBalances.push(bal("walletOther","mintA","25"));
+  const dup=inspectLifecycle(duplicate);
+  assert.equal(dup.ownerObservations.length,0,
+    "Conflicting duplicate token-account entries must not authorize an owner observation");
+  assert.ok(dup.issues.some(x=>x.startsWith("PRE_DUPLICATE_TOKEN_ACCOUNT:")));
+  const changedAuthority=inspectLifecycle(tx("set-authority",10,{ops:[
+    op("setAuthority",{account:"tokenA",authorityType:"accountOwner",newAuthority:"walletB"})]}));
+  assert.equal(changedAuthority.actions[0].eventType,"OWNER_AUTHORITY_CHANGE");
+  assert.equal(changedAuthority.actions[0].newAuthority,"walletB");
+  assert.equal(changedAuthority.actions[0].status,"INSTRUCTION_ONLY");
+  assert.equal(changedAuthority.historyContinuityProven,false);
   const wrongMint=tx("mintClash");wrongMint.postTokenBalances[0].mint="mintB";
   const clash=inspectLifecycle(wrongMint);
   assert.equal(clash.ownerObservations.length,0);
