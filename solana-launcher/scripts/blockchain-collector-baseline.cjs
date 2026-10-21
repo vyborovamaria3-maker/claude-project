@@ -5,6 +5,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { gunzipSync } = require("node:zlib");
+const { createHash } = require("node:crypto");
 const MAX_ROWS = 1000;
 const MAX_PAYLOAD_BYTES = 2 * 1024 * 1024;
 function tableExists(db, table) {
@@ -44,7 +45,7 @@ function analyze(db, options = {}) {
       reportedNetworkFeeLamports: "0", invalidNetworkFees: 0, ingestDelayP50Ms: null, ingestDelayP95Ms: null };
     let fee = 0n;
     const delays = [];
-    const cursor = db.prepare(`SELECT signature,block_time,observed_at,payload_gzip,payload_bytes FROM chain_seed_events
+    const cursor = db.prepare(`SELECT signature,block_time,observed_at,payload_hash,payload_gzip,payload_bytes FROM chain_seed_events
       ORDER BY kind,address,signature LIMIT ?`);
     for (const row of cursor.iterate(sampleLimit)) {
       sample.analyzed++;
@@ -53,6 +54,7 @@ function analyze(db, options = {}) {
           row.payload_bytes <= 0 || row.payload_bytes > MAX_PAYLOAD_BYTES) throw new Error("invalid payload");
         const buffer = gunzipSync(row.payload_gzip, { maxOutputLength: row.payload_bytes });
         if (buffer.length !== row.payload_bytes) throw new Error("payload length");
+        if (row.payload_hash && createHash("sha256").update(buffer).digest("hex") !== row.payload_hash) throw new Error("RAW hash mismatch");
         const tx = JSON.parse(buffer.toString("utf8"));
         if (!tx || tx.signature !== row.signature) throw new Error("signature mismatch");
         const raw = tx.raw || tx;
