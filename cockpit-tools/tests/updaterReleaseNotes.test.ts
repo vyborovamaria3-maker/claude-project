@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  prependUpdaterReleaseHighlights,
-} from "../src/utils/updaterReleaseNotes.ts";
+import { prependUpdaterReleaseHighlights } from "../src/utils/updaterReleaseNotes.ts";
 
 describe("updater release highlights", () => {
   it("does not prepend a duplicate highlights section", () => {
@@ -22,6 +20,4 @@ describe("updater release highlights", () => {
       original,
     );
   });
-
-
 });
