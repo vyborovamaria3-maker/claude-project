@@ -26,7 +26,7 @@ function accountKeys(tx) {
 }
 function parseTokenSides(tx,side,keys,issues) {
   const rows=side==="PRE"?tx.preTokenBalances:tx.postTokenBalances;
-  const byAccount=new Map();
+  const byAccount=new Map(), invalidAccounts=new Set();
   if (!Array.isArray(rows)) {
     issues.push(side+"_TOKEN_BALANCES_MISSING");
     return byAccount;
@@ -34,7 +34,13 @@ function parseTokenSides(tx,side,keys,issues) {
   for(const b of rows) {
     const i=b?.accountIndex, address=Number.isSafeInteger(i)&&i>=0&&i<keys.length?keys[i]:null;
     if(typeof address!=="string"||!address) {issues.push(side+"_ACCOUNT_INDEX_INVALID");continue;}
-    if(byAccount.has(address)) {issues.push(side+"_DUPLICATE_TOKEN_ACCOUNT");continue;}
+    if(invalidAccounts.has(address))continue;
+    if(byAccount.has(address)){
+      byAccount.delete(address);
+      invalidAccounts.add(address);
+      issues.push(side+"_DUPLICATE_TOKEN_ACCOUNT:"+address);
+      continue;
+    }
     const owner=typeof b.owner==="string" && b.owner?b.owner:null;
     const mint=typeof b.mint==="string" && b.mint?b.mint:null;
     const quantity=atomic(b.uiTokenAmount?.amount);
@@ -65,6 +71,8 @@ function inspectLifecycle(tx) {
   const post=parseTokenSides(tx,"POST",keys,result.issues);
   const allAccounts=new Set([...pre.keys(),...post.keys()]);
   for(const account of [...allAccounts].sort()) {
+    if(result.issues.includes("PRE_DUPLICATE_TOKEN_ACCOUNT:"+account) ||
+      result.issues.includes("POST_DUPLICATE_TOKEN_ACCOUNT:"+account)) continue;
     const before=pre.get(account),after=post.get(account);
     if(before?.mint&&after?.mint&&before.mint!==after.mint) {
       result.issues.push("ACCOUNT_MINT_CONFLICT:"+account);continue;
