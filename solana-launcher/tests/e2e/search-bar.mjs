@@ -8,6 +8,7 @@ const browser = await chromium.launch({ headless: true });
 try {
   const context = await browser.newContext({
     permissions: ["clipboard-read", "clipboard-write"],
+    serviceWorkers: "block",
   });
   try {
     const page = await context.newPage();
@@ -15,7 +16,7 @@ try {
     await page.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
     await page.waitForLoadState("load");
     let requestedMint = null;
-    await page.route("**/api/trade/analyze-stream?*", async route => {
+    await page.route(url => url.pathname === "/api/trade/analyze-stream", async route => {
       requestedMint = new URL(route.request().url()).searchParams.get("mint");
       await route.fulfill({
         status: 200,
@@ -57,7 +58,7 @@ try {
     await page.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
     let invalidRequests = 0;
     await page.unrouteAll();
-    await page.route("**/api/trade/analyze-stream?*", async route => {
+    await page.route(url => url.pathname === "/api/trade/analyze-stream", async route => {
       invalidRequests += 1;
       await route.abort();
     });
