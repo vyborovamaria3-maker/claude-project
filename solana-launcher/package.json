@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "security:test": "node scripts/security-regression.mjs",
+    "admin-confirmation:test": "node ../admin-site/tests/analysis-confirmation-browser.mjs",
     "landing:test": "node scripts/landing-regression.mjs",
     "kols:test": "node scripts/kols-regression.mjs",
     "token-intelligence:test": "node --test scripts/token-intelligence-proxy-regression.mjs",
