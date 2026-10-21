@@ -13,6 +13,7 @@ try {
     const page = await context.newPage();
 
     await page.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("load");
     let requestedMint = null;
     await page.route("**/api/trade/analyze-stream?*", async route => {
       requestedMint = new URL(route.request().url()).searchParams.get("mint");
@@ -40,10 +41,17 @@ try {
       expected => document.querySelector('[data-tag="trade.search_input"]')?.value === expected,
       MINT,
     );
+    const analysisResponsePromise = page.waitForResponse(response =>
+      response.url().includes("/api/trade/analyze-stream?") &&
+      response.request().method() === "GET"
+    );
     await page.locator('[data-tag="trade.search_submit"]').click();
-    await page.getByText("137", { exact: true }).waitFor({ state: "visible" });
+    const analysisResponse = await analysisResponsePromise;
+    assert.equal(analysisResponse.status(), 200, "Analysis request must succeed");
     assert.equal(requestedMint, MINT, "Analysis must use the pasted mint");
     await page.waitForURL(url => url.searchParams.get("mint") === MINT);
+    await page.getByRole("button", { name: /Trades\\s+137\\b/ })
+      .waitFor({ state: "visible" });
 
     // A malformed mint must not be passed to the analysis API.
     await page.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });

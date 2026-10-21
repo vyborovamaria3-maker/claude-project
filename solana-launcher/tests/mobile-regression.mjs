@@ -20,10 +20,12 @@ async function run() {
         waitUntil: "domcontentloaded",
       });
       assert(response && response.status() < 500, "Dashboard failed to load");
+      // DOM content may arrive before Next.js attaches client-side click handlers.
+      await page.waitForLoadState("load");
 
       const menu = page.getByRole("button", { name: "Open navigation" });
-      await menu.focus();
-      await page.keyboard.press("Enter");
+      await menu.waitFor({ state: "visible" });
+      await menu.click();
       const dialog = page.getByRole("dialog", { name: "Navigation" });
       await dialog.waitFor({ state: "visible" });
 
