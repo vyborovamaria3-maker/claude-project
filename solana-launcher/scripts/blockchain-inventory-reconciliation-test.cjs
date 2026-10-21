@@ -9,6 +9,7 @@ const {gzipSync}=require("node:zlib");
 const {createHash}=require("node:crypto");
 const Database=require("better-sqlite3");
 const {main:inventoryReplay}=require("./blockchain-inventory-replay.cjs");
+const {initDb,persistEvents,persistInventoryMovements}=require("./blockchain-seed-collector.cjs");
 const TOKEN_PROGRAM="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const amt=(amount,decimals=0)=>({amount:String(amount),decimals});
@@ -100,6 +101,36 @@ function run(){
     assert.ok(["OBSERVED_BALANCES_MATCH_MOVEMENTS","PARTIAL","MISMATCH","CONFLICT","NO_TOKEN_EVIDENCE"].includes(result.status),
       "Unexpected result for real signature "+item.signature+": "+result.status);
   }
+  // RAW revision must replace all old instruction legs, including the zero-leg case.
+  const revisionDb=new Database(":memory:");
+  try {
+    initDb(revisionDb);
+    const first=tx("revision");
+    first.tokenBalanceDeltas=[
+      {tokenAccount:"tokenA",owner:"alice",mint:"mint-1",decimals:0,deltaRaw:"-30"},
+      {tokenAccount:"tokenB",owner:"bob",mint:"mint-1",decimals:0,deltaRaw:"30"}];
+    const revised=structuredClone(first);
+    revised.decodedOperations=[];
+    const persist=event=>revisionDb.transaction(()=>{
+      persistEvents(revisionDb,"wallet","alice",[event]);
+      persistInventoryMovements(revisionDb,"wallet","alice",[event]);
+    })();
+    persist(first);
+    assert.equal(revisionDb.prepare("SELECT count(*) n FROM chain_inventory_movements").get().n,2);
+    assert.equal(revisionDb.prepare("SELECT raw_revision FROM chain_seed_events WHERE signature='revision'").get().raw_revision,1);
+    persist(revised);
+    assert.equal(revisionDb.prepare("SELECT count(*) n FROM chain_inventory_movements").get().n,0,
+      "Removed RAW transfer must not leave phantom inventory movements");
+    assert.equal(revisionDb.prepare("SELECT raw_revision FROM chain_seed_events WHERE signature='revision'").get().raw_revision,2);
+    assert.throws(()=>revisionDb.transaction(()=>{
+      persistEvents(revisionDb,"wallet","alice",[first]);
+      persistInventoryMovements(revisionDb,"wallet","alice",[first]);
+      throw Error("simulated checkpoint failure");
+    })(),/simulated checkpoint failure/);
+    assert.equal(revisionDb.prepare("SELECT count(*) n FROM chain_inventory_movements").get().n,0);
+    assert.equal(revisionDb.prepare("SELECT raw_revision FROM chain_seed_events WHERE signature='revision'").get().raw_revision,2,
+      "RAW and inventory rollback together after failure");
+  } finally {revisionDb.close();}
   // Bounded offline CLI audit: one valid saved RAW and one hash mismatch.
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"inventory-replay-"));
   const filename=path.join(dir,"sample.db"), db=new Database(filename);
