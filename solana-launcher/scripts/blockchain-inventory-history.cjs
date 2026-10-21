@@ -6,6 +6,7 @@ const fs=require("node:fs");
 const path=require("node:path");
 const {decode}=require("./blockchain-inventory-replay.cjs");
 const {inspectLifecycle}=require("./blockchain-inventory-lifecycle.cjs");
+const {assess}=require("./blockchain-inventory-readiness.cjs");
 const MAX_ROWS=1000;
 function project(source,out,{limit=200}={}){
   if(!Number.isSafeInteger(limit)||limit<1||limit>MAX_ROWS)throw Error("limit must be 1..1000");
@@ -130,6 +131,7 @@ function project(source,out,{limit=200}={}){
         stats.ownerTransitionWarnings++;stats.issueRows++;
       }
     }
+    stats.readiness=assess(source,stats);
     out.prepare("INSERT INTO inventory_projection_info(key,value) VALUES(?,?)")
       .run("manifest",JSON.stringify({...stats,builtAt:new Date().toISOString()}));
   })();
