@@ -15,8 +15,7 @@ ADMIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ADMIN_ROOT))
 
 from app.auth import require_admin
-from app.services import X_TABLES
-from app.twitter_monitoring import TWITTER_MONITOR_TABLES, TWITTER_SETTINGS_FIELDS, TwitterMonitoringStore, find_twitter_source
+from app.twitter_monitoring import TWITTER_MONITOR_TABLES, TWITTER_SETTINGS_FIELDS, find_twitter_source
 from app.twitter_monitoring_api import TwitterCrawlerSettingsBody, _update_via_backend, build_twitter_monitoring_router
 
 
