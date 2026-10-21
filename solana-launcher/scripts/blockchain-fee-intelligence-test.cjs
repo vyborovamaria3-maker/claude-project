@@ -98,16 +98,21 @@ function run() {
     // Different RAW receipts for the same signature MUST NOT be summed or silently selected.
     fixtureRow(source,"dex_program","program-A",mkTx("sig-1",{feeLamports:12000}));
     fixtureRow(source,"wallet","walletA",mkTx("sig-large",{feeLamports:"90071992547409930001",withTransfers:false}));
+    fixtureRow(source,"token","mint-corrupt",mkTx("sig-2"));
+    source.prepare("UPDATE chain_seed_events SET payload_hash=? WHERE kind='token' AND address='mint-corrupt'").run("f".repeat(64));
     const conflictingOutput=new Database(path.join(dir,"conflicting.db"));
     try {
       const conflicting=fee.project(source,conflictingOutput,{registry,limit:10});
       assert.equal(conflicting.rollup.networkSignatures,3);
       assert.equal(conflicting.rollup.networkConflicts,1);
+      assert.equal(conflicting.rollup.networkWithheld,1,"A corrupt second copy blocks an otherwise usable signature");
+      assert.equal(conflictingOutput.prepare("SELECT status FROM fee_network_consensus WHERE signature='sig-2'").get().status,"WITHHELD");
+      assert.equal(conflictingOutput.prepare("SELECT count(*) n FROM fee_invalid_observations WHERE signature='sig-2'").get().n,1);
       const bad=conflictingOutput.prepare("SELECT status,reason,network_fee_lamports FROM fee_network_consensus WHERE signature='sig-1'").get();
       assert.equal(bad.status,"CONFLICT");assert.equal(bad.network_fee_lamports,null);
       const kept=conflictingOutput.prepare("SELECT unique_signatures,network_fee_lamports FROM fee_payer_observed_totals WHERE payer='walletA'").get();
-      assert.equal(kept.unique_signatures,2);
-      assert.equal(kept.network_fee_lamports,(90071992547409930001n+11000n).toString());
+      assert.equal(kept.unique_signatures,1);
+      assert.equal(kept.network_fee_lamports,"90071992547409930001");
       const candidates=conflictingOutput.prepare("SELECT COUNT(*) n FROM fee_transfer_consensus WHERE signature='sig-1'").get().n;
       assert.equal(candidates,2,"Transfer candidates are kept separate from contradicted network totals");
     } finally { conflictingOutput.close(); }
