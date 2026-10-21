@@ -41,9 +41,10 @@ function analyze(db, options = {}) {
       SUM(CASE WHEN payload_hash IS NULL OR length(payload_hash)<>64 THEN 1 ELSE 0 END) missing_payload_hash
       FROM chain_seed_events`);
     const sample = { analyzed: 0, corrupt: 0, errorMetadataMissing: 0, failedExecution: 0, validMetadata: 0,
-      reportedNetworkFeeLamports: "0", invalidNetworkFees: 0 };
+      reportedNetworkFeeLamports: "0", invalidNetworkFees: 0, ingestDelayP50Ms: null, ingestDelayP95Ms: null };
     let fee = 0n;
-    const cursor = db.prepare(`SELECT signature,payload_gzip,payload_bytes FROM chain_seed_events
+    const delays = [];
+    const cursor = db.prepare(`SELECT signature,block_time,observed_at,payload_gzip,payload_bytes FROM chain_seed_events
       ORDER BY kind,address,signature LIMIT ?`);
     for (const row of cursor.iterate(sampleLimit)) {
       sample.analyzed++;
@@ -58,6 +59,10 @@ function analyze(db, options = {}) {
         const meta = raw.meta || raw.transaction?.meta;
         if (!meta || !Object.prototype.hasOwnProperty.call(meta,"err")) { sample.errorMetadataMissing++; continue; }
         sample.validMetadata++;
+        if (Number.isSafeInteger(row.block_time) && row.block_time >= 0 &&
+          Number.isSafeInteger(row.observed_at) && row.observed_at >= 1e12) {
+          delays.push(Math.max(0, row.observed_at-row.block_time*1000));
+        }
         if (meta.err !== null) sample.failedExecution++;
         const n = meta.fee;
         if (typeof n === "number" && Number.isSafeInteger(n) && n >= 0) fee += BigInt(n);
@@ -65,6 +70,10 @@ function analyze(db, options = {}) {
         else sample.invalidNetworkFees++;
       } catch { sample.corrupt++; }
     }
+    delays.sort((a,b)=>a-b);
+    const quantile = p => delays.length ? delays[Math.ceil(p*delays.length)-1] : null;
+    sample.ingestDelayP50Ms = quantile(0.5);
+    sample.ingestDelayP95Ms = quantile(0.95);
     sample.reportedNetworkFeeLamports = fee.toString();
     result.evidence = { ...r, sample, sampledFractionPercent: percent(sample.analyzed, r.stored_observations) };
   }
