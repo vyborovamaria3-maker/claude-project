@@ -54,19 +54,26 @@ try {
     await page.getByRole("button", { name: /Trades\s+137\b/ })
       .waitFor({ state: "visible" });
 
-    // A malformed mint must not be passed to the analysis API.
-    await page.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
-    let invalidRequests = 0;
-    await page.unrouteAll();
-    await page.route(url => url.pathname === "/api/trade/analyze-stream", async route => {
-      invalidRequests += 1;
-      await route.abort();
-    });
-    await page.locator('[data-tag="trade.search_input"]').fill("invalid mint");
-    await page.locator('[data-tag="trade.search_submit"]').click();
-    assert.equal(invalidRequests, 0, "Invalid input must never initiate an analysis");
-    assert.equal(new URL(page.url()).searchParams.get("mint"), null,
-      "Invalid input must not navigate to analysis results");
+    // Test invalid input on a fresh tab to avoid state persisted by the
+    // successful analysis and in-flight navigation from the previous scenario.
+    const invalidPage = await context.newPage();
+    try {
+      let invalidRequests = 0;
+      await invalidPage.route(url => url.pathname === "/api/trade/analyze-stream", async route => {
+        invalidRequests += 1;
+        await route.abort();
+      });
+      await invalidPage.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
+      await invalidPage.waitForLoadState("load");
+      await invalidPage.locator('[data-tag="trade.search_input"]').fill("invalid mint");
+      await invalidPage.locator('[data-tag="trade.search_submit"]').click();
+      await invalidPage.getByText(/Некорректный mint/).waitFor({ state: "visible" });
+      assert.equal(invalidRequests, 0, "Invalid input must never initiate an analysis");
+      assert.equal(new URL(invalidPage.url()).searchParams.get("mint"), null,
+        "Invalid input must not navigate to analysis results");
+    } finally {
+      await invalidPage.close();
+    }
   } finally {
     await context.close();
   }
