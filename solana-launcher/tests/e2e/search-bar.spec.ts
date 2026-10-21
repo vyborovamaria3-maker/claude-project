@@ -20,7 +20,7 @@ test("pasting a mint loads the analyzed values returned by the API", async ({ pa
         summary: {
           totalVolumeSol: 5,
           totalVolumeUsd: 750,
-          totalTrades: 7,
+          totalTrades: 137,
           uniqueWallets: 3,
         },
         wallets: [],
@@ -39,7 +39,7 @@ test("pasting a mint loads the analyzed values returned by the API", async ({ pa
   await expect(page.locator('[data-tag="trade.search_input"]')).toHaveValue(TEST_MINT);
 
   await page.locator('[data-tag="trade.search_submit"]').click();
-  await expect(page.getByText("5.00 SOL")).toBeVisible();
+  await expect(page.getByText("137", { exact: true })).toBeVisible();
   expect(requestedMint).toBe(TEST_MINT);
   await expect(page).toHaveURL(new RegExp(`[?&]mint=${TEST_MINT}`));
 });
