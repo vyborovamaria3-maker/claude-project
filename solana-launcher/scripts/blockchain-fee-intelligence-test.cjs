@@ -42,6 +42,12 @@ function run() {
   assert.equal(fee.extractFees(mkTx("failed",{failed:true}),registry).length,1,
     "Failed tx still pays network fee but does not settle service or tip transfers");
   assert.equal(fee.extractFees(mkTx("unregistered"),fee.feeRegistry()).length,1);
+  const overlapping=fee.feeRegistry({jito_tip_accounts:["tip-account"],
+    services:[{id:"misleading-tip-service",recipient:"tip-account"},{id:"terminal-A",recipient:"service-account"}]});
+  assert.equal(fee.extractFees(mkTx("overlap"),overlapping).length,2,
+    "Conflicting recipient attribution must not produce a tip or service fee");
+  assert.equal(rollup.reconcile([{payer:null,slot:1,amount_atomic:"12"}],["payer","slot"]).status,"PARTIAL");
+
   assert.throws(()=>fee.extractFees({...mkTx("sig-1"),raw:{...mkTx("sig-1").raw,meta:null}}));
   assert.throws(()=>fee.extractFees({...mkTx("sig-1"),raw:{...mkTx("sig-1").raw,transaction:{...mkTx("sig-1").raw.transaction,signatures:["wrong"]}}}));
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"fee-intelligence-"));
