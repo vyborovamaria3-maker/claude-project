@@ -5,7 +5,6 @@ separate admin key may change settings.
 """
 
 import pytest
-
 from tests.conftest import (
     TEST_SUBSCRIPTION_ADMIN_KEY,
     TEST_SUBSCRIPTION_INTERNAL_KEY,
