@@ -32,6 +32,8 @@ function buildFeeRollups(db) {
     fee_kind TEXT, payer TEXT, recipient TEXT, service_id TEXT,
     amount_lamports TEXT, PRIMARY KEY(signature,event_key)
   );`);
+  const blockedSignatures = new Set(db.prepare(
+    "SELECT DISTINCT signature FROM fee_invalid_observations").all().map(r=>r.signature));
   const netGroups = new Map();
   const transfers = new Map();
   const iter = db.prepare(`SELECT signature,event_key,fee_kind,payer,recipient,service_id,amount_atomic,
@@ -57,13 +59,15 @@ function buildFeeRollups(db) {
     VALUES(?,?,?,?,?,?,?,?,?,?)`);
   const totals = new Map();
   const stats = { networkSignatures:0, networkConsistent:0, networkPartial:0,
-    networkConflicts:0, candidateTransferGroups:0, candidateConsistent:0, candidateConflicts:0 };
+    networkConflicts:0, networkWithheld:0, candidateTransferGroups:0, candidateConsistent:0, candidateConflicts:0 };
   db.transaction(() => {
     for (const [signature, group] of netGroups) {
       const hashes = new Set(group.map(r => r.raw_sha256));
       const legitimate = group.every(r => r.classification_status === "EXACT_ONCHAIN"
         && r.asset === "SOL" && r.economic_role === "INDEPENDENT");
-      const c = legitimate ? reconcile(group,["payer","slot","asset","fee_kind","economic_role"])
+      const c = blockedSignatures.has(signature)
+        ? {status:"WITHHELD",reason:"invalid_raw_observation_for_signature",value:null}
+        : legitimate ? reconcile(group,["payer","slot","asset","fee_kind","economic_role"])
         : {status:"CONFLICT",reason:"invalid_network_evidence_role",value:null};
       stats.networkSignatures++;
       if (c.status==="OBSERVED_CONSISTENT") {
@@ -72,6 +76,7 @@ function buildFeeRollups(db) {
         const t=totals.get(payer)||{n:0,amount:0n};
         t.n++;t.amount+=amount;totals.set(payer,t);
       } else if(c.status==="PARTIAL")stats.networkPartial++;
+      else if(c.status==="WITHHELD")stats.networkWithheld++;
       else stats.networkConflicts++;
       insertNet.run(signature,group.length,hashes.size,c.status,c.reason,
         c.value?.payer || null,c.value?.slot ?? null,c.value?.amount_atomic || null);
@@ -81,7 +86,9 @@ function buildFeeRollups(db) {
       const [signature,eventKey]=JSON.parse(rawKey);
       const legitimate=group.every(r=>r.classification_status==="CANDIDATE"
         && r.asset==="SOL" && r.economic_role==="INDEPENDENT");
-      const c=legitimate?reconcile(group,["fee_kind","payer","recipient","service_id","slot"])
+      const c=blockedSignatures.has(signature)
+        ?{status:"WITHHELD",reason:"invalid_raw_observation_for_signature",value:null}
+        :legitimate?reconcile(group,["fee_kind","payer","recipient","service_id","slot"])
         :{status:"CONFLICT",reason:"invalid_candidate_evidence_role",value:null};
       stats.candidateTransferGroups++;
       if(c.status==="OBSERVED_CONSISTENT")stats.candidateConsistent++;
