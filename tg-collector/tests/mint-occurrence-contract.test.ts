@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { Client } from "pg";
+import { Client, type PoolClient } from "pg";
 import { activeMintOccurrences } from "../src/analytics/token-candidate-occurrences.js";
 
 // Never run this integration test against a development or production database.
@@ -52,7 +52,7 @@ test("active mint occurrences exclude deleted, unresolved and old evidence", {
       INSERT INTO tg_ticker_mentions VALUES (1, 10, 'solana', 7, 'GOOD');
     `);
 
-    const result = await activeMintOccurrences(db as never, "mint-good", "solana", 7);
+    const result = await activeMintOccurrences(db as unknown as PoolClient, "mint-good", "solana", 7);
     assert.deepEqual(result.rows.map((row) => row.message_id), ["10"]);
     assert.equal(result.rows[0].text, "live edited");
     assert.equal(result.rows[0].peer_id, "-100123");
