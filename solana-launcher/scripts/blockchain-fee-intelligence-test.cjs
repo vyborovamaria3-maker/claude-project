@@ -8,6 +8,7 @@ const { createHash }=require("node:crypto");
 const Database=require("better-sqlite3");
 const fee=require("./blockchain-fee-intelligence.cjs");
 const rollup=require("./blockchain-fee-rollup.cjs");
+const {inspectNativeBalances}=require("./blockchain-fee-balance-check.cjs");
 const baseline=require("./blockchain-collector-baseline.cjs");
 const SYSTEM="11111111111111111111111111111111";
 function mkTx(signature,{failed=false,withTransfers=true,feeLamports=11000}={}) {
@@ -47,6 +48,14 @@ function run() {
   assert.equal(fee.extractFees(mkTx("overlap"),overlapping).length,2,
     "Conflicting recipient attribution must not produce a tip or service fee");
   assert.equal(rollup.reconcile([{payer:null,slot:1,amount_atomic:"12"}],["payer","slot"]).status,"PARTIAL");
+  assert.deepEqual(inspectNativeBalances({fee:11000,preBalances:[100000,200000],postBalances:[90000,199000]}),
+    {status:"MATCH",reason:"balance_sum_matches_reported_fee",deltaLamports:"-11000"});
+  assert.equal(inspectNativeBalances({fee:11000,preBalances:[10000],postBalances:[10000]}).status,"MISMATCH");
+  assert.equal(inspectNativeBalances({fee:11000,preBalances:[9007199254740993],postBalances:[0]}).status,"UNAVAILABLE");
+  assert.equal(inspectNativeBalances({fee:11000,preBalances:[],postBalances:[]}).status,"UNAVAILABLE");
+  assert.equal(inspectNativeBalances({fee:"90071992547409930001",
+    preBalances:["90071992547409930002"],postBalances:["1"]}).status,"MATCH");
+
 
   assert.throws(()=>fee.extractFees({...mkTx("sig-1"),raw:{...mkTx("sig-1").raw,meta:null}}));
   assert.throws(()=>fee.extractFees({...mkTx("sig-1"),raw:{...mkTx("sig-1").raw,transaction:{...mkTx("sig-1").raw.transaction,signatures:["wrong"]}}}));
@@ -75,7 +84,7 @@ function run() {
     assert.deepEqual(output.prepare("SELECT payer,unique_signatures,network_fee_lamports FROM fee_payer_observed_totals").all(),
       [{payer:"walletA",unique_signatures:2,network_fee_lamports:"22000"}]);
     assert.equal(output.prepare("SELECT COUNT(*) n FROM fee_transfer_consensus").get().n,2);
-    assert.equal(output.prepare("SELECT COUNT(*) n FROM fee_transfer_consensus WHERE status='OBSERVED_CONSISTENT'").get().n,2);
+    assert.equal(output.prepare("SELECT COUNT(*) n FROM fee_transfer_consensus WHERE status='CANDIDATE_CONSISTENT'").get().n,2);
     assert.equal(rollup.decimal("90071992547409930001").toString(),"90071992547409930001");
     assert.throws(()=>rollup.decimal("9007199254740993.1"));
 
@@ -116,6 +125,32 @@ function run() {
       const candidates=conflictingOutput.prepare("SELECT COUNT(*) n FROM fee_transfer_consensus WHERE signature='sig-1'").get().n;
       assert.equal(candidates,2,"Transfer candidates are kept separate from contradicted network totals");
     } finally { conflictingOutput.close(); }
+
+    // An omitted service-fee candidate in one RAW observation stays PARTIAL.
+    fixtureRow(source,"wallet","walletA",mkTx("sig-half"));
+    fixtureRow(source,"token","mint-half",mkTx("sig-half",{withTransfers:false}));
+    const mismatch=mkTx("sig-balance",{withTransfers:false});
+    mismatch.raw.meta.preBalances=[100000];mismatch.raw.meta.postBalances=[100000];
+    fixtureRow(source,"wallet","walletA",mismatch);
+    const matching=mkTx("sig-balanced",{withTransfers:false});
+    matching.raw.meta.preBalances=[100000];matching.raw.meta.postBalances=[89000];
+    fixtureRow(source,"wallet","walletA",matching);
+    const review=new Database(path.join(dir,"review.db"));
+    try {
+      const summary=fee.project(source,review,{registry,limit:20});
+      assert.equal(summary.balanceChecks.MISMATCH,1);
+      assert.equal(summary.balanceChecks.MATCH,1);
+      assert.equal(review.prepare("SELECT status FROM fee_network_consensus WHERE signature='sig-balance'").get().status,
+        "WITHHELD","Conservation mismatch cannot become a cost claim");
+      assert.equal(review.prepare("SELECT status FROM fee_network_consensus WHERE signature='sig-balanced'").get().status,
+        "OBSERVED_CONSISTENT");
+      assert.equal(review.prepare("SELECT status FROM fee_network_consensus WHERE signature='sig-half'").get().status,
+        "OBSERVED_CONSISTENT");
+      const candidates=review.prepare("SELECT status,reason FROM fee_transfer_consensus WHERE signature='sig-half' ORDER BY event_key").all();
+      assert.equal(candidates.length,2);
+      assert.ok(candidates.every(x=>x.status==="PARTIAL" && x.reason==="candidate_missing_from_some_raw_observations"));
+      assert.equal(review.prepare("SELECT count(*) n FROM fee_payer_observed_totals WHERE payer='walletA'").get().n,1);
+    } finally { review.close(); }
 
   } finally {
     output.close();source.close();fs.rmSync(dir,{recursive:true,force:true});
