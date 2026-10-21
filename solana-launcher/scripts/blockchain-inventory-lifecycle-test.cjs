@@ -7,6 +7,7 @@ const Database=require("better-sqlite3");
 const {normalizeFullTransaction}=require("./blockchain-alchemy-provider.cjs");
 const {inspectLifecycle,WSOL,TOKEN_2022}=require("./blockchain-inventory-lifecycle.cjs");
 const {main:historyMain,project}=require("./blockchain-inventory-history.cjs");
+const {coverage,assess}=require("./blockchain-inventory-readiness.cjs");
 const fixture=require("./fixtures/alchemy-saved-swaps.json");
 const TOKEN="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 function bal(owner,mint,amount){
@@ -129,6 +130,13 @@ function integration(){
     assert.equal(report.duplicateTargets,1);
     assert.equal(report.rejectedSignatures,2);
     assert.equal(report.financialLedgerEligible,false);
+    assert.equal(report.readiness.canPromoteToPnl,false);
+    assert.equal(report.readiness.canPromoteToAuthoritativeInventory,false);
+    assert.ok(report.readiness.blockers.includes("FINALITY_NOT_INDEPENDENTLY_VERIFIED"));
+    assert.ok(report.readiness.blockers.includes("OWNERSHIP_CONTINUITY_NOT_PROVEN"));
+    assert.ok(report.readiness.blockers.includes("INVENTORY_COST_BASIS_NOT_PROVEN"));
+    assert.ok(report.readiness.blockers.includes("INVALID_OR_DIVERGENT_RAW_SIGNATURES"));
+    assert.equal(report.readiness.coverage.state,"MISSING");
     assert.equal(report.ownerTransitionWarnings,1);
     assert.equal(report.ownerObservedSpans,2);
     const projected=new Database(outPath,{readonly:true});
@@ -144,6 +152,16 @@ function integration(){
     }finally{projected.close();}
     assert.deepEqual(fs.readFileSync(sourcePath),bytes,"Read-only history must not edit source bytes");
     assert.throws(()=>historyMain(["--db",sourcePath,"--out",outPath]),/must not exist/);
+    const readinessDb=new Database(":memory:");
+    try{
+      readinessDb.exec("CREATE TABLE chain_forensic_history_coverage(possible_gap INTEGER,backfill_complete INTEGER); INSERT INTO chain_forensic_history_coverage VALUES(0,1)");
+      assert.equal(coverage(readinessDb).state,"PROVIDER_FLAGS_OBSERVED");
+      assert.equal(assess(readinessDb,{sampleTruncated:false,rejectedSignatures:0,ownerTransitionWarnings:0}).canPromoteToPnl,false,
+        "Provider exhaustion is insufficient to assert finality or cost basis");
+      readinessDb.exec("INSERT INTO chain_forensic_history_coverage VALUES(1,0)");
+      assert.equal(coverage(readinessDb).state,"GAPS_OR_MISSING_COVERAGE");
+    }finally{readinessDb.close();}
+
     assert.throws(()=>historyMain(["--db",sourcePath,"--out",path.join(dir,"bad.db"),"--limit","1001"]),/Invalid limit/);
     // Direct project uses the same deterministic API as CLI.
     const db=new Database(sourcePath,{readonly:true}),small=new Database(":memory:");
