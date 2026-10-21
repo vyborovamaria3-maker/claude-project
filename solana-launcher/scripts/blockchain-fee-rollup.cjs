@@ -5,9 +5,6 @@ function decimal(value) {
   if (typeof value !== "string" || !/^\\d{1,40}$/.test(value)) throw new Error("Invalid atomic fee amount");
   return BigInt(value);
 }
-function keyOf(row, cols) {
-  return cols.map(k => row[k] === null ? "<NULL>" : String(row[k])).join("\u001e");
-}
 function reconcile(rows, fields, amountField = "amount_atomic") {
   if (!rows.length) throw new Error("Empty fee observation group");
   const first = rows[0];
