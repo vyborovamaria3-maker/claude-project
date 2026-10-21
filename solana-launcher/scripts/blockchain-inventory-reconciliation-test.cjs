@@ -4,6 +4,11 @@ const {normalizeFullTransaction}=require("./blockchain-alchemy-provider.cjs");
 const {decodeInventoryMovements}=require("./blockchain-inventory-decoder.cjs");
 const {atomic,reconcileInventoryEvidence}=require("./blockchain-inventory-reconciliation.cjs");
 const fixture=require("./fixtures/alchemy-saved-swaps.json");
+const fs=require("node:fs"),os=require("node:os"),path=require("node:path");
+const {gzipSync}=require("node:zlib");
+const {createHash}=require("node:crypto");
+const Database=require("better-sqlite3");
+const {main:inventoryReplay}=require("./blockchain-inventory-replay.cjs");
 const TOKEN_PROGRAM="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const amt=(amount,decimals=0)=>({amount:String(amount),decimals});
@@ -95,6 +100,31 @@ function run(){
     assert.ok(["OBSERVED_BALANCES_MATCH_MOVEMENTS","PARTIAL","MISMATCH","CONFLICT","NO_TOKEN_EVIDENCE"].includes(result.status),
       "Unexpected result for real signature "+item.signature+": "+result.status);
   }
+  // Bounded offline CLI audit: one valid saved RAW and one hash mismatch.
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"inventory-replay-"));
+  const filename=path.join(dir,"sample.db"), db=new Database(filename);
+  try{
+    db.exec("CREATE TABLE chain_seed_events(kind TEXT,address TEXT,signature TEXT,slot INTEGER,block_time INTEGER,payload_hash TEXT,payload_gzip BLOB,payload_bytes INTEGER)");
+    const insert=db.prepare("INSERT INTO chain_seed_events VALUES(?,?,?,?,?,?,?,?)");
+    const replayTx=normalizeFullTransaction(fixture[0]);
+    const payload=Buffer.from(JSON.stringify(replayTx));
+    const hash=createHash("sha256").update(payload).digest("hex");
+    insert.run("token","mint",replayTx.signature,replayTx.slot,replayTx.timestamp,hash,
+      gzipSync(payload),payload.length);
+    insert.run("wallet","wallet",replayTx.signature,replayTx.slot,replayTx.timestamp,
+      "0".repeat(64),gzipSync(payload),payload.length);
+    db.close();
+    const before=fs.readFileSync(filename);
+    const result=inventoryReplay(["--db",filename,"--limit","2"]);
+    assert.equal(result.sampledObservations,2);
+    assert.equal(result.uniqueSampleSignatures,1,"Duplicate targets are not unique transactions");
+    assert.equal(result.rawInvalid,1);
+    assert.equal(result.authority,"diagnostic_only");
+    assert.equal(result.financialLedgerEligible,false);
+    assert.equal(Object.values(result.statuses).reduce((a,b)=>a+b,0),1);
+    assert.deepEqual(fs.readFileSync(filename),before,"Read-only replay never mutates the SQLite file");
+    assert.throws(()=>inventoryReplay(["--db",filename,"--limit","1001"]));
+  } finally {if(db.open)db.close();fs.rmSync(dir,{recursive:true,force:true});}
   console.log("[blockchain-inventory-reconciliation] OK: exact atomic units, two-legged transfer, unknown owner, missing balances, conflicts, Token-2022 withholding, failed tx, 10 real fixtures");
 }
 run();
