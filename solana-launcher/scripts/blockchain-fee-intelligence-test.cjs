@@ -149,11 +149,21 @@ function run() {
     const matching=mkTx("sig-balanced",{withTransfers:false});
     matching.raw.meta.preBalances=[100000];matching.raw.meta.postBalances=[89000];
     fixtureRow(source,"wallet","walletA",matching);
+    fixtureRow(source,"wallet","walletA",mkTx("sig-unhashed"));
+    fixtureRow(source,"token","mint-unhashed",mkTx("sig-unhashed"));
+    source.prepare("UPDATE chain_seed_events SET payload_hash=NULL WHERE address='mint-unhashed'").run();
+    fixtureRow(source,"wallet","walletA",mkTx("sig-misanchored"));
+    fixtureRow(source,"token","mint-misanchored",mkTx("sig-misanchored"));
+    source.prepare("UPDATE chain_seed_events SET slot=999 WHERE address='mint-misanchored'").run();
     const review=new Database(path.join(dir,"review.db"));
     try {
       const summary=fee.project(source,review,{registry,limit:20});
       assert.equal(summary.balanceChecks.MISMATCH,1);
       assert.equal(summary.balanceChecks.MATCH,1);
+      assert.equal(review.prepare("SELECT status FROM fee_network_consensus WHERE signature='sig-unhashed'").get().status,
+        "WITHHELD","Missing stored RAW hash must never authorize a fee total");
+      assert.equal(review.prepare("SELECT status FROM fee_network_consensus WHERE signature='sig-misanchored'").get().status,
+        "WITHHELD","RAW slot disagreement must never authorize a fee total");
       assert.equal(review.prepare("SELECT status FROM fee_network_consensus WHERE signature='sig-balance'").get().status,
         "WITHHELD","Conservation mismatch cannot become a cost claim");
       assert.equal(review.prepare("SELECT status FROM fee_network_consensus WHERE signature='sig-balanced'").get().status,
