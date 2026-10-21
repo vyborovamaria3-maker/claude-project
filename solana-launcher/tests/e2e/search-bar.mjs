@@ -50,7 +50,7 @@ try {
     assert.equal(analysisResponse.status(), 200, "Analysis request must succeed");
     assert.equal(requestedMint, MINT, "Analysis must use the pasted mint");
     await page.waitForURL(url => url.searchParams.get("mint") === MINT);
-    await page.getByRole("button", { name: /Trades\\s+137\\b/ })
+    await page.getByRole("button", { name: /Trades\s+137\b/ })
       .waitFor({ state: "visible" });
 
     // A malformed mint must not be passed to the analysis API.
