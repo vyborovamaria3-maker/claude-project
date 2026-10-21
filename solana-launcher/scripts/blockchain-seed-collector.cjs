@@ -1524,7 +1524,7 @@ if (require.main === module) main().catch(error => {
 });
 module.exports = {
   collect,importFolders,refreshTargets,failTask,parseArgs,resolveBudgetSettings,initDb,appendDiscovered,appendDiscoveredWallets,persistEvents,processOne,claimOne,
-  syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
+  persistInventoryMovements,syncDexProgramSources,ensurePilotScope,addScopeMember,deferScopeMember,promoteDeferredWaves,shouldStopForRuntime,
   appendDiscoveredCreators,appendDiscoveredCreatorTokens,savePumpFunLaunches,startCollectionRun,reserveHeliusCredits,
   recordHeliusResponse,recordHeliusError,releaseTaskForBudget,finishCollectionRun,usageStatus,currentMonthKey,status,
   reserveAlchemyCu,recordAlchemyResponse,recordAlchemyError,CURSOR_VERSION,
