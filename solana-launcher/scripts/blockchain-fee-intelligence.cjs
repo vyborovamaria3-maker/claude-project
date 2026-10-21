@@ -21,7 +21,7 @@ function address(a) {
 }
 function feeRegistry(value = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Registry must be an object");
-  const tips = value.jito_tip_accounts || [];
+  const tips = value.tips instanceof Set ? [...value.tips] : (value.jito_tip_accounts || []);
   const services = value.services || [];
   if (!Array.isArray(tips) || !Array.isArray(services) || tips.length > 100 || services.length > 200)
     throw new Error("Registry arrays invalid or oversized");
