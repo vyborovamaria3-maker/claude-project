@@ -34,6 +34,9 @@ function buildFeeRollups(db) {
   );`);
   const blockedSignatures = new Set(db.prepare(
     "SELECT DISTINCT signature FROM fee_invalid_observations").all().map(r=>r.signature));
+  const balanceMismatches = new Set(db.prepare(
+    "SELECT DISTINCT signature FROM fee_balance_evidence WHERE balance_status='MISMATCH'"
+  ).all().map(r=>r.signature));
   const netGroups = new Map();
   const transfers = new Map();
   const iter = db.prepare(`SELECT signature,event_key,fee_kind,payer,recipient,service_id,amount_atomic,
@@ -58,6 +61,7 @@ function buildFeeRollups(db) {
     (signature,event_key,observation_count,status,reason,fee_kind,payer,recipient,service_id,amount_lamports)
     VALUES(?,?,?,?,?,?,?,?,?,?)`);
   const totals = new Map();
+  const networkStatuses = new Map();
   const stats = { networkSignatures:0, networkConsistent:0, networkPartial:0,
     networkConflicts:0, networkWithheld:0, candidateTransferGroups:0, candidateConsistent:0, candidateConflicts:0 };
   db.transaction(() => {
@@ -67,9 +71,12 @@ function buildFeeRollups(db) {
         && r.asset === "SOL" && r.economic_role === "INDEPENDENT");
       const c = blockedSignatures.has(signature)
         ? {status:"WITHHELD",reason:"invalid_raw_observation_for_signature",value:null}
+        : balanceMismatches.has(signature)
+        ? {status:"WITHHELD",reason:"native_balance_conservation_mismatch",value:null}
         : legitimate ? reconcile(group,["payer","slot","asset","fee_kind","economic_role"])
         : {status:"CONFLICT",reason:"invalid_network_evidence_role",value:null};
       stats.networkSignatures++;
+      networkStatuses.set(signature,c.status);
       if (c.status==="OBSERVED_CONSISTENT") {
         stats.networkConsistent++;
         const payer=c.value.payer, amount=decimal(c.value.amount_atomic);
@@ -86,12 +93,21 @@ function buildFeeRollups(db) {
       const [signature,eventKey]=JSON.parse(rawKey);
       const legitimate=group.every(r=>r.classification_status==="CANDIDATE"
         && r.asset==="SOL" && r.economic_role==="INDEPENDENT");
-      const c=blockedSignatures.has(signature)
+      const networkStatus = networkStatuses.get(signature);
+      let c = blockedSignatures.has(signature)
         ?{status:"WITHHELD",reason:"invalid_raw_observation_for_signature",value:null}
+        :balanceMismatches.has(signature)
+        ?{status:"WITHHELD",reason:"native_balance_conservation_mismatch",value:null}
+        :networkStatus!=="OBSERVED_CONSISTENT"
+        ?{status:"WITHHELD",reason:"network_evidence_not_consistent",value:null}
+        :group.length !== (netGroups.get(signature)?.length||0)
+        ?{status:"PARTIAL",reason:"candidate_missing_from_some_raw_observations",value:null}
         :legitimate?reconcile(group,["fee_kind","payer","recipient","service_id","slot"])
         :{status:"CONFLICT",reason:"invalid_candidate_evidence_role",value:null};
+      // Matching transfers remain candidate observations, not verified service fees.
+      if(c.status==="OBSERVED_CONSISTENT") c={...c,status:"CANDIDATE_CONSISTENT"};
       stats.candidateTransferGroups++;
-      if(c.status==="OBSERVED_CONSISTENT")stats.candidateConsistent++;
+      if(c.status==="CANDIDATE_CONSISTENT")stats.candidateConsistent++;
       else if(c.status==="CONFLICT")stats.candidateConflicts++;
       insertTransfer.run(signature,eventKey,group.length,c.status,c.reason,
         c.value?.fee_kind||null,c.value?.payer||null,c.value?.recipient||null,c.value?.service_id||null,
