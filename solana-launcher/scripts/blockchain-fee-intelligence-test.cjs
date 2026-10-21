@@ -107,6 +107,14 @@ function run() {
     assert.equal(output.prepare("SELECT count(*) n FROM fee_evidence WHERE fee_kind='service_fee_candidate' AND classification_status='CANDIDATE'").get().n,2);
     assert.equal(output.prepare("SELECT count(*) n FROM fee_evidence WHERE fee_kind='jito_tip_candidate'").get().n,2);
     assert.equal(output.prepare("SELECT count(*) n FROM fee_evidence WHERE fee_kind='network_base' OR fee_kind='priority_fee'").get().n,0);
+    source.exec(`CREATE TABLE chain_inventory_movements(
+      owner TEXT,mint TEXT,amount_raw TEXT,operation_type TEXT);
+      INSERT INTO chain_inventory_movements VALUES('walletA','mintA','100','transferChecked');
+      INSERT INTO chain_inventory_movements VALUES(NULL,NULL,NULL,'burn');
+      CREATE TABLE chain_forensic_history_coverage (
+        source_provider TEXT,backfill_complete INTEGER,possible_gap INTEGER);
+      INSERT INTO chain_forensic_history_coverage VALUES('alchemy',1,0);
+      INSERT INTO chain_forensic_history_coverage VALUES('alchemy',0,1);`);
     const audit=baseline.analyze(source,{sampleLimit:10});
     assert.equal(audit.diagnosticOnly,true);
     assert.equal(audit.evidence.stored_observations,4);
@@ -114,6 +122,17 @@ function run() {
     assert.equal(audit.evidence.sample.corrupt,1);
     assert.equal(audit.evidence.sample.failedExecution,1);
     assert.equal(audit.coverage,null,"Missing coverage table must not become a fake zero");
+    assert.equal(audit.inventoryQuality.movementRows,2);
+    assert.equal(audit.inventoryQuality.unknownOwnerRows,1);
+    assert.equal(audit.inventoryQuality.unknownMintRows,1);
+    assert.equal(audit.inventoryQuality.unknownAmountRows,1);
+    assert.equal(audit.inventoryQuality.ownershipCoveragePercent,50);
+    assert.equal(audit.inventoryQuality.authoritativeInventoryComplete,null);
+    assert.equal(audit.coverageEvidence.trackedTargets,2);
+    assert.equal(audit.coverageEvidence.providerExhausted,1);
+    assert.equal(audit.coverageEvidence.gapFlagged,1);
+    assert.equal(audit.coverageEvidence.trueFullHistoryTargets,null);
+
     assert.equal(audit.evidence.sample.reportedNetworkFeeLamports,"33000");
     assert.equal(audit.evidence.sample.ingestDelayP50Ms,500);
     assert.equal(audit.evidence.sample.ingestDelayP95Ms,500);
