@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Client, type PoolClient } from "pg";
 import { activeMintOccurrences } from "../src/analytics/token-candidate-occurrences.js";
+import { ANALYSIS_VERSION } from "../src/analytics/extract.js";
+import { SOLANA_CHAIN_ID } from "../src/analytics/token-intelligence.js";
 
 // Never run this integration test against a development or production database.
 const databaseUrl = process.env.TG_TEST_DATABASE_URL || process.env.DATABASE_URL;
@@ -44,15 +46,15 @@ test("active mint occurrences exclude deleted, unresolved and old evidence", {
         (2, 13, now(), 'old version', NULL, NULL),
         (2, 14, now(), 'different mint', NULL, NULL);
       INSERT INTO tg_token_candidates VALUES
-        (1, 10, 'solana', 'address', 'mint-good', 7, 'confirmed_token'),
-        (1, 11, 'solana', 'address', 'mint-good', 7, 'confirmed_token'),
-        (1, 12, 'solana', 'address', 'mint-good', 7, 'pending'),
-        (2, 13, 'solana', 'address', 'mint-good', 6, 'confirmed_token'),
-        (2, 14, 'solana', 'address', 'mint-other', 7, 'confirmed_token');
-      INSERT INTO tg_ticker_mentions VALUES (1, 10, 'solana', 7, 'GOOD');
+        (1, 10, '${SOLANA_CHAIN_ID}', 'address', 'mint-good', ${ANALYSIS_VERSION}, 'confirmed_token'),
+        (1, 11, '${SOLANA_CHAIN_ID}', 'address', 'mint-good', ${ANALYSIS_VERSION}, 'confirmed_token'),
+        (1, 12, '${SOLANA_CHAIN_ID}', 'address', 'mint-good', ${ANALYSIS_VERSION}, 'pending'),
+        (2, 13, '${SOLANA_CHAIN_ID}', 'address', 'mint-good', ${ANALYSIS_VERSION - 1}, 'confirmed_token'),
+        (2, 14, '${SOLANA_CHAIN_ID}', 'address', 'mint-other', ${ANALYSIS_VERSION}, 'confirmed_token');
+      INSERT INTO tg_ticker_mentions VALUES (1, 10, '${SOLANA_CHAIN_ID}', 7, 'GOOD');
     `);
 
-    const result = await activeMintOccurrences(db as unknown as PoolClient, "mint-good", "solana", 7);
+    const result = await activeMintOccurrences(db as unknown as PoolClient, "mint-good");
     assert.deepEqual(result.rows.map((row) => row.message_id), ["10"]);
     assert.equal(result.rows[0].text, "live edited");
     assert.equal(result.rows[0].peer_id, "-100123");
