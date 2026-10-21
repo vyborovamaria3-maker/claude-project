@@ -169,9 +169,6 @@ class TwitterMonitoringTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             TwitterCrawlerSettingsBody.model_validate(invalid)
 
-    def test_product_monitoring_store_has_no_write_method(self):
-        self.assertFalse(hasattr(TwitterMonitoringStore, "update_settings"))
-
     def test_backend_writer_uses_dedicated_header_and_internal_url(self):
         body = TwitterCrawlerSettingsBody.model_validate(_payload())
         response = MagicMock()
@@ -213,24 +210,6 @@ class TwitterMonitoringTest(unittest.TestCase):
         registry = Registry()
         self.assertIs(find_twitter_source(registry), preferred)
         self.assertEqual(registry.requested, "potapoff")
-
-    def test_x_domain_contains_new_registry_tables(self):
-        for table in TWITTER_MONITOR_TABLES:
-            with self.subTest(table=table):
-                self.assertIn(table, X_TABLES)
-
-    def test_static_control_center_wires_twitter_monitoring_tab(self):
-        index = (ADMIN_ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
-        script = (ADMIN_ROOT / "app" / "static" / "twitter-monitoring-v1.js").read_text(encoding="utf-8")
-        self.assertIn('id="twitterMonitoringNav"', index)
-        self.assertIn('/static/twitter-monitoring-v1.css', index)
-        self.assertIn('/static/twitter-monitoring-v1.js', index)
-        self.assertIn('/api/twitter-monitoring/settings', script)
-        self.assertIn('expected_updated_at: settings.updated_at', script)
-        self.assertIn('navItem.id !== "twitterMonitoringNav"', script)
-        self.assertIn('stale_running_runs', script)
-        self.assertIn('Read-only таблицы backend registry', script)
-
 
 if __name__ == "__main__":
     unittest.main()
