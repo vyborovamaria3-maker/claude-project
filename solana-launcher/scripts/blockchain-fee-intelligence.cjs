@@ -94,8 +94,16 @@ function decodeEvidence(row) {
   if (bytes.length !== row.payload_bytes) throw new Error("Payload length mismatch");
   const tx = JSON.parse(bytes.toString("utf8"));
   if (!tx || typeof tx !== "object" || tx.signature !== row.signature) throw new Error("Signature mismatch");
+  // A freshly computed hash without a stored source fingerprint is not a proof of integrity.
+  if (typeof row.payload_hash !== "string" || !/^[a-f0-9]{64}$/.test(row.payload_hash))
+    throw new Error("Missing trusted RAW hash");
   const hash = crypto.createHash("sha256").update(bytes).digest("hex");
-  if (row.payload_hash && row.payload_hash !== hash) throw new Error("RAW hash mismatch");
+  if (row.payload_hash !== hash) throw new Error("RAW hash mismatch");
+  if (row.slot != null && tx.slot != null && row.slot !== tx.slot)
+    throw new Error("RAW slot mismatch");
+  const eventTime = tx.blockTime ?? tx.timestamp ?? null;
+  if (row.block_time != null && eventTime != null && row.block_time !== eventTime)
+    throw new Error("RAW block time mismatch");
   return {tx, hash};
 }
 function prepareOutput(db) {
