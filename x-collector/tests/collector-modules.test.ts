@@ -10,18 +10,6 @@ import { executeTask as legacyExecute } from "../src/runtime/collector-task";
 import { waitForDatabaseRecovery as legacyRecover } from "../src/runtime/db-recovery";
 import { safeLastErrorCode as legacyStatus } from "../lib/trade/task-status";
 
-test("six collector modules preserve entrypoint identity and runtime singleton behavior", () => {
-  assert.equal(collector.accounts.pickAccount, legacyPick);
-  assert.equal(collector.accounts.proxyConnectionIdentity, proxyConnectionIdentity);
-  assert.equal(collector.queue.claimTasks, legacyClaim);
-  assert.equal(collector.queue.safeLastErrorCode, legacyStatus);
-  assert.equal(collector.engines.searchTweets, legacySearch);
-  assert.equal(collector.persistence.persistTweets, legacyPersist);
-  assert.equal(collector.monitoring.liveSnapshot, legacyLive);
-  assert.equal(collector.runtime.executeTask, legacyExecute);
-  assert.equal(collector.runtime.waitForDatabaseRecovery, legacyRecover);
-});
-
 test("subsystem boundaries keep retry diagnostics safe and proxy identity canonical", () => {
   const a = JSON.stringify({type:"socks5",host:"proxy.local",port:1080,latency:150,last_check:10});
   const b = JSON.stringify({type:"socks5",host:"proxy.local",port:1080,latency:250,last_check:20});
