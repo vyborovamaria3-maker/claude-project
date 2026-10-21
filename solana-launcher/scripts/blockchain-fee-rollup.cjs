@@ -2,7 +2,7 @@
 // Deterministic, offline, transaction-level reconciliation of *observed* fee evidence.
 // Never mutates collector input or canonical PnL. No SQLite SUM of large integers.
 function decimal(value) {
-  if (typeof value !== "string" || !/^\\d{1,40}$/.test(value)) throw new Error("Invalid atomic fee amount");
+  if (typeof value !== "string" || !/^\d{1,40}$/.test(value)) throw new Error("Invalid atomic fee amount");
   return BigInt(value);
 }
 function reconcile(rows, fields, amountField = "amount_atomic") {
