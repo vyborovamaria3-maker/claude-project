@@ -21,7 +21,7 @@ function analyze(db, options = {}) {
     "chain_collection_budget_ledger", "chain_inventory_movements", "chain_dex_indexed_signatures"];
   const present = Object.fromEntries(tables.map(t => [t, tableExists(db, t)]));
   const result = { schema: "blockchain-baseline-v1", diagnosticOnly: true, observedAt: new Date().toISOString(),
-    sampleLimit, present, coverage: null, evidence: null, decoding: null, costs: null,
+    sampleLimit, present, coverage: null, evidence: null, decoding: null, inventoryQuality: null, costs: null,
     limitations: ["A SQLite snapshot does not prove complete Solana history.", "Unknown denominators remain null.",
       "This baseline does not establish transaction finality or authoritative PnL."] };
   if (present.chain_seed_targets) {
@@ -86,6 +86,27 @@ function analyze(db, options = {}) {
     result.decoding = { walletCacheRows: getCount("chain_wallet_trades"), canonicalTrades: getCount("token_trades"),
       inventoryMovementRows: getCount("chain_inventory_movements"), verifiedTradePercent: null,
       decoderCoveragePercent: null, description: "Counts are not evidence of correct trade decoding." };
+  }
+  if (present.chain_inventory_movements) {
+    const r = one(db, `SELECT COUNT(*) movementRows,
+      COALESCE(SUM(CASE WHEN owner IS NULL OR owner='' THEN 1 ELSE 0 END),0) unknownOwnerRows,
+      COALESCE(SUM(CASE WHEN mint IS NULL OR mint='' THEN 1 ELSE 0 END),0) unknownMintRows,
+      COALESCE(SUM(CASE WHEN amount_raw IS NULL OR amount_raw='' THEN 1 ELSE 0 END),0) unknownAmountRows,
+      COALESCE(SUM(CASE WHEN operation_type IN ('transfer','transferChecked') THEN 1 ELSE 0 END),0) transferLegRows,
+      COALESCE(SUM(CASE WHEN operation_type IN ('mintTo','mintToChecked','burn','burnChecked') THEN 1 ELSE 0 END),0) mintBurnLegRows
+      FROM chain_inventory_movements`);
+    result.inventoryQuality = { ...r, ownershipCoveragePercent: percent(r.movementRows-r.unknownOwnerRows,r.movementRows),
+      authoritativeInventoryComplete: null,
+      limitation: "Instruction legs are not an owner-reconciled inventory ledger or a basis for authoritative FIFO." };
+  }
+  if (present.chain_forensic_history_coverage) {
+    const r=one(db, `SELECT COUNT(*) trackedTargets,
+      COALESCE(SUM(CASE WHEN backfill_complete=1 THEN 1 ELSE 0 END),0) providerExhausted,
+      COALESCE(SUM(CASE WHEN possible_gap<>0 THEN 1 ELSE 0 END),0) gapFlagged,
+      COALESCE(SUM(CASE WHEN source_provider IS NULL OR source_provider='' THEN 1 ELSE 0 END),0) missingProvider
+      FROM chain_forensic_history_coverage`);
+    result.coverageEvidence = { ...r, trueFullHistoryTargets:null,
+      limitation:"Pagination exhaustion is not decoder or account-wide completeness." };
   }
   if (present.chain_alchemy_usage_requests) {
     result.costs = { alchemy: one(db, `SELECT COUNT(*) attempts, SUM(CASE WHEN http_status=429 THEN 1 ELSE 0 END) rate_limited,
