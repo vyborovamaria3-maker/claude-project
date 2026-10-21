@@ -12,6 +12,10 @@ from unittest.mock import patch
 
 import psycopg
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.testclient import TestClient
+from app.auth import require_admin
+
 from app.config import Settings
 from app.intelligence_view import (
     IntelligenceViewError,
@@ -144,20 +148,36 @@ class IntelligenceViewStoreTests(unittest.TestCase):
         with self.assertRaises(IntelligenceViewError):
             self.store.recent_documents(10)
 
-    def test_router_is_admin_protected_and_read_only(self) -> None:
-        router = build_intelligence_router()
-        paths = {route.path for route in router.routes}
-        methods = {method for route in router.routes for method in route.methods}
-        self.assertEqual(
-            paths,
-            {
+    def test_router_denies_anonymous_access_and_exposes_read_only_results(self) -> None:
+        app = FastAPI()
+        app.state.intelligence_view = self.store
+        app.include_router(build_intelligence_router())
+
+        def require_test_admin(request: Request):
+            if request.headers.get("x-test-admin") != "yes":
+                raise HTTPException(status_code=401)
+
+        app.dependency_overrides[require_admin] = require_test_admin
+        with TestClient(app) as client:
+            for path in (
                 "/api/intelligence/status",
                 "/api/intelligence/jobs",
                 "/api/intelligence/documents",
-            },
-        )
-        self.assertEqual(methods, {"GET"})
-        self.assertEqual(len(router.dependencies), 1)
+            ):
+                self.assertEqual(client.get(path).status_code, 401)
+                self.assertEqual(
+                    client.post(path, headers={"x-test-admin": "yes"}).status_code,
+                    405,
+                )
+            status = client.get(
+                "/api/intelligence/status", headers={"x-test-admin": "yes"}
+            )
+            self.assertEqual(status.status_code, 200)
+            self.assertEqual(status.json()["document_total"], 1)
+            jobs = client.get("/api/intelligence/jobs", headers={"x-test-admin": "yes"})
+            self.assertEqual(jobs.status_code, 200)
+            self.assertEqual(jobs.json()["count"], 1)
+            self.assertNotIn("job-secret", jobs.text)
 
 
 class FakePgResult:
