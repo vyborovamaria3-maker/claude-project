@@ -68,13 +68,15 @@ function extractFees(tx, registry = feeRegistry()) {
     const from = info?.source, to = info?.destination, n = atomic(info?.lamports);
     if (typeof from !== "string" || typeof to !== "string" || !from || !to || from === to || n === null || n === 0n)
       continue;
+    // Conflicting registry claims are ambiguity, not proof of a fee type.
+    const matches = registry.services.filter(s => s.recipient === to
+      && ((s.from_slot == null && s.to_slot == null) || slot !== null)
+      && (s.from_slot == null || slot >= s.from_slot)
+      && (s.to_slot == null || slot <= s.to_slot));
+    if (registry.tips.has(to) && matches.length) continue;
     let kind, serviceId = null, reason;
     if (registry.tips.has(to)) {kind="jito_tip_candidate";reason="known_tip_recipient_transfer_not_bundle_proof";}
     else {
-      const matches = registry.services.filter(s => s.recipient === to
-        && ((s.from_slot == null && s.to_slot == null) || slot !== null)
-        && (s.from_slot == null || slot >= s.from_slot)
-        && (s.to_slot == null || slot <= s.to_slot));
       if (matches.length !== 1) continue;
       kind="service_fee_candidate"; serviceId=matches[0].id;
       reason="registered_recipient_only_not_proof_of_service_fee";
