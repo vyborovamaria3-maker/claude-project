@@ -18,6 +18,7 @@ async function runBrowser(name, type) {
           const response = await page.goto(baseURL + route, {
             waitUntil: "domcontentloaded",
           });
+          await page.waitForLoadState("load", { timeout: 15_000 });
           assert(response && response.status() < 500,
             `${name} ${route}: application returned HTTP ${response?.status()}`);
           assert.deepEqual(pageErrors, [], `${name} ${route}: browser runtime failed`);
