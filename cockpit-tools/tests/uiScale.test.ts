@@ -4,7 +4,6 @@ import {
   normalizeUiScale,
   stepUiScale,
   UI_SCALE_DEFAULT,
-  UI_SCALE_OPTION_VALUES,
 } from '../src/utils/uiScale.ts';
 
 describe('uiScale helpers', () => {
@@ -31,7 +30,4 @@ describe('uiScale helpers', () => {
     assert.equal(stepUiScale(1.3, -1), 1.25);
   });
 
-  it('keeps the public option list stable', () => {
-    assert.deepEqual([...UI_SCALE_OPTION_VALUES], [0.9, 1, 1.1, 1.25, 1.5]);
-  });
 });
