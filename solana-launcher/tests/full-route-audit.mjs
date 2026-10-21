@@ -67,6 +67,11 @@ async function run() {
     await browser.close();
   }
 
+  const outputDir = path.resolve("test-results/full-route-audit");
+  await fs.mkdir(outputDir, { recursive: true });
+  await fs.writeFile(path.join(outputDir, "report.json"),
+    JSON.stringify({ routes, failureCount: failures.length, failures }, null, 2));
+
   if (failures.length) {
     console.error(failures.join("\n"));
     process.exitCode = 1;
