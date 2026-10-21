@@ -70,7 +70,9 @@ function extractFees(tx, registry = feeRegistry()) {
     let kind, serviceId = null, reason;
     if (registry.tips.has(to)) {kind="jito_tip_candidate";reason="known_tip_recipient_transfer_not_bundle_proof";}
     else {
-      const matches = registry.services.filter(s => s.recipient === to && (s.from_slot == null || slot >= s.from_slot)
+      const matches = registry.services.filter(s => s.recipient === to
+        && ((s.from_slot == null && s.to_slot == null) || slot !== null)
+        && (s.from_slot == null || slot >= s.from_slot)
         && (s.to_slot == null || slot <= s.to_slot));
       if (matches.length !== 1) continue;
       kind="service_fee_candidate"; serviceId=matches[0].id;
@@ -134,14 +136,15 @@ function project(sourceDb, outputDb, options = {}) {
   });
   for (const row of sourceDb.prepare(sql).iterate(limit)) {
     stats.observations++;
+    let decoded,events;
     try {
-      const decoded = decodeEvidence(row);
-      const events = extractFees(decoded.tx,registry);
-      write(row,decoded,events);
-      stats.networkFeeObservations++;
-      stats.candidateTransfers += events.length-1;
-      stats.exportedEvents += events.length;
-    } catch { stats.invalidEvidence++; } // Never silently promote malformed evidence.
+      decoded = decodeEvidence(row);
+      events = extractFees(decoded.tx,registry);
+    } catch { stats.invalidEvidence++; continue; } // Malformed evidence is never promoted.
+    write(row,decoded,events); // Output DB failure must abort rather than be hidden as bad RAW.
+    stats.networkFeeObservations++;
+    stats.candidateTransfers += events.length-1;
+    stats.exportedEvents += events.length;
   }
   outputDb.prepare("INSERT INTO fee_projection_info(key,value) VALUES(?,?)")
     .run("run_manifest",JSON.stringify({...stats,limit,generatedAt:new Date().toISOString()}));
