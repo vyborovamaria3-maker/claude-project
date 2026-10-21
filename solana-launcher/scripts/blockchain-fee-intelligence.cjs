@@ -7,6 +7,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { gunzipSync } = require("node:zlib");
 const { buildFeeRollups } = require("./blockchain-fee-rollup.cjs");
+const { inspectNativeBalances } = require("./blockchain-fee-balance-check.cjs");
 const MAX_RAW_BYTES = 2 * 1024 * 1024;
 const MAX_OBSERVATIONS = 5000;
 const SYSTEM = "11111111111111111111111111111111";
@@ -109,6 +110,13 @@ function prepareOutput(db) {
     economic_role TEXT NOT NULL, evidence_path TEXT NOT NULL, reason TEXT NOT NULL,
     PRIMARY KEY(target_kind,target_address,signature,raw_revision,event_key)
   );
+  CREATE TABLE fee_balance_evidence (
+    target_kind TEXT NOT NULL, target_address TEXT NOT NULL, signature TEXT NOT NULL,
+    raw_revision INTEGER NOT NULL, raw_sha256 TEXT NOT NULL, balance_status TEXT NOT NULL,
+    reason TEXT NOT NULL, delta_lamports TEXT,
+    PRIMARY KEY(target_kind,target_address,signature,raw_revision)
+  );
+  CREATE INDEX idx_fee_balance_signature ON fee_balance_evidence(signature,balance_status);
   CREATE TABLE fee_invalid_observations (
     target_kind TEXT NOT NULL, target_address TEXT NOT NULL, signature TEXT NOT NULL,
     raw_revision INTEGER, reason TEXT NOT NULL,
@@ -131,16 +139,21 @@ function project(sourceDb, outputDb, options = {}) {
   const insert = outputDb.prepare(`INSERT INTO fee_evidence(target_kind,target_address,signature,raw_revision,
     raw_sha256,event_key,slot,block_time,fee_kind,amount_atomic,asset,payer,recipient,service_id,
     classification_status,economic_role,evidence_path,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const insertBalance = outputDb.prepare(`INSERT INTO fee_balance_evidence
+    (target_kind,target_address,signature,raw_revision,raw_sha256,balance_status,reason,delta_lamports)
+    VALUES(?,?,?,?,?,?,?,?)`);
   const insertInvalid = outputDb.prepare(`INSERT OR REPLACE INTO fee_invalid_observations
     (target_kind,target_address,signature,raw_revision,reason) VALUES(?,?,?,?,?)`);
   const stats = {schema:"blockchain-fee-evidence-v1",diagnosticOnly:true,observations:0,invalidEvidence:0,
-    networkFeeObservations:0,candidateTransfers:0,exportedEvents:0,
+    networkFeeObservations:0,candidateTransfers:0,exportedEvents:0,balanceChecks:{MATCH:0,MISMATCH:0,UNAVAILABLE:0},
     limitations:["Only meta.fee is exact; its base/priority split is unknown.",
       "Recipient matches are candidates, not proven service fees or Jito bundle tips.",
       "No DEX embedded fees, SPL transfer fees, or historical FX rates are inferred.",
       "Duplicated signatures across targets are separate observations; do not sum them globally.",
       "Source is the latest RAW revision per target, not a completeness proof."]};
-  const write = outputDb.transaction((row, decoded, events) => {
+  const write = outputDb.transaction((row, decoded, events, balanceCheck) => {
+    insertBalance.run(row.kind,row.address,row.signature,row.raw_revision||1,decoded.hash,
+      balanceCheck.status,balanceCheck.reason,balanceCheck.deltaLamports);
     for (const e of events) insert.run(row.kind,row.address,row.signature,row.raw_revision||1,decoded.hash,
       e.key,row.slot,row.block_time,e.kind,e.amountAtomic,e.asset,e.payer,e.recipient,
       e.serviceId||null,e.status,e.economicRole,e.evidence,e.classificationReason);
@@ -157,7 +170,9 @@ function project(sourceDb, outputDb, options = {}) {
         "raw_or_execution_evidence_invalid");
       continue;
     } // Bad RAW is retained as a quality blocker for the same signature.
-    write(row,decoded,events); // Output DB failure must abort rather than be hidden as bad RAW.
+    const check=inspectNativeBalances(decoded.tx.raw?.meta || decoded.tx.meta || decoded.tx.raw?.transaction?.meta);
+    write(row,decoded,events,check); // Storage failure must abort, not masquerade as bad RAW.
+    stats.balanceChecks[check.status]++;
     stats.networkFeeObservations++;
     stats.candidateTransfers += events.length-1;
     stats.exportedEvents += events.length;
