@@ -5,7 +5,7 @@ import { Client } from "pg";
 import { activeMintOccurrences } from "../src/analytics/token-candidate-occurrences.js";
 
 // Never run this integration test against a development or production database.
-const databaseUrl = process.env.TG_TEST_DATABASE_URL;
+const databaseUrl = process.env.TG_TEST_DATABASE_URL || process.env.DATABASE_URL;
 const isolated = Boolean(databaseUrl && new URL(databaseUrl).pathname.endsWith("_test"));
 
 test("active mint occurrences exclude deleted, unresolved and old evidence", {
