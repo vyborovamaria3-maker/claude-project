@@ -75,6 +75,22 @@ npm run blockchain:lifecycle-audit -- --db /absolute/path/trade.db --out /absolu
 Граница выборки — не более 1000 RAW-наблюдений, а не 1000 уникальных
 финализированных транзакций.
 
+## Ограничитель готовности PnL
+
+`blockchain-inventory-readiness.cjs` добавляет в manifest
+`readiness.canPromoteToAuthoritativeInventory=false` и
+`readiness.canPromoteToPnl=false` вместе с reason codes.
+Он читает `chain_forensic_history_coverage`, если таблица есть, и
+различает отсутствующее покрытие и явные флаги неполного backfill.
+
+Даже `PROVIDER_FLAGS_OBSERVED` **не** означает verified finality,
+полной истории владения и доказанной cost basis.
+Блокировки `FINALITY_NOT_INDEPENDENTLY_VERIFIED`,
+`OWNERSHIP_CONTINUITY_NOT_PROVEN` и
+`INVENTORY_COST_BASIS_NOT_PROVEN` остаются до отдельной
+проверяемой цепочки доказательств. Никакой конфигурационный флаг
+в этом PR не может снять их автоматически.
+
 ## Следующий блок работ перед полноценным Inventory Ledger
 
 1. Дополнить реальные RAW-фикстуры Token-2022 transfer fees, withheld balance,
