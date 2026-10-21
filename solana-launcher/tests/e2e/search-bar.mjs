@@ -55,8 +55,9 @@ try {
     });
     await page.locator('[data-tag="trade.search_input"]').fill("invalid mint");
     await page.locator('[data-tag="trade.search_submit"]').click();
-    await page.getByText(/Некорректный mint/).waitFor({ state: "visible" });
     assert.equal(invalidRequests, 0, "Invalid input must never initiate an analysis");
+    assert.equal(new URL(page.url()).searchParams.get("mint"), null,
+      "Invalid input must not navigate to analysis results");
   } finally {
     await context.close();
   }
