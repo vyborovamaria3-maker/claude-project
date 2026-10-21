@@ -50,7 +50,7 @@ async function run() {
             waitUntil: "domcontentloaded", timeout: 30_000,
           });
           await page.waitForLoadState("load", { timeout: 15_000 });
-          if (!response || response.status() >= 500) {
+          if (!response || response.status() >= 400) {
             failures.push(`${route}: HTTP ${response?.status() ?? "no response"}`);
           }
           if (pageErrors.length) failures.push(`${route}: ${pageErrors.join(" | ")}`);
