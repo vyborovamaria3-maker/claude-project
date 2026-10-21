@@ -65,8 +65,18 @@ try {
       });
       await invalidPage.goto(`${BASE_URL}/trade/analysis`, { waitUntil: "domcontentloaded" });
       await invalidPage.waitForLoadState("load");
-      await invalidPage.locator('[data-tag="trade.search_input"]').fill("invalid mint");
-      await invalidPage.locator('[data-tag="trade.search_submit"]').click();
+      const input = invalidPage.locator('[data-tag="trade.search_input"]');
+      const submit = invalidPage.locator('[data-tag="trade.search_submit"]');
+      // A freshly loaded Next.js page can show server-rendered form controls
+      // before React hydration. Retry the real input interaction until its
+      // observable enabled state confirms that the change handler is attached.
+      for (let attempt = 0; attempt < 20 && !(await submit.isEnabled()); attempt++) {
+        await input.fill("");
+        await input.fill("invalid mint");
+        if (!(await submit.isEnabled())) await invalidPage.waitForTimeout(100);
+      }
+      assert(await submit.isEnabled(), "SearchBar did not become interactive");
+      await submit.click();
       await invalidPage.getByText(/Некорректный mint/).waitFor({ state: "visible" });
       assert.equal(invalidRequests, 0, "Invalid input must never initiate an analysis");
       assert.equal(new URL(invalidPage.url()).searchParams.get("mint"), null,
