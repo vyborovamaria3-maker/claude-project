@@ -11,7 +11,7 @@ function reconcile(rows, fields, amountField = "amount_atomic") {
   const same = rows.every(row => fields.every(field => row[field] === first[field])
     && decimal(row[amountField]) === decimal(first[amountField]));
   if (!same) return { status: "CONFLICT", reason: "observed_fee_disagreement", value: null };
-  if (first.payer == null || first.slot == null) {
+  if (typeof first.payer !== "string" || !first.payer.trim() || !Number.isSafeInteger(first.slot) || first.slot < 0) {
     return { status: "PARTIAL", reason: "missing_fee_payer_or_slot", value: null };
   }
   return { status: "OBSERVED_CONSISTENT", reason: "matching_raw_observations_not_finality_proof", value: first };
