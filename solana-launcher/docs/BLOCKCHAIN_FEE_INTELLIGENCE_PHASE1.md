@@ -160,6 +160,30 @@ Raydium/Orca/Jupiter decoder fixtures и историческая оценка �
 поэтому отсутствие другого наблюдения в выборке не доказывает полное
 покрытие сети или идентичность всех версий источника.
 
+## Продолжение: инвентаризация качества и строгая проверка источника
+
+В read-only baseline появились `inventoryQuality` и `coverageEvidence`.
+Отчёт показывает количество SPL movement legs, строки с неизвестным owner,
+mint и raw amount, а также наблюдаемые gap/backfill-флаги.
+`authoritativeInventoryComplete` и `trueFullHistoryTargets`
+сохраняются `null`: этих инвариантов нельзя доказать количеством строк.
+
+При построении Fee Intelligence наличие только корректного gzip недостаточно.
+Сохранённый `payload_hash` обязателен и сверяется с SHA-256 распакованного RAW.
+Дополнительно сверяются `signature`, `slot` и доступный block_time
+между записью SQLite и RAW. Legacy-строки без сохранённого hash,
+расходящиеся slots/times и повреждённые payloads фиксируются как
+`fee_invalid_observations` и блокируют итог по signature.
+
+**Тестирование:** десять сохранённых реальных Alchemy swap receipts
+покрывают проверку `sum(postBalances)-sum(preBalances) == -meta.fee`.
+В синтетических adversarial-фикстурах дополнительно проверены отсутствие
+инструкции на части наблюдений, неподтверждённый source hash,
+несовпадение slot и явный native balance mismatch.
+
+Эти проверки не завершают реконструкцию inventory и не делают PnL
+авторитетным. Они формируют диагностический список настоящих пробелов.
+
 ## Следующие этапы (не выполнены данным PR)
 
 1. Расширить сохранённые adversarial DEX fixtures для Raydium/Orca/Jupiter,
