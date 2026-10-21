@@ -26,7 +26,7 @@ async def test_checkout_can_read_settings_but_cannot_update_them(client):
     forbidden = await client.put(
         SETTINGS,
         headers=CHECKOUT,
-        json={"demo_days": 17},
+        json={**before.json(), "demo_days": 17},
     )
     assert forbidden.status_code == 403
 
@@ -37,9 +37,12 @@ async def test_checkout_can_read_settings_but_cannot_update_them(client):
 
 @pytest.mark.asyncio
 async def test_admin_can_update_settings_but_cannot_access_orders(client):
-    assert (await client.get(SETTINGS, headers=ADMIN)).status_code == 200
+    initial = await client.get(SETTINGS, headers=ADMIN)
+    assert initial.status_code == 200
 
-    changed = await client.put(SETTINGS, headers=ADMIN, json={"demo_days": 17})
+    changed = await client.put(
+        SETTINGS, headers=ADMIN, json={**initial.json(), "demo_days": 17}
+    )
     assert changed.status_code == 200
     assert changed.json()["demo_days"] == 17
 
@@ -54,5 +57,9 @@ async def test_admin_can_update_settings_but_cannot_access_orders(client):
 @pytest.mark.asyncio
 async def test_subscription_endpoints_reject_missing_credentials(client):
     assert (await client.get(SETTINGS)).status_code == 403
-    assert (await client.put(SETTINGS, json={"demo_days": 17})).status_code == 403
+    initial = await client.get(SETTINGS, headers=CHECKOUT)
+    assert initial.status_code == 200
+    assert (
+        await client.put(SETTINGS, json={**initial.json(), "demo_days": 17})
+    ).status_code == 403
     assert (await client.get(ORDER)).status_code == 403
