@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "solana-launcher/**"
+      - "admin-site/app/static/analysis-confirm-v5.js"
+      - "admin-site/tests/analysis-confirmation-browser.mjs"
       - ".github/workflows/frontend-quality-ci.yml"
 
 permissions:
@@ -90,7 +92,7 @@ jobs:
           cat "$QUALITY_LOG"
           exit 1
 
-      - name: Cross-browser smoke
+      - name: Cross-browser and SearchBar behavior smoke
         run: |
           PLAYWRIGHT_VERSION="$(node -p 'require("playwright/package.json").version')"
           docker run --rm --network host --ipc=host \
@@ -98,7 +100,7 @@ jobs:
             -v "$PWD:/work" \
             -w /work \
             "mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble" \
-            node tests/cross-browser-smoke.mjs
+            sh -lc 'node tests/cross-browser-smoke.mjs && node tests/e2e/search-bar.mjs'
 
       - name: Install isolated quality tools
         run: |
