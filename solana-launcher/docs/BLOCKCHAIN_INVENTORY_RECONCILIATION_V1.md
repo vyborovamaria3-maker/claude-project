@@ -53,6 +53,23 @@ npm run blockchain:inventory-audit -- --db /absolute/path/to/trade.db --limit 20
 полного декодирования Jupiter/Raydium/Orca, достаточного cost basis,
 безусловной финальности или готовности к авторитетному FIFO/PnL.
 
+## Исправление безопасности RAW-revisions
+
+`persistInventoryMovements` теперь атомарно заменяет **весь набор legs**
+для конкретной `(target_kind,target_address,signature)`, а не только
+обновляет совпавшие индексы. Если очередной RAW больше не содержит
+распознанного transfer, прошлые legs удаляются и не становятся
+фиктивными движениями inventory.
+
+Операция выполняется внутри существующего `processOne` SQLite transaction,
+в том же commit вместе с RAW revision, lease fence и checkpoint.
+Регрессионный тест проверяет переход `2 legs → 0 legs` и rollback после
+искусственной ошибки; исходный RAW и inventory должны остаться в
+предыдущем согласованном состоянии.
+
+Замена не делает исторический Token-2022 / WSOL / ownership ledger полным:
+это исправление только **согласованности проекции с текущей RAW-ревизией**.
+
 ## Quality gates перед PnL
 
 Для следующего этапа потребуются slot-time ownership intervals,
