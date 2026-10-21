@@ -23,8 +23,8 @@ function mkTx(signature,{failed=false,withTransfers=true,feeLamports=11000}={}) 
 }
 function fixtureRow(db,kind,address,tx) {
   const serial=JSON.stringify(tx),bytes=Buffer.from(serial);
-  db.prepare("INSERT INTO chain_seed_events(kind,address,signature,raw_revision,payload_hash,payload_gzip,payload_bytes,slot,block_time) VALUES(?,?,?,?,?,?,?,?,?)")
-    .run(kind,address,tx.signature,1,createHash("sha256").update(bytes).digest("hex"),gzipSync(bytes),bytes.length,123,1700000000);
+  db.prepare("INSERT INTO chain_seed_events(kind,address,signature,raw_revision,payload_hash,payload_gzip,payload_bytes,slot,block_time,observed_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+    .run(kind,address,tx.signature,1,createHash("sha256").update(bytes).digest("hex"),gzipSync(bytes),bytes.length,123,1700000000,1700000000500);
 }
 function run() {
   assert.equal(fee.atomic("90071992547409930001").toString(),"90071992547409930001");
@@ -46,7 +46,7 @@ function run() {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"fee-intelligence-"));
   const source=new Database(path.join(dir,"source.db")),output=new Database(path.join(dir,"out.db"));
   try {
-    source.exec("CREATE TABLE chain_seed_events (kind TEXT,address TEXT,signature TEXT,raw_revision INTEGER,payload_hash TEXT,payload_gzip BLOB,payload_bytes INTEGER,slot INTEGER,block_time INTEGER)");
+    source.exec("CREATE TABLE chain_seed_events (kind TEXT,address TEXT,signature TEXT,raw_revision INTEGER,payload_hash TEXT,payload_gzip BLOB,payload_bytes INTEGER,slot INTEGER,block_time INTEGER,observed_at INTEGER)");
     fixtureRow(source,"wallet","walletA",mkTx("sig-1"));
     fixtureRow(source,"token","mint1",mkTx("sig-1"));
     fixtureRow(source,"wallet","walletA",mkTx("sig-2",{failed:true}));
@@ -71,6 +71,8 @@ function run() {
     assert.equal(audit.evidence.sample.failedExecution,1);
     assert.equal(audit.coverage,null,"Missing coverage table must not become a fake zero");
     assert.equal(audit.evidence.sample.reportedNetworkFeeLamports,"33000");
+    assert.equal(audit.evidence.sample.ingestDelayP50Ms,500);
+    assert.equal(audit.evidence.sample.ingestDelayP95Ms,500);
     assert.throws(()=>baseline.analyze(source,{sampleLimit:1001}));
   } finally {
     output.close();source.close();fs.rmSync(dir,{recursive:true,force:true});
