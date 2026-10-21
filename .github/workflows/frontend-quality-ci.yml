@@ -62,6 +62,9 @@ jobs:
       - name: Install Playwright Chromium for Lighthouse
         run: npx playwright install chromium
 
+      - name: Admin confirmation browser behavior
+        run: npm run admin-confirmation:test
+
       - name: Build frontend from locked app dependencies
         run: npm run build
 
