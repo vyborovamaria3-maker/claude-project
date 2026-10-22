@@ -46,9 +46,12 @@ async function requireVerifiedAlertFacts(tx: PgTransaction, alertId: number): Pr
     throw new Error("Verified alert facts are unavailable");
   const score=row.score===null?null:Number(row.score);
   if(score!==null&&!Number.isFinite(score))throw new Error("Verified alert score is invalid");
+  const triggeredAt=row.triggered_at,asOf=row.as_of;
+  if(!(triggeredAt instanceof Date||typeof triggeredAt==="string")||
+     !(asOf instanceof Date||typeof asOf==="string"))throw new Error("Verified alert timestamps are invalid");
   return {tokenId:row.canonical_token_id,alertType:row.alert_type,severity:row.severity,
     score,scoreVersion:row.score_version,features:row.features,
-    triggeredAt:toUtcIso(row.triggered_at),asOf:toUtcIso(row.as_of)};
+    triggeredAt:toUtcIso(triggeredAt),asOf:toUtcIso(asOf)};
 }
 
 function assertAlertEvidenceSubset(refs: readonly string[], allowed: readonly string[]): void {
