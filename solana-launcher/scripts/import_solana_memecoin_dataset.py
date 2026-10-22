@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
@@ -445,6 +446,23 @@ def iter_parquet_rows(path: Path, batch_size: int = 10_000) -> Iterable[Mapping[
         yield from batch.to_pylist()
 
 
+def verify_source_revision(source_dir: Path) -> str:
+    repo_root = source_dir.parent
+    if not (repo_root / ".git").exists():
+        raise ValueError("Source must be a Git checkout with its data/ directory; clone the repository and checkout the pinned commit")
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"Unable to verify dataset Git revision: {exc}") from exc
+    actual = result.stdout.strip()
+    if actual != SOURCE_COMMIT:
+        raise ValueError(f"Dataset revision mismatch: expected {SOURCE_COMMIT}, found {actual}; checkout the pinned revision before importing")
+    return actual
+
+
 def preflight(source_dir: Path, allow_count_mismatch: bool = False) -> list[dict[str, Any]]:
     missing = [name for name in REQUIRED_FILES if not (source_dir / name).is_file()]
     if missing:
@@ -590,9 +608,10 @@ def main(argv: list[str] | None = None) -> int:
         raise IsADirectoryError(f"--db must be a SQLite file path, not a directory: {db_path}")
     if backup_path and backup_path == db_path:
         raise ValueError("--backup-path must differ from --db")
+    verified_commit = verify_source_revision(source_dir)
     files = preflight(source_dir, allow_count_mismatch=args.allow_count_mismatch)
     report = {"mode":"apply" if args.apply else "dry_run","dataset_id":DATASET_ID,
-        "source_dir":str(source_dir),"db":str(db_path),
+        "source_commit_verified":verified_commit,"source_dir":str(source_dir),"db":str(db_path),
         "source_rows":sum(item["rows"] for item in files),
         "files":[{"source_file":item["source_file"],"rows":item["rows"],"sha256":item["sha256"]} for item in files]}
     if not args.apply:
