@@ -89,6 +89,7 @@ test("refresh query separates transactions, supported swap evidence, and settled
   assert.match(aggregateSql, /inbox\.ingested_at <= \$3::timestamptz/);
   assert.match(aggregateSql, /MAX\(GREATEST\(observed_at,ingested_at\)\)/);
   assert.match(aggregateSql, /created_at <= \$3::timestamptz/);
+  assert.match(aggregateSql, /AT TIME ZONE 'UTC'/);
   assert.equal(snapshot.chainTransactions, 4);
   assert.equal(snapshot.chainSwapEvidenceCount, 2);
   assert.equal(snapshot.chainTrades, null);
