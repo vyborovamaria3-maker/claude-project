@@ -57,7 +57,9 @@
     "blockchain:finality-watch": "node scripts/blockchain-finality-watch.cjs",
     "blockchain:finality-watch-report": "node scripts/blockchain-finality-watch-report.cjs",
     "blockchain:finality-witness-test": "node scripts/blockchain-finality-witness-test.cjs",
-    "blockchain:finality-witness": "node scripts/blockchain-finality-witness.cjs"
+    "blockchain:finality-witness": "node scripts/blockchain-finality-witness.cjs",
+    "dataset:memecoin-import": "python3 scripts/import_solana_memecoin_dataset.py",
+    "dataset:memecoin-test": "python3 -m unittest scripts/test_import_solana_memecoin_dataset.py"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
