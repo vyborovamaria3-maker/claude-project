@@ -253,6 +253,7 @@ async def import_dataset_channel_candidates(
     source_name: str,
     source_url: str = "",
     source_license: str = "",
+    source_attribution: str = "",
     batch_size: int = 250,
 ) -> dict[str, int]:
     """Idempotently stage public dataset channels in the existing due-scan registry.
@@ -304,7 +305,9 @@ async def import_dataset_channel_candidates(
             source_entry = {
                 "url": str(record.get("source_url") or source_url)[:500] or None,
                 "license": str(record.get("license") or source_license)[:100] or None,
-                "attribution": str(record.get("attribution") or "")[:150] or None,
+                "attribution": str(
+                    record.get("attribution") or source_attribution or ""
+                )[:150] or None,
                 "snapshot": str(record.get("snapshot") or "")[:40] or None,
                 "topic": str(record.get("topic") or "")[:80] or None,
                 "language": str(record.get("language") or "")[:40] or None,
