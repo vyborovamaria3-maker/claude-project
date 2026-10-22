@@ -19,12 +19,14 @@ from app.services.telegram_discovery_registry import (
 
 
 def test_public_snapshot_normalizes_handles_filters_topics_and_sorts() -> None:
-    csv_text = """week,measured_on,username,title,topic,subscribers,verified,posts_per_day,recommended_by
-2026-W36,2026-08-31,@SolanaCalls,Solana Calls,crypto,1200,1,2.5,7
-2026-W36,2026-08-31,FinanceFeed,Finance Feed,finance,800,0,3.0,2
-2026-W36,2026-08-31,GeneralNews,General News,regional-en,900000,1,20,99
-2026-W36,2026-08-31,solanacalls,Duplicate,crypto,100,0,1,0
-"""
+    csv_text = (
+        "week,measured_on,username,title,topic,subscribers,verified,"
+        "posts_per_day,recommended_by\n"
+        "2026-W36,2026-08-31,@SolanaCalls,Solana Calls,crypto,1200,1,2.5,7\n"
+        "2026-W36,2026-08-31,FinanceFeed,Finance Feed,finance,800,0,3.0,2\n"
+        "2026-W36,2026-08-31,GeneralNews,General News,regional-en,900000,1,20,99\n"
+        "2026-W36,2026-08-31,solanacalls,Duplicate,crypto,100,0,1,0\n"
+    )
 
     rows = parse_public_channel_snapshot(csv_text, allowed_topics={"crypto", "finance"})
 
@@ -134,11 +136,13 @@ async def test_dataset_candidates_share_registry_and_are_idempotent() -> None:
 
 @pytest.mark.asyncio
 async def test_public_sync_stages_static_seed_and_remote_candidates(monkeypatch) -> None:
-    channels_csv = """week,measured_on,username,title,topic,subscribers,verified,posts_per_day,recommended_by
-2026-W36,2026-08-31,SolanaCalls,Solana Calls,crypto,1200,1,2.5,7
-2026-W36,2026-08-31,FinanceFeed,Finance Feed,finance,800,0,3.0,2
-2026-W36,2026-08-31,GeneralNews,General News,regional-en,900000,1,20,99
-"""
+    channels_csv = (
+        "week,measured_on,username,title,topic,subscribers,verified,"
+        "posts_per_day,recommended_by\n"
+        "2026-W36,2026-08-31,SolanaCalls,Solana Calls,crypto,1200,1,2.5,7\n"
+        "2026-W36,2026-08-31,FinanceFeed,Finance Feed,finance,800,0,3.0,2\n"
+        "2026-W36,2026-08-31,GeneralNews,General News,regional-en,900000,1,20,99\n"
+    )
     edges_csv = """source_username,recommended_username
 solanacalls,linkedcrypto
 financefeed,financeneighbor
