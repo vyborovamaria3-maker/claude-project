@@ -52,6 +52,21 @@ function run(){
       /Watch clock moved backwards/);
     assert.equal(state.prepare("SELECT count(*) n FROM watcher_observations").get().n,
       countBeforeBackwards,"Rejected clock rollback must leave the journal unchanged");
+    const scopeName="wallet:"+wallet;
+    const cursorBeforeFailure=state.prepare("SELECT scan_cursor,next_sequence,last_run_at FROM watcher_scopes WHERE scope=?").get(scopeName);
+    const failCommitSource={
+      prepare:(...args)=>source.prepare(...args),
+      exec:sql=>{
+        if(sql==="COMMIT")throw Error("synthetic source snapshot close failure");
+        return source.exec(sql);
+      }
+    };
+    assert.throws(()=>watchOnce(failCommitSource,state,{kind:"wallet",address:wallet,limit:1,clock:now}),
+      /synthetic source snapshot close failure/);
+    assert.deepEqual(state.prepare("SELECT scan_cursor,next_sequence,last_run_at FROM watcher_scopes WHERE scope=?").get(scopeName),
+      cursorBeforeFailure,"Source snapshot failure must roll back watcher cursor and sequence");
+    assert.equal(state.prepare("SELECT count(*) n FROM watcher_observations").get().n,
+      countBeforeBackwards,"Source snapshot failure cannot leave committed evidence");
     state.close();state=null;
     const before=fs.readFileSync(sourcePath);
     const third=runPaths({db:sourcePath,state:statePath,kind:"wallet",address:wallet,limit:1},
