@@ -10,10 +10,10 @@ Apply 001 through 006 in order. Migration 003 (Feature Store) is required for th
 
 - token_daily_cross_platform stores immutable (token, UTC day, as_of) snapshots.
 - max_input_observed_at must not be later than as_of.
-- A missing event count is null unless source_coverage_windows contains an explicit complete coverage window for that source/day. No event rows alone never prove zero activity.
+- A missing event count is null unless source_coverage_windows contains an explicit complete coverage window for that source/day. No event rows alone never prove zero activity. Coverage windows without a details.scope are treated as timeline_events; set details.scope to token_swap_evidence_revisions or settled_trade_tape for those separate data products.
 - Source coverage windows are immutable. A complete window can only be recorded after the window end.
 - Initial scores are heuristics. The backtest must be out-of-sample and use explicit labels in token_outcomes before any score is treated as predictive.
-- Current cross-platform refresh derives daily metrics from normalized timeline events. Short-window z-scores remain null until a coverage-aware interval baseline is supplied; momentum is therefore null rather than fabricated.
+- Current cross-platform refresh derives social counts and chain transaction counts from normalized timeline events. It separately resolves current supported swap evidence using latest wallet/signature revisions known at as_of. A supported swap is evidence, not a settled trade or PnL; chain_trades, chain_volume_usd and first_trade_at remain null unless explicit trade_executed events or a scoped settled_trade_tape coverage window exist. Short-window z-scores remain null until a coverage-aware interval baseline is supplied; momentum is therefore null rather than fabricated.
 
 ## API-backed AI
 
@@ -44,7 +44,7 @@ To include registered tokens with no observed event, explicitly request a bounde
 npm --prefix intelligence run refresh-cross-platform -- --day 2026-10-22 --as-of 2026-10-23T00:15:00Z --all-registered --limit 1000
 ```
 
-A token with no day events can produce zero counts only if the corresponding source has a complete coverage window known by the supplied as-of time. Otherwise the source metrics remain null. The command does not mark source windows complete; the source collector must record verified coverage through recordSourceCoverageWindow after its scan finishes.
+A token with no day events can produce zero counts only if the corresponding source has a complete coverage window known by the supplied as-of time. Otherwise the source metrics remain null. The command does not mark source windows complete; the source collector must record verified coverage through recordSourceCoverageWindow after its scan finishes. For example, pass details: { scope: "timeline_events" } for event history, { scope: "token_swap_evidence_revisions" } for a fully scanned swap-revision window, or { scope: "settled_trade_tape" } only when settled trade events are independently complete.
 
 
 ## Telegram alert delivery

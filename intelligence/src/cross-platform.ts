@@ -23,6 +23,8 @@ export type CrossPlatformSnapshotInput = Readonly<{
   xBotRatio: NullableNumber;
   xSentimentScore: NullableNumber;
   chainTrades: NullableNumber;
+  chainTransactions: NullableNumber;
+  chainSwapEvidenceCount: NullableNumber;
   chainUniqueWallets: NullableNumber;
   chainVolumeUsd: NullableNumber;
   chainLiquidityUsd: NullableNumber;
@@ -34,6 +36,7 @@ export type CrossPlatformSnapshotInput = Readonly<{
   firstMentionTgAt?: Date | string | null;
   firstMentionXAt?: Date | string | null;
   firstTradeAt?: Date | string | null;
+  firstSwapEvidenceAt?: Date | string | null;
   sourceCoverage?: Readonly<Record<SourceSystem, CoverageStatus>>;
 }>;
 
@@ -53,13 +56,14 @@ export type ValidatedCrossPlatformSnapshot = CrossPlatformSnapshotInput & CrossP
   firstMentionTgAt: string | null;
   firstMentionXAt: string | null;
   firstTradeAt: string | null;
+  firstSwapEvidenceAt: string | null;
   sourceCoverage: Record<SourceSystem, CoverageStatus>;
   snapshotSha256: string;
 };
 
 const RAW_FIELDS = [
   "tgMentions", "tgUniqueAuthors", "tgCopypastaRatio", "tgSentimentScore", "tgScamRatio",
-  "xMentions", "xUniqueAuthors", "xBotRatio", "xSentimentScore", "chainTrades",
+  "xMentions", "xUniqueAuthors", "xBotRatio", "xSentimentScore", "chainTrades", "chainTransactions", "chainSwapEvidenceCount",
   "chainUniqueWallets", "chainVolumeUsd", "chainLiquidityUsd", "chainSmartMoneyBought", "chainRugRisk",
 ] as const;
 
@@ -100,7 +104,7 @@ export function computeCrossPlatformScores(input: CrossPlatformSnapshotInput): C
   const attentionParts: Array<[string, number | null, number]> = [
     ["tg_mentions", input.tgMentions, 0.4],
     ["x_mentions", input.xMentions, 0.35],
-    ["chain_trades", input.chainTrades, 0.25],
+    ["chain_swap_evidence_count", input.chainSwapEvidenceCount, 0.25],
   ];
   const attentionAvailable = attentionParts.filter(([, value]) => value !== null);
   const attentionScore = attentionAvailable.length
@@ -163,7 +167,7 @@ export function validateCrossPlatformSnapshot(input: CrossPlatformSnapshotInput)
   const maxInputObservedAt = toUtcIso(input.maxInputObservedAt);
   if (asOf < input.day + "T00:00:00.000Z") throw new TypeError("Snapshot as_of cannot precede the UTC day");
   if (maxInputObservedAt > asOf) throw new TypeError("Future-observed inputs are not allowed");
-  const counts = ["tgMentions", "tgUniqueAuthors", "xMentions", "xUniqueAuthors", "chainTrades", "chainUniqueWallets", "chainSmartMoneyBought"] as const;
+  const counts = ["tgMentions", "tgUniqueAuthors", "xMentions", "xUniqueAuthors", "chainTrades", "chainTransactions", "chainSwapEvidenceCount", "chainUniqueWallets", "chainSmartMoneyBought"] as const;
   for (const key of counts) if (!countOrNull(input[key])) throw new TypeError("Invalid count: " + key);
   const ratios = ["tgCopypastaRatio", "tgScamRatio", "xBotRatio", "chainRugRisk"] as const;
   for (const key of ratios) if (!ratioOrNull(input[key])) throw new TypeError("Invalid ratio: " + key);
@@ -182,17 +186,18 @@ export function validateCrossPlatformSnapshot(input: CrossPlatformSnapshotInput)
   const firstMentionTgAt = utcOrNull(input.firstMentionTgAt);
   const firstMentionXAt = utcOrNull(input.firstMentionXAt);
   const firstTradeAt = utcOrNull(input.firstTradeAt);
-  for (const value of [firstMentionTgAt, firstMentionXAt, firstTradeAt]) {
+  const firstSwapEvidenceAt = utcOrNull(input.firstSwapEvidenceAt);
+  for (const value of [firstMentionTgAt, firstMentionXAt, firstTradeAt, firstSwapEvidenceAt]) {
     if (value !== null && value > asOf) throw new TypeError("Event time cannot be in the future");
   }
   const scores = computeCrossPlatformScores(input);
   const sourceCoverage: Record<SourceSystem, CoverageStatus> = {
     tg: input.sourceCoverage?.tg ?? (input.tgMentions === null ? "unknown" : "partial"),
     x: input.sourceCoverage?.x ?? (input.xMentions === null ? "unknown" : "partial"),
-    blockchain: input.sourceCoverage?.blockchain ?? (input.chainTrades === null ? "unknown" : "partial"),
+    blockchain: input.sourceCoverage?.blockchain ?? (input.chainTransactions === null && input.chainSwapEvidenceCount === null && input.chainTrades === null ? "unknown" : "partial"),
   };
   const normalized = {
-    ...input, asOf, maxInputObservedAt, firstMentionTgAt, firstMentionXAt, firstTradeAt,
+    ...input, asOf, maxInputObservedAt, firstMentionTgAt, firstMentionXAt, firstTradeAt, firstSwapEvidenceAt,
     ...scores, sourceCoverage,
   };
   return { ...normalized, snapshotSha256: sha256(stableJson(normalized)) };
@@ -206,22 +211,22 @@ export async function putCrossPlatformSnapshot(
     canonical_token_id,day,as_of,max_input_observed_at,
     tg_mentions,tg_unique_authors,tg_copypasta_ratio,tg_sentiment_score,tg_scam_ratio,
     x_mentions,x_unique_authors,x_bot_ratio,x_sentiment_score,
-    chain_trades,chain_unique_wallets,chain_volume_usd,chain_liquidity_usd,chain_smart_money_bought,chain_rug_risk,
+    chain_trades,chain_transactions,chain_swap_evidence_count,chain_unique_wallets,chain_volume_usd,chain_liquidity_usd,chain_smart_money_bought,chain_rug_risk,
     tg_mentions_z_1h,x_mentions_z_1h,chain_volume_z_1h,
-    first_mention_tg_at,first_mention_x_at,first_trade_at,
+    first_mention_tg_at,first_mention_x_at,first_trade_at,first_swap_evidence_at,
     attention_score,credibility_score,risk_score,momentum_score,score_version,score_reason,
     source_coverage,data_confidence,snapshot_sha256
   ) VALUES (
     $1,$2::date,$3,$4,
-    $5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-    $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31::jsonb,$32::jsonb,$33,$34
+    $5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+    $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34::jsonb,$35::jsonb,$36,$37
   ) ON CONFLICT(canonical_token_id,day,as_of) DO NOTHING RETURNING canonical_token_id`, [
     x.canonicalTokenId,x.day,x.asOf,x.maxInputObservedAt,
     x.tgMentions,x.tgUniqueAuthors,x.tgCopypastaRatio,x.tgSentimentScore,x.tgScamRatio,
     x.xMentions,x.xUniqueAuthors,x.xBotRatio,x.xSentimentScore,
-    x.chainTrades,x.chainUniqueWallets,x.chainVolumeUsd,x.chainLiquidityUsd,x.chainSmartMoneyBought,x.chainRugRisk,
+    x.chainTrades,x.chainTransactions,x.chainSwapEvidenceCount,x.chainUniqueWallets,x.chainVolumeUsd,x.chainLiquidityUsd,x.chainSmartMoneyBought,x.chainRugRisk,
     x.tgMentionsZ1h ?? null,x.xMentionsZ1h ?? null,x.chainVolumeZ1h ?? null,
-    x.firstMentionTgAt,x.firstMentionXAt,x.firstTradeAt,
+    x.firstMentionTgAt,x.firstMentionXAt,x.firstTradeAt,x.firstSwapEvidenceAt,
     x.attentionScore,x.credibilityScore,x.riskScore,x.momentumScore,x.scoreVersion,
     JSON.stringify(x.scoreReason),JSON.stringify(x.sourceCoverage),x.dataConfidence,x.snapshotSha256,
   ]);
@@ -314,7 +319,8 @@ export async function refreshTokenDailyCrossPlatform(
     SELECT
       MIN(te.occurred_at) FILTER (WHERE te.source_system='tg' AND te.timeline_kind='tg_message_published') AS first_mention_tg_at,
       MIN(te.occurred_at) FILTER (WHERE te.source_system='x' AND te.timeline_kind='tweet_published') AS first_mention_x_at,
-      MIN(te.occurred_at) FILTER (WHERE te.source_system='blockchain' AND te.timeline_kind='trade_executed') AS first_trade_at
+      MIN(te.occurred_at) FILTER (WHERE te.source_system='blockchain' AND te.timeline_kind='trade_executed') AS first_trade_at,
+      MAX(te.observed_at) AS max_historical_event_observed_at
     FROM timeline_events te
     JOIN timeline_event_entities token_entity
       ON token_entity.source_system=te.source_system
@@ -334,6 +340,7 @@ export async function refreshTokenDailyCrossPlatform(
       MAX(known_at) AS known_at
     FROM source_coverage_windows
     WHERE source_system IN ('tg','x','blockchain') AND known_at <= $3::timestamptz
+      AND (details->>'scope' IS NULL OR details->>'scope'='timeline_events')
       AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
     GROUP BY source_system
   ), coverage_pivot AS (
@@ -343,6 +350,57 @@ export async function refreshTokenDailyCrossPlatform(
       COALESCE(MAX(coverage_status) FILTER (WHERE source_system='blockchain'),'unknown') AS blockchain_coverage,
       MAX(known_at) AS max_coverage_known_at
     FROM coverage
+  ), trade_coverage AS (
+    SELECT
+      CASE WHEN bool_or(status='complete' AND window_start <= $2::date
+        AND window_end >= ($2::date + INTERVAL '1 day')) THEN 'complete'
+        WHEN bool_or(status='partial') THEN 'partial' ELSE 'unknown' END AS coverage_status,
+      MAX(known_at) AS known_at
+    FROM source_coverage_windows
+    WHERE source_system='blockchain' AND details->>'scope' IN ('settled_trade_tape','trade_executed')
+      AND known_at <= $3::timestamptz
+      AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
+  ), swap_coverage AS (
+    SELECT
+      CASE WHEN bool_or(status='complete' AND window_start <= $2::date
+        AND window_end >= ($2::date + INTERVAL '1 day')) THEN 'complete'
+        WHEN bool_or(status='partial') THEN 'partial' ELSE 'unknown' END AS coverage_status,
+      MAX(known_at) AS known_at
+    FROM source_coverage_windows
+    WHERE source_system='blockchain' AND details->>'scope'='token_swap_evidence_revisions'
+      AND known_at <= $3::timestamptz
+      AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
+  ), relevant_swap_signatures AS (
+    SELECT DISTINCT signature
+    FROM blockchain_swap_evidence_revisions
+    WHERE canonical_token_id=$1 AND observed_at <= $3::timestamptz AND inserted_at <= $3::timestamptz
+  ), swap_latest AS (
+    SELECT DISTINCT ON (revision.wallet_id,revision.signature)
+      revision.wallet_id,revision.signature,revision.state,revision.canonical_token_id,
+      revision.slot,revision.occurred_at,revision.observed_at,revision.inserted_at,revision.raw_revision
+    FROM blockchain_swap_evidence_revisions revision
+    WHERE revision.signature IN (SELECT signature FROM relevant_swap_signatures)
+      AND revision.observed_at <= $3::timestamptz AND revision.inserted_at <= $3::timestamptz
+    ORDER BY revision.wallet_id,revision.signature,revision.raw_revision DESC
+  ), swap_state_meta AS (
+    SELECT MAX(observed_at) AS max_swap_state_observed_at FROM swap_latest
+  ), swap_consistent AS (
+    SELECT signature,MIN(canonical_token_id) AS canonical_token_id,
+      MIN(slot) AS slot,MIN(occurred_at) AS occurred_at,MAX(observed_at) AS observed_at
+    FROM swap_latest
+    GROUP BY signature
+    HAVING BOOL_AND(state='supported')
+      AND COUNT(DISTINCT canonical_token_id)=1
+      AND COUNT(DISTINCT slot)=1
+      AND COUNT(DISTINCT occurred_at)=1
+  ), active_swaps AS (
+    SELECT consistent.signature,consistent.canonical_token_id,consistent.occurred_at,
+      consistent.observed_at,latest.wallet_id
+    FROM swap_consistent consistent
+    JOIN swap_latest latest ON latest.signature=consistent.signature
+      AND latest.state='supported' AND latest.canonical_token_id=consistent.canonical_token_id
+      AND latest.slot=consistent.slot AND latest.occurred_at=consistent.occurred_at
+    WHERE consistent.canonical_token_id=$1 AND consistent.occurred_at <= $3::timestamptz
   ), event_metrics AS (
     SELECT
       CASE WHEN COUNT(*) FILTER (WHERE source_system='tg' AND timeline_kind='tg_message_published') > 0
@@ -351,13 +409,16 @@ export async function refreshTokenDailyCrossPlatform(
       CASE WHEN COUNT(*) FILTER (WHERE source_system='x' AND timeline_kind='tweet_published') > 0
         THEN COUNT(*) FILTER (WHERE source_system='x' AND timeline_kind='tweet_published')
         WHEN (SELECT x_coverage FROM coverage_pivot)='complete' THEN 0 ELSE NULL END AS x_mentions,
+      CASE WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='chain_transaction') > 0
+        THEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='chain_transaction')
+        WHEN (SELECT blockchain_coverage FROM coverage_pivot)='complete' THEN 0 ELSE NULL END AS chain_transactions,
       CASE WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
         THEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
-        WHEN (SELECT blockchain_coverage FROM coverage_pivot)='complete' THEN 0 ELSE NULL END AS chain_trades,
+        WHEN (SELECT coverage_status FROM trade_coverage)='complete' THEN 0 ELSE NULL END AS chain_trades,
       CASE WHEN COUNT(${volume}) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
         THEN SUM(${volume}) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
         WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')=0
-          AND (SELECT blockchain_coverage FROM coverage_pivot)='complete' THEN 0 ELSE NULL END AS chain_volume_usd,
+          AND (SELECT coverage_status FROM trade_coverage)='complete' THEN 0 ELSE NULL END AS chain_volume_usd,
       AVG(${copypasta}) FILTER (WHERE source_system='tg') AS tg_copypasta_ratio,
       AVG(${sentiment}) FILTER (WHERE source_system='tg') AS tg_sentiment_score,
       AVG(${scam}) FILTER (WHERE source_system='tg') AS tg_scam_ratio,
@@ -369,7 +430,7 @@ export async function refreshTokenDailyCrossPlatform(
           AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
         THEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed'
           AND payload->>'smart_money_bought'='true')
-        WHEN (SELECT blockchain_coverage FROM coverage_pivot)='complete'
+        WHEN (SELECT coverage_status FROM trade_coverage)='complete'
           AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')=0 THEN 0
         ELSE NULL END AS chain_smart_money_bought,
       MAX(observed_at) AS max_event_observed_at
@@ -392,12 +453,19 @@ export async function refreshTokenDailyCrossPlatform(
     SELECT
       CASE WHEN COUNT(DISTINCT wallet.canonical_id) > 0 THEN COUNT(DISTINCT wallet.canonical_id)
         WHEN (SELECT blockchain_coverage FROM coverage_pivot)='complete'
-          AND (SELECT chain_trades FROM event_metrics)=0 THEN 0 ELSE NULL END AS chain_unique_wallets
+          AND (SELECT chain_transactions FROM event_metrics)=0 THEN 0 ELSE NULL END AS chain_unique_wallets
     FROM day_events e
     JOIN timeline_event_entities wallet
       ON wallet.source_system=e.source_system AND wallet.source_event_kind=e.source_event_kind
       AND wallet.event_key=e.event_key AND wallet.kind='wallet'
     WHERE e.source_system='blockchain'
+  ), swap_metrics AS (
+    SELECT
+      CASE WHEN COUNT(DISTINCT signature) FILTER (WHERE occurred_at >= $2::date AND occurred_at < ($2::date + INTERVAL '1 day')) > 0
+        THEN COUNT(DISTINCT signature) FILTER (WHERE occurred_at >= $2::date AND occurred_at < ($2::date + INTERVAL '1 day'))
+        WHEN (SELECT coverage_status FROM swap_coverage)='complete' THEN 0 ELSE NULL END AS chain_swap_evidence_count,
+      MIN(occurred_at) AS first_swap_evidence_at
+    FROM active_swaps
   ), liquidity AS (
     SELECT ${SAFE_NUMERIC("liquidity_usd")} AS value
     FROM day_events
@@ -405,12 +473,15 @@ export async function refreshTokenDailyCrossPlatform(
     ORDER BY occurred_at DESC LIMIT 1
   )
   SELECT em.*,am.tg_unique_authors,am.x_unique_authors,wm.chain_unique_wallets,
+    sm.chain_swap_evidence_count,sm.first_swap_evidence_at,
     (SELECT value FROM liquidity) AS chain_liquidity_usd,
     cp.tg_coverage,cp.x_coverage,cp.blockchain_coverage,
     fe.first_mention_tg_at,fe.first_mention_x_at,fe.first_trade_at,
-    GREATEST(em.max_event_observed_at,cp.max_coverage_known_at) AS max_input_observed_at
+    GREATEST(em.max_event_observed_at,cp.max_coverage_known_at,fe.max_historical_event_observed_at,
+      swap_meta.max_swap_state_observed_at,tc.known_at,sc.known_at) AS max_input_observed_at
   FROM event_metrics em CROSS JOIN author_metrics am CROSS JOIN wallet_metrics wm
-  CROSS JOIN coverage_pivot cp CROSS JOIN first_events fe`;
+  CROSS JOIN swap_metrics sm CROSS JOIN coverage_pivot cp CROSS JOIN first_events fe
+  CROSS JOIN swap_state_meta swap_meta CROSS JOIN trade_coverage tc CROSS JOIN swap_coverage sc`;
   const result = await tx.query(sql, [canonicalTokenId,day,normalizedAsOf]);
   const row = result.rows[0];
   if (!row || !row.max_input_observed_at) throw new Error("No observed events or explicit coverage available for this token/day");
@@ -426,7 +497,8 @@ export async function refreshTokenDailyCrossPlatform(
     tgCopypastaRatio: n(row.tg_copypasta_ratio), tgSentimentScore: n(row.tg_sentiment_score),
     tgScamRatio: n(row.tg_scam_ratio), xMentions: n(row.x_mentions), xUniqueAuthors: n(row.x_unique_authors),
     xBotRatio: n(row.x_bot_ratio), xSentimentScore: n(row.x_sentiment_score),
-    chainTrades: n(row.chain_trades), chainUniqueWallets: n(row.chain_unique_wallets),
+    chainTrades: n(row.chain_trades), chainTransactions: n(row.chain_transactions),
+    chainSwapEvidenceCount: n(row.chain_swap_evidence_count), chainUniqueWallets: n(row.chain_unique_wallets),
     chainVolumeUsd: n(row.chain_volume_usd), chainLiquidityUsd: n(row.chain_liquidity_usd),
     chainSmartMoneyBought: n(row.chain_smart_money_bought), chainRugRisk: n(row.chain_rug_risk),
     tgMentionsZ1h: null, xMentionsZ1h: null, chainVolumeZ1h: null,
@@ -438,6 +510,7 @@ export async function refreshTokenDailyCrossPlatform(
     firstMentionTgAt: timestampOrNull(row.first_mention_tg_at),
     firstMentionXAt: timestampOrNull(row.first_mention_x_at),
     firstTradeAt: timestampOrNull(row.first_trade_at),
+    firstSwapEvidenceAt: timestampOrNull(row.first_swap_evidence_at),
   };
   return putCrossPlatformSnapshot(tx, snapshot);
 }
