@@ -218,9 +218,11 @@ function tokenUsage(payload: unknown): { inputTokens: number | null; outputToken
   };
 }
 
-function estimateCost(provider: NormalizedProvider, inputTokens: number | null, outputTokens: number | null): number | null {
-  if (provider.inputCostPer1kUsd === undefined || provider.outputCostPer1kUsd === undefined ||
-      inputTokens === null || outputTokens === null) return null;
+function estimateCost(provider: NormalizedProvider, inputTokens: number | null, outputTokens: number | null,
+  task: "chat" | "embedding"): number | null {
+  if (provider.inputCostPer1kUsd === undefined || inputTokens === null) return null;
+  if (task === "embedding") return inputTokens * provider.inputCostPer1kUsd / 1_000;
+  if (provider.outputCostPer1kUsd === undefined || outputTokens === null) return null;
   return inputTokens * provider.inputCostPer1kUsd / 1_000 +
     outputTokens * provider.outputCostPer1kUsd / 1_000;
 }
@@ -379,7 +381,7 @@ export function createAiGateway(options: AiGatewayOptions) {
         let payload: unknown;
         try { payload = await response.json(); } catch { throw new AiGatewayError("ai_provider_response_invalid"); }
         const usage = tokenUsage(payload);
-        const actualCost = estimateCost(provider, usage.inputTokens, usage.outputTokens);
+        const actualCost = estimateCost(provider, usage.inputTokens, usage.outputTokens, task);
         state.estimatedCostUsd += actualCost ?? reservation ?? 0;
         state.reservedCostUsd = Math.max(0, state.reservedCostUsd - budgetReservation);
         reservationReleased = true;

@@ -61,6 +61,15 @@ test("embeddings validate vector dimensions and preserve provider ordering", asy
   );
 });
 
+test("embeddings bill actual prompt token usage instead of a character estimate", async () => {
+  const gateway=createAiGateway({providers:[provider({inputCostPer1kUsd:0.02,outputCostPer1kUsd:0.05,
+    maxEstimatedCostUsd:0.01})],defaultProviderId:"primary",
+    fetchImpl:async()=>response({data:[{index:0,embedding:[1,0]}],usage:{prompt_tokens:100}})});
+  const result=await gateway.createEmbeddings({texts:["hello"],expectedDimensions:2});
+  assert.ok(Math.abs(result.estimatedCostUsd-0.002)<1e-12);
+  assert.ok(Math.abs(gateway.getMetrics()[0].estimatedCostUsd-0.002)<1e-12);
+});
+
 test("embeddings reject missing and duplicate indices instead of returning sparse vectors", async () => {
   for (const data of [[{index:0,embedding:[1,0]}],[{index:0,embedding:[1,0]},{index:0,embedding:[0,1]}]]) {
     const gateway=createAiGateway({providers:[provider()],defaultProviderId:"primary",fetchImpl:async()=>response({data,usage:{prompt_tokens:2}})});
