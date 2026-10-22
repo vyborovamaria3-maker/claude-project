@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { formatTokenId } from "@claude-project/contracts";
-import { FEATURES_V2, FEATURES_V3, validateFeatureSnapshot } from "../dist/index.js";
+import { FEATURES_V2, FEATURES_V3, validateFeatureSnapshot, queryFeaturesAsOf } from "../dist/index.js";
 
 const token = formatTokenId("solana", "So11111111111111111111111111111111111111112");
 const v1Fields = {
@@ -36,4 +36,13 @@ test("FEATURES_V3 adds embedding reference, cluster and coherence while retainin
   });
   assert.equal(result.featureVersion, "features-v3");
   assert.equal(result.features.embedding_ref, null);
+});
+
+test("library as-of queries exclude features published later",async()=>{
+  const db={async query(sql,params){
+    assert.ok(sql.includes("computed_at <= $3"));
+    assert.equal(params[2],"2026-10-22T12:00:00.000Z");
+    return {rows:[]};
+  }};
+  assert.equal(await queryFeaturesAsOf(db,token,"2026-10-22T12:00:00Z",FEATURES_V2.version),null);
 });

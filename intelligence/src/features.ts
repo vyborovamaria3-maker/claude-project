@@ -166,7 +166,7 @@ export async function queryFeaturesAsOf(
   const result=await tx.query(`SELECT canonical_token_id,as_of,max_input_observed_at,
     computed_at,feature_version,features
     FROM chain_token_features WHERE canonical_token_id=$1 AND feature_version=$2
-      AND as_of <= $3 AND max_input_observed_at <= $3
+      AND as_of <= $3 AND max_input_observed_at <= $3 AND computed_at <= $3
     ORDER BY as_of DESC LIMIT 1`,[
       tokenId,featureVersion,toUtcIso(asOf),
     ]);
