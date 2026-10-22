@@ -101,8 +101,18 @@ AI Bearer не имеет доступа к остальным маршрута�
 по `as_of <= occurredBefore`, `max_input_observed_at <= knownAt` и
 `computed_at <= knownAt` в одной read-only repeatable-read транзакции.
 
-**Не подключено:** Python Intelligence documents, Memecoin Intelligence,
-admin/подписки, raw source DBs, аккаунты, сессии и внешние AI-провайдеры.
+**Серверный AI gateway реализован отдельно:** `POST
+/api/ai/v1/analyze-token` на `127.0.0.1:3183`, с четвёртым
+`AI_GATEWAY_CLIENT_TOKEN` для вызывающего доверенного backend, явными
+`AI_GATEWAY_ENABLED=true` и `AI_GATEWAY_EGRESS_ENABLED=true`
+для разрешения внешнего запроса. Код провайдерского адаптера ограничен
+фиксированным HTTPS endpoint и `store:false`; **реальная модель не
+подключалась, платные запросы не выполнялись**. Полный интерфейс,
+конфигурация, ограничения безопасности и релизные блокеры —
+[ai-gateway/README.md](../ai-gateway/README.md).
+
+**Не подключено к данным ИИ:** Python Intelligence documents,
+Memecoin Intelligence, admin/подписки, raw source DBs, аккаунты и сессии.
 Это требует самостоятельной политики доступа и отдельного релизного gate.
 `historicalCompleteness=unknown` и `sourceCollectorLiveness=not_checked`
 не означают отсутствие активности в источниках.
