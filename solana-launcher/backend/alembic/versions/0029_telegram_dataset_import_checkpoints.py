@@ -1,7 +1,7 @@
 """Persist Telegram dataset import checkpoints."""
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0029_telegram_dataset_import_checkpoints"
 down_revision = "0028_tginvite_direct_invite"

@@ -1,7 +1,10 @@
 import asyncio
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.social_intelligence import TelegramChannel, TelegramDatasetImportCheckpoint
 from app.services.telegram_dataset_sources import (
@@ -10,10 +13,11 @@ from app.services.telegram_dataset_sources import (
     discover_dataset_files,
     import_dataset_candidates,
 )
-from app.services.telegram_discovery_registry import due_registry_channels, record_discovery_results
+from app.services.telegram_discovery_registry import (
+    due_registry_channels,
+    record_discovery_results,
+)
 from app.services.telegram_runtime import TelegramMonitorManager
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 class StubSettings:
@@ -201,14 +205,19 @@ def test_dataset_import_merges_sources_and_queues_public_channels(tmp_path: Path
 
 
 
-def test_dataset_provenance_keeps_graph_discoveries_in_dataset_queue_but_not_manual_channels() -> None:
+def test_dataset_provenance_keeps_graph_discoveries_in_dataset_queue_but_not_manual_channels(
+) -> None:
     async def run_test() -> None:
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         async with engine.begin() as connection:
             await connection.run_sync(TelegramChannel.__table__.create)
         sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
         now = datetime.now(UTC).isoformat()
-        provenance = {"dataset_import": {"sources": {"tgdataset:channels.jsonl": {"seed_score": 70}}}}
+        provenance = {
+            "dataset_import": {
+                "sources": {"tgdataset:channels.jsonl": {"seed_score": 70}}
+            }
+        }
         try:
             async with sessionmaker() as session:
                 session.add_all(
@@ -327,7 +336,9 @@ def test_dataset_manifest_checkpoint_survives_restart_and_tracks_changes_and_rem
                         select(TelegramChannel).where(TelegramChannel.username == "alpha_calls")
                     )
                 ).scalar_one()
-                assert alpha.meta["dataset_import"]["last_imported_at"] == original_imported_at
+                assert (
+                    alpha.meta["dataset_import"]["last_imported_at"] == original_imported_at
+                )
 
             _write_jsonl(
                 source,
@@ -342,7 +353,9 @@ def test_dataset_manifest_checkpoint_survives_restart_and_tracks_changes_and_rem
 
             source.unlink()
             await restarted_process._import_dataset_sources_if_changed()
-            assert restarted_process._dataset_import_summary["removed_files"] == ["channels.jsonl"]
+            assert (
+                restarted_process._dataset_import_summary["removed_files"] == ["channels.jsonl"]
+            )
             async with sessionmaker() as session:
                 checkpoints = list(
                     (

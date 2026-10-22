@@ -51,7 +51,7 @@ class TelegramChannel(Base):
 
 
 class TelegramDatasetImportCheckpoint(Base):
-    """Persist source-file signatures so unchanged datasets are not re-imported after restarts."""
+    """Persist source-file signatures without re-importing unchanged datasets after restarts."""
 
     __tablename__ = "telegram_dataset_import_checkpoints"
 
