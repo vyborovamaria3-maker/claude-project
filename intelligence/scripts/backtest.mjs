@@ -109,9 +109,17 @@ async function main() {
       args.outcome,args.horizonHours,args.from,args.to,dataCutoffAt,
     ]);
     if (!selected.rows.length) throw new Error("backtest_no_eligible_observations");
-    // Fail closed: neither incomplete horizons nor absent labels may vanish from the denominator.
-    if (selected.rows.some((row)=>row.horizon_complete!==true)) throw new Error("backtest_incomplete_horizon");
-    if (selected.rows.some((row)=>row.outcome_at===null||row.outcome_at===undefined)) throw new Error("backtest_incomplete_outcome_coverage");
+    // Fail closed: neither incomplete horizons nor missing outcomes may disappear from the denominator.
+    const incompleteHorizonCount=selected.rows.filter((row)=>row.horizon_complete!==true).length;
+    const missingOutcomeCount=selected.rows.filter((row)=>row.outcome_at===null||row.outcome_at===undefined).length;
+    const coverage={eligibleCount:selected.rows.length,
+      completedHorizonCount:selected.rows.length-incompleteHorizonCount,
+      labeledCount:selected.rows.length-missingOutcomeCount,
+      incompleteHorizonCount,missingOutcomeCount};
+    if(incompleteHorizonCount||missingOutcomeCount){
+      process.stderr.write(JSON.stringify({outcomeCoverage:coverage})+"\n");
+      throw new Error(incompleteHorizonCount?"backtest_incomplete_horizon":"backtest_incomplete_outcome_coverage");
+    }
     const observations = selected.rows.map((row) => ({
       canonicalTokenId: row.canonical_token_id,
       signalAt: row.signal_at,
@@ -126,14 +134,15 @@ async function main() {
     const result = runSignalBacktest(observations, {
       threshold: args.threshold, baseline: args.baseline, seed: args.seed ?? "cross-platform-backtest-v1",
     });
+    const metrics={...result.metrics,outcomeCoverage:coverage};
     await persistBacktestRun(client, {
       runId: result.runId, signalName: args.signal, outcomeKind: args.outcome,
       fromAt, toAt, horizonHours: args.horizonHours, threshold: args.threshold,
-      baselineKind: args.baseline, metrics: result.metrics, observations: result.observations,
+      baselineKind: args.baseline, metrics, observations: result.observations,
       dataCutoffAt, featureVersion: null, modelId: null,
     });
     await client.query("COMMIT");
-    process.stdout.write(JSON.stringify({ runId: result.runId, signal: args.signal, outcome: args.outcome, from: args.from, to: args.to, metrics: result.metrics })+"\n");
+    process.stdout.write(JSON.stringify({ runId: result.runId, signal: args.signal, outcome: args.outcome, from: args.from, to: args.to, metrics })+"\n");
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch {}
     throw error;

@@ -68,4 +68,6 @@ test("CLI includes incomplete horizons and missing labels rather than dropping t
   assert.match(sql,/horizon_complete/);
   assert.match(sql,/backtest_incomplete_horizon/);
   assert.match(sql,/backtest_incomplete_outcome_coverage/);
+  assert.match(sql,/completedHorizonCount/);
+  assert.match(sql,/missingOutcomeCount/);
 });
