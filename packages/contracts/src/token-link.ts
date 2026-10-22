@@ -1,4 +1,4 @@
-import {isDeepStrictEqual} from "node:util";
+import {jsonStructurallyEqual} from "./json-structural-equality.js";
 import {
   buildEntityRef, type EntityRef,
 } from "./entity-registry.js";
@@ -167,9 +167,9 @@ export function validateVerifiedTokenLinkEvent(input: unknown): VerifiedTokenLin
   // extra/missing fields, different revision hashes and tampered mint evidence
   // fail even if the JSON object was re-keyed by PostgreSQL.
   if (raw.eventKey!==expected.eventKey ||
-      !isDeepStrictEqual(reg.entityRefs,expected.payload.registryEvent.entityRefs) ||
-      !isDeepStrictEqual(reg.evidenceRef,expected.payload.registryEvent.evidenceRef) ||
-      !isDeepStrictEqual(link,expected.payload.tokenLink)) {
+      !jsonStructurallyEqual(reg.entityRefs,expected.payload.registryEvent.entityRefs) ||
+      !jsonStructurallyEqual(reg.evidenceRef,expected.payload.registryEvent.evidenceRef) ||
+      !jsonStructurallyEqual(link,expected.payload.tokenLink)) {
     throw new TypeError("Inconsistent verified token link evidence");
   }
   return raw;
