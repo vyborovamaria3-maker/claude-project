@@ -66,9 +66,6 @@ export function parseApiRequest(raw,now=new Date()){
   const kind=match[2];
   const query=url.searchParams;
   const legacy=new Set(["timeline","links","swap-evidence"]);
-  const allowed=legacy
-    ? (legacy.has(kind)?new Set(["occurredBefore","knownAt","limit"]):new Set(["asOf","limit"]))
-    : new Set();
   const routeAllowed=legacy.has(kind)
     ? new Set(["occurredBefore","knownAt","limit"])
     : kind==="correlations" ? new Set(["asOf","limit"]) : new Set(["asOf"]);

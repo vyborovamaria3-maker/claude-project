@@ -51,7 +51,7 @@ function fakePool(){
         event_kind:"tg_first_mention",event_at:new Date(occurred),outcome_kind:"price_2x_24h",
         outcome_at:new Date("2026-10-20T22:00:00Z"),lift:"1.5",ci_low:"1.1",ci_high:"1.9",
         p_value:"0.02",baseline:{kind:"market_average"},sample_size:"100",
-        evaluated_at:new Date(at),data_cutoff_at:new Date(known),model_id:null,
+        evaluated_at:new Date(known),data_cutoff_at:new Date(known),model_id:null,
       }]};
       if(sql.includes("FROM token_alerts"))return {rows:[{
         alert_id:"12",canonical_token_id:id,alert_type:"attention_spike",severity:"medium",

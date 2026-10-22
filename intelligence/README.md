@@ -3,7 +3,7 @@
 The Intelligence modules are built independently of collector databases.
 Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migration order: 001_entity_registry.sql, 002_timeline.sql, optional 003_feature_store.sql, mandatory 004_token_link_observations.sql before source delivery. ARCH-06b revision events additionally require 005_blockchain_swap_evidence_revisions.sql before enabling Blockchain token events. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
+Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005 and 006. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled). Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
 
 - Ingest RegistryEvent after claiming a source outbox event; source ACK only after
   destination transaction commits. Consumer runDeliveryBatch remains a bounded,
@@ -126,3 +126,26 @@ not heartbeat-protected; keep its batch size small on slow destinations.
 Cross-source timeline identity remains blocked by the missing evidence-based
 token-link producer; the synthetic token-linked ARCH-03 integration test
 does not establish real token recognition.
+
+
+## Cross-platform analytics and API-backed AI
+
+The cross-platform layer is additive. It uses the existing entity registry and timeline and stores immutable point-in-time snapshots in token_daily_cross_platform. A missing source remains null unless an explicit complete record exists in source_coverage_windows; absence of events alone is not evidence of zero activity. Initial score formulas are heuristics, not validated trading predictors. Momentum remains null until valid interval z-scores are supplied.
+
+model_registry is the execution gate: intelligence/src/ai-analysis.ts only invokes a model with a matching task and status active. Provider API keys stay in the AI Gateway process environment and are never stored in PostgreSQL. packages/ai-gateway supports configured HTTPS OpenAI-compatible chat and embedding APIs; no local LLM is started or selected by the new Intelligence layer.
+
+Build/test order:
+```sh
+npm install --prefix packages/ai-gateway --no-package-lock
+npm --prefix packages/ai-gateway run check
+npm install --prefix packages/contracts --no-package-lock
+npm install --prefix packages/event-outbox --no-package-lock
+npm install --prefix intelligence --no-package-lock
+npm --prefix intelligence run check
+```
+
+A historical backtest requires explicit outcome labels in token_outcomes and valid source coverage. Example:
+```sh
+npm --prefix intelligence run backtest -- --signal attention_score --outcome price_2x_24h --from 2025-01-01 --to 2025-09-30 --threshold 2.0 --horizon-hours 24
+```
+The command fails when there are no eligible labeled observations; it does not synthesize outcomes. Migration 007 must be applied before using putFeatureEmbedding.
