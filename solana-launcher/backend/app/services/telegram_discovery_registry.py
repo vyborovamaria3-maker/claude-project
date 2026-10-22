@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from collections.abc import Iterable
 from typing import Any
 
 from sqlalchemy import func, select
@@ -218,6 +220,172 @@ async def record_discovery_results(
             elif state == "unavailable" and failure_count >= 8:
                 channel.is_active = False
         await session.commit()
+
+
+_DATASET_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
+_DATASET_RESERVED_USERNAMES = {"share", "addstickers", "proxy", "socks", "iv", "login", "joinchat"}
+
+
+def _flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "y"}
+    return False
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return max(0, min(parsed, 2_147_483_647))
+
+
+async def import_dataset_channel_candidates(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    records: Iterable[dict[str, Any]],
+    *,
+    source_name: str,
+    source_url: str = "",
+    source_license: str = "",
+    batch_size: int = 250,
+) -> dict[str, int]:
+    """Idempotently stage public dataset channels in the existing due-scan registry.
+
+    Dataset rows are metadata only. The regular public-web collector validates candidates and
+    stores messages; scam-marked records and malformed targets are rejected before queueing.
+    """
+    safe_batch_size = max(1, min(int(batch_size), 1000))
+    now = _utcnow()
+    stats = {"received": 0, "accepted": 0, "invalid": 0, "scam_skipped": 0}
+    pending = 0
+
+    async with sessionmaker() as session:
+        for record in records:
+            stats["received"] += 1
+            if not isinstance(record, dict):
+                stats["invalid"] += 1
+                continue
+            if _flag(record.get("scam")):
+                stats["scam_skipped"] += 1
+                continue
+
+            username = normalize_telegram_target(
+                str(record.get("username") or record.get("url") or "")
+            )
+            if (
+                not username
+                or not _DATASET_USERNAME_RE.fullmatch(username)
+                or username in _DATASET_RESERVED_USERNAMES
+            ):
+                stats["invalid"] += 1
+                continue
+
+            channel = await _upsert_registry_channel(session, username)
+            old_meta = dict(channel.meta or {})
+            title = str(record.get("title") or "").strip()[:255]
+            description = str(record.get("about") or record.get("description") or "").strip()[:4000]
+            participants = _nonnegative_int(
+                record.get("participants", record.get("n_subscribers", record.get("subscribers")))
+            )
+            if title and (not channel.title or channel.title.casefold() == username.casefold()):
+                channel.title = title
+            if description and not channel.about:
+                channel.about = description
+            if participants is not None and participants > channel.participants:
+                channel.participants = participants
+
+            source = str(record.get("source_name") or source_name).strip()[:100] or source_name
+            source_entry = {
+                "url": str(record.get("source_url") or source_url)[:500],
+                "license": str(record.get("license") or source_license)[:100],
+                "snapshot": str(record.get("snapshot") or "")[:40] or None,
+                "topic": str(record.get("topic") or "")[:80] or None,
+                "verified": _flag(record.get("verified")),
+                "subscribers": participants,
+                "posts_per_day": record.get("posts_per_day"),
+                "recommended_by": _nonnegative_int(record.get("recommended_by")),
+                "dataset_telegram_id": str(
+                    record.get("channel_id") or record.get("dataset_telegram_id") or ""
+                )[:32] or None,
+                "created": str(
+                    record.get("creation_date") or record.get("created") or ""
+                )[:40] or None,
+                "imported_at": now.isoformat(),
+            }
+            sources = old_meta.get("dataset_sources")
+            sources = list(sources) if isinstance(sources, list) else []
+            if source not in sources:
+                sources.append(source)
+            provenance = old_meta.get("dataset_provenance")
+            provenance = dict(provenance) if isinstance(provenance, dict) else {}
+            provenance[source] = source_entry
+
+            raw_tags = record.get("tags")
+            tags = (
+                [str(tag).strip().casefold()[:48] for tag in raw_tags if str(tag).strip()]
+                if isinstance(raw_tags, list)
+                else []
+            )
+            topic = str(record.get("topic") or "").strip().casefold()
+            if topic:
+                tags.append(topic)
+            previous_tags = old_meta.get("dataset_tags")
+            if isinstance(previous_tags, list):
+                tags = [
+                    str(tag).strip().casefold()[:48]
+                    for tag in [*previous_tags, *tags]
+                    if str(tag).strip()
+                ]
+            tags = list(dict.fromkeys(tags))[:30]
+
+            registry = old_meta.get("discovery_registry")
+            registry = dict(registry) if isinstance(registry, dict) else {}
+            if not registry:
+                registry = {
+                    "state": "candidate",
+                    "source": source,
+                    "discovered_from": None,
+                    "depth": 0,
+                    "relevance_score": 0.0,
+                    "failure_count": 0,
+                    "last_checked_at": None,
+                    "next_check_at": now.isoformat(),
+                    "last_error": None,
+                }
+            else:
+                registry.setdefault("source", source)
+                registry.setdefault("state", "candidate")
+                registry.setdefault("depth", 0)
+                registry.setdefault("failure_count", 0)
+                registry.setdefault("relevance_score", 0.0)
+                registry.setdefault("last_checked_at", None)
+                registry.setdefault("next_check_at", now.isoformat())
+
+            channel.meta = {
+                **old_meta,
+                "public_web": True,
+                "dataset_imported": True,
+                "dataset_sources": sources[-20:],
+                "dataset_provenance": provenance,
+                "dataset_tags": tags,
+                "dataset_verified": bool(old_meta.get("dataset_verified"))
+                or _flag(record.get("verified")),
+                "discovery_registry": registry,
+            }
+            stats["accepted"] += 1
+            pending += 1
+            if pending >= safe_batch_size:
+                await session.commit()
+                pending = 0
+        if pending:
+            await session.commit()
+    return stats
 
 
 async def due_registry_channels(
