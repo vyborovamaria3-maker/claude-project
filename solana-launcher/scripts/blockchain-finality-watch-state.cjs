@@ -85,6 +85,8 @@ function readScope({signature=null,kind=null,address=null}={}){
 }
 function classify(audit){
   const status=audit.status;
+  if(audit.flags?.includes("SIGNATURE_NOT_OBSERVED"))
+    return {state:"history_incomplete",reason:"previously_observed_signature_missing_from_source"};
   if(status==="PENDING_INDEPENDENT_FINALITY")
     return {state:"pending_independent_finality",reason:"no_independent_finality_attestation"};
   if(status==="NO_SUCCESSFUL_EXECUTION_EVIDENCE")
