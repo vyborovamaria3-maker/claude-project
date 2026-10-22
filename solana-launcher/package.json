@@ -54,7 +54,8 @@
     "blockchain:history-finality-audit": "node scripts/blockchain-history-finality-audit.cjs",
     "blockchain:history-finality-test": "node scripts/blockchain-history-finality-audit-test.cjs",
     "blockchain:finality-watch-test": "node scripts/blockchain-finality-watch-test.cjs",
-    "blockchain:finality-watch": "node scripts/blockchain-finality-watch.cjs"
+    "blockchain:finality-watch": "node scripts/blockchain-finality-watch.cjs",
+    "blockchain:finality-watch-report": "node scripts/blockchain-finality-watch-report.cjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
