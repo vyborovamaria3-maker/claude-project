@@ -158,7 +158,7 @@ export async function emitXTokenLinksInvalidation(
  */
 export function effectiveXTokenSourceRevision(
   previous:{text:string|null;author_id:string|null;posted_at:string|number|null},
-  next:{text:string;authorId:string|null|undefined;postedAt:number|null},
+  next:{text:string;authorId?:string|null;postedAt:number|null},
 ):{changed:boolean;authorId:string|null;postedAt:number|null}{
   const authorId=next.authorId??previous.author_id;
   const rawPostedAt=next.postedAt??previous.posted_at;
