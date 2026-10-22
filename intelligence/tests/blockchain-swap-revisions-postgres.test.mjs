@@ -254,6 +254,24 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     assert.equal(chainActive[0].signature,signature);
     assert.deepEqual(new Set(socialActive.map(row=>row.evidence_source_id)),
       new Set(["tg:message:-1001234567:50","x:tweet:1234567890123456789"]));
+    // One Telegram message may reference more than one verified mint.
+    // Its later source-level tombstone MUST invalidate every mint, not just
+    // whichever token was active in a particular token-centric query.
+    const secondTg=buildVerifiedTokenLinkEvent({
+      sourceSystem:"tg",evidenceRef:tgEvidence,sourceEntity:tgEntity,
+      mint,matchedLiteralMint:mint,sourceRevisionSha256:"e".repeat(64),
+      mintVerification:{
+        chainId:"solana-mainnet",method:"spl_mint_account",
+        tokenProgram:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        provider:"alchemy-solana-rpc",checkedAt:socialTime,
+      },
+    });
+    assert.equal((await deliverSocial(secondTg)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    assert.deepEqual((await queryActiveTokenLinks(pool,
+      canonicalTokenIdFromNative("solana-mainnet",mint),
+      "2026-10-18T02:00:00Z","2026-10-20T01:25:00Z"))
+      .map(row=>row.source_system),["tg"]);
     // Message edit retracts only TG. Its evidence remains immutable and
     // does not invalidate independent X or Blockchain evidence.
     const editAt="2026-10-20T01:26:00Z";
@@ -278,6 +296,7 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     assert.equal((await queryActiveBlockchainSwapEvidence(pool,token,
       "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z")).length,1);
     assert.equal((await deliverSocial(tgEvent)).duplicates,1);
+    assert.equal((await deliverSocial(secondTg)).duplicates,1);
     assert.equal((await deliverSocial(edited)).duplicates,1);
     assert.equal((await queryActiveTokenLinks(pool,
       canonicalTokenIdFromNative("solana-mainnet",mint),
