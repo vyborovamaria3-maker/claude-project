@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { formatTokenId } from "@claude-project/contracts";
 import {
-  CROSS_PLATFORM_SCORE_VERSION, computeCrossPlatformScores, validateCrossPlatformSnapshot,
+  CROSS_PLATFORM_SCORE_VERSION, computeCrossPlatformScores, validateCrossPlatformSnapshot, refreshTokenDailyCrossPlatform,
 } from "../dist/index.js";
 
 const token = formatTokenId("solana", "So11111111111111111111111111111111111111112");
@@ -48,4 +48,48 @@ test("all-null sources do not manufacture zero attention or risk", () => {
   assert.equal(scores.attentionScore, null);
   assert.equal(scores.riskScore, null);
   assert.equal(scores.momentumScore, null);
+});
+
+
+test("refresh query separates transactions, supported swap evidence, and settled trades", async () => {
+  let aggregateSql = "";
+  const tx = {
+    async query(sql) {
+      if (sql.includes("WITH token_events AS")) {
+        aggregateSql = sql;
+        return { rows: [{
+          max_input_observed_at: "2026-10-23T00:10:00Z",
+          tg_mentions: "5", tg_unique_authors: "3", tg_copypasta_ratio: "0.1",
+          tg_sentiment_score: "0.4", tg_scam_ratio: "0.02",
+          x_mentions: "7", x_unique_authors: "4", x_bot_ratio: "0.2", x_sentiment_score: "0.3",
+          chain_trades: null, chain_transactions: "4", chain_swap_evidence_count: "2",
+          chain_unique_wallets: "2", chain_volume_usd: null, chain_liquidity_usd: null,
+          chain_smart_money_bought: null, chain_rug_risk: null,
+          tg_mentions_z_1h: null, x_mentions_z_1h: null, chain_volume_z_1h: null,
+          first_mention_tg_at: "2026-10-22T01:00:00Z",
+          first_mention_x_at: "2026-10-22T02:00:00Z",
+          first_trade_at: null, first_swap_evidence_at: "2026-10-22T03:00:00Z",
+          tg_coverage: "partial", x_coverage: "partial", blockchain_coverage: "partial",
+        }] };
+      }
+      if (sql.includes("INSERT INTO token_daily_cross_platform")) {
+        return { rows: [{ canonical_token_id: token }] };
+      }
+      throw new Error("unexpected query in refresh test");
+    },
+  };
+  const snapshot = await refreshTokenDailyCrossPlatform(
+    tx, token, "2026-10-22", "2026-10-23T00:15:00Z",
+  );
+  assert.match(aggregateSql, /timeline_kind='chain_transaction'/);
+  assert.match(aggregateSql, /timeline_kind='trade_executed'/);
+  assert.match(aggregateSql, /blockchain_swap_evidence_revisions/);
+  assert.match(aggregateSql, /details->>'scope'='token_swap_evidence_revisions'/);
+  assert.match(aggregateSql, /fe\.max_historical_event_observed_at/);
+  assert.equal(snapshot.chainTransactions, 4);
+  assert.equal(snapshot.chainSwapEvidenceCount, 2);
+  assert.equal(snapshot.chainTrades, null);
+  assert.equal(snapshot.chainVolumeUsd, null);
+  assert.equal(snapshot.firstTradeAt, null);
+  assert.equal(snapshot.firstSwapEvidenceAt, "2026-10-22T03:00:00.000Z");
 });
