@@ -27,6 +27,9 @@ export type AlertObservation = Readonly<{
   riskScore?: number | null;
   correlationLift?: number | null;
   correlationPValue?: number | null;
+  correlationExposedCount?: number | null;
+  correlationControlCount?: number | null;
+  correlationValidation?: "out_of_sample";
   scoreVersion: string;
   evidenceRefs: readonly string[];
 }>;
@@ -60,6 +63,7 @@ export function evaluateCrossPlatformAlerts(input: AlertObservation): AlertCandi
   }
   for (const [name,value] of Object.entries({
     tgMentions5m:input.tgMentions5m,xMentions5m:input.xMentions5m,
+    correlationExposedCount:input.correlationExposedCount,correlationControlCount:input.correlationControlCount,
   })) {
     if (value!==undefined&&value!==null&&!count(value)) throw new TypeError("Invalid alert count: "+name);
   }
@@ -104,10 +108,15 @@ export function evaluateCrossPlatformAlerts(input: AlertObservation): AlertCandi
     candidates.push({alertType:"rug_risk",severity:"critical",score:input.riskScore,
       features:{riskScore:input.riskScore}});
   }
+  // Sparse or in-sample significance is not sufficient for a validated alert.
   if (finite(input.correlationLift)&&input.correlationLift>=2&&
-      ratio(input.correlationPValue)&&input.correlationPValue<=0.05) {
+      ratio(input.correlationPValue)&&input.correlationPValue<=0.05&&
+      count(input.correlationExposedCount)&&input.correlationExposedCount>=10&&
+      count(input.correlationControlCount)&&input.correlationControlCount>=10&&
+      input.correlationValidation==="out_of_sample") {
     candidates.push({alertType:"validated_correlation",severity:"medium",score:input.correlationLift,
-      features:{correlationLift:input.correlationLift,correlationPValue:input.correlationPValue}});
+      features:{correlationLift:input.correlationLift,correlationPValue:input.correlationPValue,
+        correlationExposedCount:input.correlationExposedCount,correlationControlCount:input.correlationControlCount}});
   }
   if (!refs.length) return [];
   return candidates.map((candidate)=>({
@@ -130,9 +139,7 @@ export async function persistAlertCandidates(
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[alert.canonicalTokenId+"|"+alert.alertType]);
     const recent=await tx.query(`SELECT alert_id FROM token_alerts
       WHERE canonical_token_id=$1 AND alert_type=$2 AND status<>'resolved'
-        AND triggered_at >= $3::timestamptz - INTERVAL '5 minutes'
-        AND triggered_at <= $3::timestamptz + INTERVAL '5 minutes'
-      LIMIT 1`,[alert.canonicalTokenId,alert.alertType,alert.triggeredAt]);
+      LIMIT 1`,[alert.canonicalTokenId,alert.alertType]);
     if(recent.rows.length)continue;
     const result=await tx.query(`INSERT INTO token_alerts
       (canonical_token_id,alert_type,severity,triggered_at,as_of,score,score_version,features,evidence_refs,status)

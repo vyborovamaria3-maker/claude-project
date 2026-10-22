@@ -14,6 +14,7 @@ test("alert rules detect multi-source anomalies with evidence",()=>{
   const alerts=evaluateCrossPlatformAlerts({
     ...base,tgMentions5m:75,xMentions5m:60,chainVolume1hUsd:1000,chainVolumeBaseline1hUsd:50,
     tgCopypastaRatio:0.9,xBotRatio:0.8,riskScore:0.85,correlationLift:2.4,correlationPValue:0.01,
+    correlationExposedCount:20,correlationControlCount:20,correlationValidation:"out_of_sample",
   });
   assert.deepEqual(alerts.map((alert)=>alert.alertType),[
     "tg_mentions_spike","x_mentions_spike","chain_volume_anomaly","coordinated_copypasta",
@@ -23,11 +24,22 @@ test("alert rules detect multi-source anomalies with evidence",()=>{
   assert.ok(formatTelegramAlert(alerts[0]).includes(token));
 });
 
-test("persistence suppresses repeated active alert types inside the five-minute cooldown",async()=>{
+test("validated correlation alerts require OOS evidence and enough samples",()=>{
+  const candidate={...base,correlationLift:4,correlationPValue:0.001};
+  assert.deepEqual(evaluateCrossPlatformAlerts(candidate),[]);
+  assert.deepEqual(evaluateCrossPlatformAlerts({...candidate,correlationExposedCount:4,correlationControlCount:4,
+    correlationValidation:"out_of_sample"}),[]);
+  assert.deepEqual(evaluateCrossPlatformAlerts({...candidate,correlationExposedCount:10,correlationControlCount:10,
+    correlationValidation:"out_of_sample"}).map(a=>a.alertType),["validated_correlation"]);
+});
+test("persistence suppresses any active incident regardless of age",async()=>{
   const candidates=evaluateCrossPlatformAlerts({...base,riskScore:0.9});
   let insertCalls=0;
   const tx={async query(sql){
-    if(sql.includes("SELECT alert_id FROM token_alerts"))return {rows:[{alert_id:1}]};
+    if(sql.includes("SELECT alert_id FROM token_alerts")){
+      assert.doesNotMatch(sql,/INTERVAL '5 minutes'/);
+      return {rows:[{alert_id:1}]};
+    }
     if(sql.includes("INSERT INTO token_alerts")){insertCalls++;return {rows:[{alert_id:2}]};}
     return {rows:[]};
   }};
