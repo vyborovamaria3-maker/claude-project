@@ -15,7 +15,9 @@ Dataset rows are candidates, not trusted signals.
   historical call dataset is CC0; it is not treated as proof that a token is safe or profitable.
 - **TGDataset (120,979 public channels)** — supported as a local import only. The archive is about
   71 GB compressed, so it is never downloaded automatically. The local importer streams large JSON
-  files and extracts channel metadata without loading the nested message archive into memory.
+  files and extracts channel metadata without loading the nested message archive into memory. If
+the TGDataset labeled_data topic map is present, the local importer defaults to Crypto-labelled
+channels; use --topics all to include every topic. Language labels are retained when available.
 - **tgparser JSON/CSV archives** — the existing telegram_import_tgparser command remains the path
   for importing archived messages for a channel already in the database. Dataset metadata import
   does not copy hundreds of millions of historical messages into production.
@@ -50,6 +52,7 @@ Run from solana-launcher/backend:
     python -m app.cli.telegram_import_datasets sync-public
     python -m app.cli.telegram_import_datasets import-local data/tgdataset --limit 1000
     python -m app.cli.telegram_import_datasets import-local data/tgdataset --limit 0 --dry-run
+    python -m app.cli.telegram_import_datasets import-local data/tgdataset --topics all --limit 0
 
 The limit defaults to 1000. A limit of 0 scans all local records and may take a long time for the
 full TGDataset archive. The importer skips scam-marked channels, normalizes usernames and t.me URLs,
