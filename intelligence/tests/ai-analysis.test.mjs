@@ -33,7 +33,12 @@ function fakeTx(task = "sentiment", status = "active") {
         model_id: params[0], provider: "primary", name: task === "embedding" ? "embed-test" : "chat-test",
         version: "1", task, status,
       }] };
-      if (sql.includes("FROM token_alerts")) return { rows: [{ evidence_refs: ["tg:message:1", "x:tweet:1"] }] };
+      if (sql.includes("FROM token_alerts")) return { rows: [{
+        evidence_refs: ["tg:message:1", "x:tweet:1"],
+        canonical_token_id:"solana:So11111111111111111111111111111111111111112",alert_type:"attention_spike",
+        severity:"medium",score:"0.8",score_version:"cross-platform-heuristics-v2",features:{tgMentions5m:75},
+        triggered_at:"2026-10-22T12:00:01Z",as_of:"2026-10-22T12:00:00Z",
+      }] };
       if (sql.includes("INSERT INTO signal_explanations")) return { rows: [{ explanation_id: 1 }] };
       return { rows: [] };
     },
@@ -55,6 +60,12 @@ test("AI explanation cannot cite evidence that was not supplied", async () => {
   await assert.rejects(service.explainSignal({
     modelId: "explain-v1", alertId: 1, facts: { alertType: "attention_spike" }, evidenceRefs: ["tg:message:1"],
   }), /outside the supplied evidence set/);
+});
+
+test("AI explanations reject fabricated factual claims even when citations are valid",async()=>{
+  const service=createAiAnalysisService(fakeTx("explanation"),gateway);
+  await assert.rejects(service.explainSignal({modelId:"explain-v1",alertId:1,
+    facts:{alertType:"attention_spike",score:999},evidenceRefs:["x:tweet:1"]}),/Unverified signal facts/);
 });
 
 test("signal explanations cannot attach evidence absent from the alert", async () => {
