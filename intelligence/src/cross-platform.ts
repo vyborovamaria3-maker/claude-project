@@ -314,11 +314,11 @@ export async function refreshTokenDailyCrossPlatform(
     WHERE te.source_system IN ('tg','x','blockchain')
       AND te.observed_at <= $3::timestamptz
       AND te.occurred_at <= $3::timestamptz
-      AND te.occurred_at >= ($2::date - INTERVAL '7 days')
-      AND te.occurred_at < ($2::date + INTERVAL '1 day')
+      AND te.occurred_at >= (($2::date - INTERVAL '7 days') AT TIME ZONE 'UTC')
+      AND te.occurred_at < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC')
   ), day_events AS (
     SELECT * FROM token_events
-    WHERE occurred_at >= $2::date AND occurred_at < ($2::date + INTERVAL '1 day')
+    WHERE occurred_at >= ($2::date::timestamp AT TIME ZONE 'UTC') AND occurred_at < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC')
   ), first_events AS (
     SELECT
       MIN(te.occurred_at) FILTER (WHERE te.source_system='tg' AND te.timeline_kind='tg_message_published') AS first_mention_tg_at,
@@ -340,8 +340,8 @@ export async function refreshTokenDailyCrossPlatform(
   ), coverage AS (
     SELECT source_system,
       CASE
-        WHEN bool_or(status='complete' AND window_start <= $2::date
-          AND window_end >= ($2::date + INTERVAL '1 day')) THEN 'complete'
+        WHEN bool_or(status='complete' AND window_start <= ($2::date::timestamp AT TIME ZONE 'UTC')
+          AND window_end >= (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC')) THEN 'complete'
         WHEN bool_or(status='partial') THEN 'partial'
         ELSE 'unknown'
       END AS coverage_status,
@@ -349,7 +349,7 @@ export async function refreshTokenDailyCrossPlatform(
     FROM source_coverage_windows
     WHERE source_system IN ('tg','x','blockchain') AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
       AND (details->>'scope' IS NULL OR details->>'scope'='timeline_events')
-      AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
+      AND window_start < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC') AND window_end > ($2::date::timestamp AT TIME ZONE 'UTC')
     GROUP BY source_system
   ), coverage_pivot AS (
     SELECT
@@ -360,24 +360,24 @@ export async function refreshTokenDailyCrossPlatform(
     FROM coverage
   ), trade_coverage AS (
     SELECT
-      CASE WHEN bool_or(status='complete' AND window_start <= $2::date
-        AND window_end >= ($2::date + INTERVAL '1 day')) THEN 'complete'
+      CASE WHEN bool_or(status='complete' AND window_start <= ($2::date::timestamp AT TIME ZONE 'UTC')
+        AND window_end >= (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC')) THEN 'complete'
         WHEN bool_or(status='partial') THEN 'partial' ELSE 'unknown' END AS coverage_status,
       MAX(GREATEST(known_at,created_at)) AS known_at
     FROM source_coverage_windows
     WHERE source_system='blockchain' AND details->>'scope' IN ('settled_trade_tape','trade_executed')
       AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
-      AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
+      AND window_start < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC') AND window_end > ($2::date::timestamp AT TIME ZONE 'UTC')
   ), swap_coverage AS (
     SELECT
-      CASE WHEN bool_or(status='complete' AND window_start <= $2::date
-        AND window_end >= ($2::date + INTERVAL '1 day')) THEN 'complete'
+      CASE WHEN bool_or(status='complete' AND window_start <= ($2::date::timestamp AT TIME ZONE 'UTC')
+        AND window_end >= (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC')) THEN 'complete'
         WHEN bool_or(status='partial') THEN 'partial' ELSE 'unknown' END AS coverage_status,
       MAX(GREATEST(known_at,created_at)) AS known_at
     FROM source_coverage_windows
     WHERE source_system='blockchain' AND details->>'scope'='token_swap_evidence_revisions'
       AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
-      AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
+      AND window_start < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC') AND window_end > ($2::date::timestamp AT TIME ZONE 'UTC')
   ), relevant_swap_signatures AS (
     SELECT DISTINCT signature
     FROM blockchain_swap_evidence_revisions
@@ -469,8 +469,8 @@ export async function refreshTokenDailyCrossPlatform(
     WHERE e.source_system='blockchain'
   ), swap_metrics AS (
     SELECT
-      CASE WHEN COUNT(DISTINCT signature) FILTER (WHERE occurred_at >= $2::date AND occurred_at < ($2::date + INTERVAL '1 day')) > 0
-        THEN COUNT(DISTINCT signature) FILTER (WHERE occurred_at >= $2::date AND occurred_at < ($2::date + INTERVAL '1 day'))
+      CASE WHEN COUNT(DISTINCT signature) FILTER (WHERE occurred_at >= ($2::date::timestamp AT TIME ZONE 'UTC') AND occurred_at < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC')) > 0
+        THEN COUNT(DISTINCT signature) FILTER (WHERE occurred_at >= ($2::date::timestamp AT TIME ZONE 'UTC') AND occurred_at < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC'))
         WHEN (SELECT coverage_status FROM swap_coverage)='complete' THEN 0 ELSE NULL END AS chain_swap_evidence_count,
       MIN(occurred_at) AS first_swap_evidence_at
     FROM active_swaps
