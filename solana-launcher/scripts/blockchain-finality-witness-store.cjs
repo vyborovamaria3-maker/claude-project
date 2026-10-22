@@ -74,16 +74,30 @@ function openWitnessState(filename,{sourcePath,recoveryEpoch}={}){
       db.pragma("user_version",{simple:true})!==SCHEMA_VERSION||
       db.prepare("SELECT recovery_epoch FROM witness_config WHERE id=1").get()?.recovery_epoch!==recoveryEpoch)
       throw Error("Witness DB schema or external recovery epoch mismatch");
-    const names=["witness_challenges","witness_receipts","witness_config"];
-    for(const name of names){
-      if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))
+    const columns={
+      witness_config:["id","recovery_epoch"],
+      witness_challenges:["challenge_hash","source_json","source_hash","key_id",
+        "endpoint_id","genesis_hash","issued_at","expires_at","consumed_at"],
+      witness_receipts:["id","challenge_hash","source_hash","key_id","endpoint_id",
+        "signature","raw_revision","raw_sha256","context_slot","observed_at",
+        "accepted_at","proof_sha256","envelope_json"]
+    };
+    for(const [name,fields] of Object.entries(columns)){
+      const definition=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name);
+      if(!definition||typeof definition.sql!=="string")
         throw Error("Witness DB missing required table: "+name);
+      const found=new Set(db.prepare("PRAGMA table_info("+name+")").all().map(x=>x.name));
+      if(fields.some(x=>!found.has(x)))throw Error("Witness DB required columns missing: "+name);
     }
     for(const name of ["witness_challenges_no_delete","witness_challenges_no_binding_change",
       "witness_receipt_no_update","witness_receipt_no_delete"]){
-      if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(name))
+      const definition=db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name);
+      if(!definition||typeof definition.sql!=="string"||!definition.sql.includes("RAISE(ABORT"))
         throw Error("Witness journal integrity trigger missing");
     }
+    const fk=db.prepare("PRAGMA foreign_key_list(witness_receipts)").all();
+    if(!fk.some(x=>x.from==="challenge_hash"&&x.table==="witness_challenges"))
+      throw Error("Witness receipts challenge foreign key missing");
     if(db.pragma("journal_mode=WAL",{simple:true})!=="wal")
       throw Error("Witness WAL required");
     db.pragma("synchronous=FULL");db.pragma("foreign_keys=ON");
