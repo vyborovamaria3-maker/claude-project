@@ -28,3 +28,20 @@ After migrations and outcome labels exist:
 npm --prefix intelligence run backtest -- --signal attention_score --outcome price_2x_24h --from 2025-01-01 --to 2025-09-30 --threshold 2.0 --horizon-hours 24
 
 Supported signal columns: attention_score, credibility_score, risk_score, momentum_score. Outcomes must already exist in token_outcomes and be observed after their occurrence time. The command exits with an error when there are no eligible observations; it never synthesizes labels.
+
+
+## Refreshing the daily cross-platform view
+
+After migrations and source event ingestion, refresh tokens that had observed timeline events on a UTC day:
+
+```sh
+npm --prefix intelligence run refresh-cross-platform -- --day 2026-10-22 --as-of 2026-10-23T00:15:00Z
+```
+
+To include registered tokens with no observed event, explicitly request a bounded all-token run:
+
+```sh
+npm --prefix intelligence run refresh-cross-platform -- --day 2026-10-22 --as-of 2026-10-23T00:15:00Z --all-registered --limit 1000
+```
+
+A token with no day events can produce zero counts only if the corresponding source has a complete coverage window known by the supplied as-of time. Otherwise the source metrics remain null. The command does not mark source windows complete; the source collector must record verified coverage through recordSourceCoverageWindow after its scan finishes.

@@ -30,7 +30,8 @@
     "etl:backfill": "node scripts/backfill.mjs",
     "etl:quality": "node scripts/quality.mjs",
     "api:local": "node api/start.mjs",
-    "backtest": "node scripts/backtest.mjs"
+    "backtest": "node scripts/backtest.mjs",
+    "refresh-cross-platform": "node scripts/refresh-cross-platform.mjs"
   },
   "exports": {
     ".": {
