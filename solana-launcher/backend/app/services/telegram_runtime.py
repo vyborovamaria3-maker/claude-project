@@ -53,7 +53,7 @@ class TelegramMonitorManager:
             "candidate": 0,
             "due": 0,
         }
-        self._dataset_manifest_signature: tuple[tuple[str, int, int], ...] | None = None
+        self._dataset_manifest_signature: dict[str, tuple[int, int]] | None = None
         self._dataset_import_summary: dict[str, Any] = {"enabled": True, "source_files": []}
 
     @property
@@ -146,11 +146,28 @@ class TelegramMonitorManager:
             self._dataset_import_summary = {"enabled": False, "source_files": []}
             return
         manifest = dataset_manifest(self.settings)
-        if manifest == self._dataset_manifest_signature:
+        current = {path: (size, modified) for path, size, modified in manifest}
+        previous = self._dataset_manifest_signature
+        if current == previous:
             return
-        paths = [Path(item[0]) for item in manifest]
-        summary = await import_dataset_candidates(self.sessionmaker, self.settings, paths=paths)
-        self._dataset_manifest_signature = manifest
+        changed_paths = [
+            Path(path)
+            for path, signature in current.items()
+            if previous is None or previous.get(path) != signature
+        ]
+        removed_files = sorted(
+            Path(path).name for path in (set(previous or {}) - set(current))
+        )
+        if previous is None or changed_paths:
+            summary = await import_dataset_candidates(
+                self.sessionmaker, self.settings, paths=changed_paths
+            )
+        else:
+            summary = dict(self._dataset_import_summary)
+        summary["source_files"] = [Path(path).name for path in current]
+        summary["changed_files"] = len(changed_paths)
+        summary["removed_files"] = removed_files
+        self._dataset_manifest_signature = current
         self._dataset_import_summary = summary
         self._registry_summary = await registry_summary(self.sessionmaker)
 
