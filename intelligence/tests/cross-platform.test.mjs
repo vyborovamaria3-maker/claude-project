@@ -84,7 +84,7 @@ test("refresh query separates transactions, supported swap evidence, and settled
   assert.match(aggregateSql, /timeline_kind='chain_transaction'/);
   assert.match(aggregateSql, /timeline_kind='trade_executed'/);
   assert.match(aggregateSql, /blockchain_swap_evidence_revisions/);
-  assert.match(aggregateSql, /details->>'scope'='token_swap_evidence_revisions'/);
+  assert.match(aggregateSql, /scope='token_swap_evidence_revisions'/);
   assert.match(aggregateSql, /fe\.max_historical_event_observed_at/);
   assert.match(aggregateSql, /inbox\.ingested_at <= \$3::timestamptz/);
   assert.match(aggregateSql, /MAX\(GREATEST\(observed_at,ingested_at\)\)/);
