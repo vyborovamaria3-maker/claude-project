@@ -91,4 +91,55 @@ try{
   assert.equal(status.pumpfunCreatorLaunches,3);
   assert(status.deferred.some(x=>x.kind==="creator"&&x.count===1));
 }finally{db.close();}
-console.log("[blockchain-recursive-pilot-regression] OK: only seed token, evidence-gated Pump.fun creator, resumable launch registry, bounded token/wallet/creator waves and runtime limit");
+// Real Alchemy create_v2 used to produce no creator because it has neither
+// Helius source=PUMP_FUN nor an enhanced CREATE classification.
+const rawCreate=require("./fixtures/alchemy-mbc-create-v2.json");
+const actualCreator="ioH8AXUJyzNKzJ9tYu93XpZDHTrkjogLcSxMFoofAWy";
+const actualMint="5dBB7trtJaHKrRhnDzPrbmZny3QJNeEGVMaBSBa8pump";
+assert.equal(rawCreate.source,"alchemy");
+assert.equal(rawCreate.type,undefined);
+const rawLaunches=extractPumpFunLaunches([rawCreate]);
+assert.equal(rawLaunches.length,1);
+assert.equal(rawLaunches[0].creator,actualCreator);
+assert.equal(rawLaunches[0].mint,actualMint);
+assert.equal(rawLaunches[0].evidenceSource,"alchemy_raw_pump_fun_create_v2_and_event");
+assert.equal(extractPumpFunLaunches([rawCreate,rawCreate]).length,1);
+const clone=()=>JSON.parse(JSON.stringify(rawCreate));
+for(const mutate of [
+  tx=>{tx.raw.meta.err={InstructionError:[2,"failed"]};},
+  tx=>{delete tx.raw.meta.err;},
+  tx=>{tx.signature="different-receipt";},
+  tx=>{tx.raw.meta.logMessages=[];},
+  tx=>{tx.raw.meta.logMessages=tx.raw.meta.logMessages.map(l=>l.startsWith("Program data: ")?"Program log: "+l:l);},
+  tx=>{tx.raw.transaction.message.instructions[2].accounts[0]=TOKEN_B;},
+  tx=>{tx.raw.transaction.message.instructions[2].accounts[2]=TOKEN_B;},
+  tx=>{tx.raw.transaction.message.instructions[2].accounts[5]=RELAYER;},
+  tx=>{tx.raw.transaction.message.instructions[2].data="1";},
+  tx=>{tx.raw.meta.logMessages.pop();},
+  tx=>{tx.raw.meta.logMessages=tx.raw.meta.logMessages.map(l=>l.replaceAll(PUMP_FUN_PROGRAM_ID,RELAYER));},
+]){
+  const tx=clone();mutate(tx);
+  assert.equal(extractPumpFunLaunches([tx]).length,0,"unproved/failed raw launch must not expand the graph");
+}
+const paidByRelayer=clone();paidByRelayer.feePayer=RELAYER;
+assert.equal(extractPumpFunLaunches([paidByRelayer])[0].creator,actualCreator);
+const rawDb=makeDb();
+try{
+  const scope=collector.ensurePilotScope(rawDb,actualMint);
+  assert.equal(collector.appendDiscoveredCreators(rawDb,scope,actualMint,[rawCreate]),1);
+  assert(rawDb.prepare("SELECT 1 FROM chain_collection_scope_members WHERE scope_id=? AND kind='creator' AND address=?").get(scope,actualCreator));
+  assert.equal(collector.appendDiscoveredCreatorTokens(rawDb,scope,actualCreator,[rawCreate]),1);
+  assert(rawDb.prepare("SELECT 1 FROM chain_collection_scope_deferred WHERE scope_id=? AND parent_kind='creator' AND parent_address=? AND kind='token' AND address=?").get(scope,actualCreator,actualMint));
+  assert(collector.appendDiscoveredWallets(rawDb,"token",actualMint,[rawCreate],scope)>0);
+  assert(rawDb.prepare("SELECT 1 FROM chain_collection_scope_deferred WHERE scope_id=? AND kind='wallet' AND address=?").get(scope,actualCreator),"raw SPL owner must be queued without enhanced arrays");
+  const failed=clone();failed.raw.meta.err={InstructionError:[2,"failed"]};
+  const failedScope=collector.ensurePilotScope(rawDb,TOKEN_C);
+  assert.equal(collector.appendDiscoveredWallets(rawDb,"token",actualMint,[failed],failedScope),0);
+  const noOwners=clone();for(const b of [...noOwners.raw.meta.preTokenBalances,...noOwners.raw.meta.postTokenBalances])delete b.owner;
+  assert.equal(collector.appendDiscoveredWallets(rawDb,"token",actualMint,[noOwners],failedScope),0,"token accounts never stand in for absent owners");
+  collector.appendDiscoveredWallets(rawDb,"token",actualMint,[{signature:"participant-fixture",tokenTransfers:[{mint:actualMint,fromUserAccount:actualCreator,toUserAccount:WALLET}]}],scope);
+  collector.promoteDeferredWaves(rawDb,scope,{tokenWaveWallets:10,creatorWaveTokens:10});
+  assert(rawDb.prepare("SELECT 1 FROM chain_collection_scope_members WHERE scope_id=? AND kind='wallet' AND address=?").get(scope,WALLET));
+  assert.equal(rawDb.prepare("SELECT COUNT(*) AS n FROM chain_pumpfun_creator_launches WHERE scope_id=? AND creator=?").get(scope,actualCreator).n,1);
+}finally{rawDb.close();}
+console.log("[blockchain-recursive-pilot-regression] OK: seed/creator/token/wallet graph, real Alchemy create_v2, reject forged or failed launch proofs, resumable bounded waves");

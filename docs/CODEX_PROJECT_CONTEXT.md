@@ -1,5 +1,15 @@
 # X Collector Runtime v2 context
 
+2026-10-22 Alchemy graph discovery: a saved MBC receipt proves raw Pump create_v2
+via matching instruction arguments/accounts and a CreateEvent emitted by Pump.
+This now feeds the existing token->creator->created-token queue without Helius
+classification. Explicit raw SPL balance owners also feed token->wallet discovery;
+absent owners and failed receipts do not. Known launches are a lower bound, not a
+verified total of the creator's tokens. Unsupported creation layouts, exhausted
+address history and completed graph waves do not prove a complete token tape.
+Only offline fixtures and in-memory queue replay were used; no production DB
+changes or provider requests were made.
+
 PR #68 merge integration (2026-10-18): preserve canonical Alchemy history and Settings V2 transport/monitoring; forensic coverage and per-request collection ledger use separate explicit schemas so #65 cache rows survive unchanged. No automatic Helius fallback. Fence success/failure/budget-release by lease token and expiry; retain raw inventory evidence and unknown execution. Offline settings/forensic/FIFO/API/legacy-database regressions cover integration; authoritative PnL remains unavailable for incompletely decoded raw history.
 
 PR #68 local review: forensic FIFO handles sub-1e-10 quantities without treating unmatched sales as known profit; balance reconciliation uses relative token precision and exact lamports. Decoder revisions are wallet v5 / DEX v3. Evidence API requires existing production auth and excludes old decoder results until offline replay. Wallet activities carry their owner; the evidence UI combines and deduplicates DEX/seed observations and cancels obsolete reads. No main merge or new collector infrastructure.
