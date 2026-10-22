@@ -2,8 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.social_intelligence import TelegramChannel
 from app.services.telegram_dataset_sources import (
@@ -16,6 +14,8 @@ from app.services.telegram_discovery_registry import (
     due_registry_channels,
     import_dataset_channel_candidates,
 )
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 def test_public_snapshot_normalizes_handles_filters_topics_and_sorts() -> None:
