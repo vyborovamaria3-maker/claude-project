@@ -75,3 +75,37 @@ Proposed next contract, after evidence review: a separate, *revisioned and retra
 - Manual production activation only after backed-up/restore-tested native databases, applied migrations, runbook and explicit operator gate.
 
 See `docs/architecture/CODEX_FINAL_INTEGRATION_PLAN_20261018.md` for earlier integration caveats and `docs/architecture/KNOWN_GAPS.md` for current release blockers.
+
+
+## TG Collector sprint-0 implementation audit — 2026-10-22
+
+Scope: source-code/SQL inventory on `main`; **not a query of the user's running databases**. Existing ARCH-01 canonical contracts above remain authoritative. Do not introduce a second physical `canonical_token_id` column without a measured need.
+
+| TG object / contract | Verified native identity and evidence | Consumer / update mechanism | Explicit limitation |
+| --- | --- | --- | --- |
+| `tg_sources` | Source surrogate `id`; verified Telegram `peer_id` is the external identity. `current_username` may change. | MTProto channel engine and discovery. | Do not use usernames as stable cross-source IDs. |
+| `tg_messages` | Primary evidence `(source_id,message_id)`, Telegram publication time vs local observation. | `src/engines/channel.ts`, `src/persistence/messages.ts`. | First observed is not first ever published. |
+| `tg_message_links` | `(source_id,message_id,kind,target_kind,target_key)`; `analysis_version`, plus `extractor_name` added in migration 011. | Evidence extraction/backfill, graph rollups. | Links are observations, not proof of actor control. |
+| `tg_graph_daily_edges` | `(source_id,day,kind,target_kind,target_key)` in migration 003. | Page writes / `analyze:backfill` / `analyze:refresh`. | Native field is **`kind`**, not `edge_kind`; graph is evidence aggregation. |
+| `tg_tokens` | **`PRIMARY KEY(chain_id,mint)`**, migration 011; Solana native chain value `solana-mainnet`. | Explicit `tokens:resolve` verifies on-chain mint layout. | Map verified `solana-mainnet` → shared `solana:<mint>`; never infer a token from a syntactically valid address. |
+| `tg_token_candidates`, `tg_ticker_registry` | Candidates may be unresolved; ticker registry has confirmed/probable/unresolved statuses. | Extractor and resolver/ticker reconciliation. | Ticker alone is not a canonical token. |
+| `tg_token_mentions` | `(source_id,message_id,chain_id,mint,mention_type,analysis_version)`; observed evidence and orphan state. | Resolver and evidence lifecycle; versioned index `(chain_id,mint,message_date)`. | Query token mentions only with explicit status and coverage predicates. |
+| `tg_token_first_mentions` | One row per `(chain_id,mint)`; source/message/time and `coverage_status`. | `refreshTokenFirstMentions`; also recomputed during token resolution. | Earliest **collected** eligible observation only. |
+| `tg_message_fingerprints`, `tg_copy_clusters` | Per-message exact normalized SHA fingerprint, cluster ID, extractor version. | `syncMessageTokenCandidates`. | Deterministic copy matching; not proof of bots or broad semantic similarity. |
+| `tg_token_velocity` | Windows `5m/15m/1h/6h/24h`; counts of mentions, sources, authors, independent clusters, velocity and acceleration. | `refreshTokenVelocity`, called by **manual** `analyze:refresh`. | `z_score` currently inserted as `NULL` by this function; no scheduler demonstrated in TG worker. |
+| `tg_channel_scores` | Composite and component scores, model version, sample size and confidence bounds. | `refreshChannelScores` from manual refresh and some token resolution paths. | Composite is deliberately `NULL` without >=5 outcomes **and** remaining component inputs; no `score_reason` column verified. |
+| `tg_token_market_snapshots`, `tg_token_outcomes` | Provider-timestamped snapshots and per-message token outcomes. `outcome_status`: pending/complete/insufficient_data/risk_confirmed. | Explicit `market:refresh` and `market:outcomes`. | No `result_reason` column verified; current snapshots are not historical pricing. |
+| `tg_signals`, `tg_backtest_runs/results` | Versioned signals and historical evaluation records. | `analyze:refresh`, explicit `backtest:run`. | Offline code existence does not validate PnL or out-of-sample performance. |
+| `outbox_events` | Source-event key `tg:<peer>:<message>:rev:<hash>`; source identity `tg:source:<peer>`. | `src/persistence/outbox.ts`; default-off `TG_INTELLIGENCE_OUTBOX_ENABLED`. | Ordinary message event contains **source** ref, not verified token ref; separate verified-token path needs end-to-end source/consumer proof. |
+| `schema_migrations` | `name,checksum,applied_at,applied_by` in `src/db.ts`. | TG checksum-enforcing migration runner. | Checked in code, not replayed against live user DB in this audit. |
+
+### Pipeline triggering: verified from entrypoints
+
+- `npm run worker` → `src/runtime/worker-loop.ts`: MTProto connect → `discoverPublicSources` → queue `claim` → `processJob`; singleton advisory lock, heartbeat, FloodWait handling. **No periodic invocation of `analyze:refresh`, `market:refresh`, `market:outcomes`, `backtest:run` is present in this loop.**
+- `npm run analyze:backfill`: offline evidence re-extraction and graph/day updates.
+- `npm run analyze:refresh`: graph/source rollups, token first mentions, channel metrics, velocity, signals, narratives, channel scores. Do not run concurrent with worker unless concurrency has been explicitly reviewed.
+- `npm run tokens:resolve`: explicit on-chain RPC mint validation; may incur provider usage/cost.
+- `npm run market:refresh`, `market:outcomes`, `backtest:run`, `db:metrics`: separate CLI entrypoints, not demonstrated to be periodically scheduled by TG worker.
+- Next.js `solana-launcher/app/api/integrations/tg-collector` is an interface into TG's own DB; this is **not** proof that Node Intelligence token timeline is populated.
+
+Source references: [TG SQL 011](../../tg-collector/sql/011_token_intelligence.sql), [rollups SQL 003](../../tg-collector/sql/003_graph_rollups.sql), [TG migration runner](../../tg-collector/src/db.ts), [worker loop](../../tg-collector/src/runtime/worker-loop.ts), [analytics refresh](../../tg-collector/src/analytics/refresh.ts), [market analysis](../../tg-collector/src/analytics/market-data.ts), [TG outbox](../../tg-collector/src/persistence/outbox.ts), [shared IDs](../../packages/contracts/src/canonical-ids.ts). See [TG live test register](LIVE_TESTS.md) and [known gaps](KNOWN_GAPS.md).
