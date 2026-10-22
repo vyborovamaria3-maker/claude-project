@@ -47,6 +47,11 @@ function run(){
     assert.equal(summary.scanned,1);
     assert.equal(summary.reviewed,2);
     assert.equal(state.prepare("SELECT count(*) n FROM watcher_current").get().n,2);
+    const countBeforeBackwards=state.prepare("SELECT count(*) n FROM watcher_observations").get().n;
+    assert.throws(()=>watchOnce(source,state,{kind:"wallet",address:wallet,limit:1,clock:()=>1}),
+      /Watch clock moved backwards/);
+    assert.equal(state.prepare("SELECT count(*) n FROM watcher_observations").get().n,
+      countBeforeBackwards,"Rejected clock rollback must leave the journal unchanged");
     state.close();state=null;
     const before=fs.readFileSync(sourcePath);
     const third=runPaths({db:sourcePath,state:statePath,kind:"wallet",address:wallet,limit:1},
@@ -88,6 +93,20 @@ function run(){
     assert.throws(()=>state.prepare("UPDATE watcher_invalidation_outbox SET state='done'").run(),/manual review/);
     assert.throws(()=>ensureSeparate(sourcePath,sourcePath),/separate/);
     assert.throws(()=>openState(sourcePath),/schema|required|SQLite/);
+    const tamperedPath=path.join(dir,"broken-watch.db");
+    const fresh=openState(tamperedPath);fresh.close();
+    const adversary=new Database(tamperedPath);
+    adversary.exec("DROP TRIGGER watcher_observation_immutable_update");
+    adversary.close();
+    assert.throws(()=>openState(tamperedPath),/immutable journal trigger missing/,
+      "Journal trigger removal must prevent opening a mutable state DB");
+    const tornPath=path.join(dir,"torn-watch.db");
+    const complete=openState(tornPath);complete.close();
+    const invalid=new Database(tornPath);
+    invalid.exec("DROP TABLE watcher_current");
+    invalid.close();
+    assert.throws(()=>openState(tornPath),/Watcher state table missing/,
+      "A file with a valid app-id but missing tables cannot silently resume");
     assert.throws(()=>readScope({kind:"wallet"}),/scope/);
     assert.throws(()=>parse(["--db",sourcePath,"--state",statePath,"--watch","--interval-seconds","1"]),/60 and 3600/);
     assert.throws(()=>watchOnce(source,state,{limit:101}),/1..100/);
