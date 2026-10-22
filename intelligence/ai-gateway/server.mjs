@@ -62,7 +62,7 @@ function projectFeatures(snapshot){
   if(!snapshot||!["observed_snapshot","missing"].includes(snapshot.status))
     throw new Error("invalid_ai_features");
   if(snapshot.status==="missing"){
-    if(snapshot.values!==null)return Promise.reject(new Error("invalid_missing_features"));
+    if(snapshot.values!==null)throw new Error("invalid_missing_features");
     return {status:"missing",values:null};
   }
   if(snapshot.featureVersion!=="features-v1"||
@@ -111,6 +111,16 @@ export function projectModelContext(context,request){
      Object.values(legacyCounts).reduce((a,b)=>a+b,0)>legacy.sampleLimit)
     throw new Error("invalid_ai_counts");
   const feature=projectFeatures(context.featureSnapshot);
+  if(feature.status==="observed_snapshot"){
+    const utc=value=>typeof value==="string"&&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)&&
+      !Number.isNaN(Date.parse(value));
+    if(!utc(feature.asOf)||!utc(feature.maxInputObservedAt)||!utc(feature.computedAt)||
+       feature.asOf>request.occurredBefore||
+       feature.maxInputObservedAt>request.knownAt||
+       feature.computedAt>request.knownAt)
+      throw new Error("future_feature_in_model_context");
+  }
   const modelContext={
     schemaVersion:"ai-token-context-v1",tokenId:request.tokenId,
     asOf:{occurredBefore:request.occurredBefore,knownAt:request.knownAt},
