@@ -17,6 +17,8 @@ on:
       - "x-collector/src/collector/persistence/verified-token-links.ts"
       - "x-collector/scripts/verify-x-token-links.ts"
       - "x-collector/tests/verified-token-links.test.ts"
+      - "x-collector/tests/x-mint-verifier.test.ts"
+      - "x-collector/src/collector/persistence/collector-store.ts"
       - ".github/workflows/native-social-token-links.yml"
   push:
     branches: [main]
@@ -35,6 +37,8 @@ on:
       - "x-collector/src/collector/persistence/verified-token-links.ts"
       - "x-collector/scripts/verify-x-token-links.ts"
       - "x-collector/tests/verified-token-links.test.ts"
+      - "x-collector/tests/x-mint-verifier.test.ts"
+      - "x-collector/src/collector/persistence/collector-store.ts"
       - ".github/workflows/native-social-token-links.yml"
 
 permissions:
@@ -101,5 +105,8 @@ jobs:
         run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
       - name: Typecheck native X verification emitters
         run: npm run typecheck
-      - name: Test verified tweet token link, edit retraction and transactional PGlite outbox
-        run: node --import tsx --test tests/verified-token-links.test.ts
+      - name: Test tweet revision, bounded RPC verifier and native PGlite outbox
+        run: >-
+          node --import tsx --test
+          tests/verified-token-links.test.ts
+          tests/x-mint-verifier.test.ts
