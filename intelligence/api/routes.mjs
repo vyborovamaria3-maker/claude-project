@@ -194,6 +194,7 @@ function normalizeSummary(row,request){
       tgScamRatio:numberOrNull(row.tg_scam_ratio),xMentions:numberOrNull(row.x_mentions),
       xUniqueAuthors:numberOrNull(row.x_unique_authors),xBotRatio:numberOrNull(row.x_bot_ratio),
       xSentimentScore:numberOrNull(row.x_sentiment_score),chainTrades:numberOrNull(row.chain_trades),
+      chainTransactions:numberOrNull(row.chain_transactions),chainSwapEvidenceCount:numberOrNull(row.chain_swap_evidence_count),
       chainUniqueWallets:numberOrNull(row.chain_unique_wallets),chainVolumeUsd:numberOrNull(row.chain_volume_usd),
       chainLiquidityUsd:numberOrNull(row.chain_liquidity_usd),chainSmartMoneyBought:numberOrNull(row.chain_smart_money_bought),
       chainRugRisk:numberOrNull(row.chain_rug_risk),
@@ -201,6 +202,7 @@ function normalizeSummary(row,request){
     firstMentionTgAt:row.first_mention_tg_at===null?null:safeTime(row.first_mention_tg_at),
     firstMentionXAt:row.first_mention_x_at===null?null:safeTime(row.first_mention_x_at),
     firstTradeAt:row.first_trade_at===null?null:safeTime(row.first_trade_at),
+    firstSwapEvidenceAt:row.first_swap_evidence_at===null?null:safeTime(row.first_swap_evidence_at),
     scores:{
       attention:numberOrNull(row.attention_score),credibility:numberOrNull(row.credibility_score),
       risk:numberOrNull(row.risk_score),momentum:numberOrNull(row.momentum_score),

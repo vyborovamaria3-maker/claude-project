@@ -31,7 +31,8 @@ test("cross-platform scores are versioned and missing metrics stay null", () => 
 test("snapshot validation preserves point-in-time boundaries and UTC day", () => {
   const snapshot = validateCrossPlatformSnapshot(base);
   assert.equal(snapshot.asOf, "2026-10-22T23:59:00.000Z");
-  assert.equal(snapshot.dataConfidence, 1);
+  assert.ok(snapshot.dataConfidence < 1);
+  assert.equal(snapshot.chainTrades, null);
   assert.match(snapshot.snapshotSha256, /^[0-9a-f]{64}$/);
   assert.throws(() => validateCrossPlatformSnapshot({ ...base, maxInputObservedAt: "2026-10-23T00:01:00Z" }), /Future-observed/);
   assert.doesNotThrow(() => validateCrossPlatformSnapshot({ ...base, asOf: "2026-10-23T00:00:00Z", maxInputObservedAt: "2026-10-23T00:00:00Z" }));

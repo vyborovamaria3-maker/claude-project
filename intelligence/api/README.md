@@ -72,3 +72,6 @@ Migration 003 (Feature Store) and migration 006 (cross-platform analytics) are n
 | GET | `/api/intelligence/v1/backtest` | optional `signal`, `limit` | Completed backtest summaries |
 
 These endpoints return normalized metrics only, not raw Telegram messages, tweet bodies, provider prompts, API keys, or full timeline payloads. As-of filters prevent later snapshots from appearing in earlier views. Historical completeness remains `unknown` unless separately established.
+
+
+Blockchain semantics: `chainTransactions` counts normalized `chain_transaction` events. `chainSwapEvidenceCount` counts only currently consistent, supported wallet/signature revisions known by `asOf`; it is not a confirmed settled-trade count. `chainTrades`, `chainVolumeUsd` and `firstTradeAt` remain null unless the source provides explicit settled-trade events/coverage.

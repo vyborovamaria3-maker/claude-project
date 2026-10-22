@@ -36,9 +36,9 @@ function fakePool(){
         canonical_token_id:id,as_of:new Date(known),max_input_observed_at:new Date("2026-10-20T02:00:00Z"),
         tg_mentions:"5",tg_unique_authors:"3",tg_copypasta_ratio:"0.1",tg_sentiment_score:"0.4",tg_scam_ratio:"0.02",
         x_mentions:"7",x_unique_authors:"4",x_bot_ratio:"0.2",x_sentiment_score:"0.3",
-        chain_trades:"2",chain_unique_wallets:"2",chain_volume_usd:"1000",chain_liquidity_usd:"5000",
+        chain_trades:null,chain_transactions:"4",chain_swap_evidence_count:"2",chain_unique_wallets:"2",chain_volume_usd:null,chain_liquidity_usd:"5000",
         chain_smart_money_bought:"1",chain_rug_risk:"0.1",
-        first_mention_tg_at:new Date(occurred),first_mention_x_at:new Date(occurred),first_trade_at:new Date(occurred),
+        first_mention_tg_at:new Date(occurred),first_mention_x_at:new Date(occurred),first_trade_at:null,first_swap_evidence_at:new Date(occurred),
         attention_score:"3.2",credibility_score:"0.72",risk_score:"0.1",momentum_score:null,
         score_version:"cross-platform-heuristics-v1",score_reason:{attention:{used:["tg_mentions"]}},
         source_coverage:{tg:"partial",x:"partial",blockchain:"partial"},data_confidence:"0.8",
@@ -194,6 +194,8 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     assert.equal(summary.status,200);
     const summaryBody=await summary.json();
     assert.equal(summaryBody.metrics.tgMentions,5);
+    assert.equal(summaryBody.metrics.chainTransactions,4);
+    assert.equal(summaryBody.metrics.chainSwapEvidenceCount,2);
     assert.equal(summaryBody.scores.risk,0.1);
     const features=await fetch(origin+base+"/features?asOf="+encodeURIComponent(known),{headers:headers()});
     assert.equal(features.status,200);
