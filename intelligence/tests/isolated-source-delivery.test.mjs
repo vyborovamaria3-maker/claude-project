@@ -60,6 +60,13 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       try {
         await client.query("BEGIN");
         await emitPostgres(client,event);
+        // Test-only due date; actual PostgreSQL claim/lease/ACK remains active.
+        // Source DB clock can be milliseconds ahead of the runner's Date.now().
+        await client.query(
+          "UPDATE outbox_events SET next_attempt_at=NOW()-interval '1 minute' "+
+          "WHERE source_system=$1 AND event_kind=$2 AND event_key=$3",
+          [event.sourceSystem,event.eventKind,event.eventKey],
+        );
         await client.query("COMMIT");
       } catch(error) {
         try{await client.query("ROLLBACK")}catch{}
@@ -134,6 +141,13 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       try{
         await tx.query("BEGIN");
         await emitPostgres(tx,event);
+        const queued=await tx.query(
+          "UPDATE outbox_events SET next_attempt_at=NOW()-interval '1 minute' "+
+          "WHERE source_system=$1 AND event_kind=$2 AND event_key=$3 "+
+          "RETURNING id",
+          [event.sourceSystem,event.eventKind,event.eventKey],
+        );
+        assert.equal(queued.rows.length,1,"fixture event must be enqueued before COMMIT");
         await tx.query("COMMIT");
       }catch(error){
         try{await tx.query("ROLLBACK")}catch{}
@@ -180,16 +194,6 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       reason:"edited",sourceRevisionSha256:"c".repeat(64),
     });
     await emitInNativeTransaction(tgPool,tgEdit);
-    // A source DB can be fractionally ahead of the test runner's Date.now()
-    // when the just-inserted default next_attempt_at is compared to the
-    // producer's client-side claim clock. Make this disposable fixture due
-    // deterministically; this does NOT bypass the real PG claim/lease path.
-    const due=await tgPool.query(
-      "UPDATE outbox_events SET next_attempt_at=NOW()-interval '1 minute' "+
-      "WHERE event_kind='token_links_invalidated' AND processed_at IS NULL "+
-      "RETURNING id",
-    );
-    assert.equal(due.rows.length,1,"TG tombstone must exist before delivery");
     const retraction=await runDeliveryBatch(port(tgPool),destPool,{
       workerId:"tg-token-retraction",batchSize:1,leaseMs:120000,
     });
