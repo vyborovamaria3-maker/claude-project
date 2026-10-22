@@ -8,3 +8,4 @@ export * from "./cross-platform.js";
 export * from "./backtest.js";
 export * from "./ai-analysis.js";
 export * from "./correlations.js";
+export * from "./alerts.js";
