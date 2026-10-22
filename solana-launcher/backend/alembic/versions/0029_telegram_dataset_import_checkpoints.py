@@ -3,7 +3,7 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0029_telegram_dataset_import_checkpoints"
+revision = "0029_tg_dataset_ckpt"
 down_revision = "0028_tginvite_direct_invite"
 branch_labels = None
 depends_on = None
