@@ -123,13 +123,13 @@ test("real loopback Intelligence HTTP -> AI gateway returns only typed anonymous
     const body=await valid.json();
     assert.deepEqual(Object.keys(body).sort(),[
       "analysis","asOf","classification","evidenceCompleteness",
-      "isTradingSignal","model","providerFinalityVerified",
+      "isTradingSignal","model","blockchainFinalityVerified",
       "schemaVersion","tokenId",
     ].sort());
     assert.equal(body.schemaVersion,"ai-analysis-v1");
     assert.equal(body.tokenId,tokenId);
     assert.equal(body.isTradingSignal,false);
-    assert.equal(body.providerFinalityVerified,false);
+    assert.equal(body.blockchainFinalityVerified,false);
     assert.equal(requestLog.length,1);
     const context=requestLog[0];
     assert.deepEqual(context.evidence.verifiedSocialLinks.observedSampleCounts,
