@@ -264,29 +264,70 @@ async def sync_public_dataset_channels(sessionmaker, settings) -> dict[str, Any]
     }
 
 
-def _local_row(row: dict[str, Any], *, source_name: str) -> dict[str, Any] | None:
+def _local_row(
+    row: dict[str, Any],
+    *,
+    source_name: str,
+    topic_by_id: dict[str, str] | None = None,
+    language_by_id: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
     username = normalize_telegram_target(str(row.get("username") or row.get("url") or ""))
     if not username:
         return None
-    topic = str(row.get("topic") or row.get("category") or "").strip().casefold()
-    tags = row.get("tags") if isinstance(row.get("tags"), list) else []
+    channel_id = str(row.get("channel_id") or row.get("telegram_channel_id") or "").strip()
+    topic = str(
+        row.get("topic")
+        or row.get("category")
+        or (topic_by_id or {}).get(channel_id, "")
+    ).strip().casefold()
+    language = str((language_by_id or {}).get(channel_id, "")).strip().casefold()
+    raw_tags = row.get("tags") if isinstance(row.get("tags"), list) else []
+    tags = [*raw_tags, *([topic] if topic else [])]
+    if language:
+        tags.append(f"lang:{language}")
     return {
         "username": username,
         "title": str(row.get("title") or username)[:255],
         "about": str(row.get("description") or row.get("about") or "")[:4000],
         "participants": row.get("n_subscribers", row.get("subscribers", row.get("participants"))),
-        "channel_id": row.get("channel_id", row.get("telegram_channel_id")),
+        "channel_id": channel_id or None,
         "creation_date": row.get("creation_date", row.get("created")),
+        "language": language or None,
         "verified": row.get("verified"),
         "scam": row.get("scam", False),
         "topic": topic,
-        "tags": [*tags, *([topic] if topic else [])],
+        "tags": tags,
         "source_name": source_name,
         "source_url": str(row.get("source_url") or "")[:500],
         "license": str(row.get("license") or "")[:100],
         "attribution": str(row.get("attribution") or "")[:150],
         "snapshot": str(row.get("snapshot") or row.get("week") or "")[:40],
     }
+
+
+def _load_local_channel_labels(root: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Load optional TGDataset topic/language maps without treating label lists as seeds."""
+    search_root = root if root.is_dir() else root.parent
+    topic_by_id: dict[str, str] = {}
+    language_by_id: dict[str, str] = {}
+    if not search_root.exists():
+        return topic_by_id, language_by_id
+
+    for csv_path in search_root.rglob("*.csv"):
+        name = csv_path.name.casefold()
+        if name not in {"ch_to_topic_mapping.csv", "channel_to_language_mapping.csv"}:
+            continue
+        target = topic_by_id if name == "ch_to_topic_mapping.csv" else language_by_id
+        try:
+            with csv_path.open("r", encoding="utf-8-sig", newline="") as source:
+                for row in csv.DictReader(source):
+                    channel_id = _cell(row, "ch_id", "channel_id", "id")
+                    label = _cell(row, "topic", "language", "lang")
+                    if channel_id and label:
+                        target[channel_id.strip()] = label.strip().casefold()
+        except OSError:
+            continue
+    return topic_by_id, language_by_id
 
 
 def _iter_large_tgdataset_json(path: Path) -> Iterator[dict[str, Any]]:
@@ -335,7 +376,11 @@ def _iter_large_tgdataset_json(path: Path) -> Iterator[dict[str, Any]]:
 
 
 def iter_local_dataset_channels(
-    path: str | Path, *, limit: int = 1000, source_name: str | None = None
+    path: str | Path,
+    *,
+    limit: int = 1000,
+    source_name: str | None = None,
+    topics: set[str] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Stream public channel metadata from CSV/JSON files or a local TGDataset directory.
 
@@ -348,15 +393,38 @@ def iter_local_dataset_channels(
         raise FileNotFoundError(f"Local dataset path does not exist: {root}")
     maximum = max(0, int(limit))
     count = 0
+    topic_by_id, language_by_id = _load_local_channel_labels(root)
+    requested_topics = {value.strip().casefold() for value in topics or set() if value.strip()}
+    explicit_all_topics = bool(requested_topics & {"all", "*"})
+    topic_filter = requested_topics - {"all", "*"}
+    if (
+        not topic_filter
+        and not explicit_all_topics
+        and source_name == "tgdataset-local"
+        and topic_by_id
+    ):
+        topic_filter = {"crypto"}
     files = [root] if root.is_file() else sorted([*root.rglob("*.csv"), *root.rglob("*.json")])
     for file_path in files:
         if file_path.suffix.casefold() == ".csv":
+            if file_path.name.casefold() in {
+                "ch_to_topic_mapping.csv",
+                "channel_to_language_mapping.csv",
+            }:
+                continue
+            if "labeled_data" in {part.casefold() for part in file_path.parts}:
+                continue
             with file_path.open("r", encoding="utf-8-sig", newline="") as source:
                 for row in csv.DictReader(source):
                     normalized = _local_row(
-                        row, source_name=source_name or f"local:{file_path.name}"
+                        row,
+                        source_name=source_name or f"local:{file_path.name}",
+                        topic_by_id=topic_by_id,
+                        language_by_id=language_by_id,
                     )
-                    if normalized:
+                    if normalized and (
+                        not topic_filter or normalized.get("topic") in topic_filter
+                    ):
                         yield normalized
                         count += 1
                     if maximum and count >= maximum:
@@ -386,9 +454,14 @@ def iter_local_dataset_channels(
                 if not isinstance(row, dict):
                     continue
                 normalized = _local_row(
-                    row, source_name=source_name or f"local:{file_path.name}"
+                    row,
+                    source_name=source_name or f"local:{file_path.name}",
+                    topic_by_id=topic_by_id,
+                    language_by_id=language_by_id,
                 )
-                if normalized:
+                if normalized and (
+                    not topic_filter or normalized.get("topic") in topic_filter
+                ):
                     yield normalized
                     count += 1
                 if maximum and count >= maximum:
@@ -396,9 +469,14 @@ def iter_local_dataset_channels(
         else:
             for row in _iter_large_tgdataset_json(file_path):
                 normalized = _local_row(
-                    row, source_name=source_name or "tgdataset-local"
+                    row,
+                    source_name=source_name or "tgdataset-local",
+                    topic_by_id=topic_by_id,
+                    language_by_id=language_by_id,
                 )
-                if normalized:
+                if normalized and (
+                    not topic_filter or normalized.get("topic") in topic_filter
+                ):
                     yield normalized
                     count += 1
                 if maximum and count >= maximum:
