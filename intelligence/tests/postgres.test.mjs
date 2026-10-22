@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
 import {buildEntityRef,buildEvidenceRef,formatTokenId} from "@claude-project/contracts";
-import {ingestRegistryEvent} from "../dist/index.js";
+import {ingestRegistryEvent,recordSourceCoverageWindow,refreshTokenDailyCrossPlatform} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 test("PostgreSQL real transaction: replay, provenance and time bounds", {skip:!url},async()=>{
@@ -41,4 +41,57 @@ test("PostgreSQL real transaction: replay, provenance and time bounds", {skip:!u
     try{await client.query("ROLLBACK")}catch{}
     throw error;
   } finally {await client.end();}
+});
+
+
+test("cross-platform refresh SQL keeps transaction, swap evidence and settled trades distinct", {skip:!url},async()=>{
+  const client=new pg.Client({connectionString:url});
+  await client.connect();
+  try{
+    await client.query("BEGIN");
+    for(const file of [
+      "001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
+      "006_cross_platform_analytics.sql",
+    ]){
+      const ddl=await readFile(new URL("../migrations/"+file,import.meta.url),"utf8");
+      await client.query(ddl);
+    }
+    const now=Date.now();
+    const todayStart=Date.UTC(new Date(now).getUTCFullYear(),new Date(now).getUTCMonth(),new Date(now).getUTCDate());
+    const day=new Date(todayStart-24*60*60*1000).toISOString().slice(0,10);
+    const nextDay=new Date(todayStart).toISOString().slice(0,10);
+    const windowStart=day+"T00:00:00.000Z";
+    const windowEnd=nextDay+"T00:00:00.000Z";
+    const asOf=new Date(now+30_000).toISOString();
+    const genericKnownAt=new Date(now-2_000).toISOString();
+    const swapKnownAt=new Date(now-1_000).toISOString();
+    const token=formatTokenId("solana","So11111111111111111111111111111111111111112");
+    for(const sourceSystem of ["tg","x","blockchain"]){
+      await recordSourceCoverageWindow(client,{
+        sourceSystem,windowStart,windowEnd,knownAt:genericKnownAt,status:"complete",
+        evidenceCount:0,details:{scope:"timeline_events"},
+      });
+    }
+    await recordSourceCoverageWindow(client,{
+      sourceSystem:"blockchain",windowStart,windowEnd,knownAt:swapKnownAt,status:"complete",
+      evidenceCount:0,details:{scope:"token_swap_evidence_revisions"},
+    });
+    const snapshot=await refreshTokenDailyCrossPlatform(client,token,day,asOf);
+    assert.equal(snapshot.tgMentions,0);
+    assert.equal(snapshot.xMentions,0);
+    assert.equal(snapshot.chainTransactions,0);
+    assert.equal(snapshot.chainTrades,null);
+    assert.equal(snapshot.chainVolumeUsd,null);
+    assert.equal(snapshot.chainSwapEvidenceCount,0);
+    assert.equal(snapshot.firstTradeAt,null);
+    assert.equal(snapshot.firstSwapEvidenceAt,null);
+    assert.ok(snapshot.maxInputObservedAt<=snapshot.asOf);
+    await client.query("ROLLBACK");
+  }catch(error){
+    try{await client.query("ROLLBACK")}catch{}
+    throw error;
+  }finally{
+    await client.end();
+  }
 });
