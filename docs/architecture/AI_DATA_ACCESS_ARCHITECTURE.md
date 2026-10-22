@@ -58,9 +58,10 @@ A separate `INTELLIGENCE_AI_API_TOKEN` must be explicitly configured together
 with `INTELLIGENCE_AI_API_ENABLED=true` and the existing
 `INTELLIGENCE_API_ENABLED=true`. The AI secret MUST differ from the ordinary
 `INTELLIGENCE_API_TOKEN`. AI key is only valid for AI routes; existing key
-cannot read AI routes. The service remains loopback-only; the future AI
-gateway uses backend-to-backend access over a trusted boundary with its own
-principal-level authorization, traffic controls and audit. **Never place
+cannot read AI routes. Both services remain loopback-only. The
+implemented AI gateway uses a separate backend Bearer secret, fixed provider
+egress and bounded capacity. A future public-facing proxy still requires
+independent end-user authorization, audit, consent and per-user quotas. **Never place
 these tokens in a browser, LLM prompt, model output or external AI provider
 config.** Transmit only sanitized response JSON to the model.
 
