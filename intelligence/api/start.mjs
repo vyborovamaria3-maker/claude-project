@@ -3,7 +3,7 @@ import "node:process";
 import {resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 import pg from "pg";
-import {API_HOST,createIntelligenceApi,checkApiReadiness,validateApiToken} from "./server.mjs";
+import {API_HOST,createIntelligenceApi,checkApiReadiness,checkAiReadiness,validateApiToken} from "./server.mjs";
 
 export function apiConfiguration(env=process.env){
   if(env.INTELLIGENCE_API_ENABLED!=="true")
@@ -15,7 +15,13 @@ export function apiConfiguration(env=process.env){
   const rawPort=env.INTELLIGENCE_API_PORT??"3182";
   if(!/^[1-9][0-9]*$/.test(rawPort)||Number(rawPort)>65535)
     throw new Error("invalid_api_port");
-  return {token,connectionString,port:Number(rawPort)};
+  const aiFlag=env.INTELLIGENCE_AI_API_ENABLED??"false";
+  if(aiFlag!=="true"&&aiFlag!=="false")throw new Error("invalid_ai_api_opt_in");
+  const aiEnabled=aiFlag==="true";
+  const aiToken=aiEnabled?validateApiToken(env.INTELLIGENCE_AI_API_TOKEN):undefined;
+  if(aiEnabled&&aiToken===token)throw new Error("ai_api_token_must_be_distinct");
+  return {token,connectionString,port:Number(rawPort),
+    ...(aiEnabled?{aiEnabled:true,aiToken}:{})};
 }
 export async function startLocalIntelligenceApi(env=process.env){
   const config=apiConfiguration(env);
@@ -31,7 +37,11 @@ export async function startLocalIntelligenceApi(env=process.env){
   let server;
   try{
     await checkApiReadiness(pool);
-    server=createIntelligenceApi({token:config.token,pool});
+    if(config.aiEnabled)await checkAiReadiness(pool);
+    server=createIntelligenceApi({
+      token:config.token,pool,aiEnabled:config.aiEnabled??false,
+      aiToken:config.aiToken,
+    });
     const api=server;
     await new Promise((accept,reject)=>{
       api.once("error",reject);
