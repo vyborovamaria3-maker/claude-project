@@ -35,8 +35,9 @@ async function run(argv=process.argv.slice(2)){
     if(stopping)break;
     // No concurrent ticks: next begins only after the previous finishes.
     await new Promise(resolve=>{
+      const cleanup=()=>{process.removeListener("SIGINT",done);process.removeListener("SIGTERM",done);};
+      function done(){clearTimeout(timeout);cleanup();resolve();}
       const timeout=setTimeout(done,a.intervalSeconds*1000);
-      function done(){clearTimeout(timeout);resolve();}
       process.once("SIGINT",done);
       process.once("SIGTERM",done);
     });
