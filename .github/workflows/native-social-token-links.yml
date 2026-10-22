@@ -8,6 +8,8 @@ on:
       - "tg-collector/src/persistence/outbox.ts"
       - "tg-collector/src/persistence/messages.ts"
       - "tg-collector/src/analytics/resolve-token-candidates.ts"
+      - "tg-collector/src/analytics/token-candidate-occurrences.ts"
+      - "tg-collector/tests/token-candidate-occurrences.test.ts"
       - "tg-collector/tests/verified-token-link.test.ts"
       - "tg-collector/tests/token-link-invalidation.test.ts"
       - "tg-collector/tests/integration/verified-token-link.test.ts"
@@ -24,6 +26,8 @@ on:
       - "tg-collector/src/persistence/outbox.ts"
       - "tg-collector/src/persistence/messages.ts"
       - "tg-collector/src/analytics/resolve-token-candidates.ts"
+      - "tg-collector/src/analytics/token-candidate-occurrences.ts"
+      - "tg-collector/tests/token-candidate-occurrences.test.ts"
       - "tg-collector/tests/verified-token-link.test.ts"
       - "tg-collector/tests/token-link-invalidation.test.ts"
       - "tg-collector/tests/integration/verified-token-link.test.ts"
@@ -73,6 +77,7 @@ jobs:
       - name: Test verified mint events, edit/delete retractions and transaction rollback
         run: >-
           node --import tsx --test --test-concurrency=1
+          tests/token-candidate-occurrences.test.ts
           tests/verified-token-link.test.ts
           tests/token-link-invalidation.test.ts
           tests/integration/verified-token-link.test.ts
