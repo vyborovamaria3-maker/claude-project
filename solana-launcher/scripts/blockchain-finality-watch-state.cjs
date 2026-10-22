@@ -47,7 +47,7 @@ function openState(filename){
         "id INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,signature TEXT NOT NULL,",
         "raw_fingerprint TEXT NOT NULL,previous_fingerprint TEXT,source_status TEXT NOT NULL,",
         "state TEXT NOT NULL,reason TEXT NOT NULL,checked_at INTEGER NOT NULL,",
-        "audit_json TEXT NOT NULL,UNIQUE(scope,signature,raw_fingerprint,checked_at));",
+        "audit_json TEXT NOT NULL);",
         "CREATE TRIGGER watcher_observation_immutable_update BEFORE UPDATE ON watcher_observations BEGIN SELECT RAISE(ABORT,'Observation journal immutable'); END;",
         "CREATE TRIGGER watcher_observation_immutable_delete BEFORE DELETE ON watcher_observations BEGIN SELECT RAISE(ABORT,'Observation journal immutable'); END;",
         "CREATE TABLE watcher_invalidation_outbox(",
