@@ -300,13 +300,17 @@ export async function refreshTokenDailyCrossPlatform(
   const volume = SAFE_NUMERIC("volume_usd");
   const sql = `WITH token_events AS (
     SELECT te.source_system,te.source_event_kind,te.event_key,te.timeline_kind,
-      te.occurred_at,te.observed_at,te.payload
+      te.occurred_at,te.observed_at,inbox.ingested_at,te.payload
     FROM timeline_events te
     JOIN timeline_event_entities token_entity
       ON token_entity.source_system=te.source_system
       AND token_entity.source_event_kind=te.source_event_kind
       AND token_entity.event_key=te.event_key
       AND token_entity.kind='token' AND token_entity.canonical_id=$1
+    JOIN intelligence_inbox inbox
+      ON inbox.source_system=te.source_system
+      AND inbox.event_kind=te.source_event_kind AND inbox.event_key=te.event_key
+      AND inbox.ingested_at <= $3::timestamptz
     WHERE te.source_system IN ('tg','x','blockchain')
       AND te.observed_at <= $3::timestamptz
       AND te.occurred_at <= $3::timestamptz
@@ -320,13 +324,17 @@ export async function refreshTokenDailyCrossPlatform(
       MIN(te.occurred_at) FILTER (WHERE te.source_system='tg' AND te.timeline_kind='tg_message_published') AS first_mention_tg_at,
       MIN(te.occurred_at) FILTER (WHERE te.source_system='x' AND te.timeline_kind='tweet_published') AS first_mention_x_at,
       MIN(te.occurred_at) FILTER (WHERE te.source_system='blockchain' AND te.timeline_kind='trade_executed') AS first_trade_at,
-      MAX(te.observed_at) AS max_historical_event_observed_at
+      MAX(GREATEST(te.observed_at,inbox.ingested_at)) AS max_historical_event_observed_at
     FROM timeline_events te
     JOIN timeline_event_entities token_entity
       ON token_entity.source_system=te.source_system
       AND token_entity.source_event_kind=te.source_event_kind
       AND token_entity.event_key=te.event_key
       AND token_entity.kind='token' AND token_entity.canonical_id=$1
+    JOIN intelligence_inbox inbox
+      ON inbox.source_system=te.source_system
+      AND inbox.event_kind=te.source_event_kind AND inbox.event_key=te.event_key
+      AND inbox.ingested_at <= $3::timestamptz
     WHERE te.source_system IN ('tg','x','blockchain')
       AND te.observed_at <= $3::timestamptz AND te.occurred_at <= $3::timestamptz
   ), coverage AS (
@@ -337,9 +345,9 @@ export async function refreshTokenDailyCrossPlatform(
         WHEN bool_or(status='partial') THEN 'partial'
         ELSE 'unknown'
       END AS coverage_status,
-      MAX(known_at) AS known_at
+      MAX(GREATEST(known_at,created_at)) AS known_at
     FROM source_coverage_windows
-    WHERE source_system IN ('tg','x','blockchain') AND known_at <= $3::timestamptz
+    WHERE source_system IN ('tg','x','blockchain') AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
       AND (details->>'scope' IS NULL OR details->>'scope'='timeline_events')
       AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
     GROUP BY source_system
@@ -355,20 +363,20 @@ export async function refreshTokenDailyCrossPlatform(
       CASE WHEN bool_or(status='complete' AND window_start <= $2::date
         AND window_end >= ($2::date + INTERVAL '1 day')) THEN 'complete'
         WHEN bool_or(status='partial') THEN 'partial' ELSE 'unknown' END AS coverage_status,
-      MAX(known_at) AS known_at
+      MAX(GREATEST(known_at,created_at)) AS known_at
     FROM source_coverage_windows
     WHERE source_system='blockchain' AND details->>'scope' IN ('settled_trade_tape','trade_executed')
-      AND known_at <= $3::timestamptz
+      AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
       AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
   ), swap_coverage AS (
     SELECT
       CASE WHEN bool_or(status='complete' AND window_start <= $2::date
         AND window_end >= ($2::date + INTERVAL '1 day')) THEN 'complete'
         WHEN bool_or(status='partial') THEN 'partial' ELSE 'unknown' END AS coverage_status,
-      MAX(known_at) AS known_at
+      MAX(GREATEST(known_at,created_at)) AS known_at
     FROM source_coverage_windows
     WHERE source_system='blockchain' AND details->>'scope'='token_swap_evidence_revisions'
-      AND known_at <= $3::timestamptz
+      AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
       AND window_start < ($2::date + INTERVAL '1 day') AND window_end > $2::date
   ), relevant_swap_signatures AS (
     SELECT DISTINCT signature
@@ -383,7 +391,7 @@ export async function refreshTokenDailyCrossPlatform(
       AND revision.observed_at <= $3::timestamptz AND revision.inserted_at <= $3::timestamptz
     ORDER BY revision.wallet_id,revision.signature,revision.raw_revision DESC
   ), swap_state_meta AS (
-    SELECT MAX(observed_at) AS max_swap_state_observed_at FROM swap_latest
+    SELECT MAX(GREATEST(observed_at,inserted_at)) AS max_swap_state_observed_at FROM swap_latest
   ), swap_consistent AS (
     SELECT signature,MIN(canonical_token_id) AS canonical_token_id,
       MIN(slot) AS slot,MIN(occurred_at) AS occurred_at,MAX(observed_at) AS observed_at
@@ -433,7 +441,7 @@ export async function refreshTokenDailyCrossPlatform(
         WHEN (SELECT coverage_status FROM trade_coverage)='complete'
           AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')=0 THEN 0
         ELSE NULL END AS chain_smart_money_bought,
-      MAX(observed_at) AS max_event_observed_at
+      MAX(GREATEST(observed_at,ingested_at)) AS max_event_observed_at
     FROM day_events
   ), author_metrics AS (
     SELECT
