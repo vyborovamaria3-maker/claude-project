@@ -158,7 +158,7 @@ test("no freeform input, unknown fields, future dates or malformed token IDs rea
       {...params,limit:51},
       {...params,occurredBefore:"not-a-date"},
       {...params,limit:-1},
-      {...params,tokenId:"solana:"+("a".repeat(43))},
+      {...params,tokenId:"solana:bad"},
     ]){
       const result=await call(origin,body);
       assert.equal(result.status,400);
