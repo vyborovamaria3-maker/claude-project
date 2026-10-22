@@ -1,3 +1,4 @@
+import {isDeepStrictEqual} from "node:util";
 import {buildEntityRef, type EntityRef} from "./entity-registry.js";
 import {toUtcIso} from "./time.js";
 import type {EvidenceRef} from "./evidence.js";
@@ -96,9 +97,12 @@ export function validateTokenLinksInvalidatedEvent(input:unknown):TokenLinksInva
     reason:inv.reason,
     sourceRevisionSha256:inv.sourceRevisionSha256,
   });
+  // PostgreSQL JSONB normalizes object-key order in source Outboxes.
+  // Deep strict equality preserves evidence integrity without depending on
+  // producer insertion order; surplus/missing fields are still rejected.
   if(expected.eventKey!==raw.eventKey||
-    JSON.stringify(expected.payload.registryEvent)!==JSON.stringify(reg)||
-    JSON.stringify(expected.payload.tokenLinksInvalidation)!==JSON.stringify(inv)){
+    !isDeepStrictEqual(expected.payload.registryEvent,reg)||
+    !isDeepStrictEqual(expected.payload.tokenLinksInvalidation,inv)){
     throw new TypeError("Inconsistent link invalidation evidence");
   }
   return raw;
