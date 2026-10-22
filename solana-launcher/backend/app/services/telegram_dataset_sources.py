@@ -174,7 +174,9 @@ def _iter_json_records(path: Path) -> Iterator[dict[str, Any]]:
 
     if ijson is not None:
         with path.open("rb") as handle:
-            for prefix in ("channels.item", "data.channels.item", "results.item", "item"):
+            for prefix in (
+                "channels.item", "data.channels.item", "data.item", "results.item", "item"
+            ):
                 handle.seek(0)
                 rows = ijson.items(handle, prefix)
                 first = next(rows, _MISSING)
