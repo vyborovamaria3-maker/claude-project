@@ -118,9 +118,10 @@ export function runSignalBacktest(
   const selectedRate = rate(selectedPositive, selected.length);
   const marketRate = rate(positives, validated.length);
   let baseline = unselected;
-  if (baselineKind === "random" && unselected.length) {
-    const count = Math.min(selected.length, unselected.length);
-    baseline = [...unselected].sort((a, b) =>
+  if (baselineKind === "random") {
+    const count = selected.length;
+    // A random market baseline must include the full eligible population.
+    baseline = [...validated].sort((a, b) =>
       seededOrder(a, options.seed ?? "cross-platform-backtest-v1").localeCompare(
         seededOrder(b, options.seed ?? "cross-platform-backtest-v1"),
       )).slice(0, count);
@@ -130,7 +131,9 @@ export function runSignalBacktest(
   const baselineRate = baselineKind === "market_average" ? marketRate : rate(baselinePositive, baseline.length);
   const uplift = selectedRate === null || baselineRate === null ? null : selectedRate - baselineRate;
   let ciLow: number | null = null, ciHigh: number | null = null, pValue: number | null = null;
-  if (selectedRate !== null) {
+  const independentTokens = new Set(validated.map((row) => row.canonicalTokenId)).size === validated.length;
+  // Random market controls can overlap selected observations; repeated tokens are not independent.
+  if (selectedRate !== null && independentTokens && baselineKind === "market_average") {
     if (baselineKind === "market_average") {
       const interval = differenceInterval(selectedPositive, selected.length, unselectedPositive, unselected.length);
       const scale = validated.length ? unselected.length / validated.length : 0;
@@ -200,6 +203,15 @@ export async function persistBacktestRun(
   if (fromAt >= toAt || dataCutoffAt < toAt) throw new TypeError("Invalid backtest date range or cutoff");
   if (!Number.isSafeInteger(input.horizonHours) || input.horizonHours < 1 || input.horizonHours > 720) {
     throw new TypeError("Invalid backtest horizon");
+  }
+  if(input.metrics.sampleSize!==input.observations.length)throw new TypeError("Backtest metrics sample count mismatch");
+  for(const row of input.observations){
+    const signalAt=toUtcIso(row.signalAt),featureAt=toUtcIso(row.maxInputObservedAt);
+    const outcomeAt=toUtcIso(row.outcomeAt),observedAt=toUtcIso(row.outcomeObservedAt);
+    const horizonEnd=new Date(Date.parse(signalAt)+input.horizonHours*3_600_000).toISOString();
+    if(signalAt<fromAt||signalAt>toAt||featureAt>signalAt||outcomeAt<=signalAt||
+       outcomeAt>horizonEnd||observedAt<outcomeAt||observedAt>dataCutoffAt||
+       horizonEnd>dataCutoffAt)throw new TypeError("Backtest result violates as-of or completed-horizon constraints");
   }
   const startedAt = new Date().toISOString();
   const completedAt = new Date().toISOString();

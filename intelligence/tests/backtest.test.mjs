@@ -27,9 +27,9 @@ test("backtest computes precision, recall, uplift and confidence bounds", () => 
   assert.equal(result.metrics.baselineCount, 6);
   assert.equal(result.metrics.baselineRate, 0.5);
   assert.ok(Math.abs(result.metrics.uplift - 1 / 6) < 1e-12);
-  assert.ok(result.metrics.ciLow <= result.metrics.uplift);
-  assert.ok(result.metrics.ciHigh >= result.metrics.uplift);
-  assert.ok(result.metrics.pValue >= 0 && result.metrics.pValue <= 1);
+  assert.equal(result.metrics.ciLow,null);
+  assert.equal(result.metrics.ciHigh,null);
+  assert.equal(result.metrics.pValue,null,"repeated tokens are not independent");
 });
 
 test("backtest rejects look-ahead, noncanonical IDs and non-future outcomes", () => {
@@ -43,8 +43,8 @@ test("backtest rejects look-ahead, noncanonical IDs and non-future outcomes", ()
 test("perfect separation with a tiny sample does not report zero uncertainty or p-value", () => {
   const result = runSignalBacktest([row(1,1,true),row(2,1,true),row(3,0,false),row(4,0,false)],{threshold:0.5});
   assert.equal(result.metrics.baselineRate,0.5); assert.equal(result.metrics.uplift,0.5);
-  assert.ok(result.metrics.ciLow<result.metrics.uplift); assert.ok(result.metrics.ciHigh>=result.metrics.uplift);
-  assert.ok(result.metrics.pValue>0&&result.metrics.pValue<=1);
+  assert.equal(result.metrics.ciLow,null); assert.equal(result.metrics.ciHigh,null);
+  assert.equal(result.metrics.pValue,null,"repeated token cohorts cannot claim significance");
 });
 
 test("random baseline is deterministic for a fixed seed", () => {
@@ -52,4 +52,11 @@ test("random baseline is deterministic for a fixed seed", () => {
   const a = runSignalBacktest(rows, { threshold: 0.8, baseline: "random", seed: "fixed" });
   const b = runSignalBacktest(rows, { threshold: 0.8, baseline: "random", seed: "fixed" });
   assert.deepEqual(a.metrics, b.metrics);
+});
+
+test("random baseline samples the full cohort and never invents independent p-values",()=>{
+  const observations=[row(1,0.9,true),row(2,0.8,false),row(3,0.1,false),row(4,0.2,true)];
+  const result=runSignalBacktest(observations,{threshold:0.8,baseline:"random",seed:"fixed"});
+  assert.equal(result.metrics.baselineCount,2);
+  assert.equal(result.metrics.ciLow,null); assert.equal(result.metrics.pValue,null);
 });
