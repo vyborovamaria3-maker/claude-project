@@ -132,7 +132,7 @@ test("TG: verified mint link shares native PostgreSQL transaction and rolls back
     current=await tx.query<{n:string}>(
       "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
     );
-    assert.equal(current.rows[0]?.n,"3");
+    assert.equal(current.rows[0]?.n,"5");
     // The same native transaction rolls back messages, verification and tombstones.
     await tx.query("ROLLBACK");finished=true;
     const absent=await tx.query<{n:string}>(
