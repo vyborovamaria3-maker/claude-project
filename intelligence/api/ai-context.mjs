@@ -4,7 +4,7 @@ import {
 } from "../dist/index.js";
 
 export const AI_CONTEXT_SCHEMA="ai-token-context-v1";
-const SOURCE_SYSTEMS=["x","tg","blockchain"];
+// Legacy timeline may contain research-only X observations; do not promote them\n// to verified tweet links. Count them in their own legacy category.\nconst SOURCE_SYSTEMS=["x","tg","blockchain","twitter_research"];
 
 /**
  * An API schema declaration, NOT a live inventory or proof of ETL health.
