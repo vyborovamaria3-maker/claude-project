@@ -25,6 +25,8 @@ on:
       - "solana-launcher/scripts/blockchain-history-finality-audit*.cjs"
       - "solana-launcher/scripts/blockchain-finality-watch*.cjs"
       - "solana-launcher/scripts/blockchain-finality-witness*.cjs"
+      - "solana-launcher/scripts/import_solana_memecoin_dataset.py"
+      - "solana-launcher/scripts/test_import_solana_memecoin_dataset.py"
       - "solana-launcher/scripts/blockchain-trade-reconciliation.cjs"
       - "solana-launcher/scripts/blockchain-trade-reconcile.cjs"
       - "solana-launcher/scripts/blockchain-trade-reconcile-test.cjs"
@@ -59,3 +61,4 @@ jobs:
       - run: npm ci --legacy-peer-deps --no-audit --no-fund
       - run: npm run blockchain:test
       - run: npm run blockchain:integration-test
+      - run: python3 -m unittest scripts/test_import_solana_memecoin_dataset.py
