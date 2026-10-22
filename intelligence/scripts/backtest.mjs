@@ -3,6 +3,30 @@ import pg from "pg";
 import { runSignalBacktest, persistBacktestRun } from "../dist/index.js";
 
 const SIGNAL_COLUMNS = new Set(["attention_score","credibility_score","risk_score","momentum_score"]);
+const COVERAGE_PREDICATES = {
+  attention_score: `tg_mentions IS NOT NULL AND x_mentions IS NOT NULL
+    AND source_coverage->>'tg'='complete' AND source_coverage->>'x'='complete'
+    AND chain_swap_evidence_count IS NOT NULL
+    AND EXISTS (SELECT 1 FROM source_coverage_windows coverage
+      WHERE coverage.source_system='blockchain' AND coverage.scope='token_swap_evidence_revisions'
+        AND coverage.status='complete'
+        AND coverage.window_start <= (day::timestamp AT TIME ZONE 'UTC')
+        AND coverage.window_end >= ((day + 1)::timestamp AT TIME ZONE 'UTC')
+        AND coverage.known_at <= as_of AND coverage.created_at <= as_of)`,
+  credibility_score: `tg_copypasta_ratio IS NOT NULL AND x_bot_ratio IS NOT NULL
+    AND source_coverage->>'tg'='complete' AND source_coverage->>'x'='complete'`,
+  risk_score: `tg_scam_ratio IS NOT NULL AND x_bot_ratio IS NOT NULL AND chain_rug_risk IS NOT NULL
+    AND source_coverage->>'tg'='complete' AND source_coverage->>'x'='complete'
+    AND source_coverage->>'blockchain'='complete'`,
+  momentum_score: `tg_mentions_z_1h IS NOT NULL AND x_mentions_z_1h IS NOT NULL AND chain_volume_z_1h IS NOT NULL
+    AND source_coverage->>'tg'='complete' AND source_coverage->>'x'='complete'
+    AND EXISTS (SELECT 1 FROM source_coverage_windows coverage
+      WHERE coverage.source_system='blockchain' AND coverage.scope='settled_trade_tape'
+        AND coverage.status='complete'
+        AND coverage.window_start <= (day::timestamp AT TIME ZONE 'UTC')
+        AND coverage.window_end >= ((day + 1)::timestamp AT TIME ZONE 'UTC')
+        AND coverage.known_at <= as_of AND coverage.created_at <= as_of)`,
+};
 function isUtcDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(value + "T00:00:00.000Z");
@@ -54,6 +78,7 @@ async function main() {
       throw new TypeError("backtest_range_must_be_historical");
     }
     const scoreColumn = args.signal;
+    const coveragePredicate = COVERAGE_PREDICATES[scoreColumn];
     const selected = await client.query(`WITH daily_snapshots AS (
       SELECT DISTINCT ON (canonical_token_id,day) *
       FROM token_daily_cross_platform
@@ -61,6 +86,7 @@ async function main() {
         AND as_of <= $5::timestamptz
         AND max_input_observed_at<=as_of
         AND ${scoreColumn} IS NOT NULL
+        AND (${coveragePredicate})
       ORDER BY canonical_token_id,day,as_of DESC
     )
     SELECT s.canonical_token_id,s.as_of AS signal_at,
