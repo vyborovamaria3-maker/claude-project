@@ -174,5 +174,8 @@ financefeed,financeneighbor
         assert by_username["solanacalls"].meta["dataset_provenance"][
             "tgatlas-telegram-public-channels-2026-W36"
         ]["license"] == "CC-BY-4.0"
+        assert by_username["solanacalls"].meta["dataset_provenance"][
+            "tgatlas-telegram-public-channels-2026-W36"
+        ]["attribution"] == "tgAtlas"
     finally:
         await engine.dispose()
