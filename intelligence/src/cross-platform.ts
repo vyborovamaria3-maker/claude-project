@@ -6,6 +6,7 @@ export const CROSS_PLATFORM_SCORE_VERSION = "cross-platform-heuristics-v1";
 
 export type SourceSystem = "tg" | "x" | "blockchain";
 export type CoverageStatus = "complete" | "partial" | "unknown";
+export type CoverageScope = "timeline_events" | "token_swap_evidence_revisions" | "settled_trade_tape";
 type NullableNumber = number | null;
 
 export type CrossPlatformSnapshotInput = Readonly<{
@@ -264,18 +265,23 @@ export async function recordSourceCoverageWindow(
   }
   const details = input.details ?? {};
   if (!details || typeof details !== "object" || Array.isArray(details)) throw new TypeError("Coverage details must be an object");
+  const rawScope = details.scope ?? "timeline_events";
+  if (typeof rawScope !== "string" || !["timeline_events","token_swap_evidence_revisions","settled_trade_tape"].includes(rawScope)) {
+    throw new TypeError("Invalid coverage scope");
+  }
+  const scope = rawScope as CoverageScope;
   const detailsSha256 = sha256(stableJson(details));
   const inserted = await tx.query(`INSERT INTO source_coverage_windows
-    (source_system,window_start,window_end,known_at,status,evidence_count,details,details_sha256)
-    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)
+    (source_system,scope,window_start,window_end,known_at,status,evidence_count,details,details_sha256)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)
     ON CONFLICT DO NOTHING RETURNING source_system`, [
-    input.sourceSystem,windowStart,windowEnd,knownAt,input.status,input.evidenceCount ?? null,
+    input.sourceSystem,scope,windowStart,windowEnd,knownAt,input.status,input.evidenceCount ?? null,
     JSON.stringify(details),detailsSha256,
   ]);
   if (inserted.rows.length) return;
   const prior = await tx.query(`SELECT status,evidence_count,details_sha256 FROM source_coverage_windows
-    WHERE source_system=$1 AND window_start=$2 AND window_end=$3 AND known_at=$4`,
-  [input.sourceSystem,windowStart,windowEnd,knownAt]);
+    WHERE source_system=$1 AND scope=$2 AND window_start=$3 AND window_end=$4 AND known_at=$5`,
+  [input.sourceSystem,scope,windowStart,windowEnd,knownAt]);
   if (prior.rows.length !== 1 || prior.rows[0]?.status !== input.status ||
       Number(prior.rows[0]?.evidence_count ?? -1) !== (input.evidenceCount ?? -1) ||
       prior.rows[0]?.details_sha256 !== detailsSha256) {
@@ -348,7 +354,7 @@ export async function refreshTokenDailyCrossPlatform(
       MAX(GREATEST(known_at,created_at)) AS known_at
     FROM source_coverage_windows
     WHERE source_system IN ('tg','x','blockchain') AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
-      AND (details->>'scope' IS NULL OR details->>'scope'='timeline_events')
+      AND scope='timeline_events'
       AND window_start < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC') AND window_end > ($2::date::timestamp AT TIME ZONE 'UTC')
     GROUP BY source_system
   ), coverage_pivot AS (
@@ -365,7 +371,7 @@ export async function refreshTokenDailyCrossPlatform(
         WHEN bool_or(status='partial') THEN 'partial' ELSE 'unknown' END AS coverage_status,
       MAX(GREATEST(known_at,created_at)) AS known_at
     FROM source_coverage_windows
-    WHERE source_system='blockchain' AND details->>'scope' IN ('settled_trade_tape','trade_executed')
+    WHERE source_system='blockchain' AND scope='settled_trade_tape'
       AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
       AND window_start < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC') AND window_end > ($2::date::timestamp AT TIME ZONE 'UTC')
   ), swap_coverage AS (
@@ -375,7 +381,7 @@ export async function refreshTokenDailyCrossPlatform(
         WHEN bool_or(status='partial') THEN 'partial' ELSE 'unknown' END AS coverage_status,
       MAX(GREATEST(known_at,created_at)) AS known_at
     FROM source_coverage_windows
-    WHERE source_system='blockchain' AND details->>'scope'='token_swap_evidence_revisions'
+    WHERE source_system='blockchain' AND scope='token_swap_evidence_revisions'
       AND known_at <= $3::timestamptz AND created_at <= $3::timestamptz
       AND window_start < (($2::date + INTERVAL '1 day') AT TIME ZONE 'UTC') AND window_end > ($2::date::timestamp AT TIME ZONE 'UTC')
   ), relevant_swap_signatures AS (

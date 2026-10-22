@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS model_registry (
 -- Coverage must be explicitly reported before an absent event can be interpreted as zero.
 CREATE TABLE IF NOT EXISTS source_coverage_windows (
   source_system TEXT NOT NULL CHECK (source_system IN ('tg','x','blockchain')),
+  scope TEXT NOT NULL DEFAULT 'timeline_events' CHECK (scope IN ('timeline_events','token_swap_evidence_revisions','settled_trade_tape')),
   window_start TIMESTAMPTZ NOT NULL,
   window_end TIMESTAMPTZ NOT NULL,
   known_at TIMESTAMPTZ NOT NULL,
@@ -27,12 +28,12 @@ CREATE TABLE IF NOT EXISTS source_coverage_windows (
   details JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(details)='object'),
   details_sha256 TEXT NOT NULL CHECK (details_sha256 ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY(source_system,window_start,window_end,known_at),
+  PRIMARY KEY(source_system,scope,window_start,window_end,known_at),
   CHECK (window_start < window_end),
   CHECK (status <> 'complete' OR known_at >= window_end)
 );
 CREATE INDEX IF NOT EXISTS idx_source_coverage_asof
-  ON source_coverage_windows(source_system,window_start,window_end,known_at DESC);
+  ON source_coverage_windows(source_system,scope,window_start,window_end,known_at DESC);
 
 CREATE TABLE IF NOT EXISTS token_daily_cross_platform (
   canonical_token_id TEXT NOT NULL,
