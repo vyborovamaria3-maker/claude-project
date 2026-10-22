@@ -171,7 +171,7 @@ async def record_discovery_results(
             if username in manual:
                 source = "manual"
             elif username in database:
-                source = "tgdataset"
+                source = str(old_registry.get("source") or "tgdataset")
             elif not result.get("discovered_from"):
                 source = str(old_registry.get("source") or "registry")
 
@@ -224,6 +224,7 @@ async def due_registry_channels(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
     limit: int = 25,
+    sources: set[str] | None = None,
 ) -> list[str]:
     now = _utcnow()
     safe_limit = max(1, min(int(limit), 200))
@@ -233,6 +234,8 @@ async def due_registry_channels(
         meta = channel.meta or {}
         registry = meta.get("discovery_registry") if isinstance(meta, dict) else None
         if not isinstance(registry, dict):
+            continue
+        if sources is not None and str(registry.get("source") or "") not in sources:
             continue
         username = normalize_telegram_target(channel.username or "")
         if not username:
