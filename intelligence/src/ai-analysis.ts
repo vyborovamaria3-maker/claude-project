@@ -142,9 +142,11 @@ export function createAiAnalysisService(tx: PgTransaction, gateway: AiGateway) {
       const response = await gateway.createEmbeddings({
         providerId: model.provider, model: model.name, texts: [input.text], expectedDimensions: 1024,
       });
+      const embedding = response.vectors[0];
+      if (!embedding) throw new Error("AI embedding response is empty");
       return {
         entityId: input.entityId, featureVersion: input.featureVersion, asOf, maxInputObservedAt,
-        embedding: response.vectors[0], modelId: model.model_id, modelVersion: model.version,
+        embedding, modelId: model.model_id, modelVersion: model.version,
         providerId: response.providerId, traceId: response.traceId,
         observedAt: new Date().toISOString(), estimatedCostUsd: response.estimatedCostUsd,
       };
