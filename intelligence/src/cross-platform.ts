@@ -439,11 +439,11 @@ export async function refreshTokenDailyCrossPlatform(
           COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
         THEN SUM(${volume}) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
         ELSE NULL END AS chain_volume_usd,
-      AVG(${copypasta}) FILTER (WHERE source_system='tg') AS tg_copypasta_ratio,
-      AVG(${sentiment}) FILTER (WHERE source_system='tg') AS tg_sentiment_score,
-      AVG(${scam}) FILTER (WHERE source_system='tg') AS tg_scam_ratio,
-      AVG(${bot}) FILTER (WHERE source_system='x') AS x_bot_ratio,
-      AVG(${sentiment}) FILTER (WHERE source_system='x') AS x_sentiment_score,
+      AVG(${copypasta}) FILTER (WHERE source_system='tg' AND timeline_kind='tg_message_published') AS tg_copypasta_ratio,
+      AVG(${sentiment}) FILTER (WHERE source_system='tg' AND timeline_kind='tg_message_published') AS tg_sentiment_score,
+      AVG(${scam}) FILTER (WHERE source_system='tg' AND timeline_kind='tg_message_published') AS tg_scam_ratio,
+      AVG(${bot}) FILTER (WHERE source_system='x' AND timeline_kind='tweet_published') AS x_bot_ratio,
+      AVG(${sentiment}) FILTER (WHERE source_system='x' AND timeline_kind='tweet_published') AS x_sentiment_score,
       AVG(${rug}) FILTER (WHERE source_system='blockchain') AS chain_rug_risk,
       CASE WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
         AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed'
@@ -456,12 +456,12 @@ export async function refreshTokenDailyCrossPlatform(
     FROM day_events
   ), author_metrics AS (
     SELECT
-      CASE WHEN COUNT(DISTINCT author.canonical_id) FILTER (WHERE e.source_system='tg') > 0
-        THEN COUNT(DISTINCT author.canonical_id) FILTER (WHERE e.source_system='tg')
+      CASE WHEN COUNT(DISTINCT author.canonical_id) FILTER (WHERE e.source_system='tg' AND e.timeline_kind='tg_message_published') > 0
+        THEN COUNT(DISTINCT author.canonical_id) FILTER (WHERE e.source_system='tg' AND e.timeline_kind='tg_message_published')
         WHEN (SELECT tg_coverage FROM coverage_pivot)='complete'
           AND (SELECT tg_mentions FROM event_metrics)=0 THEN 0 ELSE NULL END AS tg_unique_authors,
-      CASE WHEN COUNT(DISTINCT author.canonical_id) FILTER (WHERE e.source_system='x') > 0
-        THEN COUNT(DISTINCT author.canonical_id) FILTER (WHERE e.source_system='x')
+      CASE WHEN COUNT(DISTINCT author.canonical_id) FILTER (WHERE e.source_system='x' AND e.timeline_kind='tweet_published') > 0
+        THEN COUNT(DISTINCT author.canonical_id) FILTER (WHERE e.source_system='x' AND e.timeline_kind='tweet_published')
         WHEN (SELECT x_coverage FROM coverage_pivot)='complete'
           AND (SELECT x_mentions FROM event_metrics)=0 THEN 0 ELSE NULL END AS x_unique_authors
     FROM day_events e

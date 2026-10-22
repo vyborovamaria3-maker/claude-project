@@ -100,6 +100,8 @@ test("refresh query separates transactions, supported swap evidence, and settled
   assert.match(aggregateSql, /fe\.max_historical_event_observed_at/);
   assert.match(aggregateSql, /inbox\.ingested_at <= \$3::timestamptz/);
   assert.match(aggregateSql, /MAX\(GREATEST\(observed_at,ingested_at\)\)/);
+  assert.match(aggregateSql, /AVG\(.*\) FILTER \(WHERE source_system='tg' AND timeline_kind='tg_message_published'\)/);
+  assert.match(aggregateSql, /COUNT\(DISTINCT author\.canonical_id\) FILTER \(WHERE e\.source_system='x' AND e\.timeline_kind='tweet_published'\)/);
   assert.match(aggregateSql, /jsonb_typeof\(payload->'smart_money_bought'\)='boolean'/);
   assert.doesNotMatch(aggregateSql, /WHEN \(SELECT coverage_status FROM trade_coverage\)='complete' THEN 0/);
   assert.match(aggregateSql, /jsonb_typeof\(payload->'smart_money_bought'\)='boolean'/);
