@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from app.models.social_intelligence import TelegramChannel
 from app.services.telegram_dataset_sources import (
     iter_local_dataset_channels,
