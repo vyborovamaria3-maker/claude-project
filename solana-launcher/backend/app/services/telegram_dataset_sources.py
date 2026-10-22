@@ -281,22 +281,36 @@ def _normalize_candidate(
     raw_target = (
         row.get("username")
         or row.get("telegram_username")
+        or row.get("channel_username")
+        or row.get("tg_username")
         or row.get("channel_url")
         or row.get("telegram_url")
+        or row.get("telegram_link")
         or row.get("url")
         or row.get("link")
+        or row.get("channel")
     )
     username = normalize_telegram_target(str(raw_target or ""))
     if not _USERNAME_RE.fullmatch(username) or username in _RESERVED_TARGETS:
         return None
 
-    classes = _string_list(row.get("classifications") or row.get("categories") or row.get("tags"))
-    title = str(row.get("title") or row.get("name") or username).strip()[:255] or username
+    classes = _string_list(
+        row.get("classifications")
+        or row.get("categories")
+        or row.get("category")
+        or row.get("tags")
+    )
+    title = str(
+        row.get("title") or row.get("channel_name") or row.get("name") or username
+    ).strip()[:255] or username
     description = str(row.get("description") or row.get("about") or "").strip()[:4000]
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     seed_score = _safe_float(row.get("seed_score") or row.get("score"))
     subscribers = _safe_int(
-        row.get("n_subscribers") or row.get("subscribers") or row.get("participants")
+        row.get("n_subscribers")
+        or row.get("subscribers")
+        or row.get("participants")
+        or row.get("member_count")
     )
     return {
         "username": username,
