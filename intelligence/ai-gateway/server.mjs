@@ -58,6 +58,20 @@ const NUMERIC_FEATURES=new Set([
   "bot_ratio","smart_money_bought_at","liquidity_usd","volume_24h_usd",
   "holder_concentration","data_confidence",
 ]);
+const COUNT_FEATURES=new Set([
+  "mentions_5m","mentions_15m","mentions_1h","unique_authors","unique_sources",
+]);
+const RATIO_FEATURES=new Set([
+  "sentiment_bullish_ratio","bot_ratio","holder_concentration","data_confidence",
+]);
+const NONNEGATIVE_FEATURES=new Set(["liquidity_usd","volume_24h_usd"]);
+function utcTimestamp(value){
+  if(typeof value!=="string"||
+     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value))
+    return false;
+  const d=new Date(value);
+  return Number.isFinite(d.getTime())&&d.toISOString()===value;
+}
 function projectFeatures(snapshot){
   if(!snapshot||!["observed_snapshot","missing"].includes(snapshot.status))
     throw new Error("invalid_ai_features");
@@ -71,10 +85,19 @@ function projectFeatures(snapshot){
   const values={};
   for(const [key,value] of Object.entries(snapshot.values)){
     if(!NUMERIC_FEATURES.has(key))throw new Error("untrusted_feature_field");
-    if(value!==null&&typeof value!=="number"&&
-       !(key==="smart_money_bought_at"&&typeof value==="string"))
+    if(key==="smart_money_bought_at"){
+      if(value!==null&&(!utcTimestamp(value)||value>snapshot.asOf))
+        throw new Error("invalid_feature_timestamp");
+    }else if(value===null){
+      if(COUNT_FEATURES.has(key)||key==="velocity"||
+         key==="acceleration"||key==="data_confidence")
+        throw new Error("missing_required_numeric_feature");
+    }else if(typeof value!=="number"||!Number.isFinite(value)||
+       (COUNT_FEATURES.has(key)&&(!Number.isSafeInteger(value)||value<0))||
+       (RATIO_FEATURES.has(key)&&(value<0||value>1))||
+       (NONNEGATIVE_FEATURES.has(key)&&value<0)){
       throw new Error("invalid_feature_value");
-    if(typeof value==="number"&&!Number.isFinite(value))throw new Error("invalid_feature_number");
+    }
     values[key]=value;
   }
   return {
@@ -112,10 +135,8 @@ export function projectModelContext(context,request){
     throw new Error("invalid_ai_counts");
   const feature=projectFeatures(context.featureSnapshot);
   if(feature.status==="observed_snapshot"){
-    const utc=value=>typeof value==="string"&&
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)&&
-      !Number.isNaN(Date.parse(value));
-    if(!utc(feature.asOf)||!utc(feature.maxInputObservedAt)||!utc(feature.computedAt)||
+    if(!utcTimestamp(feature.asOf)||!utcTimestamp(feature.maxInputObservedAt)||
+       !utcTimestamp(feature.computedAt)||
        feature.asOf>request.occurredBefore||
        feature.maxInputObservedAt>request.knownAt||
        feature.computedAt>request.knownAt)
