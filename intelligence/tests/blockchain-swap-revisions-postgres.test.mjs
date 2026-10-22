@@ -6,6 +6,7 @@ import {readFile} from "node:fs/promises";
 import pg from "pg";
 import Database from "better-sqlite3";
 import {queryTokenApi} from "../api/routes.mjs";
+import {createIntelligenceApi} from "../api/server.mjs";
 import {
   SQLITE_OUTBOX_DDL,emitSqlite,claimSqlite,ackSqlite,failSqlite,
 } from "@claude-project/event-outbox";
@@ -331,6 +332,40 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     });
     assert.equal(wrongToken.socialLinks.length,0);
     assert.equal(wrongToken.blockchainSwapEvidence.length,0);
+    // Full HTTP surface over the SAME three-source isolated PG fixture:
+    // Bearer-only, no raw data, as-of controls and independent TG tombstone.
+    const bearer="integration_case_"+("A".repeat(35));
+    const server=createIntelligenceApi({
+      token:bearer,pool,now:()=>new Date("2026-10-22T12:00:00Z"),
+    });
+    await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
+    try{
+      const origin="http://127.0.0.1:"+server.address().port;
+      const endpoint="/api/intelligence/v1/tokens/"+encodeURIComponent(token)+"/evidence";
+      const query=knownAt=>"?occurredBefore="+encodeURIComponent("2026-10-18T02:00:00Z")+
+        "&knownAt="+encodeURIComponent(knownAt);
+      const unauth=await fetch(origin+endpoint+query("2026-10-20T01:25:00Z"));
+      assert.equal(unauth.status,401);
+      const auth={Authorization:"Bearer "+bearer};
+      const before=await fetch(origin+endpoint+query("2026-10-20T01:25:00Z"),{headers:auth});
+      assert.equal(before.status,200);
+      assert.equal(before.headers.get("cache-control"),"no-store, private");
+      const beforeBody=await before.json();
+      assert.deepEqual(new Set(beforeBody.socialLinks.map(row=>row.source)),new Set(["tg","x"]));
+      assert.equal(beforeBody.blockchainSwapEvidence.length,1);
+      assert.equal(beforeBody.blockchainSwapEvidence[0].finality,"not_independently_verified");
+      const after=await fetch(origin+endpoint+query("2026-10-20T01:30:00Z"),{headers:auth});
+      assert.equal(after.status,200);
+      const afterBody=await after.json();
+      assert.deepEqual(afterBody.socialLinks.map(row=>row.source),["x"]);
+      assert.equal(afterBody.blockchainSwapEvidence.length,1);
+      assert.equal(afterBody.historicalCompleteness,"unknown");
+      assert.equal(afterBody.tradeStatus,"not_a_confirmed_trade_tape");
+      assert.ok(!JSON.stringify(afterBody).includes("rawSha256"));
+      assert.ok(!JSON.stringify(afterBody).includes("sourceRevisionSha256"));
+    }finally{
+      await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+    }
     assert.equal((await deliverSocial(tgEvent)).duplicates,1);
     assert.equal((await deliverSocial(secondTg)).duplicates,1);
     assert.equal((await deliverSocial(edited)).duplicates,1);
