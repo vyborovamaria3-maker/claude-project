@@ -91,10 +91,11 @@ async function main() {
       ORDER BY canonical_token_id,day,as_of DESC
     )
     SELECT s.canonical_token_id,s.as_of AS signal_at,
+      (s.as_of + ($2::integer * INTERVAL '1 hour') <= $5::timestamptz) AS horizon_complete,
       s.max_input_observed_at,o.outcome_at,o.observed_at AS outcome_observed_at,
       s.${scoreColumn} AS score,o.label AS outcome,o.value AS outcome_value,o.evidence_ref
       FROM daily_snapshots s
-      JOIN LATERAL (
+      LEFT JOIN LATERAL (
         SELECT outcome_at,observed_at,label,value,evidence_ref
         FROM token_outcomes o
         WHERE o.canonical_token_id=s.canonical_token_id AND o.outcome_kind=$1
@@ -108,6 +109,9 @@ async function main() {
       args.outcome,args.horizonHours,args.from,args.to,dataCutoffAt,
     ]);
     if (!selected.rows.length) throw new Error("backtest_no_eligible_observations");
+    // Fail closed: neither incomplete horizons nor absent labels may vanish from the denominator.
+    if (selected.rows.some((row)=>row.horizon_complete!==true)) throw new Error("backtest_incomplete_horizon");
+    if (selected.rows.some((row)=>row.outcome_at===null||row.outcome_at===undefined)) throw new Error("backtest_incomplete_outcome_coverage");
     const observations = selected.rows.map((row) => ({
       canonicalTokenId: row.canonical_token_id,
       signalAt: row.signal_at,

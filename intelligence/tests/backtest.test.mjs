@@ -60,3 +60,12 @@ test("random baseline samples the full cohort and never invents independent p-va
   assert.equal(result.metrics.baselineCount,2);
   assert.equal(result.metrics.ciLow,null); assert.equal(result.metrics.pValue,null);
 });
+
+test("CLI includes incomplete horizons and missing labels rather than dropping them",async()=>{
+  const {readFile}=await import("node:fs/promises");
+  const sql=await readFile(new URL("../scripts/backtest.mjs",import.meta.url),"utf8");
+  assert.match(sql,/LEFT JOIN LATERAL/);
+  assert.match(sql,/horizon_complete/);
+  assert.match(sql,/backtest_incomplete_horizon/);
+  assert.match(sql,/backtest_incomplete_outcome_coverage/);
+});
