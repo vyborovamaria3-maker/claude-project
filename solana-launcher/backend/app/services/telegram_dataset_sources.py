@@ -476,7 +476,8 @@ async def import_dataset_candidates(
                     or registry.get("source") in {"registry", "candidate"}
                 ):
                     registry["source"] = candidate["source"]
-                if is_new or changed or not registry.get("next_check_at"):
+                needs_queue = is_new or changed or not registry.get("next_check_at")
+                if needs_queue:
                     registry.update(
                         {
                             "state": "candidate",
@@ -505,7 +506,8 @@ async def import_dataset_candidates(
                 channel.participants = max(
                     _safe_int(channel.participants), candidate["n_subscribers"]
                 )
-                channel.is_active = True
+                if needs_queue:
+                    channel.is_active = True
                 if not is_new and changed:
                     stats["updated"] += 1
                 elif not is_new:
