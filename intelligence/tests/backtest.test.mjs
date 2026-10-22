@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { formatTokenId } from "@claude-project/contracts";
-import { runSignalBacktest } from "../dist/index.js";
+import { runSignalBacktest, persistBacktestRun } from "../dist/index.js";
 
 const token = formatTokenId("solana", "So11111111111111111111111111111111111111112");
 function row(index, score, outcome) {
@@ -70,4 +70,19 @@ test("CLI includes incomplete horizons and missing labels rather than dropping t
   assert.match(sql,/backtest_incomplete_outcome_coverage/);
   assert.match(sql,/completedHorizonCount/);
   assert.match(sql,/missingOutcomeCount/);
+});
+
+test("persistence refuses signals whose horizon or outcome observation exceeds cutoff",async()=>{
+  const run=runSignalBacktest([row(1,0.9,true)],{threshold:0.5});
+  let called=false;
+  const tx={async query(){called=true;throw new Error("unexpected database write")}};
+  const input={runId:run.runId,signalName:"attention_score",outcomeKind:"price_2x_24h",
+    fromAt:"2026-10-01T00:00:00Z",toAt:"2026-10-01T01:30:00Z",
+    horizonHours:2,threshold:0.5,baselineKind:"market_average",metrics:run.metrics,
+    observations:run.observations,dataCutoffAt:"2026-10-01T02:45:00Z"};
+  await assert.rejects(persistBacktestRun(tx,input),/as-of or completed-horizon/);
+  await assert.rejects(persistBacktestRun(tx,{...input,horizonHours:1,
+    dataCutoffAt:"2026-10-01T03:00:00Z",observations:[{...run.observations[0],
+      outcomeObservedAt:"2026-10-01T03:01:00Z"}]}),/as-of or completed-horizon/);
+  assert.equal(called,false);
 });
