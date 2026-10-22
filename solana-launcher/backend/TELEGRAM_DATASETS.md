@@ -30,7 +30,9 @@ When public-web collection is enabled, the runtime syncs the small public metada
 startup and then at TG_DATASET_SYNC_INTERVAL_SECONDS (default 86400 seconds). Failed remote sources
 are retried after approximately one hour. Dataset candidates enter the same due registry as
 graph-discovered channels, and TG_PUBLIC_WEB_REFRESH_BATCH_SIZE limits work per refresh. Existing
-relevance filtering and retry/backoff rules still apply.
+relevance filtering and retry/backoff rules still apply. If MTProto is actively monitoring, metadata
+sync still runs but the public-web candidate queue waits until public-web collection is active; the
+runtime does not run both collectors concurrently for the same workload.
 
 Example environment settings:
 
