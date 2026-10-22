@@ -13,7 +13,8 @@ async function requireActiveModel(tx: PgTransaction, modelId: string, task: AiTa
     FROM model_registry WHERE model_id=$1`, [modelId]);
   const row = result.rows[0];
   if (!row || row.status !== "active" || row.task !== task ||
-      typeof row.provider !== "string" || typeof row.name !== "string" || typeof row.version !== "string") {
+      typeof row.model_id !== "string" || typeof row.provider !== "string" ||
+      typeof row.name !== "string" || typeof row.version !== "string") {
     throw new Error("AI model must be registered, active and task-compatible");
   }
   return { model_id: row.model_id, provider: row.provider, name: row.name, version: row.version, task: row.task };

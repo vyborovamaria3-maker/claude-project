@@ -87,6 +87,14 @@ function stableJson(value: unknown): string {
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
+function timestamp(value: unknown): Date | string {
+  if (value instanceof Date || typeof value === "string") return value;
+  throw new TypeError("Invalid stored timestamp");
+}
+function timestampOrNull(value: unknown): Date | string | null {
+  if (value === null || value === undefined) return null;
+  return timestamp(value);
+}
 
 export function computeCrossPlatformScores(input: CrossPlatformSnapshotInput): CrossPlatformScores {
   const attentionParts: Array<[string, number | null, number]> = [
@@ -412,7 +420,7 @@ export async function refreshTokenDailyCrossPlatform(
     return parsed;
   };
   const snapshot: CrossPlatformSnapshotInput = {
-    canonicalTokenId, day, asOf: normalizedAsOf, maxInputObservedAt: row.max_input_observed_at,
+    canonicalTokenId, day, asOf: normalizedAsOf, maxInputObservedAt: timestamp(row.max_input_observed_at),
     tgMentions: n(row.tg_mentions), tgUniqueAuthors: n(row.tg_unique_authors),
     tgCopypastaRatio: n(row.tg_copypasta_ratio), tgSentimentScore: n(row.tg_sentiment_score),
     tgScamRatio: n(row.tg_scam_ratio), xMentions: n(row.x_mentions), xUniqueAuthors: n(row.x_unique_authors),
@@ -426,9 +434,9 @@ export async function refreshTokenDailyCrossPlatform(
       x: row.x_coverage === "complete" ? "complete" : row.x_coverage === "partial" ? "partial" : "unknown",
       blockchain: row.blockchain_coverage === "complete" ? "complete" : row.blockchain_coverage === "partial" ? "partial" : "unknown",
     },
-    firstMentionTgAt: row.first_mention_tg_at ?? null,
-    firstMentionXAt: row.first_mention_x_at ?? null,
-    firstTradeAt: row.first_trade_at ?? null,
+    firstMentionTgAt: timestampOrNull(row.first_mention_tg_at),
+    firstMentionXAt: timestampOrNull(row.first_mention_x_at),
+    firstTradeAt: timestampOrNull(row.first_trade_at),
   };
   return putCrossPlatformSnapshot(tx, snapshot);
 }
@@ -515,7 +523,7 @@ export async function putFeatureEmbedding(
     FROM feature_embeddings WHERE entity_id=$1 AND feature_version=$2 AND as_of=$3`,
   [input.entityId,input.featureVersion,asOf]);
   if (prior.rows.length !== 1 || prior.rows[0]?.embedding_sha256 !== embeddingSha256 ||
-      toUtcIso(prior.rows[0]?.max_input_observed_at) !== maxInputObservedAt ||
+      toUtcIso(timestamp(prior.rows[0]?.max_input_observed_at)) !== maxInputObservedAt ||
       prior.rows[0]?.model_id !== input.modelId) {
     throw new Error("Embedding snapshot conflict: immutable version differs");
   }
