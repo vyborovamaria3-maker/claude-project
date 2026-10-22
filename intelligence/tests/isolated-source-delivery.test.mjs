@@ -3,11 +3,14 @@ import assert from "node:assert/strict";
 import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
-import {buildEntityRef,buildEvidenceRef,formatAuthorId,formatSourceId} from "@claude-project/contracts";
+import {
+  buildEntityRef,buildEvidenceRef,formatAuthorId,formatSourceId,formatTokenId,
+  buildVerifiedTokenLinkEvent,buildTokenLinksInvalidatedEvent,
+} from "@claude-project/contracts";
 import {
   POSTGRES_OUTBOX_DDL,emitPostgres,claimPostgres,ackPostgres,failPostgres,
 } from "@claude-project/event-outbox";
-import {runDeliveryBatch} from "../dist/index.js";
+import {runDeliveryBatch,queryActiveTokenLinks} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 
@@ -26,7 +29,7 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       await admin.query(POSTGRES_OUTBOX_DDL);
     }
     await admin.query('SET search_path TO "'+sources.dst+'"');
-    for (const name of ["001_entity_registry.sql","002_timeline.sql"]) {
+    for (const name of ["001_entity_registry.sql","002_timeline.sql","004_token_link_observations.sql"]) {
       await admin.query(await readFile(new URL("../migrations/"+name,import.meta.url),"utf8"));
     }
     const poolFor=(schema)=>new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -89,6 +92,132 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
     assert.equal(replay.duplicates,1);
     assert.equal(replay.delivered,0);
     assert.equal((await destPool.query("SELECT count(*)::integer AS n FROM entity_evidence")).rows[0].n,2);
+
+    // Separate real PostgreSQL outboxes publish actual token-link contract
+    // envelopes (not a mocked claim function). Destination transaction commit
+    // must precede an independent source ACK, and a source edit cannot revoke
+    // evidence from another social platform.
+    const mint="So11111111111111111111111111111111111111112";
+    const token=formatTokenId("solana",mint);
+    const seen="2026-10-22T13:00:00Z";
+    const cutoff="2026-10-18T02:00:00Z";
+    const knownAt="2026-10-23T00:00:00Z";
+    const inputs=[
+      {
+        pool:xPool,sourceSystem:"x",
+        ref:buildEntityRef({
+          kind:"author",canonicalId:formatAuthorId("x","9999"),
+          firstSeenAt:seen,lastSeenAt:seen,
+        }),
+        evidence:buildEvidenceRef({
+          sourceKind:"x_tweet",tweetId:"900001",
+          occurredAt:"2026-10-18T01:20:00Z",observedAt:seen,
+          parserVersion:"x-mint-verifier-v1",
+        }),
+        revision:"a".repeat(64),
+      },{
+        pool:tgPool,sourceSystem:"tg",
+        ref:buildEntityRef({
+          kind:"source",canonicalId:formatSourceId("tg","12345"),
+          firstSeenAt:seen,lastSeenAt:seen,
+        }),
+        evidence:buildEvidenceRef({
+          sourceKind:"tg_message",sourceAccountId:"12345",messageId:"78",
+          occurredAt:"2026-10-18T01:22:00Z",observedAt:seen,
+          parserVersion:"tg-mint-verifier-v1",
+        }),
+        revision:"b".repeat(64),
+      },
+    ];
+    const emitInNativeTransaction=async(pool,event)=>{
+      const tx=await pool.connect();
+      try{
+        await tx.query("BEGIN");
+        await emitPostgres(tx,event);
+        await tx.query("COMMIT");
+      }catch(error){
+        try{await tx.query("ROLLBACK")}catch{}
+        throw error;
+      }finally{tx.release()}
+    };
+    for(const item of inputs){
+      const verified=buildVerifiedTokenLinkEvent({
+        sourceSystem:item.sourceSystem,
+        sourceEntity:item.ref,evidenceRef:item.evidence,
+        mint,matchedLiteralMint:mint,
+        sourceRevisionSha256:item.revision,
+        mintVerification:{
+          chainId:"solana-mainnet",method:"spl_mint_account",
+          tokenProgram:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          provider:"alchemy-solana-rpc",checkedAt:seen,
+        },
+      });
+      await emitInNativeTransaction(item.pool,verified);
+      const delivered=await runDeliveryBatch(port(item.pool),destPool,{
+        workerId:item.sourceSystem+"-token-verified",batchSize:1,leaseMs:120000,
+      });
+      assert.equal(delivered.delivered,1);
+      assert.equal(delivered.failed,0);
+    }
+    const beforeEdit=await queryActiveTokenLinks(destPool,token,cutoff,knownAt);
+    assert.deepEqual(new Set(beforeEdit.map(row=>row.source_system)),
+      new Set(["tg","x"]));
+    assert.deepEqual(new Set(beforeEdit.map(row=>row.evidence_source_id)),
+      new Set(["tg:message:12345:78","x:tweet:900001"]));
+    // Tombstone is source-wide: a new TG message revision revokes TG only.
+    const editedAt="2026-10-22T13:05:00Z";
+    const tgEdit=buildTokenLinksInvalidatedEvent({
+      sourceSystem:"tg",
+      sourceEntity:buildEntityRef({
+        kind:"source",canonicalId:formatSourceId("tg","12345"),
+        firstSeenAt:editedAt,lastSeenAt:editedAt,
+      }),
+      evidenceRef:buildEvidenceRef({
+        sourceKind:"tg_message",sourceAccountId:"12345",messageId:"78",
+        occurredAt:"2026-10-18T01:22:00Z",observedAt:editedAt,
+        parserVersion:"tg-mint-verifier-v1",
+      }),
+      reason:"edited",sourceRevisionSha256:"c".repeat(64),
+    });
+    await emitInNativeTransaction(tgPool,tgEdit);
+    const retraction=await runDeliveryBatch(port(tgPool),destPool,{
+      workerId:"tg-token-retraction",batchSize:1,leaseMs:120000,
+    });
+    assert.equal(retraction.delivered,1);
+    assert.equal(retraction.failed,0);
+    assert.deepEqual((await queryActiveTokenLinks(destPool,token,cutoff,knownAt))
+      .map(row=>row.source_system),["x"]);
+    // Simulate process restart/ACK loss after destination COMMIT for X proof
+    // and TG tombstone. Replays may be claimed but must NOT resurrect the TG
+    // assertion or duplicate destination evidence.
+    await xPool.query(
+      "UPDATE outbox_events SET processed_at=NULL,lease_owner=NULL,lease_until=NULL " +
+      "WHERE event_kind='token_link_verified'",
+    );
+    await tgPool.query(
+      "UPDATE outbox_events SET processed_at=NULL,lease_owner=NULL,lease_until=NULL " +
+      "WHERE event_kind='token_links_invalidated'",
+    );
+    for(const [source,workerId] of [[xPool,"x-proof-replay"],[tgPool,"tg-edit-replay"]]){
+      const replayLink=await runDeliveryBatch(port(source),destPool,{
+        workerId,batchSize:1,leaseMs:120000,
+      });
+      assert.equal(replayLink.duplicates,1);
+      assert.equal(replayLink.delivered,0);
+      assert.equal(replayLink.failed,0);
+    }
+    assert.deepEqual((await queryActiveTokenLinks(destPool,token,cutoff,knownAt))
+      .map(row=>row.source_system),["x"]);
+    const storedLinks=await destPool.query(
+      "SELECT source_system,event_kind,evidence_source_id FROM token_link_observations " +
+      "ORDER BY source_system,event_kind",
+    );
+    assert.equal(storedLinks.rows.length,3);
+    assert.deepEqual(
+      new Set(storedLinks.rows.map(row=>row.evidence_source_id)),
+      new Set(["tg:message:12345:78","x:tweet:900001"]),
+    );
+
   }finally{
     if(xPool)await xPool.end();
     if(tgPool)await tgPool.end();
