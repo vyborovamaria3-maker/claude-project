@@ -28,6 +28,18 @@ function parseObject(raw: string): Record<string, unknown> {
 function confidence(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
+async function requireAlertEvidenceRefs(tx: PgTransaction, alertId: number): Promise<string[]> {
+  const result = await tx.query("SELECT evidence_refs FROM token_alerts WHERE alert_id=$1", [alertId]);
+  const value = result.rows[0]?.evidence_refs;
+  if (!Array.isArray(value) || value.some((ref) => typeof ref !== "string" || ref.length > 256)) {
+    throw new Error("Alert evidence references are unavailable or invalid");
+  }
+  return [...new Set(value as string[])];
+}
+function assertAlertEvidenceSubset(refs: readonly string[], allowed: readonly string[]): void {
+  if (refs.some((ref) => !allowed.includes(ref))) throw new TypeError("Evidence reference is not attached to alert");
+}
+
 function safeRefs(value: unknown, allowed: readonly string[]): string[] {
   if (!Array.isArray(value) || value.length > 100 || value.some((ref) => typeof ref !== "string" || ref.length > 256)) {
     throw new Error("AI evidence references are invalid");
@@ -108,9 +120,12 @@ export function createAiAnalysisService(tx: PgTransaction, gateway: AiGateway) {
       const model = await requireActiveModel(tx, input.modelId, "explanation");
       if (!Number.isSafeInteger(input.alertId) || input.alertId < 1 ||
           !input.facts || typeof input.facts !== "object" || Array.isArray(input.facts) ||
-          input.evidenceRefs.length > 100 || input.evidenceRefs.some((ref) => typeof ref !== "string" || ref.length > 256)) {
+          !Array.isArray(input.evidenceRefs) || input.evidenceRefs.length > 100 ||
+          input.evidenceRefs.some((ref) => typeof ref !== "string" || ref.length > 256)) {
         throw new TypeError("Signal explanation input is invalid");
       }
+      const alertRefs = await requireAlertEvidenceRefs(tx, input.alertId);
+      assertAlertEvidenceSubset(input.evidenceRefs, alertRefs);
       const response = await gateway.chatCompletion({
         providerId: model.provider, model: model.name, temperature: 0, maxTokens: 700,
         responseFormat: "json_object",
@@ -159,13 +174,15 @@ export function createAiAnalysisService(tx: PgTransaction, gateway: AiGateway) {
       const model = await requireActiveModel(tx, input.modelId, "explanation");
       if (!Number.isSafeInteger(input.alertId) || input.alertId < 1 ||
           !/^[0-9a-f-]{36}$/i.test(input.traceId) || !input.explanation.trim() || input.explanation.length > 4_000 ||
-          input.evidenceRefs.length > 100) {
+          !Array.isArray(input.evidenceRefs) || input.evidenceRefs.length > 100) {
         throw new TypeError("Signal explanation persistence input is invalid");
       }
       const refs = input.evidenceRefs.map((ref) => {
         if (typeof ref !== "string" || ref.length > 256) throw new TypeError("Invalid evidence reference");
         return ref;
       });
+      const alertRefs = await requireAlertEvidenceRefs(tx, input.alertId);
+      assertAlertEvidenceSubset(refs, alertRefs);
       const inserted = await tx.query(`INSERT INTO signal_explanations
         (alert_id,model_id,trace_id,explanation,evidence_refs)
         VALUES ($1,$2,$3,$4,$5::jsonb)

@@ -3,7 +3,7 @@
 The Intelligence modules are built independently of collector databases.
 Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005 and 006. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
+Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql and 008_alert_status_history.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005, 006 and 008. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
 
 - Ingest RegistryEvent after claiming a source outbox event; source ACK only after
   destination transaction commits. Consumer runDeliveryBatch remains a bounded,
@@ -17,8 +17,11 @@ Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sq
   inputs are rejected. Duplicate identical snapshots are accepted as no-op;
   conflicting revisions require a NEW explicit feature version or new as_of.
 - A historical offline recomputation at an earlier as_of is NOT a proof that a
-  trading signal was actually available at that moment. A future production
-  backtest must separately use feature publication times and observed labels.
+  trading signal was actually available at that moment. API and backtest reads
+  also require snapshot/result creation timestamps to be no later than the
+  requested as_of; this intentionally excludes late backfills from historical
+  signal evaluation. A future production backtest must separately use feature
+  publication times and observed labels.
 
 CI builds the shared contract, event-outbox and Intelligence modules and tests
 PostgreSQL transaction/replay, timeline cutoffs and feature schema invariants.

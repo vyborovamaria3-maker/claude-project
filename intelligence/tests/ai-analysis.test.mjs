@@ -33,6 +33,7 @@ function fakeTx(task = "sentiment", status = "active") {
         model_id: params[0], provider: "primary", name: task === "embedding" ? "embed-test" : "chat-test",
         version: "1", task, status,
       }] };
+      if (sql.includes("FROM token_alerts")) return { rows: [{ evidence_refs: ["tg:message:1", "x:tweet:1"] }] };
       if (sql.includes("INSERT INTO signal_explanations")) return { rows: [{ explanation_id: 1 }] };
       return { rows: [] };
     },
@@ -54,6 +55,13 @@ test("AI explanation cannot cite evidence that was not supplied", async () => {
   await assert.rejects(service.explainSignal({
     modelId: "explain-v1", alertId: 1, facts: { alertType: "attention_spike" }, evidenceRefs: ["tg:message:1"],
   }), /outside the supplied evidence set/);
+});
+
+test("signal explanations cannot attach evidence absent from the alert", async () => {
+  const service=createAiAnalysisService(fakeTx("explanation"),gateway);
+  await assert.rejects(service.saveSignalExplanation({alertId:1,modelId:"explain-v1",
+    traceId:"00000000-0000-4000-8000-000000000001",explanation:"Validated explanation",evidenceRefs:["tg:message:999"]}),
+    /not attached to alert/);
 });
 
 test("embedding output is checked for 1024 dimensions", async () => {

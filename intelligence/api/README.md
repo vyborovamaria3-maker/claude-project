@@ -10,7 +10,7 @@
 - Нет CORS и поддержки OPTIONS/POST. Возвращаются `Cache-Control: no-store`, `nosniff`, запрет embedding и `Referrer-Policy: no-referrer`.
 - Ограничены 60 запросов в минуту на процесс, 8 параллельных, 10 секунд на запрос и 5 секунд серверного PostgreSQL statement timeout.
 - Доступ только к **отдельной базе Intelligence**, через `INTELLIGENCE_DATABASE_URL`. В рабочем окружении DB-роль должна иметь только `SELECT` на нужные представления/таблицы, **не** доступ к источникам. В соединении включён `default_transaction_read_only=on`.
-- До запуска требуются миграции Intelligence **001–006**, включая Feature Store (003), token links (004), swap evidence revisions (005) и кросс-платформенные таблицы (006). Без них запуск отклоняется. Миграция 007 нужна только для pgvector embeddings.
+- До запуска требуются миграции Intelligence **001–006 и 008**, включая Feature Store (003), token links (004), swap evidence revisions (005), кросс-платформенные таблицы (006) и историю статусов оповещений (008). Миграция 007 нужна только для pgvector embeddings. Для существующих оповещений история начинается с момента применения 008; более ранние переходы восстановить нельзя.
 - Ошибки запроса/базы обезличены: ни SQL, ни DSN, ни сообщение Twitter/Telegram, ни тело сырой транзакции, ни RPC provider response не возвращаются и не печатаются.
 - Все запросы используют канонический `solana:<full-mint>` и строгие UTC-временные границы. SQL использует параметризацию существующего Intel слоя.
 
@@ -59,7 +59,7 @@ npm run api:local
 Следующий отдельный этап: ARCH-11 — авторизованный backend proxy POTAPoff + UI, использующий только этот read-only API, не соединяющий браузер с источниками и не раскрывающий серверный токен.
 
 
-## Cross-platform analytics routes (migration 006)
+## Cross-platform analytics routes (migrations 006 and 008)
 
 Migration 003 (Feature Store) and migration 006 (cross-platform analytics) are now required by readiness. Migration 007 is optional for API startup and is required only for pgvector embeddings.
 
@@ -71,7 +71,7 @@ Migration 003 (Feature Store) and migration 006 (cross-platform analytics) are n
 | GET | `/api/intelligence/v1/signals` | `asOf`, optional `limit` | Non-resolved alerts known by that time |
 | GET | `/api/intelligence/v1/backtest` | optional `signal`, `limit` | Completed backtest summaries |
 
-These endpoints return normalized metrics only, not raw Telegram messages, tweet bodies, provider prompts, API keys, or full timeline payloads. As-of filters prevent later snapshots from appearing in earlier views. Historical completeness remains `unknown` unless separately established.
+These endpoints return normalized metrics only, not raw Telegram messages, tweet bodies, provider prompts, API keys, or full timeline payloads. As-of filters include result creation/computation timestamps as well as input-observation timestamps. Summary selection prioritizes the latest UTC day, then the latest snapshot within that day. Correlation results are returned once per statistical group, with the observation window exposed separately. Signal status is reconstructed from migration 008 onward; earlier status transitions are unavailable, and alerts without status history at the requested time are omitted. Historical completeness remains `unknown` unless separately established.
 
 
-Blockchain semantics: `chainTransactions` counts normalized `chain_transaction` events. `chainSwapEvidenceCount` counts only currently consistent, supported wallet/signature revisions known by `asOf`; it is not a confirmed settled-trade count. `chainTrades`, `chainVolumeUsd` and `firstTradeAt` remain null unless the source provides explicit settled-trade events/coverage.
+Blockchain semantics: `chainTransactions` counts normalized `chain_transaction` events. `chainSwapEvidenceCount` counts only currently consistent, supported wallet/signature revisions known by `asOf`; it is not a confirmed settled-trade count. `chainTrades` is derived only from explicit `trade_executed` Timeline events. `chainVolumeUsd` stays null unless every counted trade has a valid numeric volume; coverage metadata alone cannot prove that Timeline mirrors the settled trade tape. `firstTradeAt` remains null when no explicit trade event is available.
