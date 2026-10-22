@@ -1,5 +1,6 @@
 "use strict";
 const PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+const WXMR = "WXMRyRZhsa19ety5erZhHg4N3xj3EVN92u94422teJp";
 const SOL = "So11111111111111111111111111111111111111112";
 const TOKEN_PROGRAMS = new Set(["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
 const DISCRIMINATOR = Buffer.from("bddb7fd34ee661ee", "hex");
@@ -34,6 +35,18 @@ function tokenAccounts(tx, mint) {
   for (const entry of [...(tx.raw.meta.preTokenBalances || []), ...(tx.raw.meta.postTokenBalances || [])]) {
     const key = tx.accountKeys?.[entry.accountIndex];
     if (key && entry.mint === mint && entry.owner) map.set(key, entry.owner);
+  }
+  // Closed temporary quote accounts have no pre/post token-balance row.
+  // Retain explicit SPL initialization ownership to prove wrapped-SOL settlement.
+  const instructions = [...(tx.raw.transaction.message.instructions || []),
+    ...(tx.raw.meta.innerInstructions || []).flatMap(g => g.instructions)];
+  for (const ix of instructions) {
+    const info = ix.parsed?.info;
+    if (TOKEN_PROGRAMS.has(ix.programId) && ["initializeAccount", "initializeAccount2", "initializeAccount3"].includes(ix.parsed?.type)
+        && info?.mint === mint && typeof info.owner === "string" && typeof info.account === "string") {
+      if (map.has(info.account) && map.get(info.account) !== info.owner) return new Map();
+      map.set(info.account, info.owner);
+    }
   }
   return map;
 }
@@ -114,7 +127,7 @@ function decodePumpSwap(tx, mint) {
   // One canonical token_trades row cannot safely represent multiple swap legs.
   if (events.length !== 1) return null;
   const event = events[0];
-  if (event.solRaw <= 0n || event.tokenRaw <= 0n || event.solRaw > BigInt(Number.MAX_SAFE_INTEGER)
+  if (event.solRaw < 0n || event.tokenRaw <= 0n || event.solRaw > BigInt(Number.MAX_SAFE_INTEGER)
       || event.tokenRaw > BigInt(Number.MAX_SAFE_INTEGER)) return null;
   const keys = raw.transaction.message.accountKeys;
   const signers = new Set(keys.filter(k => k?.signer === true).map(k => k.pubkey));
@@ -148,6 +161,14 @@ function decodePumpSwap(tx, mint) {
     && d.mint !== mint && /^-?\d+$/.test(d.deltaRaw) && BigInt(d.deltaRaw) !== 0n);
   let routeQuoteDelta = null;
   let quoteMint = SOL, quoteAmount = Number(event.solRaw) / 1e9, quoteDecimals = 9;
+  // The legacy SOL field is not a token quote or a conversion rate.
+  if (event.solRaw === 0n) {
+    if ([...tx.preTokenBalances, ...tx.postTokenBalances].some(b => b.mint === WXMR && b.uiTokenAmount?.decimals !== 12)) return null;
+    const poolFlows = provenGroups.map(g => cashFlow(tx,g.instructions,WXMR,pool.owner));
+    if (poolFlows.some(n => n === null)) return null;
+    const poolFlow = poolFlows.reduce((a,b) => a+b,0n);
+    if (event.buy ? poolFlow <= 0n : poolFlow >= 0n) return null;
+  }
   if (quoteDeltas.length) {
     if (quoteDeltas.length !== 1) return null;
     const quote = quoteDeltas[0], amount = BigInt(quote.deltaRaw);
@@ -166,6 +187,14 @@ function decodePumpSwap(tx, mint) {
     quoteMint = quote.mint; quoteDecimals = quote.decimals;
     quoteAmount = Math.abs(Number(routeQuoteDelta)) / 10 ** quoteDecimals;
   } else {
+    if (event.solRaw === 0n) {
+      const flows = provenGroups.map(g => cashFlow(tx,g.instructions,SOL,quoteOwner));
+      if (flows.some(n => n === null)) return null;
+      const flow = flows.reduce((a,b) => a+b,0n);
+      if ((event.buy ? flow >= 0n : flow <= 0n) || (flow < 0n ? -flow : flow) > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      routeQuoteDelta = flow;
+      quoteAmount = Math.abs(Number(flow)) / 1e9;
+    }
     const index = tx.accountKeys.indexOf(trader.owner);
     const delta = tx.postBalances[index] - tx.preBalances[index];
     if (!Number.isFinite(delta) || (event.buy ? delta >= 0 : delta <= 0)) return null;
@@ -174,10 +203,11 @@ function decodePumpSwap(tx, mint) {
   const amountSol = quoteMint === SOL ? quoteAmount : 0;
   return { signature: tx.signature, timestamp: tx.timestamp, slot: tx.slot, trader: trader.owner,
     type: event.buy ? "buy" : "sell", amountTokens, amountSol, priceSol: amountSol / amountTokens,
-    quoteMint, quoteAmount, quoteDecimals, fee: Number(raw.meta.fee || 0) / 1e9,
+    quoteMint, quoteAmount, quoteDecimals,
+    quoteAmountRaw: String(routeQuoteDelta === null ? event.solRaw : routeQuoteDelta < 0n ? -routeQuoteDelta : routeQuoteDelta), fee: Number(raw.meta.fee || 0) / 1e9,
     feeLamports: Number(raw.meta.fee || 0), source: "alchemy", decoderCoverage: "swap_only",
     attribution: "pump_event_and_checked_transfer_path", protocolTrader: event.protocolUser,
-    protocolAmountSol: Number(event.solRaw) / 1e9,
+    ...(event.solRaw > 0n ? { protocolAmountSol: Number(event.solRaw) / 1e9 } : { settlementEvidence: "wxmr_pool_and_wallet_transfer_ledger" }),
     ...(quoteDeltas.length ? { quoteWalletDeltaRaw: quoteDeltas[0].deltaRaw,
       quoteRouteDeltaRaw: String(routeQuoteDelta),
       quoteExternalDeltaRaw: String(BigInt(quoteDeltas[0].deltaRaw) - routeQuoteDelta) } : {}),
