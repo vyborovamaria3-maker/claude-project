@@ -12,7 +12,7 @@ const base = {
   tgMentions: 20, tgUniqueAuthors: 8, tgCopypastaRatio: 0.1, tgSentimentScore: 0.5, tgScamRatio: 0.05,
   xMentions: 30, xUniqueAuthors: 12, xBotRatio: 0.2, xSentimentScore: 0.4,
   chainTrades: null, chainTransactions: 18, chainSwapEvidenceCount: 15, chainUniqueWallets: 9, chainVolumeUsd: null, chainLiquidityUsd: 50000,
-  chainSmartMoneyBought: 3, chainRugRisk: 0.1,
+  chainSmartMoneyBought: null, chainRugRisk: 0.1,
   tgMentionsZ1h: 1.2, xMentionsZ1h: 0.8, chainVolumeZ1h: 1.5,
   firstMentionTgAt: "2026-10-22T01:00:00Z", firstMentionXAt: "2026-10-22T02:00:00Z",
   firstTradeAt: null, firstSwapEvidenceAt: "2026-10-22T03:00:00Z",
@@ -86,6 +86,9 @@ test("refresh query separates transactions, supported swap evidence, and settled
   assert.match(aggregateSql, /blockchain_swap_evidence_revisions/);
   assert.match(aggregateSql, /details->>'scope'='token_swap_evidence_revisions'/);
   assert.match(aggregateSql, /fe\.max_historical_event_observed_at/);
+  assert.match(aggregateSql, /inbox\.ingested_at <= \\$3::timestamptz/);
+  assert.match(aggregateSql, /MAX\(GREATEST\(observed_at,ingested_at\)\)/);
+  assert.match(aggregateSql, /created_at <= \\$3::timestamptz/);
   assert.equal(snapshot.chainTransactions, 4);
   assert.equal(snapshot.chainSwapEvidenceCount, 2);
   assert.equal(snapshot.chainTrades, null);
