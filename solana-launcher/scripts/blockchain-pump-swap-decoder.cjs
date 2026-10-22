@@ -84,18 +84,23 @@ function routePrefix(data) {
   for (const c of data) { const v = alphabet.indexOf(c); if (v < 0) return ""; n = n * 58n + BigInt(v); }
   let hex = n.toString(16); if (hex.length % 2) hex = "0" + hex;
   const bytes = Buffer.from(hex, "hex");
-  return bytes.length === 57 ? bytes.subarray(0, 8).toString("hex") : "";
+  const prefix = bytes.subarray(0, 8).toString("hex");
+  return (bytes.length === 57 && prefix === "aa2955b184501f35") || (bytes.length === 56 && prefix === "be9ca9b0959aa16c") ? prefix : "";
+}
+function containsPump(tx,group) {
+  return tx.raw.transaction.message.instructions[group.index]?.programId===PUMP || group.instructions.some(ix=>ix.programId===PUMP);
 }
 function splitBuy(tx, mint, event, deltas, signers) {
-  if (!event.buy || deltas.length !== 3) return null;
+  if (!event.buy || ![3,4].includes(deltas.length)) return null;
   const negative = deltas.filter(d => BigInt(d.deltaRaw) < 0n), positive = deltas.filter(d => BigInt(d.deltaRaw) > 0n);
-  if (negative.length !== 1 || positive.length !== 2 || BigInt(negative[0].deltaRaw) !== -event.tokenRaw
+  if (negative.length !== 1 || ![2,3].includes(positive.length) || BigInt(negative[0].deltaRaw) !== -event.tokenRaw
       || positive.reduce((n,d) => n + BigInt(d.deltaRaw), 0n) !== event.tokenRaw) return null;
   const owners = tokenAccounts(tx, mint), matches = [];
   for (const group of tx.raw.meta.innerInstructions || []) {
+    if(!containsPump(tx,group))continue;
     const ix = tx.raw.transaction.message.instructions[group.index], a = ix?.accounts;
     // Pin the observed canonical router SwapTob ABI; never select the largest recipient.
-    if (ix?.programId !== "proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u" || routePrefix(ix.data) !== "aa2955b184501f35"
+    if (ix?.programId !== "proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u" || !["aa2955b184501f35","be9ca9b0959aa16c"].includes(routePrefix(ix.data))
         || !a || a[4] !== mint || !signers.has(a[0])) continue;
     const quoteOwners = tokenAccounts(tx, a[3]);
     if (quoteOwners.get(a[1]) !== a[0]) continue;
@@ -103,22 +108,103 @@ function splitBuy(tx, mint, event, deltas, signers) {
     if (!trader) continue;
     const transfers = group.instructions.filter(x => TOKEN_PROGRAMS.has(x.programId) && x.parsed?.type === "transferChecked"
       && x.parsed.info.mint === mint).map(x => x.parsed.info);
-    if (transfers.length !== 3) continue;
+    if (transfers.length !== positive.length + 1) continue;
     const [input, ...outputs] = transfers;
     if (owners.get(input.source) !== negative[0].owner || owners.get(input.destination) !== event.protocolUser
         || input.tokenAmount.amount !== String(event.tokenRaw)) continue;
     if (!outputs.every(o => o.source === input.destination && o.authority === event.protocolUser
       && positive.some(d => d.owner === owners.get(o.destination) && d.deltaRaw === o.tokenAmount.amount))) continue;
-    if (new Set(outputs.map(o=>o.destination)).size !== 2
-        || new Set(outputs.map(o=>owners.get(o.destination))).size !== 2
+    if (new Set(outputs.map(o=>o.destination)).size !== positive.length
+        || new Set(outputs.map(o=>owners.get(o.destination))).size !== positive.length
         || !outputs.some(o => o.destination === a[2])) continue;
     if (outputs.reduce((n,o)=>n+BigInt(o.tokenAmount.amount),0n) !== event.tokenRaw) continue;
-    const deduction = positive.find(d => d.owner !== trader.owner);
+    const deductions = positive.filter(d => d.owner !== trader.owner);
     matches.push({ trader, pool: negative[0], group, quoteOwner: a[0], quoteMint: a[3],
-      tokenDeduction: { owner: deduction.owner, amountRaw: deduction.deltaRaw }, grossTokenAmountRaw: String(event.tokenRaw) });
+      tokenDeductions: deductions.map(d => ({owner:d.owner,amountRaw:d.deltaRaw})), grossTokenAmountRaw: String(event.tokenRaw) });
   }
   return matches.length === 1 ? matches[0] : null;
 }
+// A single recipient can be proven directly from an exact two-hop transfer,
+// without interpreting an unpinned router ABI or choosing the largest wallet.
+function forwardedBuy(tx,mint,event,deltas,signers) {
+  if (!event.buy || deltas.length !== 2 || !signers.has(event.protocolUser)) return null;
+  const trader=deltas.find(d=>BigInt(d.deltaRaw)===event.tokenRaw);
+  const pool=deltas.find(d=>BigInt(d.deltaRaw)===-event.tokenRaw);
+  if(!trader || !pool || trader.owner===event.protocolUser) return null;
+  const owners=tokenAccounts(tx,mint), matches=[];
+  for(const group of tx.raw.meta.innerInstructions||[]) {
+    if(!containsPump(tx,group))continue;
+    const transfers=group.instructions.filter(ix=>TOKEN_PROGRAMS.has(ix.programId)&&ix.parsed?.type==='transferChecked'&&ix.parsed.info.mint===mint).map(ix=>ix.parsed.info);
+    if(transfers.length!==2)continue;
+    const [a,b]=transfers;
+    if(owners.get(a.source)!==pool.owner || owners.get(a.destination)!==event.protocolUser || a.destination!==b.source
+      || b.authority!==event.protocolUser || owners.get(b.destination)!==trader.owner
+      || a.tokenAmount.amount!==String(event.tokenRaw) || b.tokenAmount.amount!==String(event.tokenRaw))continue;
+    matches.push({trader,pool,group,quoteOwner:event.protocolUser,tokenDeductions:[],grossTokenAmountRaw:String(event.tokenRaw),forwarded:true});
+  }
+  return matches.length===1?matches[0]:null;
+}
+
+function wxmrRoute(tx,mint,owner,buy,pumpGroups,poolOwner) {
+  const all=[...tx.raw.transaction.message.instructions,...(tx.raw.meta.innerInstructions||[]).flatMap(g=>g.instructions)];
+  const actual=(tx.tokenBalanceDeltas||[]).find(d=>d.owner===owner&&d.mint===WXMR)?.deltaRaw||'0';
+  if(cashFlow(tx,all,WXMR,owner)!==BigInt(actual)) return null;
+  const sum=(groups,currency)=>groups.reduce((n,g)=>{const f=cashFlow(tx,g.instructions,currency,owner);return f===null||n===null?null:n+f},0n);
+  let groups=pumpGroups;
+  const pumpFlow=sum(groups,WXMR); if(pumpFlow===null)return null;
+  const wxmrOwners=tokenAccounts(tx,WXMR);
+  let protocolFlow=0n;
+  for(const ix of pumpGroups.flatMap(g=>g.instructions)) {
+    const i=ix.parsed?.info;
+    if(!TOKEN_PROGRAMS.has(ix.programId)||ix.parsed?.type!=='transferChecked'||i.mint!==WXMR)continue;
+    if(wxmrOwners.get(i.source)===poolOwner&&wxmrOwners.get(i.destination)===owner)protocolFlow+=BigInt(i.tokenAmount.amount);
+    if(wxmrOwners.get(i.source)===owner&&wxmrOwners.get(i.destination)===poolOwner)protocolFlow-=BigInt(i.tokenAmount.amount);
+  }
+  const ownerAccounts=tokenAccounts(tx,WXMR);
+  const touched=g=>new Set(g.instructions.flatMap(ix=>{
+    const i=ix.parsed?.info;
+    if(!TOKEN_PROGRAMS.has(ix.programId)||!['transfer','transferChecked'].includes(ix.parsed?.type)||!i)return [];
+    if(ix.parsed.type==='transferChecked'&&i.mint!==WXMR)return [];
+    return [i.source,i.destination].filter(a=>ownerAccounts.get(a)===owner);
+  }));
+  const pumpAccounts=new Set(groups.flatMap(g=>[...touched(g)]));
+  const candidates=(tx.raw.meta.innerInstructions||[]).filter(g=>!groups.includes(g)).filter(g=>{
+    if(buy ? g.index>=Math.min(...groups.map(g=>g.index)) : g.index<=Math.max(...groups.map(g=>g.index)))return false;
+    const f=cashFlow(tx,g.instructions,WXMR,owner);
+    const currencies=[SOL,...(tx.preTokenBalances||[]).map(b=>b.mint),...(tx.postTokenBalances||[]).map(b=>b.mint)].filter(m=>m!==mint&&m!==WXMR);
+    const conversion=currencies.some(m=>{const q=cashFlow(tx,g.instructions,m,owner);return q!==null&&(buy?q<0n:q>0n)});
+    return conversion&&f!==null&&(buy?f>0n&&pumpFlow<0n:f<0n&&pumpFlow>0n)&&[...touched(g)].some(a=>pumpAccounts.has(a));
+  });
+  if(candidates.length>1)return null;
+  if(candidates.length===1) {
+    groups=[...groups,candidates[0]].sort((a,b)=>a.index-b.index);
+    if(sum(groups,WXMR)!==BigInt(actual))return null;
+  }
+  const currencies=[...new Set([SOL,...(tx.preTokenBalances||[]).map(b=>b.mint),...(tx.postTokenBalances||[]).map(b=>b.mint)])].filter(m=>m!==mint&&m!==WXMR);
+  let settlement=currencies.filter(m=>{const f=sum(groups,m);return f!==null&&(buy?f<0n:f>0n)});
+  if(settlement.length>1) {
+    const balanced=settlement.filter(m=>(tx.tokenBalanceDeltas||[]).some(d=>d.owner===owner&&d.mint===m&&(buy?BigInt(d.deltaRaw)<0n:BigInt(d.deltaRaw)>0n)));
+    if(balanced.length===1)settlement=balanced;
+  }
+  // Token quote is intermediate only with both a credit and a debit on an
+  // explicitly owned WXMR account. Retain any residual rather than rounding it.
+  const instructions=groups.flatMap(g=>g.instructions);
+  let credit=0n,debit=0n;
+  for(const ix of instructions){const f=cashFlow(tx,[ix],WXMR,owner);if(f===null)return null;if(f>0n)credit+=f;else debit-=f}
+  const direct=()=> {
+    if(buy?pumpFlow<0n:pumpFlow>0n)return {groups:pumpGroups,currency:WXMR,intermediateDeltaRaw:actual};
+    if(buy?protocolFlow<0n:protocolFlow>0n)return {groups:pumpGroups,currency:WXMR,intermediateDeltaRaw:actual,protocolWxmrFlow:protocolFlow};
+    return {groups:pumpGroups};
+  };
+  if(settlement.length===0) return candidates.length ? null : direct();
+  // A partial conversion leaves two assets. Keep the complete protocol quote
+  // instead of presenting just the converted fraction as the trade proceeds.
+  if(candidates.length && BigInt(actual)!==0n)return direct();
+  if(BigInt(actual)<0n)return direct();
+  if(settlement.length!==1 || credit<=0n || debit<=0n)return candidates.length?null:direct();
+  return {groups,currency:settlement[0],intermediateDeltaRaw:actual,conversionGroup: candidates[0]?.index??null};
+}
+
 function decodePumpSwap(tx, mint) {
   if (tx?.transactionError !== null || tx.raw?.meta?.err !== null || !Number.isSafeInteger(tx.slot)) return null;
   const raw = tx.raw;
@@ -131,10 +217,27 @@ function decodePumpSwap(tx, mint) {
       || event.tokenRaw > BigInt(Number.MAX_SAFE_INTEGER)) return null;
   const keys = raw.transaction.message.accountKeys;
   const signers = new Set(keys.filter(k => k?.signer === true).map(k => k.pubkey));
-  const deltas = (tx.tokenBalanceDeltas || []).filter(d => d.mint === mint && d.deltaRaw !== "0");
+  let deltas = (tx.tokenBalanceDeltas || []).filter(d => d.mint === mint && d.deltaRaw !== "0");
+  let poolMintedRaw = null;
+  // A launch can mint the initial supply into the pool and BUY in one tx.
+  // Subtract only an explicit mint into a newly created, non-signing pool
+  // account whose remaining balance exactly equals mint minus this trade.
+  if(event.buy) {
+    const instructions=[...raw.transaction.message.instructions,...(raw.meta.innerInstructions||[]).flatMap(g=>g.instructions)];
+    const mints=instructions.filter(ix=>TOKEN_PROGRAMS.has(ix.programId)&&ix.parsed?.type==='mintTo'&&ix.parsed.info.mint===mint);
+    if(mints.length===1 && /^\d+$/.test(mints[0].parsed.info.amount||'')) {
+      const info=mints[0].parsed.info, minted=BigInt(info.amount);
+      const poolDelta=deltas.find(d=>!signers.has(d.owner)&&d.tokenAccount===info.account&&BigInt(d.deltaRaw)===minted-event.tokenRaw);
+      const existed=(tx.preTokenBalances||[]).some(b=>b.mint===mint&&tx.accountKeys[b.accountIndex]===info.account);
+      if(poolDelta && !existed && (tx.postTokenBalances||[]).filter(b=>b.mint===mint&&b.owner===poolDelta.owner).length===1) {
+        poolMintedRaw=String(minted);
+        deltas=deltas.map(d=>d===poolDelta?{...d,deltaRaw:String(-event.tokenRaw)}:d);
+      }
+    }
+  }
   if (deltas.some(d => !d.owner || !/^-?\d+$/.test(d.deltaRaw))) return null;
   const signedAmount = event.buy ? event.tokenRaw : -event.tokenRaw;
-  const split = splitBuy(tx, mint, event, deltas, signers);
+  const split = splitBuy(tx, mint, event, deltas, signers) || forwardedBuy(tx,mint,event,deltas,signers);
   const candidates = deltas.filter(d => signers.has(d.owner) && BigInt(d.deltaRaw) === signedAmount);
   if (!split && (deltas.length !== 2 || candidates.length !== 1)) return null;
   const trader = split ? split.trader : candidates[0];
@@ -151,13 +254,20 @@ function decodePumpSwap(tx, mint) {
       && ix.parsed?.type === "transferChecked" && ix.parsed.info.mint === mint
       && ix.parsed.info.tokenAmount?.amount === String(event.tokenRaw)).map(ix => ix.parsed.info);
     if (hasPath(transfers, event.buy ? poolAccounts : userAccounts, event.buy ? userAccounts : poolAccounts,
-      owners, event.protocolUser)) provenGroups.push(group);
+      owners, event.protocolUser) && !provenGroups.includes(group)) provenGroups.push(group);
   }
   if (!provenGroups.length) return null;
   // A routed sell may settle in USDC rather than SOL. Do not pretend the
   // protocol's intermediate SOL leg is the seller's received quote.
   const quoteOwner = split ? split.quoteOwner : trader.owner;
-  const quoteDeltas = (tx.tokenBalanceDeltas || []).filter(d => d.owner === quoteOwner
+  const route=event.solRaw===0n?wxmrRoute(tx,mint,quoteOwner,event.buy,provenGroups,pool.owner):{groups:provenGroups};
+  if(!route)return null;
+  const settlementGroups=route.groups;
+  const quoteDeltas = route.currency && (route.currency!==SOL || (tx.tokenBalanceDeltas||[]).some(d=>d.owner===quoteOwner&&d.mint===SOL&&d.deltaRaw!=="0")) ? [{
+    owner:quoteOwner,mint:route.currency,
+    decimals: route.currency===SOL?9:(tx.tokenBalanceDeltas||[]).find(d=>d.mint===route.currency)?.decimals,
+    deltaRaw:(tx.tokenBalanceDeltas||[]).find(d=>d.owner===quoteOwner&&d.mint===route.currency)?.deltaRaw||'0',
+  }] : (tx.tokenBalanceDeltas || []).filter(d => (!route.currency||d.mint===route.currency)&&d.owner === quoteOwner
     && d.mint !== mint && /^-?\d+$/.test(d.deltaRaw) && BigInt(d.deltaRaw) !== 0n);
   let routeQuoteDelta = null;
   let quoteMint = SOL, quoteAmount = Number(event.solRaw) / 1e9, quoteDecimals = 9;
@@ -172,14 +282,23 @@ function decodePumpSwap(tx, mint) {
   if (quoteDeltas.length) {
     if (quoteDeltas.length !== 1) return null;
     const quote = quoteDeltas[0], amount = BigInt(quote.deltaRaw);
-    if ((event.buy ? amount >= 0n : amount <= 0n) || !Number.isInteger(quote.decimals)
+    if ((!route.currency && (event.buy ? amount >= 0n : amount <= 0n)) || !Number.isInteger(quote.decimals)
         || quote.decimals < 0 || quote.decimals > 18 || (amount < 0n ? -amount : amount) > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    if (split && quote.mint !== split.quoteMint) return null;
+    if (split?.quoteMint && quote.mint !== split.quoteMint) return null;
     const all = [...raw.transaction.message.instructions, ...(raw.meta.innerInstructions || []).flatMap(g=>g.instructions)];
-    if (cashFlow(tx, all, quote.mint, quoteOwner) !== amount) return null;
-    const routeFlows = provenGroups.map(g => cashFlow(tx,g.instructions,quote.mint,quoteOwner));
+    let observedFlow=cashFlow(tx, all, quote.mint, quoteOwner);
+    if(observedFlow!==amount && quote.mint===SOL && route.currency===SOL) {
+      // syncNative converts explicit native deposits into wrapped-token balance.
+      const owners=tokenAccounts(tx,SOL);
+      const synced=new Set(all.filter(ix=>TOKEN_PROGRAMS.has(ix.programId)&&ix.parsed?.type==='syncNative').map(ix=>ix.parsed.info.account));
+      const deposits=all.filter(ix=>ix.programId==='11111111111111111111111111111111'&&ix.parsed?.type==='transfer'
+        &&ix.parsed.info.source===quoteOwner&&owners.get(ix.parsed.info.destination)===quoteOwner&&synced.has(ix.parsed.info.destination));
+      if(observedFlow!==null)for(const ix of deposits){if(!Number.isSafeInteger(ix.parsed.info.lamports)||ix.parsed.info.lamports<0)return null;observedFlow+=BigInt(ix.parsed.info.lamports)}
+    }
+    if (observedFlow !== amount) return null;
+    const routeFlows = settlementGroups.map(g => cashFlow(tx,g.instructions,quote.mint,quoteOwner));
     if (routeFlows.some(n => n === null)) return null;
-    const routeAmount = routeFlows.reduce((a,b) => a+b,0n);
+    const routeAmount = route.protocolWxmrFlow ?? routeFlows.reduce((a,b) => a+b,0n);
     if (event.buy ? routeAmount >= 0n : routeAmount <= 0n) return null;
     const absolute = routeAmount < 0n ? -routeAmount : routeAmount;
     if (absolute > BigInt(Number.MAX_SAFE_INTEGER)) return null;
@@ -188,14 +307,15 @@ function decodePumpSwap(tx, mint) {
     quoteAmount = Math.abs(Number(routeQuoteDelta)) / 10 ** quoteDecimals;
   } else {
     if (event.solRaw === 0n) {
-      const flows = provenGroups.map(g => cashFlow(tx,g.instructions,SOL,quoteOwner));
+      if(route.currency && route.currency!==SOL)return null;
+      const flows = settlementGroups.map(g => cashFlow(tx,g.instructions,SOL,quoteOwner));
       if (flows.some(n => n === null)) return null;
       const flow = flows.reduce((a,b) => a+b,0n);
       if ((event.buy ? flow >= 0n : flow <= 0n) || (flow < 0n ? -flow : flow) > BigInt(Number.MAX_SAFE_INTEGER)) return null;
       routeQuoteDelta = flow;
       quoteAmount = Math.abs(Number(flow)) / 1e9;
     }
-    const index = tx.accountKeys.indexOf(trader.owner);
+    const index = tx.accountKeys.indexOf(quoteOwner);
     const delta = tx.postBalances[index] - tx.preBalances[index];
     if (!Number.isFinite(delta) || (event.buy ? delta >= 0 : delta <= 0)) return null;
   }
@@ -211,7 +331,10 @@ function decodePumpSwap(tx, mint) {
     ...(quoteDeltas.length ? { quoteWalletDeltaRaw: quoteDeltas[0].deltaRaw,
       quoteRouteDeltaRaw: String(routeQuoteDelta),
       quoteExternalDeltaRaw: String(BigInt(quoteDeltas[0].deltaRaw) - routeQuoteDelta) } : {}),
+    ...(route.currency ? { intermediateQuoteMint: WXMR, intermediateQuoteDeltaRaw: route.intermediateDeltaRaw, settlementGroupIndices: settlementGroups.map(g=>g.index) } : {}),
+    ...(route.protocolWxmrFlow !== undefined ? { settlementBasis: "protocol_quote_before_forwarding" } : {}),
+    ...(poolMintedRaw ? { poolMintedRaw } : {}),
     ...(split ? { fundedBy: split.quoteOwner, grossTokenAmountRaw: split.grossTokenAmountRaw,
-      tokenDeductions: [split.tokenDeduction], attribution: "router_swap_tob_recipient_and_split_transfer_ledger" } : {}) };
+      tokenDeductions: split.tokenDeductions, attribution: split.forwarded ? "signed_funder_and_exact_forwarded_recipient" : "router_swap_tob_recipient_and_split_transfer_ledger" } : {}) };
 }
 module.exports = { decodePumpSwap, pumpEvents };
