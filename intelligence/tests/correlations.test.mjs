@@ -28,6 +28,18 @@ test("correlation calculates lift, confidence interval and significance against 
   assert.ok(result.pValue<0.05);
 });
 
+test("Fisher exact test rejects spurious significance for 4/4 vs 1/4",()=>{
+  const cohort=[
+    ...[1,2,3,4].map((i)=>sample(i,true,true)),
+    sample(5,false,true),...([6,7,8].map((i)=>sample(i,false,false))),
+  ];
+  const [result]=calculateEventOutcomeCorrelations(cohort,"2026-10-04T12:00:00Z");
+  assert.equal(result.lift,4);
+  assert.equal(result.baseline.method,"fisher_exact_two_sided");
+  assert.ok(Math.abs(result.pValue-1/7)<1e-8);
+  assert.ok(result.pValue>0.05);
+});
+
 test("correlation groups are isolated by token",()=>{
   const tokenB=formatTokenId("solana","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
   const samples=[sample(1,true,true),sample(2,true,true),sample(3,false,false),sample(4,false,false),

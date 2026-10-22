@@ -40,7 +40,30 @@ function normalCdf(value: number): number {
   const erf=1-(((((1.061405429*t-1.453152027)*t+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x));
   return 0.5*(1+sign*erf);
 }
+
 function proportion(positive:number,count:number):number|null{return count?positive/count:null;}
+// Two-sided Fisher exact test, conditional on observed 2x2 table margins.
+function logChoose(n:number,k:number):number {
+  if(k<0||k>n)return Number.NEGATIVE_INFINITY;
+  const m=Math.min(k,n-k);
+  let result=0;
+  for(let i=1;i<=m;i++)result+=Math.log(n-m+i)-Math.log(i);
+  return result;
+}
+function fisherTwoSided(a:number,b:number,c:number,d:number):number|null {
+  const n=a+b+c+d, positives=a+c, exposed=a+b;
+  const lo=Math.max(0,positives-(c+d)),hi=Math.min(exposed,positives);
+  if(hi-lo>2000)return null;
+  const denominator=logChoose(n,positives);
+  const logP=(x:number)=>logChoose(exposed,x)+logChoose(n-exposed,positives-x)-denominator;
+  const observed=logP(a);
+  let total=0;
+  for(let x=lo;x<=hi;x++) {
+    const candidate=logP(x);
+    if(candidate<=observed+1e-9)total+=Math.exp(candidate);
+  }
+  return Math.max(0,Math.min(1,total));
+}
 function validateSample(sample:CorrelationSample,evaluatedAt:string) {
   if(parseTokenId(sample.canonicalTokenId)?.id!==sample.canonicalTokenId)throw new TypeError("Noncanonical correlation token ID");
   if(!/^[a-z][a-z0-9_]{0,63}$/.test(sample.eventKind)||!/^[a-z][a-z0-9_]{0,63}$/.test(sample.outcomeKind)) {
@@ -82,6 +105,7 @@ export function calculateEventOutcomeCorrelations(
     const controlRate=proportion(controlPositive,control.length);
     const lift=exposedRate===null||controlRate===null||controlRate===0?null:exposedRate/controlRate;
     let ciLow:number|null=null,ciHigh:number|null=null,pValue:number|null=null;
+    let significanceMethod="unavailable";
     if(exposedRate!==null&&controlRate!==null) {
       const correctedA=exposedPositive+0.5;
       const correctedB=exposed.length-exposedPositive+0.5;
@@ -93,12 +117,24 @@ export function calculateEventOutcomeCorrelations(
       const standardError=Math.sqrt(1/correctedA-1/(correctedA+correctedB)+1/correctedC-1/(correctedC+correctedD));
       ciLow=Math.exp(logLift-1.96*standardError);
       ciHigh=Math.exp(logLift+1.96*standardError);
-      const pooled=(exposedPositive+controlPositive)/(exposed.length+control.length);
-      const variance=pooled*(1-pooled)*(1/Math.max(1,exposed.length)+1/Math.max(1,control.length));
+
+      const total=exposed.length+control.length, successes=exposedPositive+controlPositive;
+      const expected=[
+        exposed.length*successes/total,exposed.length*(total-successes)/total,
+        control.length*successes/total,control.length*(total-successes)/total,
+      ];
       if(exposed.length&&control.length) {
-        const se=Math.sqrt(Math.max(0,variance));
-        pValue=se===0?(exposedRate===controlRate?1:0):
-          Math.max(0,Math.min(1,2*(1-normalCdf(Math.abs((exposedRate-controlRate)/se)))));
+        if(expected.some((value)=>value<5)) {
+          significanceMethod="fisher_exact_two_sided";
+          pValue=fisherTwoSided(exposedPositive,exposed.length-exposedPositive,
+            controlPositive,control.length-controlPositive);
+        } else {
+          significanceMethod="two_proportion_z_test";
+          const pooled=successes/total;
+          const variance=pooled*(1-pooled)*(1/exposed.length+1/control.length);
+          const se=Math.sqrt(Math.max(0,variance));
+          pValue=se===0?1:Math.max(0,Math.min(1,2*(1-normalCdf(Math.abs((exposedRate-controlRate)/se)))));
+        }
       }
     }
     results.push({
@@ -106,7 +142,8 @@ export function calculateEventOutcomeCorrelations(
       exposedCount:exposed.length,exposedPositive,controlCount:control.length,controlPositive,
       exposedRate,controlRate,lift,ciLow,ciHigh,pValue,
       baseline:{
-        method:"two_proportion_z_test",
+        method:significanceMethod,
+        validation:"exploratory_not_out_of_sample_validated",
         controlDefinition:"same event/outcome cohort windows without the event",
         exposedRate,controlRate,
         exposedCount:exposed.length,exposedPositive,
