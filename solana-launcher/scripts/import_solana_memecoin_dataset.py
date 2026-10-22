@@ -139,6 +139,8 @@ def _epoch_seconds(value: Any) -> int | None:
         return None
     try:
         numeric_text = float(raw)
+        if not math.isfinite(numeric_text):
+            return None
         return _epoch_seconds(numeric_text)
     except ValueError:
         pass
@@ -371,12 +373,12 @@ def import_file_rows(
     if source_rows < 0:
         raise ValueError("source_rows must be non-negative")
     previous = conn.execute(
-        "SELECT source_sha256,source_rows,imported_rows,status FROM external_memecoin_import_files WHERE dataset_id=? AND source_file=?",
+        "SELECT source_sha256,source_rows,imported_rows,status,incomplete_rows FROM external_memecoin_import_files WHERE dataset_id=? AND source_file=?",
         (dataset_id, source_file),
     ).fetchone()
     if previous and previous[0] == source_sha256 and previous[1] == source_rows and previous[2] == source_rows and previous[3] == "complete":
         return {"source_file": source_file, "source_rows": source_rows, "imported_rows": source_rows,
-                "incomplete_rows": 0, "status": "skipped_unchanged"}
+                "incomplete_rows": int(previous[4]), "status": "skipped_unchanged"}
     table = FILE_TABLE[source_file]
     insert_sql = INSERTS[source_file][0]
     inserted = 0
