@@ -40,7 +40,7 @@ def _parser() -> argparse.ArgumentParser:
     local.add_argument("--source-url", default="", help="Dataset landing page for provenance")
     local.add_argument("--license", default="", help="Dataset license label for provenance")
     local.add_argument(
-        "--dry-run", action="store_true", help="Validate and count without DB writes"
+        "--dry-run", action="store_true", help="Count candidate rows without DB writes"
     )
     return parser
 
