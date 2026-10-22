@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { parseTokenId, toUtcIso, type TokenId } from "@claude-project/contracts";
 import type { PgTransaction } from "./entity-registry.js";
 
-export const CROSS_PLATFORM_SCORE_VERSION = "cross-platform-heuristics-v1";
+export const CROSS_PLATFORM_SCORE_VERSION = "cross-platform-heuristics-v2";
 
 export type SourceSystem = "tg" | "x" | "blockchain";
 export type CoverageStatus = "complete" | "partial" | "unknown";

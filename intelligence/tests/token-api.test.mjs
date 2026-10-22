@@ -40,7 +40,7 @@ function fakePool(){
         chain_smart_money_bought:"1",chain_rug_risk:"0.1",
         first_mention_tg_at:new Date(occurred),first_mention_x_at:new Date(occurred),first_trade_at:null,first_swap_evidence_at:new Date(occurred),
         attention_score:"3.2",credibility_score:"0.72",risk_score:"0.1",momentum_score:null,
-        score_version:"cross-platform-heuristics-v1",score_reason:{attention:{used:["tg_mentions"]}},
+        score_version:"cross-platform-heuristics-v2",score_reason:{attention:{used:["tg_mentions"]}},
         source_coverage:{tg:"partial",x:"partial",blockchain:"partial"},data_confidence:"0.8",
       }]};
       if(sql.includes("FROM chain_token_features"))return {rows:[{
@@ -55,7 +55,7 @@ function fakePool(){
       }]};
       if(sql.includes("FROM token_alerts"))return {rows:[{
         alert_id:"12",canonical_token_id:id,alert_type:"attention_spike",severity:"medium",
-        triggered_at:new Date(at),as_of:new Date(known),score:"2.4",score_version:"cross-platform-heuristics-v1",
+        triggered_at:new Date(at),as_of:new Date(known),score:"2.4",score_version:"cross-platform-heuristics-v2",
         evidence_refs:["x:tweet:1024"],status:"open",
       }]};
       if(sql.includes("FROM backtest_runs"))return {rows:[{

@@ -6,7 +6,7 @@ import { evaluateCrossPlatformAlerts, formatTelegramAlert } from "../dist/index.
 const token=formatTokenId("solana","So11111111111111111111111111111111111111112");
 const base={
   canonicalTokenId:token,asOf:"2026-10-22T12:00:00Z",triggeredAt:"2026-10-22T12:00:01Z",
-  maxInputObservedAt:"2026-10-22T11:59:00Z",scoreVersion:"cross-platform-heuristics-v1",
+  maxInputObservedAt:"2026-10-22T11:59:00Z",scoreVersion:"cross-platform-heuristics-v2",
   evidenceRefs:["tg:message:1","x:tweet:2"],
 };
 
