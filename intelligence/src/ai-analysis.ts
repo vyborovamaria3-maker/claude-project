@@ -17,7 +17,7 @@ async function requireActiveModel(tx: PgTransaction, modelId: string, task: AiTa
       typeof row.name !== "string" || typeof row.version !== "string") {
     throw new Error("AI model must be registered, active and task-compatible");
   }
-  return { model_id: row.model_id, provider: row.provider, name: row.name, version: row.version, task: row.task };
+  return { model_id: row.model_id, provider: row.provider, name: row.name, version: row.version, task };
 }
 function parseObject(raw: string): Record<string, unknown> {
   let value: unknown;
