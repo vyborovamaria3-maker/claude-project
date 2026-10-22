@@ -135,9 +135,30 @@ function snapshot(entry){
     kind:x.kind,address:x.address,rawRevision:x.rawRevision,rawSha256:x.rawSha256,slot:x.slot
   })).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
   const flags=[...(entry.flags||[])].sort();
+  // Flags alone are insufficient: provider/coverage counters can change while
+  // status remains "partial" or "provider_exhausted". Bind their observed
+  // metadata too, without volatile timestamps or decoded transaction payloads.
+  const targets=(entry.targets||[]).map(t=>({
+    kind:t.kind,address:t.address,
+    checkpoint:t.checkpoint?{
+      backfillComplete:t.checkpoint.backfillComplete,
+      possibleGap:t.checkpoint.possibleGap,
+      forwardCursorPending:t.checkpoint.forwardCursorPending,
+      provider:t.checkpoint.provider,
+      cursorVersion:t.checkpoint.cursorVersion
+    }:null,
+    coverage:t.coverage?{
+      status:t.coverage.status,sourceProvider:t.coverage.sourceProvider,
+      observedTransactions:t.coverage.observedTransactions,
+      backfillComplete:t.coverage.backfillComplete,
+      possibleGap:t.coverage.possibleGap,
+      forwardCursorPending:t.coverage.forwardCursorPending,
+      gapReason:t.coverage.gapReason
+    }:null
+  })).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
   const fingerprint=hash({signature:entry.signature,identities,status:entry.status,flags,
-    observedSlots:[...(entry.observedSlots||[])].sort((a,b)=>a-b)});
-  return {fingerprint,identities,flags};
+    targets,observedSlots:[...(entry.observedSlots||[])].sort((a,b)=>a-b)});
+  return {fingerprint,identities,flags,targets};
 }
 function scanSignatures(source,scope,cursor,limit) {
   if(scope.startsWith("signature:"))return [scope.slice("signature:".length)];
@@ -213,7 +234,8 @@ function watchOnce(source,state,{limit=25,signature=null,kind=null,address=null,
         if(changed){
           // Persist only the bounded audit, not decompressed RAW, transaction
           // payloads, RPC keys, or other private wallet analytics.
-          const audit={signature,status:a.status,flags:a.flags,rawRevisions:view.identities};
+          const audit={signature,status:a.status,flags:a.flags,rawRevisions:view.identities,
+            targetCoverage:view.targets};
           const record=add.run(scope,signature,view.fingerprint,previous?.raw_fingerprint||null,
             a.status,classified.state,classified.reason,now,JSON.stringify(audit));
           report.newObservations++;
