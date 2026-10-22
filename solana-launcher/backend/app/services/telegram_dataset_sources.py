@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.social_intelligence import TelegramChannel
+from app.models.social_intelligence import TelegramChannel, TelegramDatasetImportCheckpoint
 from app.services.telegram_parser import normalize_telegram_target
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -120,6 +120,74 @@ def dataset_manifest(settings: Any) -> tuple[tuple[str, int, int], ...]:
             continue
         signature.append((str(path), int(stat.st_size), int(stat.st_mtime_ns)))
     return tuple(signature)
+
+
+async def load_dataset_manifest_checkpoint(
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> dict[str, tuple[int, int]]:
+    """Load the last successfully imported file signatures from the persistent database."""
+
+    async with sessionmaker() as session:
+        rows = list(
+            (
+                await session.execute(select(TelegramDatasetImportCheckpoint))
+            )
+            .scalars()
+            .all()
+        )
+    return {
+        row.path: (int(row.file_size), int(row.modified_at_ns))
+        for row in rows
+    }
+
+
+async def save_dataset_manifest_checkpoint(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    manifest: dict[str, tuple[int, int]],
+) -> None:
+    """Atomically replace persisted signatures after all changed files import successfully."""
+
+    async with sessionmaker() as session:
+        rows = list(
+            (
+                await session.execute(select(TelegramDatasetImportCheckpoint))
+            )
+            .scalars()
+            .all()
+        )
+        by_hash = {row.path_hash: row for row in rows}
+        current_hashes: set[str] = set()
+        now = utcnow()
+
+        for path, (file_size, modified_at_ns) in manifest.items():
+            path_hash = hashlib.sha256(path.encode("utf-8")).hexdigest()
+            current_hashes.add(path_hash)
+            row = by_hash.get(path_hash)
+            if row is None:
+                session.add(
+                    TelegramDatasetImportCheckpoint(
+                        path_hash=path_hash,
+                        path=path,
+                        file_size=int(file_size),
+                        modified_at_ns=int(modified_at_ns),
+                        updated_at=now,
+                    )
+                )
+                continue
+            if (
+                row.path != path
+                or row.file_size != int(file_size)
+                or row.modified_at_ns != int(modified_at_ns)
+            ):
+                row.path = path
+                row.file_size = int(file_size)
+                row.modified_at_ns = int(modified_at_ns)
+                row.updated_at = now
+
+        for row in rows:
+            if row.path_hash not in current_hashes:
+                await session.delete(row)
+        await session.commit()
 
 
 def _source_id(path: Path, settings: Any) -> str:

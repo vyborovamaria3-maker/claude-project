@@ -1,8 +1,9 @@
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.models.social_intelligence import TelegramChannel
+from app.models.social_intelligence import TelegramChannel, TelegramDatasetImportCheckpoint
 from app.services.telegram_dataset_sources import (
     _normalize_candidate,
     dataset_manifest,
@@ -10,6 +11,7 @@ from app.services.telegram_dataset_sources import (
     import_dataset_candidates,
 )
 from app.services.telegram_discovery_registry import due_registry_channels, record_discovery_results
+from app.services.telegram_runtime import TelegramMonitorManager
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -192,6 +194,173 @@ def test_dataset_import_merges_sources_and_queues_public_channels(tmp_path: Path
                 ).scalar_one()
                 assert beta.is_active is False
                 assert beta.meta["discovery_registry"]["state"] == "unavailable"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run_test())
+
+
+
+def test_dataset_provenance_keeps_graph_discoveries_in_dataset_queue_but_not_manual_channels() -> None:
+    async def run_test() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(TelegramChannel.__table__.create)
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        now = datetime.now(UTC).isoformat()
+        provenance = {"dataset_import": {"sources": {"tgdataset:channels.jsonl": {"seed_score": 70}}}}
+        try:
+            async with sessionmaker() as session:
+                session.add_all(
+                    [
+                        TelegramChannel(
+                            telegram_id=-101,
+                            username="graph_dataset",
+                            title="Graph dataset",
+                            entity_type="channel",
+                            participants=0,
+                            about="",
+                            is_active=True,
+                            first_seen_at=datetime.now(UTC),
+                            last_seen_at=datetime.now(UTC),
+                            last_scanned_at=None,
+                            meta={
+                                **provenance,
+                                "discovery_registry": {
+                                    "source": "graph",
+                                    "state": "candidate",
+                                    "next_check_at": now,
+                                },
+                            },
+                        ),
+                        TelegramChannel(
+                            telegram_id=-102,
+                            username="manual_dataset",
+                            title="Manual dataset",
+                            entity_type="channel",
+                            participants=0,
+                            about="",
+                            is_active=True,
+                            first_seen_at=datetime.now(UTC),
+                            last_seen_at=datetime.now(UTC),
+                            last_scanned_at=None,
+                            meta={
+                                **provenance,
+                                "discovery_registry": {
+                                    "source": "manual",
+                                    "state": "candidate",
+                                    "next_check_at": now,
+                                },
+                            },
+                        ),
+                        TelegramChannel(
+                            telegram_id=-103,
+                            username="graph_only",
+                            title="Graph only",
+                            entity_type="channel",
+                            participants=0,
+                            about="",
+                            is_active=True,
+                            first_seen_at=datetime.now(UTC),
+                            last_seen_at=datetime.now(UTC),
+                            last_scanned_at=None,
+                            meta={
+                                "discovery_registry": {
+                                    "source": "graph",
+                                    "state": "candidate",
+                                    "next_check_at": now,
+                                }
+                            },
+                        ),
+                    ]
+                )
+                await session.commit()
+
+            due = await due_registry_channels(
+                sessionmaker,
+                limit=10,
+                sources={"tgdataset", "teragram", "custom"},
+            )
+            assert due == ["graph_dataset"]
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run_test())
+
+
+def test_dataset_manifest_checkpoint_survives_restart_and_tracks_changes_and_removals(
+    tmp_path: Path,
+) -> None:
+    custom = tmp_path / "custom"
+    source = custom / "channels.jsonl"
+    _write_jsonl(source, [{"username": "alpha_calls", "seed_score": 72}])
+    settings = StubSettings()
+    settings.telegram_public_web_dataset_paths = str(custom)
+
+    async def run_test() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(TelegramChannel.__table__.create)
+            await connection.run_sync(TelegramDatasetImportCheckpoint.__table__.create)
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            first_process = TelegramMonitorManager(settings, sessionmaker)
+            await first_process._import_dataset_sources_if_changed()
+            assert first_process._dataset_import_summary["inserted"] == 1
+
+            async with sessionmaker() as session:
+                alpha = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "alpha_calls")
+                    )
+                ).scalar_one()
+                original_imported_at = alpha.meta["dataset_import"]["last_imported_at"]
+
+            # A fresh manager has no in-memory signature, so it must restore the database
+            # checkpoint and skip parsing an unchanged candidate file.
+            restarted_process = TelegramMonitorManager(settings, sessionmaker)
+            await restarted_process._import_dataset_sources_if_changed()
+            assert restarted_process._dataset_import_summary["checkpoint_restored"] is True
+            async with sessionmaker() as session:
+                alpha = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "alpha_calls")
+                    )
+                ).scalar_one()
+                assert alpha.meta["dataset_import"]["last_imported_at"] == original_imported_at
+
+            _write_jsonl(
+                source,
+                [
+                    {"username": "alpha_calls", "seed_score": 72},
+                    {"username": "beta_calls", "seed_score": 65},
+                ],
+            )
+            await restarted_process._import_dataset_sources_if_changed()
+            assert restarted_process._dataset_import_summary["changed_files"] == 1
+            assert restarted_process._dataset_import_summary["inserted"] == 1
+
+            source.unlink()
+            await restarted_process._import_dataset_sources_if_changed()
+            assert restarted_process._dataset_import_summary["removed_files"] == ["channels.jsonl"]
+            async with sessionmaker() as session:
+                checkpoints = list(
+                    (
+                        await session.execute(select(TelegramDatasetImportCheckpoint))
+                    )
+                    .scalars()
+                    .all()
+                )
+                usernames = set(
+                    (
+                        await session.execute(select(TelegramChannel.username))
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert checkpoints == []
+                # Removing an input file removes its checkpoint, not historical channel evidence.
+                assert usernames == {"alpha_calls", "beta_calls"}
         finally:
             await engine.dispose()
 

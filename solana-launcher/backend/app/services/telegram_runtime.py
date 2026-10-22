@@ -14,6 +14,8 @@ from app.services.telegram_dataset_sources import (
     DATASET_REGISTRY_SOURCES,
     dataset_manifest,
     import_dataset_candidates,
+    load_dataset_manifest_checkpoint,
+    save_dataset_manifest_checkpoint,
 )
 from app.services.telegram_discovery_registry import (
     due_registry_channels,
@@ -145,29 +147,52 @@ class TelegramMonitorManager:
             self._dataset_manifest_signature = None
             self._dataset_import_summary = {"enabled": False, "source_files": []}
             return
+
         manifest = dataset_manifest(self.settings)
         current = {path: (size, modified) for path, size, modified in manifest}
+        restored_checkpoint = self._dataset_manifest_signature is None
         previous = self._dataset_manifest_signature
+        if previous is None:
+            previous = await load_dataset_manifest_checkpoint(self.sessionmaker)
+
         if current == previous:
+            self._dataset_manifest_signature = current
+            if restored_checkpoint:
+                # A new process can trust only signatures persisted after a successful import.
+                # Refresh summary state without parsing the unchanged, potentially huge files.
+                self._dataset_import_summary = {
+                    "enabled": True,
+                    "source_files": [Path(path).name for path in current],
+                    "source_files_count": len(current),
+                    "changed_files": 0,
+                    "removed_files": [],
+                    "checkpoint_restored": True,
+                }
+                self._registry_summary = await registry_summary(self.sessionmaker)
             return
+
         changed_paths = [
             Path(path)
             for path, signature in current.items()
-            if previous is None or previous.get(path) != signature
+            if previous.get(path) != signature
         ]
         removed_files = sorted(
-            Path(path).name for path in (set(previous or {}) - set(current))
+            Path(path).name for path in (set(previous) - set(current))
         )
-        if previous is None or changed_paths:
+        if changed_paths:
             summary = await import_dataset_candidates(
                 self.sessionmaker, self.settings, paths=changed_paths
             )
         else:
             summary = dict(self._dataset_import_summary)
+
         summary["source_files"] = [Path(path).name for path in current]
         summary["source_files_count"] = len(current)
         summary["changed_files"] = len(changed_paths)
         summary["removed_files"] = removed_files
+        # Save only after import completes. If import fails midway, the old checkpoint remains;
+        # re-import is idempotent and will retry the changed files on the next tick.
+        await save_dataset_manifest_checkpoint(self.sessionmaker, current)
         self._dataset_manifest_signature = current
         self._dataset_import_summary = summary
         self._registry_summary = await registry_summary(self.sessionmaker)
