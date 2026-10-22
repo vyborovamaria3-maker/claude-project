@@ -292,7 +292,7 @@ export async function queryTokenApi(pool,request){
   if(request.kind==="signals"){
     const result=await pool.query(`SELECT alert_id,canonical_token_id,alert_type,severity,triggered_at,as_of,
       score,score_version,evidence_refs,status
-      FROM token_alerts WHERE triggered_at <= $1 AND status <> 'resolved'
+      FROM token_alerts WHERE triggered_at <= $1 AND status NOT IN ('resolved','sending')
       ORDER BY triggered_at DESC LIMIT $2`,[request.asOf,request.limit+1]);
     const items=result.rows.slice(0,request.limit).map((row)=>({
       alertId:String(row.alert_id),tokenId:String(row.canonical_token_id),alertType:String(row.alert_type),

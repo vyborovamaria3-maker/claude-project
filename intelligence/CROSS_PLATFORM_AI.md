@@ -45,3 +45,14 @@ npm --prefix intelligence run refresh-cross-platform -- --day 2026-10-22 --as-of
 ```
 
 A token with no day events can produce zero counts only if the corresponding source has a complete coverage window known by the supplied as-of time. Otherwise the source metrics remain null. The command does not mark source windows complete; the source collector must record verified coverage through recordSourceCoverageWindow after its scan finishes.
+
+
+## Telegram alert delivery
+
+Configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the runtime secret store, then run:
+
+```sh
+npm --prefix intelligence run dispatch-telegram-alerts
+```
+
+The dispatcher claims alerts with row locks, marks them as sending, posts plain text without parse mode, then marks successful deliveries. Failed attempts return to open; after 10 attempts they are left for manual review. A stale sending claim can be retried after 10 minutes. Run the dispatcher from a scheduler if recurring delivery is required. The bot token is never logged or written to PostgreSQL.

@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --check scripts/backtest.mjs && node --check scripts/refresh-cross-platform.mjs && node --test tests/*.test.mjs",
+    "test": "npm run build && node --check scripts/backtest.mjs && node --check scripts/refresh-cross-platform.mjs && node --check scripts/dispatch-telegram-alerts.mjs && node --test tests/*.test.mjs",
     "check": "npm run typecheck && npm run test",
     "etl:status": "node scripts/run.mjs --status",
     "etl:once": "node scripts/run.mjs --once",
@@ -31,7 +31,8 @@
     "etl:quality": "node scripts/quality.mjs",
     "api:local": "node api/start.mjs",
     "backtest": "node scripts/backtest.mjs",
-    "refresh-cross-platform": "node scripts/refresh-cross-platform.mjs"
+    "refresh-cross-platform": "node scripts/refresh-cross-platform.mjs",
+    "dispatch-telegram-alerts": "node scripts/dispatch-telegram-alerts.mjs"
   },
   "exports": {
     ".": {
