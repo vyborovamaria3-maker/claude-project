@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS token_daily_cross_platform (
   snapshot_sha256 TEXT NOT NULL CHECK (snapshot_sha256 ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY(canonical_token_id,day,as_of),
-  CHECK (day = (as_of AT TIME ZONE 'UTC')::date),
+  CHECK (as_of >= (day::timestamp AT TIME ZONE 'UTC')),
   CHECK (max_input_observed_at <= as_of)
 );
 CREATE INDEX IF NOT EXISTS idx_cross_platform_token_asof

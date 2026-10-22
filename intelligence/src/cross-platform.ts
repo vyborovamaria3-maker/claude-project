@@ -153,7 +153,7 @@ export function validateCrossPlatformSnapshot(input: CrossPlatformSnapshotInput)
   }
   const asOf = toUtcIso(input.asOf);
   const maxInputObservedAt = toUtcIso(input.maxInputObservedAt);
-  if (asOf.slice(0, 10) !== input.day) throw new TypeError("Snapshot as_of must be on the requested UTC day");
+  if (asOf < input.day + "T00:00:00.000Z") throw new TypeError("Snapshot as_of cannot precede the UTC day");
   if (maxInputObservedAt > asOf) throw new TypeError("Future-observed inputs are not allowed");
   const counts = ["tgMentions", "tgUniqueAuthors", "xMentions", "xUniqueAuthors", "chainTrades", "chainUniqueWallets", "chainSmartMoneyBought"] as const;
   for (const key of counts) if (!countOrNull(input[key])) throw new TypeError("Invalid count: " + key);
@@ -278,7 +278,7 @@ export async function refreshTokenDailyCrossPlatform(
 ): Promise<ValidatedCrossPlatformSnapshot> {
   if (parseTokenId(canonicalTokenId)?.id !== canonicalTokenId) throw new TypeError("Noncanonical token ID");
   const normalizedAsOf = toUtcIso(asOf);
-  if (normalizedAsOf.slice(0, 10) !== day) throw new TypeError("as_of must be on the requested UTC day");
+  if (normalizedAsOf < day + "T00:00:00.000Z") throw new TypeError("as_of cannot precede the requested UTC day");
   const sentiment = SAFE_NUMERIC("sentiment_score");
   const copypasta = SAFE_NUMERIC("copypasta_ratio");
   const scam = SAFE_NUMERIC("scam_ratio");
@@ -302,6 +302,19 @@ export async function refreshTokenDailyCrossPlatform(
   ), day_events AS (
     SELECT * FROM token_events
     WHERE occurred_at >= $2::date AND occurred_at < ($2::date + INTERVAL '1 day')
+  ), first_events AS (
+    SELECT
+      MIN(te.occurred_at) FILTER (WHERE te.source_system='tg' AND te.timeline_kind='tg_message_published') AS first_mention_tg_at,
+      MIN(te.occurred_at) FILTER (WHERE te.source_system='x' AND te.timeline_kind='tweet_published') AS first_mention_x_at,
+      MIN(te.occurred_at) FILTER (WHERE te.source_system='blockchain' AND te.timeline_kind='trade_executed') AS first_trade_at
+    FROM timeline_events te
+    JOIN timeline_event_entities token_entity
+      ON token_entity.source_system=te.source_system
+      AND token_entity.source_event_kind=te.source_event_kind
+      AND token_entity.event_key=te.event_key
+      AND token_entity.kind='token' AND token_entity.canonical_id=$1
+    WHERE te.source_system IN ('tg','x','blockchain')
+      AND te.observed_at <= $3::timestamptz AND te.occurred_at <= $3::timestamptz
   ), coverage AS (
     SELECT source_system,
       CASE
@@ -350,9 +363,6 @@ export async function refreshTokenDailyCrossPlatform(
         WHEN (SELECT blockchain_coverage FROM coverage_pivot)='complete'
           AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')=0 THEN 0
         ELSE NULL END AS chain_smart_money_bought,
-      MIN(occurred_at) FILTER (WHERE source_system='tg' AND timeline_kind='tg_message_published') AS first_mention_tg_at,
-      MIN(occurred_at) FILTER (WHERE source_system='x' AND timeline_kind='tweet_published') AS first_mention_x_at,
-      MIN(occurred_at) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') AS first_trade_at,
       MAX(observed_at) AS max_event_observed_at
     FROM day_events
   ), author_metrics AS (
@@ -388,9 +398,10 @@ export async function refreshTokenDailyCrossPlatform(
   SELECT em.*,am.tg_unique_authors,am.x_unique_authors,wm.chain_unique_wallets,
     (SELECT value FROM liquidity) AS chain_liquidity_usd,
     cp.tg_coverage,cp.x_coverage,cp.blockchain_coverage,
+    fe.first_mention_tg_at,fe.first_mention_x_at,fe.first_trade_at,
     GREATEST(em.max_event_observed_at,cp.max_coverage_known_at) AS max_input_observed_at
   FROM event_metrics em CROSS JOIN author_metrics am CROSS JOIN wallet_metrics wm
-  CROSS JOIN coverage_pivot cp`;
+  CROSS JOIN coverage_pivot cp CROSS JOIN first_events fe`;
   const result = await tx.query(sql, [canonicalTokenId,day,normalizedAsOf]);
   const row = result.rows[0];
   if (!row || !row.max_input_observed_at) throw new Error("No observed events or explicit coverage available for this token/day");

@@ -34,7 +34,8 @@ test("snapshot validation preserves point-in-time boundaries and UTC day", () =>
   assert.equal(snapshot.dataConfidence, 1);
   assert.match(snapshot.snapshotSha256, /^[0-9a-f]{64}$/);
   assert.throws(() => validateCrossPlatformSnapshot({ ...base, maxInputObservedAt: "2026-10-23T00:01:00Z" }), /Future-observed/);
-  assert.throws(() => validateCrossPlatformSnapshot({ ...base, asOf: "2026-10-23T00:00:00Z" }), /UTC day/);
+  assert.doesNotThrow(() => validateCrossPlatformSnapshot({ ...base, asOf: "2026-10-23T00:00:00Z", maxInputObservedAt: "2026-10-23T00:00:00Z" }));
+  assert.throws(() => validateCrossPlatformSnapshot({ ...base, asOf: "2026-10-21T23:59:00Z" }), /cannot precede/);
   assert.throws(() => validateCrossPlatformSnapshot({ ...base, xBotRatio: 1.2 }), /Invalid ratio/);
 });
 
