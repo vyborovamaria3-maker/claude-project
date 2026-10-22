@@ -16,8 +16,11 @@ from app.services.telegram_dataset_sources import (
 )
 from app.services.telegram_discovery_registry import import_dataset_channel_candidates
 
-TGDATASET_URL = "https://github.com/SystemsLab-Sapienza/TGDataset"
-TGDATASET_LICENSE = "See https://zenodo.org/records/7640712 and cite the TGDataset paper"
+TGDATASET_URL = "https://zenodo.org/records/7640712"
+TGDATASET_LICENSE = "CC-BY-4.0"
+TGDATASET_ATTRIBUTION = (
+    "La Morgia, Mei, and Mongardini, TGDataset (KDD 2025), DOI 10.1145/3690624.3709397"
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -91,6 +94,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             or (TGDATASET_URL if args.source_name == "tgdataset-local" else ""),
             source_license=args.license
             or (TGDATASET_LICENSE if args.source_name == "tgdataset-local" else ""),
+            source_attribution=(
+                TGDATASET_ATTRIBUTION if args.source_name == "tgdataset-local" else ""
+            ),
             batch_size=250,
         )
         return {"source": args.source_name, **stats}
