@@ -35,16 +35,21 @@ async function main() {
   if (!connectionString) throw new Error("database_config_required");
   const fromAt = new Date(args.from+"T00:00:00.000Z");
   const toAt = new Date(args.to+"T23:59:59.999Z");
-  const dataCutoffAt = new Date();
-  if (toAt > dataCutoffAt) throw new TypeError("backtest_range_must_be_historical");
   const pool = new pg.Pool({
     connectionString, max: 2, connectionTimeoutMillis: 3000,
     query_timeout: 10000, statement_timeout: 8000,
     options: "-c statement_timeout=8000",
   });
+  const client = await pool.connect();
   try {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+    const cutoffResult = await client.query("SELECT transaction_timestamp() AS cutoff");
+    const dataCutoffAt = cutoffResult.rows[0]?.cutoff;
+    if (!(dataCutoffAt instanceof Date) || toAt > dataCutoffAt) {
+      throw new TypeError("backtest_range_must_be_historical");
+    }
     const scoreColumn = args.signal;
-    const selected = await pool.query(`SELECT s.canonical_token_id,s.as_of AS signal_at,
+    const selected = await client.query(`SELECT s.canonical_token_id,s.as_of AS signal_at,
       s.max_input_observed_at,o.outcome_at,o.observed_at AS outcome_observed_at,
       s.${scoreColumn} AS score,o.label AS outcome,o.value AS outcome_value,o.evidence_ref
       FROM token_daily_cross_platform s
@@ -55,13 +60,15 @@ async function main() {
           AND o.outcome_at>s.as_of
           AND o.outcome_at<=s.as_of + ($2::integer * INTERVAL '1 hour')
           AND o.observed_at>=o.outcome_at
+          AND o.observed_at<=$5::timestamptz
         ORDER BY o.outcome_at ASC,o.observed_at ASC LIMIT 1
       ) o ON TRUE
       WHERE s.day >= $3::date AND s.day <= $4::date
+        AND s.as_of <= $5::timestamptz
         AND s.${scoreColumn} IS NOT NULL
         AND s.max_input_observed_at<=s.as_of
       ORDER BY s.as_of,s.canonical_token_id`, [
-      args.outcome,args.horizonHours,args.from,args.to,
+      args.outcome,args.horizonHours,args.from,args.to,dataCutoffAt,
     ]);
     if (!selected.rows.length) throw new Error("backtest_no_eligible_observations");
     const observations = selected.rows.map((row) => ({
@@ -78,22 +85,21 @@ async function main() {
     const result = runSignalBacktest(observations, {
       threshold: args.threshold, baseline: args.baseline, seed: args.seed ?? "cross-platform-backtest-v1",
     });
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await persistBacktestRun(client, {
-        runId: result.runId, signalName: args.signal, outcomeKind: args.outcome,
-        fromAt, toAt, horizonHours: args.horizonHours, threshold: args.threshold,
-        baselineKind: args.baseline, metrics: result.metrics, observations: result.observations,
-        dataCutoffAt, featureVersion: null, modelId: null,
-      });
-      await client.query("COMMIT");
-    } catch (error) {
-      try { await client.query("ROLLBACK"); } catch {}
-      throw error;
-    } finally { client.release(); }
+    await persistBacktestRun(client, {
+      runId: result.runId, signalName: args.signal, outcomeKind: args.outcome,
+      fromAt, toAt, horizonHours: args.horizonHours, threshold: args.threshold,
+      baselineKind: args.baseline, metrics: result.metrics, observations: result.observations,
+      dataCutoffAt, featureVersion: null, modelId: null,
+    });
+    await client.query("COMMIT");
     process.stdout.write(JSON.stringify({ runId: result.runId, signal: args.signal, outcome: args.outcome, from: args.from, to: args.to, metrics: result.metrics })+"\n");
-  } finally { await pool.end(); }
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+    await pool.end();
+  }
 }
 main().catch((error) => {
   const code = error instanceof Error && /^[a-z0-9_]+$/.test(error.message) ? error.message : "backtest_failed";
