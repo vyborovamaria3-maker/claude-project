@@ -65,6 +65,9 @@ function openState(filename){
     if(db.pragma("application_id",{simple:true})!==APPLICATION_ID||
       db.pragma("user_version",{simple:true})!==VERSION)
       throw Error("Dedicated watcher SQLite schema required");
+    if(db.pragma("journal_mode=WAL",{simple:true})!=="wal")
+      throw Error("Durable watcher requires SQLite WAL");
+    db.pragma("synchronous=FULL");
     db.pragma("foreign_keys=ON");
     return db;
   }catch(e){db.close();throw e;}
