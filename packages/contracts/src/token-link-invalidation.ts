@@ -1,4 +1,4 @@
-import {isDeepStrictEqual} from "node:util";
+import {jsonStructurallyEqual} from "./json-structural-equality.js";
 import {buildEntityRef, type EntityRef} from "./entity-registry.js";
 import {toUtcIso} from "./time.js";
 import type {EvidenceRef} from "./evidence.js";
@@ -101,8 +101,8 @@ export function validateTokenLinksInvalidatedEvent(input:unknown):TokenLinksInva
   // Deep strict equality preserves evidence integrity without depending on
   // producer insertion order; surplus/missing fields are still rejected.
   if(expected.eventKey!==raw.eventKey||
-    !isDeepStrictEqual(expected.payload.registryEvent,reg)||
-    !isDeepStrictEqual(expected.payload.tokenLinksInvalidation,inv)){
+    !jsonStructurallyEqual(expected.payload.registryEvent,reg)||
+    !jsonStructurallyEqual(expected.payload.tokenLinksInvalidation,inv)){
     throw new TypeError("Inconsistent link invalidation evidence");
   }
   return raw;
