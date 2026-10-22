@@ -23,6 +23,38 @@ function ensureSeparate(sourcePath,statePath){
   }
   return {input,output};
 }
+const REQUIRED_SCHEMA={
+  watcher_scopes:["scope","scan_cursor","next_sequence","last_run_at"],
+  watcher_current:["scope","signature","raw_fingerprint","state","reason","source_status",
+    "last_checked_sequence","last_checked_at"],
+  watcher_observations:["id","scope","signature","raw_fingerprint","previous_fingerprint",
+    "source_status","state","reason","checked_at","audit_json"],
+  watcher_invalidation_outbox:["id","observation_id","scope","signature",
+    "previous_fingerprint","new_fingerprint","reason","state","created_at"]
+};
+const REQUIRED_TRIGGERS=[
+  "watcher_observation_immutable_update","watcher_observation_immutable_delete",
+  "watcher_outbox_no_update","watcher_outbox_no_delete"
+];
+function validateStateSchema(db){
+  if(db.pragma("application_id",{simple:true})!==APPLICATION_ID||
+     db.pragma("user_version",{simple:true})!==VERSION)
+    throw Error("Dedicated watcher SQLite schema required");
+  for(const [name,fields] of Object.entries(REQUIRED_SCHEMA)){
+    const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name);
+    if(!row||typeof row.sql!=="string")throw Error("Watcher state table missing: "+name);
+    const cols=new Set(db.prepare("PRAGMA table_info("+name+")").all().map(x=>x.name));
+    if(fields.some(field=>!cols.has(field)))throw Error("Watcher state columns missing: "+name);
+  }
+  for(const name of REQUIRED_TRIGGERS){
+    const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name);
+    if(!row||typeof row.sql!=="string"||!row.sql.includes("RAISE(ABORT"))
+      throw Error("Watcher immutable journal trigger missing: "+name);
+  }
+  const foreign=db.prepare("PRAGMA foreign_key_list(watcher_invalidation_outbox)").all();
+  if(!foreign.some(x=>x.from==="observation_id" && x.table==="watcher_observations"))
+    throw Error("Watcher outbox foreign key missing");
+}
 function openState(filename){
   const exists=fs.existsSync(filename);
   if(!exists){
@@ -35,7 +67,8 @@ function openState(filename){
       if(db.pragma("application_id",{simple:true})!==0||
          db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").get().n)
         throw Error("State file is not empty");
-      db.exec([
+      db.transaction(()=>{
+        db.exec([
         "CREATE TABLE watcher_scopes(scope TEXT PRIMARY KEY, scan_cursor TEXT, next_sequence INTEGER NOT NULL DEFAULT 0, last_run_at INTEGER);",
         "CREATE TABLE watcher_current(",
         "scope TEXT NOT NULL,signature TEXT NOT NULL,raw_fingerprint TEXT NOT NULL,",
@@ -59,12 +92,11 @@ function openState(filename){
         "CREATE TRIGGER watcher_outbox_no_update BEFORE UPDATE ON watcher_invalidation_outbox BEGIN SELECT RAISE(ABORT,'Outbox is manual review only'); END;",
         "CREATE TRIGGER watcher_outbox_no_delete BEFORE DELETE ON watcher_invalidation_outbox BEGIN SELECT RAISE(ABORT,'Outbox is append only'); END;"
       ].join("\n"));
-      db.pragma("application_id="+APPLICATION_ID);
-      db.pragma("user_version="+VERSION);
+        db.pragma("application_id="+APPLICATION_ID);
+        db.pragma("user_version="+VERSION);
+      }).immediate();
     }
-    if(db.pragma("application_id",{simple:true})!==APPLICATION_ID||
-      db.pragma("user_version",{simple:true})!==VERSION)
-      throw Error("Dedicated watcher SQLite schema required");
+    validateStateSchema(db);
     if(db.pragma("journal_mode=WAL",{simple:true})!=="wal")
       throw Error("Durable watcher requires SQLite WAL");
     db.pragma("synchronous=FULL");
@@ -140,7 +172,11 @@ function watchOnce(source,state,{limit=25,signature=null,kind=null,address=null,
   try{
     const perform=state.transaction(()=>{
       state.prepare("INSERT OR IGNORE INTO watcher_scopes(scope) VALUES(?)").run(scope);
-      const meta=state.prepare("SELECT scan_cursor,next_sequence FROM watcher_scopes WHERE scope=?").get(scope);
+      const meta=state.prepare("SELECT scan_cursor,next_sequence,last_run_at FROM watcher_scopes WHERE scope=?").get(scope);
+      if(meta.last_run_at!==null && now<meta.last_run_at)
+        throw Error("Watch clock moved backwards for scope");
+      if(!Number.isSafeInteger(meta.next_sequence)||meta.next_sequence<0)
+        throw Error("Invalid watcher sequence");
       const newOnes=scanSignatures(source,scope,meta.scan_cursor,limit);
       const oldOnes=state.prepare(
         "SELECT signature FROM watcher_current WHERE scope=? ORDER BY last_checked_sequence,signature LIMIT ?"
