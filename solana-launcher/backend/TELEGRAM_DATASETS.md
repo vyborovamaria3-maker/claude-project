@@ -14,8 +14,9 @@ Dataset rows are candidates, not trusted signals.
 - **SmugCalls Solana memecoin calls** — stages the public SmugCalls channel as a seed. The linked
   historical call dataset is CC0; it is not treated as proof that a token is safe or profitable.
 - **TGDataset (120,979 public channels)** — supported as a local import only. The archive is about
-  71 GB compressed, so it is never downloaded automatically. The local importer streams large JSON
-  files and extracts channel metadata without loading the nested message archive into memory. If
+  71 GB zipped, so it is never downloaded automatically. The local importer streams large JSON
+  files and extracts channel metadata without loading the nested message archive into memory. The
+  source is CC BY 4.0 and its authors/paper citation are recorded in provenance. If
 the TGDataset labeled_data topic map is present, the local importer defaults to Crypto-labelled
 channels; use --topics all to include every topic. Language labels are retained when available.
 - **tgparser JSON/CSV archives** — the existing telegram_import_tgparser command remains the path
