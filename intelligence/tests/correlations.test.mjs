@@ -23,7 +23,7 @@ test("correlation calculates lift, confidence interval and significance against 
   assert.equal(result.sampleSize,30);
   assert.equal(result.exposedRate,0.6);
   assert.equal(result.controlRate,0.2);
-  assert.equal(result.lift,3);
+  assert.ok(Math.abs(result.lift-3)<1e-12);
   assert.ok(result.ciLow<result.lift&&result.ciHigh>result.lift);
   assert.ok(result.pValue<0.05);
 });
