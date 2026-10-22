@@ -1,0 +1,100 @@
+name: Native social token-link CI
+
+on:
+  pull_request:
+    paths:
+      - "packages/contracts/**"
+      - "intelligence/**"
+      - "tg-collector/src/persistence/outbox.ts"
+      - "tg-collector/src/persistence/messages.ts"
+      - "tg-collector/src/analytics/resolve-token-candidates.ts"
+      - "tg-collector/tests/verified-token-link.test.ts"
+      - "tg-collector/tests/token-link-invalidation.test.ts"
+      - "tg-collector/tests/integration/verified-token-link.test.ts"
+      - "tg-collector/sql/**"
+      - "x-collector/src/collector/persistence/verified-token-links.ts"
+      - "x-collector/scripts/verify-x-token-links.ts"
+      - "x-collector/tests/verified-token-links.test.ts"
+      - ".github/workflows/native-social-token-links.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/contracts/**"
+      - "intelligence/**"
+      - "tg-collector/src/persistence/outbox.ts"
+      - "tg-collector/src/persistence/messages.ts"
+      - "tg-collector/src/analytics/resolve-token-candidates.ts"
+      - "tg-collector/tests/verified-token-link.test.ts"
+      - "tg-collector/tests/token-link-invalidation.test.ts"
+      - "tg-collector/tests/integration/verified-token-link.test.ts"
+      - "tg-collector/sql/**"
+      - "x-collector/src/collector/persistence/verified-token-links.ts"
+      - "x-collector/scripts/verify-x-token-links.ts"
+      - "x-collector/tests/verified-token-links.test.ts"
+      - ".github/workflows/native-social-token-links.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  telegram-native-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tgtest
+          POSTGRES_PASSWORD: tgtest
+          POSTGRES_DB: tg_evidence_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tgtest -d tg_evidence_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://tgtest:tgtest@127.0.0.1:5432/tg_evidence_test
+      TG_INTELLIGENCE_OUTBOX_ENABLED: "false"
+      TG_INTELLIGENCE_TOKEN_LINKS_ENABLED: "false"
+    defaults:
+      run:
+        working-directory: tg-collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install TG dependencies without opening Telegram sessions
+        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+      - name: Typecheck native TG emitters
+        run: npm run typecheck
+      - name: Test verified mint events, edit/delete retractions and transaction rollback
+        run: >-
+          node --import tsx --test --test-concurrency=1
+          tests/verified-token-link.test.ts
+          tests/token-link-invalidation.test.ts
+          tests/integration/verified-token-link.test.ts
+
+  x-native-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      X_INTELLIGENCE_OUTBOX_ENABLED: "false"
+      X_INTELLIGENCE_TOKEN_LINKS_ENABLED: "false"
+      X_INTELLIGENCE_MINT_VERIFY_ENABLED: "false"
+    defaults:
+      run:
+        working-directory: x-collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install X dependencies without Playwright browsers
+        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+      - name: Typecheck native X verification emitters
+        run: npm run typecheck
+      - name: Test verified tweet token link, edit retraction and transactional PGlite outbox
+        run: node --import tsx --test tests/verified-token-links.test.ts
