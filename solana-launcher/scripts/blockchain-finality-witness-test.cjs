@@ -117,6 +117,15 @@ function run(){
       require("node:crypto").createHash("sha256").update(retry.challenge).digest("hex")).consumed_at,null);
     assert.equal(accept(source,state,{pins,envelope:createReceipt(retry,0),clock}).status,
       "signed_witness_observation_stored");
+    // Reports created before issuance cannot be attached to a new nonce,
+    // even when a trusted witness signs them.
+    const premature=issue(source,state,{...base,pins,keyId:pins[0].keyId,clock:()=>time+100});
+    assert.equal(accept(source,state,{pins,envelope:createReceipt(premature,0),
+      clock:()=>time+150}).reason,"witness_report_precedes_challenge");
+    // Expiration uses trusted import clock, not a signer-controlled timestamp.
+    const expired=issue(source,state,{...base,pins,keyId:pins[0].keyId,clock:()=>time-1000});
+    assert.equal(accept(source,state,{pins,envelope:createReceipt(expired,0),
+      clock:()=>time+60_000}).reason,"witness_challenge_expired");
     // A witness challenge is a one-use revision-bound request, not a generic
     // long-lived signature confirmation.
     const stale=issue(source,state,{...base,pins,keyId:pins[0].keyId,clock:()=>time-1000});
@@ -132,6 +141,14 @@ function run(){
       .get(require("node:crypto").createHash("sha256").update(stale.challenge).digest("hex")).consumed_at,null);
     // CLI: strict out-of-band pins, explicit paths, no network.
     state.close();state=null;
+    const tamperedPath=path.join(dir,"tampered-witness.db");
+    const validState=openWitnessState(tamperedPath,{sourcePath,recoveryEpoch:epoch});
+    validState.close();
+    const corruptState=new Database(tamperedPath);
+    corruptState.exec("DROP TRIGGER witness_receipt_no_update");
+    corruptState.close();
+    assert.throws(()=>openWitnessState(tamperedPath,{sourcePath,recoveryEpoch:epoch}),
+      /Witness journal integrity trigger missing/);
     const config=path.join(dir,"trusted-pins.json");
     fs.writeFileSync(config,JSON.stringify({recoveryEpoch:epoch,witnesses:pins}));
     const bytes=fs.readFileSync(sourcePath);
