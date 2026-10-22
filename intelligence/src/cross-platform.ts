@@ -366,6 +366,7 @@ export async function refreshTokenDailyCrossPlatform(
       AVG(${rug}) FILTER (WHERE source_system='blockchain') AS chain_rug_risk,
       CASE WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed'
         AND payload ? 'smart_money_bought') = COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
+          AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
         THEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed'
           AND payload->>'smart_money_bought'='true')
         WHEN (SELECT blockchain_coverage FROM coverage_pivot)='complete'

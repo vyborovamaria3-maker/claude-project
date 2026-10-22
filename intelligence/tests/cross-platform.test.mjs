@@ -22,7 +22,7 @@ test("cross-platform scores are versioned and missing metrics stay null", () => 
   const scores = computeCrossPlatformScores({ ...base, tgCopypastaRatio: null, xBotRatio: null, chainRugRisk: null });
   assert.equal(scores.scoreVersion, CROSS_PLATFORM_SCORE_VERSION);
   assert.equal(scores.credibilityScore, null);
-  assert.equal(scores.riskScore, 0.05);
+  assert.ok(Math.abs(scores.riskScore - 0.05) < 1e-12);
   assert.equal(scores.momentumScore, 1.17);
   assert.ok(scores.dataConfidence < 1);
   assert.ok(scores.scoreReason.predictiveValidity.includes("not_established"));
