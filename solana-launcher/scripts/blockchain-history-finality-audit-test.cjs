@@ -25,9 +25,11 @@ function run(){
   try{
     initDb(db);
     const first=saved(0);
-    target(db,"wallet","wallet-good");
+    const address=first.accountKeys[0];
+    assert.match(address,/^[1-9A-HJ-NP-Za-km-z]{20,60}$/);
+    target(db,"wallet",address);
     target(db,"token","mint-good");
-    persistEvents(db,"wallet","wallet-good",[first]);
+    persistEvents(db,"wallet",address,[first]);
     persistEvents(db,"token","mint-good",[first]);
     const second=saved(1);
     target(db,"wallet","wallet-revision");
@@ -56,12 +58,21 @@ function run(){
     // In production processOne finalizes coverage flags after RAW ingestion
     // in the SAME commit. The fixture mimics that final checkpoint update.
     db.prepare("UPDATE chain_forensic_history_coverage SET coverage_status='provider_exhausted', possible_gap=0, backfill_complete=1, forward_cursor_pending=0, gap_reason=NULL WHERE address NOT IN ('wallet-corrupt')").run();
+    const seventh=saved(6);
+    target(db,"wallet","wallet-no-execution");
+    delete seventh.raw.meta.err; // Offline raw cannot prove transaction success.
+    persistEvents(db,"wallet","wallet-no-execution",[seventh]);
+    const eighth=saved(7);
+    target(db,"wallet","wallet-no-slot");
+    eighth.slot=null;eighth.raw.slot=null;
+    persistEvents(db,"wallet","wallet-no-slot",[eighth]);
+    db.prepare("UPDATE chain_forensic_history_coverage SET coverage_status='provider_exhausted', possible_gap=0, backfill_complete=1, forward_cursor_pending=0 WHERE address IN ('wallet-no-execution','wallet-no-slot')").run();
     const report=aggregate(db,{limit:20});
     assert.equal(report.version,"history-finality-audit-v1");
     assert.equal(report.finalityVerified,false);
     assert.equal(report.pnlEligible,false);
     assert.equal(report.historyComplete,false);
-    assert.equal(report.distinctSignaturesSampled,6);
+    assert.equal(report.distinctSignaturesSampled,8);
     const bySig=new Map(report.signatures.map(s=>[s.signature,s]));
     assert.equal(bySig.get(first.signature).status,"PENDING_INDEPENDENT_FINALITY");
     assert.equal(bySig.get(first.signature).observationCopies,2);
@@ -78,6 +89,16 @@ function run(){
     assert.equal(bySig.get(sixth.signature).status,"INCOMPLETE_HISTORY_OR_REVISIONS");
     assert.ok(bySig.get(sixth.signature).flags.includes("COLLECTOR_TARGET_MISSING"));
     assert.ok(bySig.get(sixth.signature).flags.includes("FORENSIC_COVERAGE_MISSING"));
+    assert.equal(bySig.get(seventh.signature).status,"NO_SUCCESSFUL_EXECUTION_EVIDENCE");
+    assert.ok(bySig.get(seventh.signature).flags.includes("EXECUTION_STATUS_UNKNOWN"));
+    assert.equal(bySig.get(eighth.signature).status,"INCOMPLETE_HISTORY_OR_REVISIONS");
+    assert.ok(bySig.get(eighth.signature).flags.includes("SLOT_UNAVAILABLE_FOR_FINALITY"));
+    const scoped=aggregate(db,{kind:"wallet",address,limit:5});
+    assert.equal(scoped.sampleScope,"target");
+    assert.equal(scoped.signatures.length,1);
+    assert.equal(scoped.signatures[0].signature,first.signature);
+    assert.throws(()=>aggregate(db,{kind:"wallet"}),/must be supplied together/);
+    assert.throws(()=>aggregate(db,{signature:first.signature,kind:"wallet",address}),/cannot be combined/);
     const truncated=aggregate(db,{limit:1});
     assert.equal(truncated.distinctSignaturesSampled,1);
     assert.equal(truncated.sampleTruncated,true);
@@ -91,8 +112,11 @@ function run(){
     const bytes=fs.readFileSync(filepath);
     const cli=main(["--db",filepath,"--signature",first.signature]);
     assert.equal(cli.signatures[0].status,"PENDING_INDEPENDENT_FINALITY");
+    const targeted=main(["--db",filepath,"--kind","wallet","--address",address,"--limit","5"]);
+    assert.equal(targeted.signatures.length,1);
+    assert.equal(targeted.signatures[0].signature,first.signature);
     assert.deepEqual(fs.readFileSync(filepath),bytes,"Read-only audit may not mutate stored RAW");
   }finally{if(db.open)db.close();fs.rmSync(temp,{recursive:true,force:true});}
-  console.log("[blockchain-history-finality-audit] OK: 6 real retained Alchemy receipts, cross-target conflict, revisions, corruption, gap/finality gate, readonly");
+  console.log("[blockchain-history-finality-audit] OK: 8 real retained Alchemy receipts, cross-target conflict, revisions, corruption, gap/finality gate, readonly");
 }
 run();
