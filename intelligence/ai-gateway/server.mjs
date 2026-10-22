@@ -280,7 +280,7 @@ export function createAiGateway({
           asOf:context.asOf,analysis:modelResponse.analysis,
           model:modelResponse.model,classification:"unverified_model_interpretation",
           evidenceCompleteness:"unknown",isTradingSignal:false,
-          providerFinalityVerified:false,
+          blockchainFinalityVerified:false,
         });
       }catch{
         // No upstream errors, provider credentials, SQL, prompt or raw body.
