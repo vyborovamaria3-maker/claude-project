@@ -65,7 +65,7 @@ export function calculateEventOutcomeCorrelations(
   const groups=new Map<string,Array<ReturnType<typeof validateSample>>>();
   for(const sample of samples) {
     const validated=validateSample(sample,evaluatedAt);
-    const key=validated.eventKind+"|"+validated.outcomeKind;
+    const key=validated.canonicalTokenId+"|"+validated.eventKind+"|"+validated.outcomeKind;
     const group=groups.get(key)??[];
     group.push(validated);
     groups.set(key,group);

@@ -28,6 +28,15 @@ test("correlation calculates lift, confidence interval and significance against 
   assert.ok(result.pValue<0.05);
 });
 
+test("correlation groups are isolated by token",()=>{
+  const tokenB=formatTokenId("solana","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+  const samples=[sample(1,true,true),sample(2,true,true),sample(3,false,false),sample(4,false,false),
+    {...sample(5,true,false),canonicalTokenId:tokenB},{...sample(6,false,true),canonicalTokenId:tokenB}];
+  const results=calculateEventOutcomeCorrelations(samples,"2026-10-04T12:00:00Z");
+  assert.equal(results.length,2);
+  assert.ok(results.every((result)=>result.samples.every((item)=>item.canonicalTokenId===result.samples[0]?.canonicalTokenId)));
+});
+
 test("correlation rejects look-ahead and never fabricates lift when control rate is zero",()=>{
   assert.throws(()=>calculateEventOutcomeCorrelations([{
     ...sample(1,true,true),maxInputObservedAt:"2026-10-01T02:00:00Z",
