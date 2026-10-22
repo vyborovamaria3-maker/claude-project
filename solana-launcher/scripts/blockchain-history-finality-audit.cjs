@@ -83,11 +83,16 @@ function inspectRevisionChain(row,query){
     flags.push("RAW_REWRITE_OR_CORRECTION_OBSERVED");
   return [...new Set(flags)];
 }
-function aggregate(source,{limit=50,signature=null}={}){
+function aggregate(source,{limit=50,signature=null,kind=null,address=null}={}){
   if(!Number.isSafeInteger(limit)||limit<1||limit>MAX_SIGNATURES)
     throw Error("limit must be between 1 and 200");
   if(signature!==null && (typeof signature!=="string"||!/^[1-9A-HJ-NP-Za-km-z]{20,100}$/.test(signature)))
     throw Error("signature must be a Solana base58 identifier");
+  if ((kind===null)!==(address===null))throw Error("--kind and --address must be supplied together");
+  if(signature!==null && kind!==null)throw Error("--signature and --kind/--address cannot be combined");
+  if(kind!==null && (!/^(wallet|token|creator|dex_program)$/.test(kind)||
+     typeof address!=="string"||!/^[1-9A-HJ-NP-Za-km-z]{20,60}$/.test(address)))
+    throw Error("unsupported kind or invalid Solana base58 address");
   if(!tableExists(source,"chain_seed_events"))throw Error("chain_seed_events table missing");
   const names=columns(source,"chain_seed_events");
   const required=["kind","address","signature","raw_revision","slot","block_time","payload_gzip","payload_hash","payload_bytes"];
@@ -117,15 +122,18 @@ function aggregate(source,{limit=50,signature=null}={}){
   };
   // All copies for each selected signature must be considered together.
   // Unlike LIMIT over target rows, this cannot silently omit a second target.
-  const ids=signature?[{signature}]:source.prepare(
-    "SELECT DISTINCT signature FROM chain_seed_events ORDER BY signature LIMIT ?").all(limit+1);
+  const ids=signature?[{signature}]:kind!==null
+    ?source.prepare("SELECT signature FROM chain_seed_events WHERE kind=? AND address=? ORDER BY signature LIMIT ?")
+      .all(kind,address,limit+1)
+    :source.prepare("SELECT DISTINCT signature FROM chain_seed_events ORDER BY signature LIMIT ?").all(limit+1);
   const truncated=!signature&&ids.length>limit;
   const chosen=ids.slice(0,limit);
   const copies=source.prepare(
     "SELECT kind,address,signature,raw_revision,slot,block_time,payload_gzip,payload_hash,payload_bytes FROM chain_seed_events WHERE signature=? ORDER BY kind,address LIMIT ?");
   const output={version:VERSION,authority:"diagnostic_only",finalityVerified:false,
     historyComplete:false,pnlEligible:false,distinctSignaturesSampled:chosen.length,
-    sampleTruncated:truncated,byStatus:{},signatures:[],
+    sampleTruncated:truncated,sampleScope:signature?"signature":kind!==null?"target":"global",
+    targetScope:kind!==null?{kind,address}:null,byStatus:{},signatures:[],
     globalLimitations:["Finalized RPC request configuration is not independently attested RPC or consensus finality.",
       "Provider pagination exhaustion does not establish account-wide token history or decoder completeness.",
       "Observation-time RAW consistency cannot prove rollback/reorg stability or continuous wallet ownership.",
@@ -144,9 +152,13 @@ function aggregate(source,{limit=50,signature=null}={}){
         rawValid++;
         hashes.add(row.payload_hash);
         slots.add(row.slot);
+        if(!Number.isSafeInteger(row.slot)||row.slot<=0)
+          reasons.push("SLOT_UNAVAILABLE_FOR_FINALITY");
         if(normalized.transactionError===null)hasSuccessful=true;
-        else if(normalized.transactionError!==undefined)hasFailed=true;
-        else reasons.push("EXECUTION_STATUS_UNKNOWN");
+        else if(normalized.transactionError===undefined ||
+          normalized.transactionError?.unknown)
+          reasons.push("EXECUTION_STATUS_UNKNOWN");
+        else hasFailed=true;
       }catch{
         reasons.push("CURRENT_RAW_CORRUPT_OR_UNSUPPORTED");
       }
@@ -178,11 +190,11 @@ function aggregate(source,{limit=50,signature=null}={}){
   return output;
 }
 function parse(argv){
-  const a={limit:50,signature:null,db:null};
+  const a={limit:50,signature:null,kind:null,address:null,db:null};
   for(let i=0;i<argv.length;i++){
-    if(["--db","--limit","--signature"].includes(argv[i])&&argv[i+1]){
+    if(["--db","--limit","--signature","--kind","--address"].includes(argv[i])&&argv[i+1]){
       a[argv[i].slice(2)]=argv[++i];
-    }else throw Error("Usage: --db existing.sqlite [--limit 50] [--signature BASE58]");
+    }else throw Error("Usage: --db existing.sqlite [--limit 50] [--signature BASE58 | --kind wallet --address BASE58]");
   }
   if(!a.db)throw Error("Explicit --db existing file required");
   a.limit=Number(a.limit);
