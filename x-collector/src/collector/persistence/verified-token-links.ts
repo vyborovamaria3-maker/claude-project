@@ -144,3 +144,32 @@ export async function emitXTokenLinksInvalidation(
   ]);
   return true;
 }
+
+
+/**
+ * Match the source-of-truth UPSERT semantics before deciding whether a
+ * verified tweet -> mint link must be revoked. The collector stores new
+ * text unconditionally but COALESCEs missing authorId / postedAt with the
+ * previous values. A changed author or post timestamp changes the evidence
+ * revision even when the text is identical. Metric-only updates do not.
+ *
+ * Caller must hold the same tweet row lock as the source write and must
+ * check that the UPSERT actually persisted (not an older observation).
+ */
+export function effectiveXTokenSourceRevision(
+  previous:{text:string|null;author_id:string|null;posted_at:string|number|null},
+  next:{text:string;authorId:string|null|undefined;postedAt:number|null},
+):{changed:boolean;authorId:string|null;postedAt:number|null}{
+  const authorId=next.authorId??previous.author_id;
+  const rawPostedAt=next.postedAt??previous.posted_at;
+  const postedAt=rawPostedAt===null?null:Number(rawPostedAt);
+  if(postedAt!==null &&
+     (!Number.isSafeInteger(postedAt)||postedAt<0||!Number.isFinite(new Date(postedAt).getTime()))){
+    throw new TypeError("Invalid X source publication clock");
+  }
+  const changed=previous.text!==next.text||
+    previous.author_id!==authorId||
+    (previous.posted_at===null?null:String(previous.posted_at))!==
+      (postedAt===null?null:String(postedAt));
+  return {changed,authorId,postedAt};
+}
