@@ -168,31 +168,36 @@ class TelegramMonitorManager:
         await service.start_monitor(monitored)
         return True
 
+    async def _sync_public_datasets_if_due(self) -> None:
+        if not self.settings.telegram_public_web_enabled:
+            return
+        if not getattr(self.settings, "telegram_dataset_sync_enabled", True):
+            return
+        now = monotonic()
+        interval = max(
+            3600,
+            int(getattr(self.settings, "telegram_dataset_sync_interval_seconds", 86400)),
+        )
+        if now - self._last_dataset_sync_attempt < interval:
+            return
+        self._last_dataset_sync_attempt = now
+        try:
+            self._dataset_sync_summary = await sync_public_dataset_channels(
+                self.sessionmaker, self.settings
+            )
+            self._last_dataset_sync_at = utcnow().isoformat()
+            if self._dataset_sync_summary.get("errors"):
+                # Retry failed remote sources within an hour without hammering them.
+                self._last_dataset_sync_attempt = monotonic() - max(0, interval - 3600)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._dataset_sync_summary = {"enabled": True, "error": str(exc)[:500]}
+            self._last_dataset_sync_attempt = monotonic() - max(0, interval - 3600)
+
     async def _refresh_public_web_once(self) -> None:
         if not self.settings.telegram_public_web_enabled:
             return
-
-        if getattr(self.settings, "telegram_dataset_sync_enabled", True):
-            now = monotonic()
-            interval = max(
-                3600,
-                int(getattr(self.settings, "telegram_dataset_sync_interval_seconds", 86400)),
-            )
-            if now - self._last_dataset_sync_attempt >= interval:
-                self._last_dataset_sync_attempt = now
-                try:
-                    self._dataset_sync_summary = await sync_public_dataset_channels(
-                        self.sessionmaker, self.settings
-                    )
-                    self._last_dataset_sync_at = utcnow().isoformat()
-                    if self._dataset_sync_summary.get("errors"):
-                        # Retry failed remote sources within an hour without hammering them.
-                        self._last_dataset_sync_attempt = monotonic() - max(0, interval - 3600)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    self._dataset_sync_summary = {"enabled": True, "error": str(exc)[:500]}
-                    self._last_dataset_sync_attempt = monotonic() - max(0, interval - 3600)
 
         if not self.settings.telegram_public_web_refresh_enabled:
             if not self._public_bootstrapped and self.public_web.configured_channels:
@@ -253,6 +258,7 @@ class TelegramMonitorManager:
                 mtproto_running = False
                 mtproto_error: str | None = None
                 try:
+                    await self._sync_public_datasets_if_due()
                     mtproto_running = await self._ensure_mtproto_monitor()
                 except asyncio.CancelledError:
                     raise
