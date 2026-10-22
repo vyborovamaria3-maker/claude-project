@@ -153,4 +153,4 @@ A historical backtest requires explicit outcome labels in token_outcomes and val
 ```sh
 npm --prefix intelligence run backtest -- --signal attention_score --outcome price_2x_24h --from 2025-01-01 --to 2025-09-30 --threshold 2.0 --horizon-hours 24
 ```
-The command fails when there are no eligible labeled observations; it does not synthesize outcomes. Migration 007 must be applied before using putFeatureEmbedding.
+The command fails when labels are missing or the complete outcome horizon has not elapsed; it prints cohort coverage counts instead of reporting selective precision. Statistical significance is not reported for repeated-token or overlapping random-control observations without an independent design. Migration 007 must be applied before using putFeatureEmbedding.

@@ -4,7 +4,7 @@ This document describes the additive implementation in the existing Intelligence
 
 ## Migration order
 
-Apply 001 through 006 in order. Migration 003 (Feature Store) is required for the features API. Migration 007 is optional and requires the pgvector extension; apply it only after 006 on a PostgreSQL server that supports pgvector. Do not modify old checksum-tracked migrations.
+Apply 001 through 006, then 008 (historical alert status). Migration 003 (Feature Store) is required for the features API. Migration 007 is optional and requires the pgvector extension; apply it only after 006 on a PostgreSQL server that supports pgvector. Do not modify old checksum-tracked migrations.
 
 ## Data correctness
 
@@ -27,7 +27,7 @@ After migrations and outcome labels exist:
 
 npm --prefix intelligence run backtest -- --signal attention_score --outcome price_2x_24h --from 2025-01-01 --to 2025-09-30 --threshold 2.0 --horizon-hours 24
 
-Supported signal columns: attention_score, credibility_score, risk_score, momentum_score. The CLI uses the latest eligible point-in-time snapshot per token and UTC day so repeated refreshes do not overweight a token-day. Dates are validated as real UTC calendar days. Outcomes must already exist in token_outcomes and be observed after their occurrence time. Each signal also requires its relevant metric fields and complete source-coverage windows known by that snapshot's as_of time (swap-revision coverage for attention; settled-trade-tape coverage for momentum). The command exits with an error when there are no eligible observations; it never synthesizes labels.
+Supported signal columns: attention_score, credibility_score, risk_score, momentum_score. The CLI uses the latest eligible point-in-time snapshot per token and UTC day so repeated refreshes do not overweight a token-day. Dates are validated as real UTC calendar days. Outcomes must already exist in token_outcomes and be observed after their occurrence time. Each signal also requires its relevant metric fields and complete source-coverage windows known by that snapshot's as_of time (swap-revision coverage for attention; settled-trade-tape coverage for momentum). The command fails closed when any eligible token-day has an unfinished outcome horizon or lacks an explicit label; it never assumes missing outcomes are false. It prints aggregate eligibility, maturity and label-coverage counts without leaking row payloads. Results are exploratory unless validated out of sample. When the same token appears repeatedly, naive independent-sample confidence intervals and p-values are omitted. The random baseline samples the full eligible cohort and is not used for independent two-sample significance tests.
 
 
 ## Refreshing the daily cross-platform view
@@ -55,4 +55,4 @@ Configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in the runtime secret store, t
 npm --prefix intelligence run dispatch-telegram-alerts
 ```
 
-The dispatcher claims alerts with row locks, marks them as sending, posts plain text without parse mode, then marks successful deliveries. Failed attempts return to open; after 10 attempts they are left for manual review. A stale sending claim can be retried after 10 minutes. Run the dispatcher from a scheduler if recurring delivery is required. The bot token is never logged or written to PostgreSQL.
+The dispatcher claims alerts with row locks, marks them as sending, posts plain text without parse mode, then marks successful deliveries. Failed attempts return to open; after 10 attempts they are left for manual review. A stale sending claim can be retried after 10 minutes. Delivery is at-least-once, not exactly-once: if Telegram accepts a message but the database status update fails, a retry can duplicate it. A stable alert ID is included in messages to identify duplicates. New alerts for an active token/type incident are suppressed until the prior incident is explicitly resolved. Run the dispatcher from a scheduler if recurring delivery is required. The bot token is never logged or written to PostgreSQL.

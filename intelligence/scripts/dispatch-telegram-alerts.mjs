@@ -15,6 +15,7 @@ function formatAlert(row) {
   const refs=safeRefs(row.evidence_refs).join(", ")||"none";
   return [
     "[POTAPoff] "+String(row.severity).toUpperCase()+" "+String(row.alert_type),
+    "Alert ID: "+String(row.alert_id),
     "Token: "+String(row.canonical_token_id),
     "Score: "+score+" ("+String(row.score_version??"unversioned")+")",
     "Triggered at: "+new Date(row.triggered_at).toISOString(),
