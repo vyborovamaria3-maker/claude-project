@@ -78,6 +78,39 @@ def test_local_json_dataset_import_is_bounded_and_keeps_source_metadata(tmp_path
     assert rows[0]["topic"] == "crypto"
 
 
+def test_local_tgdataset_topic_labels_filter_to_crypto(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "tgdataset"
+    labeled_dir = dataset_dir / "labeled_data"
+    labeled_dir.mkdir(parents=True)
+    (labeled_dir / "ch_to_topic_mapping.csv").write_text(
+        "ch_ID,topic\n123,Crypto\n456,Entertainment\n", encoding="utf-8"
+    )
+    (dataset_dir / "channels.json").write_text(
+        json.dumps(
+            {
+                "123": {"username": "CryptoFeed", "title": "Crypto Feed"},
+                "456": {"username": "EntertainmentFeed", "title": "Entertainment Feed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = list(
+        iter_local_dataset_channels(dataset_dir, limit=10, source_name="tgdataset-local")
+    )
+
+    assert [row["username"] for row in rows] == ["cryptofeed"]
+    assert rows[0]["topic"] == "crypto"
+    assert "crypto" in rows[0]["tags"]
+
+    all_topics = list(
+        iter_local_dataset_channels(
+            dataset_dir, limit=10, source_name="tgdataset-local", topics={"all"}
+        )
+    )
+    assert {row["username"] for row in all_topics} == {"cryptofeed", "entertainmentfeed"}
+
+
 @pytest.mark.asyncio
 async def test_dataset_candidates_share_registry_and_are_idempotent() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
