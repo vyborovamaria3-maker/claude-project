@@ -304,6 +304,7 @@ async def import_dataset_channel_candidates(
             source_entry = {
                 "url": str(record.get("source_url") or source_url)[:500],
                 "license": str(record.get("license") or source_license)[:100],
+                "attribution": str(record.get("attribution") or "")[:150] or None,
                 "snapshot": str(record.get("snapshot") or "")[:40] or None,
                 "topic": str(record.get("topic") or "")[:80] or None,
                 "verified": _flag(record.get("verified")),
