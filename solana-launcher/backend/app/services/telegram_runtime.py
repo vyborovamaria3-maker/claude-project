@@ -165,6 +165,7 @@ class TelegramMonitorManager:
         else:
             summary = dict(self._dataset_import_summary)
         summary["source_files"] = [Path(path).name for path in current]
+        summary["source_files_count"] = len(current)
         summary["changed_files"] = len(changed_paths)
         summary["removed_files"] = removed_files
         self._dataset_manifest_signature = current
