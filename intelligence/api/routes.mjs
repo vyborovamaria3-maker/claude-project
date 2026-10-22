@@ -1,4 +1,5 @@
 import {parseTokenId} from "@claude-project/contracts";
+import {aiDataCatalog,queryAiTokenContext} from "./ai-context.mjs";
 import {queryTokenTimeline,queryActiveTokenLinks,queryActiveBlockchainSwapEvidence} from "../dist/index.js";
 
 const API_PREFIX="/api/intelligence/v1";
@@ -35,7 +36,11 @@ export function parseApiRequest(raw,now=new Date()){
     if(url.search)throw new TypeError("unexpected_query");
     return {kind:"health"};
   }
-  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence|evidence)$/.exec(url.pathname);
+  if(url.pathname===API_PREFIX+"/ai/catalog"){
+    if(url.search)throw new TypeError("unexpected_query");
+    return {kind:"ai-catalog"};
+  }
+  const match=/^\/api\/intelligence\/v1\/tokens\/([^/]+)\/(timeline|links|swap-evidence|evidence|ai-context)$/.exec(url.pathname);
   if(!match)return null;
   let tokenId;
   try{tokenId=decodeURIComponent(match[1]);}
@@ -123,6 +128,8 @@ function normalizeSwapEvidence(row,tokenId){
   };
 }
 export async function queryTokenApi(pool,request){
+  if(request.kind==="ai-catalog")return aiDataCatalog();
+  if(request.kind==="ai-context")return queryAiTokenContext(pool,request);
   if(request.kind==="health"){
     await pool.query("SELECT 1 AS ok");
     return {
