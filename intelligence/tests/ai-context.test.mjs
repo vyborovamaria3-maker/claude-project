@@ -61,7 +61,8 @@ function spyPool({feature=row,fail=false}={}){
     },
     release(){released++},
   };
-  return {sql,client,async connect(){return client},get released(){return released}};
+  return {sql,client,query:(...args)=>client.query(...args),
+    async connect(){return client},get released(){return released}};
 }
 async function withServer(pool,options,run){
   const server=createIntelligenceApi({
