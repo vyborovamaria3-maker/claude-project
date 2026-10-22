@@ -230,9 +230,12 @@ function watchOnce(source,state,{limit=25,signature=null,kind=null,address=null,
       state.prepare("UPDATE watcher_scopes SET scan_cursor=?,next_sequence=?,last_run_at=? WHERE scope=?")
         .run(nextCursor,seq,now,scope);
       report.scanned=newOnes.length;
+      // Validate/close the source read snapshot BEFORE the state transaction
+      // commits. A source snapshot close failure must roll back the outbox,
+      // cursor and observation inserts together.
+      source.exec("COMMIT");
     });
     perform.immediate();
-    source.exec("COMMIT");
     return report;
   }catch(e){
     try{source.exec("ROLLBACK");}catch{}
