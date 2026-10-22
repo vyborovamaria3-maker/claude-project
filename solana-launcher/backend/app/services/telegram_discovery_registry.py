@@ -302,14 +302,22 @@ async def import_dataset_channel_candidates(
 
             source = str(record.get("source_name") or source_name).strip()[:100] or source_name
             source_entry = {
-                "url": str(record.get("source_url") or source_url)[:500],
-                "license": str(record.get("license") or source_license)[:100],
+                "url": str(record.get("source_url") or source_url)[:500] or None,
+                "license": str(record.get("license") or source_license)[:100] or None,
                 "attribution": str(record.get("attribution") or "")[:150] or None,
                 "snapshot": str(record.get("snapshot") or "")[:40] or None,
                 "topic": str(record.get("topic") or "")[:80] or None,
-                "verified": _flag(record.get("verified")),
+                "verified": (
+                    _flag(record.get("verified"))
+                    if record.get("verified") is not None
+                    else None
+                ),
                 "subscribers": participants,
-                "posts_per_day": record.get("posts_per_day"),
+                "posts_per_day": (
+                    record.get("posts_per_day")
+                    if record.get("posts_per_day") not in (None, "")
+                    else None
+                ),
                 "recommended_by": _nonnegative_int(record.get("recommended_by")),
                 "dataset_telegram_id": str(
                     record.get("channel_id") or record.get("dataset_telegram_id") or ""
@@ -325,6 +333,13 @@ async def import_dataset_channel_candidates(
                 sources.append(source)
             provenance = old_meta.get("dataset_provenance")
             provenance = dict(provenance) if isinstance(provenance, dict) else {}
+            previous_entry = provenance.get(source)
+            if isinstance(previous_entry, dict):
+                merged_entry = dict(previous_entry)
+                for key, value in source_entry.items():
+                    if key == "imported_at" or value not in (None, ""):
+                        merged_entry[key] = value
+                source_entry = merged_entry
             provenance[source] = source_entry
 
             raw_tags = record.get("tags")
