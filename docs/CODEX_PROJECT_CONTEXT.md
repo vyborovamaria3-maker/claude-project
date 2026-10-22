@@ -1,5 +1,13 @@
 # X Collector Runtime v2 context
 
+Live creator-history cross-check (2026-10-22) retained another successful
+create_v2 shape with a 43-byte options tail. Its requested creator/initiating
+user is ioH8..., while CreateEvent names DSAR... as the actual creator. Preserve
+both roles: creator identity follows the event; launchedBy follows the matched
+instruction/event user. Creator-history discovery follows either role and labels
+initiated launches separately, without overwriting the launch registry creator.
+The Gracias Messi fixture and negative account-binding test cover this case.
+
 2026-10-22 Alchemy graph discovery: a saved MBC receipt proves raw Pump create_v2
 via matching instruction arguments/accounts and a CreateEvent emitted by Pump.
 This now feeds the existing token->creator->created-token queue without Helius

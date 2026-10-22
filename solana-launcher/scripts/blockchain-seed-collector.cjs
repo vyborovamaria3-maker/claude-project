@@ -1141,12 +1141,13 @@ function appendDiscoveredCreators(db,scopeId,tokenAddress,transactions){
 }
 function appendDiscoveredCreatorTokens(db,scopeId,creatorAddress,transactions){
   const {extractPumpFunLaunches}=require("./blockchain-pumpfun-discovery.cjs");
-  const launches=extractPumpFunLaunches(transactions).filter(x=>x.creator===creatorAddress);
+  const launches=extractPumpFunLaunches(transactions).filter(x=>x.creator===creatorAddress || x.launchedBy===creatorAddress);
   if(!launches.length)return 0;
   savePumpFunLaunches(db,scopeId,launches);
   for(const launch of launches){
     deferScopeMember(db,scopeId,"creator",creatorAddress,"token",launch.mint,900,
-      "pumpfun_creator_launch","creator",creatorAddress);
+      launch.creator===creatorAddress ? "pumpfun_creator_launch" : "pumpfun_creator_initiated_launch",
+      "creator",creatorAddress);
   }
   return launches.length;
 }

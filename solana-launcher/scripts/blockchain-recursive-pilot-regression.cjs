@@ -103,6 +103,14 @@ assert.equal(rawLaunches.length,1);
 assert.equal(rawLaunches[0].creator,actualCreator);
 assert.equal(rawLaunches[0].mint,actualMint);
 assert.equal(rawLaunches[0].evidenceSource,"alchemy_raw_pump_fun_create_v2_and_event");
+const gracias=require("./fixtures/alchemy-gracias-create-v2.json");
+assert.equal(extractPumpFunLaunches([gracias])[0]?.creator,"DSARkkwtiLGmPYgQQjYNommoUCkVjPHLXXgUsFKwzSNU");
+assert.equal(extractPumpFunLaunches([gracias])[0]?.launchedBy,actualCreator);
+assert.equal(extractPumpFunLaunches([gracias])[0]?.evidence.creatorSource,"CreateEvent_override");
+assert.equal(extractPumpFunLaunches([gracias])[0]?.mint,"LURCbaJ4ejcbyVNUAUcKGzpvEnmSGBaEATq6g1Qpump");
+const graciasForged=JSON.parse(JSON.stringify(gracias));
+for(const ix of graciasForged.raw.transaction.message.instructions)if(ix.programId===PUMP_FUN_PROGRAM_ID&&ix.accounts?.[0]==="LURCbaJ4ejcbyVNUAUcKGzpvEnmSGBaEATq6g1Qpump")ix.accounts[0]=TOKEN_B;
+assert.equal(extractPumpFunLaunches([graciasForged]).length,0);
 assert.equal(extractPumpFunLaunches([rawCreate,rawCreate]).length,1);
 const clone=()=>JSON.parse(JSON.stringify(rawCreate));
 for(const mutate of [
@@ -141,5 +149,10 @@ try{
   collector.promoteDeferredWaves(rawDb,scope,{tokenWaveWallets:10,creatorWaveTokens:10});
   assert(rawDb.prepare("SELECT 1 FROM chain_collection_scope_members WHERE scope_id=? AND kind='wallet' AND address=?").get(scope,WALLET));
   assert.equal(rawDb.prepare("SELECT COUNT(*) AS n FROM chain_pumpfun_creator_launches WHERE scope_id=? AND creator=?").get(scope,actualCreator).n,1);
+  assert.equal(collector.appendDiscoveredCreatorTokens(rawDb,scope,actualCreator,[gracias]),1);
+  assert.equal(rawDb.prepare("SELECT creator FROM chain_pumpfun_creator_launches WHERE scope_id=? AND mint=?").get(scope,"LURCbaJ4ejcbyVNUAUcKGzpvEnmSGBaEATq6g1Qpump").creator,
+    "DSARkkwtiLGmPYgQQjYNommoUCkVjPHLXXgUsFKwzSNU","initiator must not overwrite event creator");
+  assert.equal(rawDb.prepare("SELECT reason FROM chain_collection_scope_deferred WHERE scope_id=? AND kind='token' AND address=?").get(scope,"LURCbaJ4ejcbyVNUAUcKGzpvEnmSGBaEATq6g1Qpump").reason,
+    "pumpfun_creator_initiated_launch");
 }finally{rawDb.close();}
 console.log("[blockchain-recursive-pilot-regression] OK: seed/creator/token/wallet graph, real Alchemy create_v2, reject forged or failed launch proofs, resumable bounded waves");

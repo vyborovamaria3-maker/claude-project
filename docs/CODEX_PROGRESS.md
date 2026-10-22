@@ -169,3 +169,14 @@ Three MBC SELL review (2026-10-22): two rejected transactions are proven interme
   history gaps remain partial; known creator launches are not an exhaustive count.
 - Regression uses the real saved receipt, malformed/failed proof rejection and
   in-memory graph replay. No Alchemy calls or production writes.
+
+2026-10-22 live expansion follow-up: after a validated 9.43 GB SQLite backup,
+the corrected discovery/queue schema was connected to the real database. Creator
+history exposed 11 initiated launches: 10 matching MBC's event creator plus
+Gracias Messi with a distinct event creator. Support the retained 43-byte
+create_v2 tail and record requested creator, event creator and initiator
+separately. Follow initiated tokens as separately labeled edges; never assign
+their event creator to the initiator. Retained live receipt and negative binding
+tests guard the distinction. Collection checkpoints/request ledger and detailed
+coverage reports live with the task artifacts; history exhaustion is not proof
+of complete swap decoding or globally exhaustive creator discovery.

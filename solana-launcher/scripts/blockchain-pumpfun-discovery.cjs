@@ -83,20 +83,26 @@ function rawPumpFunLaunches(tx) {
       const bytes = Buffer.from(bs58.decode(ix.data));
       if (bytes.subarray(0, 8).toString("hex") !== "d6904cec5f8b31b4") continue;
       const prefix = readPrefix(bytes), o = prefix.offset;
-      if (bytes.length !== o + 34 || bytes[o + 32] > 1 || bytes[o + 33] > 1) continue;
+      // Two retained successful create_v2 receipts have 34/43-byte tails.
+      // Their common creator prefix is independently matched to CreateEvent;
+      // trailing options are not interpreted as creator or mint evidence.
+      if (![34, 43].includes(bytes.length - o) || bytes[o + 32] > 1 || bytes[o + 33] > 1) continue;
       const accounts = (ix.accounts || []).map(accountAddress);
-      const creator = bs58.encode(bytes.subarray(o, o + 32)), mint = accounts[0];
-      if (!isSolanaAddress(creator) || !isSolanaAddress(mint)) continue;
-      const matches = events.filter(e => e.mint === mint && e.creator === creator &&
+      const requestedCreator = bs58.encode(bytes.subarray(o, o + 32)), mint = accounts[0];
+      if (!isSolanaAddress(requestedCreator) || !isSolanaAddress(mint)) continue;
+      const matches = events.filter(e => e.mint === mint &&
+        (e.creator === requestedCreator || (bytes.length - o === 43 && requestedCreator === accounts[5])) &&
         e.curve === accounts[2] && e.user === accounts[5] &&
         e.strings.every((s, i) => s === prefix.strings[i]));
       if (matches.length !== 1) continue;
-      launches.push({ creator, mint, signature: tx.signature,
+      const event = matches[0], creator = event.creator;
+      launches.push({ creator, launchedBy: event.user, mint, signature: tx.signature,
         slot: Number.isSafeInteger(tx.slot) ? tx.slot : null,
         timestamp: Number.isSafeInteger(tx.timestamp) ? tx.timestamp : null,
         evidenceSource: "alchemy_raw_pump_fun_create_v2_and_event",
         evidence: { programId: PUMP_FUN_PROGRAM_ID, instructionName: "create_v2",
-          creatorSource: "instruction_arguments_and_CreateEvent", mintAccountIndex: 0,
+          creatorSource: creator === requestedCreator ? "instruction_arguments_and_CreateEvent" : "CreateEvent_override",
+          requestedCreator, eventCreator: creator, mintAccountIndex: 0,
           user: accounts[5], bondingCurve: accounts[2], decoderCoverage: "create_v2_only" } });
     }
     return launches;
