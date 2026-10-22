@@ -30,7 +30,10 @@ def _parser() -> argparse.ArgumentParser:
         "import-local", help="Import channel metadata from local CSV/JSON or TGDataset files"
     )
     local.add_argument(
-        "path", type=Path, help="A CSV/JSON file or directory containing dataset files"
+        "path",
+        type=Path,
+        nargs="?",
+        help="CSV/JSON file or dataset directory (defaults to TG_DATASET_LOCAL_PATH)",
     )
     local.add_argument("--limit", type=int, default=1000, help="Maximum channels; 0 means no cap")
     local.add_argument("--source-name", default="tgdataset-local", help="Provenance label")
@@ -51,8 +54,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 
         if args.limit < 0:
             raise ValueError("--limit must be zero (unlimited) or a positive integer")
+        local_path = args.path or Path(settings.telegram_dataset_local_path)
         records = iter_local_dataset_channels(
-            args.path, limit=args.limit, source_name=args.source_name
+            local_path, limit=args.limit, source_name=args.source_name
         )
         if args.dry_run:
             received = accepted = scam_skipped = 0
