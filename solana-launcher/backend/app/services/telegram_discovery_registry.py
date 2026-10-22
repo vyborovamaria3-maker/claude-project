@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import Counter
-from datetime import UTC, datetime, timedelta
 from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
