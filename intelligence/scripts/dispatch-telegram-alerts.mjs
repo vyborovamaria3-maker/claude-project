@@ -39,7 +39,7 @@ async function main() {
       await client.query("BEGIN");
       const claimed=await client.query(`WITH picked AS (
         SELECT alert_id FROM token_alerts
-        WHERE delivery_attempts < 10
+        WHERE delivery_attempts < 10 AND triggered_at <= NOW()
           AND (status='open' OR (status='sending' AND delivery_attempted_at < NOW()-INTERVAL '10 minutes'))
         ORDER BY triggered_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED
       )

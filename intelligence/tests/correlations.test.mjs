@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { formatTokenId } from "@claude-project/contracts";
-import { calculateEventOutcomeCorrelations } from "../dist/index.js";
+import { calculateEventOutcomeCorrelations, persistEventOutcomeCorrelations } from "../dist/index.js";
 
 const token=formatTokenId("solana","So11111111111111111111111111111111111111112");
 function sample(index,exposed,outcome) {
@@ -35,6 +35,18 @@ test("correlation groups are isolated by token",()=>{
   const results=calculateEventOutcomeCorrelations(samples,"2026-10-04T12:00:00Z");
   assert.equal(results.length,2);
   assert.ok(results.every((result)=>result.samples.every((item)=>item.canonicalTokenId===result.samples[0]?.canonicalTokenId)));
+});
+
+test("persistence stores one aggregate row per token/event/outcome group",async()=>{
+  const samples=[sample(1,true,true),sample(2,true,false),sample(3,false,false),sample(4,false,false)];
+  const writes=[];
+  const tx={async query(sql,params){if(sql.includes("INSERT INTO token_correlations")){writes.push({sql,params});return {rows:[{correlation_id:writes.length}]};}return {rows:[]};}};
+  const count=await persistEventOutcomeCorrelations(tx,samples,{evaluatedAt:"2026-10-04T12:00:00Z",dataCutoffAt:"2026-10-04T12:00:00Z"});
+  assert.equal(count,1); assert.equal(writes.length,1);
+  assert.match(writes[0].sql,/VALUES \(\$1,\$2,\$3,\$4,NULL/);
+  const baseline=JSON.parse(writes[0].params[8]);
+  assert.equal(baseline.eventWindowStart,"2026-10-01T01:00:00.000Z");
+  assert.equal(baseline.eventWindowEnd,"2026-10-01T04:00:00.000Z");
 });
 
 test("correlation rejects look-ahead and never fabricates lift when control rate is zero",()=>{

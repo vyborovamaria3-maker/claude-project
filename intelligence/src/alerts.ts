@@ -124,7 +124,16 @@ export async function persistAlertCandidates(
     if(parseTokenId(alert.canonicalTokenId)?.id!==alert.canonicalTokenId)throw new TypeError("Noncanonical alert token ID");
     if(!["info","low","medium","high","critical"].includes(alert.severity))throw new TypeError("Invalid alert severity");
     if(alert.triggeredAt<alert.asOf)throw new TypeError("Alert trigger time cannot precede as_of");
+    if(!/^[a-z][a-z0-9_]{0,63}$/.test(alert.alertType))throw new TypeError("Invalid alert type");
     const refs=evidenceRefs(alert.evidenceRefs);
+    // Caller must hold a transaction: this lock serializes concurrent evaluators per token/type.
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[alert.canonicalTokenId+"|"+alert.alertType]);
+    const recent=await tx.query(`SELECT alert_id FROM token_alerts
+      WHERE canonical_token_id=$1 AND alert_type=$2 AND status<>'resolved'
+        AND triggered_at >= $3::timestamptz - INTERVAL '5 minutes'
+        AND triggered_at <= $3::timestamptz + INTERVAL '5 minutes'
+      LIMIT 1`,[alert.canonicalTokenId,alert.alertType,alert.triggeredAt]);
+    if(recent.rows.length)continue;
     const result=await tx.query(`INSERT INTO token_alerts
       (canonical_token_id,alert_type,severity,triggered_at,as_of,score,score_version,features,evidence_refs,status)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,'open')

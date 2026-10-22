@@ -72,6 +72,7 @@ export function calculateEventOutcomeCorrelations(
   }
   const results:CorrelationGroupResult[]=[];
   for(const group of groups.values()) {
+    group.sort((a,b)=>a.eventAt.localeCompare(b.eventAt)||a.outcomeAt.localeCompare(b.outcomeAt));
     const first=group[0]!;
     const exposed=group.filter((row)=>row.exposed);
     const control=group.filter((row)=>!row.exposed);
@@ -131,20 +132,21 @@ export async function persistEventOutcomeCorrelations(
     throw new TypeError("Correlation data cutoff precedes an input observation");
   }
   const groups=calculateEventOutcomeCorrelations(samples,evaluatedAt);
-  let inserted=0;
   for(const group of groups) {
-    for(const sample of group.samples) {
-      const result=await tx.query(`INSERT INTO token_correlations
-        (canonical_token_id,event_kind,event_at,outcome_kind,outcome_at,lift,ci_low,ci_high,p_value,
-         baseline,sample_size,model_id,evaluated_at,data_cutoff_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14)
-        ON CONFLICT DO NOTHING RETURNING correlation_id`,[
-        sample.canonicalTokenId,sample.eventKind,sample.eventAt,sample.outcomeKind,sample.outcomeAt,
-        group.lift,group.ciLow,group.ciHigh,group.pValue,JSON.stringify(group.baseline),
-        group.sampleSize,input.modelId??null,evaluatedAt,dataCutoffAt,
-      ]);
-      inserted+=result.rows.length;
-    }
+    const ordered=[...group.samples].sort((a,b)=>a.eventAt.localeCompare(b.eventAt)||a.outcomeAt.localeCompare(b.outcomeAt));
+    const first=ordered[0]; if(!first)continue;
+    const outcomeTimes=ordered.map((sample)=>sample.outcomeAt).sort();
+    const eventWindowStart=ordered[0]!.eventAt, eventWindowEnd=ordered[ordered.length-1]!.eventAt;
+    const baseline={...group.baseline,eventWindowStart,eventWindowEnd,outcomeWindowStart:outcomeTimes[0]??null,outcomeWindowEnd:outcomeTimes[outcomeTimes.length-1]??null};
+    const result=await tx.query(`INSERT INTO token_correlations
+      (canonical_token_id,event_kind,event_at,outcome_kind,outcome_at,lift,ci_low,ci_high,p_value,baseline,sample_size,model_id,evaluated_at,data_cutoff_at)
+      VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
+      ON CONFLICT(canonical_token_id,event_kind,event_at,outcome_kind,evaluated_at) DO UPDATE SET
+        outcome_at=NULL,lift=EXCLUDED.lift,ci_low=EXCLUDED.ci_low,ci_high=EXCLUDED.ci_high,p_value=EXCLUDED.p_value,
+        baseline=EXCLUDED.baseline,sample_size=EXCLUDED.sample_size,model_id=EXCLUDED.model_id,data_cutoff_at=EXCLUDED.data_cutoff_at
+      RETURNING correlation_id`,[first.canonicalTokenId,group.eventKind,eventWindowStart,group.outcomeKind,
+      group.lift,group.ciLow,group.ciHigh,group.pValue,JSON.stringify(baseline),group.sampleSize,input.modelId??null,evaluatedAt,dataCutoffAt]);
+    inserted+=result.rows.length;
   }
   return inserted;
 }

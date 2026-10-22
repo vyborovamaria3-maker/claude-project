@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { formatTokenId } from "@claude-project/contracts";
-import { evaluateCrossPlatformAlerts, formatTelegramAlert } from "../dist/index.js";
+import { evaluateCrossPlatformAlerts, formatTelegramAlert, persistAlertCandidates } from "../dist/index.js";
 
 const token=formatTokenId("solana","So11111111111111111111111111111111111111112");
 const base={
@@ -21,6 +21,18 @@ test("alert rules detect multi-source anomalies with evidence",()=>{
   ]);
   assert.equal(alerts.find((alert)=>alert.alertType==="rug_risk")?.severity,"critical");
   assert.ok(formatTelegramAlert(alerts[0]).includes(token));
+});
+
+test("persistence suppresses repeated active alert types inside the five-minute cooldown",async()=>{
+  const candidates=evaluateCrossPlatformAlerts({...base,riskScore:0.9});
+  let insertCalls=0;
+  const tx={async query(sql){
+    if(sql.includes("SELECT alert_id FROM token_alerts"))return {rows:[{alert_id:1}]};
+    if(sql.includes("INSERT INTO token_alerts")){insertCalls++;return {rows:[{alert_id:2}]};}
+    return {rows:[]};
+  }};
+  assert.deepEqual(await persistAlertCandidates(tx,candidates),[]);
+  assert.equal(insertCalls,0);
 });
 
 test("no evidence means no alert, and future-observed inputs are rejected",()=>{
