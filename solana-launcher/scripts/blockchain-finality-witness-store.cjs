@@ -107,11 +107,15 @@ function sourceIdentity(source,kind,address,signature) {
 }
 function sourceSnapshot(source,fn){
   source.exec("BEGIN");
+  let closed=false;
   try {
     // Source snapshot is finalized before a state transaction commits.
-    const r=fn(()=>source.exec("COMMIT"));
-    return r;
-  }catch(e){try{source.exec("ROLLBACK");}catch{}throw e;}
+    const commit=()=>{source.exec("COMMIT");closed=true;};
+    const result=fn(commit);
+    // A fail-closed return may not call commit(); never leak BEGIN to caller.
+    if(!closed)source.exec("ROLLBACK");
+    return result;
+  }catch(e){if(!closed){try{source.exec("ROLLBACK");}catch{}}throw e;}
 }
 function pinFor(pins,keyId){
   const match=validatePins(pins).find(x=>x.keyId===keyId);
@@ -163,6 +167,8 @@ function accept(source,state,{pins,envelope,clock=Date.now}={}){
     if(!old||old.consumed_at!==null)return fail("witness_challenge_already_used");
     if(now<old.issued_at||now>=old.expires_at||now-result.observedAt>300_000)
       return fail("witness_challenge_expired");
+    if(payload.startedAt<old.issued_at||result.observedAt<old.issued_at)
+      return fail("witness_report_precedes_challenge");
     if(old.source_json!==JSON.stringify(original)||old.key_id!==pin.keyId||
       old.endpoint_id!==pin.endpointId||old.genesis_hash!==pin.genesisHash)
       return fail("witness_challenge_binding_changed");
@@ -206,9 +212,11 @@ function quorum(source,state,{pins,kind,address,signature}={}){
     if(row.source_json!==JSON.stringify(current))continue;
     const pin=pins.find(x=>x.keyId===row.key_id&&x.endpointId===row.endpoint_id);
     if(!pin||witnesses.some(x=>x.keyId===pin.keyId||x.endpointId===pin.endpointId))continue;
-    let envelope;
-    try{envelope=JSON.parse(row.envelope_json);}catch{continue;}
-    const payload=JSON.parse(envelope.payload);
+    let envelope,payload;
+    try{
+      envelope=JSON.parse(row.envelope_json);
+      payload=JSON.parse(envelope.payload);
+    }catch{continue;}
     const checked=verifyReport(envelope,pin,{
       challenge:payload.challenge,source:current,now:row.accepted_at
     });
