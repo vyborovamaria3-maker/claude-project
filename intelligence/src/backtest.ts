@@ -55,6 +55,32 @@ function normalCdf(value: number): number {
 function rate(positives: number, count: number): number | null {
   return count ? positives / count : null;
 }
+function wilsonInterval(positives: number, count: number): readonly [number, number] | null {
+  if (!count) return null;
+  const z = 1.96, p = positives / count, z2 = z * z;
+  const denominator = 1 + z2 / count;
+  const center = (p + z2 / (2 * count)) / denominator;
+  const margin = z * Math.sqrt(p * (1 - p) / count + z2 / (4 * count * count)) / denominator;
+  return [Math.max(0, center - margin), Math.min(1, center + margin)];
+}
+function differenceInterval(aPositives: number, aCount: number, bPositives: number, bCount: number): readonly [number, number] | null {
+  const a = wilsonInterval(aPositives, aCount), b = wilsonInterval(bPositives, bCount);
+  if (!a || !b) return null;
+  const pa = aPositives / aCount, pb = bPositives / bCount, difference = pa - pb;
+  const low = difference - Math.sqrt((pa - a[0]) ** 2 + (b[1] - pb) ** 2);
+  const high = difference + Math.sqrt((a[1] - pa) ** 2 + (pb - b[0]) ** 2);
+  return [Math.max(-1, low), Math.min(1, high)];
+}
+function twoProportionPValue(aPositives: number, aCount: number, bPositives: number, bCount: number): number | null {
+  if (!aCount || !bCount) return null;
+  const aRate = aPositives / aCount, bRate = bPositives / bCount;
+  const pooled = (aPositives + bPositives) / (aCount + bCount);
+  const standardError = Math.sqrt(pooled * (1 - pooled) * (1 / aCount + 1 / bCount));
+  if (standardError === 0) return aRate === bRate ? 1 : null;
+  const correction = 0.5 * (1 / aCount + 1 / bCount);
+  const z = Math.max(0, Math.abs(aRate - bRate) - correction) / standardError;
+  return Math.max(0, Math.min(1, 2 * (1 - normalCdf(z))));
+}
 function seededOrder(row: ValidatedBacktestObservation, seed: string): string {
   return createHash("sha256").update(seed + "|" + row.canonicalTokenId + "|" + row.signalAt).digest("hex");
 }
@@ -85,6 +111,12 @@ export function runSignalBacktest(
   });
   const selected = validated.filter((row) => row.selected);
   const unselected = validated.filter((row) => !row.selected);
+  const positives = validated.filter((row) => row.outcome).length;
+  const selectedPositive = selected.filter((row) => row.outcome).length;
+  const selectedNegative = selected.length - selectedPositive;
+  const unselectedPositive = unselected.filter((row) => row.outcome).length;
+  const selectedRate = rate(selectedPositive, selected.length);
+  const marketRate = rate(positives, validated.length);
   let baseline = unselected;
   if (baselineKind === "random" && unselected.length) {
     const count = Math.min(selected.length, unselected.length);
@@ -93,25 +125,23 @@ export function runSignalBacktest(
         seededOrder(b, options.seed ?? "cross-platform-backtest-v1"),
       )).slice(0, count);
   }
-  const positives = validated.filter((row) => row.outcome).length;
-  const selectedPositive = selected.filter((row) => row.outcome).length;
-  const selectedNegative = selected.length - selectedPositive;
-  const baselinePositive = baseline.filter((row) => row.outcome).length;
-  const selectedRate = rate(selectedPositive, selected.length);
-  const baselineRate = rate(baselinePositive, baseline.length);
-  const marketRate = rate(positives, validated.length);
+  const baselineCount = baselineKind === "market_average" ? validated.length : baseline.length;
+  const baselinePositive = baselineKind === "market_average" ? positives : baseline.filter((row) => row.outcome).length;
+  const baselineRate = baselineKind === "market_average" ? marketRate : rate(baselinePositive, baseline.length);
   const uplift = selectedRate === null || baselineRate === null ? null : selectedRate - baselineRate;
-  let ciLow: number | null = null;
-  let ciHigh: number | null = null;
-  let pValue: number | null = null;
-  if (selectedRate !== null && baselineRate !== null) {
-    const variance = selectedRate * (1 - selectedRate) / selected.length +
-      baselineRate * (1 - baselineRate) / baseline.length;
-    const standardError = Math.sqrt(Math.max(0, variance));
-    ciLow = Math.max(-1, selectedRate - baselineRate - 1.96 * standardError);
-    ciHigh = Math.min(1, selectedRate - baselineRate + 1.96 * standardError);
-    if (standardError === 0) pValue = selectedRate === baselineRate ? 1 : 0;
-    else pValue = Math.max(0, Math.min(1, 2 * (1 - normalCdf(Math.abs((selectedRate - baselineRate) / standardError)))));
+  let ciLow: number | null = null, ciHigh: number | null = null, pValue: number | null = null;
+  if (selectedRate !== null) {
+    if (baselineKind === "market_average") {
+      const interval = differenceInterval(selectedPositive, selected.length, unselectedPositive, unselected.length);
+      const scale = validated.length ? unselected.length / validated.length : 0;
+      if (interval && rate(unselectedPositive, unselected.length) !== null) {
+        ciLow = interval[0] * scale; ciHigh = interval[1] * scale;
+        pValue = twoProportionPValue(selectedPositive, selected.length, unselectedPositive, unselected.length);
+      }
+    } else {
+      const interval = differenceInterval(selectedPositive, selected.length, baselinePositive, baseline.length);
+      if (interval) { ciLow = interval[0]; ciHigh = interval[1]; pValue = twoProportionPValue(selectedPositive, selected.length, baselinePositive, baseline.length); }
+    }
   }
   const truePositive = selectedPositive;
   const falsePositive = selectedNegative;
@@ -124,7 +154,7 @@ export function runSignalBacktest(
       selectedCount: selected.length,
       selectedPositive,
       selectedNegative,
-      baselineCount: baseline.length,
+      baselineCount,
       baselinePositive,
       precision: selectedRate,
       recall: positives ? selectedPositive / positives : null,

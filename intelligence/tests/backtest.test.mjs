@@ -24,8 +24,9 @@ test("backtest computes precision, recall, uplift and confidence bounds", () => 
   assert.equal(result.metrics.selectedCount, 3);
   assert.equal(result.metrics.precision, 2 / 3);
   assert.equal(result.metrics.recall, 2 / 3);
-  assert.equal(result.metrics.baselineCount, 3);
-  assert.equal(result.metrics.uplift, 1 / 3);
+  assert.equal(result.metrics.baselineCount, 6);
+  assert.equal(result.metrics.baselineRate, 0.5);
+  assert.equal(result.metrics.uplift, 1 / 6);
   assert.ok(result.metrics.ciLow <= result.metrics.uplift);
   assert.ok(result.metrics.ciHigh >= result.metrics.uplift);
   assert.ok(result.metrics.pValue >= 0 && result.metrics.pValue <= 1);
@@ -37,6 +38,13 @@ test("backtest rejects look-ahead, noncanonical IDs and non-future outcomes", ()
   }], { threshold: 0.5 }), /Look-ahead/);
   assert.throws(() => runSignalBacktest([{ ...row(1, 0.9, true), canonicalTokenId: "solana:fake" }], { threshold: 0.5 }), /Noncanonical/);
   assert.throws(() => runSignalBacktest([{ ...row(1, 0.9, true), outcomeAt: "2026-10-01T01:00:00Z" }], { threshold: 0.5 }), /Outcome must occur after/);
+});
+
+test("perfect separation with a tiny sample does not report zero uncertainty or p-value", () => {
+  const result = runSignalBacktest([row(1,1,true),row(2,1,true),row(3,0,false),row(4,0,false)],{threshold:0.5});
+  assert.equal(result.metrics.baselineRate,0.5); assert.equal(result.metrics.uplift,0.5);
+  assert.ok(result.metrics.ciLow<result.metrics.uplift); assert.ok(result.metrics.ciHigh>=result.metrics.uplift);
+  assert.ok(result.metrics.pValue>0&&result.metrics.pValue<=1);
 });
 
 test("random baseline is deterministic for a fixed seed", () => {

@@ -117,7 +117,8 @@ export async function checkApiReadiness(pool){
     "to_regclass('token_daily_cross_platform') IS NOT NULL AS cross_platform,"+
     "to_regclass('token_correlations') IS NOT NULL AS correlations,"+
     "to_regclass('token_alerts') IS NOT NULL AS alerts,"+
-    "to_regclass('backtest_runs') IS NOT NULL AS backtests",
+    "to_regclass('backtest_runs') IS NOT NULL AS backtests,"+
+    "to_regclass('token_alert_status_history') IS NOT NULL AS alert_status_history",
   );
   const row=result.rows[0]??{};
   if(!row.inbox||!row.timeline||!row.entities||!row.links){
@@ -128,4 +129,5 @@ export async function checkApiReadiness(pool){
   if(!row.model_registry||!row.cross_platform||!row.correlations||!row.alerts||!row.backtests){
     throw new Error("intelligence_api_migration_006_required");
   }
+  if(!row.alert_status_history)throw new Error("intelligence_api_migration_008_required");
 }

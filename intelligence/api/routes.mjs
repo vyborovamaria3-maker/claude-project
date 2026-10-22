@@ -185,7 +185,9 @@ function safeCoverage(value){
 }
 function normalizeSummary(row,request){
   return {
-    schemaVersion:"token-intelligence-v1",tokenId:request.tokenId,asOf:safeTime(row.as_of),
+    schemaVersion:"token-intelligence-v1",tokenId:request.tokenId,
+    day:row.day===null||row.day===undefined?null:(row.day instanceof Date?row.day.toISOString().slice(0,10):String(row.day).slice(0,10)),
+    asOf:safeTime(row.as_of),
     maxInputObservedAt:safeTime(row.max_input_observed_at),
     historicalCompleteness:"unknown",dataAvailable:true,
     metrics:{
@@ -254,7 +256,8 @@ export async function queryTokenApi(pool,request){
   if(request.kind==="summary"){
     const result=await pool.query(`SELECT * FROM token_daily_cross_platform
       WHERE canonical_token_id=$1 AND as_of <= $2 AND max_input_observed_at <= $2
-      ORDER BY as_of DESC LIMIT 1`,[request.tokenId,request.asOf]);
+        AND created_at <= $2
+      ORDER BY day DESC,as_of DESC LIMIT 1`,[request.tokenId,request.asOf]);
     if(!result.rows.length)return {
       schemaVersion:"token-intelligence-v1",tokenId:request.tokenId,asOf:request.asOf,
       dataAvailable:false,historicalCompleteness:"unknown",sourceCoverage:{tg:"unknown",x:"unknown",blockchain:"unknown"},
@@ -262,40 +265,52 @@ export async function queryTokenApi(pool,request){
     return normalizeSummary(result.rows[0],request);
   }
   if(request.kind==="features"){
-    const result=await pool.query(`SELECT canonical_token_id,as_of,max_input_observed_at,feature_version,features
+    const result=await pool.query(`SELECT canonical_token_id,as_of,max_input_observed_at,computed_at,feature_version,features
       FROM chain_token_features WHERE canonical_token_id=$1 AND as_of <= $2 AND max_input_observed_at <= $2
-      ORDER BY as_of DESC,CASE feature_version WHEN 'features-v3' THEN 3 WHEN 'features-v2' THEN 2 ELSE 1 END DESC
+        AND computed_at <= $2
+      ORDER BY as_of DESC,CASE feature_version WHEN 'features-v3' THEN 3 WHEN 'features-v2' THEN 2 ELSE 1 END DESC,computed_at DESC
       LIMIT 1`,[request.tokenId,request.asOf]);
     const row=result.rows[0];
     if(!row)return {schemaVersion:"token-intelligence-v1",tokenId:request.tokenId,asOf:request.asOf,dataAvailable:false};
     return {
       schemaVersion:"token-intelligence-v1",tokenId:request.tokenId,
       asOf:safeTime(row.as_of),maxInputObservedAt:safeTime(row.max_input_observed_at),
+      computedAt:row.computed_at===null||row.computed_at===undefined?null:safeTime(row.computed_at),
       featureVersion:row.feature_version,features:safeFeatures(row.features),dataAvailable:true,
     };
   }
   if(request.kind==="correlations"){
     const result=await pool.query(`SELECT event_kind,event_at,outcome_kind,outcome_at,lift,ci_low,ci_high,p_value,
-      baseline,sample_size,evaluated_at,data_cutoff_at,model_id
-      FROM token_correlations WHERE canonical_token_id=$1 AND evaluated_at <= $2
-      ORDER BY p_value ASC NULLS LAST,evaluated_at DESC LIMIT $3`,
+      baseline,sample_size,evaluated_at,data_cutoff_at,model_id FROM (
+        SELECT DISTINCT ON (canonical_token_id,event_kind,outcome_kind,evaluated_at,data_cutoff_at,model_id)
+          canonical_token_id,event_kind,event_at,outcome_kind,outcome_at,lift,ci_low,ci_high,p_value,
+          baseline,sample_size,evaluated_at,data_cutoff_at,model_id
+        FROM token_correlations WHERE canonical_token_id=$1 AND evaluated_at <= $2 AND created_at <= $2
+        ORDER BY canonical_token_id,event_kind,outcome_kind,evaluated_at,data_cutoff_at,model_id,event_at ASC
+      ) grouped ORDER BY p_value ASC NULLS LAST,evaluated_at DESC LIMIT $3`,
     [request.tokenId,request.asOf,request.limit+1]);
-    const items=result.rows.slice(0,request.limit).map((row)=>({
-      eventKind:String(row.event_kind),eventAt:safeTime(row.event_at),outcomeKind:String(row.outcome_kind),
-      outcomeAt:row.outcome_at===null?null:safeTime(row.outcome_at),lift:numberOrNull(row.lift),
-      ciLow:numberOrNull(row.ci_low),ciHigh:numberOrNull(row.ci_high),pValue:numberOrNull(row.p_value),
-      baseline:safeObject(row.baseline),sampleSize:numberOrNull(row.sample_size),
-      evaluatedAt:safeTime(row.evaluated_at),dataCutoffAt:safeTime(row.data_cutoff_at),
-      modelId:typeof row.model_id==="string"?row.model_id:null,
-    }));
+    const items=result.rows.slice(0,request.limit).map((row)=>{
+      const baseline=safeObject(row.baseline);
+      return {eventKind:String(row.event_kind),eventAt:safeTime(row.event_at),outcomeKind:String(row.outcome_kind),
+        outcomeAt:null,eventWindowEnd:typeof baseline.eventWindowEnd==="string"?safeTime(baseline.eventWindowEnd):null,
+        outcomeWindowStart:typeof baseline.outcomeWindowStart==="string"?safeTime(baseline.outcomeWindowStart):null,
+        outcomeWindowEnd:typeof baseline.outcomeWindowEnd==="string"?safeTime(baseline.outcomeWindowEnd):null,
+        lift:numberOrNull(row.lift),ciLow:numberOrNull(row.ci_low),ciHigh:numberOrNull(row.ci_high),pValue:numberOrNull(row.p_value),
+        baseline,sampleSize:numberOrNull(row.sample_size),evaluatedAt:safeTime(row.evaluated_at),
+        dataCutoffAt:safeTime(row.data_cutoff_at),modelId:typeof row.model_id==="string"?row.model_id:null};
+    });
     return {schemaVersion:"token-intelligence-v1",tokenId:request.tokenId,asOf:request.asOf,
       historicalCompleteness:"unknown",truncated:result.rows.length>request.limit,items};
   }
   if(request.kind==="signals"){
-    const result=await pool.query(`SELECT alert_id,canonical_token_id,alert_type,severity,triggered_at,as_of,
-      score,score_version,evidence_refs,status
-      FROM token_alerts WHERE triggered_at <= $1 AND status NOT IN ('resolved','sending')
-      ORDER BY triggered_at DESC LIMIT $2`,[request.asOf,request.limit+1]);
+    const result=await pool.query(`SELECT alert.alert_id,alert.canonical_token_id,alert.alert_type,alert.severity,
+      alert.triggered_at,alert.as_of,alert.score,alert.score_version,alert.evidence_refs,history.status
+      FROM token_alerts alert JOIN LATERAL (
+        SELECT status FROM token_alert_status_history WHERE alert_id=alert.alert_id AND changed_at <= $1
+        ORDER BY changed_at DESC,history_id DESC LIMIT 1
+      ) history ON TRUE
+      WHERE alert.triggered_at <= $1 AND alert.created_at <= $1 AND history.status NOT IN ('resolved','sending')
+      ORDER BY alert.triggered_at DESC LIMIT $2`,[request.asOf,request.limit+1]);
     const items=result.rows.slice(0,request.limit).map((row)=>({
       alertId:String(row.alert_id),tokenId:String(row.canonical_token_id),alertType:String(row.alert_type),
       severity:String(row.severity),triggeredAt:safeTime(row.triggered_at),asOf:safeTime(row.as_of),

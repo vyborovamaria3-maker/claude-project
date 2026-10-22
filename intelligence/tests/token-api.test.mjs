@@ -197,17 +197,25 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     assert.equal(summaryBody.metrics.chainTransactions,4);
     assert.equal(summaryBody.metrics.chainSwapEvidenceCount,2);
     assert.equal(summaryBody.scores.risk,0.1);
+    const summarySql=pool.logs.find(entry=>entry.sql.includes("FROM token_daily_cross_platform"))?.sql??"";
+    assert.match(summarySql,/created_at <= \$2/); assert.match(summarySql,/ORDER BY day DESC,as_of DESC/);
     const features=await fetch(origin+base+"/features?asOf="+encodeURIComponent(known),{headers:headers()});
     assert.equal(features.status,200);
     const featuresBody=await features.json();
     assert.equal(featuresBody.featureVersion,"features-v2");
+    const featureSql=pool.logs.find(entry=>entry.sql.includes("FROM chain_token_features"))?.sql??"";
+    assert.match(featureSql,/computed_at <= \$2/);
     assert.ok(!JSON.stringify(featuresBody).includes("SECRET"));
     const correlations=await fetch(origin+base+"/correlations?asOf="+encodeURIComponent(at)+"&limit=5",{headers:headers()});
     assert.equal(correlations.status,200);
     assert.equal((await correlations.json()).items[0].pValue,0.02);
+    const correlationSql=pool.logs.find(entry=>entry.sql.includes("FROM token_correlations"))?.sql??"";
+    assert.match(correlationSql,/created_at <= \$2/);
     const signals=await fetch(origin+"/api/intelligence/v1/signals?asOf="+encodeURIComponent(at),{headers:headers()});
     assert.equal(signals.status,200);
     assert.equal((await signals.json()).items[0].alertType,"attention_spike");
+    const signalSql=pool.logs.find(entry=>entry.sql.includes("FROM token_alerts alert"))?.sql??"";
+    assert.match(signalSql,/token_alert_status_history/); assert.match(signalSql,/changed_at <= \$1/);
     const backtests=await fetch(origin+"/api/intelligence/v1/backtest?signal=attention_score",{headers:headers()});
     assert.equal(backtests.status,200);
     assert.equal((await backtests.json()).items[0].metrics.sampleSize,100);
@@ -267,11 +275,15 @@ test("readiness requires destination 001/002/004; no fallback to source database
   }]})}),/migration_003_required/);
   await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
     inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
-    model_registry:true,cross_platform:false,correlations:true,alerts:true,backtests:true,
+    model_registry:false,cross_platform:false,correlations:true,alerts:true,backtests:true,
   }]})}),/migration_006_required/);
+  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
+    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
+    model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,alert_status_history:false,
+  }]})}),/migration_008_required/);
   await assert.doesNotReject(checkApiReadiness({query:async()=>({rows:[{
     inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
-    model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,
+    model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,alert_status_history:true,
   }]})}));
 });
 
@@ -287,11 +299,24 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
     for(const file of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
-      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql"]){
+      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql",
+      "008_alert_status_history.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
     await checkApiReadiness(pool);
+    const triggerAt=new Date(Date.now()-1_000).toISOString();
+    const insertedAlert=await pool.query(`INSERT INTO token_alerts
+      (canonical_token_id,alert_type,severity,triggered_at,as_of,score_version,features,evidence_refs)
+      VALUES ($1,'api_status_history_test','low',$2,$2,'test','{}'::jsonb,'[]'::jsonb) RETURNING alert_id`,[id,triggerAt]);
+    const alertId=insertedAlert.rows[0].alert_id;
+    const initialHistory=(await pool.query(`SELECT status,changed_at FROM token_alert_status_history WHERE alert_id=$1 ORDER BY history_id ASC LIMIT 1`,[alertId])).rows[0];
+    await new Promise(resolve=>setTimeout(resolve,10));
+    await pool.query("UPDATE token_alerts SET status='delivered' WHERE alert_id=$1",[alertId]);
+    const transitionHistory=await pool.query(`SELECT status FROM token_alert_status_history WHERE alert_id=$1 ORDER BY history_id ASC`,[alertId]);
+    assert.deepEqual(transitionHistory.rows.map(row=>row.status),["open","delivered"]);
+    const statusAsOf=await pool.query(`SELECT status FROM token_alert_status_history WHERE alert_id=$1 AND changed_at <= $2 ORDER BY changed_at DESC,history_id DESC LIMIT 1`,[alertId,initialHistory.changed_at]);
+    assert.equal(statusAsOf.rows[0].status,"open");
     const firstAt="2026-10-20T02:00:00.000Z";
     const revokedAt="2026-10-20T02:30:00.000Z";
     const author=buildEntityRef({kind:"author",canonicalId:"x:123",firstSeenAt:firstAt,lastSeenAt:firstAt});

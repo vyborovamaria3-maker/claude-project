@@ -82,12 +82,13 @@ function utcOrNull(value: Date | string | null | undefined): string | null {
   return toUtcIso(value);
 }
 function stableJson(value: unknown): string {
+  if (value === undefined) return "null";
   if (Array.isArray(value)) return "[" + value.map(stableJson).join(",") + "]";
   if (value && typeof value === "object") {
     const object = value as Record<string, unknown>;
     return "{" + Object.keys(object).sort().map((key) => JSON.stringify(key) + ":" + stableJson(object[key])).join(",") + "}";
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? "null";
 }
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
@@ -198,7 +199,11 @@ export function validateCrossPlatformSnapshot(input: CrossPlatformSnapshotInput)
     blockchain: input.sourceCoverage?.blockchain ?? (input.chainTransactions === null && input.chainSwapEvidenceCount === null && input.chainTrades === null ? "unknown" : "partial"),
   };
   const normalized = {
-    ...input, asOf, maxInputObservedAt, firstMentionTgAt, firstMentionXAt, firstTradeAt, firstSwapEvidenceAt,
+    ...input,
+    tgMentionsZ1h: input.tgMentionsZ1h ?? null,
+    xMentionsZ1h: input.xMentionsZ1h ?? null,
+    chainVolumeZ1h: input.chainVolumeZ1h ?? null,
+    asOf, maxInputObservedAt, firstMentionTgAt, firstMentionXAt, firstTradeAt, firstSwapEvidenceAt,
     ...scores, sourceCoverage,
   };
   return { ...normalized, snapshotSha256: sha256(stableJson(normalized)) };
@@ -428,24 +433,24 @@ export async function refreshTokenDailyCrossPlatform(
         WHEN (SELECT blockchain_coverage FROM coverage_pivot)='complete' THEN 0 ELSE NULL END AS chain_transactions,
       CASE WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
         THEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
-        WHEN (SELECT coverage_status FROM trade_coverage)='complete' THEN 0 ELSE NULL END AS chain_trades,
-      CASE WHEN COUNT(${volume}) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
+        ELSE NULL END AS chain_trades,
+      CASE WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
+        AND COUNT(${volume}) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') =
+          COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
         THEN SUM(${volume}) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
-        WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')=0
-          AND (SELECT coverage_status FROM trade_coverage)='complete' THEN 0 ELSE NULL END AS chain_volume_usd,
+        ELSE NULL END AS chain_volume_usd,
       AVG(${copypasta}) FILTER (WHERE source_system='tg') AS tg_copypasta_ratio,
       AVG(${sentiment}) FILTER (WHERE source_system='tg') AS tg_sentiment_score,
       AVG(${scam}) FILTER (WHERE source_system='tg') AS tg_scam_ratio,
       AVG(${bot}) FILTER (WHERE source_system='x') AS x_bot_ratio,
       AVG(${sentiment}) FILTER (WHERE source_system='x') AS x_sentiment_score,
       AVG(${rug}) FILTER (WHERE source_system='blockchain') AS chain_rug_risk,
-      CASE WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed'
-        AND payload ? 'smart_money_bought') = COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
-          AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
+      CASE WHEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed') > 0
+        AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed'
+          AND jsonb_typeof(payload->'smart_money_bought')='boolean') =
+          COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')
         THEN COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed'
           AND payload->>'smart_money_bought'='true')
-        WHEN (SELECT coverage_status FROM trade_coverage)='complete'
-          AND COUNT(*) FILTER (WHERE source_system='blockchain' AND timeline_kind='trade_executed')=0 THEN 0
         ELSE NULL END AS chain_smart_money_bought,
       MAX(GREATEST(observed_at,ingested_at)) AS max_event_observed_at
     FROM day_events

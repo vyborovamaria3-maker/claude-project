@@ -85,6 +85,7 @@ async function main() {
       WHERE day >= $3::date AND day <= $4::date
         AND as_of <= $5::timestamptz
         AND max_input_observed_at<=as_of
+        AND created_at <= as_of
         AND ${scoreColumn} IS NOT NULL
         AND (${coveragePredicate})
       ORDER BY canonical_token_id,day,as_of DESC
