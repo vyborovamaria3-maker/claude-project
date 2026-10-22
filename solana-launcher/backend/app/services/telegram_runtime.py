@@ -289,7 +289,9 @@ class TelegramMonitorManager:
             for row in graph_rows
             if row.get("error") and normalize_telegram_target(str(row.get("username") or ""))
         }
-        monitor_candidates = [channel for channel in channels if channel not in errored] + discovered
+        monitor_candidates = [
+            channel for channel in channels if channel not in errored
+        ] + discovered
         monitored = list(dict.fromkeys(monitor_candidates))
         if not monitored:
             return False
