@@ -37,6 +37,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     local.add_argument("--limit", type=int, default=1000, help="Maximum channels; 0 means no cap")
     local.add_argument("--source-name", default="tgdataset-local", help="Provenance label")
+    local.add_argument(
+        "--topics",
+        default="",
+        help="Comma-separated topic labels; use all to disable TGDataset's default Crypto filter",
+    )
     local.add_argument("--source-url", default="", help="Dataset landing page for provenance")
     local.add_argument("--license", default="", help="Dataset license label for provenance")
     local.add_argument(
@@ -55,8 +60,12 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         if args.limit < 0:
             raise ValueError("--limit must be zero (unlimited) or a positive integer")
         local_path = args.path or Path(settings.telegram_dataset_local_path)
+        topics = {value.strip() for value in args.topics.split(",") if value.strip()}
         records = iter_local_dataset_channels(
-            local_path, limit=args.limit, source_name=args.source_name
+            local_path,
+            limit=args.limit,
+            source_name=args.source_name,
+            topics=topics or None,
         )
         if args.dry_run:
             received = accepted = scam_skipped = 0
