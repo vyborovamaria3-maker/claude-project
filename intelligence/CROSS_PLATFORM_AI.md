@@ -27,7 +27,7 @@ After migrations and outcome labels exist:
 
 npm --prefix intelligence run backtest -- --signal attention_score --outcome price_2x_24h --from 2025-01-01 --to 2025-09-30 --threshold 2.0 --horizon-hours 24
 
-Supported signal columns: attention_score, credibility_score, risk_score, momentum_score. Outcomes must already exist in token_outcomes and be observed after their occurrence time. The command exits with an error when there are no eligible observations; it never synthesizes labels.
+Supported signal columns: attention_score, credibility_score, risk_score, momentum_score. The CLI uses the latest eligible point-in-time snapshot per token and UTC day so repeated refreshes do not overweight a token-day. Dates are validated as real UTC calendar days. Outcomes must already exist in token_outcomes and be observed after their occurrence time. The command exits with an error when there are no eligible observations; it never synthesizes labels.
 
 
 ## Refreshing the daily cross-platform view
