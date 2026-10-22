@@ -45,10 +45,15 @@ function response(res,status,body,headers={}){
 /** No cookie sessions, permissive CORS, browser-side secrets or source DB
  * queries. Caller injects an Intelligence-only read-only PostgreSQL pool. */
 export function createIntelligenceApi({
-  token,pool,now=()=>new Date(),requestsPerMinute=MAX_REQUESTS_PER_MINUTE,
-  maxInFlight=MAX_IN_FLIGHT,
+  token,pool,aiEnabled=false,aiToken,now=()=>new Date(),
+  requestsPerMinute=MAX_REQUESTS_PER_MINUTE,maxInFlight=MAX_IN_FLIGHT,
 }){
   const verifier=sha(validateApiToken(token));
+  if(typeof aiEnabled!=="boolean")throw new TypeError("invalid_ai_opt_in");
+  // External LLM gateway must never inherit the ordinary service token.
+  // Explicit second credential is required before either AI route exists.
+  const aiVerifier=aiEnabled?sha(validateApiToken(aiToken)):null;
+  if(aiEnabled&&aiToken===token)throw new TypeError("ai_token_must_be_distinct");
   if(!pool||typeof pool.query!=="function")throw new TypeError("database_pool_required");
   if(!Number.isSafeInteger(requestsPerMinute)||requestsPerMinute<1||
      requestsPerMinute>1000||!Number.isSafeInteger(maxInFlight)||
@@ -70,7 +75,9 @@ export function createIntelligenceApi({
     }
     inFlight++;
     try{
-      if(!checkAuthorization(req,verifier)){
+      const ordinaryAuthorized=checkAuthorization(req,verifier);
+      const aiAuthorized=aiVerifier!==null&&checkAuthorization(req,aiVerifier);
+      if(!ordinaryAuthorized&&!aiAuthorized){
         response(res,401,{error:"unauthorized"},
           {"WWW-Authenticate":"Bearer realm=\"intelligence\""});
         return;
@@ -87,6 +94,12 @@ export function createIntelligenceApi({
       try{route=parseApiRequest(req.url,now())}
       catch{response(res,400,{error:"invalid_request"});return}
       if(route===null){
+        response(res,404,{error:"not_found"});return;
+      }
+      const isAiRoute=route.kind==="ai-catalog"||route.kind==="ai-context";
+      if((isAiRoute&&!aiAuthorized)||(!isAiRoute&&!ordinaryAuthorized)){
+        // Scope isolation: ordinary API token cannot access AI context,
+        // and an AI gateway key cannot access existing raw-ish link IDs.
         response(res,404,{error:"not_found"});return;
       }
       try{
@@ -121,4 +134,15 @@ export async function checkApiReadiness(pool){
   if(!result.rows[0]?.swap_revisions){
     throw new Error("intelligence_api_migration_005_required");
   }
+}
+
+/** Feature migrations 003 are mandatory ONLY when the AI read model is
+ * explicitly enabled. Legacy v1 API stays compatible while AI is off. */
+export async function checkAiReadiness(pool){
+  const result=await pool.query(
+    "SELECT to_regclass('feature_versions') IS NOT NULL AS feature_versions,"+
+    "to_regclass('chain_token_features') IS NOT NULL AS feature_store",
+  );
+  if(!result.rows[0]?.feature_versions||!result.rows[0]?.feature_store)
+    throw new Error("intelligence_ai_api_migration_003_required");
 }
