@@ -86,7 +86,6 @@ def discover_dataset_files(settings: Any) -> list[Path]:
             )
         ),
     }
-    custom_root = data_root / "telegram-datasets"
 
     if tgdataset_root.is_dir():
         for path in sorted(tgdataset_root.glob("TGDataset_*.candidates.jsonl")):
@@ -96,10 +95,6 @@ def discover_dataset_files(settings: Any) -> list[Path]:
         if teragram_root.is_dir():
             add_file(teragram_root / "teragram_candidates.jsonl")
             add_file(teragram_root / "telegram_seed_database.json")
-    if custom_root.is_dir():
-        for path in sorted(custom_root.rglob("*")):
-            add_file(path)
-
     configured_seed = str(getattr(settings, "telegram_public_web_seed_database", "") or "").strip()
     if configured_seed:
         add_file(_resolve_path(configured_seed))
