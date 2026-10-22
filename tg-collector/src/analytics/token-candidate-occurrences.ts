@@ -27,7 +27,7 @@ export async function activeMintOccurrences(
  * Re-check the evidence under a row lock after any off-database mint lookup.
  * A matching body alone does not prove the Telegram source revision survived
  * unchanged: edits can preserve the visible text while changing edit metadata
- * or publication time. A null/invalid clock is never promoted to a match.
+ * or publication time. An invalid non-null clock is never a match.
  *
  * This is an equality guard, NOT RPC proof or a substitute for the caller's
  * `SELECT ... FOR UPDATE` on the message row.
@@ -48,7 +48,6 @@ export function sameObservedMessageRevision(
       a.getTime()===b.getTime();
   return !!locked && locked.deleted_at===null &&
     typeof candidate.text==="string" && candidate.text===locked.text &&
-    typeof candidate.peer_id==="string" && candidate.peer_id.length>0 &&
     candidate.peer_id===locked.peer_id &&
     sameClock(candidate.message_date,locked.posted_at) &&
     sameClock(candidate.edited_at,locked.edited_at);
