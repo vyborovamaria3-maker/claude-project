@@ -49,7 +49,7 @@ def test_dataset_file_discovery_includes_explicit_files_and_seed_database(tmp_pa
 def test_candidate_normalization_accepts_public_urls_and_rejects_private_or_scam_rows() -> None:
     candidate = _normalize_candidate(
         {
-            "username": "https://t.me/s/Alpha_Calls/123",
+            "channel_url": "https://t.me/s/Alpha_Calls/123",
             "classifications": "Solana;memecoin",
             "seed_score": "72.5",
         },
