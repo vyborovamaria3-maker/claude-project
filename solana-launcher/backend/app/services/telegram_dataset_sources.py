@@ -277,7 +277,7 @@ def _local_row(row: dict[str, Any], *, source_name: str) -> dict[str, Any] | Non
         "participants": row.get("n_subscribers", row.get("subscribers", row.get("participants"))),
         "channel_id": row.get("channel_id", row.get("telegram_channel_id")),
         "creation_date": row.get("creation_date", row.get("created")),
-        "verified": row.get("verified", False),
+        "verified": row.get("verified"),
         "scam": row.get("scam", False),
         "topic": topic,
         "tags": [*tags, *([topic] if topic else [])],
