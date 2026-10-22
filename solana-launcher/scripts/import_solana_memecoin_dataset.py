@@ -460,6 +460,16 @@ def verify_source_revision(source_dir: Path) -> str:
     actual = result.stdout.strip()
     if actual != SOURCE_COMMIT:
         raise ValueError(f"Dataset revision mismatch: expected {SOURCE_COMMIT}, found {actual}; checkout the pinned revision before importing")
+    try:
+        relative_data_path = str(source_dir.relative_to(repo_root))
+        dirty = subprocess.run(
+            ["git", "-C", str(repo_root), "status", "--porcelain", "--", relative_data_path],
+            check=True, capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"Unable to verify dataset working tree: {exc}") from exc
+    if dirty:
+        raise ValueError("Dataset data/ working tree is modified or contains untracked files; restore the pinned source before importing")
     return actual
 
 
@@ -551,6 +561,8 @@ def run_import(source_dir: Path, db_path: Path, files: list[dict[str, Any]], bac
                 conn, DATASET_ID, item["source_file"], iter_parquet_rows(item["path"]),
                 item["sha256"], item["rows"], int(dt.datetime.now(dt.timezone.utc).timestamp()),
             )
+            if sha256_file(item["path"]) != item["sha256"]:
+                raise RuntimeError(f"{item['source_file']} changed during import; catalog remains incomplete and rerun will replace that shard")
             file_reports.append(report)
             print(json.dumps({"file": report}, ensure_ascii=False), flush=True)
         create_indexes(conn)
