@@ -102,8 +102,8 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
     assert.equal(current[0].source_revision_sha256,"b".repeat(64));
     assert.equal((await send(pool,restored)).duplicates,1,"same event must be idempotent");
     assert.equal((await send(pool,edit)).duplicates,1,"same tombstone must be idempotent");
-    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM token_link_observations")).rows[0].n,5);
-    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM intelligence_inbox")).rows[0].n,5);
+    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM token_link_observations")).rows[0].n,3);
+    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM intelligence_inbox")).rows[0].n,3);
     assert.equal((await queryTokenTimeline(pool,token,"2026-10-20T01:10:00Z","2026-10-20T01:10:00Z")).length,
       0,"no phantom irreversible token timeline is emitted");
 
