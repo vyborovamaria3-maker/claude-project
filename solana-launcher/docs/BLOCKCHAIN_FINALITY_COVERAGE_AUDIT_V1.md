@@ -37,7 +37,13 @@ API-ключей, обновления `chain_wallet_trades` или измене
 npm run blockchain:history-finality-test
 npm run blockchain:history-finality-audit -- --db /absolute/path/to/trade.db --limit 50
 npm run blockchain:history-finality-audit -- --db /absolute/path/to/trade.db --signature BASE58_SIGNATURE
+npm run blockchain:history-finality-audit -- --db /absolute/path/to/trade.db --kind wallet --address WALLET_PUBKEY --limit 50
 ```
+
+Режим `--kind wallet --address ...` выбирает signatures по составному
+индексу target, а затем сверяет все другие известные target-наблюдения тех же
+signatures. Это удобнее для большой SQLite, чем глобальный DISTINCT скан.
+`--signature` нельзя объединять с `--kind/--address`.
 
 Результат — JSON в stdout. Источник открывается с
 `readonly:true, fileMustExist:true`, `query_only=ON`.
@@ -83,5 +89,5 @@ npm run blockchain:history-finality-audit -- --db /absolute/path/to/trade.db --s
 
 Регрессия использует сохранённые реальные Alchemy RAW и тестирует
 дубли разных targets, ревизии, изменение содержимого, повреждение hash,
-ошибочное исполнение и отсутствие coverage metadata. Никаких платных
+ошибочное или неизвестное исполнение, отсутствие слота и coverage metadata. Никаких платных
 или live-запросов в рамках PR не выполняется.
