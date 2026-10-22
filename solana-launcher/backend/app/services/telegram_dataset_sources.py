@@ -114,6 +114,7 @@ def parse_public_channel_snapshot(
                 "source_name": TGATLAS_DATASET_NAME,
                 "source_url": TGATLAS_DATASET_URL,
                 "license": TGATLAS_LICENSE,
+                "attribution": "tgAtlas",
             }
         )
     records.sort(
@@ -206,6 +207,7 @@ async def sync_public_dataset_channels(sessionmaker, settings) -> dict[str, Any]
             "source_name": SMUGCALLS_DATASET_NAME,
             "source_url": SMUGCALLS_DATASET_URL,
             "license": SMUGCALLS_LICENSE,
+            "attribution": "SmugCalls / Smurfetc",
         }
     ]
     errors: list[dict[str, str]] = []
@@ -282,6 +284,7 @@ def _local_row(row: dict[str, Any], *, source_name: str) -> dict[str, Any] | Non
         "source_name": source_name,
         "source_url": str(row.get("source_url") or "")[:500],
         "license": str(row.get("license") or "")[:100],
+        "attribution": str(row.get("attribution") or "")[:150],
         "snapshot": str(row.get("snapshot") or row.get("week") or "")[:40],
     }
 
@@ -298,10 +301,21 @@ def _iter_large_tgdataset_json(path: Path) -> Iterator[dict[str, Any]]:
     with path.open("rb") as source:
         current_id: str | None = None
         current: dict[str, Any] = {}
+        yielded = False
         for prefix, event, value in ijson.parse(source):
             if prefix == "" and event == "map_key":
                 current_id = str(value)
                 current = {"channel_id": current_id}
+                yielded = False
+            elif (
+                current_id is not None
+                and prefix == f"{current_id}.text_messages"
+                and event == "start_map"
+                and not yielded
+            ):
+                # TGDataset puts channel metadata before its potentially huge message map.
+                yield current
+                yielded = True
             elif current_id is not None and prefix in {
                 f"{current_id}.username",
                 f"{current_id}.title",
@@ -313,9 +327,11 @@ def _iter_large_tgdataset_json(path: Path) -> Iterator[dict[str, Any]]:
             } and event in {"string", "number", "boolean", "null"}:
                 current[prefix.rsplit(".", 1)[-1]] = value
             elif current_id is not None and prefix == current_id and event == "end_map":
-                yield current
+                if not yielded:
+                    yield current
                 current_id = None
                 current = {}
+                yielded = False
 
 
 def iter_local_dataset_channels(
