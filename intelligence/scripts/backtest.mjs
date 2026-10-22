@@ -3,6 +3,11 @@ import pg from "pg";
 import { runSignalBacktest, persistBacktestRun } from "../dist/index.js";
 
 const SIGNAL_COLUMNS = new Set(["attention_score","credibility_score","risk_score","momentum_score"]);
+function isUtcDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + "T00:00:00.000Z");
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === value;
+}
 function parseArgs(argv) {
   const result = {};
   for (let i=0;i<argv.length;i++) {
@@ -19,7 +24,7 @@ function parseArgs(argv) {
   }
   if (!SIGNAL_COLUMNS.has(result.signal)) throw new TypeError("invalid_signal");
   if (!/^[a-z][a-z0-9_]{0,63}$/.test(result.outcome)) throw new TypeError("invalid_outcome");
-  for (const key of ["from","to"]) if (!/^\d{4}-\d{2}-\d{2}$/.test(result[key])) throw new TypeError("invalid_date");
+  for (const key of ["from","to"]) if (!isUtcDate(result[key])) throw new TypeError("invalid_date");
   if (result.from > result.to) throw new TypeError("invalid_date_range");
   const threshold = Number(result.threshold);
   if (!Number.isFinite(threshold)) throw new TypeError("invalid_threshold");
@@ -49,10 +54,19 @@ async function main() {
       throw new TypeError("backtest_range_must_be_historical");
     }
     const scoreColumn = args.signal;
-    const selected = await client.query(`SELECT s.canonical_token_id,s.as_of AS signal_at,
+    const selected = await client.query(`WITH daily_snapshots AS (
+      SELECT DISTINCT ON (canonical_token_id,day) *
+      FROM token_daily_cross_platform
+      WHERE day >= $3::date AND day <= $4::date
+        AND as_of <= $5::timestamptz
+        AND max_input_observed_at<=as_of
+        AND ${scoreColumn} IS NOT NULL
+      ORDER BY canonical_token_id,day,as_of DESC
+    )
+    SELECT s.canonical_token_id,s.as_of AS signal_at,
       s.max_input_observed_at,o.outcome_at,o.observed_at AS outcome_observed_at,
       s.${scoreColumn} AS score,o.label AS outcome,o.value AS outcome_value,o.evidence_ref
-      FROM token_daily_cross_platform s
+      FROM daily_snapshots s
       JOIN LATERAL (
         SELECT outcome_at,observed_at,label,value,evidence_ref
         FROM token_outcomes o
@@ -63,10 +77,6 @@ async function main() {
           AND o.observed_at<=$5::timestamptz
         ORDER BY o.outcome_at ASC,o.observed_at ASC LIMIT 1
       ) o ON TRUE
-      WHERE s.day >= $3::date AND s.day <= $4::date
-        AND s.as_of <= $5::timestamptz
-        AND s.${scoreColumn} IS NOT NULL
-        AND s.max_input_observed_at<=s.as_of
       ORDER BY s.as_of,s.canonical_token_id`, [
       args.outcome,args.horizonHours,args.from,args.to,dataCutoffAt,
     ]);
