@@ -9,8 +9,13 @@ import {
   SQLITE_OUTBOX_DDL,emitSqlite,claimSqlite,ackSqlite,failSqlite,
 } from "@claude-project/event-outbox";
 import {
-  runDeliveryBatch,queryActiveBlockchainSwapEvidence,ingestBlockchainSwapRevision,
+  runDeliveryBatch,queryActiveBlockchainSwapEvidence,queryActiveTokenLinks,ingestBlockchainSwapRevision,
 } from "../dist/index.js";
+import {
+  canonicalTokenIdFromNative,buildEntityRef,buildEvidenceRef,
+  buildVerifiedTokenLinkEvent,buildTokenLinksInvalidatedEvent,
+  formatAuthorId,formatSourceId,
+} from "@claude-project/contracts";
 
 const require=createRequire(import.meta.url);
 const {buildTokenSwapRevisionEvent}=require(
@@ -62,7 +67,7 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
     for(const file of ["001_entity_registry.sql","002_timeline.sql",
-      "005_blockchain_swap_evidence_revisions.sql"]){
+      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -192,6 +197,91 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
         offset===3?1:0,"conflicting mint, slot or occurrence cannot become active evidence");
       assert.equal((await active(mint,"2026-10-20T01:30:00Z")).length,0);
     }
+    // One canonical token, three INDEPENDENT evidence types:
+    // X verified literal tweet, TG verified literal message, and a separately
+    // reconciled Blockchain wallet swap raw revision. No assertion of PnL.
+    const token=canonicalTokenIdFromNative("solana-mainnet",mint2);
+    assert.equal(token,canonicalTokenIdFromNative("solana",mint2));
+    const socialTime="2026-10-20T01:24:00Z";
+    const verifySocial=(sourceSystem,evidenceRef,sourceEntity,revision)=>
+      buildVerifiedTokenLinkEvent({
+        sourceSystem,evidenceRef,sourceEntity,
+        mint:mint2,matchedLiteralMint:mint2,
+        sourceRevisionSha256:revision.repeat(64),
+        mintVerification:{
+          chainId:"solana-mainnet",method:"spl_mint_account",
+          tokenProgram:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          provider:"alchemy-solana-rpc",checkedAt:socialTime,
+        },
+      });
+    const tgEntity=buildEntityRef({
+      kind:"source",canonicalId:formatSourceId("tg","-1001234567"),
+      firstSeenAt:socialTime,lastSeenAt:socialTime,
+    });
+    const xEntity=buildEntityRef({
+      kind:"author",canonicalId:formatAuthorId("x","9007199254740993"),
+      firstSeenAt:socialTime,lastSeenAt:socialTime,
+    });
+    const tgEvidence=buildEvidenceRef({
+      sourceKind:"tg_message",sourceAccountId:"-1001234567",messageId:"50",
+      occurredAt:"2026-10-18T01:01:00Z",observedAt:socialTime,
+      parserVersion:"tg-mint-verifier-v1",
+    });
+    const xEvidence=buildEvidenceRef({
+      sourceKind:"x_tweet",tweetId:"1234567890123456789",
+      occurredAt:"2026-10-18T01:02:00Z",observedAt:socialTime,
+      parserVersion:"x-mint-verifier-v1",
+    });
+    const tgEvent=verifySocial("tg",tgEvidence,tgEntity,"e");
+    const xEvent=verifySocial("x",xEvidence,xEntity,"f");
+    async function deliverSocial(event){
+      return runDeliveryBatch({
+        claim:async()=>[{...event,id:"synthetic",attempts:0,
+          leaseOwner:"fixture",leaseUntil:"2026-10-20T03:00:00Z"}],
+        ack:async()=>true,fail:async()=>true,
+      },pool,{workerId:"fixture",batchSize:1,leaseMs:120000});
+    }
+    assert.equal((await deliverSocial(tgEvent)).delivered,1);
+    assert.equal((await deliverSocial(xEvent)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    const socialActive=await queryActiveTokenLinks(pool,token,
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z");
+    const chainActive=await queryActiveBlockchainSwapEvidence(pool,token,
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z");
+    assert.deepEqual(new Set(socialActive.map(row=>row.source_system)),
+      new Set(["tg","x"]));
+    assert.equal(chainActive.length,1);
+    assert.equal(chainActive[0].signature,signature);
+    assert.deepEqual(new Set(socialActive.map(row=>row.evidence_source_id)),
+      new Set(["tg:message:-1001234567:50","x:tweet:1234567890123456789"]));
+    // Message edit retracts only TG. Its evidence remains immutable and
+    // does not invalidate independent X or Blockchain evidence.
+    const editAt="2026-10-20T01:26:00Z";
+    const edited=buildTokenLinksInvalidatedEvent({
+      sourceSystem:"tg",
+      sourceEntity:buildEntityRef({
+        kind:"source",canonicalId:formatSourceId("tg","-1001234567"),
+        firstSeenAt:editAt,lastSeenAt:editAt,
+      }),
+      evidenceRef:buildEvidenceRef({
+        sourceKind:"tg_message",sourceAccountId:"-1001234567",messageId:"50",
+        occurredAt:"2026-10-18T01:01:00Z",observedAt:editAt,
+        parserVersion:"tg-mint-verifier-v1",
+      }),
+      reason:"edited",sourceRevisionSha256:"a".repeat(64),
+    });
+    assert.equal((await deliverSocial(edited)).delivered,1);
+    await pool.query("UPDATE token_link_observations SET inserted_at=observed_at");
+    assert.deepEqual((await queryActiveTokenLinks(pool,token,
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z"))
+      .map(row=>row.source_system),["x"]);
+    assert.equal((await queryActiveBlockchainSwapEvidence(pool,token,
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z")).length,1);
+    assert.equal((await deliverSocial(tgEvent)).duplicates,1);
+    assert.equal((await deliverSocial(edited)).duplicates,1);
+    assert.equal((await queryActiveTokenLinks(pool,
+      canonicalTokenIdFromNative("solana-mainnet",mint),
+      "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z")).length,0);
     // Late-delivered contradictory evidence must not retroactively change an
     // earlier as-of view.
     assert.equal((await active(mint2,"2026-10-20T01:21:30Z")).length,1);
