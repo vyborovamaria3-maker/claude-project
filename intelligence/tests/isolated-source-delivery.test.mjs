@@ -180,10 +180,20 @@ test("independent X/TG PG sources deliver to a separate Intelligence schema with
       reason:"edited",sourceRevisionSha256:"c".repeat(64),
     });
     await emitInNativeTransaction(tgPool,tgEdit);
+    // A source DB can be fractionally ahead of the test runner's Date.now()
+    // when the just-inserted default next_attempt_at is compared to the
+    // producer's client-side claim clock. Make this disposable fixture due
+    // deterministically; this does NOT bypass the real PG claim/lease path.
+    const due=await tgPool.query(
+      "UPDATE outbox_events SET next_attempt_at=NOW()-interval '1 minute' "+
+      "WHERE event_kind='token_links_invalidated' AND processed_at IS NULL "+
+      "RETURNING id",
+    );
+    assert.equal(due.rows.length,1,"TG tombstone must exist before delivery");
     const retraction=await runDeliveryBatch(port(tgPool),destPool,{
       workerId:"tg-token-retraction",batchSize:1,leaseMs:120000,
     });
-    assert.equal(retraction.delivered,1);
+    assert.equal(retraction.delivered,1,JSON.stringify(retraction));
     assert.equal(retraction.failed,0);
     assert.deepEqual((await queryActiveTokenLinks(destPool,token,cutoff,knownAt))
       .map(row=>row.source_system),["x"]);
