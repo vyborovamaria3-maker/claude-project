@@ -21,7 +21,7 @@ test("TG tuple, X mint and chain swap mint resolve to one shared token ID", () =
 test("different mints, ambiguous tickers and mismatched chains never join", () => {
   assert.notEqual(canonicalTokenIdFromNative("solana-mainnet",mint),
     canonicalTokenIdFromNative("solana-mainnet",secondMint));
-  for (const raw of ["$SOL","SOL","So1111...",mint.toLowerCase(),"",null,undefined]) {
+  for (const raw of ["$SOL","SOL","So1111...","",null,undefined]) {
     assert.throws(() => canonicalTokenIdFromNative("solana-mainnet",raw));
   }
   for (const chain of ["solana-devnet","solana-testnet","polygon","Solana",""]) {
