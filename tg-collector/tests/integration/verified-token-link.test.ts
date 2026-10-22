@@ -53,6 +53,57 @@ test("TG: verified mint link shares native PostgreSQL transaction and rolls back
       "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
     );
     assert.equal(current.rows[0]?.n,"0");
+    // A Telegram edit can retain exactly the same body while changing
+    // editDate. The previous SPL proof was bound to the OLD message revision.
+    await tx.query(
+      "UPDATE tg_token_candidates SET resolution_status='confirmed_token' " +
+      "WHERE source_id=$1 AND message_id=$2 AND candidate_type='address'",
+      [sourceId,981],
+    );
+    await persistMessage(tx,sourceId,{
+      id:981,date:1792364400,editDate:1792364500,message:text,
+    });
+    current=await tx.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
+    );
+    assert.equal(current.rows[0]?.n,"1",
+      "same text with a NEW Telegram edit timestamp must revoke old verified links");
+    let invalidatedCandidate=await tx.query<{status:string}>(
+      "SELECT resolution_status AS status FROM tg_token_candidates " +
+      "WHERE source_id=$1 AND message_id=$2 AND candidate_type='address' LIMIT 1",
+      [sourceId,981],
+    );
+    assert.equal(invalidatedCandidate.rows[0]?.status,"unresolved");
+
+    // Published time is also part of the verified revision hash.
+    await tx.query(
+      "UPDATE tg_token_candidates SET resolution_status='confirmed_token' " +
+      "WHERE source_id=$1 AND message_id=$2 AND candidate_type='address'",
+      [sourceId,981],
+    );
+    await persistMessage(tx,sourceId,{
+      id:981,date:1792364401,editDate:1792364500,message:text,
+    });
+    current=await tx.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
+    );
+    assert.equal(current.rows[0]?.n,"2",
+      "same text with changed publication time must revoke the old proof");
+    invalidatedCandidate=await tx.query<{status:string}>(
+      "SELECT resolution_status AS status FROM tg_token_candidates " +
+      "WHERE source_id=$1 AND message_id=$2 AND candidate_type='address' LIMIT 1",
+      [sourceId,981],
+    );
+    assert.equal(invalidatedCandidate.rows[0]?.status,"unresolved");
+    await persistMessage(tx,sourceId,{
+      id:981,date:1792364401,editDate:1792364500,message:text,views:56,
+    });
+    current=await tx.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
+    );
+    assert.equal(current.rows[0]?.n,"2",
+      "views-only refresh with identical clocks must NOT revoke links");
+
     // Reobserving the same literal mint in an edited text does NOT inherit
     // old on-chain verification; the native candidate becomes unresolved.
     await tx.query(
@@ -60,7 +111,7 @@ test("TG: verified mint link shares native PostgreSQL transaction and rolls back
       "WHERE source_id=$1 AND message_id=$2 AND candidate_type='address'",
       [sourceId,981],
     );
-    await persistMessage(tx,sourceId,{id:981,date:1792364400,message:text+" revised"});
+    await persistMessage(tx,sourceId,{id:981,date:1792364401,editDate:1792364500,message:text+" revised"});
     const pending=await tx.query<{status:string}>(
       "SELECT resolution_status AS status FROM tg_token_candidates " +
       "WHERE source_id=$1 AND message_id=$2 AND candidate_type='address' LIMIT 1",
@@ -70,12 +121,12 @@ test("TG: verified mint link shares native PostgreSQL transaction and rolls back
     current=await tx.query<{n:string}>(
       "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
     );
-    assert.equal(current.rows[0]?.n,"1");
+    assert.equal(current.rows[0]?.n,"3");
     await persistMessage(tx,sourceId,{id:981,date:1792364400,message:"edited without mint"});
     current=await tx.query<{n:string}>(
       "SELECT count(*)::text AS n FROM outbox_events WHERE event_kind='token_links_invalidated'",
     );
-    assert.equal(current.rows[0]?.n,"2");
+    assert.equal(current.rows[0]?.n,"4");
     assert.equal(await markMessageDeleted(tx,sourceId,981),true);
     assert.equal(await markMessageDeleted(tx,sourceId,981),false);
     current=await tx.query<{n:string}>(
