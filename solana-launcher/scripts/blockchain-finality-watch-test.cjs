@@ -136,6 +136,23 @@ function run(){
     assert.ok(state.prepare("SELECT count(*) n FROM watcher_invalidation_outbox WHERE signature=?").get(b.signature).n>=1);
     assert.equal(state.prepare("SELECT state FROM watcher_current WHERE scope=? AND signature=?")
       .get("wallet:"+wallet,b.signature).state,"history_incomplete");
+    // A local coverage metadata change with the SAME overall dispute status
+    // must still change the fingerprint and request manual invalidation.
+    const prevCoverageFingerprint=state.prepare(
+      "SELECT raw_fingerprint FROM watcher_current WHERE scope=? AND signature=?"
+    ).get("wallet:"+wallet,a.signature).raw_fingerprint;
+    source.prepare("UPDATE chain_forensic_history_coverage SET observed_transactions=observed_transactions+1 WHERE kind='wallet' AND address=?").run(wallet);
+    const coverageTick=watchOnce(source,state,{kind:"wallet",address:wallet,limit:2,clock:now});
+    assert.ok(coverageTick.invalidationsQueued>=1,
+      "Coverage metadata-only changes must not be silently ignored");
+    const nextCoverageFingerprint=state.prepare(
+      "SELECT raw_fingerprint FROM watcher_current WHERE scope=? AND signature=?"
+    ).get("wallet:"+wallet,a.signature).raw_fingerprint;
+    assert.notEqual(nextCoverageFingerprint,prevCoverageFingerprint);
+    const coverageObservation=state.prepare(
+      "SELECT audit_json FROM watcher_observations WHERE scope=? AND signature=? ORDER BY id DESC LIMIT 1"
+    ).get("wallet:"+wallet,a.signature);
+    assert.ok(JSON.parse(coverageObservation.audit_json).targetCoverage.length>0);
     console.log("[blockchain-finality-watch] OK: durable restart, changed RAW, manual outbox, missing-signature replay, no PnL promotion");
   }finally{
     state?.close();
