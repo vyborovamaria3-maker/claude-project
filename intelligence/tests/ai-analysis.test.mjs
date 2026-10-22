@@ -15,7 +15,7 @@ const gateway = createAiGateway({
       return new Response(JSON.stringify({ data: [{ index: 0, embedding: new Array(1024).fill(0.25) }], usage: { prompt_tokens: 2 } }));
     }
     const prompt = body.messages[1].content;
-    if (prompt.includes('"alertId"')) {
+    if (prompt.includes('"alertType"')) {
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
         explanation: "Attention increased across the supplied sources.", evidenceRefs: ["x:tweet:1"],
       }) } }], usage: { prompt_tokens: 10, completion_tokens: 20 } }));

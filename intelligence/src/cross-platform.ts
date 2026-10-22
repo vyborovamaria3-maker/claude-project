@@ -34,6 +34,7 @@ export type CrossPlatformSnapshotInput = Readonly<{
   firstMentionTgAt?: Date | string | null;
   firstMentionXAt?: Date | string | null;
   firstTradeAt?: Date | string | null;
+  sourceCoverage?: Readonly<Record<SourceSystem, CoverageStatus>>;
 }>;
 
 export type CrossPlatformScores = Readonly<{
@@ -178,9 +179,9 @@ export function validateCrossPlatformSnapshot(input: CrossPlatformSnapshotInput)
   }
   const scores = computeCrossPlatformScores(input);
   const sourceCoverage: Record<SourceSystem, CoverageStatus> = {
-    tg: input.tgMentions === null ? "unknown" : "complete",
-    x: input.xMentions === null ? "unknown" : "complete",
-    blockchain: input.chainTrades === null ? "unknown" : "complete",
+    tg: input.sourceCoverage?.tg ?? (input.tgMentions === null ? "unknown" : "partial"),
+    x: input.sourceCoverage?.x ?? (input.xMentions === null ? "unknown" : "partial"),
+    blockchain: input.sourceCoverage?.blockchain ?? (input.chainTrades === null ? "unknown" : "partial"),
   };
   const normalized = {
     ...input, asOf, maxInputObservedAt, firstMentionTgAt, firstMentionXAt, firstTradeAt,
@@ -409,20 +410,16 @@ export async function refreshTokenDailyCrossPlatform(
     chainVolumeUsd: n(row.chain_volume_usd), chainLiquidityUsd: n(row.chain_liquidity_usd),
     chainSmartMoneyBought: n(row.chain_smart_money_bought), chainRugRisk: n(row.chain_rug_risk),
     tgMentionsZ1h: null, xMentionsZ1h: null, chainVolumeZ1h: null,
-    firstMentionTgAt: row.first_mention_tg_at ?? null,
-    firstMentionXAt: row.first_mention_x_at ?? null,
-    firstTradeAt: row.first_trade_at ?? null,
-  };
-  const stored = await putCrossPlatformSnapshot(tx, snapshot);
-  // Coverage is attached to the immutable snapshot only when explicitly known.
-  return {
-    ...stored,
     sourceCoverage: {
       tg: row.tg_coverage === "complete" ? "complete" : row.tg_coverage === "partial" ? "partial" : "unknown",
       x: row.x_coverage === "complete" ? "complete" : row.x_coverage === "partial" ? "partial" : "unknown",
       blockchain: row.blockchain_coverage === "complete" ? "complete" : row.blockchain_coverage === "partial" ? "partial" : "unknown",
     },
+    firstMentionTgAt: row.first_mention_tg_at ?? null,
+    firstMentionXAt: row.first_mention_x_at ?? null,
+    firstTradeAt: row.first_trade_at ?? null,
   };
+  return putCrossPlatformSnapshot(tx, snapshot);
 }
 
 export async function registerModel(

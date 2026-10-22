@@ -45,10 +45,13 @@ test("embeddings validate vector dimensions and preserve provider ordering", asy
   const gateway = createAiGateway({
     providers: [provider()],
     defaultProviderId: "primary",
-    fetchImpl: async () => response({
-      data: [{ index: 1, embedding: [0, 1] }, { index: 0, embedding: [1, 0] }],
-      usage: { prompt_tokens: 5 },
-    }),
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return response({
+        data: body.input.length === 1 ? [{ index: 0, embedding: [1, 0] }] : [{ index: 1, embedding: [0, 1] }, { index: 0, embedding: [1, 0] }],
+        usage: { prompt_tokens: 5 },
+      });
+    },
   });
   const result = await gateway.createEmbeddings({ texts: ["a", "b"], expectedDimensions: 2 });
   assert.deepEqual(result.vectors, [[1, 0], [0, 1]]);
@@ -105,10 +108,10 @@ test("gateway enforces HTTPS, bounded inputs and provider rate limits", async ()
     gateway.chatCompletion({ messages: [{ role: "user", content: "second" }] }),
     (error) => error instanceof AiGatewayError && error.code === "ai_provider_rate_limit_exhausted",
   );
-  assert.throws(() => createAiGateway({
+  await assert.rejects(createAiGateway({
     providers: [provider({ maxInputChars: 1000 })],
     defaultProviderId: "primary",
-  }).chatCompletion({ messages: [{ role: "user", content: "x".repeat(1001) }] }));
+  }).chatCompletion({ messages: [{ role: "user", content: "x".repeat(1001) }] }), /ai_input_too_large/);
 });
 
 test("environment config resolves API keys from named variables, never from provider JSON", () => {

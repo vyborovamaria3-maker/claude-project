@@ -172,13 +172,15 @@ export async function persistBacktestRun(
     throw new TypeError("Invalid backtest horizon");
   }
   const startedAt = new Date().toISOString();
+  const completedAt = new Date().toISOString();
+  if (dataCutoffAt > completedAt) throw new TypeError("Backtest data cutoff cannot be in the future");
   await tx.query(`INSERT INTO backtest_runs
     (run_id,signal_name,outcome_kind,from_at,to_at,horizon_hours,threshold,baseline_kind,status,
      metrics,feature_version,model_id,started_at,completed_at,data_cutoff_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed',$9::jsonb,$10,$11,$12,NOW(),$13)`, [
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed',$9::jsonb,$10,$11,$12,$13,$14)`, [
     input.runId,input.signalName,input.outcomeKind,fromAt,toAt,input.horizonHours,input.threshold,
     input.baselineKind,JSON.stringify(input.metrics),input.featureVersion ?? null,input.modelId ?? null,
-    startedAt,dataCutoffAt,
+    startedAt,completedAt,dataCutoffAt,
   ]);
   for (const row of input.observations) {
     await tx.query(`INSERT INTO backtest_results
