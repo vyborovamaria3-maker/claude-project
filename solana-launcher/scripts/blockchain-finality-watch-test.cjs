@@ -7,6 +7,7 @@ const {normalizeFullTransaction}=require("./blockchain-alchemy-provider.cjs");
 const fixture=require("./fixtures/alchemy-saved-swaps.json");
 const {openState,watchOnce,runPaths,ensureSeparate,readScope}=require("./blockchain-finality-watch-state.cjs");
 const {parse}=require("./blockchain-finality-watch.cjs");
+const {review,main:reviewMain}=require("./blockchain-finality-watch-report.cjs");
 function seed(db,kind,address,event){
   db.prepare("INSERT OR IGNORE INTO chain_seed_targets(kind,address,backfill_complete,possible_gap,collection_provider,raw_history_seen) VALUES(?,?,1,0,'alchemy',0)").run(kind,address);
   persistEvents(db,kind,address,[event]);
@@ -70,6 +71,15 @@ function run(){
     const outbox=state.prepare("SELECT * FROM watcher_invalidation_outbox ORDER BY id").all();
     assert.ok(outbox.some(x=>x.reason==="evidence_fingerprint_or_quality_changed"));
     assert.ok(outbox.every(x=>x.state==="pending"));
+    const reviewList=review(state,{limit:1});
+    assert.equal(reviewList.diagnosticOnly,true);
+    assert.equal(reviewList.autoApplied,false);
+    assert.equal(reviewList.shown,1);
+    assert.equal(reviewList.totalPending,outbox.length);
+    assert.equal(review(state,{limit:1,afterId:reviewList.nextAfterId}).shown,
+      outbox.length>1?1:0);
+    assert.throws(()=>review(state,{limit:1000}),/Invalid review pagination/);
+    assert.equal(reviewMain(["--state",statePath,"--limit","1"]).shown,1);
     const count=outbox.length;
     summary=watchOnce(source,state,{kind:"wallet",address:wallet,limit:2,clock:now});
     assert.equal(summary.invalidationsQueued,0,"Identical RAW evidence must not enqueue duplicates");
