@@ -32,6 +32,39 @@ function fakePool(){
     async query(sql,params){
       logs.push({sql,params});
       if(sql==="SELECT 1 AS ok")return {rows:[{ok:1}]};
+      if(sql.includes("FROM token_daily_cross_platform"))return {rows:[{
+        canonical_token_id:id,as_of:new Date(known),max_input_observed_at:new Date("2026-10-20T02:00:00Z"),
+        tg_mentions:"5",tg_unique_authors:"3",tg_copypasta_ratio:"0.1",tg_sentiment_score:"0.4",tg_scam_ratio:"0.02",
+        x_mentions:"7",x_unique_authors:"4",x_bot_ratio:"0.2",x_sentiment_score:"0.3",
+        chain_trades:"2",chain_unique_wallets:"2",chain_volume_usd:"1000",chain_liquidity_usd:"5000",
+        chain_smart_money_bought:"1",chain_rug_risk:"0.1",
+        first_mention_tg_at:new Date(occurred),first_mention_x_at:new Date(occurred),first_trade_at:new Date(occurred),
+        attention_score:"3.2",credibility_score:"0.72",risk_score:"0.1",momentum_score:null,
+        score_version:"cross-platform-heuristics-v1",score_reason:{attention:{used:["tg_mentions"]}},
+        source_coverage:{tg:"partial",x:"partial",blockchain:"partial"},data_confidence:"0.8",
+      }]};
+      if(sql.includes("FROM chain_token_features"))return {rows:[{
+        canonical_token_id:id,as_of:new Date(known),max_input_observed_at:new Date("2026-10-20T02:00:00Z"),
+        feature_version:"features-v2",features:{mentions_5m:5,raw_message:"SECRET"},
+      }]};
+      if(sql.includes("FROM token_correlations"))return {rows:[{
+        event_kind:"tg_first_mention",event_at:new Date(occurred),outcome_kind:"price_2x_24h",
+        outcome_at:new Date("2026-10-20T22:00:00Z"),lift:"1.5",ci_low:"1.1",ci_high:"1.9",
+        p_value:"0.02",baseline:{kind:"market_average"},sample_size:"100",
+        evaluated_at:new Date(at),data_cutoff_at:new Date(known),model_id:null,
+      }]};
+      if(sql.includes("FROM token_alerts"))return {rows:[{
+        alert_id:"12",canonical_token_id:id,alert_type:"attention_spike",severity:"medium",
+        triggered_at:new Date(at),as_of:new Date(known),score:"2.4",score_version:"cross-platform-heuristics-v1",
+        evidence_refs:["x:tweet:1024"],status:"open",
+      }]};
+      if(sql.includes("FROM backtest_runs"))return {rows:[{
+        run_id:"00000000-0000-4000-8000-000000000001",signal_name:"attention_score",outcome_kind:"price_2x_24h",
+        from_at:new Date("2025-01-01T00:00:00Z"),to_at:new Date("2025-09-30T23:59:59Z"),
+        horizon_hours:24,threshold:"2",baseline_kind:"market_average",status:"completed",
+        metrics:{sampleSize:100,pValue:0.04},started_at:new Date(known),completed_at:new Date(at),
+        data_cutoff_at:new Date(known),feature_version:"features-v2",model_id:null,
+      }]};
       if(sql.includes("FROM timeline_events")){
         return {rows:[{
           source_system:"x",timeline_kind:"tweet_published",
@@ -92,6 +125,11 @@ test("strict token/time/query validation rejects aliases, encoded slashes, futur
   assert.equal(parseApiRequest("/api/intelligence/v1/health",now).kind,"health");
   assert.equal(parseApiRequest(base+"/timeline?"+window+"&limit=3",now).limit,3);
   assert.equal(parseApiRequest(base+"/swap-evidence?"+window+"&limit=3",now).kind,"swap-evidence");
+  assert.equal(parseApiRequest(base+"/summary?asOf="+encodeURIComponent(known),now).kind,"summary");
+  assert.equal(parseApiRequest(base+"/features?asOf="+encodeURIComponent(known),now).kind,"features");
+  assert.equal(parseApiRequest(base+"/correlations?asOf="+encodeURIComponent(known)+"&limit=2",now).limit,2);
+  assert.equal(parseApiRequest("/api/intelligence/v1/signals?asOf="+encodeURIComponent(known),now).kind,"signals");
+  assert.equal(parseApiRequest("/api/intelligence/v1/backtest?signal=attention_score",now).kind,"backtest");
   for(const route of [
     base+"/timeline?"+window+"&limit=101",
     base+"/timeline?"+window+"&limit=0",
@@ -99,6 +137,8 @@ test("strict token/time/query validation rejects aliases, encoded slashes, futur
     base+"/timeline?"+window+"&limit=2&limit=4",
     base+"/timeline?"+window+"&unknown=1",
     base+"/timeline?knownAt="+encodeURIComponent(known),
+    base+"/summary?asOf="+encodeURIComponent(known)+"&limit=2",
+    "/api/intelligence/v1/signals?asOf="+encodeURIComponent("2026-10-20T23:30:00.000Z"),
     base+"/links?"+window.replace(encodeURIComponent(known),encodeURIComponent("2026-10-20T23:30:00.000Z")),
     base+"/timeline?occurredBefore="+encodeURIComponent(at)+"&knownAt="+encodeURIComponent(known),
     "/api/intelligence/v1/tokens/SOL/timeline?"+window,
@@ -150,7 +190,26 @@ test("HTTP API enforces Bearer, no cookie/CORS, safe responses and read-only que
     const ready=await fetch(origin+"/api/intelligence/v1/health",{headers:headers()});
     assert.equal(ready.status,200);
     assert.equal((await ready.json()).sourceCollectorsChecked,false);
-    assert.equal(pool.logs.length,4);
+    const summary=await fetch(origin+base+"/summary?asOf="+encodeURIComponent(known),{headers:headers()});
+    assert.equal(summary.status,200);
+    const summaryBody=await summary.json();
+    assert.equal(summaryBody.metrics.tgMentions,5);
+    assert.equal(summaryBody.scores.risk,0.1);
+    const features=await fetch(origin+base+"/features?asOf="+encodeURIComponent(known),{headers:headers()});
+    assert.equal(features.status,200);
+    const featuresBody=await features.json();
+    assert.equal(featuresBody.featureVersion,"features-v2");
+    assert.ok(!JSON.stringify(featuresBody).includes("SECRET"));
+    const correlations=await fetch(origin+base+"/correlations?asOf="+encodeURIComponent(at)+"&limit=5",{headers:headers()});
+    assert.equal(correlations.status,200);
+    assert.equal((await correlations.json()).items[0].pValue,0.02);
+    const signals=await fetch(origin+"/api/intelligence/v1/signals?asOf="+encodeURIComponent(at),{headers:headers()});
+    assert.equal(signals.status,200);
+    assert.equal((await signals.json()).items[0].alertType,"attention_spike");
+    const backtests=await fetch(origin+"/api/intelligence/v1/backtest?signal=attention_score",{headers:headers()});
+    assert.equal(backtests.status,200);
+    assert.equal((await backtests.json()).items[0].metrics.sampleSize,100);
+    assert.equal(pool.logs.length,9);
     assert.equal(pool.logs[0].params[0],id);
     assert.equal(pool.logs[0].params[3],2,"fetch limit+1 for truncation detection");
   });
@@ -201,8 +260,16 @@ test("readiness requires destination 001/002/004; no fallback to source database
   await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
     inbox:true,timeline:true,entities:true,links:true,swap_revisions:false,
   }]})}),/migration_005_required/);
+  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
+    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:false,
+  }]})}),/migration_003_required/);
+  await assert.rejects(checkApiReadiness({query:async()=>({rows:[{
+    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
+    model_registry:true,cross_platform:false,correlations:true,alerts:true,backtests:true,
+  }]})}),/migration_006_required/);
   await assert.doesNotReject(checkApiReadiness({query:async()=>({rows:[{
-    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,
+    inbox:true,timeline:true,entities:true,links:true,swap_revisions:true,feature_store:true,
+    model_registry:true,cross_platform:true,correlations:true,alerts:true,backtests:true,
   }]})}));
 });
 
@@ -217,8 +284,8 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
   try{
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
-    for(const file of ["001_entity_registry.sql","002_timeline.sql","004_token_link_observations.sql",
-      "005_blockchain_swap_evidence_revisions.sql"]){
+    for(const file of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql","006_cross_platform_analytics.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+file,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});

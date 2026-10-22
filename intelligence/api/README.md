@@ -57,3 +57,18 @@ npm run api:local
 - Не включать на реальном ноутбуке без ревью прав DB-роли, сетевого bind, параметров маршрута, backup/restore и контроля токенов.
 
 Следующий отдельный этап: ARCH-11 — авторизованный backend proxy POTAPoff + UI, использующий только этот read-only API, не соединяющий браузер с источниками и не раскрывающий серверный токен.
+
+
+## Cross-platform analytics routes (migration 006)
+
+Migration 003 (Feature Store) and migration 006 (cross-platform analytics) are now required by readiness. Migration 007 is optional for API startup and is required only for pgvector embeddings.
+
+| Method | Endpoint | Required query | Purpose |
+| --- | --- | --- | --- |
+| GET | `/api/intelligence/v1/tokens/:id/summary` | `asOf` | Latest cross-platform snapshot available by the requested UTC time |
+| GET | `/api/intelligence/v1/tokens/:id/features` | `asOf` | Latest point-in-time Feature Store snapshot |
+| GET | `/api/intelligence/v1/tokens/:id/correlations` | `asOf`, optional `limit` | Evaluated event/outcome correlations |
+| GET | `/api/intelligence/v1/signals` | `asOf`, optional `limit` | Non-resolved alerts known by that time |
+| GET | `/api/intelligence/v1/backtest` | optional `signal`, `limit` | Completed backtest summaries |
+
+These endpoints return normalized metrics only, not raw Telegram messages, tweet bodies, provider prompts, API keys, or full timeline payloads. As-of filters prevent later snapshots from appearing in earlier views. Historical completeness remains `unknown` unless separately established.
