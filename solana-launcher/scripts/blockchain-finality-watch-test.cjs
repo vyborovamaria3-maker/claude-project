@@ -153,6 +153,16 @@ function run(){
       "SELECT audit_json FROM watcher_observations WHERE scope=? AND signature=? ORDER BY id DESC LIMIT 1"
     ).get("wallet:"+wallet,a.signature);
     assert.ok(JSON.parse(coverageObservation.audit_json).targetCoverage.length>0);
+    // A -> B -> A is three distinct observed states, not an SQL UNIQUE conflict.
+    const historyBeforeRevert=state.prepare("SELECT count(*) n FROM watcher_observations WHERE scope=? AND signature=?")
+      .get("wallet:"+wallet,a.signature).n;
+    source.prepare("UPDATE chain_forensic_history_coverage SET observed_transactions=observed_transactions-1 WHERE kind='wallet' AND address=?").run(wallet);
+    const reverted=watchOnce(source,state,{kind:"wallet",address:wallet,limit:2,clock:now});
+    assert.ok(reverted.invalidationsQueued>=1);
+    assert.equal(state.prepare("SELECT raw_fingerprint FROM watcher_current WHERE scope=? AND signature=?")
+      .get("wallet:"+wallet,a.signature).raw_fingerprint,prevCoverageFingerprint);
+    assert.equal(state.prepare("SELECT count(*) n FROM watcher_observations WHERE scope=? AND signature=?")
+      .get("wallet:"+wallet,a.signature).n,historyBeforeRevert+1);
     console.log("[blockchain-finality-watch] OK: durable restart, changed RAW, manual outbox, missing-signature replay, no PnL promotion");
   }finally{
     state?.close();
