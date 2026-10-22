@@ -10,7 +10,8 @@
     "@claude-project/contracts": "file:../packages/contracts",
     "@claude-project/event-outbox": "file:../packages/event-outbox",
     "pg": "^8.16.3",
-    "better-sqlite3": "^12.10.0"
+    "better-sqlite3": "^12.10.0",
+    "@claude-project/ai-gateway": "file:../packages/ai-gateway"
   },
   "devDependencies": {
     "typescript": "5.9.3",
@@ -28,7 +29,8 @@
     "etl:supervise": "node scripts/supervise.mjs --sources x,tg,blockchain",
     "etl:backfill": "node scripts/backfill.mjs",
     "etl:quality": "node scripts/quality.mjs",
-    "api:local": "node api/start.mjs"
+    "api:local": "node api/start.mjs",
+    "backtest": "node scripts/backtest.mjs"
   },
   "exports": {
     ".": {

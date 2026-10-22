@@ -25,11 +25,41 @@ export const FEATURES_V1 = {
   },
 } as const;
 
+export const FEATURES_V2 = {
+  version: "features-v2",
+  fields: {
+    ...FEATURES_V1.fields,
+    sentiment_score: "signed_ratio_or_null",
+    copypasta_ratio: "ratio_or_null",
+    narrative_id: "nonempty_string_or_null",
+    velocity_5m: "finite_number_or_null",
+    velocity_1h: "finite_number_or_null",
+  },
+} as const;
+
+export const FEATURES_V3 = {
+  version: "features-v3",
+  fields: {
+    ...FEATURES_V2.fields,
+    embedding_ref: "nonempty_string_or_null",
+    cluster_id: "nonempty_string_or_null",
+    coherence_score: "ratio_or_null",
+  },
+} as const;
+
+export type FeatureVersion = typeof FEATURES_V1.version | typeof FEATURES_V2.version | typeof FEATURES_V3.version;
+type FeatureDefinition = { version: FeatureVersion; fields: Record<string, string> };
+const FEATURE_DEFINITIONS: Record<FeatureVersion, FeatureDefinition> = {
+  "features-v1": FEATURES_V1 as unknown as FeatureDefinition,
+  "features-v2": FEATURES_V2 as unknown as FeatureDefinition,
+  "features-v3": FEATURES_V3 as unknown as FeatureDefinition,
+};
+
 export type FeatureSnapshot = {
   canonicalTokenId: TokenId;
   asOf: Date | string;
   maxInputObservedAt: Date | string;
-  featureVersion: typeof FEATURES_V1.version;
+  featureVersion: FeatureVersion;
   features: Record<string, unknown>;
 };
 
@@ -39,9 +69,12 @@ function isValid(value: unknown, rule: string): boolean {
     case "nonnegative_integer":return typeof value==="number" && Number.isSafeInteger(value) && value>=0;
     case "nonnegative_number_or_null":return typeof value==="number" && Number.isFinite(value) && value>=0;
     case "finite_number":return typeof value==="number" && Number.isFinite(value);
+    case "finite_number_or_null":return typeof value==="number" && Number.isFinite(value);
     case "ratio":
     case "ratio_or_null":return typeof value==="number" && Number.isFinite(value) && value>=0 && value<=1;
+    case "signed_ratio_or_null":return typeof value==="number" && Number.isFinite(value) && value>=-1 && value<=1;
     case "nonempty_string":return typeof value==="string" && value.trim().length>0 && value.length<=256;
+    case "nonempty_string_or_null":return typeof value==="string" && value.trim().length>0 && value.length<=256;
     case "utc_timestamp_or_null":
       try {return typeof value==="string" && toUtcIso(value)===value;} catch {return false;}
     default:return false;
@@ -50,20 +83,19 @@ function isValid(value: unknown, rule: string): boolean {
 
 export function validateFeatureSnapshot(input: FeatureSnapshot): {
   canonicalTokenId: TokenId; asOf: string; maxInputObservedAt: string;
-  featureVersion: typeof FEATURES_V1.version; features: Record<string, unknown>;
+  featureVersion: FeatureVersion; features: Record<string, unknown>;
 } {
   if (parseTokenId(input.canonicalTokenId)?.id!==input.canonicalTokenId) {
     throw new TypeError("Noncanonical token ID");
   }
-  if (input.featureVersion!==FEATURES_V1.version) {
-    throw new TypeError("Unknown feature version");
-  }
+  const definition = FEATURE_DEFINITIONS[input.featureVersion];
+  if (!definition) throw new TypeError("Unknown feature version");
   const asOf=toUtcIso(input.asOf), observed=toUtcIso(input.maxInputObservedAt);
   if (observed>asOf) throw new TypeError("Future-observed inputs are not allowed");
   if (typeof input.features!=="object"||input.features===null||Array.isArray(input.features)) {
     throw new TypeError("features must be an object");
   }
-  const fields=FEATURES_V1.fields as Record<string,string>;
+  const fields=definition.fields;
   for (const key of Object.keys(input.features)) {
     if (!Object.hasOwn(fields,key)) throw new TypeError("Unknown feature field: "+key);
   }
@@ -79,19 +111,23 @@ export function validateFeatureSnapshot(input: FeatureSnapshot): {
   return {
     canonicalTokenId:input.canonicalTokenId,asOf,
     maxInputObservedAt:observed,
-    featureVersion:FEATURES_V1.version,features:input.features,
+    featureVersion:input.featureVersion,features:input.features,
   };
 }
 
 /** Ensure the feature registry is immutable for a given version. */
-export async function registerFeatureVersion(tx: PgTransaction): Promise<void> {
-  const definition=JSON.stringify(FEATURES_V1);
+export async function registerFeatureVersion(
+  tx: PgTransaction, featureVersion: FeatureVersion = FEATURES_V1.version,
+): Promise<void> {
+  const definition = FEATURE_DEFINITIONS[featureVersion];
+  if (!definition) throw new TypeError("Unknown feature version");
+  const json=JSON.stringify(definition);
   const insert=await tx.query(`INSERT INTO feature_versions(feature_version,definition)
     VALUES ($1,$2::jsonb) ON CONFLICT DO NOTHING RETURNING feature_version`,
-    [FEATURES_V1.version,definition]);
+    [featureVersion,json]);
   if (insert.rows.length) return;
   const verified=await tx.query(`SELECT definition = $2::jsonb AS same
-    FROM feature_versions WHERE feature_version=$1`,[FEATURES_V1.version,definition]);
+    FROM feature_versions WHERE feature_version=$1`,[featureVersion,json]);
   if (verified.rows.length!==1 || verified.rows[0]?.same!==true) {
     throw new Error("Feature definition version collision");
   }
@@ -123,14 +159,16 @@ export async function putFeatureSnapshot(tx: PgTransaction, source: FeatureSnaps
 
 export async function queryFeaturesAsOf(
   tx: PgTransaction, tokenId: TokenId, asOf: Date | string,
+  featureVersion: FeatureVersion = FEATURES_V1.version,
 ): Promise<Record<string, unknown> | null> {
   if (parseTokenId(tokenId)?.id!==tokenId) throw new TypeError("Noncanonical token ID");
+  if (!FEATURE_DEFINITIONS[featureVersion]) throw new TypeError("Unknown feature version");
   const result=await tx.query(`SELECT canonical_token_id,as_of,max_input_observed_at,
     computed_at,feature_version,features
     FROM chain_token_features WHERE canonical_token_id=$1 AND feature_version=$2
       AND as_of <= $3 AND max_input_observed_at <= $3
     ORDER BY as_of DESC LIMIT 1`,[
-      tokenId,FEATURES_V1.version,toUtcIso(asOf),
+      tokenId,featureVersion,toUtcIso(asOf),
     ]);
   return result.rows[0]??null;
 }

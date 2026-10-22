@@ -5,6 +5,7 @@ on:
     paths:
       - "intelligence/**"
       - "packages/contracts/**"
+      - "packages/ai-gateway/**"
       - ".github/workflows/intelligence-foundation.yml"
   push:
     branches: [main]
@@ -43,5 +44,7 @@ jobs:
       - run: npm --prefix packages/contracts run check
       - run: npm install --prefix packages/event-outbox --no-package-lock --no-audit
       - run: npm --prefix packages/event-outbox run check
+      - run: npm install --prefix packages/ai-gateway --no-package-lock --no-audit
+      - run: npm --prefix packages/ai-gateway run check
       - run: npm install --prefix intelligence --no-package-lock --no-audit
       - run: npm --prefix intelligence run check

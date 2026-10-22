@@ -4,3 +4,6 @@ export * from "./delivery.js";
 export * from "./features.js";
 export * from "./token-links.js";
 export * from "./blockchain-swaps.js";
+export * from "./cross-platform.js";
+export * from "./backtest.js";
+export * from "./ai-analysis.js";
