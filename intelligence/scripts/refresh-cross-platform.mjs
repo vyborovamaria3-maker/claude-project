@@ -61,11 +61,16 @@ async function main() {
           ON event.source_system=entity.source_system
           AND event.source_event_kind=entity.source_event_kind
           AND event.event_key=entity.event_key
+        JOIN intelligence_inbox inbox
+          ON inbox.source_system=event.source_system
+          AND inbox.event_kind=event.source_event_kind
+          AND inbox.event_key=event.event_key
         WHERE entity.kind='token'
-          AND event.occurred_at >= $1::date
-          AND event.occurred_at < ($1::date + INTERVAL '1 day')
+          AND event.occurred_at >= ($1::date::timestamp AT TIME ZONE 'UTC')
+          AND event.occurred_at < (($1::date + INTERVAL '1 day') AT TIME ZONE 'UTC')
           AND event.occurred_at <= $2::timestamptz
           AND event.observed_at <= $2::timestamptz
+          AND inbox.ingested_at <= $2::timestamptz
         ORDER BY entity.canonical_id LIMIT $3`,[args.day,args.asOf,args.limit]);
       tokens=result.rows.map((row)=>row.canonical_id);
     }
