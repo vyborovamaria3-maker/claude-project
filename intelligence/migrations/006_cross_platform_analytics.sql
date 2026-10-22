@@ -120,6 +120,8 @@ CREATE TABLE IF NOT EXISTS token_correlations (
 );
 CREATE INDEX IF NOT EXISTS idx_token_correlations_significance
   ON token_correlations(canonical_token_id,p_value ASC NULLS LAST,evaluated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_token_correlations_observation
+  ON token_correlations(canonical_token_id,event_kind,event_at,outcome_kind,evaluated_at);
 
 CREATE TABLE IF NOT EXISTS token_alerts (
   alert_id BIGSERIAL PRIMARY KEY,

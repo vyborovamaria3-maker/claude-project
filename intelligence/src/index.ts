@@ -7,3 +7,4 @@ export * from "./blockchain-swaps.js";
 export * from "./cross-platform.js";
 export * from "./backtest.js";
 export * from "./ai-analysis.js";
+export * from "./correlations.js";
