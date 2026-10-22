@@ -169,6 +169,29 @@ def test_dataset_import_merges_sources_and_queues_public_channels(tmp_path: Path
                     )
                 ).scalar_one()
                 assert beta.meta["discovery_registry"]["source"] == "teragram"
+
+            for _ in range(8):
+                await record_discovery_results(
+                    sessionmaker,
+                    [{"username": "beta_calls", "error": "channel unavailable"}],
+                )
+            async with sessionmaker() as session:
+                beta = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "beta_calls")
+                    )
+                ).scalar_one()
+                assert beta.is_active is False
+
+            await import_dataset_candidates(sessionmaker, StubSettings(), paths=[teragram])
+            async with sessionmaker() as session:
+                beta = (
+                    await session.execute(
+                        select(TelegramChannel).where(TelegramChannel.username == "beta_calls")
+                    )
+                ).scalar_one()
+                assert beta.is_active is False
+                assert beta.meta["discovery_registry"]["state"] == "unavailable"
         finally:
             await engine.dispose()
 
