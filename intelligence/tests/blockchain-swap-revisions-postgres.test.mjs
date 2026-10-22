@@ -5,6 +5,7 @@ import {createRequire} from "node:module";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
 import Database from "better-sqlite3";
+import {queryTokenApi} from "../api/routes.mjs";
 import {
   SQLITE_OUTBOX_DDL,emitSqlite,claimSqlite,ackSqlite,failSqlite,
 } from "@claude-project/event-outbox";
@@ -254,6 +255,31 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
     assert.equal(chainActive[0].signature,signature);
     assert.deepEqual(new Set(socialActive.map(row=>row.evidence_source_id)),
       new Set(["tg:message:-1001234567:50","x:tweet:1234567890123456789"]));
+    // Exercise the REAL read-only API projection over the same destination
+    // PostgreSQL tables (not a mocked HTTP pool or fabricated response).
+    const apiRequest=(knownAt,limit=10)=>({
+      kind:"evidence",tokenId:token,
+      occurredBefore:"2026-10-18T02:00:00Z",knownAt,limit,
+    });
+    const beforeEdit=await queryTokenApi(pool,apiRequest("2026-10-20T01:25:00Z"));
+    assert.deepEqual(new Set(beforeEdit.socialLinks.map(row=>row.source)),
+      new Set(["tg","x"]));
+    assert.equal(beforeEdit.blockchainSwapEvidence.length,1);
+    assert.equal(beforeEdit.blockchainSwapEvidence[0].evidenceId,
+      "chain:tx:solana:"+signature);
+    assert.equal(beforeEdit.tradeStatus,"not_a_confirmed_trade_tape");
+    assert.equal(beforeEdit.historicalCompleteness,"unknown");
+    assert.equal(beforeEdit.blockchainFinality,"not_independently_verified");
+    const serialized=JSON.stringify(beforeEdit);
+    assert.equal(serialized.includes("sourceRevisionSha256"),false);
+    assert.equal(serialized.includes("rawSha256"),false);
+    assert.equal(serialized.includes("walletId"),false);
+    const limited=await queryTokenApi(pool,apiRequest("2026-10-20T01:25:00Z",1));
+    assert.equal(limited.socialLinks.length,1);
+    assert.equal(limited.socialLinksTruncated,true,
+      "social links and chain evidence must be bounded independently");
+    assert.equal(limited.blockchainSwapEvidence.length,1);
+    assert.equal(limited.blockchainSwapEvidenceTruncated,false);
     // One Telegram message may reference more than one verified mint.
     // Its later source-level tombstone MUST invalidate every mint, not just
     // whichever token was active in a particular token-centric query.
@@ -295,6 +321,16 @@ test("ARCH-06b: immutable PG revisions, unsupported correction, late delivery, a
       .map(row=>row.source_system),["x"]);
     assert.equal((await queryActiveBlockchainSwapEvidence(pool,token,
       "2026-10-18T02:00:00Z","2026-10-20T01:30:00Z")).length,1);
+    const afterEdit=await queryTokenApi(pool,apiRequest("2026-10-20T01:30:00Z"));
+    assert.deepEqual(afterEdit.socialLinks.map(row=>row.source),["x"]);
+    assert.equal(afterEdit.blockchainSwapEvidence.length,1,
+      "a TG edit must never invalidate an independent Blockchain swap revision");
+    const wrongToken=await queryTokenApi(pool,{
+      ...apiRequest("2026-10-20T01:30:00Z"),
+      tokenId:canonicalTokenIdFromNative("solana-mainnet",mint),
+    });
+    assert.equal(wrongToken.socialLinks.length,0);
+    assert.equal(wrongToken.blockchainSwapEvidence.length,0);
     assert.equal((await deliverSocial(tgEvent)).duplicates,1);
     assert.equal((await deliverSocial(secondTg)).duplicates,1);
     assert.equal((await deliverSocial(edited)).duplicates,1);
