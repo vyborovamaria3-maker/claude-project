@@ -53,6 +53,9 @@ function run(){
     persistEvents(db,"wallet","wallet-failed",[fifth]);
     const sixth=saved(5);
     persistEvents(db,"wallet","wallet-missing-target",[sixth]);
+    // In production processOne finalizes coverage flags after RAW ingestion
+    // in the SAME commit. The fixture mimics that final checkpoint update.
+    db.prepare("UPDATE chain_forensic_history_coverage SET coverage_status='provider_exhausted', possible_gap=0, backfill_complete=1, forward_cursor_pending=0, gap_reason=NULL WHERE address NOT IN ('wallet-corrupt')").run();
     const report=aggregate(db,{limit:20});
     assert.equal(report.version,"history-finality-audit-v1");
     assert.equal(report.finalityVerified,false);
