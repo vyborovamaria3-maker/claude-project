@@ -3,9 +3,6 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from app.models.social_intelligence import TelegramChannel, TelegramDatasetImportCheckpoint
 from app.services.telegram_dataset_sources import (
     _normalize_candidate,
@@ -18,6 +15,8 @@ from app.services.telegram_discovery_registry import (
     record_discovery_results,
 )
 from app.services.telegram_runtime import TelegramMonitorManager
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 class StubSettings:
