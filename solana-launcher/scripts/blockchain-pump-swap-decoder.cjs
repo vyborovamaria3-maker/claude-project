@@ -77,15 +77,18 @@ function cashFlow(tx, instructions, mint, owner) {
   }
   return delta;
 }
-function routePrefix(data) {
-  if (typeof data !== "string" || data.length > 100) return "";
+function instructionBytes(data) {
+  if (typeof data !== "string" || data.length > 100) return null;
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
   let n = 0n;
-  for (const c of data) { const v = alphabet.indexOf(c); if (v < 0) return ""; n = n * 58n + BigInt(v); }
+  for (const c of data) { const v = alphabet.indexOf(c); if (v < 0) return null; n = n * 58n + BigInt(v); }
   let hex = n.toString(16); if (hex.length % 2) hex = "0" + hex;
-  const bytes = Buffer.from(hex, "hex");
-  const prefix = bytes.subarray(0, 8).toString("hex");
-  return (bytes.length === 57 && prefix === "aa2955b184501f35") || (bytes.length === 56 && prefix === "be9ca9b0959aa16c") ? prefix : "";
+  return Buffer.from(hex, "hex");
+}
+function routePrefix(data) {
+  const bytes=instructionBytes(data); if(!bytes)return "";
+  const prefix=bytes.subarray(0,8).toString("hex");
+  return (bytes.length===57&&prefix==="aa2955b184501f35")||(bytes.length===56&&prefix==="be9ca9b0959aa16c")?prefix:"";
 }
 function containsPump(tx,group) {
   return tx.raw.transaction.message.instructions[group.index]?.programId===PUMP || group.instructions.some(ix=>ix.programId===PUMP);
@@ -205,6 +208,94 @@ function wxmrRoute(tx,mint,owner,buy,pumpGroups,poolOwner) {
   return {groups,currency:settlement[0],intermediateDeltaRaw:actual,conversionGroup: candidates[0]?.index??null};
 }
 
+const ORDER_PROGRAM='6Vo3245eszAb5wuqEMw8mGdbfRUdKbHhDHP5LcaGuTAB';
+const USDC='EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+function decodeLimitOrderSell(tx,mint,event,deltas,signers) {
+  if(event.buy || deltas.length!==2)return null;
+  const custody=deltas.find(d=>BigInt(d.deltaRaw)===-event.tokenRaw&&d.owner===event.protocolUser);
+  const pool=deltas.find(d=>BigInt(d.deltaRaw)===event.tokenRaw);
+  if(!custody||!pool||signers.has(custody.owner)||!Number.isInteger(custody.decimals)||custody.decimals<0||custody.decimals>18)return null;
+  if([...tx.preTokenBalances,...tx.postTokenBalances].some(b=>(b.mint===USDC&&b.uiTokenAmount?.decimals!==6)||(b.mint===WXMR&&b.uiTokenAmount?.decimals!==12)))return null;
+  const matches=[],targetOwners=tokenAccounts(tx,mint),quoteOwners=tokenAccounts(tx,USDC),wxmrOwners=tokenAccounts(tx,WXMR);
+  const all=[...tx.raw.transaction.message.instructions,...(tx.raw.meta.innerInstructions||[]).flatMap(g=>g.instructions)];
+  const delta=(owner,currency)=>BigInt((tx.tokenBalanceDeltas||[]).find(d=>d.owner===owner&&d.mint===currency)?.deltaRaw||'0');
+  for(const group of tx.raw.meta.innerInstructions||[]) {
+    const outer=tx.raw.transaction.message.instructions[group.index],a=outer?.accounts,bytes=instructionBytes(outer?.data);
+    // Observed ExecuteLimitOrder ABI: executor, beneficiary, input/output
+    // mints, custody authority, custody accounts and beneficiary destination.
+    if(outer?.programId!==ORDER_PROGRAM||!bytes||bytes.length!==65||bytes.subarray(0,8).toString('hex')!=='34213c1e2f642816'
+      ||!a||a.length<18||!signers.has(a[0])||a[1]===a[0]||a[1]===custody.owner
+      ||a[2]!==mint||a[7]!==mint||a[3]!==USDC||a[9]!==USDC||a[6]!==custody.owner
+      ||targetOwners.get(a[8])!==custody.owner||quoteOwners.get(a[10])!==custody.owner
+      ||quoteOwners.get(a[11])!==a[1]||targetOwners.get(a[12])!==a[1]||!containsPump(tx,group))continue;
+    const ix=group.instructions;
+    const transfers=ix.filter(x=>TOKEN_PROGRAMS.has(x.programId)&&x.parsed?.type==='transferChecked'&&x.parsed.info.mint===mint).map(x=>x.parsed.info);
+    if(transfers.length!==1)continue;
+    const input=transfers[0];
+    if(input.source!==a[8]||input.authority!==custody.owner||targetOwners.get(input.destination)!==pool.owner||input.tokenAmount.amount!==String(event.tokenRaw)||input.tokenAmount.decimals!==custody.decimals)continue;
+    if(cashFlow(tx,all,mint,custody.owner)!==-event.tokenRaw)continue;
+    const checked=ix.filter(x=>TOKEN_PROGRAMS.has(x.programId)&&x.parsed?.type==='transferChecked').map(x=>x.parsed.info);
+    const received=checked.filter(i=>i.mint===WXMR&&wxmrOwners.get(i.source)===pool.owner&&wxmrOwners.get(i.destination)===custody.owner);
+    const spent=checked.filter(i=>i.mint===WXMR&&wxmrOwners.get(i.source)===custody.owner&&wxmrOwners.get(i.destination)!==custody.owner);
+    if(received.length!==1||spent.length!==1||received[0].tokenAmount.amount!==spent[0].tokenAmount.amount||checked.indexOf(received[0])>=checked.indexOf(spent[0]))continue;
+    const quoteIn=checked.filter(i=>i.mint===USDC&&i.destination===a[10]&&quoteOwners.get(i.source)===wxmrOwners.get(spent[0].destination));
+    if(quoteIn.length!==1||checked.indexOf(spent[0])>=checked.indexOf(quoteIn[0]))continue;
+    const out=ix.filter(x=>TOKEN_PROGRAMS.has(x.programId)&&['transfer','transferChecked'].includes(x.parsed?.type)&&x.parsed.info.source===a[10]).map(x=>x.parsed.info);
+    const amount=i=>BigInt(i.tokenAmount?.amount??i.amount);
+    if(out.length!==2||!out.every(i=>i.authority===custody.owner))continue;
+    const net=out.find(i=>i.destination===a[11]),fee=out.find(i=>quoteOwners.get(i.destination)===a[0]);
+    if(!net||!fee||net===fee||amount(net)<=0n||amount(fee)<=0n||amount(net)+amount(fee)!==amount(quoteIn[0]))continue;
+    if(amount(net)>BigInt(Number.MAX_SAFE_INTEGER)||custody.decimals<0||custody.decimals>18)continue;
+    if(delta(custody.owner,WXMR)!==0n||delta(custody.owner,USDC)!==0n
+      ||cashFlow(tx,all,WXMR,custody.owner)!==0n||cashFlow(tx,all,USDC,custody.owner)!==0n
+      ||delta(a[1],USDC)!==amount(net)||cashFlow(tx,all,USDC,a[1])!==amount(net)
+      ||delta(a[0],USDC)!==amount(fee)||cashFlow(tx,all,USDC,a[0])!==amount(fee))continue;
+    // Do not infer any SOL price from the pool's zero legacy SOL field.
+    matches.push({signature:tx.signature,timestamp:tx.timestamp,slot:tx.slot,trader:a[1],type:'sell',
+      amountTokens:Number(event.tokenRaw)/10**custody.decimals,amountSol:0,priceSol:0,
+      quoteMint:USDC,quoteDecimals:6,quoteAmount:Number(amount(net))/1e6,quoteAmountRaw:String(amount(net)),
+      fee:Number(tx.raw.meta.fee||0)/1e9,feeLamports:Number(tx.raw.meta.fee||0),feePayer:a[0],source:'alchemy',decoderCoverage:'swap_only',
+      attribution:'limit_order_beneficiary_and_custody_transfer',custodyOwner:custody.owner,executedBy:a[0],protocolTrader:event.protocolUser,
+      settlementGrossRaw:String(amount(quoteIn[0])),settlementDeductions:[{owner:a[0],quoteMint:USDC,amountRaw:String(amount(fee))}],
+      quoteWalletDeltaRaw:String(amount(net)),quoteRouteDeltaRaw:String(amount(net)),quoteExternalDeltaRaw:'0',
+      orderProgram:ORDER_PROGRAM,orderInstructionGroup:group.index});
+  }
+  return matches.length===1?matches[0]:null;
+}
+function classifyIntermediatePumpSell(tx,mint) {
+  if(tx?.transactionError!==null||tx.raw?.meta?.err!==null||tx.raw.transaction?.signatures?.[0]!==tx.signature)return null;
+  const events=pumpEvents(tx.raw);
+  if(events.length!==2||events[0].buy||events[1].buy||events[1].mint!==mint||events[0].mint===mint||events[0].protocolUser!==events[1].protocolUser)return null;
+  const user=events[0].protocolUser,signers=new Set(tx.raw.transaction.message.accountKeys.filter(k=>k.signer===true).map(k=>k.pubkey));
+  if(!signers.has(user))return null;
+  const target=(tx.tokenBalanceDeltas||[]).filter(d=>d.mint===mint&&d.deltaRaw!=='0');
+  if(target.length!==2)return null;
+  const source=target.find(d=>BigInt(d.deltaRaw)===-events[1].tokenRaw),pool=target.find(d=>BigInt(d.deltaRaw)===events[1].tokenRaw);
+  if(!source||!pool||source.owner===user||pool.owner===user||signers.has(source.owner))return null;
+  // Verify pool identity rather than merely labelling a non-signing owner.
+  try {
+    const {PublicKey}=require('@solana/web3.js');
+    const curve=m=>PublicKey.findProgramAddressSync([Buffer.from('bonding-curve'),new PublicKey(m).toBuffer()],new PublicKey(PUMP))[0].toBase58();
+    if(curve(events[0].mint)!==source.owner||curve(mint)!==pool.owner)return null;
+  }catch{return null;}
+  const upstream=events[0],inDelta=(tx.tokenBalanceDeltas||[]).filter(d=>d.mint===upstream.mint&&d.deltaRaw!=='0');
+  if(inDelta.length!==2||!inDelta.some(d=>d.owner===user&&BigInt(d.deltaRaw)===-upstream.tokenRaw)
+    ||!inDelta.some(d=>d.owner===source.owner&&BigInt(d.deltaRaw)===upstream.tokenRaw))return null;
+  const targetOwners=tokenAccounts(tx,mint),upstreamOwners=tokenAccounts(tx,upstream.mint),matches=[];
+  for(const group of tx.raw.meta.innerInstructions||[]) {
+    const outer=tx.raw.transaction.message.instructions[group.index],bytes=instructionBytes(outer?.data);
+    if(outer?.programId!==ORDER_PROGRAM||!bytes||bytes.length!==68||bytes.subarray(0,8).toString('hex')!=='be8efb768a255abd'||!containsPump(tx,group))continue;
+    const transfers=group.instructions.filter(x=>TOKEN_PROGRAMS.has(x.programId)&&x.parsed?.type==='transferChecked').map(x=>x.parsed.info);
+    const input=transfers.filter(i=>i.mint===upstream.mint&&i.authority===user&&upstreamOwners.get(i.source)===user&&upstreamOwners.get(i.destination)===source.owner&&i.tokenAmount.amount===String(upstream.tokenRaw));
+    const intermediate=transfers.filter(i=>i.mint===mint&&i.authority===source.owner&&targetOwners.get(i.source)===source.owner&&targetOwners.get(i.destination)===pool.owner&&i.tokenAmount.amount===String(events[1].tokenRaw));
+    if(input.length!==1||intermediate.length!==1||transfers.indexOf(input[0])>=transfers.indexOf(intermediate[0]))continue;
+    matches.push({signature:tx.signature,mint,classification:'intermediate_pool_leg',initiator:user,sourcePool:source.owner,targetPool:pool.owner,
+      soldInputMint:upstream.mint,soldInputAmountRaw:String(upstream.tokenRaw),intermediateAmountRaw:String(events[1].tokenRaw),
+      walletTrade:false,poolPdaVerified:true,reason:'Signed user sells another mint; MBC moves directly from its upstream pool into the next Pump pool'});
+  }
+  return matches.length===1?matches[0]:null;
+}
+
 function decodePumpSwap(tx, mint) {
   if (tx?.transactionError !== null || tx.raw?.meta?.err !== null || !Number.isSafeInteger(tx.slot)) return null;
   const raw = tx.raw;
@@ -239,7 +330,7 @@ function decodePumpSwap(tx, mint) {
   const signedAmount = event.buy ? event.tokenRaw : -event.tokenRaw;
   const split = splitBuy(tx, mint, event, deltas, signers) || forwardedBuy(tx,mint,event,deltas,signers);
   const candidates = deltas.filter(d => signers.has(d.owner) && BigInt(d.deltaRaw) === signedAmount);
-  if (!split && (deltas.length !== 2 || candidates.length !== 1)) return null;
+  if (!split && (deltas.length !== 2 || candidates.length !== 1)) return decodeLimitOrderSell(tx,mint,event,deltas,signers);
   const trader = split ? split.trader : candidates[0];
   const pools = deltas.filter(d => d.owner !== trader.owner && BigInt(d.deltaRaw) === -signedAmount);
   if (pools.length !== 1 || !Number.isInteger(trader.decimals) || trader.decimals < 0 || trader.decimals > 18) return null;
@@ -337,4 +428,4 @@ function decodePumpSwap(tx, mint) {
     ...(split ? { fundedBy: split.quoteOwner, grossTokenAmountRaw: split.grossTokenAmountRaw,
       tokenDeductions: split.tokenDeductions, attribution: split.forwarded ? "signed_funder_and_exact_forwarded_recipient" : "router_swap_tob_recipient_and_split_transfer_ledger" } : {}) };
 }
-module.exports = { decodePumpSwap, pumpEvents };
+module.exports = { decodePumpSwap, pumpEvents, classifyIntermediatePumpSell };
