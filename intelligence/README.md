@@ -3,7 +3,7 @@
 The Intelligence modules are built independently of collector databases.
 Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005 and 006. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled). Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
+Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005 and 006. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
 
 - Ingest RegistryEvent after claiming a source outbox event; source ACK only after
   destination transaction commits. Consumer runDeliveryBatch remains a bounded,
@@ -30,6 +30,8 @@ Local commands (Node 22+):
   npm --prefix packages/contracts run check
   npm install --prefix packages/event-outbox --ignore-scripts --no-package-lock
   npm --prefix packages/event-outbox run check
+  npm install --prefix packages/ai-gateway --no-package-lock
+  npm --prefix packages/ai-gateway run check
   npm install --prefix intelligence --ignore-scripts --no-package-lock
   npm --prefix intelligence run check
 
