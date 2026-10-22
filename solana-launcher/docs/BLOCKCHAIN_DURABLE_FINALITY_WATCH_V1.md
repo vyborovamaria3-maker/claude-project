@@ -35,6 +35,9 @@ live-этапа. Слово «watcher» означает повторный ау
 ```bash
 npm run blockchain:finality-watch-test
 
+# Посмотреть необработанную очередь инвалидаций, ничего не применяя:
+npm run blockchain:finality-watch-report -- --state /absolute/path/to/finality-watch-state.db --limit 50
+
 # Однократный bounded read-only проход (до 25 signatures):
 npm run blockchain:finality-watch -- \
   --db /absolute/path/to/trade.db \
