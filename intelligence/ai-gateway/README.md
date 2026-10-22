@@ -28,7 +28,7 @@ request timeout enforced, responses are bounded in size, and redirects
 forbidden. Actual data-handling behavior still depends on the provider
 account's terms and settings; operators must review that independently.
 
-## Three distinct credentials
+## Four distinct credentials
 
 1. `INTELLIGENCE_API_TOKEN`: ordinary service credential, NOT usable for AI.
 2. `INTELLIGENCE_AI_API_TOKEN`: credential for `/ai-context`, held only by
@@ -130,7 +130,7 @@ Example success shape:
   "classification": "unverified_model_interpretation",
   "evidenceCompleteness": "unknown",
   "isTradingSignal": false,
-  "providerFinalityVerified": false
+  "blockchainFinalityVerified": false
 }
 ```
 
