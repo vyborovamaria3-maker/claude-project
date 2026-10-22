@@ -75,7 +75,38 @@ test("cross-platform refresh SQL keeps transaction, swap evidence and settled tr
     }
     await recordSourceCoverageWindow(client,{
       sourceSystem:"blockchain",windowStart,windowEnd,knownAt:swapKnownAt,status:"complete",
-      evidenceCount:0,details:{scope:"token_swap_evidence_revisions"},
+      evidenceCount:null,details:{scope:"token_swap_evidence_revisions"},
+    });
+    const addRevision=async({eventKey,walletId,signature,rawRevision,rawSha256,state,canonicalTokenId,slot,observedAt,occurredAt})=>{
+      await client.query(`INSERT INTO intelligence_inbox
+        (source_system,event_kind,event_key,schema_version,evidence_source_id,ingested_at)
+        VALUES ('blockchain','token_swap_evidence_revision',$1,'chain-token-revision-v1',$2,NOW())`,
+      [eventKey,"chain:tx:solana:"+signature]);
+      await client.query(`INSERT INTO blockchain_swap_evidence_revisions
+        (source_system,event_kind,event_key,wallet_id,signature,raw_revision,raw_sha256,state,
+         canonical_token_id,slot,observed_at,occurred_at,details)
+        VALUES ('blockchain','token_swap_evidence_revision',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,[
+        eventKey,walletId,signature,rawRevision,rawSha256,state,canonicalTokenId,slot,
+        observedAt,occurredAt,JSON.stringify({testFixture:true}),
+      ]);
+    };
+    const wallet="solana:11111111111111111111111111111111";
+    const observedAt=new Date(now-1_000).toISOString();
+    const swapAt=day+"T03:00:00.000Z";
+    await addRevision({
+      eventKey:"fixture:supported:revision:1",walletId:wallet,signature:"fixture-supported-signature",
+      rawRevision:1,rawSha256:"a".repeat(64),state:"supported",canonicalTokenId:token,slot:100,
+      observedAt,occurredAt:swapAt,
+    });
+    await addRevision({
+      eventKey:"fixture:retracted:revision:1",walletId:wallet,signature:"fixture-retracted-signature",
+      rawRevision:1,rawSha256:"b".repeat(64),state:"supported",canonicalTokenId:token,slot:101,
+      observedAt,occurredAt:day+"T04:00:00.000Z",
+    });
+    await addRevision({
+      eventKey:"fixture:retracted:revision:2",walletId:wallet,signature:"fixture-retracted-signature",
+      rawRevision:2,rawSha256:"c".repeat(64),state:"unsupported",canonicalTokenId:null,slot:null,
+      observedAt:new Date(now-500).toISOString(),occurredAt:null,
     });
     const snapshot=await refreshTokenDailyCrossPlatform(client,token,day,asOf);
     assert.equal(snapshot.tgMentions,0);
@@ -83,9 +114,9 @@ test("cross-platform refresh SQL keeps transaction, swap evidence and settled tr
     assert.equal(snapshot.chainTransactions,0);
     assert.equal(snapshot.chainTrades,null);
     assert.equal(snapshot.chainVolumeUsd,null);
-    assert.equal(snapshot.chainSwapEvidenceCount,0);
+    assert.equal(snapshot.chainSwapEvidenceCount,1);
     assert.equal(snapshot.firstTradeAt,null);
-    assert.equal(snapshot.firstSwapEvidenceAt,null);
+    assert.equal(snapshot.firstSwapEvidenceAt,new Date(swapAt).toISOString());
     assert.ok(snapshot.maxInputObservedAt<=snapshot.asOf);
     await client.query("ROLLBACK");
   }catch(error){
