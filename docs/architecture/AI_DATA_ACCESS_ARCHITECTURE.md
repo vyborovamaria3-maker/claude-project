@@ -6,7 +6,7 @@ canonical-token/source-evidence work in PR #165. All deployment switches are
 
 ## Objective and hard boundaries
 
-The future AI service consumes a **versioned, explicit server-to-server API**.
+The implemented local AI gateway consumes a **versioned, explicit server-to-server API**, with external model egress opt-in only.
 It must NOT receive credentials for any native collector database, perform
 arbitrary SQL, inspect raw social content, acquire signing/trading keys, or
 treat model output as a confirmed trade/signal.
@@ -122,6 +122,41 @@ PnL, quantified edge, investment signals or private actor identities.
 9. Credential scopes are disjoint. Ordinary Intelligence v1 Bearer cannot
    call `ai-context`, and AI Bearer cannot call `/health`, `/links` or
    other regular routes.
+
+## Implemented model-API gateway (still default-off)
+
+The dependent Draft PR now includes `intelligence/ai-gateway/`, not just
+the read model. It is a **loopback-only server** on 127.0.0.1:3183 with
+`POST /api/ai/v1/analyze-token`, exposed solely to a trusted
+application backend via **separate** `AI_GATEWAY_CLIENT_TOKEN`.
+Requests contain only a canonical token ID, `occurredBefore`, `knownAt`
+and `limit`; there is **no free-form prompt, SQL, tool declaration,
+model selection or destination URL** on this endpoint. It retrieves the
+Intelligence-only `/ai-context` using `INTELLIGENCE_AI_API_TOKEN`.
+
+A second explicit projection verifies source evidence count bounds,
+missing-feature semantics and source clock cutoffs, validates numerical
+feature ranges and timestamps (rejects free-text disguised as a timestamp),
+and strips every unrecognized field before external transmission.
+The model receives a strict data-only payload without message contents,
+wallet identifiers, unknown source strings or provider keys.
+
+The provider adapter is fixed to the HTTPS OpenAI Responses endpoint.
+It uses `store:false`, no tools, a 600-token output budget, response
+byte limits, a timeout and `redirect:"error"`. The generated analysis is
+clearly labeled **unverified model interpretation**; no order submission,
+wallet command, trading signal or PnL estimate is implemented.
+The provider key remains server-side and is sent **only as provider HTTP
+authorization**. The adapter does **not** imply provider privacy guarantees
+beyond the request setting or an operator-reviewed account agreement.
+
+Provider egress requires explicit `AI_GATEWAY_ENABLED=true`,
+`AI_GATEWAY_EGRESS_ENABLED=true` and `INTELLIGENCE_AI_API_ENABLED=true`
+plus valid, independently scoped keys. No real provider call has been made,
+and no production deployment is enabled. See the complete operator runbook:
+[`intelligence/ai-gateway/README.md`](../../intelligence/ai-gateway/README.md).
+No hosted multi-user gateway, user-authenticated public endpoint, model
+evaluation or billing control system has been deployed.
 
 ## Future stages — **not implemented by this PR**
 
