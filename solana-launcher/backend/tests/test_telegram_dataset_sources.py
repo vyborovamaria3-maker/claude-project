@@ -2,9 +2,6 @@ import asyncio
 import json
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from app.models.social_intelligence import TelegramChannel
 from app.services.telegram_dataset_sources import (
     _normalize_candidate,
@@ -13,6 +10,8 @@ from app.services.telegram_dataset_sources import (
     import_dataset_candidates,
 )
 from app.services.telegram_discovery_registry import due_registry_channels, record_discovery_results
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 class StubSettings:
