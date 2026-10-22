@@ -61,6 +61,32 @@ test("embeddings validate vector dimensions and preserve provider ordering", asy
   );
 });
 
+test("embeddings reject missing and duplicate indices instead of returning sparse vectors", async () => {
+  for (const data of [[{index:0,embedding:[1,0]}],[{index:0,embedding:[1,0]},{index:0,embedding:[0,1]}]]) {
+    const gateway=createAiGateway({providers:[provider()],defaultProviderId:"primary",fetchImpl:async()=>response({data,usage:{prompt_tokens:2}})});
+    await assert.rejects(gateway.createEmbeddings({texts:["a","b"],expectedDimensions:2}),
+      (error)=>error instanceof AiGatewayError&&error.code==="ai_embedding_response_invalid");
+  }
+});
+
+test("concurrent requests reserve estimated provider budget before yielding", async () => {
+  let calls=0,markStarted,release;
+  const started=new Promise(resolve=>{markStarted=resolve;}), blocked=new Promise(resolve=>{release=resolve;});
+  const gateway=createAiGateway({providers:[provider({inputCostPer1kUsd:1,outputCostPer1kUsd:1,maxEstimatedCostUsd:0.004,maxConcurrent:2})],
+    defaultProviderId:"primary",fetchImpl:async()=>{calls++;markStarted();await blocked;return response({choices:[{message:{content:"ok"}}],usage:{prompt_tokens:2,completion_tokens:1}});}});
+  const first=gateway.chatCompletion({messages:[{role:"user",content:"hello"}],maxTokens:1}); await started;
+  await assert.rejects(gateway.chatCompletion({messages:[{role:"user",content:"hello"}],maxTokens:1}),
+    error=>error instanceof AiGatewayError&&error.code==="ai_provider_cost_budget_exhausted");
+  release(); await first; assert.equal(calls,1); assert.equal(gateway.getMetrics()[0].reservedCostUsd,0);
+});
+
+test("metric callback failures do not turn successful provider calls into failures", async () => {
+  const gateway=createAiGateway({providers:[provider()],defaultProviderId:"primary",onMetric:()=>{throw new Error("telemetry down");},
+    fetchImpl:async()=>response({choices:[{message:{content:"ok"}}]})});
+  assert.equal((await gateway.chatCompletion({messages:[{role:"user",content:"hello"}]})).content,"ok");
+  assert.equal(gateway.getMetrics()[0].successfulRequests,1); assert.equal(gateway.getMetrics()[0].failedRequests,0);
+});
+
 test("transient provider errors retry; authentication errors do not retry", async () => {
   let calls = 0;
   const gateway = createAiGateway({

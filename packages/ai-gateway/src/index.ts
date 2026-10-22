@@ -74,6 +74,7 @@ type ProviderRuntime = {
   inFlight: number;
   requestTimestamps: number[];
   estimatedCostUsd: number;
+  reservedCostUsd: number;
   successfulRequests: number;
   failedRequests: number;
 };
@@ -300,10 +301,14 @@ export function createAiGateway(options: AiGatewayOptions) {
     if (providers.has(provider.id)) throw new AiGatewayError("ai_provider_id_duplicate");
     providers.set(provider.id, provider);
     runtime.set(provider.id, {
-      inFlight: 0, requestTimestamps: [], estimatedCostUsd: 0, successfulRequests: 0, failedRequests: 0,
+      inFlight: 0, requestTimestamps: [], estimatedCostUsd: 0, reservedCostUsd: 0, successfulRequests: 0, failedRequests: 0,
     });
   }
   if (!providers.has(options.defaultProviderId)) throw new AiGatewayError("ai_default_provider_missing");
+
+  function emitMetric(metric: AiMetric): void {
+    try { options.onMetric?.(metric); } catch { /* telemetry must not change request results */ }
+  }
 
   function getProvider(providerId?: string): NormalizedProvider {
     const id = providerId ?? options.defaultProviderId;
@@ -325,11 +330,14 @@ export function createAiGateway(options: AiGatewayOptions) {
     if (state.inFlight >= provider.maxConcurrent) throw new AiGatewayError("ai_provider_capacity_exhausted", null, true);
     const reservation = estimatedReservation(provider, inputChars, outputTokenBudget);
     if (provider.maxEstimatedCostUsd !== undefined &&
-        (reservation === null || state.estimatedCostUsd + reservation > provider.maxEstimatedCostUsd)) {
+        (reservation === null || state.estimatedCostUsd + state.reservedCostUsd + reservation > provider.maxEstimatedCostUsd)) {
       throw new AiGatewayError("ai_provider_cost_budget_exhausted");
     }
+    const budgetReservation = provider.maxEstimatedCostUsd === undefined ? 0 : (reservation ?? 0);
     const started = now();
     state.inFlight++;
+    state.reservedCostUsd += budgetReservation;
+    let reservationReleased = false;
     let lastStatus: number | null = null;
     try {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -373,25 +381,23 @@ export function createAiGateway(options: AiGatewayOptions) {
         const usage = tokenUsage(payload);
         const actualCost = estimateCost(provider, usage.inputTokens, usage.outputTokens);
         state.estimatedCostUsd += actualCost ?? reservation ?? 0;
-        state.successfulRequests++;
+        state.reservedCostUsd = Math.max(0, state.reservedCostUsd - budgetReservation);
+        reservationReleased = true;
         const latencyMs = Math.max(0, now() - started);
-        options.onMetric?.({
-          providerId: provider.id, task, ok: true, latencyMs,
-          inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, estimatedCostUsd: actualCost,
-        });
         return { payload, traceId: randomUUID(), latencyMs, ...usage, estimatedCostUsd: actualCost };
       }
       throw new AiGatewayError("ai_provider_http_error", lastStatus, true);
     } catch (error) {
       state.failedRequests++;
       const statusCode = error instanceof AiGatewayError ? error.statusCode ?? undefined : undefined;
-      options.onMetric?.({
+      emitMetric({
         providerId: provider.id, task, ok: false, latencyMs: Math.max(0, now() - started),
         inputTokens: null, outputTokens: null, estimatedCostUsd: null,
         ...(statusCode !== undefined ? { statusCode } : {}),
       });
       throw error instanceof AiGatewayError ? error : new AiGatewayError("ai_provider_request_failed");
     } finally {
+      if (!reservationReleased) state.reservedCostUsd = Math.max(0, state.reservedCostUsd - budgetReservation);
       state.inFlight--;
     }
   }
@@ -424,12 +430,19 @@ export function createAiGateway(options: AiGatewayOptions) {
       };
       if (request.responseFormat === "json_object") body.response_format = { type: "json_object" };
       const result = await postJson(provider, "chat/completions", body, inputChars, "chat", maxTokens, request.signal);
-      return {
-        content: responseContent(result.payload), providerId: provider.id, model,
-        traceId: result.traceId, latencyMs: result.latencyMs,
-        inputTokens: result.inputTokens, outputTokens: result.outputTokens,
-        estimatedCostUsd: result.estimatedCostUsd,
-      };
+      let content: string;
+      try { content = responseContent(result.payload); }
+      catch (error) {
+        const state = runtime.get(provider.id)!; state.failedRequests++;
+        emitMetric({providerId:provider.id,task:"chat",ok:false,latencyMs:result.latencyMs,inputTokens:result.inputTokens,
+          outputTokens:result.outputTokens,estimatedCostUsd:result.estimatedCostUsd});
+        throw error;
+      }
+      const state = runtime.get(provider.id)!; state.successfulRequests++;
+      emitMetric({providerId:provider.id,task:"chat",ok:true,latencyMs:result.latencyMs,inputTokens:result.inputTokens,
+        outputTokens:result.outputTokens,estimatedCostUsd:result.estimatedCostUsd});
+      return {content,providerId:provider.id,model,traceId:result.traceId,latencyMs:result.latencyMs,
+        inputTokens:result.inputTokens,outputTokens:result.outputTokens,estimatedCostUsd:result.estimatedCostUsd};
     },
     async createEmbeddings(request: EmbeddingRequest): Promise<EmbeddingResult> {
       if (!Array.isArray(request.texts) || request.texts.length < 1 || request.texts.length > 128 ||
@@ -445,37 +458,44 @@ export function createAiGateway(options: AiGatewayOptions) {
       const result = await postJson(provider, "embeddings", {
         model, input: request.texts,
       }, inputChars, "embedding", 0, request.signal);
-      if (!result.payload || typeof result.payload !== "object" ||
-          !Array.isArray((result.payload as { data?: unknown }).data)) {
-        throw new AiGatewayError("ai_embedding_response_invalid");
-      }
-      const data = (result.payload as { data: Array<{ index?: unknown; embedding?: unknown }> }).data;
-      const vectors: number[][] = new Array(request.texts.length);
-      for (const item of data) {
-        if (!Number.isSafeInteger(item.index) || (item.index as number) < 0 ||
-            (item.index as number) >= request.texts.length || !Array.isArray(item.embedding) ||
-            item.embedding.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+      try {
+        if (!result.payload || typeof result.payload !== "object" || !Array.isArray((result.payload as { data?: unknown }).data))
           throw new AiGatewayError("ai_embedding_response_invalid");
+        const data = (result.payload as { data: Array<{ index?: unknown; embedding?: unknown }> }).data;
+        if (data.length !== request.texts.length) throw new AiGatewayError("ai_embedding_response_invalid");
+        const vectors: number[][] = new Array(request.texts.length), seenIndices = new Set<number>();
+        for (const item of data) {
+          if (!item || typeof item !== "object" || !Number.isSafeInteger(item.index) || (item.index as number) < 0 ||
+              (item.index as number) >= request.texts.length || seenIndices.has(item.index as number) ||
+              !Array.isArray(item.embedding) || item.embedding.some((value) => typeof value !== "number" || !Number.isFinite(value)))
+            throw new AiGatewayError("ai_embedding_response_invalid");
+          seenIndices.add(item.index as number); vectors[item.index as number] = item.embedding as number[];
         }
-        vectors[item.index as number] = item.embedding as number[];
+        for (let index=0; index<vectors.length; index++) if (!Array.isArray(vectors[index]))
+          throw new AiGatewayError("ai_embedding_response_invalid");
+        if (request.expectedDimensions !== undefined &&
+            (!Number.isSafeInteger(request.expectedDimensions) || request.expectedDimensions < 1 ||
+             vectors.some((vector) => vector.length !== request.expectedDimensions)))
+          throw new AiGatewayError("ai_embedding_dimensions_mismatch");
+        const state = runtime.get(provider.id)!; state.successfulRequests++;
+        emitMetric({providerId:provider.id,task:"embedding",ok:true,latencyMs:result.latencyMs,inputTokens:result.inputTokens,
+          outputTokens:null,estimatedCostUsd:result.estimatedCostUsd});
+        return {vectors,providerId:provider.id,model,traceId:result.traceId,latencyMs:result.latencyMs,
+          inputTokens:result.inputTokens,estimatedCostUsd:result.estimatedCostUsd};
+      } catch (error) {
+        const state = runtime.get(provider.id)!; state.failedRequests++;
+        const statusCode = error instanceof AiGatewayError ? error.statusCode ?? undefined : undefined;
+        emitMetric({providerId:provider.id,task:"embedding",ok:false,latencyMs:result.latencyMs,inputTokens:result.inputTokens,
+          outputTokens:null,estimatedCostUsd:result.estimatedCostUsd,...(statusCode!==undefined?{statusCode}:{})});
+        throw error;
       }
-      if (vectors.some((vector) => !vector) ||
-          (request.expectedDimensions !== undefined &&
-           (!Number.isSafeInteger(request.expectedDimensions) || request.expectedDimensions < 1 ||
-            vectors.some((vector) => vector.length !== request.expectedDimensions)))) {
-        throw new AiGatewayError("ai_embedding_dimensions_mismatch");
-      }
-      return {
-        vectors, providerId: provider.id, model, traceId: result.traceId,
-        latencyMs: result.latencyMs, inputTokens: result.inputTokens,
-        estimatedCostUsd: result.estimatedCostUsd,
-      };
     },
     getMetrics() {
       return [...runtime.entries()].map(([providerId, state]) => ({
         providerId, inFlight: state.inFlight,
         recentRequests: state.requestTimestamps.length,
         estimatedCostUsd: state.estimatedCostUsd,
+        reservedCostUsd: state.reservedCostUsd,
         successfulRequests: state.successfulRequests,
         failedRequests: state.failedRequests,
       }));
