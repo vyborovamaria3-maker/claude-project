@@ -281,8 +281,12 @@ def _local_row(
         or (topic_by_id or {}).get(channel_id, "")
     ).strip().casefold()
     language = str((language_by_id or {}).get(channel_id, "")).strip().casefold()
-    raw_tags = row.get("tags") if isinstance(row.get("tags"), list) else []
-    tags = [*raw_tags, *([topic] if topic else [])]
+    raw_tags = row.get("tags")
+    tags: list[str] = []
+    if isinstance(raw_tags, list):
+        tags.extend(str(tag).strip() for tag in raw_tags if str(tag).strip())
+    if topic:
+        tags.append(topic)
     if language:
         tags.append(f"lang:{language}")
     return {
