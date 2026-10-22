@@ -65,7 +65,7 @@ test("cross-platform refresh SQL keeps transaction, swap evidence and settled tr
     const windowEnd=nextDay+"T00:00:00.000Z";
     const asOf=new Date(now+30_000).toISOString();
     const genericKnownAt=new Date(Math.max(now-2_000,todayStart+1_000)).toISOString();
-    const swapKnownAt=new Date(Math.max(now-1_000,todayStart+2_000)).toISOString();
+    const swapKnownAt=genericKnownAt;
     const token=formatTokenId("solana","So11111111111111111111111111111111111111112");
     for(const sourceSystem of ["tg","x","blockchain"]){
       await recordSourceCoverageWindow(client,{
