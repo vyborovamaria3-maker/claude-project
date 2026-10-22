@@ -87,6 +87,13 @@ test("metric callback failures do not turn successful provider calls into failur
   assert.equal(gateway.getMetrics()[0].successfulRequests,1); assert.equal(gateway.getMetrics()[0].failedRequests,0);
 });
 
+test("embeddings reject sparse text input arrays", async () => {
+  const gateway=createAiGateway({providers:[provider()],defaultProviderId:"primary",fetchImpl:async()=>response({data:[]})});
+  const texts=new Array(2); texts[0]="hello";
+  await assert.rejects(gateway.createEmbeddings({texts}),
+    error=>error instanceof AiGatewayError&&error.code==="ai_embedding_input_invalid");
+});
+
 test("transient provider errors retry; authentication errors do not retry", async () => {
   let calls = 0;
   const gateway = createAiGateway({

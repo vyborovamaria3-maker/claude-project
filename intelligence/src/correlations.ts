@@ -132,6 +132,7 @@ export async function persistEventOutcomeCorrelations(
     throw new TypeError("Correlation data cutoff precedes an input observation");
   }
   const groups=calculateEventOutcomeCorrelations(samples,evaluatedAt);
+  let inserted=0;
   for(const group of groups) {
     const ordered=[...group.samples].sort((a,b)=>a.eventAt.localeCompare(b.eventAt)||a.outcomeAt.localeCompare(b.outcomeAt));
     const first=ordered[0]; if(!first)continue;

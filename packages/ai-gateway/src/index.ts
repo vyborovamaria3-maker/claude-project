@@ -446,7 +446,8 @@ export function createAiGateway(options: AiGatewayOptions) {
     },
     async createEmbeddings(request: EmbeddingRequest): Promise<EmbeddingResult> {
       if (!Array.isArray(request.texts) || request.texts.length < 1 || request.texts.length > 128 ||
-          request.texts.some((text) => typeof text !== "string" || text.length < 1)) {
+          Array.from({length:request.texts.length},(_,index)=>request.texts[index])
+            .some((text) => typeof text !== "string" || text.length < 1)) {
         throw new AiGatewayError("ai_embedding_input_invalid");
       }
       const provider = getProvider(request.providerId);

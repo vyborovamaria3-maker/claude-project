@@ -47,6 +47,12 @@ test("optional absent z-scores and explicit nulls produce the same immutable sna
     validateCrossPlatformSnapshot({...without,tgMentionsZ1h:null,xMentionsZ1h:null,chainVolumeZ1h:null}).snapshotSha256);
 });
 
+test("optional absent z-scores and explicit nulls produce the same immutable snapshot hash", () => {
+  const without={...base}; delete without.tgMentionsZ1h; delete without.xMentionsZ1h; delete without.chainVolumeZ1h;
+  assert.equal(validateCrossPlatformSnapshot(without).snapshotSha256,
+    validateCrossPlatformSnapshot({...without,tgMentionsZ1h:null,xMentionsZ1h:null,chainVolumeZ1h:null}).snapshotSha256);
+});
+
 test("all-null sources do not manufacture zero attention or risk", () => {
   const input = Object.fromEntries(Object.keys(base).map((key) => [key, null]));
   Object.assign(input, { canonicalTokenId: token, day: "2026-10-22", asOf: "2026-10-22T23:59:00Z", maxInputObservedAt: "2026-10-22T23:58:00Z" });
@@ -94,6 +100,8 @@ test("refresh query separates transactions, supported swap evidence, and settled
   assert.match(aggregateSql, /fe\.max_historical_event_observed_at/);
   assert.match(aggregateSql, /inbox\.ingested_at <= \$3::timestamptz/);
   assert.match(aggregateSql, /MAX\(GREATEST\(observed_at,ingested_at\)\)/);
+  assert.match(aggregateSql, /jsonb_typeof\(payload->'smart_money_bought'\)='boolean'/);
+  assert.doesNotMatch(aggregateSql, /WHEN \(SELECT coverage_status FROM trade_coverage\)='complete' THEN 0/);
   assert.match(aggregateSql, /jsonb_typeof\(payload->'smart_money_bought'\)='boolean'/);
   assert.doesNotMatch(aggregateSql, /WHEN \(SELECT coverage_status FROM trade_coverage\)='complete' THEN 0/);
   assert.match(aggregateSql, /created_at <= \$3::timestamptz/);
