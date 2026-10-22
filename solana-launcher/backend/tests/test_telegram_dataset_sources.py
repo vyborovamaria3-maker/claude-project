@@ -1,4 +1,3 @@
-import asyncio
 import json
 from pathlib import Path
 
@@ -122,7 +121,10 @@ async def test_dataset_candidates_share_registry_and_are_idempotent() -> None:
         assert channel.title == "Alpha Calls"
         assert channel.participants == 100
         assert channel.meta["dataset_sources"] == ["snapshot-a"]
-        assert channel.meta["dataset_provenance"]["snapshot-a"]["license"] == "CC-BY-4.0"
+        assert (
+            channel.meta["dataset_provenance"]["snapshot-a"]["license"]
+            == "CC-BY-4.0"
+        )
         assert channel.meta["dataset_tags"] == ["crypto"]
         assert channel.meta["discovery_registry"]["state"] == "candidate"
         assert "alphacalls" in due
