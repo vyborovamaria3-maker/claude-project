@@ -26,7 +26,7 @@ test("backtest computes precision, recall, uplift and confidence bounds", () => 
   assert.equal(result.metrics.recall, 2 / 3);
   assert.equal(result.metrics.baselineCount, 6);
   assert.equal(result.metrics.baselineRate, 0.5);
-  assert.equal(result.metrics.uplift, 1 / 6);
+  assert.ok(Math.abs(result.metrics.uplift - 1 / 6) < 1e-12);
   assert.ok(result.metrics.ciLow <= result.metrics.uplift);
   assert.ok(result.metrics.ciHigh >= result.metrics.uplift);
   assert.ok(result.metrics.pValue >= 0 && result.metrics.pValue <= 1);

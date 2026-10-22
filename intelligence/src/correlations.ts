@@ -144,7 +144,7 @@ export async function persistEventOutcomeCorrelations(
       VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
       ON CONFLICT(canonical_token_id,event_kind,event_at,outcome_kind,evaluated_at) DO UPDATE SET
         outcome_at=NULL,lift=EXCLUDED.lift,ci_low=EXCLUDED.ci_low,ci_high=EXCLUDED.ci_high,p_value=EXCLUDED.p_value,
-        baseline=EXCLUDED.baseline,sample_size=EXCLUDED.sample_size,model_id=EXCLUDED.model_id,data_cutoff_at=EXCLUDED.data_cutoff_at
+        baseline=EXCLUDED.baseline,sample_size=EXCLUDED.sample_size,model_id=EXCLUDED.model_id,data_cutoff_at=EXCLUDED.data_cutoff_at,created_at=NOW()
       RETURNING correlation_id`,[first.canonicalTokenId,group.eventKind,eventWindowStart,group.outcomeKind,
       group.lift,group.ciLow,group.ciHigh,group.pValue,JSON.stringify(baseline),group.sampleSize,input.modelId??null,evaluatedAt,dataCutoffAt]);
     inserted+=result.rows.length;

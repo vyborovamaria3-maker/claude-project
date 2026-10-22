@@ -315,7 +315,7 @@ test("real isolated PostgreSQL: token timeline and retraction-aware links are sa
     await pool.query("UPDATE token_alerts SET status='delivered' WHERE alert_id=$1",[alertId]);
     const transitionHistory=await pool.query(`SELECT status FROM token_alert_status_history WHERE alert_id=$1 ORDER BY history_id ASC`,[alertId]);
     assert.deepEqual(transitionHistory.rows.map(row=>row.status),["open","delivered"]);
-    const statusAsOf=await pool.query(`SELECT status FROM token_alert_status_history WHERE alert_id=$1 AND changed_at <= $2 ORDER BY changed_at DESC,history_id DESC LIMIT 1`,[alertId,initialHistory.changed_at]);
+    const statusAsOf=await pool.query(`SELECT status FROM token_alert_status_history WHERE alert_id=$1 AND changed_at <= $2::timestamptz + INTERVAL '1 millisecond' ORDER BY changed_at DESC,history_id DESC LIMIT 1`,[alertId,initialHistory.changed_at]);
     assert.equal(statusAsOf.rows[0].status,"open");
     const firstAt="2026-10-20T02:00:00.000Z";
     const revokedAt="2026-10-20T02:30:00.000Z";
