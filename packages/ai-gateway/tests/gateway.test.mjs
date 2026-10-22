@@ -114,7 +114,7 @@ test("gateway enforces HTTPS, bounded inputs and provider rate limits", async ()
   }).chatCompletion({ messages: [{ role: "user", content: "x".repeat(1001) }] }), /ai_input_too_large/);
 });
 
-test("environment config resolves API keys from named variables, never from provider JSON", () => {
+test("environment config resolves API keys from named variables, never from provider JSON", async () => {
   assert.throws(() => createAiGatewayFromEnv({}), /ai_gateway_disabled/);
   assert.throws(() => createAiGatewayFromEnv({
     AI_GATEWAY_ENABLED: "true",
