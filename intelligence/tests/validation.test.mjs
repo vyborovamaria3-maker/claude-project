@@ -38,9 +38,10 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
   const db={async query(sql){
     if(sql.includes("FROM backtest_runs"))return {rows:[{
       run_id:"00000000-0000-4000-8000-000000000001",status:"completed",
-      signal_name:"attention_score",threshold:"0.7",baseline_kind:"market_average",
+      signal_name:"attention_score",outcome_kind:"price_2x_24h",threshold:"0.7",baseline_kind:"market_average",
       feature_version:"cross-platform-heuristics-v2",horizon_hours:24,model_id:null,
-      metrics:{sampleSize:120},data_cutoff_at:"2026-10-20T00:00:00Z",
+      metrics:{sampleSize:120,outcomeCoverage:{eligibleCount:120,labeledCount:120,
+        completedHorizonCount:120,missingOutcomeCount:0,incompleteHorizonCount:0}},data_cutoff_at:"2026-10-20T00:00:00Z",
       completed_at:"2026-10-21T00:00:00Z",
     }]};
     if(sql.includes("FROM backtest_results"))return {rows:rows.map(r=>({
@@ -52,6 +53,8 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
       policy_id:"00000000-0000-4000-8000-000000000002",
       registered_at:"2026-09-30T00:00:00Z",
     }]};
+    if(sql.includes("FROM backtest_results r")&&sql.includes("token_daily_cross_platform"))
+      return {rows:[{invalid:0}]};
     if(sql.includes("INSERT INTO signal_validation_registry"))return {rows:[]};
     throw new Error("unexpected SQL");
   }};
@@ -67,9 +70,10 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
 test("missing outcomes cannot be silently counted as false",async()=>{
   const db={async query(sql){
     if(sql.includes("FROM backtest_runs"))return {rows:[{
-      status:"completed",signal_name:"attention_score",threshold:"0.7",
+      status:"completed",signal_name:"attention_score",outcome_kind:"price_2x_24h",threshold:"0.7",
       baseline_kind:"market_average",feature_version:"cross-platform-heuristics-v2",
-      horizon_hours:24,metrics:{sampleSize:1},data_cutoff_at:"2026-10-20T00:00:00Z",
+      horizon_hours:24,metrics:{sampleSize:1,outcomeCoverage:{eligibleCount:1,labeledCount:1,
+        completedHorizonCount:1,missingOutcomeCount:0,incompleteHorizonCount:0}},data_cutoff_at:"2026-10-20T00:00:00Z",
       completed_at:"2026-10-21T00:00:00Z",
     }]};
     if(sql.includes("FROM backtest_results"))return {rows:[{
@@ -84,4 +88,29 @@ test("missing outcomes cannot be silently counted as false",async()=>{
     runId:"00000000-0000-4000-8000-000000000001",
     signalVersion:"cross-platform-heuristics-v2",codeRevision:"a".repeat(40),
   }),/validation_requires_explicit_boolean_outcomes/);
+});
+
+test("holdout certification fails if persisted rows have no source proof",async()=>{
+  const rows=cohort();
+  const db={async query(sql){
+    if(sql.includes("FROM backtest_runs"))return {rows:[{
+      status:"completed",signal_name:"attention_score",outcome_kind:"price_2x_24h",
+      threshold:"0.7",baseline_kind:"market_average",feature_version:"cross-platform-heuristics-v2",
+      horizon_hours:24,metrics:{sampleSize:rows.length,outcomeCoverage:{
+        eligibleCount:rows.length,labeledCount:rows.length,completedHorizonCount:rows.length,
+        missingOutcomeCount:0,incompleteHorizonCount:0,
+      }},data_cutoff_at:"2026-10-20T00:00:00Z",completed_at:"2026-10-21T00:00:00Z",
+    }]};
+    if(sql.includes("FROM backtest_results r")&&sql.includes("token_daily_cross_platform"))
+      return {rows:[{invalid:1}]};
+    if(sql.includes("FROM backtest_results"))return {rows:rows.map(r=>({
+      canonical_token_id:r.canonicalTokenId,signal_at:r.signalAt,score:r.score,selected:r.selected,
+      outcome_label:r.outcome,outcome_at:r.outcomeAt,outcome_observed_at:r.outcomeObservedAt,
+    }))};
+    throw new Error("unexpected SQL");
+  }};
+  await assert.rejects(certifyTemporalHoldout(db,{
+    runId:"00000000-0000-4000-8000-000000000001",signalVersion:"cross-platform-heuristics-v2",
+    codeRevision:"a".repeat(40),
+  }),/validation_requires_verified_source_and_outcome_provenance/);
 });

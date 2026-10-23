@@ -114,6 +114,42 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
       Number((row.metrics as Record<string,unknown>|null)?.sampleSize)!==records.rows.length||
       !row.data_cutoff_at||!row.completed_at)
     throw new TypeError("validation_requires_completed_versioned_backtest");
+  const signalFields=new Set(["attention_score","credibility_score","risk_score","momentum_score"]);
+  if(typeof row.signal_name!=="string"||!signalFields.has(row.signal_name))
+    throw new TypeError("validation_unknown_source_signal");
+  const coverage=(row.metrics as Record<string,unknown>)?.outcomeCoverage as Record<string,unknown>|undefined;
+  if(!coverage||coverage.eligibleCount!==records.rows.length||
+     coverage.labeledCount!==records.rows.length||
+     coverage.completedHorizonCount!==records.rows.length||
+     coverage.missingOutcomeCount!==0||coverage.incompleteHorizonCount!==0)
+    throw new TypeError("validation_unverified_outcome_coverage");
+  // Source and outcome comparisons stay inside PostgreSQL: timestamp equality
+  // would otherwise lose microseconds through JavaScript Date conversions.
+  // The score column is selected from the closed allowlist above, not user SQL.
+  const sourceProof=await tx.query(`SELECT COUNT(*)::integer AS invalid
+    FROM backtest_results r
+    WHERE r.run_id=$1
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM token_daily_cross_platform f
+          WHERE f.canonical_token_id=r.canonical_token_id
+            AND f.score_version=$2
+            AND date_trunc('milliseconds',f.available_at)=date_trunc('milliseconds',r.signal_at)
+            AND date_trunc('milliseconds',f.max_input_observed_at)
+                  =date_trunc('milliseconds',r.max_input_observed_at)
+            AND f.${row.signal_name}=r.score
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM token_outcomes o
+          WHERE o.canonical_token_id=r.canonical_token_id AND o.outcome_kind=$3
+            AND date_trunc('milliseconds',o.outcome_at)=date_trunc('milliseconds',r.outcome_at)
+            AND date_trunc('milliseconds',o.observed_at)=date_trunc('milliseconds',r.outcome_observed_at)
+            AND o.label=r.outcome_label AND o.evidence_ref IS NOT DISTINCT FROM r.evidence_ref
+            AND o.observed_at <= $4::timestamptz AND o.created_at <= $4::timestamptz
+        )
+      )`,[input.runId,input.signalVersion,row.outcome_kind,row.data_cutoff_at]);
+  if(sourceProof.rows[0]?.invalid!==0)
+    throw new TypeError("validation_requires_verified_source_and_outcome_provenance");
   const cutoff=toUtcIso(row.data_cutoff_at as Date|string);
   const completed=toUtcIso(row.completed_at as Date|string);
   if(cutoff>completed)throw new TypeError("validation_cutoff_after_completion");
