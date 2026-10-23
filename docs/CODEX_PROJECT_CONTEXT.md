@@ -1,5 +1,7 @@
 # X Collector Runtime v2 context
 
+PR #127 V2-07 (2026-10-23): X session and AI key consumers share compatible legacy/V2 helpers, including UI/register and old publisher scripts. Reply has a separate envelope and may still fall back to MASTER_KEY. Audit is append-only with indefinite retention; logs rotate without age/count deletion. See x-collector/docs/V2_07_SECURITY_REVIEW_20261023_RU.md for remaining operational gates; no working rotation or live X performed.
+
 PR #68 merge integration (2026-10-18): preserve canonical Alchemy history and Settings V2 transport/monitoring; forensic coverage and per-request collection ledger use separate explicit schemas so #65 cache rows survive unchanged. No automatic Helius fallback. Fence success/failure/budget-release by lease token and expiry; retain raw inventory evidence and unknown execution. Offline settings/forensic/FIFO/API/legacy-database regressions cover integration; authoritative PnL remains unavailable for incompletely decoded raw history.
 
 PR #68 local review: forensic FIFO handles sub-1e-10 quantities without treating unmatched sales as known profit; balance reconciliation uses relative token precision and exact lamports. Decoder revisions are wallet v5 / DEX v3. Evidence API requires existing production auth and excludes old decoder results until offline replay. Wallet activities carry their owner; the evidence UI combines and deduplicates DEX/seed observations and cancels obsolete reads. No main merge or new collector infrastructure.

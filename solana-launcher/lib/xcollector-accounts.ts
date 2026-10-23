@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import { Pool } from 'pg';
 
@@ -16,7 +15,11 @@ function settings() {
   if (process.env.X_COLLECTOR_ENV && !filename) throw new AccountError('Файл X_COLLECTOR_ENV не найден', 503);
   const env = filename ? dotenv.parse(fs.readFileSync(filename)) : {};
   return { url: env.DATABASE_URL || process.env.X_COLLECTOR_DATABASE_URL,
-    key: env.MASTER_KEY || process.env.X_COLLECTOR_MASTER_KEY };
+    key: env.MASTER_KEY || process.env.X_COLLECTOR_MASTER_KEY,
+    keyEnv: {...process.env,...env,
+      MASTER_KEY:env.MASTER_KEY||process.env.X_COLLECTOR_MASTER_KEY,
+      X_COLLECTOR_ENCRYPTION_KEYS:env.X_COLLECTOR_ENCRYPTION_KEYS||process.env.X_COLLECTOR_ENCRYPTION_KEYS,
+      X_COLLECTOR_ACTIVE_KEY_ID:env.X_COLLECTOR_ACTIVE_KEY_ID||process.env.X_COLLECTOR_ACTIVE_KEY_ID} };
 }
 let pool: Pool | undefined, poolUrl: string | undefined;
 export function collectorDatabase() {
@@ -45,15 +48,14 @@ export function sessionState(raw: unknown) {
   return JSON.stringify({ cookies: state.cookies, origins: state.origins ?? [] });
 }
 function encryptedSession(session: string) {
-  const { key: raw } = settings();
+  const { key: raw,keyEnv } = settings();
   if (!raw) throw new AccountError('Укажите MASTER_KEY в x-collector/.env', 503);
-  const key = /^[a-f0-9]{64}$/i.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
-  if (key.length !== 32) throw new AccountError('MASTER_KEY должен содержать 32 байта', 503);
-  try {
-    const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    const ciphertext = Buffer.concat([cipher.update(session, 'utf8'), cipher.final()]);
-    return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
-  } finally { key.fill(0); }
+  const root=[path.resolve(process.cwd(),'../x-collector'),path.resolve(process.cwd(),'x-collector')].find(p=>fs.existsSync(path.join(p,'scripts/autopost/keyring.cjs')));
+  if(!root)throw new AccountError('Установите обновление X Collector',503);
+  const nativeModule=process.getBuiltinModule('node:module') as typeof import('node:module');
+  const {sealBytes}=nativeModule.createRequire(path.join(root,'package.json'))('./scripts/autopost/keyring.cjs') as {sealBytes:(plain:Buffer,env:Record<string,string|undefined>)=>Buffer};
+  const plain=Buffer.from(session,'utf8');
+  try{return sealBytes(plain,keyEnv);}finally{plain.fill(0);}
 }
 async function hasRole() {
   const r = await database().query("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='x_accounts' AND column_name='role'");

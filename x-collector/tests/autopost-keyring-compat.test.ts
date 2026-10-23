@@ -4,6 +4,7 @@ import {createRequire} from 'node:module';
 import {test} from 'node:test';
 import {decryptBuffer,encryptBuffer,decryptBufferWithKeys,clearKeyCache} from '../lib/trade/crypto';
 import {decryptSession} from '../src/x/session';
+import {encryptSession} from '../scripts/register';
 const load=createRequire(__filename);
 const cjs=load('../scripts/autopost/keyring.cjs');
 const core=load('../scripts/autopost/key-rotation-core.cjs');
@@ -70,5 +71,24 @@ test('V2-07: unknown ID, missing key and tampered headers fail closed',async()=>
   delete process.env.X_COLLECTOR_ACTIVE_KEY_ID;
   assert.throws(()=>decryptBuffer(valid),/KEY_UNAVAILABLE/);
   assert.equal(core.kind(encryptBuffer(plain)),'legacy');
+ });
+});
+
+test('V2-07: registration writer uses keyring and TS operations do not retain a removed legacy key',async()=>{
+ const old=randomBytes(32),future=randomBytes(32),plain='offline-register-fixture';
+ const vars={MASTER_KEY:old.toString('hex'),X_COLLECTOR_ENCRYPTION_KEYS:JSON.stringify({future:future.toString('hex')}),X_COLLECTOR_ACTIVE_KEY_ID:'future'};
+ await withEnv(vars,async()=>{
+  const modern=await encryptSession(plain);
+  assert.equal(core.kind(modern),'v2');assert.equal(cjs.unsealBytes(modern,vars).toString('utf8'),plain);
+  delete process.env.X_COLLECTOR_ACTIVE_KEY_ID;
+  const legacy=await encryptSession(plain);assert.equal(core.kind(legacy),'legacy');
+  assert.equal(decryptBuffer(legacy).toString('utf8'),plain);
+  delete process.env.MASTER_KEY;
+  assert.throws(()=>decryptBuffer(legacy),/KEY_UNAVAILABLE/);
+  await assert.rejects(encryptSession(plain),/KEY_UNAVAILABLE/);
+  process.env.MASTER_KEY=future.toString('hex');
+  assert.throws(()=>decryptBuffer(legacy),/DECRYPTION_FAILED/);
+  process.env.X_COLLECTOR_ACTIVE_KEY_ID='not_configured';
+  await assert.rejects(encryptSession(plain),/ACTIVE_KEY_UNAVAILABLE/);
  });
 });

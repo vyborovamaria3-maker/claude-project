@@ -46,6 +46,8 @@ test('v2 audit schema is replayable, append-only and tracks attempts across manu
   assert.ok(events.rows.every(x=>!JSON.stringify(x.payload).includes('hello')));
   await assert.rejects(db.query("UPDATE xc_auto_job_events SET event_type='tampered' WHERE job_id=$1",[id]),/append-only/);
   await assert.rejects(db.query("DELETE FROM xc_auto_job_events WHERE job_id=$1",[id]),/append-only/);
+  await assert.rejects(db.query('TRUNCATE xc_auto_job_events'),/append-only/);
+  await assert.rejects(db.query('DELETE FROM xc_auto_jobs WHERE id=$1',[id]),/foreign key/);
  }finally{await db.close();}
 });
 

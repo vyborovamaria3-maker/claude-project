@@ -4,6 +4,7 @@ import readline from "node:readline";
 import { encryptBuffer } from "../lib/trade/crypto";
 import { registerAccount } from "../lib/trade/account-manager";
 import { closePool } from "../lib/trade/pg";
+import { safeDiagnostic } from "../lib/trade/safe-diagnostic";
 
 const TAG = "[x-login]";
 
@@ -26,14 +27,7 @@ function log(msg: string): void {
 }
 
 function fail(e: unknown): never {
-  const msg = e instanceof Error ? e.message : String(e);
-  const cause = e instanceof Error && e.cause instanceof Error
-    ? (e.cause.message || String(e.cause))
-    : e instanceof Error && e.cause !== undefined
-      ? String(e.cause)
-      : "";
-  console.error(`${TAG} failed: ${msg}`);
-  if (cause && cause !== msg) console.error(`${TAG} cause: ${cause}`);
+  console.error(`${TAG} failed: ${safeDiagnostic(e)}. Check browser, keyring and database configuration.`);
   process.exit(1);
 }
 

@@ -76,10 +76,8 @@ async function main() {
 }
 
 main()
-  .catch((e) => {
-    console.error("[x-accounts] failed:", e instanceof Error ? e.message : e);
-    const cause = e instanceof Error && e.cause instanceof Error ? e.cause.message : "";
-    if (cause) console.error("[x-accounts] cause:", cause);
+  .catch(() => {
+    console.error("[x-accounts] failed. Check database configuration and migrations.");
     process.exitCode = 1;
   })
   .finally(() => closePool().catch(() => {}));

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { encryptBuffer } from "../lib/trade/crypto";
 import { registerAccount } from "../lib/trade/account-manager";
 import { closePool } from "../lib/trade/pg";
+import { safeDiagnostic } from "../lib/trade/safe-diagnostic";
 
 const TAG = "[x-import]";
 
@@ -9,7 +10,7 @@ const [accountName, statePath] = process.argv.slice(2);
 
 function fail(msg: string, cause?: unknown): never {
   console.error(`${TAG} failed: ${msg}`);
-  if (cause instanceof Error) console.error(`${TAG} cause: ${cause.message}`);
+  if (cause !== undefined) console.error(`${TAG} code: ${safeDiagnostic(cause)}`);
   process.exit(1);
 }
 
@@ -69,5 +70,5 @@ async function main() {
 }
 
 main()
-  .catch((e) => fail(e instanceof Error ? e.message : String(e), e))
+  .catch((e) => fail('Import failed. Check session format, keyring and database configuration.', e))
   .finally(() => closePool().catch(() => {}));

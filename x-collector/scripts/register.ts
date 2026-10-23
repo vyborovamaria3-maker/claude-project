@@ -1,27 +1,14 @@
-import "dotenv/config";
 import { Client } from "pg";
-import crypto from "node:crypto";
+import dotenv from 'dotenv';
+import {encryptBuffer} from '../lib/trade/crypto';
 
-const ALGO = "aes-256-gcm";
-const KEY_LEN = 32, IV_LEN = 12;
-
-function getKey(): Buffer {
-  const raw = process.env.MASTER_KEY;
-  if (!raw) throw new Error("MASTER_KEY не задан");
-  const buf = raw.length === 64 ? Buffer.from(raw, "hex") : Buffer.from(raw, "base64");
-  if (buf.length !== KEY_LEN) throw new Error(`MASTER_KEY должен быть ${KEY_LEN} байт`);
-  return buf;
-}
-
-async function encryptSession(plain: string): Promise<Buffer> {
-  const iv = crypto.randomBytes(IV_LEN);
-  const c = crypto.createCipheriv(ALGO, getKey(), iv);
-  const enc = Buffer.concat([c.update(Buffer.from(plain)), c.final()]);
-  const tag = c.getAuthTag();
-  return Buffer.concat([iv, tag, enc]);
+export async function encryptSession(plain: string): Promise<Buffer> {
+  const bytes=Buffer.from(plain,'utf8');
+  try{return encryptBuffer(bytes);}finally{bytes.fill(0);}
 }
 
 async function main() {
+  dotenv.config();
   const handle = process.argv[2];
   const cookies = process.argv[3];
   const proxyJson = process.argv[4] || "{}";
@@ -67,12 +54,12 @@ async function main() {
       now,
     ]);
     console.log(`Account ${handle} registered successfully.`);
-  } catch (error) {
-    console.error("Failed to register account:", error instanceof Error ? error.message : String(error));
+  } catch {
+    console.error("Failed to register account. Check keyring, database and input format.");
     process.exit(1);
   } finally {
     await client.end().catch(() => {});
   }
 }
 
-main();
+if(require.main===module)void main();

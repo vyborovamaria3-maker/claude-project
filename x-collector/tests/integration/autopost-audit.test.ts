@@ -62,6 +62,10 @@ test('real PostgreSQL: v2 attempt audit is atomic across two concurrent clients'
     await admin.query("UPDATE xc_auto_jobs SET status='published',finished_at=$2 WHERE id=$1",[id,now+130]);
     const events=await admin.query<{event_type:string}>("SELECT event_type FROM xc_auto_job_events WHERE job_id=$1 ORDER BY event_id",[id]);
     assert.deepEqual(events.rows.map(r=>r.event_type),['created','claimed','boundary_recorded','uncertain','manual_retry_approved','claimed','published']);
+    await assert.rejects(admin.query('UPDATE xc_auto_job_events SET event_type=event_type'),/append.only/i);
+    await assert.rejects(admin.query('DELETE FROM xc_auto_job_events'),/append.only/i);
+    await assert.rejects(admin.query('TRUNCATE xc_auto_job_events'),/append.only/i);
+    await assert.rejects(admin.query('DELETE FROM xc_auto_jobs WHERE id=$1',[id]),/foreign key/i);
   }finally{
     await Promise.all([first.end().catch(()=>{}),second.end().catch(()=>{})]);
     try{if(created)await admin.query('DROP SCHEMA "'+schema+'" CASCADE');}finally{await admin.end().catch(()=>{});}

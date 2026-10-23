@@ -7,6 +7,7 @@ import { extractCookies } from "../src/x/session";
 import { createBrowser, XCookie } from "../src/x/client";
 import { parseProxy } from "../src/x/proxy";
 import { proxyStatus } from "../src/x/diagnostics";
+import { safeDiagnostic } from "../lib/trade/safe-diagnostic";
 
 const TAG = "[x-health]";
 
@@ -29,10 +30,9 @@ async function run(name: string, fn: () => Promise<string>): Promise<void> {
     results.push({ name, ok: true, detail });
     console.log(`${TAG} OK   ${name} — ${detail}`);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const cause = e instanceof Error && e.cause instanceof Error ? ` (cause: ${e.cause.message})` : "";
-    results.push({ name, ok: false, detail: `${msg}${cause}` });
-    console.error(`${TAG} FAIL ${name} — ${msg}${cause}`);
+    const detail = safeDiagnostic(e);
+    results.push({ name, ok: false, detail });
+    console.error(`${TAG} FAIL ${name} — ${detail}`);
   }
 }
 
@@ -130,7 +130,7 @@ async function main() {
 
 main()
   .catch((e) => {
-    console.error(`${TAG} failed:`, e instanceof Error ? e.message : e);
+    console.error(`${TAG} failed: ${safeDiagnostic(e)}`);
     process.exitCode = 1;
   })
   .finally(() => closePool().catch(() => {}));

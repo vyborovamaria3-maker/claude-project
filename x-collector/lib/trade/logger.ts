@@ -7,7 +7,7 @@ import { getConfig } from "./config";
 type Level = "debug" | "info" | "warn" | "error";
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 const PROCESS_TOKEN = `${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}`;
-const SENSITIVE_KEY = /(token|password|secret|session|cookie|authorization|master.?key|api.?key|credentials|proxy|jwt|encryption.?key)/i;
+const SENSITIVE_KEY = /(token|password|secret|session|cookie|authorization|master.?key|api.?key|credentials|proxy|jwt|encryption.?key|^ct0$)/i;
 
 export interface LogContext {
   taskId?: number;
@@ -36,15 +36,35 @@ let bytesWritten = 0;
 
 /** Вырезает поля, похожие на секреты, и ограничивает глубину/длину значений. */
 export function redactText(value: string): string {
-  return value
+  const text=value
     .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[REDACTED]@")
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
-    .replace(/\b(password|secret|api[_-]?key|access[_-]?token|auth_token|ct0|cookie|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]");
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]");
+  // Consume complete quoted/JSON values, not just their first whitespace-delimited word.
+  const assignment=/(\b[A-Za-z_][\w.-]*|"[A-Za-z_][\w.-]*"|'[A-Za-z_][\w.-]*')\s*[:=]\s*/g;
+  let result='',copied=0,match:RegExpExecArray|null;
+  while((match=assignment.exec(text))){
+    if(!SENSITIVE_KEY.test(match[1].replace(/["']/g,'')))continue;
+    const start=assignment.lastIndex,first=text[start];let end=start;
+    if(first==='"'||first==="'"||first==='{'||first==='['){
+      const stack:string[]=[];let quote:string|null=null,escaped=false;
+      for(;end<text.length;end++){
+        const ch=text[end];
+        if(quote){if(escaped)escaped=false;else if(ch==='\\')escaped=true;else if(ch===quote){quote=null;if(!stack.length){end++;break;}}}
+        else if(ch==='"'||ch==="'")quote=ch;
+        else if(ch==='{'||ch==='[')stack.push(ch==='{'?'}':']');
+        else if(stack.length&&ch===stack.at(-1)){stack.pop();if(!stack.length){end++;break;}}
+      }
+    }else{while(end<text.length&&!/[\s,;&]/.test(text[end]))end++;}
+    result+=text.slice(copied,start)+(first==='"'||first==="'"?first+'[REDACTED]'+first:first==='{'||first==='['?'"[REDACTED]"':'[REDACTED]');
+    copied=end;assignment.lastIndex=end;
+  }
+  return result+text.slice(copied);
 }
 
 export function scrub(value: unknown, key = "", depth = 0): unknown {
   if (SENSITIVE_KEY.test(key)) return "[REDACTED]";
   if (depth > 6) return "[DEPTH_LIMIT]";
+  if (value instanceof Uint8Array) return "[BINARY_REDACTED]";
   if (Array.isArray(value)) return value.map((item) => scrub(item, key, depth + 1));
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
@@ -85,7 +105,7 @@ function rotateIfNeeded(incomingBytes: number) {
   try {
     fs.renameSync(oldPath, `${oldPath}.${Date.now()}.${randomUUID().slice(0, 8)}`);
   } catch (error) {
-    process.stderr.write(`[logger] rotation failed: ${String(error)}\n`);
+    process.stderr.write(`[logger] rotation failed: ${redactText(String(error))}\n`);
   }
   fd = fs.openSync(currentPath, "a", 0o600);
   bytesWritten = fs.fstatSync(fd).size;
@@ -107,7 +127,7 @@ function emit(level: Level, msg: string, meta?: Record<string, unknown>) {
       bytesWritten = fs.fstatSync(fd).size;
     }
   } catch (error) {
-    process.stderr.write(`[logger] file write failed: ${String(error)}\n`);
+    process.stderr.write(`[logger] file write failed: ${redactText(String(error))}\n`);
   }
 
   const colors: Record<Level, string> = {

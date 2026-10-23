@@ -81,7 +81,7 @@ Jitter для transient pre-send retry; разделение Worker на planner
 | V2-04 | Heartbeat/health UI | V2-01 | **Реализован и проверен offline** — независимый heartbeat, health/UI и реальный Windows Worker restart |
 | V2-05 | Priority + dedup | V2-01 | **Реализован и проверен offline на измеренном объёме** — account-level quota, manual-first/dedup/guards; 200004 jobs: mixed 2–19 мс, busy/quota-exhausted 53–55 мс; см. QUEUE_EXPLAIN_V205_20261020_RU.md |
 | V2-06 | Circuit breaker | V2-02 | **Реализован и проверен offline** — runtime account/AI breaker, open/half_open/reset и безопасная обработка ошибок |
-| V2-07 | Secret rotation/runbook | Baseline | **Тестовая часть проверена** — TS/CJS legacy/V2, rotation/rollback, Worker lock, полный pg_dump/restore; consumer/security review и рабочее переключение остаются отдельными gates |
+| V2-07 | Secret rotation/runbook | Baseline | **Offline consumers/security проверены 23.10** — устранены legacy bypass и утечки логов; TS/CJS/UI legacy/V2, rotation/rollback, Worker lock, append-only audit проверены. Эксплуатационная retention/ACL и рабочее переключение остаются gates |
 | V2-08 | Offline acceptance / controlled live smoke | После P0 и CI | **Offline acceptance + CI PASS** — Windows 367 unit / 12 PostgreSQL / 11 UI; CI 24 SUCCESS / 1 SKIPPED на f0627c6; live gate открыт |
 
 **Таблица выше отражает текущую проверенную готовность.** Описания инкрементов ниже — история реализации; старые формулировки «не закрыт» и «следующий шаг» не отменяют последующую приёмку. Production rotation и live X не выполнялись.
