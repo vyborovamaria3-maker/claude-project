@@ -113,11 +113,9 @@ export function evaluateCrossPlatformAlerts(input: AlertObservation): AlertCandi
   if (finite(input.correlationLift)&&input.correlationLift>=2&&
       ratio(input.correlationPValue)&&input.correlationPValue<=0.05&&
       count(input.correlationExposedCount)&&input.correlationExposedCount>=10&&
-      count(input.correlationControlCount)&&input.correlationControlCount>=10&&
-      // A caller's out_of_sample flag does NOT authenticate this specific
-      // event/outcome. Research alert only until a correlation-specific
-      // holdout certificate is persisted and verified.
-      true) {
+      count(input.correlationControlCount)&&input.correlationControlCount>=10) {
+    // A caller's out_of_sample flag is not evidence of held-out validation.
+    // This is descriptive research, not a certified predictive alert.
     candidates.push({alertType:"correlation_candidate",severity:"medium",score:input.correlationLift,
       features:{correlationLift:input.correlationLift,correlationPValue:input.correlationPValue,
         correlationExposedCount:input.correlationExposedCount,correlationControlCount:input.correlationControlCount}});

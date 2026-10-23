@@ -69,10 +69,13 @@ test("no evidence means no alert, and future-observed inputs are rejected",()=>{
   assert.throws(()=>evaluateCrossPlatformAlerts({...base,tgCopypastaRatio:1.1}),/Invalid alert ratio/);
 });
 
-test("caller-supplied OOS claim cannot upgrade an exploratory correlation",()=>{
+test("candidate correlations remain exploratory with or without caller OOS claim",()=>{
   const alerts=evaluateCrossPlatformAlerts({...base,correlationLift:2.5,
     correlationPValue:0.001,correlationExposedCount:20,correlationControlCount:20,
     correlationValidation:"out_of_sample"});
   assert.equal(alerts.length,1);
   assert.equal(alerts[0].alertType,"correlation_candidate");
+  const withoutClaim=evaluateCrossPlatformAlerts({...base,correlationLift:2.5,
+    correlationPValue:0.001,correlationExposedCount:20,correlationControlCount:20});
+  assert.equal(withoutClaim[0]?.alertType,"correlation_candidate");
 });
