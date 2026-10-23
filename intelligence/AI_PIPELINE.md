@@ -1,10 +1,10 @@
 # Collector-backed API AI analysis
 
-Apply migrations 001–006, 008, 009 and **010_intelligence_governance.sql** to the separate Intelligence destination before enabling the AI runtime. Migration 007/pgvector is optional and is not needed for sentiment, narratives or explanations. Do not apply these migrations to collector databases.
+Apply migrations 001–006, 008, 009, **010_intelligence_governance.sql**, **011_validation_preregistration.sql**, **012_ai_shared_budget.sql** and **013_invalidation_retry_schedule.sql** to the separate Intelligence destination before enabling the AI runtime. Migration 007/pgvector is optional and is not needed for sentiment, narratives or explanations. Do not apply these migrations to collector databases.
 
 ## Execution
 
-With the explicit AI flags below enabled, the existing `etl:once` and foreground `etl:supervise` commands run bounded AI batches **after** normal destination commit and source ACK. They reuse the existing collector pools. API errors do not NACK an already delivered message or restart source collection. No plaintext message text is copied into the Intelligence database. Migration 010 only provisions an optional encrypted, 30-day-max snapshot contract; no encryption adapter is wired, and storing plaintext/ciphertext is NOT enabled. The current AI text adapter still performs bounded read-only lookups against source schemas. Do not claim source-schema decoupling until a privacy-reviewed snapshot producer and purge worker are deployed. Successful AI calls have a typed cost-ledger entry; failed/retried/invalid provider calls still require independent billing reconciliation.
+With the explicit AI flags below enabled, the existing `etl:once` and foreground `etl:supervise` commands run bounded AI batches **after** normal destination commit and source ACK. They reuse the existing collector pools. API errors do not NACK an already delivered message or restart source collection. No plaintext message text is copied into the Intelligence database. Migration 010 provisions an optional encrypted 30-day-max snapshot contract. AES-256-GCM import/read/purge adapters exist but remain disabled until explicitly enabled, given a secret encryption key and key reference, with a configured purge schedule; no plaintext is stored. The current AI text adapter still performs bounded read-only lookups against source schemas. Do not claim source-schema decoupling until a privacy-reviewed snapshot producer and purge worker are deployed. Successful AI calls have a typed cost-ledger entry; failed/retried/invalid provider calls still require independent billing reconciliation.
 
 For existing collector databases without the new outbox schema, the read-only snapshot worker is available:
 
@@ -72,3 +72,24 @@ AI attempts retain only an allowlisted stable gateway error code (network/HTTP/a
 - Migration 010 adds `ai_cost_ledger`; `createAiRuntime` fails closed without it. A successful typed sentiment/narrative/explanation result logs the provider trace as the idempotency key. Price estimates are NOT reconciled provider invoices; the existing AI Gateway in-memory reservation is process-local, not a cross-worker budget.
 - Protected text storage is OPTIONAL and NOT ACTIVE. A separate source-adapter + encryption + purge rollout must precede any event_text_snapshots writes. No raw Telegram/X texts, API keys or session data are logged.
 - The central API currently remains loopback-only; no remote POTAPoff gateway is deployed by this migration.
+
+## Opt-in runtime commands added after Intelligence 2.2
+
+The following are **not automatically enabled** by installing migrations:
+
+```bash
+npm --prefix intelligence run invalidation:once
+npm --prefix intelligence run validation:preregister -- --signal-version <version> --signal <score_column> --threshold <value> --horizon-hours 24 --code-revision <git_sha>
+npm --prefix intelligence run validation:holdout -- --run-id <uuid> --signal-version <version> --code-revision <git_sha>
+npm --prefix intelligence run gateway:local
+npm --prefix intelligence run text-snapshot:import -- --source tg --limit 10
+npm --prefix intelligence run text-snapshot:purge
+```
+
+Each has a corresponding explicit `*_ENABLED=true` flag. For text snapshots,
+use `INTELLIGENCE_TEXT_ENCRYPTION_KEY_B64` and
+`INTELLIGENCE_TEXT_KEY_REF` supplied from a secret manager and run purge
+regularly. Enabling optional shared budget requires migration 012, a per-provider
+configured price, and `INTELLIGENCE_AI_SHARED_DAILY_BUDGET_USD`. Production
+rollout must separately validate billing reconciliation, identity mapping,
+DB grants and KMS rotation; do not store production keys in this document.

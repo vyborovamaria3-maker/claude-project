@@ -3,7 +3,7 @@
 The Intelligence modules are built independently of collector databases.
 Only the test workflow opens a disposable PostgreSQL 16 instance.
 
-Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql and 008_alert_status_history.sql and 009_ai_analysis.sql, then 010_intelligence_governance.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005, 006 and 008. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
+Migration order: 001_entity_registry.sql, 002_timeline.sql, 003_feature_store.sql, 004_token_link_observations.sql, 005_blockchain_swap_evidence_revisions.sql, then 006_cross_platform_analytics.sql and 008_alert_status_history.sql and 009_ai_analysis.sql, then 010_intelligence_governance.sql, 011_validation_preregistration.sql, 012_ai_shared_budget.sql, and 013_invalidation_retry_schedule.sql. Migration 007_feature_embeddings_pgvector.sql is optional and requires pgvector on the PostgreSQL server. The analytics API requires 003, 004, 005, 006 and 008. Do not start the ETL supervisor against a target missing 004 (or 005 when ARCH-06b events are enabled).
 
 - Ingest RegistryEvent after claiming a source outbox event; source ACK only after
   destination transaction commits. Consumer runDeliveryBatch remains a bounded,

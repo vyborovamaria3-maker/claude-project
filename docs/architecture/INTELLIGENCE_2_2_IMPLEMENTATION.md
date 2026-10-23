@@ -75,3 +75,43 @@ remain separate work. Estimate != invoice.
 
 CI tests use disposable Postgres fixtures and do not change real X/TG/Solana
 databases, connect to live provider accounts or deploy public access.
+
+## Code review update — October 23, 2026
+
+Subsequent additive migrations 011, 012 and 013 extend the original governance
+contract. All live activation remains explicit opt-in.
+
+- `011_validation_preregistration.sql` adds an immutable policy with a
+  database-owned registration timestamp. A holdout certificate must match its
+  threshold, version, model/code revision and signal kind, and the policy must
+  predate the evaluation period. Certificate generation crosschecks source
+  features available at the signal time and explicit `token_outcomes` labels
+  with source version/observation time.
+- `012_ai_shared_budget.sql` adds per-provider UTC daily reservations for
+  more than one worker. With `INTELLIGENCE_AI_SHARED_BUDGET_ENABLED=true`,
+  requests reserve an allowance before calling the external API. The entire
+  allowance remains charged if provider billing is unknown. This is an
+  **estimated spend guard**, not proof that an API invoice is correct.
+- `013_invalidation_retry_schedule.sql` adds `next_attempt_at`, fixing
+  immediate reclaims that could exhaust all retries in one batch.
+- The opt-in `invalidation:once` worker recomputes affected UTC days if they
+  can be identified from source evidence. It keeps unknown/incomplete data
+  unknown, rather than fabricating zeroes.
+- The opt-in encrypted text import/read/purge implementation uses AES-256-GCM
+  with authenticated event/revision binding. Source deletion tombstones
+  cryptoshred existing ciphertext; new as-of token aggregates exclude deleted
+  social messages. Real KMS, key rotation, legal retention policy and complete
+  upstream deletion coverage must be verified before deployment.
+- The `gateway:local` process enforces per-role Bearer authorization, logs
+  allow/deny decisions before proxying, disallows HTTP redirects and bounds
+  upstream response size while streaming. It binds loopback: there is no
+  publicly accessible POTAPoff gateway or user-account identity integration.
+
+### Still required before declaring production-ready
+
+Independent human review of source schemas/grants, an isolated real-data
+restore drill, representative source load/latency tests, verification that all
+sources emit deletion and link retraction events, rate/cost invoice
+reconciliation, expiry/rotation of AI keys and secrets, and a documented
+POTAPoff host-to-host authentication and deployment plan. An automated CI
+success is not proof that such operational checks have happened.
