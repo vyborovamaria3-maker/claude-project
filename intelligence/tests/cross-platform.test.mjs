@@ -108,6 +108,10 @@ test("refresh query separates transactions, supported swap evidence, and settled
   assert.doesNotMatch(aggregateSql, /WHEN \(SELECT coverage_status FROM trade_coverage\)='complete' THEN 0/);
   assert.match(aggregateSql, /created_at <= \$3::timestamptz/);
   assert.match(aggregateSql, /AT TIME ZONE 'UTC'/);
+  assert.equal(aggregateSql.split("deleted.event_kind='message_deleted'").length-1,2,
+    "daily and first-mention metrics must both exclude delivered deletions");
+  assert.equal(aggregateSql.split("deleted.ingested_at<=$3::timestamptz").length-1,2,
+    "future deletions must not leak into earlier as-of metrics");
   assert.equal(snapshot.chainTransactions, 4);
   assert.equal(snapshot.chainSwapEvidenceCount, 2);
   assert.equal(snapshot.chainTrades, null);

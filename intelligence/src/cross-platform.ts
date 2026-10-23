@@ -352,6 +352,15 @@ export async function refreshTokenDailyCrossPlatform(
       AND inbox.event_kind=te.source_event_kind AND inbox.event_key=te.event_key
       AND inbox.ingested_at <= $3::timestamptz
     WHERE te.source_system IN ('tg','x','blockchain')
+      -- A delivered source tombstone removes the earlier source post only in
+      -- materializations whose cutoff includes the tombstone.
+      AND NOT EXISTS (
+        SELECT 1 FROM intelligence_inbox deleted
+        WHERE deleted.source_system=te.source_system
+          AND deleted.evidence_source_id=te.evidence_source_id
+          AND deleted.event_kind='message_deleted'
+          AND deleted.ingested_at<=$3::timestamptz
+      )
       AND te.observed_at <= $3::timestamptz
       AND te.occurred_at <= $3::timestamptz
       AND te.occurred_at >= (($2::date - INTERVAL '7 days') AT TIME ZONE 'UTC')
@@ -373,6 +382,15 @@ export async function refreshTokenDailyCrossPlatform(
       AND inbox.event_kind=te.source_event_kind AND inbox.event_key=te.event_key
       AND inbox.ingested_at <= $3::timestamptz
     WHERE te.source_system IN ('tg','x','blockchain')
+      -- A delivered source tombstone removes the earlier source post only in
+      -- materializations whose cutoff includes the tombstone.
+      AND NOT EXISTS (
+        SELECT 1 FROM intelligence_inbox deleted
+        WHERE deleted.source_system=te.source_system
+          AND deleted.evidence_source_id=te.evidence_source_id
+          AND deleted.event_kind='message_deleted'
+          AND deleted.ingested_at<=$3::timestamptz
+      )
       AND te.observed_at <= $3::timestamptz AND te.occurred_at <= $3::timestamptz
   ), coverage AS (
     SELECT source_system,
