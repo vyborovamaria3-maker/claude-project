@@ -30,6 +30,7 @@
     "etl:backfill": "node scripts/backfill.mjs",
     "etl:quality": "node scripts/quality.mjs",
     "invalidation:once": "node scripts/run-invalidations.mjs",
+    "validation:holdout": "node scripts/certify-holdout.mjs",
     "api:local": "node api/start.mjs",
     "backtest": "node scripts/backtest.mjs",
     "refresh-cross-platform": "node scripts/refresh-cross-platform.mjs",
