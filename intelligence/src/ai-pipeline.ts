@@ -78,7 +78,7 @@ export async function readCollectorContext(pool:AiPool,source:Source,ref:string,
 }
 
 /** Runs AFTER normal collector delivery/ACK. AI failure never changes source delivery. */
-export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source;readText:(ref:string,at:Date|string)=>Promise<string|null>;
+export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source;readText:(ref:string,at:Date|string,kind?:string,eventKey?:string)=>Promise<string|null>;
   readContext?:(ref:string,at:Date|string)=>Promise<AiMessageContext[]>;
   gateway:AiGateway;models:AiModels;limit?:number;signal?:AbortSignal;refresh?:(token:string,day:string)=>Promise<void>}){
   const limit=input.limit??2;
@@ -112,7 +112,7 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
         if(input.signal?.aborted)break;
         const eventKey=String(row.event_key),kind=String(row.source_event_kind),ref=String(row.evidence_source_id);
         try{
-          const text=await input.readText(ref,row.observed_at as Date);
+          const text=await input.readText(ref,row.observed_at as Date,kind,eventKey);
           if(text===null){stats.unavailable++;throw new Error("source_revision_unavailable");}
           if(input.source==="tg"&&isLowValueTelegramPost(text)){
             await client.query(`INSERT INTO ai_message_attempts(source_system,source_event_kind,event_key,task,model_id,attempts,next_attempt_at,error_code)
