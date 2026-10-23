@@ -106,7 +106,7 @@
     "xlsx": "file:./scripts/xlsx-safe-package"
   },
   "overrides": {
-    "toml": "^5.0.0",
+    "toml": "5.0.1",
     "bigint-buffer": "$bigint-buffer"
   }
 }

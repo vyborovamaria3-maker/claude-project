@@ -1,5 +1,7 @@
 # X Collector Runtime v2 context
 
+Frontend audit high (2026-10-23): toml override pinned to compatible 5.0.1 with bounded DoS regressions; 7 high entries remain through braces 3.0.3, which has no published fix. Moderate Solana/jayson and parser chains remain separate work. No audit suppression or major dependency migration; see solana-launcher/docs/NPM_AUDIT_HIGH_20261023_RU.md.
+
 Frontend security baseline (2026-10-23): Next.js/eslint-config-next 16.4.2, sharp 0.35.5 pinned; React 18 retained with compatible peer range. Verified security regression, lint, analysis/build/TypeScript, isolated browser smoke and collector keyring compatibility. Next audit advisories cleared; unrelated dependency backlog remains. See solana-launcher/docs/NEXT_SECURITY_UPDATE_20261023_RU.md.
 
 PR #127 V2-07 (2026-10-23): X session and AI key consumers share compatible legacy/V2 helpers, including UI/register and old publisher scripts. Reply has a separate envelope and may still fall back to MASTER_KEY. Audit is append-only with indefinite retention; logs rotate without age/count deletion. See x-collector/docs/V2_07_SECURITY_REVIEW_20261023_RU.md for remaining operational gates; no working rotation or live X performed.
