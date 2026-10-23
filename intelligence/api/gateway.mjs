@@ -7,6 +7,27 @@ const HEADERS={"Content-Type":"application/json; charset=utf-8",
   "Cache-Control":"no-store, private","X-Content-Type-Options":"nosniff",
   "Content-Security-Policy":"default-src 'none'; frame-ancestors 'none'"};
 function digest(value){return createHash("sha256").update(value).digest();}
+async function boundedJsonResponse(response,maxBytes=1024*1024){
+  const header=response.headers.get("content-length");
+  if(header!==null && /^\d+$/.test(header) && Number(header)>maxBytes)
+    throw new Error("upstream_response_too_large");
+  if(!response.body)throw new Error("upstream_response_missing");
+  const reader=response.body.getReader();
+  const chunks=[];let count=0;
+  try{
+    for(;;){
+      const {done,value}=await reader.read();
+      if(done)break;
+      count+=value.byteLength;
+      if(count>maxBytes)throw new Error("upstream_response_too_large");
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks.map(item=>Buffer.from(item))).toString("utf8"));
+  }finally{
+    try{await reader.cancel()}catch{}
+    reader.releaseLock();
+  }
+}
 function reply(res,status,body){
   const content=JSON.stringify(body);
   res.writeHead(status,{...HEADERS,"Content-Length":Buffer.byteLength(content)});
@@ -57,14 +78,14 @@ export function createPotapoffGateway({clients,internalApiToken,internalApiPort=
       try{
         const upstream=await fetchImpl(BASE+internalApiPort+req.url,{
           method:"GET",headers:{"Authorization":"Bearer "+internalApiToken,
-            "Accept":"application/json"},signal:AbortSignal.timeout(7000),
+            "Accept":"application/json"},redirect:"error",signal:AbortSignal.timeout(7000),
         });
         if(!upstream.headers.get("content-type")?.startsWith("application/json")){
           reply(res,502,{error:"upstream_invalid_content_type"});return;
         }
-        const raw=await upstream.text();
-        if(raw.length>1024*1024){reply(res,502,{error:"upstream_response_too_large"});return}
-        let body;try{body=JSON.parse(raw)}catch{reply(res,502,{error:"upstream_response_invalid"});return}
+        let body;
+        try{body=await boundedJsonResponse(upstream)}
+        catch{reply(res,502,{error:"upstream_response_invalid"});return}
         reply(res,upstream.status>=200&&upstream.status<=599?upstream.status:502,body);
       }catch{reply(res,503,{error:"intelligence_upstream_unavailable"})}
       finally{inFlight--}

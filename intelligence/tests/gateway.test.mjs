@@ -41,6 +41,34 @@ test("POTAPoff gateway emits 401, 403, 200 and redacted audit logs",async t=>{
   assert.equal(JSON.stringify(f.audits).includes(viewer),false);
   assert.equal(JSON.stringify(f.audits).includes(internal),false);
 });
+test("gateway rejects upstream redirects and streams with oversized bodies",async t=>{
+  const audit={async query(){return {rows:[]}}};
+  const client="a".repeat(48);
+  const endpoint="/api/intelligence/v1/backtest?signal=attention_score";
+  const cases=[
+    async()=>new Response(null,{status:302,headers:{location:"https://example.org/leak"}}),
+    async()=>new Response(new ReadableStream({start(controller){
+      controller.enqueue(new Uint8Array(1024*1024+1));controller.close();
+    }}),{status:200,headers:{"content-type":"application/json"}}),
+  ];
+  let index=0;
+  const server=createPotapoffGateway({clients:[{id:"analyst",role:"analyst",token:client}],
+    internalApiToken:"c".repeat(48),auditDb:audit,
+    now:()=>new Date("2026-10-23T00:00:00Z"),
+    fetchImpl:async(uri,opts)=>{
+      assert.equal(opts.redirect,"error");
+      return cases[index++]();
+    },
+  });
+  await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const base="http://127.0.0.1:"+server.address().port;
+  for(let n=0;n<2;n++){
+    const response=await fetch(base+endpoint,{headers:{Authorization:"Bearer "+client}});
+    assert.equal(response.status,502);
+  }
+  assert.equal(index,2);
+});
 test("gateway refuses access if security audit cannot be persisted",async t=>{
   const f=await fixture(t,{async query(){throw new Error("connection credentials: secret")}});
   const response=await fetch(f.base+summary,{headers:{Authorization:"Bearer "+analyst}});
