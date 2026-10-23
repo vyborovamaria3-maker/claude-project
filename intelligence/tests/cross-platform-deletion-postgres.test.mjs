@@ -50,6 +50,8 @@ test("deleted Telegram evidence is excluded as-of without erasing history",{skip
   const after=await refreshTokenDailyCrossPlatform(db,token,"2026-10-20","2026-10-22T12:00:00Z");
   assert.equal(after.tgMentions,null);
   assert.equal(after.firstMentionTgAt,null);
+  assert.ok(Date.parse(after.maxInputObservedAt)>=Date.parse("2026-10-22T00:00:00Z"),
+    "a delivered deletion must advance input provenance");
   const historic=await db.query(`SELECT tg_mentions FROM token_daily_cross_platform
     WHERE canonical_token_id=$1 AND as_of='2026-10-21T12:00Z'`,[token]);
   assert.equal(Number(historic.rows[0].tg_mentions),1);

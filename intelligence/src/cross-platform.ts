@@ -392,6 +392,26 @@ export async function refreshTokenDailyCrossPlatform(
           AND deleted.ingested_at<=$3::timestamptz
       )
       AND te.observed_at <= $3::timestamptz AND te.occurred_at <= $3::timestamptz
+  ), tombstone_meta AS (
+    SELECT MAX(deleted.ingested_at) AS known_at
+    FROM intelligence_inbox deleted
+    JOIN timeline_events te ON te.source_system=deleted.source_system
+      AND te.evidence_source_id=deleted.evidence_source_id
+    WHERE deleted.event_kind='message_deleted'
+      AND deleted.source_system IN ('tg','x')
+      AND deleted.ingested_at<=$3::timestamptz
+      AND te.observed_at<=$3::timestamptz AND te.occurred_at<=$3::timestamptz
+      AND (
+        EXISTS (SELECT 1 FROM timeline_event_entities e
+          WHERE e.source_system=te.source_system
+            AND e.source_event_kind=te.source_event_kind AND e.event_key=te.event_key
+            AND e.kind='token' AND e.canonical_id=$1)
+        OR EXISTS (SELECT 1 FROM token_link_observations v
+          WHERE v.source_system=te.source_system
+            AND v.evidence_source_id=te.evidence_source_id
+            AND v.canonical_token_id=$1 AND v.state='verified'
+            AND v.observed_at<=$3::timestamptz AND v.inserted_at<=$3::timestamptz)
+      )
   ), coverage AS (
     SELECT source_system,
       CASE
@@ -541,10 +561,10 @@ export async function refreshTokenDailyCrossPlatform(
     cp.tg_coverage,cp.x_coverage,cp.blockchain_coverage,
     fe.first_mention_tg_at,fe.first_mention_x_at,fe.first_trade_at,
     GREATEST(em.max_event_observed_at,cp.max_coverage_known_at,fe.max_historical_event_observed_at,
-      swap_meta.max_swap_state_observed_at,tc.known_at,sc.known_at) AS max_input_observed_at
+      swap_meta.max_swap_state_observed_at,tc.known_at,sc.known_at,tombstone_meta.known_at) AS max_input_observed_at
   FROM event_metrics em CROSS JOIN author_metrics am CROSS JOIN wallet_metrics wm
   CROSS JOIN swap_metrics sm CROSS JOIN coverage_pivot cp CROSS JOIN first_events fe
-  CROSS JOIN swap_state_meta swap_meta CROSS JOIN trade_coverage tc CROSS JOIN swap_coverage sc`;
+  CROSS JOIN swap_state_meta swap_meta CROSS JOIN trade_coverage tc CROSS JOIN swap_coverage sc CROSS JOIN tombstone_meta`;
   const result = await tx.query(sql, [canonicalTokenId,day,normalizedAsOf]);
   const row = result.rows[0];
   if (!row || !row.max_input_observed_at) throw new Error("No observed events or explicit coverage available for this token/day");
