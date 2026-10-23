@@ -100,7 +100,7 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
   if(!Number.isSafeInteger(days)||days<1||days>30)throw new TypeError("invalid_validation_expiry");
   // A dedicated validation DB role must protect INSERT into the registry.
   const [run,records]=await Promise.all([
-    tx.query(`SELECT run_id,signal_name,status,threshold,baseline_kind,feature_version,
+    tx.query(`SELECT run_id,signal_name,outcome_kind,status,threshold,baseline_kind,feature_version,
       horizon_hours,model_id,metrics,data_cutoff_at,completed_at FROM backtest_runs
       WHERE run_id=$1`,[input.runId]),
     tx.query(`SELECT canonical_token_id,signal_at,score,selected,outcome_label,
