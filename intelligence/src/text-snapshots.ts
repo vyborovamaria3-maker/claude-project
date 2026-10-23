@@ -68,10 +68,26 @@ export async function storeEncryptedEventText(tx:PgTransaction,input:SnapshotIde
 }
 export async function readEncryptedEventText(tx:PgTransaction,key:Buffer,input:SnapshotIdentity&{keyRef:string}):Promise<string|null>{
   identity(input);
-  const result=await tx.query(`SELECT revision_sha256,text_ciphertext,encryption_key_ref FROM event_text_snapshots
-    WHERE source_system=$1 AND source_event_kind=$2 AND event_key=$3 AND purged_at IS NULL
-      AND expires_at>clock_timestamp() AND available_at<=clock_timestamp()
-    ORDER BY available_at DESC LIMIT 2`,[input.sourceSystem,input.sourceEventKind,input.eventKey]);
+  // Deletions and edits must revoke access to prior revision snapshots.
+  // The inbox JOIN prevents serving ciphertext not anchored to a delivered event.
+  const result=await tx.query(`SELECT s.revision_sha256,s.text_ciphertext,s.encryption_key_ref
+    FROM event_text_snapshots s
+    JOIN intelligence_inbox original
+      ON original.source_system=s.source_system
+      AND original.event_kind=s.source_event_kind AND original.event_key=s.event_key
+    WHERE s.source_system=$1 AND s.source_event_kind=$2 AND s.event_key=$3
+      AND s.purged_at IS NULL
+      AND s.expires_at>clock_timestamp() AND s.available_at<=clock_timestamp()
+      AND NOT EXISTS (
+        SELECT 1 FROM intelligence_inbox removed
+        WHERE removed.source_system=original.source_system
+          AND removed.evidence_source_id=original.evidence_source_id
+          AND removed.event_kind IN ('message_deleted','token_links_invalidated')
+          AND removed.ingested_at>=original.ingested_at
+      )
+    ORDER BY s.available_at DESC LIMIT 2`,[
+      input.sourceSystem,input.sourceEventKind,input.eventKey,
+    ]);
   if(result.rows.length===0)return null;
   if(result.rows.length!==1||result.rows[0]?.encryption_key_ref!==input.keyRef)
     throw new Error("text_snapshot_revision_or_key_ambiguous");

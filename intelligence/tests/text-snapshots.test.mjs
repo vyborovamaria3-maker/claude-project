@@ -35,6 +35,17 @@ test("read refuses mismatched key reference and missing snapshot",async()=>{
   assert.equal(await readEncryptedEventText({async query(){return {rows:[]}}},key,
     {...id,keyRef:"runtime-v1"}),null);
 });
+test("snapshot reader filters source deletions and link retractions before decrypting",async()=>{
+  const key=randomBytes(32);
+  const db={async query(sql){
+    assert.match(sql,/JOIN intelligence_inbox original/);
+    assert.match(sql,/message_deleted/);
+    assert.match(sql,/token_links_invalidated/);
+    assert.match(sql,/removed.ingested_at>=original.ingested_at/);
+    return {rows:[]};
+  }};
+  assert.equal(await readEncryptedEventText(db,key,{...id,keyRef:"runtime-v1"}),null);
+});
 test("purge returns deleted count without exposing ciphertext",async()=>{
   const db={async query(sql,params){
     assert.match(sql,/DELETE FROM event_text_snapshots/);assert.deepEqual(params,[3]);

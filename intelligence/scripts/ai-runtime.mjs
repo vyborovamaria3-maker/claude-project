@@ -32,8 +32,9 @@ export async function createAiRuntime(destination,sources,env=process.env){
   }finally{client.release();}
   return {
     async run(source,signal){
-      const connection=sources[source];
-      if(!["x","tg"].includes(source)||!connection)return null;
+      if(!["x","tg"].includes(source))return null;
+      const connection=sources?.[source];
+      if(!snapshotMode&&!connection)return null;
       return runAiAnalysisBatch({destination,source,gateway,models,limit,signal,
         readText:async(ref,at,kind,eventKey)=>{
           if(!snapshotMode)return readCollectorMessage(connection,source,ref,at);
