@@ -80,7 +80,7 @@ export async function selectBacktestObservations(client, args, dataCutoffAt) {
       ORDER BY canonical_token_id,(signal_at AT TIME ZONE 'UTC')::date,
         signal_at DESC,day DESC,as_of DESC
     )
-    SELECT s.canonical_token_id,s.signal_at,
+    SELECT s.canonical_token_id,s.signal_at,s.score_version,
       (s.signal_at + ($2::integer * INTERVAL '1 hour') <= $5::timestamptz) AS horizon_complete,
       s.max_input_observed_at,o.outcome_at,o.observed_at AS outcome_observed_at,
       s.${scoreColumn} AS score,o.label AS outcome,o.value AS outcome_value,o.evidence_ref
@@ -132,6 +132,9 @@ async function main() {
       process.stderr.write(JSON.stringify({outcomeCoverage:coverage})+"\n");
       throw new Error(incompleteHorizonCount?"backtest_incomplete_horizon":"backtest_incomplete_outcome_coverage");
     }
+    const versions=[...new Set(selected.rows.map(row=>row.score_version))];
+    if(versions.length!==1||typeof versions[0]!=="string"||!versions[0])
+      throw new Error("backtest_mixed_score_versions");
     const observations = selected.rows.map((row) => ({
       canonicalTokenId: row.canonical_token_id,
       signalAt: row.signal_at,
@@ -151,7 +154,7 @@ async function main() {
       runId: result.runId, signalName: args.signal, outcomeKind: args.outcome,
       fromAt, toAt, horizonHours: args.horizonHours, threshold: args.threshold,
       baselineKind: args.baseline, metrics, observations: result.observations,
-      dataCutoffAt, featureVersion: null, modelId: null,
+      dataCutoffAt, featureVersion: versions[0], modelId: null,
     });
     await client.query("COMMIT");
     process.stdout.write(JSON.stringify({ runId: result.runId, signal: args.signal, outcome: args.outcome, from: args.from, to: args.to, metrics })+"\n");

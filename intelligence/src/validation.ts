@@ -84,7 +84,7 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
   if(!row||row.status!=="completed"||row.feature_version!==input.signalVersion||
       row.baseline_kind!=="market_average"||
       !Number.isFinite(Number(row.threshold))||
-      Number(row.metrics?.sampleSize)!==records.rows.length||
+      Number((row.metrics as Record<string,unknown>|null)?.sampleSize)!==records.rows.length||
       !row.data_cutoff_at||!row.completed_at)
     throw new TypeError("validation_requires_completed_versioned_backtest");
   const cutoff=toUtcIso(row.data_cutoff_at as Date|string);

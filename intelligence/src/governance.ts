@@ -18,6 +18,9 @@ export async function requireCurrentSignalValidation(
     WHERE validation.signal_version=$1 AND validation.validation_status='passed'
       AND validation.method IN ('walk_forward','holdout','expanding_window')
       AND validation.dataset_cutoff=run.data_cutoff_at
+      AND run.feature_version=validation.signal_version
+      AND validation.method_params->>'producer'='temporal_holdout_v1'
+      AND validation.validation_report->>'pValue' IS NOT NULL
       AND validation.published_at<=$2::timestamptz
       AND validation.deployment_valid_until>$2::timestamptz
       AND run.status='completed' AND run.completed_at<=$2::timestamptz
