@@ -1,5 +1,7 @@
 # X Collector Runtime v2 context
 
+Frontend moderate audit (2026-10-23): ip-address lockfile patched to 10.7.4; moderate 21 remain through Solana/jayson uuid/stream-json and Tailwind selector-parser. No fixed releases found in installed major branches; major upgrades explicitly excluded. Security, frontend build/lint and isolated browser/keyring regressions pass. See solana-launcher/docs/NPM_AUDIT_MODERATE_20261023_RU.md.
+
 Frontend audit high (2026-10-23): toml override pinned to compatible 5.0.1 with bounded DoS regressions; 7 high entries remain through braces 3.0.3, which has no published fix. Moderate Solana/jayson and parser chains remain separate work. No audit suppression or major dependency migration; see solana-launcher/docs/NPM_AUDIT_HIGH_20261023_RU.md.
 
 Frontend security baseline (2026-10-23): Next.js/eslint-config-next 16.4.2, sharp 0.35.5 pinned; React 18 retained with compatible peer range. Verified security regression, lint, analysis/build/TypeScript, isolated browser smoke and collector keyring compatibility. Next audit advisories cleared; unrelated dependency backlog remains. See solana-launcher/docs/NEXT_SECURITY_UPDATE_20261023_RU.md.

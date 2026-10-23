@@ -167,4 +167,5 @@ for (const entry of fs.readdirSync(workflowDir, { withFileTypes: true })) {
 }
 
 execFileSync(process.execPath, [path.join(root, "scripts/toml-security-regression.cjs")], { stdio: "inherit", timeout: 30000 });
+execFileSync(process.execPath, [path.join(root, "scripts/ip-address-security-regression.cjs")], { stdio: "inherit", timeout: 15000 });
 console.log("SECURITY_REGRESSION_OK");
