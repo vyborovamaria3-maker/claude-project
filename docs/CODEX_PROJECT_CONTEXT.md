@@ -1,5 +1,7 @@
 # X Collector Runtime v2 context
 
+Frontend security baseline (2026-10-23): Next.js/eslint-config-next 16.4.2, sharp 0.35.5 pinned; React 18 retained with compatible peer range. Verified security regression, lint, analysis/build/TypeScript, isolated browser smoke and collector keyring compatibility. Next audit advisories cleared; unrelated dependency backlog remains. See solana-launcher/docs/NEXT_SECURITY_UPDATE_20261023_RU.md.
+
 PR #127 V2-07 (2026-10-23): X session and AI key consumers share compatible legacy/V2 helpers, including UI/register and old publisher scripts. Reply has a separate envelope and may still fall back to MASTER_KEY. Audit is append-only with indefinite retention; logs rotate without age/count deletion. See x-collector/docs/V2_07_SECURITY_REVIEW_20261023_RU.md for remaining operational gates; no working rotation or live X performed.
 
 PR #68 merge integration (2026-10-18): preserve canonical Alchemy history and Settings V2 transport/monitoring; forensic coverage and per-request collection ledger use separate explicit schemas so #65 cache rows survive unchanged. No automatic Helius fallback. Fence success/failure/budget-release by lease token and expiry; retain raw inventory evidence and unknown execution. Offline settings/forensic/FIFO/API/legacy-database regressions cover integration; authoritative PnL remains unavailable for incompletely decoded raw history.
