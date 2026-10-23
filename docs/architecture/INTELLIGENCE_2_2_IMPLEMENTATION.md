@@ -115,3 +115,8 @@ sources emit deletion and link retraction events, rate/cost invoice
 reconciliation, expiry/rotation of AI keys and secrets, and a documented
 POTAPoff host-to-host authentication and deployment plan. An automated CI
 success is not proof that such operational checks have happened.
+
+
+- `014_privacy_evidence_indexes.sql` adds indexed evidence lookup for
+  text retractions. Keep migration numbers unique: this migration follows
+  `013_invalidation_retry_schedule.sql`.

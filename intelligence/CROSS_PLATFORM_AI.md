@@ -6,7 +6,7 @@ This document describes the additive implementation in the existing Intelligence
 
 For collector-backed AI execution, typed persistence, verified explanations and the AI API, also apply migration009 and follow [AI_PIPELINE.md](AI_PIPELINE.md). The models are invoked by ETL only with the explicit AI runtime configuration; older collectors can use the bounded read-only snapshot worker.
 
-Apply 001 through 006, then 008 (alert history), 009 (typed AI), 010 (governance), 011 (policy preregistration), 012 (shared AI budget), 013 (invalidation retry scheduling). Migration 003 (Feature Store) is required for the features API. Migration 007 is optional and requires the pgvector extension; apply it only after 006 on a PostgreSQL server that supports pgvector. Do not modify old checksum-tracked migrations.
+Apply 001 through 006, then 008 (alert history), 009 (typed AI), 010 (governance), 011 (policy preregistration), 012 (shared AI budget), 013 (invalidation retry scheduling), 014 (privacy evidence indexes). Migration 003 (Feature Store) is required for the features API. Migration 007 is optional and requires the pgvector extension; apply it only after 006 on a PostgreSQL server that supports pgvector. Do not modify old checksum-tracked migrations.
 
 ## Data correctness
 
