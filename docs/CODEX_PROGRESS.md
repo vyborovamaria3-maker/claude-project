@@ -182,3 +182,5 @@ coverage reports live with the task artifacts; history exhaustion is not proof
 of complete swap decoding or globally exhaustive creator discovery.
 
 2026-10-23: fixed three negative-final-SOL SELL receipts in BoJack (two) and Gracias Messi (one). Added exact native ledger proof and three retained real fixtures with adversarial regression cases. blockchain:test, blockchain:integration-test and strict TypeScript checks pass. Production replay uses a validated online snapshot and a short transaction; only two affected wallet aggregates and quote/cache projections refresh while raw background collection continues. MBC counts remain unchanged. No new RPC for investigation/replay, no main changes.
+
+2026-10-23 dependency audit: repaired the production audit gate by locking Next.js 16.4.2 with matching ESLint configuration, sharp 0.35.5 and TOML 5.0.1. npm audit --omit=dev --audit-level=high passes with 0 high/critical findings; 20 moderate findings remain. Existing local BigInt protection is retained. Dependency installation and compatibility checks use a separate worktree so the active raw collector and production database remain available.
