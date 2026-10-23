@@ -49,6 +49,25 @@ test("correlation groups are isolated by token",()=>{
   assert.ok(results.every((result)=>result.samples.every((item)=>item.canonicalTokenId===result.samples[0]?.canonicalTokenId)));
 });
 
+test("replays and conflicting labels cannot inflate correlation sample size",async()=>{
+  const cohort=[...[1,2,3,4].map(i=>sample(i,true,true)),
+    sample(5,false,true),...[6,7,8].map(i=>sample(i,false,false))];
+  const evaluatedAt="2026-10-04T12:00:00Z";
+  assert.ok(calculateEventOutcomeCorrelations(cohort,evaluatedAt)[0].pValue>0.05);
+  const repeated=Array.from({length:10},()=>cohort).flat();
+  assert.throws(()=>calculateEventOutcomeCorrelations(repeated,evaluatedAt),/Duplicate correlation observation/);
+  const first=cohort[0];
+  for(const changed of [
+    {...first,eventAt:first.eventAt.toISOString()},
+    {...first,outcome:false},
+    {...first,exposed:false,outcomeAt:new Date(first.outcomeAt.getTime()+60_000)},
+  ])assert.throws(()=>calculateEventOutcomeCorrelations([...cohort,changed],evaluatedAt),/Duplicate correlation observation/);
+  let wrote=false;
+  await assert.rejects(persistEventOutcomeCorrelations({async query(){wrote=true;return {rows:[]}}},
+    repeated,{evaluatedAt,dataCutoffAt:evaluatedAt}),/Duplicate correlation observation/);
+  assert.equal(wrote,false);
+});
+
 test("persistence stores one aggregate row per token/event/outcome group",async()=>{
   const samples=[sample(1,true,true),sample(2,true,false),sample(3,false,false),sample(4,false,false)];
   const writes=[];

@@ -1,5 +1,7 @@
 PROJECT: X Collector Runtime v2
 
+2026-10-23 PR #167 follow-up: backtest signals use snapshot availability (later of input cutoff and database write time), with UTC signal-date filtering before daily selection. Refresh records wall-clock insertion time. Correlation replay/conflicting labels fail before persistence. Added real PostgreSQL refresh/selection/persistence regressions and correlation replay tests; see intelligence/CROSS_PLATFORM_AI.md. Local strict typecheck/build and all 101 Intelligence tests pass against disposable PostgreSQL 16 with no skips. No merge.
+
 ## PR #127 — локальная приёмка и производительность V2
 
 V2 plan/queue EXPLAIN (2026-10-20): statuses reconciled with Windows acceptance and CI f0627c6. SQL-only disposable *_test benchmark: 200004 synthetic jobs / 100 accounts; mixed 35–42 ms with manual_due index, manual-first before LIMIT verified. All-accounts-busy and all-agent-quotas-exhausted exceeded 15 s. A 10004-job diagnostic shows 4000 repeated quota aggregates before eligibility rejection. V2-05 performance gate remains open; runtime SQL unchanged. See x-collector/docs/QUEUE_EXPLAIN_V205_20261020_RU.md. No working DB/keys, Worker, X or merge used.

@@ -86,9 +86,14 @@ export function calculateEventOutcomeCorrelations(
 ): CorrelationGroupResult[] {
   const evaluatedAt=toUtcIso(evaluatedAtInput);
   const groups=new Map<string,Array<ReturnType<typeof validateSample>>>();
+  const seen=new Set<string>();
   for(const sample of samples) {
     const validated=validateSample(sample,evaluatedAt);
     const key=validated.canonicalTokenId+"|"+validated.eventKind+"|"+validated.outcomeKind;
+    // One event window is one observation, even if a replay changes its outcome metadata.
+    const observationKey=key+"|"+validated.eventAt;
+    if(seen.has(observationKey))throw new TypeError("Duplicate correlation observation");
+    seen.add(observationKey);
     const group=groups.get(key)??[];
     group.push(validated);
     groups.set(key,group);

@@ -213,6 +213,7 @@ export async function putCrossPlatformSnapshot(
   tx: PgTransaction, input: CrossPlatformSnapshotInput,
 ): Promise<ValidatedCrossPlatformSnapshot> {
   const x = validateCrossPlatformSnapshot(input);
+  // NOW() is the transaction start, which can precede calculation of this snapshot.
   const result = await tx.query(`INSERT INTO token_daily_cross_platform (
     canonical_token_id,day,as_of,max_input_observed_at,
     tg_mentions,tg_unique_authors,tg_copypasta_ratio,tg_sentiment_score,tg_scam_ratio,
@@ -221,11 +222,11 @@ export async function putCrossPlatformSnapshot(
     tg_mentions_z_1h,x_mentions_z_1h,chain_volume_z_1h,
     first_mention_tg_at,first_mention_x_at,first_trade_at,first_swap_evidence_at,
     attention_score,credibility_score,risk_score,momentum_score,score_version,score_reason,
-    source_coverage,data_confidence,snapshot_sha256
+    source_coverage,data_confidence,snapshot_sha256,created_at
   ) VALUES (
     $1,$2::date,$3,$4,
     $5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-    $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34::jsonb,$35::jsonb,$36,$37
+    $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34::jsonb,$35::jsonb,$36,$37,clock_timestamp()
   ) ON CONFLICT(canonical_token_id,day,as_of) DO NOTHING RETURNING canonical_token_id`, [
     x.canonicalTokenId,x.day,x.asOf,x.maxInputObservedAt,
     x.tgMentions,x.tgUniqueAuthors,x.tgCopypastaRatio,x.tgSentimentScore,x.tgScamRatio,

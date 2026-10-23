@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import pg from "pg";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { runSignalBacktest, persistBacktestRun } from "../dist/index.js";
 
 const SIGNAL_COLUMNS = new Set(["attention_score","credibility_score","risk_score","momentum_score"]);
@@ -58,6 +60,46 @@ function parseArgs(argv) {
   if (baseline!=="market_average" && baseline!=="random") throw new TypeError("invalid_baseline");
   return { ...result, threshold, horizonHours, baseline };
 }
+export async function selectBacktestObservations(client, args, dataCutoffAt) {
+    if (!SIGNAL_COLUMNS.has(args.signal)) throw new TypeError("invalid_signal");
+    const scoreColumn = args.signal;
+    const coveragePredicate = COVERAGE_PREDICATES[scoreColumn];
+    // Filter by availability before choosing the last signal per token/UTC signal day.
+    return client.query(`WITH available_snapshots AS (
+      SELECT *, GREATEST(as_of,created_at) AS signal_at
+      FROM token_daily_cross_platform
+      WHERE max_input_observed_at<=as_of
+        AND ${scoreColumn} IS NOT NULL
+        AND (${coveragePredicate})
+    ), daily_snapshots AS (
+      SELECT DISTINCT ON (canonical_token_id,(signal_at AT TIME ZONE 'UTC')::date) *
+      FROM available_snapshots
+      WHERE signal_at >= ($3::date::timestamp AT TIME ZONE 'UTC')
+        AND signal_at < (($4::date + 1)::timestamp AT TIME ZONE 'UTC')
+        AND signal_at <= $5::timestamptz
+      ORDER BY canonical_token_id,(signal_at AT TIME ZONE 'UTC')::date,
+        signal_at DESC,day DESC,as_of DESC
+    )
+    SELECT s.canonical_token_id,s.signal_at,
+      (s.signal_at + ($2::integer * INTERVAL '1 hour') <= $5::timestamptz) AS horizon_complete,
+      s.max_input_observed_at,o.outcome_at,o.observed_at AS outcome_observed_at,
+      s.${scoreColumn} AS score,o.label AS outcome,o.value AS outcome_value,o.evidence_ref
+      FROM daily_snapshots s
+      LEFT JOIN LATERAL (
+        SELECT outcome_at,observed_at,label,value,evidence_ref
+        FROM token_outcomes o
+        WHERE o.canonical_token_id=s.canonical_token_id AND o.outcome_kind=$1
+          AND o.outcome_at>s.signal_at
+          AND o.outcome_at<=s.signal_at + ($2::integer * INTERVAL '1 hour')
+          AND o.observed_at>=o.outcome_at
+          AND o.observed_at<=$5::timestamptz AND o.created_at<=$5::timestamptz
+        ORDER BY o.outcome_at ASC,o.observed_at ASC LIMIT 1
+      ) o ON TRUE
+      ORDER BY s.signal_at,s.canonical_token_id`, [
+      args.outcome,args.horizonHours,args.from,args.to,dataCutoffAt,
+    ]);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const connectionString = process.env.INTELLIGENCE_DATABASE_URL;
@@ -77,37 +119,7 @@ async function main() {
     if (!(dataCutoffAt instanceof Date) || toAt > dataCutoffAt) {
       throw new TypeError("backtest_range_must_be_historical");
     }
-    const scoreColumn = args.signal;
-    const coveragePredicate = COVERAGE_PREDICATES[scoreColumn];
-    const selected = await client.query(`WITH daily_snapshots AS (
-      SELECT DISTINCT ON (canonical_token_id,day) *
-      FROM token_daily_cross_platform
-      WHERE day >= $3::date AND day <= $4::date
-        AND as_of <= $5::timestamptz
-        AND max_input_observed_at<=as_of
-        AND created_at <= as_of
-        AND ${scoreColumn} IS NOT NULL
-        AND (${coveragePredicate})
-      ORDER BY canonical_token_id,day,as_of DESC
-    )
-    SELECT s.canonical_token_id,s.as_of AS signal_at,
-      (s.as_of + ($2::integer * INTERVAL '1 hour') <= $5::timestamptz) AS horizon_complete,
-      s.max_input_observed_at,o.outcome_at,o.observed_at AS outcome_observed_at,
-      s.${scoreColumn} AS score,o.label AS outcome,o.value AS outcome_value,o.evidence_ref
-      FROM daily_snapshots s
-      LEFT JOIN LATERAL (
-        SELECT outcome_at,observed_at,label,value,evidence_ref
-        FROM token_outcomes o
-        WHERE o.canonical_token_id=s.canonical_token_id AND o.outcome_kind=$1
-          AND o.outcome_at>s.as_of
-          AND o.outcome_at<=s.as_of + ($2::integer * INTERVAL '1 hour')
-          AND o.observed_at>=o.outcome_at
-          AND o.observed_at<=$5::timestamptz
-        ORDER BY o.outcome_at ASC,o.observed_at ASC LIMIT 1
-      ) o ON TRUE
-      ORDER BY s.as_of,s.canonical_token_id`, [
-      args.outcome,args.horizonHours,args.from,args.to,dataCutoffAt,
-    ]);
+    const selected = await selectBacktestObservations(client,args,dataCutoffAt);
     if (!selected.rows.length) throw new Error("backtest_no_eligible_observations");
     // Fail closed: neither incomplete horizons nor missing outcomes may disappear from the denominator.
     const incompleteHorizonCount=selected.rows.filter((row)=>row.horizon_complete!==true).length;
@@ -151,7 +163,7 @@ async function main() {
     await pool.end();
   }
 }
-main().catch((error) => {
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) main().catch((error) => {
   const code = error instanceof Error && /^[a-z0-9_]+$/.test(error.message) ? error.message : "backtest_failed";
   process.stderr.write(code+"\n");
   process.exitCode = 1;
