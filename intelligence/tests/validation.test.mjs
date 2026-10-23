@@ -23,6 +23,11 @@ test("chronological holdout is disjoint and statistically significant",()=>{
   assert.ok(result.pValue<0.05);
   assert.equal(result.passed,true);
 });
+test("training outcomes observed after holdout starts are rejected",()=>{
+  const rows=cohort();
+  rows[70]={...rows[70],outcomeObservedAt:"2026-10-10T06:00:00.000Z"};
+  assert.throws(()=>evaluateTemporalHoldout(rows),/holdout_train_outcomes_cross_split_boundary/);
+});
 test("repeated tokens are rejected as dependent samples",()=>{
   const rows=cohort();
   rows[100]={...rows[100],canonicalTokenId:rows[0].canonicalTokenId};

@@ -74,6 +74,11 @@ export function evaluateTemporalHoldout(rows:readonly HoldoutRow[],testFraction=
   const splitDay=sorted[boundary]!.signalAt.slice(0,10);
   const train=sorted.filter(r=>r.signalAt.slice(0,10)<splitDay);
   const test=sorted.filter(r=>r.signalAt.slice(0,10)>=splitDay);
+  const splitAt=splitDay+"T00:00:00.000Z";
+  // A training label available only after the split is not independent
+  // evidence for a policy chosen before the holdout.
+  if(train.some(r=>toUtcIso(r.outcomeObservedAt)>=splitAt))
+    throw new TypeError("holdout_train_outcomes_cross_split_boundary");
   if(train.length<20||test.length<20||
      new Set(train.map(r=>r.signalAt.slice(0,10))).size<2||
      new Set(test.map(r=>r.signalAt.slice(0,10))).size<2)
@@ -88,7 +93,7 @@ export function evaluateTemporalHoldout(rows:readonly HoldoutRow[],testFraction=
   const passed=pValue<=0.05&&selectedRate>controlRate&&lift!==null&&lift>=2;
   return {passed,pValue,lift,selectedRate,controlRate,trainCount:train.length,
     testCount:test.length,selectedCount:selected.length,controlCount:control.length,
-    splitAt:splitDay+"T00:00:00.000Z",rows:sorted};
+    splitAt,rows:sorted};
 }
 
 export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
