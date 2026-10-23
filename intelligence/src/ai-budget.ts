@@ -50,7 +50,7 @@ export async function settleSharedAiBudget(pool:DbPool,input:Readonly<{
   reservationId:string;measuredCostUsd?:number|null;
 }>):Promise<boolean>{
   if(typeof input.reservationId!=="string"||
-     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.reservationId))
+     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.reservationId))
     throw new TypeError("invalid_ai_budget_reservation");
   if(input.measuredCostUsd!==null&&input.measuredCostUsd!==undefined&&
      (!Number.isFinite(input.measuredCostUsd)||input.measuredCostUsd<0||input.measuredCostUsd>MAX_USD))
