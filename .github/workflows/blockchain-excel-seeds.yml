@@ -11,6 +11,7 @@ on:
       - "solana-launcher/scripts/blockchain-swap-proof-validation*.cjs"
       - "solana-launcher/scripts/blockchain-alchemy-provider.cjs"
       - "solana-launcher/scripts/blockchain-pump-swap*.cjs"
+      - "solana-launcher/scripts/blockchain-four-routes-regression.cjs"
       - "solana-launcher/scripts/blockchain-wallet-cache*.cjs"
       - "solana-launcher/scripts/blockchain-collector-regression.mjs"
       - "solana-launcher/scripts/blockchain-inventory-decoder.cjs"
