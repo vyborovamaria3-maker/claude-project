@@ -17,7 +17,7 @@ derived analytics only. No new microservice or duplicate Inbox is introduced.
 | Four-way coverage assessments | Table only; complete requires verified counts and evidence |
 | Encrypted `event_text_snapshots` | Table only; no plaintext, no encryption producer or purge worker yet |
 | Analytics lineage | Table only; not populated by all builders |
-| Invalidation queue + log | Table and idempotent enqueue helper; no automatic cross-source producer/processor |
+| Invalidation queue + log | Table and enqueue helper; X/TG link/revision events enqueue affected tokens; no general recomputation worker |
 | Signal validation registry | Table and alert persistence gate; independent validation executor still required |
 | AI cost ledger | Table plus successful typed AI-call accounting; invoice reconciliation missing |
 | Gateway auth audit | Table only; cross-host gateway not deployed |

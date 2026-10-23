@@ -70,7 +70,10 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
   try{
     await admin.query('CREATE SCHEMA "'+schema+'"');
     await admin.query('SET search_path TO "'+schema+'"');
-    for(const filename of ["001_entity_registry.sql","002_timeline.sql","004_token_link_observations.sql"]){
+    for(const filename of ["001_entity_registry.sql","002_timeline.sql","003_feature_store.sql",
+      "004_token_link_observations.sql","005_blockchain_swap_evidence_revisions.sql",
+      "006_cross_platform_analytics.sql","008_alert_status_history.sql","009_ai_analysis.sql",
+      "010_intelligence_governance.sql"]){
       await admin.query(await readFile(new URL("../migrations/"+filename,import.meta.url),"utf8"));
     }
     pool=new pg.Pool({connectionString:url,options:"-c search_path="+schema,max:3});
@@ -124,6 +127,15 @@ test("real PostgreSQL: late arrivals, edit retractions, historical as-of and rep
     assert.equal(result.failed,1);
     assert.equal(nack,1);
     assert.equal((await pool.query("SELECT count(*)::integer AS n FROM token_link_observations")).rows[0].n,3);
+    // Revoke a link AFTER verified revisions exist; replay cannot enqueue twice.
+    const newerDelete=invalidated("2026-10-20T01:09:00Z");
+    assert.equal((await send(pool,newerDelete)).delivered,1);
+    assert.equal((await send(pool,newerDelete)).duplicates,1);
+    const changes=await pool.query(`SELECT reason,count(*)::integer AS n
+      FROM analytics_invalidation_queue GROUP BY reason ORDER BY reason`);
+    assert.ok(changes.rows.some(row=>row.reason==="link_invalidated"&&row.n===1));
+    assert.equal((await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_log")).rows[0].n,
+      (await pool.query("SELECT count(*)::integer AS n FROM analytics_invalidation_queue")).rows[0].n);
   }finally{
     if(pool)await pool.end();
     await admin.query("SET search_path TO public");
