@@ -1,6 +1,6 @@
 import { parseTokenId, toUtcIso, type TokenId } from "@claude-project/contracts";
 import type { PgTransaction } from "./entity-registry.js";
-import {requireCurrentSignalValidation} from "./governance.js";
+
 
 export type AlertSeverity = "info" | "low" | "medium" | "high" | "critical";
 export type AlertCandidate = Readonly<{
@@ -109,13 +109,16 @@ export function evaluateCrossPlatformAlerts(input: AlertObservation): AlertCandi
     candidates.push({alertType:"rug_risk",severity:"critical",score:input.riskScore,
       features:{riskScore:input.riskScore}});
   }
-  // Sparse or in-sample significance is not sufficient for a validated alert.
+  // Correlation statistics are exploratory; this code never certifies returns.
   if (finite(input.correlationLift)&&input.correlationLift>=2&&
       ratio(input.correlationPValue)&&input.correlationPValue<=0.05&&
       count(input.correlationExposedCount)&&input.correlationExposedCount>=10&&
       count(input.correlationControlCount)&&input.correlationControlCount>=10&&
-      input.correlationValidation==="out_of_sample") {
-    candidates.push({alertType:"validated_correlation",severity:"medium",score:input.correlationLift,
+      // A caller's out_of_sample flag does NOT authenticate this specific
+      // event/outcome. Research alert only until a correlation-specific
+      // holdout certificate is persisted and verified.
+      true) {
+    candidates.push({alertType:"correlation_candidate",severity:"medium",score:input.correlationLift,
       features:{correlationLift:input.correlationLift,correlationPValue:input.correlationPValue,
         correlationExposedCount:input.correlationExposedCount,correlationControlCount:input.correlationControlCount}});
   }
@@ -136,11 +139,10 @@ export async function persistAlertCandidates(
     if(alert.triggeredAt<alert.asOf)throw new TypeError("Alert trigger time cannot precede as_of");
     if(!/^[a-z][a-z0-9_]{0,63}$/.test(alert.alertType))throw new TypeError("Invalid alert type");
     const refs=evidenceRefs(alert.evidenceRefs);
-    // Never accept a claimed out_of_sample flag without a completed independent validation record.
-    if(alert.alertType==="validated_correlation" &&
-       !(await requireCurrentSignalValidation(tx,alert.scoreVersion,alert.triggeredAt))) {
-      throw new Error("validated_correlation_requires_verified_registry");
-    }
+    // Generic score-version validation cannot certify a token-specific event/
+    // outcome correlation. Fail closed until scoped independent proof exists.
+    if(alert.alertType==="validated_correlation")
+      throw new Error("validated_correlation_scoped_evidence_required");
     // Caller must hold a transaction: this lock serializes concurrent evaluators per token/type.
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[alert.canonicalTokenId+"|"+alert.alertType]);
     const recent=await tx.query(`SELECT alert_id FROM token_alerts

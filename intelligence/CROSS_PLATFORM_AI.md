@@ -74,3 +74,9 @@ The dispatcher claims alerts with row locks, marks them as sending, posts plain 
 - `event_text_snapshots` permits encrypted short-lived data only; a retention/purge key-management service is required prior to use. Existing read-only source text adapters remain active.
 - `gateway_auth_log` is a database contract, not proof of a deployed authenticated cross-host gateway.
 - Existing `intelligence_inbox` is NOT duplicated; its compound primary key already handles replay.
+\n**Correlation alert semantics:** a significant exploratory event/outcome
+association now emits `correlation_candidate`, never `validated_correlation`.
+A caller-supplied `correlationValidation` flag and an unrelated feature
+backtest are insufficient to certify a specific event/outcome pair. Forced
+`validated_correlation` writes fail closed until correlation-scoped held-out
+provenance and a registry join are implemented.\n

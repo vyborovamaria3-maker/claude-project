@@ -18,31 +18,32 @@ test("alert rules detect multi-source anomalies with evidence",()=>{
   });
   assert.deepEqual(alerts.map((alert)=>alert.alertType),[
     "tg_mentions_spike","x_mentions_spike","chain_volume_anomaly","coordinated_copypasta",
-    "high_bot_activity","rug_risk","validated_correlation",
+    "high_bot_activity","rug_risk","correlation_candidate",
   ]);
   assert.equal(alerts.find((alert)=>alert.alertType==="rug_risk")?.severity,"critical");
   assert.ok(formatTelegramAlert(alerts[0]).includes(token));
 });
 
-test("validated correlation alerts require OOS evidence and enough samples",()=>{
+test("candidate correlation alerts require adequate samples and stay exploratory",()=>{
   const candidate={...base,correlationLift:4,correlationPValue:0.001};
   assert.deepEqual(evaluateCrossPlatformAlerts(candidate),[]);
   assert.deepEqual(evaluateCrossPlatformAlerts({...candidate,correlationExposedCount:4,correlationControlCount:4,
     correlationValidation:"out_of_sample"}),[]);
   assert.deepEqual(evaluateCrossPlatformAlerts({...candidate,correlationExposedCount:10,correlationControlCount:10,
-    correlationValidation:"out_of_sample"}).map(a=>a.alertType),["validated_correlation"]);
+    correlationValidation:"out_of_sample"}).map(a=>a.alertType),["correlation_candidate"]);
 });
-test("validated correlation persistence fails closed without independent registry evidence",async()=>{
+test("forced validated correlation cannot be inserted based on a generic score-version certificate",async()=>{
   const candidates=evaluateCrossPlatformAlerts({...base,correlationLift:3,correlationPValue:0.002,
-    correlationExposedCount:30,correlationControlCount:30,correlationValidation:"out_of_sample"});
+    correlationExposedCount:30,correlationControlCount:30,correlationValidation:"out_of_sample"})
+    .map(candidate=>({...candidate,alertType:"validated_correlation"}));
   let inserts=0,checked=0;
   const db={async query(sql){
     if(sql.includes("signal_validation_registry")){checked++;return {rows:[]};}
     if(sql.includes("INSERT INTO token_alerts"))inserts++;
     return {rows:[]};
   }};
-  await assert.rejects(persistAlertCandidates(db,candidates),/validated_correlation_requires_verified_registry/);
-  assert.equal(checked,1);assert.equal(inserts,0);
+  await assert.rejects(persistAlertCandidates(db,candidates),/validated_correlation_scoped_evidence_required/);
+  assert.equal(checked,0);assert.equal(inserts,0);
 });
 
 test("persistence suppresses any active incident regardless of age",async()=>{
@@ -66,4 +67,12 @@ test("no evidence means no alert, and future-observed inputs are rejected",()=>{
     ...base,maxInputObservedAt:"2026-10-22T12:00:02Z",riskScore:0.9,
   }),/observed after as_of/);
   assert.throws(()=>evaluateCrossPlatformAlerts({...base,tgCopypastaRatio:1.1}),/Invalid alert ratio/);
+});
+
+test("caller-supplied OOS claim cannot upgrade an exploratory correlation",()=>{
+  const alerts=evaluateCrossPlatformAlerts({...base,correlationLift:2.5,
+    correlationPValue:0.001,correlationExposedCount:20,correlationControlCount:20,
+    correlationValidation:"out_of_sample"});
+  assert.equal(alerts.length,1);
+  assert.equal(alerts[0].alertType,"correlation_candidate");
 });
