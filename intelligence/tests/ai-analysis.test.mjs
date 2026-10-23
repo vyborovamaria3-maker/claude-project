@@ -223,3 +223,11 @@ test("unresolved direction cannot become a directional score even if provider re
     assert.equal(result.label,"mixed");assert.equal(result.score,0);assert.equal(result.directionAmbiguous,true);
   }
 });
+
+
+test("context cannot inject cross-source, future-ID or oversized messages into the paid request",async()=>{
+ const item={evidenceRef:'tg:message:1:1',text:'holding well',postedAt:'2026-10-20T00:00:00Z',observedAt:'2026-10-20T00:00:00Z'};
+ const service=createAiAnalysisService(fakeTx(),gateway);
+ for(const context of [[{...item,evidenceRef:'tg:message:2:1'}],[{...item,evidenceRef:'tg:message:1:8'}],[{...item,text:'x'.repeat(1201)}],[item,item]])
+  await assert.rejects(service.analyzeSentiment({modelId:'sentiment-v3',text:'thought it would rug',evidenceRefs:['tg:message:1:7'],context}),/Invalid AI message context/);
+});

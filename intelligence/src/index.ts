@@ -10,3 +10,4 @@ export * from "./ai-analysis.js";
 export * from "./correlations.js";
 export * from "./alerts.js";
 export * from "./ai-pipeline.js";
+export * from "./ai-message-input.js";

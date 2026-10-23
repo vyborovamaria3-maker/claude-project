@@ -225,9 +225,20 @@ function normalizeAiAnalysis(row){
   }else throw new TypeError("invalid_stored_ai_task");
   if(typeof row.model_version!=="string"||!row.model_version.length||row.model_version.length>128||
       /[\u0000-\u001f]/.test(row.model_version))throw new TypeError("invalid_stored_ai_model");
+  const contextEvidence=input.contextEvidence??[];
+  if(!Array.isArray(contextEvidence)||contextEvidence.length>2)throw new TypeError("invalid_stored_ai_context");
+  const context=contextEvidence.map(item=>{
+    if(!item||typeof item.textSha256!=="string"||!/^[a-f0-9]{64}$/.test(item.textSha256)||
+      typeof item.evidenceRef!=="string"||!item.evidenceRef.startsWith(evidenceId.split(":").slice(0,3).join(":")+":"))
+      throw new TypeError("invalid_stored_ai_context");
+    const observedAt=safeTime(item.observedAt),postedAt=safeTime(item.postedAt);
+    if(observedAt>safeTime(row.analyzed_at))throw new TypeError("invalid_stored_ai_context");
+    return {evidenceRef:safeEvidenceId(item.evidenceRef),textSha256:item.textSha256,postedAt,observedAt};
+  });
   return {
     source:row.source_system,evidenceId,task:row.task,result,
-    evidenceRefs:safeRefs(input.evidenceRefs).filter(ref=>ref===evidenceId),
+    ...(input.contextEvidence===undefined?{}:{contextEvidence:context}),
+    evidenceRefs:safeRefs(input.evidenceRefs).filter(ref=>ref===evidenceId||context.some(item=>item.evidenceRef===ref)),
     modelId:safeModelId(row.model_id),modelVersion:row.model_version,
     sourceObservedAt:safeTime(row.source_observed_at),analyzedAt:safeTime(row.analyzed_at),
     interpretation:"model_classification_of_source_content",
@@ -354,6 +365,10 @@ export async function queryTokenApi(pool,request){
       WHERE analysis.analyzed_at <= $2 AND analysis.source_observed_at <= $2
         AND event.observed_at <= $2 AND event.occurred_at <= $2 AND inbox.ingested_at <= $2
         AND ($4::text IS NULL OR analysis.source_system=$4)
+          AND NOT EXISTS(SELECT 1 FROM ai_message_attempts excluded
+            WHERE excluded.source_system=analysis.source_system AND excluded.source_event_kind=analysis.source_event_kind
+              AND excluded.event_key=analysis.event_key AND excluded.error_code='excluded_template_v1'
+              AND excluded.next_attempt_at<=$2)
         AND ($1::text IS NULL OR EXISTS (
           SELECT 1 FROM timeline_event_entities entity
           WHERE entity.source_system=event.source_system AND entity.source_event_kind=event.source_event_kind

@@ -1,5 +1,5 @@
 import {buildXSnapshotEvent,buildTgSnapshotEvent} from "./backfill-core.mjs";
-import {ingestRegistryEvent,ingestTimelineEvent} from "../dist/index.js";
+import {ingestRegistryEvent,ingestTimelineEvent,isLowValueTelegramPost} from "../dist/index.js";
 
 async function writeUnattributedXSnapshot(tx,row){
   if(!/^[1-9][0-9]{0,24}$/.test(row.tweet_id))throw new TypeError("invalid_snapshot_tweet");
@@ -46,12 +46,14 @@ export async function importAiSourceSnapshots(sourcePool,destination,source,limi
     }else rows=(await reader.query(`SELECT m.message_id,s.peer_id,m.collected_at,m.posted_at,m.deleted_at,m.text
       FROM tg_messages m JOIN tg_sources s ON s.id=m.source_id
       WHERE m.deleted_at IS NULL AND m.text IS NOT NULL AND btrim(m.text)<>''
-      ORDER BY m.collected_at DESC,m.message_id DESC LIMIT $1`,[limit])).rows;
+      ORDER BY m.collected_at DESC,m.message_id DESC LIMIT $1`,[Math.max(32,limit*16)])).rows;
     await reader.query("COMMIT");
   }catch(error){try{await reader.query("ROLLBACK");}catch{}throw error;}
   finally{reader.release();}
   const stats={visited:rows.length,imported:0,excluded:0,unattributed:0};
   for(const row of rows){
+    if(stats.imported>=limit)break;
+    if(source==="tg"&&isLowValueTelegramPost(row.text)){stats.excluded++;continue;}
     const event=source==="x"?buildXSnapshotEvent(row):buildTgSnapshotEvent(row);
     if(!event&&source!=="x"){stats.excluded++;continue;}
     const tx=await destination.connect();

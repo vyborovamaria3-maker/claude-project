@@ -338,6 +338,10 @@ export async function refreshTokenDailyCrossPlatform(
     LEFT JOIN LATERAL(SELECT result,analyzed_at FROM ai_message_analyses a
       WHERE a.source_system=te.source_system AND a.source_event_kind=te.source_event_kind AND a.event_key=te.event_key
         AND a.task='sentiment' AND a.analyzed_at<=$3::timestamptz AND a.source_observed_at<=$3::timestamptz
+        AND NOT EXISTS(SELECT 1 FROM ai_message_attempts excluded
+          WHERE excluded.source_system=a.source_system AND excluded.source_event_kind=a.source_event_kind
+            AND excluded.event_key=a.event_key AND excluded.error_code='excluded_template_v1'
+            AND excluded.next_attempt_at<=$3::timestamptz)
         AND NOT EXISTS(SELECT 1 FROM token_link_observations inv
           WHERE inv.source_system=te.source_system AND inv.evidence_source_id=te.evidence_source_id
             AND inv.state='invalidated' AND inv.observed_at>=a.source_observed_at

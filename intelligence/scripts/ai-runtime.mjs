@@ -1,5 +1,5 @@
 import {createAiGatewayFromEnv} from "@claude-project/ai-gateway";
-import {readCollectorMessage,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform} from "../dist/index.js";
+import {readCollectorMessage,readCollectorContext,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform} from "../dist/index.js";
 
 /** Explicit API opt-in, separate from collector ACK/lease handling. */
 export async function createAiRuntime(destination,sources,env=process.env){
@@ -30,6 +30,7 @@ export async function createAiRuntime(destination,sources,env=process.env){
       if(!["x","tg"].includes(source)||!connection)return null;
       return runAiAnalysisBatch({destination,source,gateway,models,limit,signal,
         readText:(ref,at)=>readCollectorMessage(connection,source,ref,at),
+        readContext:(ref,at)=>readCollectorContext(connection,source,ref,at),
         refresh:async(token,day)=>{
           const tx=await destination.connect();
           try{

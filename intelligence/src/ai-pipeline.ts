@@ -2,6 +2,7 @@ import {createHash} from "node:crypto";
 import type {AiGateway} from "@claude-project/ai-gateway";
 import {toUtcIso} from "@claude-project/contracts";
 import type {PgTransaction} from "./entity-registry.js";
+import {isLowValueTelegramPost,type AiMessageContext} from "./ai-message-input.js";
 import {createAiAnalysisService} from "./ai-analysis.js";
 
 type Client=PgTransaction & {release():void};
@@ -25,7 +26,7 @@ export async function readCollectorMessage(pool:AiPool,source:Source,ref:string,
   try{
     await client.query("BEGIN READ ONLY");
     const response=source==="x"?await client.query(`SELECT text,updated_at AS observed_at FROM twitter_tweets WHERE tweet_id=$1`,[match[1]]):
-      await client.query(`SELECT m.text,m.collected_at AS observed_at FROM tg_messages m
+      await client.query(`SELECT m.text,GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz) AS observed_at FROM tg_messages m
         JOIN tg_sources s ON s.id=m.source_id
         WHERE s.peer_id=$1 AND m.message_id=$2 AND m.deleted_at IS NULL`,[match[1],match[2]]);
     const row=response.rows[0];
@@ -37,12 +38,38 @@ export async function readCollectorMessage(pool:AiPool,source:Source,ref:string,
   finally{client.release();}
 }
 
+/** Only earlier messages in the same source, already available at the analysis cutoff. */
+export async function readCollectorContext(pool:AiPool,source:Source,ref:string,observedAt:Date|string):Promise<AiMessageContext[]> {
+  if(source!=="tg")return [];
+  const match=/^tg:message:(-?[1-9][0-9]{0,24}):([1-9][0-9]{0,24})$/.exec(ref);
+  if(!match)throw new TypeError("Invalid AI context evidence");
+  const at=toUtcIso(observedAt),client=await pool.connect();
+  try{
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const rows=await client.query(`SELECT m.message_id,m.text,m.posted_at,GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz) AS collected_at FROM tg_messages m
+      JOIN tg_sources s ON s.id=m.source_id
+      JOIN tg_messages target ON target.source_id=m.source_id AND target.message_id=$2
+      WHERE s.peer_id=$1 AND target.deleted_at IS NULL AND target.collected_at<=$3
+        AND m.message_id<target.message_id AND m.posted_at<=target.posted_at
+        AND m.posted_at>=target.posted_at-INTERVAL '30 minutes' AND m.collected_at<=$3
+        AND GREATEST(m.collected_at,(to_jsonb(m)->>'edited_at')::timestamptz)<=$3
+        AND m.deleted_at IS NULL AND length(m.text) BETWEEN 1 AND 1200
+      ORDER BY m.posted_at DESC,m.message_id DESC LIMIT 12`,[match[1],match[2],at]);
+    await client.query("COMMIT");
+    return rows.rows.filter(row=>typeof row.text==="string"&&row.text.trim()&&!isLowValueTelegramPost(row.text))
+      .slice(0,2).reverse().map(row=>({evidenceRef:`tg:message:${match[1]}:${row.message_id}`,
+        text:row.text as string,postedAt:sourceTime(row.posted_at),observedAt:sourceTime(row.collected_at)}));
+  }catch(error){try{await client.query("ROLLBACK");}catch{}throw error;}
+  finally{client.release();}
+}
+
 /** Runs AFTER normal collector delivery/ACK. AI failure never changes source delivery. */
 export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source;readText:(ref:string,at:Date|string)=>Promise<string|null>;
+  readContext?:(ref:string,at:Date|string)=>Promise<AiMessageContext[]>;
   gateway:AiGateway;models:AiModels;limit?:number;signal?:AbortSignal;refresh?:(token:string,day:string)=>Promise<void>}){
   const limit=input.limit??2;
   if(!Number.isSafeInteger(limit)||limit<1||limit>8)throw new RangeError("AI batch limit must be 1..8");
-  const stats={analyzed:0,failed:0,unavailable:0,busy:false,explained:0,refreshed:0,refreshFailed:0};
+  const stats={analyzed:0,filtered:0,failed:0,unavailable:0,busy:false,explained:0,refreshed:0,refreshFailed:0};
   const client=await input.destination.connect();
   const lock="intelligence-ai|"+input.source;
   let locked=false;
@@ -50,6 +77,7 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
     locked=(await client.query("SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked",[lock])).rows[0]?.locked===true;
     if(!locked){stats.busy=true;return stats;}
     const service=createAiAnalysisService(client,input.gateway);
+    const contexts=new Map<string,AiMessageContext[]>();
     for(const task of ["sentiment","narrative"] as const){
       const modelId=input.models[task];if(!modelId)continue;
       if(input.signal?.aborted)break;
@@ -72,15 +100,27 @@ export async function runAiAnalysisBatch(input:{destination:AiPool;source:Source
         try{
           const text=await input.readText(ref,row.observed_at as Date);
           if(text===null){stats.unavailable++;throw new Error("source_revision_unavailable");}
-          const output=task==="sentiment"?await service.analyzeSentiment({modelId,text,evidenceRefs:[ref]}):
-            await service.classifyNarrative({modelId,text,evidenceRefs:[ref]});
+          if(input.source==="tg"&&isLowValueTelegramPost(text)){
+            await client.query(`INSERT INTO ai_message_attempts(source_system,source_event_kind,event_key,task,model_id,attempts,next_attempt_at,error_code)
+              VALUES($1,$2,$3,$4,$5,5,clock_timestamp(),'excluded_template_v1') ON CONFLICT(source_system,source_event_kind,event_key,task,model_id) DO UPDATE
+              SET attempts=5,error_code=EXCLUDED.error_code,next_attempt_at=EXCLUDED.next_attempt_at`,[input.source,kind,eventKey,task,modelId]);
+            stats.filtered++;continue;
+          }
+          const contextKey=ref+"|"+sourceTime(row.observed_at);
+          if(!contexts.has(contextKey))contexts.set(contextKey,input.source==="tg"&&input.readContext?
+            await input.readContext(ref,new Date()):[]);
+          const context=contexts.get(contextKey)!;
+          const contextEvidence=context.map(item=>({evidenceRef:item.evidenceRef,postedAt:item.postedAt,observedAt:item.observedAt,
+            textSha256:createHash("sha256").update(item.text).digest("hex")}));
+          const output=task==="sentiment"?await service.analyzeSentiment({modelId,text,evidenceRefs:[ref],context}):
+            await service.classifyNarrative({modelId,text,evidenceRefs:[ref],context});
           // Provenance belongs to typed columns, never to arbitrary provider JSON.
           const result=task==="sentiment"?{
             label:(output as {label:string}).label,score:(output as {score:number}).score,
-            directionAmbiguous:(output as {directionAmbiguous:boolean}).directionAmbiguous,
+            directionAmbiguous:(output as {directionAmbiguous:boolean}).directionAmbiguous,contextEvidence,
             confidence:output.confidence,evidenceRefs:output.evidenceRefs,
           }:{narrativeId:(output as {narrativeId:string|null}).narrativeId,
-            keywords:(output as {keywords:string[]}).keywords,confidence:output.confidence,evidenceRefs:output.evidenceRefs};
+            keywords:(output as {keywords:string[]}).keywords,contextEvidence,confidence:output.confidence,evidenceRefs:output.evidenceRefs};
           await client.query("BEGIN");
           const tokens=await client.query(`SELECT canonical_id FROM timeline_event_entities WHERE source_system=$1
             AND source_event_kind=$2 AND event_key=$3 AND kind='token'

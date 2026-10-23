@@ -4,7 +4,7 @@ import {randomUUID} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
 import {createAiGateway} from "@claude-project/ai-gateway";
-import {readCollectorMessage,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform,
+import {readCollectorMessage,readCollectorContext,isLowValueTelegramPost,runAiAnalysisBatch,registerModel,refreshTokenDailyCrossPlatform,
   evaluateCrossPlatformAlerts,persistAlertCandidates} from "../dist/index.js";
 import {importAiSourceSnapshots} from "../scripts/ai-source-snapshot.mjs";
 import {parseApiRequest,queryTokenApi} from "../api/routes.mjs";
@@ -68,6 +68,13 @@ test("real PG source snapshots -> AI -> immutable storage -> API and as-of summa
   assert.equal(response.items.length,2);
   const global=await queryTokenApi(f.destination,parseApiRequest(`/api/intelligence/v1/ai?asOf=${now}&source=tg`));
   assert.equal(global.items.length,2);
+  const excludedAt=new Date();
+  await f.destination.query(`INSERT INTO ai_message_attempts(source_system,source_event_kind,event_key,task,model_id,attempts,next_attempt_at,error_code)
+    SELECT source_system,source_event_kind,event_key,'sentiment','test-sentiment',5,$1,'excluded_template_v1' FROM timeline_events WHERE source_system='tg'`,[excludedAt]);
+  const filteredApi=await queryTokenApi(f.destination,{kind:'ai',tokenId:null,source:'tg',asOf:excludedAt.toISOString(),limit:20});
+  assert.equal(filteredApi.items.length,0,"known filtered templates hide legacy AI results without deleting source data");
+  const historical=await queryTokenApi(f.destination,{kind:'ai',tokenId:null,source:'tg',asOf:new Date(excludedAt.getTime()-1).toISOString(),limit:20});
+  assert.equal(historical.items.length,2,"later filtering must not rewrite historical responses");
   const before=await queryTokenApi(f.destination,parseApiRequest(`/api/intelligence/v1/tokens/${token}/ai?asOf=${new Date(f.ms+1000).toISOString()}`));
   assert.equal(before.items.length,0);
   const tx=await f.destination.connect();
@@ -157,4 +164,49 @@ test("failed explanations have persistent bounded retry; valid grounding survive
   assert.equal(stored.grounding.version,"alert-facts-v1");assert.match(stored.explanation,/Score: 75/);
   const response=await queryTokenApi(f.destination,parseApiRequest(`/api/intelligence/v1/signals?asOf=${new Date().toISOString()}`));
   assert.equal(response.items[0].explanation.text,stored.explanation);
+});
+
+
+test("TG context is earlier, same-source, available by cutoff, unedited and non-template",{skip:!url},async t=>{
+ const f=await fixture(t);const at=new Date(f.ms),before=new Date(f.ms-1000),future=new Date(f.ms+1000);
+ await f.source.query("ALTER TABLE tg_messages ADD COLUMN edited_at TIMESTAMPTZ; INSERT INTO tg_sources VALUES(2,'-100456')");
+ await f.source.query(`INSERT INTO tg_messages(source_id,message_id,text,collected_at,posted_at,deleted_at,edited_at) VALUES
+   (1,1,'it still holding well wow',$1,$2,NULL,NULL),
+   (1,2,'Gamble Found! card',$1,$2,NULL,NULL),
+   (1,3,'deleted context',$1,$2,$1,NULL),
+   (1,4,'not available at cutoff',$3,$2,NULL,NULL),
+   (1,5,'edited after cutoff',$1,$2,NULL,$3),
+   (1,6,'published after target',$1,$3,NULL,NULL),
+   (1,8,'future message ID',$1,$2,NULL,NULL),
+   (2,1,'different source',$1,$2,NULL,NULL)`,[at,before,future]);
+ const context=await readCollectorContext(f.source,'tg','tg:message:-100123:7',at);
+ assert.deepEqual(context.map(x=>x.evidenceRef),['tg:message:-100123:1']);
+ assert.equal(context[0].text,'it still holding well wow');
+ await f.source.query("UPDATE tg_messages SET edited_at=$1 WHERE message_id=7",[future]);
+ assert.equal(await readCollectorMessage(f.source,'tg','tg:message:-100123:7',at),null);
+});
+
+test("template posts never bill AI, are durably excluded, and do not block the next conversational message",{skip:!url},async t=>{
+ const f=await fixture(t);await importAiSourceSnapshots(f.source,f.destination,'tg',1);
+ await f.source.query("UPDATE tg_messages SET text='🫡 Gamble Found! 🟩 The Ice Age Lion ($Sparta) MC: $15K'");
+ const input={...f,source:'tg',readText:(ref,at)=>readCollectorMessage(f.source,'tg',ref,at)};
+ const first=await runAiAnalysisBatch(input);assert.equal(first.filtered,2);assert.equal(first.failed,0);assert.equal(f.calls.length,0);
+ assert.equal((await runAiAnalysisBatch(input)).filtered,0);assert.equal(f.calls.length,0);
+ assert.equal((await f.destination.query("SELECT count(*) FROM ai_message_attempts WHERE error_code='excluded_template_v1' AND attempts=5")).rows[0].count,'2');
+ await f.source.query("INSERT INTO tg_messages VALUES(1,8,'thought it would be rugged',$1,$1,NULL)",[new Date(f.ms+100)]);
+ await importAiSourceSnapshots(f.source,f.destination,'tg',1);
+ let reads=0;
+ const batch=await runAiAnalysisBatch({...input,readContext:async()=>{reads++;return [{evidenceRef:'tg:message:-100123:6',text:'it still holding well wow',postedAt:new Date(f.ms-1000).toISOString(),observedAt:new Date(f.ms).toISOString()}];}});
+ assert.equal(batch.analyzed,2);assert.equal(f.calls.length,2);assert.equal(reads,1);
+ const stored=(await f.destination.query("SELECT result FROM ai_message_analyses WHERE task='sentiment'")).rows[0].result;
+ assert.equal(stored.contextEvidence[0].evidenceRef,'tg:message:-100123:6');
+ assert.equal(stored.contextEvidence[0].textSha256.length,64);assert.equal(JSON.stringify(stored).includes('holding well'),false);
+ const api=await queryTokenApi(f.destination,parseApiRequest(`/api/intelligence/v1/ai?asOf=${new Date().toISOString()}&source=tg`));
+ assert.equal(api.items[0].contextEvidence[0].evidenceRef,'tg:message:-100123:6');
+ assert.equal(JSON.stringify(api).includes('holding well'),false);
+});
+
+test("format filter rejects known scanner cards but retains conversational warnings and jokes",()=>{
+ for(const text of ['🫡 Gamble Found! 🟩 The Ice Age Lion ($Sparta) MC: 15K','🚀 Token started migration to Raydium','🔥$REKT: $251K >> $1M3 | Х5 | 1m','0xee9fcc99971e3da8dd8c97557387bd7b88927777','├ MC: 10K\n├ VOL: 20K\n└ HOLDERS: 100'])assert.equal(isLowValueTelegramPost(text),true,text);
+ for(const text of ['it still holding well wow','thought id come back to it getting rugged','Don’t screw up my DCA’s lmao tryna bid better dips 😂','I ignore Gamble Found! posts; they are bot spam','Other UMI dumping hard expecting this one to hold the cat meta'])assert.equal(isLowValueTelegramPost(text),false,text);
 });
