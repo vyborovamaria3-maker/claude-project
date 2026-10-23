@@ -41,13 +41,13 @@ test("deleted Telegram evidence is excluded as-of without erasing history",{skip
      details,details_sha256,created_at)
     VALUES('tg','timeline_events','2026-10-20T00:00Z','2026-10-21T00:00Z',
      '2026-10-21T01:00Z','partial',1,'{}',$1,'2026-10-21T01:00Z')`,["0".repeat(64)]);
-  const before=await refreshTokenDailyCrossPlatform(db,token,"2026-10-20","2026-10-21T12:00Z");
+  const before=await refreshTokenDailyCrossPlatform(db,token,"2026-10-20","2026-10-21T12:00:00Z");
   assert.equal(before.tgMentions,1);
   await db.query(`INSERT INTO intelligence_inbox
     (source_system,event_kind,event_key,schema_version,evidence_source_id,ingested_at)
     VALUES('tg','message_deleted','message-1-deleted','test','tg:message:123:1',
       '2026-10-22T00:00Z')`);
-  const after=await refreshTokenDailyCrossPlatform(db,token,"2026-10-20","2026-10-22T12:00Z");
+  const after=await refreshTokenDailyCrossPlatform(db,token,"2026-10-20","2026-10-22T12:00:00Z");
   assert.equal(after.tgMentions,null);
   assert.equal(after.firstMentionTgAt,null);
   const historic=await db.query(`SELECT tg_mentions FROM token_daily_cross_platform
