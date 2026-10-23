@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {randomUUID} from "node:crypto";
+import {randomUUID,randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
-import {recordAiCost,queueAnalyticsInvalidation,requireCurrentSignalValidation} from "../dist/index.js";
+import {recordAiCost,queueAnalyticsInvalidation,requireCurrentSignalValidation,storeEncryptedEventText,readEncryptedEventText} from "../dist/index.js";
 
 const url=process.env.INTELLIGENCE_TEST_DB_URL;
 const token="solana:So11111111111111111111111111111111111111112";
@@ -74,6 +74,33 @@ test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and
       "fabricated validation without immutable preregistration cannot authorize an alert");
     // The authorization query must reject p>0.05, lift<2 and tiny holdout cohorts.
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,new Date(Date.now()+2*86400000)),false);
+
+
+    const eventId={sourceSystem:"tg",sourceEventKind:"message_observed",eventKey:"tg-test-v1"};
+    const evidenceId="tg:message:-100123:42";
+    await db.query(`INSERT INTO intelligence_inbox
+      (source_system,event_kind,event_key,schema_version,evidence_source_id)
+      VALUES('tg','message_observed',$1,'tg-message-v1',$2)`,[eventId.eventKey,evidenceId]);
+    await db.query(`INSERT INTO timeline_events
+      (source_system,source_event_kind,event_key,timeline_kind,occurred_at,observed_at,
+        evidence_source_id,schema_version,payload)
+      VALUES('tg','message_observed',$1,'tg_message_published',
+        '2026-10-20T11:00:00Z','2026-10-20T12:00:00Z',$2,'timeline-v1','{}')`,
+      [eventId.eventKey,evidenceId]);
+    const key=randomBytes(32);
+    assert.equal(await storeEncryptedEventText(db,{...eventId,
+      observedAt:"2026-10-20T12:00:00Z",text:"Sensitive Telegram source post",
+      key,keyRef:"fixture-key-v1",retentionDays:1}),true);
+    assert.equal(await readEncryptedEventText(db,key,{...eventId,keyRef:"fixture-key-v1"}),
+      "Sensitive Telegram source post");
+    await db.query(`INSERT INTO intelligence_inbox
+      (source_system,event_kind,event_key,schema_version,evidence_source_id)
+      VALUES('tg','message_deleted','tg-test-delete','tg-message-v1',$1)`,[evidenceId]);
+    assert.equal(await readEncryptedEventText(db,key,{...eventId,keyRef:"fixture-key-v1"}),null,
+      "a delivered deletion tombstone must revoke previously encrypted text");
+    const storedBytes=await db.query("SELECT text_ciphertext FROM event_text_snapshots");
+    assert.equal(storedBytes.rows.length,1);
+    assert.equal(storedBytes.rows[0].text_ciphertext.includes(Buffer.from("Sensitive Telegram")),false);
 
     const interpret=await db.query(`SELECT column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name='token_daily_cross_platform'
