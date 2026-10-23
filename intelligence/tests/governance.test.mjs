@@ -63,12 +63,13 @@ test("Intelligence 2.2 PostgreSQL schema: as-of, coverage, validation, dedup and
         clock_timestamp()-INTERVAL '4 days',24,0.7,'market_average','completed',
         '{"sampleSize":25}',clock_timestamp()-INTERVAL '10 seconds',
         clock_timestamp(),clock_timestamp()-INTERVAL '5 seconds')`,[runId]);
-    const cutoff=(await db.query("SELECT data_cutoff_at FROM backtest_runs WHERE run_id=$1",[runId])).rows[0].data_cutoff_at;
+    // PostgreSQL preserves microseconds that JS Date rounds away: copy the cutoff server-side.
     await db.query(`INSERT INTO signal_validation_registry
       (signal_version,backtest_run_id,method,method_params,reproducibility_hash,
         dataset_cutoff,validation_status,deployment_valid_until)
-      VALUES($1,$2,'holdout','{"held_out":true}',$3,$4,'passed',$5)`,
-      [signalVersion,runId,"a".repeat(64),cutoff,new Date(Date.now()+86400000)]);
+      SELECT $1,run_id,'holdout','{"held_out":true}'::jsonb,$3,
+        data_cutoff_at,'passed',$4::timestamptz FROM backtest_runs WHERE run_id=$2`,
+      [signalVersion,runId,"a".repeat(64),new Date(Date.now()+86400000)]);
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,signalTime),true);
     assert.equal(await requireCurrentSignalValidation(db,signalVersion,new Date(Date.now()+2*86400000)),false);
 
