@@ -46,7 +46,7 @@ test("holdout certificate is deterministic and bound to run details",async()=>{
       signal_name:"attention_score",outcome_kind:"price_2x_24h",threshold:"0.7",baseline_kind:"market_average",
       feature_version:"cross-platform-heuristics-v2",horizon_hours:24,model_id:null,
       metrics:{sampleSize:120,outcomeCoverage:{eligibleCount:120,labeledCount:120,
-        completedHorizonCount:120,missingOutcomeCount:0,incompleteHorizonCount:0}},data_cutoff_at:"2026-10-20T00:00:00Z",
+        completedHorizonCount:120,missingOutcomeCount:0,incompleteHorizonCount:0,ambiguousOutcomeCount:0}},data_cutoff_at:"2026-10-20T00:00:00Z",
       completed_at:"2026-10-21T00:00:00Z",
     }]};
     if(sql.includes("FROM backtest_results r")&&sql.includes("token_daily_cross_platform"))
@@ -78,7 +78,7 @@ test("missing outcomes cannot be silently counted as false",async()=>{
       status:"completed",signal_name:"attention_score",outcome_kind:"price_2x_24h",threshold:"0.7",
       baseline_kind:"market_average",feature_version:"cross-platform-heuristics-v2",
       horizon_hours:24,metrics:{sampleSize:1,outcomeCoverage:{eligibleCount:1,labeledCount:1,
-        completedHorizonCount:1,missingOutcomeCount:0,incompleteHorizonCount:0}},data_cutoff_at:"2026-10-20T00:00:00Z",
+        completedHorizonCount:1,missingOutcomeCount:0,incompleteHorizonCount:0,ambiguousOutcomeCount:0}},data_cutoff_at:"2026-10-20T00:00:00Z",
       completed_at:"2026-10-21T00:00:00Z",
     }]};
     if(sql.includes("FROM backtest_results"))return {rows:[{
@@ -103,7 +103,7 @@ test("holdout certification fails if persisted rows have no source proof",async(
       threshold:"0.7",baseline_kind:"market_average",feature_version:"cross-platform-heuristics-v2",
       horizon_hours:24,metrics:{sampleSize:rows.length,outcomeCoverage:{
         eligibleCount:rows.length,labeledCount:rows.length,completedHorizonCount:rows.length,
-        missingOutcomeCount:0,incompleteHorizonCount:0,
+        missingOutcomeCount:0,incompleteHorizonCount:0,ambiguousOutcomeCount:0,
       }},data_cutoff_at:"2026-10-20T00:00:00Z",completed_at:"2026-10-21T00:00:00Z",
     }]};
     if(sql.includes("FROM backtest_results r")&&sql.includes("token_daily_cross_platform"))

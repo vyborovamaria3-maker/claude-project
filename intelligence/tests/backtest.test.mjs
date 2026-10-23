@@ -70,6 +70,8 @@ test("CLI includes incomplete horizons and missing labels rather than dropping t
   assert.match(sql,/backtest_incomplete_outcome_coverage/);
   assert.match(sql,/completedHorizonCount/);
   assert.match(sql,/missingOutcomeCount/);
+  assert.match(sql,/outcome_match_count/);
+  assert.match(sql,/backtest_ambiguous_outcome_labels/);
 });
 
 test("persistence refuses signals whose horizon or outcome observation exceeds cutoff",async()=>{

@@ -126,7 +126,8 @@ export async function certifyTemporalHoldout(tx:PgTransaction,input:Readonly<{
   if(!coverage||coverage.eligibleCount!==records.rows.length||
      coverage.labeledCount!==records.rows.length||
      coverage.completedHorizonCount!==records.rows.length||
-     coverage.missingOutcomeCount!==0||coverage.incompleteHorizonCount!==0)
+     coverage.missingOutcomeCount!==0||coverage.incompleteHorizonCount!==0||
+     coverage.ambiguousOutcomeCount!==0)
     throw new TypeError("validation_unverified_outcome_coverage");
   // Never silently turn a missing label into a negative outcome.
   if(records.rows.some(r=>typeof r.outcome_label!=="boolean"||typeof r.selected!=="boolean"||
