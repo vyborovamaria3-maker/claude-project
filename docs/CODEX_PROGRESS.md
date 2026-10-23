@@ -180,3 +180,5 @@ their event creator to the initiator. Retained live receipt and negative binding
 tests guard the distinction. Collection checkpoints/request ledger and detailed
 coverage reports live with the task artifacts; history exhaustion is not proof
 of complete swap decoding or globally exhaustive creator discovery.
+
+2026-10-23: fixed three negative-final-SOL SELL receipts in BoJack (two) and Gracias Messi (one). Added exact native ledger proof and three retained real fixtures with adversarial regression cases. blockchain:test, blockchain:integration-test and strict TypeScript checks pass. Production replay uses a validated online snapshot and a short transaction; only two affected wallet aggregates and quote/cache projections refresh while raw background collection continues. MBC counts remain unchanged. No new RPC for investigation/replay, no main changes.

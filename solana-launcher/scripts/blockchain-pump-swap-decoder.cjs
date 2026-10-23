@@ -296,6 +296,52 @@ function classifyIntermediatePumpSell(tx,mint) {
   return matches.length===1?matches[0]:null;
 }
 
+// Native SELL proceeds can be smaller than tips/network fees. Prove the route
+// receipt instead of treating the wallet's final SOL sign as trade direction.
+function negativeNativeSellSettlement(tx,mint,trader,pool,event,groups) {
+  if(event.buy||event.solRaw<=0n||groups.length!==1)return null;
+  const raw=tx.raw,keys=tx.accountKeys;
+  const rawKeys=raw.transaction.message.accountKeys.map(k=>typeof k==='string'?k:k.pubkey);
+  if(keys.length!==new Set(keys).size||keys.length!==rawKeys.length||keys.some((k,i)=>k!==rawKeys[i]))return null;
+  const pre=raw.meta.preBalances,post=raw.meta.postBalances,fee=raw.meta.fee;
+  if(pre.length!==keys.length||post.length!==keys.length||!Number.isSafeInteger(fee)||fee<0
+    ||[...pre,...post].some(n=>!Number.isSafeInteger(n)||n<0)
+    ||pre.some((n,i)=>n!==tx.preBalances[i])||post.some((n,i)=>n!==tx.postBalances[i]))return null;
+  try {
+    const {PublicKey}=require('@solana/web3.js');
+    const curve=PublicKey.findProgramAddressSync([Buffer.from('bonding-curve'),new PublicKey(mint).toBuffer()],new PublicKey(PUMP))[0].toBase58();
+    if(curve!==pool.owner)return null;
+  }catch{return null;}
+  const poolIndex=keys.indexOf(pool.owner),userIndex=keys.indexOf(trader.owner);
+  if(poolIndex<0||userIndex<0||poolIndex===userIndex)return null;
+  const adjusted=pre.map((n,i)=>BigInt(post[i])-BigInt(n));adjusted[0]+=BigInt(fee);
+  let outsideWalletFlow=0n;
+  const routeIndex=groups[0].index;
+  for(const group of raw.meta.innerInstructions||[])if(group.index!==routeIndex&&group.instructions.length)return null;
+  for(const [index,ix]of raw.transaction.message.instructions.entries()) {
+    if(index===routeIndex)continue;
+    if(ix.programId==='ComputeBudget111111111111111111111111111111')continue;
+    const info=ix.parsed?.info;
+    if(ix.programId!=='11111111111111111111111111111111'||ix.parsed?.type!=='transfer'
+      ||!Number.isSafeInteger(info?.lamports)||info.lamports<0)return null;
+    const source=keys.indexOf(info.source),destination=keys.indexOf(info.destination);
+    if(source<0||destination<0)return null;
+    const n=BigInt(info.lamports);adjusted[source]+=n;adjusted[destination]-=n;
+    if(source===userIndex)outsideWalletFlow-=n;
+    if(destination===userIndex)outsideWalletFlow+=n;
+  }
+  const received=adjusted[userIndex];
+  // Once explicit outside transfers and the network fee are removed, the
+  // canonical pool must be the only funding source. Other debits could hide
+  // account rent refunds, competing swaps or an unrelated native withdrawal.
+  if(adjusted[poolIndex]!==-event.solRaw||received<=0n||received>event.solRaw
+    ||adjusted.some((n,i)=>i!==poolIndex&&n<0n)||adjusted.reduce((a,b)=>a+b,0n)!==0n)return null;
+  return {receivedRaw:String(received),grossPoolDebitRaw:String(event.solRaw),
+    routeDeductionsRaw:String(event.solRaw-received),outsideWalletFlowRaw:String(outsideWalletFlow),
+    walletDeltaRaw:String(BigInt(post[userIndex])-BigInt(pre[userIndex])),networkFeeRaw:String(fee),
+    pool:pool.owner,routeInstructionGroup:routeIndex,feePayer:keys[0]};
+}
+
 function decodePumpSwap(tx, mint) {
   if (tx?.transactionError !== null || tx.raw?.meta?.err !== null || !Number.isSafeInteger(tx.slot)) return null;
   const raw = tx.raw;
@@ -360,7 +406,7 @@ function decodePumpSwap(tx, mint) {
     deltaRaw:(tx.tokenBalanceDeltas||[]).find(d=>d.owner===quoteOwner&&d.mint===route.currency)?.deltaRaw||'0',
   }] : (tx.tokenBalanceDeltas || []).filter(d => (!route.currency||d.mint===route.currency)&&d.owner === quoteOwner
     && d.mint !== mint && /^-?\d+$/.test(d.deltaRaw) && BigInt(d.deltaRaw) !== 0n);
-  let routeQuoteDelta = null;
+  let routeQuoteDelta = null, nativeSettlement = null;
   let quoteMint = SOL, quoteAmount = Number(event.solRaw) / 1e9, quoteDecimals = 9;
   // The legacy SOL field is not a token quote or a conversion rate.
   if (event.solRaw === 0n) {
@@ -408,7 +454,13 @@ function decodePumpSwap(tx, mint) {
     }
     const index = tx.accountKeys.indexOf(quoteOwner);
     const delta = tx.postBalances[index] - tx.preBalances[index];
-    if (!Number.isFinite(delta) || (event.buy ? delta >= 0 : delta <= 0)) return null;
+    if (!Number.isFinite(delta)) return null;
+    if(event.buy ? delta>=0 : delta<=0) {
+      nativeSettlement=negativeNativeSellSettlement(tx,mint,trader,pool,event,provenGroups);
+      if(!nativeSettlement)return null;
+      routeQuoteDelta=BigInt(nativeSettlement.receivedRaw);
+      quoteAmount=Number(routeQuoteDelta)/1e9;
+    }
   }
   const amountTokens = Math.abs(Number(trader.deltaRaw)) / 10 ** trader.decimals;
   const amountSol = quoteMint === SOL ? quoteAmount : 0;
@@ -419,6 +471,7 @@ function decodePumpSwap(tx, mint) {
     feeLamports: Number(raw.meta.fee || 0), source: "alchemy", decoderCoverage: "swap_only",
     attribution: "pump_event_and_checked_transfer_path", protocolTrader: event.protocolUser,
     ...(event.solRaw > 0n ? { protocolAmountSol: Number(event.solRaw) / 1e9 } : { settlementEvidence: "wxmr_pool_and_wallet_transfer_ledger" }),
+    ...(nativeSettlement ? {settlementEvidence:'native_pool_debit_and_balanced_route_ledger',nativeSettlement} : {}),
     ...(quoteDeltas.length ? { quoteWalletDeltaRaw: quoteDeltas[0].deltaRaw,
       quoteRouteDeltaRaw: String(routeQuoteDelta),
       quoteExternalDeltaRaw: String(BigInt(quoteDeltas[0].deltaRaw) - routeQuoteDelta) } : {}),
