@@ -33,6 +33,11 @@ async function main(){
       WHERE t.source_system=$1 AND t.timeline_kind IN ('tweet_published','tg_message_published')
         AND t.observed_at>=clock_timestamp()-($2::integer*INTERVAL '1 day')
         AND i.ingested_at<=clock_timestamp()
+        AND NOT EXISTS(SELECT 1 FROM intelligence_inbox removed
+          WHERE removed.source_system=i.source_system
+            AND removed.evidence_source_id=i.evidence_source_id
+            AND removed.event_kind IN ('message_deleted','token_links_invalidated')
+            AND (removed.event_kind='message_deleted' OR removed.ingested_at>=i.ingested_at))
         AND NOT EXISTS(SELECT 1 FROM event_text_snapshots s
           WHERE s.source_system=t.source_system AND s.source_event_kind=t.source_event_kind
             AND s.event_key=t.event_key)

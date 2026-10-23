@@ -58,7 +58,15 @@ export async function storeEncryptedEventText(tx:PgTransaction,input:SnapshotIde
   const result=await tx.query(`INSERT INTO event_text_snapshots
     (source_system,source_event_kind,event_key,revision_sha256,observed_at,
      text_ciphertext,encryption_key_ref,expires_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+($8::integer*INTERVAL '1 day'))
+    SELECT $1,$2,$3,$4,$5,$6,$7,clock_timestamp()+($8::integer*INTERVAL '1 day')
+    FROM intelligence_inbox original
+    WHERE original.source_system=$1 AND original.event_kind=$2 AND original.event_key=$3
+      AND NOT EXISTS(SELECT 1 FROM intelligence_inbox removed
+        WHERE removed.source_system=original.source_system
+          AND removed.evidence_source_id=original.evidence_source_id
+          AND removed.event_kind IN ('message_deleted','token_links_invalidated')
+          AND (removed.event_kind='message_deleted'
+               OR removed.ingested_at>=original.ingested_at))
     ON CONFLICT(source_system,source_event_kind,event_key,revision_sha256) DO NOTHING
     RETURNING event_key`,[
     input.sourceSystem,input.sourceEventKind,input.eventKey,sealed.sha256,observedAt,

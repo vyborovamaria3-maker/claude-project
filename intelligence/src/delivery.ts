@@ -128,6 +128,25 @@ async function queueAffectedTokensForRecalculation(
     });
 }
 
+/** Revoke stored social ciphertext in the same destination transaction as a
+ * verified deletion/edit tombstone. Older migration versions keep working. */
+async function revokeRetiredTextSnapshots(
+  tx:PgTransaction,event:ClaimedEvent,body:RegistryOutboxPayload,
+):Promise<void> {
+  if(!["x","tg"].includes(event.sourceSystem)||
+     !["message_deleted","token_links_invalidated"].includes(event.eventKind))return;
+  const present=await tx.query("SELECT to_regclass('event_text_snapshots') IS NOT NULL AS ready");
+  if(present.rows[0]?.ready!==true)return;
+  await tx.query(`UPDATE event_text_snapshots s
+    SET text_ciphertext=NULL,purged_at=clock_timestamp()
+    FROM intelligence_inbox original
+    WHERE original.source_system=$1 AND original.evidence_source_id=$2
+      AND s.source_system=original.source_system
+      AND s.source_event_kind=original.event_kind
+      AND s.event_key=original.event_key AND s.purged_at IS NULL`,[
+      event.sourceSystem,body.registryEvent.evidenceRef.sourceId,
+    ]);
+}
 /** The only transaction boundary: destination COMMIT BEFORE source ACK. */
 async function writeDestination(
   pool: DestinationPool, event: ClaimedEvent,
@@ -154,7 +173,10 @@ async function writeDestination(
     if (body.timelineEvent) {
       await ingestTimelineEvent(client,event.sourceSystem,event.eventKind,body.timelineEvent);
     }
-    if(fresh)await queueAffectedTokensForRecalculation(client,event,body);
+    if(fresh){
+      await revokeRetiredTextSnapshots(client,event,body);
+      await queueAffectedTokensForRecalculation(client,event,body);
+    }
     await client.query("COMMIT");open=false;
     return fresh;
   } catch(error) {
